@@ -7,33 +7,22 @@ use crate::stmt::Stmt;
 use crate::ts as TypeScript;
 use crate::{ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr, flags};
 
-/// Zig: `G.Fn.flags: Flags.Function.Set`. Downstream crates address the flag
-/// enum via `G::FnFlags::IsExport` etc.; re-export the enum + set type here.
+/// Downstream crates address the flag enum via `G::FnFlags::IsExport` etc.;
+/// re-export the enum + set type here.
 pub use crate::flags::Function as FnFlags;
-pub use crate::flags::FunctionSet as FnFlagsSet;
 
-// PORT NOTE: all `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
+// All `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
 // erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
 // adding a `PhantomData<&'arena ()>` to `StoreSlice` in one pass.
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Decl {
     pub binding: BindingNodeIndex,
     pub value: Option<ExprNodeIndex>,
 }
 
-// Zig: `pub const List = Vec(Decl);` (nested decl) — inherent assoc types
-// are nightly; free alias.
+// Inherent assoc types are nightly; free alias.
 pub type DeclList = Vec<Decl, bun_alloc::AstAlloc>;
-
-impl Default for Decl {
-    fn default() -> Self {
-        Self {
-            binding: BindingNodeIndex::default(),
-            value: None,
-        }
-    }
-}
 
 pub struct NamespaceAlias {
     pub namespace_ref: Ref,
@@ -113,14 +102,12 @@ impl Class {
             }
 
             if property.kind == PropertyKind::Normal && f.contains(flags::Property::IsStatic) {
-                for val_ in [property.value, property.initializer] {
-                    if let Some(val) = val_ {
-                        match val.data {
-                            ExprData::EArrow(..) | ExprData::EFunction(..) => {}
-                            _ => {
-                                if !val.data.can_be_moved() {
-                                    return false;
-                                }
+                for val in [property.value, property.initializer].into_iter().flatten() {
+                    match val.data {
+                        ExprData::EArrow(..) | ExprData::EFunction(..) => {}
+                        _ => {
+                            if !val.data.can_be_moved() {
+                                return false;
                             }
                         }
                     }
@@ -166,8 +153,8 @@ pub struct Property {
     pub kind: PropertyKind,
     pub flags: flags::PropertySet,
 
-    // Arena-owned `?*ClassStaticBlock` (Zig). `StoreRef` centralises the
-    // raw-pointer deref so the accessors below stay safe.
+    // Arena-owned. `StoreRef` centralises the raw-pointer deref so the
+    // accessors below stay safe.
     pub class_static_block: Option<crate::StoreRef<ClassStaticBlock>>,
     pub ts_decorators: ExprNodeList,
     // Key is optional for spread
@@ -179,7 +166,6 @@ pub struct Property {
     pub ts_metadata: TypeScript::Metadata,
 }
 
-// Zig: nested `pub const List = Vec(Property);` — free alias.
 pub type PropertyList = Vec<Property, bun_alloc::AstAlloc>;
 
 impl Default for Property {
@@ -215,7 +201,7 @@ impl Property {
         self.class_static_block.as_deref_mut()
     }
 
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Property, bun_alloc::AllocError> {
@@ -235,7 +221,7 @@ impl Property {
             kind: self.kind,
             flags: self.flags,
             class_static_block,
-            // Zig: `try this.ts_decorators.deepClone(arena)` — Vec<Expr> per-element deep clone.
+            // Vec<Expr> per-element deep clone.
             ts_decorators: self
                 .ts_decorators
                 .try_deep_clone_with(|e| e.deep_clone(bump))?,
@@ -252,7 +238,6 @@ impl Property {
     }
 }
 
-// Zig: `enum(u3)` — Rust has no u3, use u8
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -267,16 +252,6 @@ pub enum PropertyKind {
     AutoAccessor,
 }
 
-impl PropertyKind {
-    // TODO(port): Zig `jsonStringify(self, writer: anytype) !void` — maps to a serde-like
-    // protocol writing @tagName(self). Phase B: decide on the json writer trait.
-    pub fn json_stringify(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // Zig: `writer.write(@tagName(self))` on a std.json WriteStream — emits a
-        // *quoted* JSON string. Tag names are [a-z_] so no escaping needed.
-        write!(writer, "\"{}\"", <&'static str>::from(self))
-    }
-}
-
 pub struct FnBody {
     pub loc: crate::Loc,
     pub stmts: StmtNodeList,
@@ -287,7 +262,6 @@ impl FnBody {
         bump: &bun_alloc::Arena,
         expr: ExprNodeIndex,
     ) -> core::result::Result<FnBody, bun_alloc::AllocError> {
-        // PERF(port): Zig used arena.dupe over a 1-elem array literal; bumpalo equivalent
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(crate::s::Return { value: Some(expr) }, expr.loc)
         });
@@ -305,7 +279,7 @@ pub struct Fn {
     // This was originally nullable, but doing so I believe caused a miscompilation
     // Specifically, the body was always null.
     pub body: FnBody,
-    pub arguments_ref: Option<Ref>,
+    pub arguments_ref: Ref,
 
     pub flags: flags::FunctionSet,
 
@@ -322,7 +296,7 @@ impl Default for Fn {
                 loc: crate::Loc::EMPTY,
                 stmts: StmtNodeList::EMPTY,
             },
-            arguments_ref: None,
+            arguments_ref: Ref::NONE,
             flags: flags::FUNCTION_NONE,
             return_ts_metadata: TypeScript::Metadata::MNone,
         }
@@ -330,11 +304,10 @@ impl Default for Fn {
 }
 
 impl Fn {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Fn, bun_alloc::AllocError> {
-        // PERF(port): Zig arena.alloc + per-index assign; bumpalo equivalent.
         let src_args: &[Arg] = self.args.slice();
         let args: &mut [Arg] = bump.alloc_slice_fill_default::<Arg>(src_args.len());
         for i in 0..args.len() {
@@ -379,12 +352,12 @@ impl Default for Arg {
 }
 
 impl Arg {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Arg, bun_alloc::AllocError> {
         Ok(Arg {
-            // Zig: `try this.ts_decorators.deepClone(arena)` — Vec<Expr> per-element deep clone.
+            // Vec<Expr> per-element deep clone.
             ts_decorators: self
                 .ts_decorators
                 .try_deep_clone_with(|e| e.deep_clone(bump))?,
@@ -398,5 +371,3 @@ impl Arg {
         })
     }
 }
-
-// ported from: src/js_parser/ast/G.zig

@@ -11,7 +11,8 @@ const SIZE: usize = 56;
 const SIZE: usize = 8;
 const ALIGNMENT: usize = 8;
 
-/// Mirrors `std.builtin.SourceLocation`. Rust's `core::panic::Location` lacks `fn_name`
+/// A NUL-terminated source location (function name, file, line, column).
+/// Rust's `core::panic::Location` lacks `fn_name`
 /// and is not NUL-terminated, so callers construct this via the [`src!`](crate::src) macro
 /// (which captures `module_path!()`/`file!()`/`line!()` as NUL-terminated literals) or via
 /// [`SourceLocation::from_caller`] which interns the runtime `Location` for `#[track_caller]`
@@ -24,10 +25,13 @@ pub struct SourceLocation {
 }
 
 // SAFETY: both pointers always reference `'static` data — either compile-time literals
-// from `concat!(file!(), "\0")` / `c"…"`, or leaked interned `CString`s from
-// `intern_location_file`. They are never freed and never written through, so sharing
-// across threads is sound.
+// from `concat!(file!(), "\0")` / `c"…"`, or interned `CString`s owned by
+// `intern_location_file`'s process-level `static` cache. The cache only ever inserts
+// (never removes or shrinks), and Rust never drops `static`s, so the boxed bytes live
+// for the rest of the process and are never written through. Sharing across threads is
+// therefore sound.
 unsafe impl Send for SourceLocation {}
+// SAFETY: same invariant as `Send` above — both pointers reference immutable `'static` data.
 unsafe impl Sync for SourceLocation {}
 
 impl SourceLocation {
@@ -37,7 +41,7 @@ impl SourceLocation {
     /// `BUN_JSC_dumpSimulatedThrows` diagnostics.
     #[track_caller]
     #[inline]
-    pub fn from_caller() -> Self {
+    pub(crate) fn from_caller() -> Self {
         let loc = core::panic::Location::caller();
         Self {
             fn_name: c"<rust>".as_ptr(),
@@ -47,30 +51,40 @@ impl SourceLocation {
     }
 }
 
-/// Intern a `&'static str` (from `Location::file()`) as a leaked NUL-terminated C string.
-/// Thread-local cache keyed by string-data pointer identity — `Location::file()` always
-/// returns the same `&'static str` for a given call site, so the cache is bounded by the
-/// number of distinct `#[track_caller]` sites that reach a scope ctor.
+/// Intern a `&'static str` (from `Location::file()`) as a NUL-terminated C string.
+/// Cache keyed by string-data pointer identity — `Location::file()` always returns the
+/// same `&'static str` for a given call site, so the cache is bounded by the number of
+/// distinct `#[track_caller]` sites that reach a scope ctor.
+///
+/// The cache is a process-level `static` (not `thread_local!`) on purpose: long-lived
+/// threadpool/worker threads are still parked when the main thread calls `exit()`, so
+/// their TLS destructors never run and LSan does not trace those threads' TLS slots as
+/// roots — every `Box<CStr>` interned from a worker was reported as leaked. A `static`
+/// lives in `.data`/`.bss` (a built-in LSan root), is never dropped, and reaches the
+/// boxed `CStr` data transitively via the `HashMap`'s bucket allocation. It also closes
+/// a latent UAF: `SourceLocation` is `Copy + Send + Sync`, so a value handed across
+/// threads could outlive a per-thread cache that *did* run its destructor. The returned
+/// pointer is stable across rehash because the `HashMap` value is `Box<CStr>` — the
+/// boxed bytes never move.
+///
+/// Only compiled under `cfg(any(debug_assertions, bun_asan))`; after warmup the critical
+/// section is a single `HashMap::get`, and this never runs on a release path.
 #[cfg(any(debug_assertions, bun_asan))]
 fn intern_location_file(file: &'static str) -> *const c_char {
-    use std::cell::RefCell;
-    use std::collections::HashMap;
-    use std::ffi::CString;
-    thread_local! {
-        static CACHE: RefCell<HashMap<usize, *const c_char>> = RefCell::new(HashMap::new());
-    }
-    CACHE.with(|c| {
-        *c.borrow_mut()
-            .entry(file.as_ptr() as usize)
-            .or_insert_with(|| {
-                // `file!()` paths never contain interior NULs; fall back gracefully if one
-                // somehow does.
-                let cs = CString::new(file).unwrap_or_else(|_| CString::new("<rust>").unwrap());
-                // Bounded leak — same lifetime semantics as the `concat!(file!(), "\0")` literals
-                // the [`src!`] macro emits.
-                Box::leak(cs.into_boxed_c_str()).as_ptr()
-            })
-    })
+    use bun_collections::HashMap;
+    use bun_threading::Guarded;
+    use std::ffi::{CStr, CString};
+    static CACHE: Guarded<Option<HashMap<usize, Box<CStr>>>> = Guarded::new(None);
+    let mut guard = CACHE.lock();
+    guard
+        .get_or_insert_with(HashMap::new)
+        .entry(file.as_ptr() as usize)
+        .or_insert_with(|| {
+            CString::new(file)
+                .unwrap_or_else(|_| CString::new("<rust>").unwrap())
+                .into_boxed_c_str()
+        })
+        .as_ptr()
 }
 #[cfg(not(any(debug_assertions, bun_asan)))]
 #[inline(always)]
@@ -152,7 +166,7 @@ impl Drop for TopExceptionScopeGuard<'_> {
     fn drop(&mut self) {
         // SAFETY: the guard is only ever constructed by `init_guard`, which fully
         // initialized the scope; the borrow ensures it has not been destroyed.
-        unsafe { TopExceptionScope::destroy(self.0) };
+        unsafe { self.0.destroy() };
     }
 }
 
@@ -178,7 +192,7 @@ impl TopExceptionScope {
     ///
     /// Prefer [`top_scope!`](crate::top_scope) (RAII) over calling this directly.
     #[track_caller]
-    pub fn init<'a>(
+    pub(crate) fn init<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
     ) -> &'a mut Self {
@@ -188,7 +202,7 @@ impl TopExceptionScope {
     /// Like [`init`](Self::init) but with an explicit [`SourceLocation`] — used by the
     /// [`top_scope!`](crate::top_scope) macro to forward `file!()`/`line!()` literals.
     #[inline]
-    pub fn init_at<'a>(
+    pub(crate) fn init_at<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
         src: SourceLocation,
@@ -204,17 +218,6 @@ impl TopExceptionScope {
         this
     }
 
-    /// RAII constructor: initialize in `storage` and return a guard that runs the C++
-    /// dtor on drop. Called by [`top_scope!`](crate::top_scope); rarely needed directly.
-    #[track_caller]
-    #[inline]
-    pub fn init_guard<'a>(
-        storage: &'a mut core::mem::MaybeUninit<Self>,
-        global: &JSGlobalObject,
-    ) -> TopExceptionScopeGuard<'a> {
-        TopExceptionScopeGuard(Self::init(storage, global))
-    }
-
     /// RAII constructor with explicit [`SourceLocation`].
     #[inline]
     pub fn init_guard_at<'a>(
@@ -225,7 +228,7 @@ impl TopExceptionScope {
         TopExceptionScopeGuard(Self::init_at(storage, global, src))
     }
 
-    pub fn init_in_place(&mut self, global: &JSGlobalObject, src: SourceLocation) {
+    pub(crate) fn init_in_place(&mut self, global: &JSGlobalObject, src: SourceLocation) {
         // SAFETY: `bytes` is SIZE bytes, ALIGNMENT-aligned (via #[repr(align(8))]); the C++
         // side asserts size/alignment match.
         unsafe {
@@ -248,36 +251,37 @@ impl TopExceptionScope {
 
     /// Generate a useful message including where the exception was thrown.
     /// Only intended to be called when there is a pending exception.
+    #[cfg(any(debug_assertions, bun_asan))]
     #[cold]
     fn assertion_failure(&mut self, proof: NonNull<Exception>) -> ! {
         let _ = proof;
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         TopExceptionScope__assertNoException(&mut self.bytes);
         unreachable!("assertionFailure called without a pending exception");
     }
 
-    pub fn has_exception(&mut self) -> bool {
+    pub(crate) fn has_exception(&mut self) -> bool {
         self.exception().is_some()
     }
 
     /// Get the thrown exception if it exists (like scope.exception() in C++)
     pub fn exception(&mut self) -> Option<NonNull<Exception>> {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         NonNull::new(TopExceptionScope__pureException(&mut self.bytes))
     }
 
     pub fn clear_exception(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         TopExceptionScope__clearException(&mut self.bytes)
     }
 
     /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
-    pub fn exception_including_traps(&mut self) -> Option<NonNull<Exception>> {
+    pub(crate) fn exception_including_traps(&mut self) -> Option<NonNull<Exception>> {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         NonNull::new(TopExceptionScope__exceptionIncludingTraps(&mut self.bytes))
     }
 
@@ -291,48 +295,41 @@ impl TopExceptionScope {
     }
 
     /// Asserts there has not been any exception thrown.
-    pub fn assert_no_exception(&mut self) {
-        #[cfg(any(debug_assertions, bun_asan))]
-        {
-            if let Some(e) = self.exception() {
-                // TerminationException can be raised at any safepoint (worker
-                // terminate(), worker process.exit()) regardless of what the host
-                // function returned, so it's never a return-value/exception
-                // mismatch — let the caller's safepoint observe it.
-                if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
-                    return;
-                }
-                self.assertion_failure(e);
+    #[cfg(any(debug_assertions, bun_asan))]
+    pub(crate) fn assert_no_exception(&mut self) {
+        if let Some(e) = self.exception() {
+            // TerminationException can be raised at any safepoint (worker
+            // terminate(), worker process.exit()) regardless of what the host
+            // function returned, so it's never a return-value/exception
+            // mismatch — let the caller's safepoint observe it.
+            if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
+                return;
             }
+            self.assertion_failure(e);
         }
     }
 
     /// Asserts that there is or is not an exception according to the value of `should_have_exception`.
     /// Prefer over `assert(scope.has_exception() == ...)` because if there is an unexpected exception,
     /// this function prints a trace of where it was thrown.
-    pub fn assert_exception_presence_matches(&mut self, should_have_exception: bool) {
-        #[cfg(any(debug_assertions, bun_asan))]
-        {
-            if should_have_exception {
-                // Must call `has_exception()` unconditionally inside this cfg block
-                // (not via `debug_assert!`): release+ASAN builds enter here via
-                // `bun_asan` with `debug_assertions` off, and the C++ scope's
-                // destructor will fail `verifyExceptionCheckNeedIsSatisfied` unless
-                // the underlying `VM::exception()` was actually invoked. Zig spec
-                // uses `bun.assertf` (active under `ci_assert`, which includes ASAN).
-                assert!(self.has_exception(), "Expected an exception to be thrown");
-            } else {
-                self.assert_no_exception();
-            }
+    #[cfg(any(debug_assertions, bun_asan))]
+    pub(crate) fn assert_exception_presence_matches(&mut self, should_have_exception: bool) {
+        if should_have_exception {
+            // Must call `has_exception()` unconditionally (not via
+            // `debug_assert!`): release+ASAN builds enter here via `bun_asan`
+            // with `debug_assertions` off, and the C++ scope's destructor will
+            // fail `verifyExceptionCheckNeedIsSatisfied` unless the underlying
+            // `VM::exception()` was actually invoked.
+            assert!(self.has_exception(), "Expected an exception to be thrown");
+        } else {
+            self.assert_no_exception();
         }
-        #[cfg(not(any(debug_assertions, bun_asan)))]
-        let _ = should_have_exception;
     }
 
     /// If no exception, returns.
     /// If termination exception, returns JSTerminated (so you can `?`)
     /// If non-termination exception, assertion failure.
-    pub fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
+    pub(crate) fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         if let Some(e) = self.exception() {
             if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
                 return Err(JsError::Terminated);
@@ -346,16 +343,13 @@ impl TopExceptionScope {
     }
 
     /// # Safety
-    /// `this` must point to a scope previously initialized via `init()` and not yet destroyed.
+    /// The scope must have been initialized via `init()` and not yet destroyed.
     /// Prefer dropping a [`TopExceptionScopeGuard`] instead.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract.
-        let this = unsafe { &mut *this };
+    pub(crate) unsafe fn destroy(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(this.location, &this.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         // SAFETY: bytes was initialized by init().
-        unsafe { TopExceptionScope__destruct(&raw mut this.bytes) };
-        // this.bytes = undefined; — no-op in Rust
+        unsafe { TopExceptionScope__destruct(&raw mut self.bytes) };
     }
 }
 
@@ -376,7 +370,6 @@ macro_rules! top_scope {
     ($scope:ident, $global:expr) => {
         let mut __bun_top_scope_storage =
             ::core::mem::MaybeUninit::<$crate::TopExceptionScope>::uninit();
-        #[allow(unused_mut)]
         let mut $scope = $crate::TopExceptionScope::init_guard_at(
             &mut __bun_top_scope_storage,
             $global,
@@ -402,7 +395,6 @@ macro_rules! validation_scope {
     ($scope:ident, $global:expr) => {
         let mut __bun_validation_scope_storage =
             ::core::mem::MaybeUninit::<$crate::ExceptionValidationScope>::uninit();
-        #[allow(unused_mut)]
         let mut $scope = $crate::ExceptionValidationScope::init_guard_at(
             &mut __bun_validation_scope_storage,
             $global,
@@ -413,9 +405,8 @@ macro_rules! validation_scope {
 
 /// Limited subset of TopExceptionScope functionality, for when you have a different way to detect
 /// exceptions and you only need a TopExceptionScope to prove that you are checking exceptions correctly.
-/// Gated by `cfg(any(debug_assertions, bun_asan))` — Zig's `Environment.ci_assert` is
-/// `isDebug || isTest || enable_asan || (ReleaseSafe && is_canary)`; the bun_jsc crate has no
-/// `ci_assert` Cargo feature, so gate on the same predicate this file already uses for `SIZE`.
+/// Gated by `cfg(any(debug_assertions, bun_asan))` — the same predicate this file
+/// already uses for `SIZE`.
 /// Without this, debug builds left the scope as a no-op while `debug_assert!` callers (e.g.
 /// `bun_string_jsc::from_js`) still fired, panicking on every legitimate stringify exception.
 ///
@@ -424,7 +415,7 @@ pub struct ExceptionValidationScope {
     #[cfg(any(debug_assertions, bun_asan))]
     scope: TopExceptionScope,
     #[cfg(not(any(debug_assertions, bun_asan)))]
-    scope: (),
+    _scope: (),
 }
 
 /// RAII guard for an [`ExceptionValidationScope`]. See [`TopExceptionScopeGuard`].
@@ -468,7 +459,7 @@ impl ExceptionValidationScope {
 
     /// See [`TopExceptionScope::init`] for the storage-passing rationale.
     #[track_caller]
-    pub fn init<'a>(
+    pub(crate) fn init<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
     ) -> &'a mut Self {
@@ -476,7 +467,7 @@ impl ExceptionValidationScope {
     }
 
     #[inline]
-    pub fn init_at<'a>(
+    pub(crate) fn init_at<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
         src: SourceLocation,
@@ -494,8 +485,8 @@ impl ExceptionValidationScope {
             );
             // SAFETY: layout assertion above; `MaybeUninit<T>` is `repr(transparent)`.
             let inner = unsafe {
-                &mut *(storage as *mut core::mem::MaybeUninit<Self>
-                    as *mut core::mem::MaybeUninit<TopExceptionScope>)
+                &mut *core::ptr::from_mut(storage)
+                    .cast::<core::mem::MaybeUninit<TopExceptionScope>>()
             };
             TopExceptionScope::init_at(inner, global, src);
             // SAFETY: `init_at` fully initialized the sole field.
@@ -504,14 +495,14 @@ impl ExceptionValidationScope {
         #[cfg(not(any(debug_assertions, bun_asan)))]
         {
             let _ = (global, src);
-            storage.write(Self { scope: () })
+            storage.write(Self { _scope: () })
         }
     }
 
     /// RAII constructor — see [`TopExceptionScope::init_guard`].
     #[track_caller]
     #[inline]
-    pub fn init_guard<'a>(
+    pub(crate) fn init_guard<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
     ) -> ExceptionValidationScopeGuard<'a> {
@@ -528,15 +519,8 @@ impl ExceptionValidationScope {
         ExceptionValidationScopeGuard(Self::init_at(storage, global, src))
     }
 
-    pub fn init_in_place(&mut self, global: &JSGlobalObject, src: SourceLocation) {
-        #[cfg(any(debug_assertions, bun_asan))]
-        self.scope.init_in_place(global, src);
-        #[cfg(not(any(debug_assertions, bun_asan)))]
-        let _ = (global, src);
-    }
-
     /// Asserts there has not been any exception thrown.
-    pub fn assert_no_exception(&mut self) {
+    pub(crate) fn assert_no_exception(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
         self.scope.assert_no_exception();
     }
@@ -555,7 +539,7 @@ impl ExceptionValidationScope {
     /// If no exception, returns.
     /// If termination exception, returns JSTerminated (so you can `?`)
     /// If non-termination exception, assertion failure.
-    pub fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
+    pub(crate) fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         #[cfg(any(debug_assertions, bun_asan))]
         return self.scope.assert_no_exception_except_termination();
         #[cfg(not(any(debug_assertions, bun_asan)))]
@@ -563,7 +547,7 @@ impl ExceptionValidationScope {
     }
 
     /// Inconveniently named on purpose; this is only needed for some weird edge cases
-    pub fn has_exception_or_false_when_assertions_are_disabled(&mut self) -> bool {
+    pub(crate) fn has_exception_or_false_when_assertions_are_disabled(&mut self) -> bool {
         #[cfg(any(debug_assertions, bun_asan))]
         return self.scope.has_exception();
         #[cfg(not(any(debug_assertions, bun_asan)))]
@@ -573,24 +557,26 @@ impl ExceptionValidationScope {
     /// # Safety
     /// `this` must point to a scope previously initialized via `init()` and not yet destroyed.
     /// Prefer dropping an [`ExceptionValidationScopeGuard`] instead.
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         #[cfg(any(debug_assertions, bun_asan))]
+        // SAFETY: caller contract — `this` points to a scope initialized via `init()` and not
+        // yet destroyed; under this cfg the wrapper's sole field is the inner scope.
         unsafe {
-            TopExceptionScope::destroy(&mut (*this).scope)
+            (*this).scope.destroy()
         };
         #[cfg(not(any(debug_assertions, bun_asan)))]
         let _ = this;
     }
 }
 
-// ──────────────── per-mode FFI-call wrappers (Rust analogue of cpp.zig) ────────────────
+// ──────────────── per-mode FFI-call wrappers ────────────────
 //
 // `src/codegen/cppbind.ts` parses C++ `[[ZIG_EXPORT(mode)]]` attributes and emits
-// `build/<profile>/codegen/cpp.zig`, where each throwing FFI gets a typed wrapper that
+// typed wrappers into `cpp.rs` (see `generateRustFn` in cppbind.ts), which
+// `bun_jsc::cpp` `include!`s. Each throwing FFI gets a wrapper that
 // (a) opens an `ExceptionValidationScope`/`TopExceptionScope` *before* the call,
 // (b) asserts the return-value sentinel agrees with the scope's exception state, and
-// (c) converts to `error{JSError}`. The Rust port emits the same wrappers into
-// `cpp.rs` (see `generateRustFn` in cppbind.ts), which `bun_jsc::cpp` `include!`s.
+// (c) converts to `JsResult`.
 //
 // These four helpers are the per-mode bodies the generated wrappers (and hand-written
 // FFI shims in `JSValue.rs`/`JSPromise.rs`/etc.) delegate to. They are *not* the
@@ -622,7 +608,7 @@ pub fn call_zero_is_throw_at(
 
 /// `[[ZIG_EXPORT(zero_is_throw)]]` — `#[track_caller]` convenience wrapper.
 /// Prefer [`call_zero_is_throw_at`] with [`src!`](crate::src) in hot paths (avoids the
-/// debug-build thread-local intern of `Location::file()`).
+/// debug-build process-level intern of `Location::file()`).
 #[track_caller]
 #[inline]
 pub fn call_zero_is_throw(
@@ -682,9 +668,8 @@ pub fn call_null_is_throw<T>(
 ///
 /// Under `cfg(any(debug_assertions, bun_asan))` this opens a real [`TopExceptionScope`]
 /// so `simulateThrow()` is satisfied and the assertion fires on mismatch. In release
-/// builds the C++ validation machinery is compiled out, so we match Zig's generated
-/// `check_slow` wrapper exactly: single `Bun__RETURN_IF_EXCEPTION` FFI call after the
-/// closure (1 FFI hop instead of 3).
+/// builds the C++ validation machinery is compiled out: a single
+/// `Bun__RETURN_IF_EXCEPTION` FFI call after the closure (1 FFI hop instead of 3).
 #[inline]
 pub fn call_check_slow_at<R>(
     global: &JSGlobalObject,
@@ -721,35 +706,6 @@ pub fn call_check_slow<R>(global: &JSGlobalObject, f: impl FnOnce() -> R) -> JsR
     call_check_slow_at(global, SourceLocation::from_caller(), f)
 }
 
-/// Macro forms of the per-mode wrappers — expand [`src!`](crate::src) at the *call site* so
-/// the debug-build diagnostic `SourceLocation` is a NUL-terminated literal (zero-cost),
-/// not a `#[track_caller]` `Location::file()` interned through a thread-local HashMap.
-/// Prefer these over the bare `call_*_is_throw` fns in hand-written hot-path shims.
-#[macro_export]
-macro_rules! call_zero_is_throw {
-    ($global:expr, $f:expr $(,)?) => {
-        $crate::top_exception_scope::call_zero_is_throw_at($global, $crate::src!(), $f)
-    };
-}
-#[macro_export]
-macro_rules! call_false_is_throw {
-    ($global:expr, $f:expr $(,)?) => {
-        $crate::top_exception_scope::call_false_is_throw_at($global, $crate::src!(), $f)
-    };
-}
-#[macro_export]
-macro_rules! call_null_is_throw {
-    ($global:expr, $f:expr $(,)?) => {
-        $crate::top_exception_scope::call_null_is_throw_at($global, $crate::src!(), $f)
-    };
-}
-#[macro_export]
-macro_rules! call_check_slow {
-    ($global:expr, $f:expr $(,)?) => {
-        $crate::top_exception_scope::call_check_slow_at($global, $crate::src!(), $f)
-    };
-}
-
 // safe fn: `&mut [u8; SIZE]` is ABI-identical to a non-null `*mut [u8; SIZE]`
 // (thin pointer to a fixed-size array). Every `&mut self.bytes` reachable here
 // has been seated by `init_in_place` (the sole constructor path), so the C++
@@ -773,8 +729,7 @@ unsafe extern "C" {
     /// returns if an exception was already thrown, or if a trap (like another thread requesting
     /// termination) causes an exception to be thrown
     safe fn TopExceptionScope__exceptionIncludingTraps(ptr: &mut [u8; SIZE]) -> *mut Exception;
+    #[cfg(any(debug_assertions, bun_asan))]
     safe fn TopExceptionScope__assertNoException(ptr: &mut [u8; SIZE]);
     fn TopExceptionScope__destruct(ptr: *mut [u8; SIZE]);
 }
-
-// ported from: src/jsc/TopExceptionScope.zig

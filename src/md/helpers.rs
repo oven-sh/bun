@@ -3,49 +3,43 @@ use super::types::{OFF, TextType};
 
 /// Check if a byte is ASCII whitespace (space, tab, LF, CR, FF, VT).
 #[inline]
-pub fn is_whitespace(c: u8) -> bool {
+pub(crate) fn is_whitespace(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0C | 0x0B)
 }
 
 /// Check if a byte is a blank character (space or tab).
 #[inline]
-pub fn is_blank(c: u8) -> bool {
+pub(crate) fn is_blank(c: u8) -> bool {
     c == b' ' || c == b'\t'
 }
 
 /// Check if a byte is a newline (CR or LF).
 #[inline]
-pub fn is_newline(c: u8) -> bool {
+pub(crate) fn is_newline(c: u8) -> bool {
     c == b'\n' || c == b'\r'
-}
-
-/// Check if a byte is a newline or NUL (used for end-of-line detection).
-#[inline]
-pub fn is_newline_or_nul(c: u8) -> bool {
-    c == b'\n' || c == b'\r' || c == 0
 }
 
 /// Check if byte is ASCII alphanumeric.
 #[inline]
-pub fn is_alpha_num(c: u8) -> bool {
+pub(crate) fn is_alpha_num(c: u8) -> bool {
     c.is_ascii_alphanumeric()
 }
 
 /// Check if byte is ASCII alpha.
 #[inline]
-pub fn is_alpha(c: u8) -> bool {
+pub(crate) fn is_alpha(c: u8) -> bool {
     c.is_ascii_alphabetic()
 }
 
 /// Check if byte is ASCII digit.
 #[inline]
-pub fn is_digit(c: u8) -> bool {
+pub(crate) fn is_digit(c: u8) -> bool {
     c.is_ascii_digit()
 }
 
 /// Check if a Unicode codepoint is whitespace per CommonMark spec.
 /// This includes ASCII whitespace + Unicode Zs category.
-pub fn is_unicode_whitespace(codepoint: u32) -> bool {
+pub(crate) fn is_unicode_whitespace(codepoint: u32) -> bool {
     if codepoint < 128 {
         return is_whitespace(codepoint as u8);
     }
@@ -53,7 +47,7 @@ pub fn is_unicode_whitespace(codepoint: u32) -> bool {
 }
 
 /// Check if a Unicode codepoint is punctuation per CommonMark spec.
-pub fn is_unicode_punctuation(codepoint: u32) -> bool {
+pub(crate) fn is_unicode_punctuation(codepoint: u32) -> bool {
     if codepoint < 128 {
         return is_ascii_punctuation(u8::try_from(codepoint).expect("int cast"));
     }
@@ -63,7 +57,7 @@ pub fn is_unicode_punctuation(codepoint: u32) -> bool {
 
 /// Check if byte is ASCII punctuation per CommonMark spec.
 #[inline]
-pub fn is_ascii_punctuation(c: u8) -> bool {
+pub(crate) fn is_ascii_punctuation(c: u8) -> bool {
     matches!(
         c,
         b'!' | b'"'
@@ -114,29 +108,14 @@ fn is_unicode_punctuation_extended(codepoint: u32) -> bool {
     false
 }
 
-/// Check if a character at a given offset matches any character in the set.
-#[inline]
-pub fn is_any_of(text: &[u8], off: OFF, chars: &[u8]) -> bool {
-    if (off as usize) >= text.len() {
-        return false;
-    }
-    let c = text[off as usize];
-    for &ch in chars {
-        if c == ch {
-            return true;
-        }
-    }
-    false
-}
-
-pub struct LineIndentation {
+pub(crate) struct LineIndentation {
     pub indent: u32,
     pub off: OFF,
 }
 
 /// Get the indentation of a line starting from `off`, counting spaces and tabs.
 /// Returns the indent width and advances `off` past the whitespace.
-pub fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -> LineIndentation {
+pub(crate) fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -> LineIndentation {
     let mut off = off_start;
     let mut indent: u32 = 0;
     while (off as usize) < text.len() && is_blank(text[off as usize]) {
@@ -150,14 +129,14 @@ pub fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -> LineI
     LineIndentation { indent, off }
 }
 
-pub struct Utf8DecodeResult {
-    pub codepoint: u32,
-    pub len: u8,
+pub(crate) struct Utf8DecodeResult {
+    pub(crate) codepoint: u32,
+    pub(crate) len: u8,
 }
 
 /// Decode a UTF-8 codepoint from the text at the given offset.
 /// Returns the codepoint and the number of bytes consumed.
-pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
+pub(crate) fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
     if off >= text.len() {
         return Utf8DecodeResult {
             codepoint: 0,
@@ -191,7 +170,7 @@ pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
     let n = seq_len as usize;
     buf[..n].copy_from_slice(&text[off..][..n]);
 
-    let cp = bun_core::strings::decode_wtf8_rune_t::<u32>(&buf, seq_len, 0xFFFD);
+    let cp = bun_core::strings::decode_wtf8_rune_t::<u32>(buf, seq_len, 0xFFFD);
     Utf8DecodeResult {
         codepoint: cp,
         len: seq_len,
@@ -201,7 +180,7 @@ pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
 /// Decode the UTF-8 codepoint ending just before position `off` (i.e. the
 /// codepoint whose last byte is at `text[off - 1]`).
 /// Returns the codepoint and the number of bytes it occupies.
-pub fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
+pub(crate) fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
     if off == 0 || off > text.len() {
         return Utf8DecodeResult {
             codepoint: 0,
@@ -228,12 +207,12 @@ pub fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
 }
 
 /// Encode a Unicode codepoint as UTF-8.
-pub fn encode_utf8(codepoint: u32, buf: &mut [u8; 4]) -> u8 {
+pub(crate) fn encode_utf8(codepoint: u32, buf: &mut [u8; 4]) -> u8 {
     bun_core::strings::encode_wtf8_rune(buf, codepoint) as u8
 }
 
 /// Skip UTF-8 BOM if present at the start of the text.
-pub fn skip_utf8_bom(text: &[u8]) -> &[u8] {
+pub(crate) fn skip_utf8_bom(text: &[u8]) -> &[u8] {
     if text.len() >= 3 && text[0] == 0xEF && text[1] == 0xBB && text[2] == 0xBF {
         return &text[3..];
     }
@@ -245,7 +224,7 @@ pub use bun_core::strings::eql_case_insensitive_ascii_check_length as ascii_case
 
 /// Find an HTML entity starting at `start` (which must point to '&').
 /// Returns the end position (one past the ';') or null if no valid entity found.
-pub fn find_entity(content: &[u8], start: usize) -> Option<usize> {
+pub(crate) fn find_entity(content: &[u8], start: usize) -> Option<usize> {
     if start + 2 >= content.len() {
         return None;
     }
@@ -382,7 +361,7 @@ static UNICODE_PUNCTUATION_RANGES: &[[u32; 2]] = &[
 ];
 
 /// Parse a numeric character reference (&#DDD; or &#xHHH;) and return the codepoint.
-pub fn parse_entity_codepoint(entity_text: &[u8]) -> Option<u32> {
+pub(crate) fn parse_entity_codepoint(entity_text: &[u8]) -> Option<u32> {
     if entity_text.len() < 4 || entity_text[0] != b'&' || entity_text[1] != b'#' {
         return None;
     }
@@ -443,7 +422,7 @@ pub fn decode_entity_to_utf8<'a>(entity_text: &[u8], out: &'a mut [u8; 8]) -> Op
 
 /// Generate a GitHub-compatible slug from text content.
 /// Modifies text_buf in-place. Uses slug_counts for -N deduplication.
-pub fn generate_slug<'a>(
+pub(crate) fn generate_slug<'a>(
     text_buf: &'a mut Vec<u8>,
     slug_counts: &mut bun_collections::StringHashMap<u32>,
 ) -> &'a [u8] {
@@ -451,7 +430,7 @@ pub fn generate_slug<'a>(
     let mut out_len: usize = 0;
     let mut prev_hyphen: bool = true; // true to trim leading hyphens
 
-    // PORT NOTE: reshaped for borrowck — index instead of `for &c in text_items`
+    // reshaped for borrowck — index instead of `for &c in text_items`
     for idx in 0..text_len {
         let c = text_buf[idx];
         if c >= b'A' && c <= b'Z' {
@@ -477,25 +456,25 @@ pub fn generate_slug<'a>(
         out_len -= 1;
     }
 
-    // Deduplicate via slug_counts
-    // TODO(port): exact bun_collections::StringHashMap entry/get_or_put API — Zig used getOrPut
-    // with a borrowed key then duped it on first insert. Here we look up first, then insert an
-    // owned key on miss; map is assumed to own its keys (so Drop frees them).
-    if let Some(value) = slug_counts.get_mut(&text_buf[..out_len]) {
-        // Already seen — append -N suffix
-        let count = *value + 1;
-        *value = count;
-        text_buf.truncate(out_len);
-        text_buf.push(b'-');
-
-        let mut dec_buf = bun_core::fmt::ItoaBuf::new();
-        text_buf.extend_from_slice(bun_core::fmt::itoa(&mut dec_buf, count));
-        return text_buf.as_slice();
+    // Deduplicate via slug_counts. `StringHashMap::get_or_put` probes
+    // once (the map owns its keys, value starts at 0 on miss).
+    let Ok(gop) = slug_counts.get_or_put(&text_buf[..out_len]) else {
+        return &text_buf[..out_len];
+    };
+    if !gop.found_existing {
+        // First occurrence — value initialised to 0 by `get_or_put`.
+        return &text_buf[..out_len];
     }
 
-    // First occurrence — store an owned key so the map owns it
-    slug_counts.put_assume_capacity(&text_buf[..out_len], 0);
-    &text_buf[..out_len]
+    // Already seen — append -N suffix
+    let count = *gop.value_ptr + 1;
+    *gop.value_ptr = count;
+    text_buf.truncate(out_len);
+    text_buf.push(b'-');
+
+    let mut dec_buf = bun_core::fmt::ItoaBuf::new();
+    text_buf.extend_from_slice(bun_core::fmt::itoa(&mut dec_buf, count));
+    text_buf.as_slice()
 }
 
 /// Shared heading-ID state used by all renderers (HTML, React AST, JS callbacks).
@@ -503,10 +482,10 @@ pub fn generate_slug<'a>(
 /// and deduplicates slugs via a count map.
 #[derive(Default)]
 pub struct HeadingIdTracker {
-    pub enabled: bool,
-    pub in_heading: bool,
-    pub text_buf: Vec<u8>,
-    pub slug_counts: bun_collections::StringHashMap<u32>,
+    pub(crate) enabled: bool,
+    pub(crate) in_heading: bool,
+    pub(crate) text_buf: Vec<u8>,
+    pub(crate) slug_counts: bun_collections::StringHashMap<u32>,
 }
 
 impl HeadingIdTracker {
@@ -561,5 +540,3 @@ impl HeadingIdTracker {
         self.text_buf.clear();
     }
 }
-
-// ported from: src/md/helpers.zig

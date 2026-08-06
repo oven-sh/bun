@@ -446,7 +446,7 @@ export interface Dependency {
 
   /**
    * Whether this dep participates in the build at all. Defaults to always-on.
-   * E.g. libuv is windows-only, tinycc is disabled on windows-arm64.
+   * E.g. libuv is windows-only, tinycc is disabled on Android/FreeBSD.
    */
   enabled?: (cfg: Config) => boolean;
 
@@ -601,8 +601,8 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     const rustup = q(join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`));
     const cargoCrossEnsure =
       cfg.rustToolchain !== undefined
-        ? `${stream} $env ${rustup} toolchain install ${cfg.rustToolchain} --force --component rust-src --target $rust_target`
-        : `${stream} $env ${rustup} target add $rust_target`;
+        ? `${stream} $env ${rustup} -q toolchain install ${cfg.rustToolchain} --force --no-self-update --component rust-src --target $rust_target`
+        : `${stream} $env ${rustup} -q target add $rust_target`;
     // Windows: ninja runs commands via CreateProcess (no shell) — wrap in
     // `cmd /c "..."` so `&&` is interpreted as a chain operator instead of
     // being passed as a literal arg. See rust.ts `rust_build_cross`.
@@ -628,9 +628,11 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
 
   // DirectBuild host tool: compile+link in one clang invocation with NO
   // cfg target/arch flags — the tool runs on the build host. cc()/link()
-  // would add --target which breaks cross-compiles.
+  // would add --target which breaks cross-compiles. cfg.hostCc (not cfg.cc):
+  // when cross-compiling for windows, cc is clang-cl and defaults to a
+  // *-windows-msvc triple — host tools must stay plain clang.
   n.rule("dep_host_cc", {
-    command: `${q(cfg.cc)} $flags -o $out $in`,
+    command: `${q(cfg.hostCc)} $flags -o $out $in`,
     description: "host-cc $out",
   });
 
@@ -674,14 +676,6 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
  */
 export function depSourceDir(cfg: Config, name: string): string {
   return resolve(cfg.vendorDir, name);
-}
-
-/**
- * Path to a dep's fetch stamp. Used by rust-only mode to depend on lolhtml's
- * source being on disk without resolving the full dep graph.
- */
-export function depSourceStamp(cfg: Config, name: string): string {
-  return resolve(depSourceDir(cfg, name), ".ref");
 }
 
 /**
@@ -1372,9 +1366,19 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   // `rust_eh_personality`. RUSTUP_TOOLCHAIN overrides the directory walk.
   if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
 
-  if (spec.rustflags && spec.rustflags.length > 0) {
+  // Path remapping (CI reproducibility) — mirrors the C/C++
+  // `-ffile-prefix-map` entries in flags.ts and the same block in rust.ts,
+  // so vendored Rust deps built here (lol-html) don't embed the absolute
+  // checkout path in `file!()`/panic locations/debuginfo either.
+  const rustflags: string[] = [...(spec.rustflags ?? [])];
+  if (cfg.ci) {
+    rustflags.push(`--remap-path-prefix=${cfg.cwd}=.`);
+    rustflags.push(`--remap-path-prefix=${cfg.vendorDir}=vendor`);
+  }
+
+  if (rustflags.length > 0) {
     // The \x1f encoding is deliberate — see cargo's docs on CARGO_ENCODED_RUSTFLAGS.
-    env.CARGO_ENCODED_RUSTFLAGS = spec.rustflags.join("\x1f");
+    env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
   }
 
   // Windows: pin the linker to MSVC's link.exe. Without this, if Git Bash
@@ -1402,7 +1406,7 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
       const llvmArch = cfg.arm64 ? "aarch64" : "x86_64";
       linkArgs.push(`-Clink-arg=-L${join(cfg.androidNdkRuntimeDir, llvmArch)}`);
     }
-    env.CARGO_ENCODED_RUSTFLAGS = [...(spec.rustflags ?? []), ...linkArgs].join("\x1f");
+    env.CARGO_ENCODED_RUSTFLAGS = [...rustflags, ...linkArgs].join("\x1f");
   }
 
   // ─── Emit build node ───

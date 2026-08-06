@@ -5,21 +5,21 @@ use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]
 pub struct CachedStructure {
-    pub structure: StrongOptional, // Strong.Optional = .empty
+    pub(crate) structure: StrongOptional, // Strong.Optional = .empty
     /// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
-    pub fields: Option<Box<[ExternColumnIdentifier]>>,
+    pub(crate) fields: Option<Box<[ExternColumnIdentifier]>>,
 }
 
 impl CachedStructure {
-    pub fn has(&self) -> bool {
+    pub(crate) fn has(&self) -> bool {
         self.structure.has() || self.fields.is_some()
     }
 
-    pub fn js_value(&self) -> Option<JSValue> {
+    pub(crate) fn js_value(&self) -> Option<JSValue> {
         self.structure.get()
     }
 
-    pub fn set(
+    pub(crate) fn set(
         &mut self,
         global_object: &JSGlobalObject,
         value: Option<JSValue>,
@@ -43,7 +43,7 @@ impl CachedStructure {
     ///
     /// `columns` is iterated twice (count + build), hence the `Clone` bound;
     /// `slice.iter().map(..)` satisfies it without allocation.
-    pub fn build_from_columns<'a, I>(
+    pub(crate) fn build_from_columns<'a, I>(
         &mut self,
         global_object: &JSGlobalObject,
         owner: JSValue,
@@ -63,9 +63,9 @@ impl CachedStructure {
             .count();
 
         let max_inline = JSObject::max_inline_capacity() as usize;
-        // PORT NOTE: initialized to empty so the `> max_inline` branch below can
-        // unconditionally `into_boxed_slice()` it; in the `<= max_inline` branch
-        // it stays empty and is never read.
+        // Initialized to empty so the `> max_inline` branch below can
+        // unconditionally `into_boxed_slice()` it; in the `<= max_inline`
+        // branch it stays empty and is never read.
         let mut heap_ids: Vec<ExternColumnIdentifier> = Vec::new();
         let ids: &mut [MaybeUninit<ExternColumnIdentifier>] = if non_duplicated_count <= max_inline
         {
@@ -107,8 +107,8 @@ impl CachedStructure {
             // SAFETY: `heap_ids` has capacity `non_duplicated_count` and every
             // slot in [0..non_duplicated_count] was initialized in the loop above.
             unsafe { heap_ids.set_len(non_duplicated_count) };
-            // Ownership transfer of heap `ids` to CachedStructure (Zig: cached_structure
-            // becomes responsible for freeing the alloc'd slice).
+            // Ownership transfer of heap `ids` to CachedStructure, which
+            // becomes responsible for freeing the alloc'd slice.
             self.set(global_object, None, Some(heap_ids.into_boxed_slice()));
         } else {
             // Every element in `ids[..]` was `.write()`n above; C++ reads them as
@@ -116,22 +116,22 @@ impl CachedStructure {
             // without materialising a typed slice (avoids an unsafe assume-init cast).
             self.set(
                 global_object,
-                Some(JSObject::create_structure(
-                    global_object,
-                    owner,
-                    ids.len() as u32,
-                    ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
-                )),
+                // SAFETY: every `ids[..len]` slot was initialized in the loop
+                // above; the stack buffer outlives the FFI call.
+                Some(unsafe {
+                    JSObject::create_structure(
+                        global_object,
+                        owner,
+                        ids.len() as u32,
+                        ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
+                    )
+                }),
                 None,
             );
         }
     }
 }
 
-// PORT NOTE: Zig `deinit` only freed owned fields:
-//   - `structure.deinit()`  → handled by `impl Drop for StrongOptional`
-//   - per-element `name.deinit()` + `default_allocator.free(fields)`
-//     → handled by `Drop` on `Box<[ExternColumnIdentifier]>` (each element drops itself)
-// so no explicit `impl Drop` body is needed.
-
-// ported from: src/sql_jsc/shared/CachedStructure.zig
+// No explicit `impl Drop` is needed: the GC-strong structure handle is freed
+// by `impl Drop for StrongOptional`, and the field array (including each
+// element's owned name) is freed by `Drop` on `Box<[ExternColumnIdentifier]>`.

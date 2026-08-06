@@ -423,7 +423,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     return JSValue::encode(histogram);
 }
 
-// Extern declarations for Timer.zig
+// Extern declarations for the native timer implementation
 extern "C" void Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, int32_t resolution);
 extern "C" void Timer_disableEventLoopDelayMonitoring(void* vm);
 
@@ -486,7 +486,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_enableEventLoopDelay, (JSGlobalObject * glob
     // Reset histogram data on enable
     histogram->reset();
 
-    // Enable the event loop delay monitor in Timer.zig
+    // Enable the event loop delay monitor in the native timer implementation
     Timer_enableEventLoopDelayMonitoring(bunVM(globalObject), JSValue::encode(histogram), resolution);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
@@ -511,13 +511,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disableEventLoopDelay, (JSGlobalObject * glo
         return JSValue::encode(jsUndefined());
     }
 
-    // Call into Zig to disable monitoring
+    // Call into native code to disable monitoring
     Timer_disableEventLoopDelayMonitoring(bunVM(globalObject));
 
     return JSValue::encode(jsUndefined());
 }
 
-// Extern function for Zig to record delays
+// Extern function for native code to record delays
 extern "C" void JSNodePerformanceHooksHistogram_recordDelay(JSC::EncodedJSValue histogram, int64_t delay_ns)
 {
     if (!histogram || delay_ns <= 0) return;

@@ -1,7 +1,13 @@
-import { describe, expect } from "bun:test";
-import { isBroken, isWindows } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isBroken, isWindows, tempDir } from "harness";
+import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { itBundled } from "./expectBundled";
+import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
+
+// A public path composes with the referenced file's path relative to the output
+// directory, never relative to the importing chunk (esbuild's semantics).
+const CDN_PUBLIC_PATH = "https://cdn.example/app/";
+const cdnUrls = (source: string) => [...source.matchAll(/"(https:\/\/cdn\.example\/[^"]+)"/g)].map(match => match[1]);
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -211,7 +217,7 @@ describe("bundler", () => {
     },
     runtimeFiles: {},
     run: {
-      stdout: '1 {"ns":2,"default":1,"def2":3}',
+      stdout: '1 {"def2":3,"default":1,"ns":2}',
     },
   });
   itBundled("edgecase/ExternalES6ConvertedToCommonJSSimplified", {
@@ -861,6 +867,94 @@ describe("bundler", () => {
     publicPath: "/www",
     run: {},
   });
+  itBundled("edgecase/PublicPathNestedChunkReferences", {
+    files: {
+      "/src/pages/a/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        import logo from "../../logo.svg";
+        console.log(shared(), logo);
+      `,
+      "/src/pages/b/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        console.log(shared());
+      `,
+      "/src/shared.ts": /* ts */ `
+        import icon from "./icon.svg";
+        export const shared = () => icon;
+      `,
+      "/src/icon.svg": `<svg id="icon" />`,
+      "/src/logo.svg": `<svg id="logo" />`,
+    },
+    entryPoints: ["/src/pages/a/entry.ts", "/src/pages/b/entry.ts"],
+    outputPaths: ["/out/pages/a/entry.js", "/out/pages/b/entry.js"],
+    root: "/src",
+    outdir: "/out",
+    splitting: true,
+    publicPath: CDN_PUBLIC_PATH,
+    chunkNaming: "chunk-[hash].[ext]",
+    loader: { ".svg": "file" },
+    onAfterBundle(api) {
+      // The nested entry references the shared chunk and its own asset. Both
+      // must resolve under the public path, not above it.
+      const nested = cdnUrls(api.readFile("out/pages/a/entry.js")).map(url => url.slice(CDN_PUBLIC_PATH.length));
+      expect(nested.sort()).toEqual([
+        expect.stringMatching(/^chunk-[a-z0-9]+\.js$/),
+        expect.stringMatching(/^logo-[a-z0-9]+\.svg$/),
+      ]);
+      for (const rel of nested) {
+        api.assertFileExists(join("out", rel));
+      }
+
+      // The root-level chunk emits the same form in the same build.
+      const chunks = readdirSync(api.outdir).filter(file => file.endsWith(".js"));
+      expect(chunks).toHaveLength(1);
+      const rootLevel = cdnUrls(api.readFile(join("out", chunks[0]))).map(url => url.slice(CDN_PUBLIC_PATH.length));
+      expect(rootLevel).toEqual([expect.stringMatching(/^icon-[a-z0-9]+\.svg$/)]);
+      api.assertFileExists(join("out", rootLevel[0]));
+    },
+  });
+  itBundled("edgecase/PublicPathNestedEntryAsset", {
+    files: {
+      "/src/pages/a/entry.ts": /* ts */ `
+        import logo from "../../logo.svg";
+        console.log(logo);
+      `,
+      "/src/logo.svg": `<svg id="logo" />`,
+    },
+    entryPoints: ["/src/pages/a/entry.ts"],
+    outputPaths: ["/out/pages/a/entry.js"],
+    root: "/src",
+    outdir: "/out",
+    publicPath: CDN_PUBLIC_PATH,
+    loader: { ".svg": "file" },
+    onAfterBundle(api) {
+      const urls = cdnUrls(api.readFile("out/pages/a/entry.js")).map(url => url.slice(CDN_PUBLIC_PATH.length));
+      expect(urls).toEqual([expect.stringMatching(/^logo-[a-z0-9]+\.svg$/)]);
+      api.assertFileExists(join("out", urls[0]));
+    },
+  });
+  itBundled("edgecase/NoPublicPathNestedChunkStaysRelative", {
+    files: {
+      "/src/pages/a/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        console.log(shared());
+      `,
+      "/src/pages/b/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        console.log(shared());
+      `,
+      "/src/shared.ts": `export const shared = () => "shared";`,
+    },
+    entryPoints: ["/src/pages/a/entry.ts", "/src/pages/b/entry.ts"],
+    outputPaths: ["/out/pages/a/entry.js", "/out/pages/b/entry.js"],
+    root: "/src",
+    outdir: "/out",
+    splitting: true,
+    chunkNaming: "chunk-[hash].[ext]",
+    onAfterBundle(api) {
+      api.expectFile("out/pages/a/entry.js").toMatch(/from "\.\.\/\.\.\/chunk-[a-z0-9]+\.js"/);
+    },
+  });
   itBundled("edgecase/ImportDefaultInDirectory", {
     files: {
       "/a/file.js": `
@@ -1160,7 +1254,7 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../node_modules/react/index.js", "../entry.js"],
-        mappingsExactMatch: "miBACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+        mappingsExactMatch: "2lBACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
       },
     },
   });
@@ -1194,6 +1288,48 @@ describe("bundler", () => {
         mappingsExactMatch:
           "AACQ,QAAQ,IAAI,MAAM,EAOlB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM",
       },
+    },
+  });
+  // SourceMapPieces.finalize advanced the shift cursor at most once per
+  // mapping, so a mapping crossing >=2 placeholder substitutions on one
+  // minified line was re-encoded against a stale shift and landed out of order.
+  itBundled("edgecase/EmitInvalidSourceMapMultipleShifts", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import a from "./a.bin";
+        import b from "./b.bin";
+        import c from "./c.bin";
+        const keep: string[] = [a, b, c];
+        console.log(keep);
+      `,
+      "/a.bin": "AAAA",
+      "/b.bin": "BBBB",
+      "/c.bin": "CCCC",
+    },
+    outdir: "/out",
+    loader: { ".bin": "file" },
+    sourceMap: "external",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      const map = JSON.parse(api.readFile("/out/entry.js.map"));
+      expect(map.sources).toEqual(["../entry.ts"]);
+      const line1 = decodeSourceMappingsLine(map.mappings.split(";")[0]);
+      for (let i = 1; i < line1.length; i++) {
+        if (line1[i].gen < line1[i - 1].gen) {
+          throw new Error(
+            `out-of-order mappings on line 1: generated column ` +
+              `${line1[i - 1].gen} -> ${line1[i].gen}\n` +
+              line1.map(s => `  col ${s.gen} -> entry.ts:${s.ol + 1}:${s.oc}`).join("\n"),
+          );
+        }
+      }
+      // The first mapping after all three substituted asset paths is for
+      // `keep` in `const keep`. It must point at the `keep` identifier in
+      // the generated output, not at a stale pre-shift column.
+      const keepCol = js.split("\n")[0].indexOf("keep=[");
+      expect(keepCol).toBeGreaterThan(0);
+      expect(line1).toContainEqual({ gen: keepCol, src: 0, ol: 3, oc: 6 });
     },
   });
   itBundled("edgecase/NoUselessConstructorTS", {
@@ -1876,6 +2012,79 @@ describe("bundler", () => {
       `,
     },
   });
+  // https://github.com/oven-sh/bun/issues/31755
+  // An object literal whose computed keys are inlined enum members (e.g.
+  // `{ [A.FOO]: ... }`) has no side effects, so when the binding is unused it
+  // must be tree-shaken along with everything it references. The enum-member
+  // key is wrapped in an inlined-enum node; the side-effect check must look
+  // through that wrapper just like it does for a bare numeric-literal key.
+  itBundled("edgecase/TsEnumKeyedObjectTreeShaking#31755", {
+    files: {
+      "/entry.ts": `
+        import { A } from './lib';
+        console.log(JSON.stringify(A));
+      `,
+      "/lib.ts": `
+        export enum A { FOO, BAR }
+        export function fooFunctionREMOVE() {}
+        export const fooArrowFunctionREMOVE = () => {};
+        export const unusedObjectREMOVE = { [A.FOO]: fooFunctionREMOVE, [A.BAR]: fooArrowFunctionREMOVE };
+      `,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    assertNotPresent: {
+      "/out.js": ["fooFunctionREMOVE", "fooArrowFunctionREMOVE", "unusedObjectREMOVE"],
+    },
+    run: {
+      stdout: `{"0":"FOO","1":"BAR","FOO":0,"BAR":1}`,
+    },
+  });
+  // Same as above but with primitive-literal values, isolating the computed
+  // enum-member key as the thing that previously blocked removal.
+  itBundled("edgecase/TsEnumKeyedLiteralObjectTreeShaking#31755", {
+    files: {
+      "/entry.ts": `
+        import { A } from './lib';
+        console.log(JSON.stringify(A));
+      `,
+      "/lib.ts": `
+        export enum A { FOO, BAR }
+        export const unusedObjectREMOVE = { [A.FOO]: 1, [A.BAR]: 2 };
+      `,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    assertNotPresent: {
+      "/out.js": ["unusedObjectREMOVE"],
+    },
+    run: {
+      stdout: `{"0":"FOO","1":"BAR","FOO":0,"BAR":1}`,
+    },
+  });
+  // Guard against over-eager removal: a computed key that actually has side
+  // effects must keep the object alive even when the binding is unused. The
+  // side effect is observed at runtime (the flag it sets is printed) so the
+  // test fails if the computed-key call is tree-shaken away.
+  itBundled("edgecase/ComputedKeyWithSideEffectsNotTreeShaken#31755", {
+    files: {
+      "/entry.ts": `
+        import './lib';
+        console.log(globalThis.hit === true ? 'side-effect-ran' : 'side-effect-missing');
+      `,
+      "/lib.ts": `
+        function sideEffectKept() { globalThis.hit = true; return 'k'; }
+        const unusedObject = { [sideEffectKept()]: 1 };
+      `,
+    },
+    onAfterBundle(api) {
+      // The side-effecting key call must survive tree-shaking.
+      api.expectFile("/out.js").toContain("sideEffectKept");
+    },
+    run: {
+      stdout: `side-effect-ran`,
+    },
+  });
   itBundled("edgecase/ImportMetaMain", {
     files: {
       "/entry.ts": /* js */ `
@@ -2204,16 +2413,6 @@ describe("bundler", () => {
     run: true,
   });
 
-  // TODO(@paperclover): test every case of this. I had already tested it manually, but it may break later
-  const requireTranspilationListESM = [
-    // input, output:bun, output:node
-    ["require", "import.meta.require", "__require"],
-    ["typeof require", "import.meta.require", "typeof __require"],
-    ["typeof require", "import.meta.require", "typeof __require"],
-  ];
-
-  // // itBundled('edgecase/RequireTranspilation')
-
   itBundled("edgecase/TSConfigPathsConfigDir", {
     files: {
       "/src/entry.ts": /* ts */ `
@@ -2433,6 +2632,27 @@ describe("bundler", () => {
       stdout: "",
     },
   });
+  itBundled("edgecase/MacroProtoKeyIsOwnProperty", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { getData } from "./macro.ts" with { type: "macro" };
+        const data = getData();
+        console.write(JSON.stringify([
+          Object.getPrototypeOf(data) === Object.prototype,
+          Object.hasOwn(data, "__proto__"),
+          data.x,
+          JSON.stringify(data),
+        ]));
+      `,
+      "/macro.ts": /* js */ `
+        export function getData() {
+          return JSON.parse('{"__proto__": {"x": 1}, "a": 2}');
+        }
+      `,
+    },
+    target: "bun",
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
   itBundled("edgecase/NodeBuiltinWithoutPrefix", {
     files: {
       "/entry.ts": `
@@ -2477,6 +2697,478 @@ describe("bundler", () => {
         "
       `);
     },
+  });
+  itBundled("edgecase/NonAsciiIdentifierPreserved", {
+    files: {
+      "/entry.js": /* js */ `
+        class Café {}
+        function naïve(x) { return x }
+        class Cafá {}
+        class 模块 {}
+        const aπ = 1;
+        const a𝒜 = 2;
+        const élan = 3;
+        console.log(JSON.stringify([Café.name, naïve.name, Cafá.name, 模块.name, aπ, a𝒜, élan]));
+      `,
+    },
+    target: "node",
+    run: { stdout: '["Café","naïve","Cafá","模块",1,2,3]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("class Café");
+      expect(out).toContain("function naïve");
+      expect(out).toContain("class Cafá");
+      expect(out).toContain("class 模块");
+      expect(out).toContain("var aπ");
+      expect(out).toContain("var a𝒜");
+      expect(out).toContain("var élan");
+      expect(out).not.toContain("Caf_");
+      expect(out).not.toContain("na_ve");
+      expect(out).not.toContain("模_");
+      expect(out).not.toContain("var a_");
+    },
+  });
+  itBundled("edgecase/NonAsciiIdentifierPreservedBunTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        class Café {}
+        function naïve(x) { return x }
+        console.log(JSON.stringify([Café.name, naïve.name]));
+      `,
+    },
+    target: "bun",
+    run: { stdout: '["Café","naïve"]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("Caf_");
+      expect(out).not.toContain("na_ve");
+    },
+  });
+  // The bundler's per-edge graph walks (reachable files, tree-shaking /
+  // code-splitting liveness, chunk part ordering, CSS discovery, TLA
+  // validation, async propagation, dependency wrapping) used to recurse once
+  // per import-graph edge, overflowing the stack on long linear chains. 7000
+  // reliably crashed the old recursive form under debug+ASAN.
+  const deepChainDepth = 7000;
+  const deepChainFiles = {
+    ...Object.fromEntries(
+      Array.from({ length: deepChainDepth - 1 }, (_, i) => [
+        `/m${i}.js`,
+        `import { v${i + 1} } from "./m${i + 1}.js"; export const v${i} = v${i + 1} + 1;`,
+      ]),
+    ),
+    [`/m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = 1;`,
+  };
+  itBundled("edgecase/DeepImportChain", {
+    files: {
+      "/entry.js": `import { v0 } from "./m0.js"; console.log(v0);`,
+      ...deepChainFiles,
+    },
+    backend: "cli",
+    run: { stdout: String(deepChainDepth) },
+  });
+  // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
+  // the chain; `await import()` of an ESM head without splitting wraps the
+  // whole chain, driving `DependencyWrapper::wrap` through it. The wrapped
+  // output initializes module N by calling module N+1's init, so running it
+  // would recurse at runtime; checking for the deepest wrapper is enough.
+  itBundled("edgecase/DeepImportChainWrappedTLA", {
+    files: {
+      "/entry.js": `await 0; const { v0 } = await import("./m0.js"); console.log(v0);`,
+      ...deepChainFiles,
+    },
+    backend: "cli",
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).toContain(`init_m${deepChainDepth - 2}`);
+    },
+  });
+  // Diamond-shaped DAG (half the modules have two importers). The code-
+  // splitting reachability pass tracks min distance-from-entry for each file;
+  // a LIFO walk with distance relaxation does O(V*E) re-visits here, so this
+  // guards that the pass stays O(V+E). Plain fs writes because itBundled's
+  // fixture pipeline is too slow at this scale under debug+ASAN.
+  test.concurrent(
+    "edgecase/DeepImportDiamondDAG",
+    async () => {
+      const N = 20000;
+      using dir = tempDir("deep-import-dag", {});
+      const root = String(dir);
+      for (let i = 0; i < N; i++) {
+        const deps: number[] = [];
+        if (i + 1 < N) deps.push(i + 1);
+        if (2 * i + 3 < N) deps.push(2 * i + 3);
+        writeFileSync(
+          join(root, `m${i}.js`),
+          deps.map(d => `import { v as v${d} } from "./m${d}.js";`).join("\n") +
+            `\nexport const v = ${i}${deps.map(d => ` + v${d}`).join("")};\n`,
+        );
+      }
+      writeFileSync(join(root, "entry.js"), `import { v } from "./m0.js"; console.log(typeof v);\n`);
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "entry.js", "--outfile=out.js"],
+        cwd: root,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 60_000,
+      });
+      const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect({ stderr, exitCode, signalCode: build.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+
+      await using run = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        cwd: root,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect({ stdout, stderr: runStderr, exitCode: runExit }).toEqual({
+        stdout: "number\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
+  itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
+    files: {
+      "/entry.ts": /* js */ `
+        const a = require("./模块.cjs");
+        const b = require("./foo\u2014bar.cjs");
+        console.log(a.x, b.y);
+      `,
+      "/模块.cjs": /* js */ `
+        module.exports = { x: 42 };
+      `,
+      "/foo\u2014bar.cjs": /* js */ `
+        module.exports = { y: 7 };
+      `,
+    },
+    target: "node",
+    run: { stdout: "42 7" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // ID_Continue code points in the path basename are preserved.
+      expect(out).toContain("require_模块");
+      expect(out).not.toContain("require_模_");
+      expect(out).not.toContain("require___");
+      // Non-ID_Continue code points (U+2014 em dash) are still replaced with _.
+      expect(out).toContain("require_foo_bar");
+      expect(out).not.toContain("require_foo\u2014bar");
+    },
+  });
+  // `delete (null ?? ns.x)` evaluates its operand to a value, so the result is
+  // `true` with no side effect. When bundling rewrites `ns.x` to the local
+  // binding (EImportIdentifier) after folding `??`, the printer must re-wrap
+  // the operand so `delete` still sees a value instead of the binding itself.
+  // Without the wrap the output is `delete x`, a strict-mode SyntaxError.
+  itBundled("edgecase/DeleteFoldedNamespacePropertyRef", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./m.js";
+        console.log(delete (null ?? ns.x), ns.x);
+        console.log(delete (0, ns.x), ns.x);
+        console.log(delete (true ? ns.x : 0), ns.x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+x\b/);
+      expect(code).not.toMatch(/delete\s+ns\.x\b/);
+    },
+    run: { stdout: "true 1\ntrue 1\ntrue 1" },
+  });
+  itBundled("edgecase/DeleteFoldedNamespacePropertyRefMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./m.js";
+        console.log(delete (null ?? ns.x), ns.x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: { stdout: "true 1" },
+  });
+  // Same path via a direct named import: the identifier becomes an
+  // EImportIdentifier during the visit pass.
+  itBundled("edgecase/DeleteFoldedImportedBindingRef", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from "./m.js";
+        console.log(delete (null ?? x), x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+x\b/);
+    },
+    run: { stdout: "true 1" },
+  });
+  // The bundler rewrites bare `require`/`require.main`/`require.resolve` to an
+  // ERequireCallTarget / ERequireMain / ERequireResolveCallTarget that prints
+  // as `__require` / `__require.main` / `__require.resolve`.
+  itBundled("edgecase/DeleteFoldedRequireRefs", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? require));
+        console.log(delete (null ?? require.main));
+        console.log(delete (null ?? require.resolve));
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+__require\b/);
+      expect(code).not.toMatch(/delete\s+require\b/);
+    },
+    run: { stdout: "true\ntrue\ntrue" },
+  });
+  // The visit pass substitutes unbound `undefined` to EUndefined, which
+  // `print_undefined` emits as the bare identifier when not minifying.
+  itBundled("edgecase/DeleteFoldedUndefinedRef", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? undefined));
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+undefined\b/);
+    },
+    run: { stdout: "true" },
+  });
+  // `import.meta.main` is rewritten to EImportMetaMain; under `target: node`
+  // that prints as `__require.main == __require.module` without its own paren
+  // wrap, so an unwrapped `delete` would bind to `__require.main`.
+  itBundled("edgecase/DeleteFoldedImportMetaMainRef", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? import.meta.main));
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+import\.meta\.main\b/);
+    },
+    run: { stdout: "true" },
+  });
+  itBundled("edgecase/DeleteFoldedImportMetaMainRefNode", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? import.meta.main));
+      `,
+    },
+    target: "node",
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+__require\.main\b/);
+    },
+    run: { runtime: "node", stdout: "true" },
+  });
+  // A same-file `const enum` member is inlined to an EInlinedEnum wrapping an
+  // ENumber during the visit pass, so the NaN/Infinity check has to look
+  // through the wrapper.
+  itBundled("edgecase/DeleteFoldedInlinedConstEnumNaN", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const enum E { N = 0/0, I = 1/0, V = 1 }
+        console.log(delete (null ?? E.N), delete (null ?? E.I), delete (null ?? E.V));
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+NaN\b/);
+      expect(code).not.toMatch(/delete\s+Infinity\b/);
+    },
+    run: { stdout: "true true true" },
+  });
+  // https://github.com/oven-sh/bun/issues/14509
+  // A require() in the catch handler of a try/catch is the common "fallback
+  // require" pattern and should not fail the build when unresolvable.
+  itBundled("edgecase/RequireInCatchBody", {
+    files: {
+      "/entry.js": /* js */ `
+        let v;
+        try {
+          v = require('pkg');
+        } catch (e) {
+          v = require('pkg/sub.cjs');
+        }
+        console.log(v);
+      `,
+      "/node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        exports: { ".": "./index.js" },
+      }),
+      "/node_modules/pkg/index.js": `module.exports = "main";`,
+    },
+    target: "bun",
+    run: { stdout: "main" },
+  });
+  itBundled("edgecase/RequireInCatchBodyFromNodeModules", {
+    files: {
+      "/entry.js": `console.log(require('lib'));`,
+      "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "index.js" }),
+      "/node_modules/lib/index.js": /* js */ `
+        let v;
+        try {
+          v = require('pkg');
+        } catch (e) {
+          v = require('pkg/dist/node/pkg.cjs');
+        }
+        module.exports = v;
+      `,
+      "/node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        exports: { ".": "./index.js" },
+      }),
+      "/node_modules/pkg/index.js": `module.exports = "pkg-main";`,
+    },
+    target: "bun",
+    run: { stdout: "pkg-main" },
+  });
+  itBundled("edgecase/RequireInCatchBodyBothUnresolved", {
+    files: {
+      "/entry.js": /* js */ `
+        exports.load = function () {
+          try {
+            return require('does-not-exist-a');
+          } catch (e) {
+            return require('does-not-exist-b');
+          }
+        };
+      `,
+    },
+    target: "bun",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const { load } = require('./out.js');
+        try {
+          load();
+          console.log("no throw");
+        } catch (e) {
+          console.log("threw: " + e.message.includes("does-not-exist-b"));
+        }
+      `,
+    },
+    run: { file: "/test.js", stdout: "threw: true" },
+  });
+  itBundled("edgecase/RequireResolveInCatchBody", {
+    files: {
+      "/entry.js": /* js */ `
+        let v;
+        try {
+          v = require.resolve('does-not-exist-a');
+        } catch (e) {
+          v = require.resolve('does-not-exist-b');
+        }
+        console.log(typeof v);
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("does-not-exist-b");
+    },
+  });
+  itBundled("edgecase/AwaitImportInCatchBody", {
+    files: {
+      "/entry.js": /* js */ `
+        async function load() {
+          try {
+            return await import('does-not-exist-a');
+          } catch (e) {
+            return await import('does-not-exist-b');
+          }
+        }
+        load().catch(e => console.log("caught"));
+      `,
+    },
+    target: "bun",
+    run: { stdout: "caught" },
+  });
+  itBundled("edgecase/RequireInFinallyStillErrors", {
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          console.log("ok");
+        } catch (e) {
+        } finally {
+          require('does-not-exist');
+        }
+      `,
+    },
+    target: "bun",
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "does-not-exist". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("edgecase/RequireAfterCatchBodyStillErrors", {
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          require('does-not-exist-a');
+        } catch (e) {
+          require('does-not-exist-b');
+        }
+        require('does-not-exist-c');
+      `,
+    },
+    target: "bun",
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "does-not-exist-c". Maybe you need to "bun install"?`],
+    },
+  });
+  // A resolved-but-disabled path (node builtin under --target=browser, or a
+  // `"browser": { "pkg": false }` remap) in a try/catch body must keep emitting
+  // the empty-module stub, not a runtime throw.
+  itBundled("edgecase/RequireDisabledInCatchBodyStaysEmpty", {
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          throw 0;
+        } catch (e) {
+          const a = require('fs');
+          const b = require('mapped-false');
+          if (a instanceof Error || b instanceof Error) throw new Error("unreachable");
+          console.log("ok");
+        }
+      `,
+      "/package.json": JSON.stringify({ name: "app", browser: { "mapped-false": false } }),
+      "/node_modules/mapped-false/package.json": JSON.stringify({ name: "mapped-false", main: "index.js" }),
+      "/node_modules/mapped-false/index.js": `module.exports = "real";`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Cannot require module");
+    },
+    run: { stdout: "ok" },
+  });
+  itBundled("edgecase/RequireDisabledInTryBodyStaysEmpty", {
+    files: {
+      "/entry.js": /* js */ `
+        let hit = "";
+        try {
+          const x = require('mapped-false');
+          hit = "try:" + (x instanceof Error);
+        } catch (e) {
+          hit = "catch:" + e.message;
+        }
+        console.log(hit);
+      `,
+      "/package.json": JSON.stringify({ name: "app", browser: { "mapped-false": false } }),
+      "/node_modules/mapped-false/package.json": JSON.stringify({ name: "mapped-false", main: "index.js" }),
+      "/node_modules/mapped-false/index.js": `module.exports = "real";`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Cannot require module");
+    },
+    run: { stdout: "try:false" },
   });
 });
 

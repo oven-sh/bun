@@ -55,9 +55,9 @@ pub struct List {
     pub map: Map,
 }
 
-// Zig: `std.ArrayHashMapUnmanaged(void, void, struct {}, true)` — a keyless
-// array-hash-map used purely as an index table; all lookups go through the
-// `Adapter` which hashes/compares against `list.items(.source_index)`.
+// A keyless array-hash-map used purely as an index table; all lookups go
+// through the `Adapter` which hashes/compares against the `source_index`
+// column of `list`.
 type Map = ArrayHashMap<(), ()>;
 
 impl List {
@@ -75,27 +75,16 @@ impl List {
             reference_source_index,
             ssr_source_index,
         })?;
-        // PORT NOTE: reshaped for borrowck — Zig built `Adapter` from
-        // `m.list.slice()` while also borrowing `m.map` mutably. Here we hand
-        // the adapter just the `source_index` column it needs.
+        // For borrowck we hand the adapter just the `source_index` column
+        // it needs.
         let gop = self.map.get_or_put_adapted(
-            source_index,
-            Adapter {
+            &source_index,
+            &Adapter {
                 source_indices: self.list.items::<"source_index", IndexInt>(),
             },
         )?;
         debug_assert!(!gop.found_existing);
         Ok(())
-    }
-
-    /// Can only be called on the bundler thread.
-    pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
-        self.map.get_index_adapted(
-            &real_source_index,
-            Adapter {
-                source_indices: self.list.items::<"source_index", IndexInt>(),
-            },
-        )
     }
 
     /// Use this to improve speed of accessing fields at the cost of
@@ -117,7 +106,7 @@ impl<'a> Slice<'a> {
     pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
         self.map.get_index_adapted(
             &real_source_index,
-            Adapter {
+            &Adapter {
                 source_indices: self.list.items::<"source_index", IndexInt>(),
             },
         )
@@ -126,13 +115,10 @@ impl<'a> Slice<'a> {
     pub fn get_reference_source_index(&self, real_source_index: IndexInt) -> Option<u32> {
         let i = self.map.get_index_adapted(
             &real_source_index,
-            Adapter {
+            &Adapter {
                 source_indices: self.list.items::<"source_index", IndexInt>(),
             },
         )?;
-        // Zig: `bun.unsafeAssert(l.list.capacity > 0)` — optimization hint for
-        // `MultiArrayList.Slice.items`. The Rust `items()` already short-circuits
-        // on `capacity == 0`, so the assert is dropped.
         Some(self.list.items::<"reference_source_index", IndexInt>()[i])
     }
 
@@ -148,10 +134,9 @@ impl<'a> Slice<'a> {
     }
 }
 
-// PORT NOTE: Zig stored the full `MultiArrayList.Slice` and called
-// `.items(.source_index)` on each compare. The Rust `Slice<T>` is not `Copy`,
-// so we cache just the `source_index` column the adapter actually needs.
-pub struct Adapter<'a> {
+// Caches just the `source_index` column the adapter actually needs
+// (`Slice<T>` is not `Copy`).
+pub(crate) struct Adapter<'a> {
     pub source_indices: &'a [IndexInt],
 }
 
@@ -165,5 +150,3 @@ impl<'a> ArrayHashAdapter<IndexInt, ()> for Adapter<'a> {
         *a == self.source_indices[b_index]
     }
 }
-
-// ported from: src/js_parser/ast/ServerComponentBoundary.zig

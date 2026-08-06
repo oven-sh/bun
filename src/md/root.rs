@@ -2,7 +2,6 @@ use crate::parser;
 use crate::types::Flags;
 
 // Re-export types needed by external renderers (e.g. JS callback renderer).
-pub use crate::types::Align;
 pub use crate::types::BLOCK_FENCED_CODE;
 pub use crate::types::BlockType;
 pub use crate::types::Renderer;
@@ -12,32 +11,32 @@ pub use crate::types::TextType;
 
 #[derive(Clone, Copy, Default)]
 pub struct RenderOptions {
-    pub tag_filter: bool,
-    pub heading_ids: bool,
-    pub autolink_headings: bool,
+    pub(crate) tag_filter: bool,
+    pub(crate) heading_ids: bool,
+    pub(crate) autolink_headings: bool,
 }
 
 #[derive(Clone, Copy)]
 pub struct Options {
-    pub tables: bool,
-    pub strikethrough: bool,
-    pub tasklists: bool,
+    pub(crate) tables: bool,
+    pub(crate) strikethrough: bool,
+    pub(crate) tasklists: bool,
     pub permissive_autolinks: bool,
     pub permissive_url_autolinks: bool,
     pub permissive_www_autolinks: bool,
     pub permissive_email_autolinks: bool,
-    pub hard_soft_breaks: bool,
-    pub wiki_links: bool,
-    pub underline: bool,
-    pub latex_math: bool,
-    pub collapse_whitespace: bool,
-    pub permissive_atx_headers: bool,
-    pub no_indented_code_blocks: bool,
-    pub no_html_blocks: bool,
-    pub no_html_spans: bool,
+    pub(crate) hard_soft_breaks: bool,
+    pub(crate) wiki_links: bool,
+    pub(crate) underline: bool,
+    pub(crate) latex_math: bool,
+    pub(crate) collapse_whitespace: bool,
+    pub(crate) permissive_atx_headers: bool,
+    pub(crate) no_indented_code_blocks: bool,
+    pub(crate) no_html_blocks: bool,
+    pub(crate) no_html_spans: bool,
     /// GFM tag filter: replaces `<` with `&lt;` for disallowed HTML tags
     /// (title, textarea, style, xmp, iframe, noembed, noframes, script, plaintext).
-    pub tag_filter: bool,
+    pub(crate) tag_filter: bool,
     pub heading_ids: bool,
     pub autolink_headings: bool,
 }
@@ -69,8 +68,7 @@ impl Default for Options {
 }
 
 impl Options {
-    // Private base (all-false) used for struct-update in the presets below,
-    // mirroring Zig's field-default semantics for `.{ .field = ... }`.
+    // Private base (all-false) used for struct-update in the presets below.
     const NONE: Self = Self {
         tables: false,
         strikethrough: false,
@@ -93,24 +91,6 @@ impl Options {
         autolink_headings: false,
     };
 
-    pub const COMMONMARK: Self = Self {
-        tables: false,
-        strikethrough: false,
-        tasklists: false,
-        ..Self::NONE
-    };
-
-    pub const GITHUB: Self = Self {
-        tables: true,
-        strikethrough: true,
-        tasklists: true,
-        permissive_autolinks: true,
-        permissive_www_autolinks: true,
-        permissive_email_autolinks: true,
-        tag_filter: true,
-        ..Self::NONE
-    };
-
     pub const TERMINAL: Self = Self {
         tables: true,
         strikethrough: true,
@@ -124,7 +104,7 @@ impl Options {
         ..Self::NONE
     };
 
-    pub fn to_flags(self) -> Flags {
+    pub(crate) fn to_flags(self) -> Flags {
         Flags {
             tables: self.tables,
             strikethrough: self.strikethrough,
@@ -133,9 +113,7 @@ impl Options {
             permissive_www_autolinks: self.permissive_www_autolinks || self.permissive_autolinks,
             permissive_email_autolinks: self.permissive_email_autolinks
                 || self.permissive_autolinks,
-            hard_soft_breaks: self.hard_soft_breaks,
             wiki_links: self.wiki_links,
-            underline: self.underline,
             latex_math: self.latex_math,
             collapse_whitespace: self.collapse_whitespace,
             permissive_atx_headers: self.permissive_atx_headers,
@@ -145,7 +123,7 @@ impl Options {
         }
     }
 
-    pub fn to_render_options(self) -> RenderOptions {
+    pub(crate) fn to_render_options(self) -> RenderOptions {
         RenderOptions {
             tag_filter: self.tag_filter,
             heading_ids: self.heading_ids,
@@ -153,8 +131,7 @@ impl Options {
         }
     }
 
-    /// `(snake_case, camelCase, setter)` for every bool field — replaces the
-    /// Zig comptime `@typeInfo(Options).@"struct".fields` reflection loop in
+    /// `(snake_case, camelCase, setter)` for every bool field — used by
     /// `Bun.markdown`'s option parser.
     pub const BOOL_FIELD_SETTERS: &'static [(
         &'static str,
@@ -209,12 +186,10 @@ impl Options {
     ];
 }
 
-// TODO(port): narrow error set — Zig: `parser.Parser.Error`
 pub fn render_to_html(text: &[u8]) -> Result<Box<[u8]>, parser::ParserError> {
     render_to_html_with_options(text, Options::default())
 }
 
-// TODO(port): narrow error set — Zig: `parser.Parser.Error`
 pub fn render_to_html_with_options(
     text: &[u8],
     options: Options,
@@ -223,7 +198,6 @@ pub fn render_to_html_with_options(
 }
 
 /// Parse and render using a custom renderer implementation.
-// TODO(port): narrow error set — Zig: `parser.Parser.Error`
 pub fn render_with_renderer<'a>(
     text: &'a [u8],
     options: Options,
@@ -239,15 +213,11 @@ pub fn render_with_renderer<'a>(
 
 pub use crate::types;
 
-pub use crate::entity;
 pub use crate::helpers;
 
 pub use crate::ansi_renderer as ansi;
-pub use ansi::AnsiRenderer;
 pub use ansi::ImageUrlCollector;
 pub use ansi::Theme as AnsiTheme;
 pub use ansi::detect_kitty_graphics;
 pub use ansi::detect_light_background;
 pub use ansi::render_to_ansi;
-
-// ported from: src/md/root.zig

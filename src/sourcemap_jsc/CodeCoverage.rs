@@ -5,11 +5,11 @@ use core::ptr::NonNull;
 use bun_ast::Loc;
 use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
-use bun_core::{self, ZigStringSlice, strings};
+use bun_core::{self, ZigStringSlice};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
-    self as sourcemap, LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap,
-    internal_source_map, line_offset_table,
+    LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap, internal_source_map,
+    line_offset_table,
 };
 
 type LinesHits = Vec<u32>;
@@ -29,19 +29,18 @@ type Bitset = DynamicBitSet;
 /// We use two bitsets since the typical size will be decently small,
 /// bitsets are simple and bitsets are relatively fast to construct and query
 pub struct Report {
-    pub source_url: ZigStringSlice,
-    pub executable_lines: Bitset,
-    pub lines_which_have_executed: Bitset,
-    pub line_hits: LinesHits,
-    pub functions: Vec<Block>,
-    pub functions_which_have_executed: Bitset,
-    pub stmts_which_have_executed: Bitset,
-    pub stmts: Vec<Block>,
-    pub total_lines: u32,
+    pub(crate) source_url: ZigStringSlice,
+    pub(crate) executable_lines: Bitset,
+    pub(crate) lines_which_have_executed: Bitset,
+    pub(crate) line_hits: LinesHits,
+    pub(crate) functions: Vec<Block>,
+    pub(crate) functions_which_have_executed: Bitset,
+    pub(crate) stmts_which_have_executed: Bitset,
+    pub(crate) stmts: Vec<Block>,
 }
 
 impl Report {
-    pub fn lines_coverage_fraction(&self) -> f64 {
+    pub(crate) fn lines_coverage_fraction(&self) -> f64 {
         let mut intersected = self
             .executable_lines
             .clone()
@@ -58,7 +57,7 @@ impl Report {
         intersected_count / total_count
     }
 
-    pub fn stmts_coverage_fraction(&self) -> f64 {
+    pub(crate) fn stmts_coverage_fraction(&self) -> f64 {
         let total_count: f64 = self.stmts.len() as f64;
 
         if total_count == 0.0 {
@@ -68,7 +67,7 @@ impl Report {
         (self.stmts_which_have_executed.count() as f64) / total_count
     }
 
-    pub fn function_coverage_fraction(&self) -> f64 {
+    pub(crate) fn function_coverage_fraction(&self) -> f64 {
         let total_count: f64 = self.functions.len() as f64;
         if total_count == 0.0 {
             return 1.0;
@@ -114,18 +113,16 @@ impl Report {
     }
 }
 
-// Report::deinit only freed owned containers; Rust drops Bitset/Vec/Vec fields automatically.
-// Note: source_url is NOT freed, matching the Zig deinit (caller owns it).
+// Bitset/Vec/Vec fields drop automatically.
+// Note: source_url is NOT freed (caller owns it).
 
 pub mod text {
     use super::*;
-    // PORT NOTE: Zig `Output.prettyFmt(fmt, comptime bool)` is a comptime string
-    // rewrite. The `pretty_fmt!` macro only accepts literal `true`/`false` today,
+    // The `pretty_fmt!` macro only accepts literal `true`/`false` today,
     // so call the runtime rewriter for the `ENABLE_COLORS` const-generic sites.
-    // PERF(port): runtime `pretty_fmt` allocates a small Vec per call — profile in
-    // Phase B; if hot, hoist into `const` once the proc-macro lands.
+    // PERF: runtime `pretty_fmt` allocates a small Vec per call — if hot,
+    // hoist into `const` once the proc-macro lands.
     use bun_core::output::pretty_fmt;
-    use bun_io::Write as _;
 
     pub fn write_format_with_values<const ENABLE_COLORS: bool>(
         filename: &[u8],
@@ -236,7 +233,7 @@ pub mod text {
         let mut prev_line: usize = 0;
         let mut is_first = true;
 
-        // PORT NOTE: `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
+        // `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
         // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
         // route through the runtime rewriter.
         let red = pretty_fmt::<ENABLE_COLORS>("<red>");
@@ -272,10 +269,6 @@ pub mod text {
 
         if prev_line != start_of_line_range {
             if is_first {
-                #[allow(unused_assignments)]
-                {
-                    is_first = false;
-                }
             } else {
                 writer.write_all(&comma)?;
             }
@@ -294,7 +287,6 @@ pub mod text {
 
 pub mod lcov {
     use super::*;
-    use bun_io::Write as _;
 
     pub fn write_format(
         report: &Report,
@@ -326,19 +318,18 @@ pub mod lcov {
         // FN: line number,function name
 
         // FNF: functions found
-        write!(writer, "FNF:{}\n", report.functions.len())?;
+        writeln!(writer, "FNF:{}", report.functions.len())?;
 
         // FNH: functions hit
-        write!(
+        writeln!(
             writer,
-            "FNH:{}\n",
+            "FNH:{}",
             report.functions_which_have_executed.count()
         )?;
 
         // ** Track all executable lines **
         // Executable lines that were not hit should be marked as 0
-        // PORT NOTE: Zig cloned the bitset before iterating; `DynamicBitSet::iterator`
-        // borrows `&self` so the clone is unnecessary.
+        // `DynamicBitSet::iterator` borrows `&self`, so no clone is needed.
         let mut iter = report.executable_lines.iterator::<true, true>();
 
         // ** Branch coverage not supported yet, since JSC does not support those yet. ** //
@@ -348,28 +339,27 @@ pub mod lcov {
         let line_hits = report.line_hits.slice();
         while let Some(line) = iter.next() {
             // DA: line number, hit count
-            write!(writer, "DA:{},{}\n", line + 1, line_hits[line])?;
+            writeln!(writer, "DA:{},{}", line + 1, line_hits[line])?;
         }
 
         // LF: lines found
-        write!(writer, "LF:{}\n", report.executable_lines.count())?;
+        writeln!(writer, "LF:{}", report.executable_lines.count())?;
 
         // LH: lines hit
-        write!(writer, "LH:{}\n", report.lines_which_have_executed.count())?;
+        writeln!(writer, "LH:{}", report.lines_which_have_executed.count())?;
 
         writer.write_all(b"end_of_record\n")?;
         Ok(())
     }
 }
 
-// TODO(port): move to sourcemap_jsc_sys
 unsafe extern "C" {
     fn CodeCoverage__withBlocksAndFunctions(
         vm: *mut VM,
         source_id: i32,
         ctx: *mut c_void,
         ignore_sourcemap: bool,
-        cb: extern "C" fn(*mut Generator, *const BasicBlockRange, usize, usize, bool),
+        cb: extern "C" fn(&mut Generator, *const BasicBlockRange, usize, usize, bool),
     ) -> bool;
 }
 
@@ -380,19 +370,15 @@ struct Generator<'a> {
 
 impl<'a> Generator<'a> {
     extern "C" fn do_(
-        this: *mut Generator,
+        this: &mut Generator,
         blocks_ptr: *const BasicBlockRange,
         blocks_len: usize,
         function_start_offset: usize,
         ignore_sourcemap: bool,
     ) {
-        // SAFETY: `this` was passed as &mut Generator to CodeCoverage__withBlocksAndFunctions
-        // and is valid for the duration of this synchronous callback.
-        let this = unsafe { &mut *this };
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
-        // pointer even for zero-length slices, so we must bail before constructing the slice
-        // (matches the Zig spec, which early-returns on `blocks.len == 0`).
+        // pointer even for zero-length slices, so we must bail before constructing the slice.
         if blocks_len == 0 {
             return;
         }
@@ -409,7 +395,7 @@ impl<'a> Generator<'a> {
             return;
         }
 
-        // PORT NOTE: Zig assigns the slice by value with no ownership transfer here.
+        // No ownership transfer here:
         // `from_utf8_never_free` already detaches the lifetime by design, and
         // `generate_report_from_blocks` only borrows `&self`, so no &/&mut overlap.
         let source_url =
@@ -422,7 +408,7 @@ impl<'a> Generator<'a> {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct BasicBlockRange {
     start_offset: c_int,
     end_offset: c_int,
@@ -430,25 +416,17 @@ pub struct BasicBlockRange {
     execution_count: usize,
 }
 
-impl Default for BasicBlockRange {
-    fn default() -> Self {
-        Self {
-            start_offset: 0,
-            end_offset: 0,
-            has_executed: false,
-            execution_count: 0,
-        }
-    }
-}
-
 pub struct ByteRangeMapping {
-    pub line_offset_table: line_offset_table::List,
-    pub source_id: i32,
+    pub(crate) line_offset_table: line_offset_table::List,
+    pub(crate) source_id: i32,
     pub source_url: ZigStringSlice,
 }
 
-// TODO(port): IdentityContext(u64) hasher — key is already a wyhash, hash fn should be identity
-pub type ByteRangeMappingHashMap = bun_collections::HashMap<u64, ByteRangeMapping>;
+// Keys are already wyhashes (`bun_wyhash::hash` of the source URL — see
+// `ByteRangeMapping__find`), so use the identity context instead of
+// re-hashing them.
+pub type ByteRangeMappingHashMap =
+    bun_collections::HashMap<u64, ByteRangeMapping, bun_collections::IdentityContext<u64>>;
 
 thread_local! {
     // Lazily-initialized per-thread map. Stored behind `Box` so the address of the
@@ -486,7 +464,7 @@ fn thread_map_opt() -> Option<NonNull<ByteRangeMappingHashMap>> {
 }
 
 impl ByteRangeMapping {
-    /// Zig: `pub threadlocal var map: ?*HashMap = null;` — read-only accessor
+    /// Read-only accessor
     /// for the per-thread `ByteRangeMappingHashMap`. Returns `None` if no
     /// coverage data was recorded on this thread.
     ///
@@ -498,11 +476,7 @@ impl ByteRangeMapping {
         thread_map_opt()
     }
 
-    pub fn is_less_than(_: (), a: &ByteRangeMapping, b: &ByteRangeMapping) -> bool {
-        strings::order(a.source_url.slice(), b.source_url.slice()) == core::cmp::Ordering::Less
-    }
-
-    pub fn generate_report_from_blocks(
+    pub(crate) fn generate_report_from_blocks(
         &self,
         source_url: ZigStringSlice,
         blocks: &[BasicBlockRange],
@@ -511,20 +485,18 @@ impl ByteRangeMapping {
     ) -> Result<Report, bun_alloc::AllocError> {
         let line_starts = self.line_offset_table.items_byte_offset_to_start_of_line();
 
-        let mut executable_lines: Bitset = Bitset::default();
-        let mut lines_which_have_executed: Bitset = Bitset::default();
-        // PORT NOTE: Zig's `SavedSourceMap.get` returns a `?*ParsedSourceMap` with a +1
-        // intrusive ref (Zig: `defer if (parsed_mappings_) |p| p.deref()`). The Rust port
-        // models this as `Option<Arc<ParsedSourceMap>>`, so the +1 is released
-        // automatically when `parsed_mappings_` drops at scope exit — no explicit guard
-        // is required.
+        let mut executable_lines: Bitset;
+        let mut lines_which_have_executed: Bitset;
+        // `SavedSourceMap::get` returns an `Option<Arc<ParsedSourceMap>>`, so the
+        // +1 ref is released automatically when `parsed_mappings_` drops at scope
+        // exit — no explicit guard is required.
         let parsed_mappings_: Option<std::sync::Arc<ParsedSourceMap>> =
             // SAFETY: `VirtualMachine::get()` returns the live singleton `*mut VirtualMachine`
             // with full write provenance; dereference to call the `&mut self` accessor.
             bun_jsc::VirtualMachine::VirtualMachine::get().as_mut()
                 .source_mappings()
                 .get(source_url.slice());
-        let mut line_hits = LinesHits::default();
+        let mut line_hits: LinesHits;
 
         let mut functions: Vec<Block> = Vec::new();
         functions.reserve_exact(function_blocks.len());
@@ -534,7 +506,7 @@ impl ByteRangeMapping {
         let mut stmts: Vec<Block> = Vec::new();
         stmts.reserve_exact(function_blocks.len());
 
-        let mut line_count: u32 = 0;
+        let line_count: u32;
 
         if ignore_sourcemap || parsed_mappings_.is_none() {
             line_count = line_starts.len() as u32;
@@ -587,10 +559,7 @@ impl ByteRangeMapping {
                         stmts_which_have_executed.set(i);
                     }
 
-                    stmts.push(Block {
-                        start_line: min_line,
-                        end_line: max_line,
-                    });
+                    stmts.push(Block {});
                 }
             }
 
@@ -638,10 +607,7 @@ impl ByteRangeMapping {
                     }
                 }
 
-                functions.push(Block {
-                    start_line: min_line,
-                    end_line: max_line,
-                });
+                functions.push(Block {});
 
                 if did_fn_execute {
                     functions_which_have_executed.set(i);
@@ -727,10 +693,7 @@ impl ByteRangeMapping {
                 }
 
                 if min_line != u32::MAX {
-                    stmts.push(Block {
-                        start_line: min_line,
-                        end_line: max_line,
-                    });
+                    stmts.push(Block {});
 
                     if has_executed {
                         stmts_which_have_executed.set(i);
@@ -819,10 +782,7 @@ impl ByteRangeMapping {
                     }
                 }
 
-                functions.push(Block {
-                    start_line: min_line,
-                    end_line: max_line,
-                });
+                functions.push(Block {});
                 if did_fn_execute {
                     functions_which_have_executed.set(i);
                 }
@@ -837,20 +797,18 @@ impl ByteRangeMapping {
             executable_lines,
             lines_which_have_executed,
             line_hits,
-            total_lines: line_count,
             stmts,
             functions_which_have_executed,
             stmts_which_have_executed,
         })
     }
 
-    pub fn compute(
+    pub(crate) fn compute(
         source_contents: &[u8],
         source_id: i32,
         source_url: ZigStringSlice,
     ) -> ByteRangeMapping {
         ByteRangeMapping {
-            // TODO(port): VirtualMachine::get().allocator dropped — LineOffsetTable::generate uses global mimalloc
             line_offset_table: LineOffsetTable::generate(source_contents, 0)
                 .unwrap_or_else(|_| bun_alloc::out_of_memory()),
             source_id,
@@ -859,11 +817,11 @@ impl ByteRangeMapping {
     }
 }
 
-// ByteRangeMapping::deinit only freed line_offset_table; Rust drops it automatically.
-// source_url is NOT freed, matching Zig deinit.
+// line_offset_table drops automatically.
+// source_url is NOT freed (caller owns it).
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__generate(
+extern "C" fn ByteRangeMapping__generate(
     str_: bun_core::String,
     source_contents_str: bun_core::String,
     source_id: i32,
@@ -875,7 +833,6 @@ pub extern "C" fn ByteRangeMapping__generate(
 
     let slice = str_.to_utf8();
     let hash = bun_wyhash::hash(slice.slice());
-    // TODO(port): getOrPut → entry API; verify ByteRangeMapping is properly dropped on overwrite
     let source_contents = source_contents_str.to_utf8();
 
     let new_value = ByteRangeMapping::compute(source_contents.slice(), source_id, slice);
@@ -885,15 +842,12 @@ pub extern "C" fn ByteRangeMapping__generate(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__getSourceID(this: *mut ByteRangeMapping) -> i32 {
-    // SAFETY: `this` is a valid pointer obtained from ByteRangeMapping__find.
-    unsafe { (*this).source_id }
+extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
+    this.source_id
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__find(
-    path: bun_core::String,
-) -> Option<NonNull<ByteRangeMapping>> {
+extern "C" fn ByteRangeMapping__find(path: bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
 
     let map_ptr = thread_map_opt()?;
@@ -905,10 +859,10 @@ pub extern "C" fn ByteRangeMapping__find(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__findExecutedLines(
+extern "C" fn ByteRangeMapping__findExecutedLines(
     global_this: &JSGlobalObject,
     source_url: bun_core::String,
-    blocks_ptr: *const BasicBlockRange,
+    blocks_ptr: NonNull<BasicBlockRange>,
     blocks_len: usize,
     function_start_offset: usize,
     ignore_sourcemap: bool,
@@ -920,7 +874,7 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
     let this = unsafe { &*this_ptr.as_ptr() };
 
     // SAFETY: blocks_ptr[0..blocks_len] is a valid contiguous C array from JSC.
-    let all = unsafe { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
+    let all = unsafe { core::slice::from_raw_parts(blocks_ptr.as_ptr(), blocks_len) };
     let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
     let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
     if function_blocks.len() > 1 {
@@ -939,7 +893,7 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
 
     let mut coverage_fraction = Fraction::default();
 
-    // PORT NOTE: std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_io::Write target).
+    // std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_io::Write target).
     let mut buf: Vec<u8> = Vec::new();
 
     if text::write_format::<false>(
@@ -969,9 +923,4 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
 pub use bun_options_types::code_coverage_options::Fraction;
 
 #[derive(Clone, Copy, Default)]
-pub struct Block {
-    pub start_line: u32,
-    pub end_line: u32,
-}
-
-// ported from: src/sourcemap_jsc/CodeCoverage.zig
+pub struct Block {}

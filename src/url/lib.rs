@@ -1,12 +1,13 @@
 // This is close to WHATWG URL, but we don't want the validation errors
-#![allow(unused, non_snake_case, clippy::all)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
+pub mod error;
+pub use error::{Error, Result};
+
 use core::cell::RefCell;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{String as BunString, Tag as BunStringTag, immutable as strings};
+use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_paths::resolve_path::{self, platform};
 use bun_wyhash::hash as wyhash;
 
@@ -21,7 +22,7 @@ use bun_core::io::Write as _;
 
 // ── route_param (moved from bun_router) ───────────────────────────────────
 pub mod route_param {
-    // PORT NOTE: name/value borrow from the route template + the live request
+    // name/value borrow from the route template + the live request
     // path; lifetime-generic so `bun_router` (the only producer) can fill them
     // from non-'static buffers. Downstream that only stores literals can use
     // `Param<'static>`.
@@ -30,14 +31,14 @@ pub mod route_param {
         pub name: &'a [u8],
         pub value: &'a [u8],
     }
-    // TODO(b2-blocked): bun_collections::MultiArrayList — derive(MultiArrayElement)
-    // proc-macro not yet available. Using Vec; SoA layout is a perf concern only.
+    // SoA (`MultiArrayList`) layout would be a perf optimization only; a plain
+    // Vec is semantically identical.
     pub type List<'a> = Vec<Param<'a>>;
 }
-pub use route_param::List as ParamsList;
+use route_param::List as ParamsList;
 
 // ── whatwg (WTF::URL FFI shim, MOVE_DOWN from bun_jsc) ────────────────────
-// Ground truth: src/jsc/URL.zig. The JS-value entry points (`hrefFromJS`, `fromJS`)
+// The JS-value entry points (`hrefFromJS`, `fromJS`)
 // stay in tier-6 `bun_jsc` as extension methods — they need JSValue/JSGlobalObject.
 // Everything else is a thin extern-"C" wrapper around WTF::URL and is JSC-agnostic.
 pub mod whatwg {
@@ -51,8 +52,7 @@ pub mod whatwg {
         _opaque: [u8; 0],
     }
 
-    // TODO(port): move to <area>_sys
-    // PORT NOTE: getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
+    // Getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
     // WTF::URL on read. `URL__deinit` keeps `*mut` (it `delete`s). `BunString*` inputs stay
     // `*mut` to match the C ABI; callers pass a mutable local copy (see below).
     // SAFETY (safe fn): `URL` is an opaque ZST handle (never null when behind `&`);
@@ -64,27 +64,19 @@ pub mod whatwg {
         safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
-        safe fn URL__username(url: &URL) -> String;
-        safe fn URL__password(url: &URL) -> String;
-        safe fn URL__search(url: &URL) -> String;
-        safe fn URL__host(url: &URL) -> String;
         safe fn URL__hostname(url: &URL) -> String;
-        safe fn URL__port(url: &URL) -> u32;
         safe fn URL__deinit(url: &mut URL);
         safe fn URL__pathname(url: &URL) -> String;
         safe fn URL__getHref(input: &mut String) -> String;
         safe fn URL__getFileURLString(input: &mut String) -> String;
         safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
-        safe fn URL__pathFromFileURL(input: &mut String) -> String;
-        safe fn URL__hash(url: &URL) -> String;
         safe fn URL__fragmentIdentifier(url: &URL) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
     }
 
-    // PORT NOTE: Zig takes `bun.String` by value then `var input = str; f(&input)` to
-    // obtain a mutable address for C ABI. We take `&String` (matching existing call sites
+    // The C ABI wants a mutable address. We take `&String` (matching existing call sites
     // in this crate) and — since `bun_core::String: Copy` — bit-copy into a mutable
-    // local and pass `&mut local`. This mirrors the Zig spec exactly and avoids casting
+    // local and pass `&mut local`. This avoids casting
     // a shared-ref-derived pointer to `*mut` (read-only provenance). The C++ side
     // (`BunString::toWTFString() const`) does not mutate, but the local-copy form is
     // sound regardless.
@@ -104,10 +96,6 @@ pub mod whatwg {
         let mut input = *str;
         URL__getFileURLString(&mut input)
     }
-    pub fn path_from_file_url(str: &String) -> String {
-        let mut input = *str;
-        URL__pathFromFileURL(&mut input)
-    }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
     ///
@@ -118,26 +106,22 @@ pub mod whatwg {
         // to hand C++ only the leading ASCII prefix (latin1-safe).
         let first_non_ascii = strings::first_non_ascii(slice).map_or(slice.len(), |i| i as usize);
         // SAFETY: ptr/len derived from a valid slice prefix; C++ only reads.
-        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) };
-        if len == 0 {
+        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) } as usize;
+        if len == 0 || len > first_non_ascii {
             return None;
         }
-        Some(&slice[..len as usize])
+        Some(&slice[..len])
     }
 
     impl URL {
-        pub fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
+        pub(crate) fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
             let mut input = *str;
             URL__fromString(&mut input)
         }
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(&String::borrow_utf8(input))
         }
-        /// Includes the leading '#'.
-        pub fn hash(&self) -> String {
-            URL__hash(self)
-        }
-        /// Exactly the same as `hash`, excluding the leading '#'.
+        /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
             URL__fragmentIdentifier(self)
         }
@@ -147,41 +131,16 @@ pub mod whatwg {
         pub fn href(&self) -> String {
             URL__href(self)
         }
-        pub fn username(&self) -> String {
-            URL__username(self)
-        }
-        pub fn password(&self) -> String {
-            URL__password(self)
-        }
-        pub fn search(&self) -> String {
-            URL__search(self)
-        }
-        /// Returns the host WITHOUT the port.
-        ///
-        /// Note that this does NOT match JS behavior, which returns the host with the port. See
-        /// `hostname` for the JS equivalent of `host`.
-        ///
-        /// ```text
-        /// URL("http://example.com:8080").host() => "example.com"
-        /// ```
-        pub fn host(&self) -> String {
-            URL__host(self)
-        }
         /// Returns the host WITH the port.
         ///
-        /// Note that this does NOT match JS behavior which returns the host without the port. See
-        /// `host` for the JS equivalent of `hostname`.
+        /// Note that this does NOT match JS `hostname`, which excludes the port (that
+        /// port-less form is `bun_jsc::URL::host`).
         ///
         /// ```text
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
         /// ```
         pub fn hostname(&self) -> String {
             URL__hostname(self)
-        }
-        /// Returns `u32::MAX` if the port is not set. Otherwise, the result is
-        /// guaranteed to be within the `u16` range.
-        pub fn port(&self) -> u32 {
-            URL__port(self)
         }
         pub fn pathname(&self) -> String {
             URL__pathname(self)
@@ -193,16 +152,13 @@ pub mod whatwg {
 }
 // Re-export the free helpers at crate root so lower-tier callers can write
 // `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
-pub use whatwg::{
-    file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
-};
+pub use whatwg::{file_url_from_string, href_from_string, join, origin_from_slice};
 
-// PORT NOTE: URL is a pure view struct — every field is a slice into `href` (or a
-// literal default). Zig expresses this with `[]const u8` fields borrowing the
-// caller-provided `base`.
+// URL is a pure view struct — every field is a slice into `href` (or a
+// literal default).
 #[derive(Clone)]
 pub struct URL<'a> {
-    pub hash: &'a [u8],
+    pub(crate) hash: &'a [u8],
     /// hostname, but with a port — `localhost:3000`
     pub host: &'a [u8],
     /// hostname does not have a port — `localhost`
@@ -214,10 +170,10 @@ pub struct URL<'a> {
     pub path: &'a [u8],
     pub port: &'a [u8],
     pub protocol: &'a [u8],
-    pub search: &'a [u8],
-    pub search_params: Option<QueryStringMap>,
+    pub(crate) search: &'a [u8],
+    pub(crate) search_params: Option<QueryStringMap>,
     pub username: &'a [u8],
-    pub port_was_automatically_set: bool,
+    pub(crate) port_was_automatically_set: bool,
 }
 
 impl<'a> Default for URL<'a> {
@@ -242,10 +198,7 @@ impl<'a> Default for URL<'a> {
 }
 
 /// An owning URL — holds the normalized `href` buffer that the borrowed
-/// `URL<'_>` view slices into. Port of `URL.fromString`'s ownership model:
-/// Zig returned a `URL` borrowing from a fresh allocation the caller had to
-/// `allocator.free(url.href)`; in Rust, `OwnedURL` owns that buffer and
-/// `Drop` frees it.
+/// `URL<'_>` view slices into; `Drop` frees it.
 #[derive(Default, Clone)]
 pub struct OwnedURL {
     href: Box<[u8]>,
@@ -254,11 +207,11 @@ pub struct OwnedURL {
 impl OwnedURL {
     /// Borrow as a parsed `URL` view. All slices in the returned `URL` borrow
     /// `self.href`.
-    // PERF(port): re-parses on each call. Zig parsed once into a borrowing
-    // struct the caller held alongside the buffer; Rust cannot express that
-    // self-reference without unsafe lifetime extension (PORTING.md §Forbidden).
-    // Callers in practice call this once and hold the borrow — profile in
-    // Phase B; if hot, store component `(u32, u32)` offsets here instead.
+    // PERF: re-parses on each call. Storing a parsed view alongside the
+    // buffer would be a self-reference, which Rust cannot express without
+    // unsafe lifetime extension.
+    // Callers in practice call this once and hold the borrow — if this shows
+    // up on a hot path, store component `(u32, u32)` offsets here instead.
     #[inline]
     pub fn url(&self) -> URL<'_> {
         URL::parse(&self.href)
@@ -273,8 +226,8 @@ impl OwnedURL {
     }
     /// Construct from an already-normalized href buffer (the tail of
     /// `URL::from_string` after `to_owned_slice`). Exposed so out-of-crate
-    /// producers (e.g. `bun_url_jsc::url_from_js`) can build an `OwnedURL`
-    /// without the `href` field being public.
+    /// producers can build an `OwnedURL` without the `href` field being
+    /// public.
     #[inline]
     pub fn from_href(href: Box<[u8]>) -> Self {
         Self { href }
@@ -327,7 +280,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn is_file(&self) -> bool {
-        self.protocol == b"file"
+        strings::eql_case_insensitive_ascii(self.protocol, b"file", true)
     }
 
     /// host + path without the ending slash, protocol, searchParams and hash
@@ -362,37 +315,18 @@ impl<'a> URL<'a> {
         self.href.len() == Self::BLOB_SPECIFIER_LEN && self.href.starts_with(b"blob:")
     }
 
-    // PORT NOTE: `fromJS` alias to url_jsc deleted per PORTING.md — JSC interop lives
-    // in bun_url_jsc as an extension trait.
-
-    // PORT NOTE: ownership — Zig returns a `URL` borrowing from a freshly-allocated
-    // owned slice (`href.toOwnedSlice`); caller frees `url.href` later. Per
-    // PORTING.md §Forbidden (no Box::leak / mem::forget / unsafe lifetime
-    // extension), Rust returns an `OwnedURL` that owns the buffer; callers borrow
+    // Ownership: returns an `OwnedURL` that owns the buffer; callers borrow
     // via `.url()` and Drop frees it.
-    pub fn from_string(input: &BunString) -> Result<OwnedURL, bun_core::Error> {
+    pub fn from_string(input: &BunString) -> crate::Result<OwnedURL> {
         let href = whatwg::href_from_string(input);
         if href.tag() == BunStringTag::Dead {
-            return Err(bun_core::err!("InvalidURL"));
+            return Err(crate::Error::InvalidURL);
         }
-        // Zig: `defer href.deref()` — `to_owned_slice` is infallible so explicit
+        // `to_owned_slice` is infallible so explicit
         // ordering suffices (no error path between alloc and deref).
         let owned = href.to_owned_slice().into_boxed_slice();
         href.deref();
         Ok(OwnedURL { href: owned })
-    }
-
-    pub fn from_utf8(input: &[u8]) -> Result<OwnedURL, bun_core::Error> {
-        Self::from_string(&BunString::borrow_utf8(input))
-    }
-
-    pub fn is_localhost(&self) -> bool {
-        self.hostname.is_empty() || self.hostname == b"localhost" || self.hostname == b"0.0.0.0"
-    }
-
-    #[inline]
-    pub fn is_unix(&self) -> bool {
-        self.protocol.starts_with(b"unix")
     }
 
     pub fn display_protocol(&self) -> &[u8] {
@@ -409,17 +343,19 @@ impl<'a> URL<'a> {
         b"http"
     }
 
+    // RFC 3986 §3.1: the scheme is case-insensitive. `URL::parse` borrows
+    // `protocol` from the input without normalizing, so compare accordingly.
     #[inline]
     pub fn is_https(&self) -> bool {
-        self.protocol == b"https"
+        strings::eql_case_insensitive_ascii(self.protocol, b"https", true)
     }
     #[inline]
     pub fn is_s3(&self) -> bool {
-        self.protocol == b"s3"
+        strings::eql_case_insensitive_ascii(self.protocol, b"s3", true)
     }
     #[inline]
     pub fn is_http(&self) -> bool {
-        self.protocol == b"http"
+        strings::eql_case_insensitive_ascii(self.protocol, b"http", true)
     }
 
     pub fn display_hostname(&self) -> &[u8] {
@@ -431,16 +367,14 @@ impl<'a> URL<'a> {
     }
 
     pub fn s3_path(&self) -> &'a [u8] {
-        // we need to remove protocol if exists and ignore searchParams, should be host + pathname
-        let href = if !self.protocol.is_empty() && self.href.len() > self.protocol.len() + 2 {
+        if !self.protocol.is_empty() && self.href.len() > self.protocol.len() + 2 {
             &self.href[self.protocol.len() + 2..]
         } else {
             self.href
-        };
-        &href[0..href.len() - (self.search.len() + self.hash.len())]
+        }
     }
 
-    pub fn display_host(&self) -> bun_fmt::HostFormatter<'_> {
+    pub(crate) fn display_host(&self) -> bun_fmt::HostFormatter<'_> {
         bun_fmt::HostFormatter {
             host: if !self.host.is_empty() {
                 self.host
@@ -456,9 +390,7 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// Zig: `std.fmt.allocPrint(alloc, "{s}://{f}/{s}/", .{
-    ///     url.displayProtocol(), url.displayHost(),
-    ///     std.mem.trim(u8, url.pathname, "/") })`.
+    /// Formats `<displayProtocol>://<displayHost>/<trimmed pathname>/`.
     ///
     /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
     /// `Display`); the other two pieces are raw byte slices, so we assemble
@@ -481,7 +413,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn has_http_like_protocol(&self) -> bool {
-        self.protocol == b"http" || self.protocol == b"https"
+        self.is_http() || self.is_https()
     }
 
     pub fn get_port(&self) -> Option<u16> {
@@ -492,12 +424,12 @@ impl<'a> URL<'a> {
         self.get_port().unwrap_or_else(|| self.get_default_port())
     }
 
-    pub fn get_default_port(&self) -> u16 {
+    pub(crate) fn get_default_port(&self) -> u16 {
         if self.is_https() { 443u16 } else { 80u16 }
     }
 
     pub fn is_ip_address(&self) -> bool {
-        strings::is_ip_address(self.hostname)
+        bun_core::ip_address::is_ip_address(self.hostname)
     }
 
     pub fn has_valid_port(&self) -> bool {
@@ -512,15 +444,23 @@ impl<'a> URL<'a> {
         !self.hostname.is_empty() && !self.pathname.is_empty()
     }
 
-    pub fn join_normalize<'b>(
+    #[inline]
+    #[allow(
+        invalid_value,
+        clippy::uninit_assumed_init,
+        clippy::undocumented_unsafe_blocks
+    )]
+    fn join_buf_uninit() -> [u8; 2048] {
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+    }
+
+    pub(crate) fn join_normalize<'b>(
         out: &'b mut [u8],
         prefix: &[u8],
         dirname: &[u8],
         basename: &[u8],
         extname: &[u8],
     ) -> &'b [u8] {
-        let mut buf = [0u8; 2048];
-
         let mut path_parts: [&[u8]; 10] = [b""; 10];
         let mut path_end: usize = 0;
 
@@ -552,12 +492,23 @@ impl<'a> URL<'a> {
             path_end += 1;
         }
 
+        let mut total: usize = 0;
+        for part in &path_parts[0..path_end] {
+            total += part.len();
+        }
+        let mut buf_stack = Self::join_buf_uninit();
+        let mut buf_heap: Vec<u8>;
+        let buf: &mut [u8] = if total <= buf_stack.len() {
+            &mut buf_stack
+        } else {
+            buf_heap = vec![0u8; total];
+            &mut buf_heap
+        };
         let mut buf_i: usize = 0;
         for part in &path_parts[0..path_end] {
             buf[buf_i..buf_i + part.len()].copy_from_slice(part);
             buf_i += part.len();
         }
-        // Zig: resolve_path.normalizeStringBuf(buf[0..buf_i], out, false, .loose, false)
         resolve_path::normalize_string_buf::<false, platform::Loose, false>(&buf[0..buf_i], out)
     }
 
@@ -568,12 +519,18 @@ impl<'a> URL<'a> {
         dirname: &[u8],
         basename: &[u8],
         extname: &[u8],
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        let mut out = [0u8; 2048];
-        let normalized_path = Self::join_normalize(&mut out, prefix, dirname, basename, extname);
+    ) -> crate::Result<()> {
+        let needed = 2 + prefix.len() + dirname.len() + basename.len() + extname.len();
+        let mut out_stack = Self::join_buf_uninit();
+        let mut out_heap: Vec<u8>;
+        let out: &mut [u8] = if needed <= out_stack.len() {
+            &mut out_stack
+        } else {
+            out_heap = vec![0u8; needed];
+            &mut out_heap
+        };
+        let normalized_path = Self::join_normalize(out, prefix, dirname, basename, extname);
 
-        // Zig: writer.print("{s}/{s}", .{ this.origin, normalized_path })
         writer.write_all(self.origin)?;
         writer.write_all(b"/")?;
         writer.write_all(normalized_path)?;
@@ -587,21 +544,26 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
         absolute_path: &[u8],
-    ) -> Result<Box<[u8]>, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::Result<Box<[u8]>> {
         let has_uplevels = strings::index_of(dirname, b"../").is_some();
 
         if has_uplevels {
-            // std.fmt.allocPrint("{s}/abs:{s}")
             let mut v = Vec::with_capacity(self.origin.len() + 5 + absolute_path.len());
             v.extend_from_slice(self.origin);
             v.extend_from_slice(b"/abs:");
             v.extend_from_slice(absolute_path);
             Ok(v.into_boxed_slice())
         } else {
-            let mut out = [0u8; 2048];
-            let normalized_path =
-                Self::join_normalize(&mut out, prefix, dirname, basename, extname);
+            let needed = 2 + prefix.len() + dirname.len() + basename.len() + extname.len();
+            let mut out_stack = Self::join_buf_uninit();
+            let mut out_heap: Vec<u8>;
+            let out: &mut [u8] = if needed <= out_stack.len() {
+                &mut out_stack
+            } else {
+                out_heap = vec![0u8; needed];
+                &mut out_heap
+            };
+            let normalized_path = Self::join_normalize(out, prefix, dirname, basename, extname);
             let mut v = Vec::with_capacity(self.origin.len() + 1 + normalized_path.len());
             v.extend_from_slice(self.origin);
             v.extend_from_slice(b"/");
@@ -614,9 +576,10 @@ impl<'a> URL<'a> {
         if base.is_empty() {
             return URL::default();
         }
-        let mut url = URL::default();
-        url.href = base;
-        // PORT NOTE: Zig uses u31; Rust has no u31 — using u32 (values never approach 2^31).
+        let mut url = URL {
+            href: base,
+            ..Default::default()
+        };
         let mut offset: u32 = 0;
         match base[0] {
             b'@' => {
@@ -736,7 +699,7 @@ impl<'a> URL<'a> {
         url
     }
 
-    pub fn parse_protocol(&mut self, str: &'a [u8]) -> Option<u32> {
+    pub(crate) fn parse_protocol(&mut self, str: &'a [u8]) -> Option<u32> {
         if str.len() < b"://".len() {
             return None;
         }
@@ -758,7 +721,7 @@ impl<'a> URL<'a> {
         None
     }
 
-    pub fn parse_username(&mut self, str: &'a [u8]) -> Option<u32> {
+    pub(crate) fn parse_username(&mut self, str: &'a [u8]) -> Option<u32> {
         // reset it
         self.username = b"";
 
@@ -782,7 +745,7 @@ impl<'a> URL<'a> {
         None
     }
 
-    pub fn parse_password(&mut self, str: &'a [u8]) -> Option<u32> {
+    pub(crate) fn parse_password(&mut self, str: &'a [u8]) -> Option<u32> {
         // reset it
         self.password = b"";
 
@@ -794,13 +757,11 @@ impl<'a> URL<'a> {
                 b'@' => {
                     // we found a password, everything before this point in the slice is a password
                     self.password = &str[0..i];
-                    if cfg!(debug_assertions) {
-                        debug_assert!(
-                            str[i..].len() < 2
-                                || u16::from_le_bytes([str[i], str[i + 1]])
-                                    != u16::from_le_bytes(*b"//")
-                        );
-                    }
+                    debug_assert!(
+                        str[i..].len() < 2
+                            || u16::from_le_bytes([str[i], str[i + 1]])
+                                != u16::from_le_bytes(*b"//")
+                    );
                     return Some(u32::try_from(i + 1).expect("int cast"));
                 }
                 // if we reach a slash or "?", there's no password
@@ -813,7 +774,7 @@ impl<'a> URL<'a> {
         None
     }
 
-    pub fn parse_host(&mut self, str: &'a [u8]) -> Option<u32> {
+    pub(crate) fn parse_host(&mut self, str: &'a [u8]) -> Option<u32> {
         let mut i: u32 = 0;
 
         // reset it
@@ -901,27 +862,23 @@ impl<'a> URL<'a> {
 
 #[derive(Clone, Copy)]
 pub struct Param {
-    pub name: api::StringPointer,
-    pub name_hash: u64,
-    pub value: api::StringPointer,
+    pub(crate) name: api::StringPointer,
+    pub(crate) name_hash: u64,
+    pub(crate) value: api::StringPointer,
 }
 
-// PERF(port): Zig uses `std.MultiArrayList(Param)` for SoA cache-friendly column
-// scans. bun_collections::MultiArrayList exists but requires `MultiArrayElement`
-// (no derive macro yet). Using Vec<Param> (AoS) for now — semantically identical;
-// revisit once `` lands.
-// TODO(b2-blocked): bun_collections::MultiArrayList derive
-pub type ParamList = Vec<Param>;
+// Vec<Param> (AoS); SoA would be a perf optimization only.
+pub(crate) type ParamList = Vec<Param>;
 
 /// QueryString array-backed hash table that does few allocations and preserves the original order
 pub struct QueryStringMap {
-    // PORT NOTE: allocator field dropped — global mimalloc per PORTING.md.
-    // TODO(port): `slice` is self-referential (points into `buffer`) when decoding
+    // Allocator field dropped — global mimalloc per PORTING.md.
+    // `slice` is self-referential (points into `buffer`) when decoding
     // happened, otherwise borrows the caller's query_string. Stored as raw fat ptr.
     slice: *const [u8],
-    pub buffer: Vec<u8>,
-    pub list: ParamList,
-    pub name_count: Option<usize>,
+    pub(crate) buffer: Vec<u8>,
+    pub(crate) list: ParamList,
+    pub(crate) name_count: Option<usize>,
 }
 
 impl Clone for QueryStringMap {
@@ -931,14 +888,17 @@ impl Clone for QueryStringMap {
         // If the original `slice` did NOT point into our own buffer (the
         // nothing-needs-decoding fast path borrows the caller's query_string),
         // keep it as-is — both clones borrow the same external slice.
-        let slice = if !self.buffer.is_empty()
-            && bun_alloc::is_slice_in_buffer(unsafe { &*self.slice }, &self.buffer)
-        {
-            let len = unsafe { &*self.slice }.len();
-            &raw const buffer[..len]
-        } else {
-            self.slice
-        };
+        // SAFETY: `self.slice` is valid for the lifetime of `self` — it either points
+        // into `self.buffer` (decoding path) or borrows an external query_string the
+        // caller keeps alive (nothing-needs-decoding fast path).
+        let self_slice = unsafe { &*self.slice };
+        let slice =
+            if !self.buffer.is_empty() && bun_alloc::is_slice_in_buffer(self_slice, &self.buffer) {
+                let len = self_slice.len();
+                &raw const buffer[..len]
+            } else {
+                self.slice
+            };
         Self {
             slice,
             buffer,
@@ -949,7 +909,7 @@ impl Clone for QueryStringMap {
 }
 
 thread_local! {
-    // PORT NOTE: unused in current code (commented-out path in get_name_count)
+    // Unused in current code (commented-out path in get_name_count).
     static NAME_COUNT_BUF: RefCell<[*const [u8]; 8]> = const { RefCell::new([std::ptr::from_ref::<[u8]>(&[]); 8]) };
 }
 
@@ -971,51 +931,11 @@ impl QueryStringMap {
         Iterator::init(self)
     }
 
-    pub fn str(&self, ptr: api::StringPointer) -> &[u8] {
+    pub(crate) fn str(&self, ptr: api::StringPointer) -> &[u8] {
         // SAFETY: `slice` is valid for the lifetime of `self` (either borrows
         // `self.buffer` or an external query_string the caller keeps alive).
         let slice = unsafe { &*self.slice };
         &slice[ptr.offset as usize..ptr.offset as usize + ptr.length as usize]
-    }
-
-    pub fn get_index(&self, input: &[u8]) -> Option<usize> {
-        let hash = wyhash(input);
-        self.list.iter().position(|p| p.name_hash == hash)
-    }
-
-    pub fn get(&self, input: &[u8]) -> Option<&[u8]> {
-        let hash = wyhash(input);
-        let i = self.list.iter().position(|p| p.name_hash == hash)?;
-        Some(self.str(self.list[i].value))
-    }
-
-    pub fn has(&self, input: &[u8]) -> bool {
-        self.get_index(input).is_some()
-    }
-
-    pub fn get_all<'s>(&'s self, input: &[u8], target: &mut [&'s [u8]]) -> usize {
-        let hash = wyhash(input);
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
-        self.get_all_with_hash_from_offset(target, hash, 0)
-    }
-
-    pub fn get_all_with_hash_from_offset<'s>(
-        &'s self,
-        target: &mut [&'s [u8]],
-        hash: u64,
-        offset: usize,
-    ) -> usize {
-        let mut remainder = &self.list[offset..];
-        let mut target_i: usize = 0;
-        while !remainder.is_empty() && target_i < target.len() {
-            let Some(i) = remainder.iter().position(|p| p.name_hash == hash) else {
-                break;
-            };
-            target[target_i] = self.str(remainder[i].value);
-            remainder = &remainder[i + 1..];
-            target_i += 1;
-        }
-        target_i
     }
 
     pub fn init_with_scanner(
@@ -1038,7 +958,10 @@ impl QueryStringMap {
 
         debug_assert!(count > 0); // We should not call initWithScanner when there are no path params
 
-        while let Some(result) = scanner.query.next() {
+        while count < MAX_QUERY_STRING_PARAMS {
+            let Some(result) = scanner.query.next() else {
+                break;
+            };
             if result.name_needs_decoding || result.value_needs_decoding {
                 nothing_needs_decoding = false;
             }
@@ -1050,7 +973,7 @@ impl QueryStringMap {
             return Ok(None);
         }
 
-        list.reserve(count); // PERF(port): was ensureTotalCapacity
+        list.reserve(count.min(MAX_QUERY_STRING_PARAMS));
         scanner.reset();
 
         // this over-allocates
@@ -1059,6 +982,9 @@ impl QueryStringMap {
         let mut buf_writer_pos: u32 = 0;
 
         while let Some(result) = scanner.pathname.next() {
+            if list.len() >= MAX_QUERY_STRING_PARAMS {
+                break;
+            }
             let mut name = result.name;
             let mut value = result.value;
             let name_slice = result.raw_name(scanner.pathname.routename);
@@ -1070,17 +996,12 @@ impl QueryStringMap {
 
             let name_hash: u64 = wyhash(name_slice);
 
-            value.length = match PercentEncoding::decode(
-                &mut buf,
-                result.raw_value(scanner.pathname.pathname),
-            ) {
-                Ok(n) => n,
-                Err(_) => continue,
-            };
+            let value_slice = result.raw_value(scanner.pathname.pathname);
+            value.length = u32::try_from(value_slice.len()).unwrap();
             value.offset = buf_writer_pos;
+            buf.extend_from_slice(value_slice);
             buf_writer_pos += value.length;
 
-            // PERF(port): was appendAssumeCapacity
             list.push(Param {
                 name,
                 value,
@@ -1091,6 +1012,9 @@ impl QueryStringMap {
         let route_parameter_begin = list.len();
 
         while let Some(result) = scanner.query.next() {
+            if list.len() >= MAX_QUERY_STRING_PARAMS {
+                break;
+            }
             let mut name = result.name;
             let mut value = result.value;
             let name_hash: u64;
@@ -1100,11 +1024,21 @@ impl QueryStringMap {
                     &scanner.query.query_string[name.offset as usize..][..name.length as usize],
                 ) {
                     Ok(n) => n,
-                    Err(_) => continue,
+                    Err(_) => {
+                        buf.truncate(buf_writer_pos as usize);
+                        continue;
+                    }
                 };
                 name.offset = buf_writer_pos;
                 buf_writer_pos += name.length;
                 name_hash = wyhash(&buf[name.offset as usize..][..name.length as usize]);
+                if let Some(index) = list.iter().position(|p| p.name_hash == name_hash) {
+                    if index < route_parameter_begin {
+                        continue;
+                    }
+
+                    name = list[index].name;
+                }
             } else {
                 name_hash = wyhash(result.raw_name(scanner.query.query_string));
                 if let Some(index) = list.iter().position(|p| p.name_hash == name_hash) {
@@ -1121,7 +1055,10 @@ impl QueryStringMap {
                         &scanner.query.query_string[name.offset as usize..][..name.length as usize],
                     ) {
                         Ok(n) => n,
-                        Err(_) => continue,
+                        Err(_) => {
+                            buf.truncate(buf_writer_pos as usize);
+                            continue;
+                        }
                     };
                     name.offset = buf_writer_pos;
                     buf_writer_pos += name.length;
@@ -1133,12 +1070,14 @@ impl QueryStringMap {
                 &scanner.query.query_string[value.offset as usize..][..value.length as usize],
             ) {
                 Ok(n) => n,
-                Err(_) => continue,
+                Err(_) => {
+                    buf.truncate(buf_writer_pos as usize);
+                    continue;
+                }
             };
             value.offset = buf_writer_pos;
             buf_writer_pos += value.length;
 
-            // PERF(port): was appendAssumeCapacity
             list.push(Param {
                 name,
                 value,
@@ -1165,7 +1104,10 @@ impl QueryStringMap {
         let mut estimated_str_len: usize = 0;
 
         let mut nothing_needs_decoding = true;
-        while let Some(result) = scanner.next() {
+        while count < MAX_QUERY_STRING_PARAMS {
+            let Some(result) = scanner.next() else {
+                break;
+            };
             if result.name_needs_decoding || result.value_needs_decoding {
                 nothing_needs_decoding = false;
             }
@@ -1178,18 +1120,20 @@ impl QueryStringMap {
         }
 
         scanner = Scanner::init(query_string);
-        list.reserve(count); // PERF(port): was ensureTotalCapacity
+        list.reserve(count);
 
         if nothing_needs_decoding {
             scanner = Scanner::init(query_string);
             while let Some(result) = scanner.next() {
+                if list.len() >= MAX_QUERY_STRING_PARAMS {
+                    break;
+                }
                 debug_assert!(!result.name_needs_decoding);
                 debug_assert!(!result.value_needs_decoding);
 
                 let name = result.name;
                 let value = result.value;
                 let name_hash: u64 = wyhash(result.raw_name(query_string));
-                // PERF(port): was appendAssumeCapacity
                 list.push(Param {
                     name,
                     value,
@@ -1200,7 +1144,7 @@ impl QueryStringMap {
             return Ok(Some(QueryStringMap {
                 list,
                 buffer: Vec::new(),
-                // TODO(port): borrows external query_string; lifetime not tracked in Phase A
+                // `slice` borrows the caller's query_string; lifetime not tracked here
                 slice: std::ptr::from_ref::<[u8]>(query_string),
                 name_count: None,
             }));
@@ -1209,9 +1153,11 @@ impl QueryStringMap {
         let mut buf: Vec<u8> = Vec::with_capacity(estimated_str_len);
         let mut buf_writer_pos: u32 = 0;
 
-        // PORT NOTE: reshaped for borrowck — Zig captured `list.slice()` once outside
-        // the loop; here we re-slice per iteration to avoid holding a borrow across push().
+        // Re-slice per iteration to avoid holding a borrow across push().
         while let Some(result) = scanner.next() {
+            if list.len() >= MAX_QUERY_STRING_PARAMS {
+                break;
+            }
             let mut name = result.name;
             let mut value = result.value;
             let name_hash: u64;
@@ -1221,7 +1167,10 @@ impl QueryStringMap {
                     &query_string[name.offset as usize..][..name.length as usize],
                 ) {
                     Ok(n) => n,
-                    Err(_) => continue,
+                    Err(_) => {
+                        buf.truncate(buf_writer_pos as usize);
+                        continue;
+                    }
                 };
                 name.offset = buf_writer_pos;
                 buf_writer_pos += name.length;
@@ -1236,7 +1185,10 @@ impl QueryStringMap {
                         &query_string[name.offset as usize..][..name.length as usize],
                     ) {
                         Ok(n) => n,
-                        Err(_) => continue,
+                        Err(_) => {
+                            buf.truncate(buf_writer_pos as usize);
+                            continue;
+                        }
                     };
                     name.offset = buf_writer_pos;
                     buf_writer_pos += name.length;
@@ -1248,12 +1200,14 @@ impl QueryStringMap {
                 &query_string[value.offset as usize..][..value.length as usize],
             ) {
                 Ok(n) => n,
-                Err(_) => continue,
+                Err(_) => {
+                    buf.truncate(buf_writer_pos as usize);
+                    continue;
+                }
             };
             value.offset = buf_writer_pos;
             buf_writer_pos += value.length;
 
-            // PERF(port): was appendAssumeCapacity
             list.push(Param {
                 name,
                 value,
@@ -1271,17 +1225,18 @@ impl QueryStringMap {
     }
 }
 
-// Assume no query string param map will exceed 2048 keys
-// Browsers typically limit URL lengths to around 64k
-// PORT NOTE: Zig `StaticBitSet(2048)` resolves to `ArrayBitSet(usize, 2048)`.
-// bun_collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
-// pick ArrayBitSet directly. 2048 / 64 == 32 masks.
-type VisitedMap = ArrayBitSet<2048, { num_masks_for(2048) }>;
+// Browsers typically limit URL lengths to around 64k.
+// IntegerBitSet caps at ≤64 bits, so pick ArrayBitSet directly. 2048 / 64 == 32 masks.
+/// Hard cap on parsed query-string parameters, enforced in `init` /
+/// `init_with_scanner` so the fixed-size `VisitedMap` bitset is never indexed
+/// out of bounds.
+const MAX_QUERY_STRING_PARAMS: usize = 2048;
+type VisitedMap = ArrayBitSet<MAX_QUERY_STRING_PARAMS, { num_masks_for(MAX_QUERY_STRING_PARAMS) }>;
 
 pub struct Iterator<'a> {
-    pub i: usize,
-    pub map: &'a QueryStringMap,
-    pub visited: VisitedMap,
+    pub(crate) i: usize,
+    pub(crate) map: &'a QueryStringMap,
+    pub(crate) visited: VisitedMap,
 }
 
 pub struct IteratorResult<'a, 't> {
@@ -1290,7 +1245,8 @@ pub struct IteratorResult<'a, 't> {
 }
 
 impl<'a> Iterator<'a> {
-    pub fn init(map: &'a QueryStringMap) -> Iterator<'a> {
+    pub(crate) fn init(map: &'a QueryStringMap) -> Iterator<'a> {
+        debug_assert!(map.list.len() <= MAX_QUERY_STRING_PARAMS);
         Iterator {
             i: 0,
             map,
@@ -1298,12 +1254,12 @@ impl<'a> Iterator<'a> {
         }
     }
 
-    // TODO(port): lifetime on `target`/return — values borrow target, name borrows map.slice
+    // Lifetimes: values borrow `target` ('t), name borrows `map.slice` ('a).
     pub fn next<'t>(&mut self, target: &'t mut [&'a [u8]]) -> Option<IteratorResult<'a, 't>>
     where
         'a: 't,
     {
-        while self.visited.is_set(self.i) {
+        while self.i < self.map.list.len() && self.visited.is_set(self.i) {
             self.i += 1;
         }
         if self.i >= self.map.list.len() {
@@ -1330,9 +1286,7 @@ impl<'a> Iterator<'a> {
             .position(|p| p.name_hash == hash)
         {
             let real_i = current_i + next_index + self.i;
-            if cfg!(debug_assertions) {
-                debug_assert!(!self.visited.is_set(real_i));
-            }
+            debug_assert!(!self.visited.is_set(real_i));
 
             self.visited.set(real_i);
             target[target_i] = self.map.str(remainder[current_i + next_index].value);
@@ -1376,19 +1330,21 @@ impl From<bun_core::Error> for DecodeError {
         DecodeError::Write(e)
     }
 }
-impl From<DecodeError> for bun_core::Error {
+impl From<DecodeError> for crate::Error {
     fn from(e: DecodeError) -> Self {
         match e {
-            DecodeError::DecodingError => bun_core::err!("DecodingError"),
-            DecodeError::Write(inner) => inner,
+            DecodeError::DecodingError => crate::Error::DecodingError,
+            DecodeError::Write(inner) => crate::Error::Core(inner),
         }
     }
 }
 
 impl PercentEncoding {
-    pub fn decode(writer: &mut impl bun_core::io::Write, input: &[u8]) -> Result<u32, DecodeError> {
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
-        Self::decode_fault_tolerant::<_, false>(writer, input, None)
+    pub(crate) fn decode(
+        writer: &mut impl bun_core::io::Write,
+        input: &[u8],
+    ) -> Result<u32, DecodeError> {
+        Self::decode_fault_tolerant::<_, false>(writer, input)
     }
 
     /// Decode percent-encoded input into allocated memory.
@@ -1398,8 +1354,6 @@ impl PercentEncoding {
         let mut buf: Vec<u8> = Vec::with_capacity(input.len());
         // errdefer allocator.free(buf) — Vec drops automatically on error
 
-        // TODO(port): Zig used fixedBufferStream into a pre-sized [u8; input.len];
-        // here we just write into a Vec and truncate.
         let len = Self::decode(&mut buf, input)?;
 
         buf.truncate(len as usize);
@@ -1416,9 +1370,7 @@ impl PercentEncoding {
     pub fn decode_fault_tolerant<W: bun_core::io::Write, const FAULT_TOLERANT: bool>(
         writer: &mut W,
         input: &[u8],
-        needs_redirect: Option<&mut bool>,
     ) -> Result<u32, DecodeError> {
-        let mut needs_redirect = needs_redirect;
         let mut i: usize = 0;
         let mut written: u32 = 0;
         // unlike JavaScript's decodeURIComponent, we are not handling invalid surrogate pairs
@@ -1436,14 +1388,11 @@ impl PercentEncoding {
                             // This is an invalid %-encoded string, intended to be swapped out at build time by webpack-html-plugin
                             // We don't process HTML, so rewriting this URL path won't happen
                             // But we want to be a little more fault tolerant here than just throwing up an error for something that works in other tools
-                            // So we just skip over it and issue a redirect
-                            // We issue a redirect because various other tooling client-side may validate URLs
-                            // We can't expect other tools to be as fault tolerant
+                            // So we just skip over it
                             if i + b"PUBLIC_URL%".len() < input.len()
                                 && &input[i + 1..][..b"PUBLIC_URL%".len()] == b"PUBLIC_URL%"
                             {
                                 i += b"PUBLIC_URL%".len() + 1;
-                                *needs_redirect.as_deref_mut().unwrap() = true;
                                 continue;
                             }
                             return Err(DecodeError::DecodingError);
@@ -1483,26 +1432,24 @@ impl PercentEncoding {
     }
 }
 
-// TODO(b0): FormData re-export removed — bun_runtime (T6) is upward.
-// Callers should import from bun_runtime::webcore::form_data
-// directly (or move-in pass relocates FormData here if it belongs at T2).
-// pub use bun_runtime::webcore::form_data::FormData;
+// FormData intentionally not re-exported here: bun_runtime (T6) is upward of
+// this crate. Callers import from bun_runtime::webcore::form_data directly.
 
 // ══════════════════════════════════════════════════════════════════════════
 // Scanners
 // ══════════════════════════════════════════════════════════════════════════
 
 #[derive(Clone, Copy)]
-pub struct ScannerResult {
-    pub name_needs_decoding: bool,
-    pub value_needs_decoding: bool,
-    pub name: api::StringPointer,
-    pub value: api::StringPointer,
+struct ScannerResult {
+    pub(crate) name_needs_decoding: bool,
+    pub(crate) value_needs_decoding: bool,
+    pub(crate) name: api::StringPointer,
+    pub(crate) value: api::StringPointer,
 }
 
 impl ScannerResult {
     #[inline]
-    pub fn raw_name<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
+    fn raw_name<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
         if self.name.length > 0 {
             &query_string[self.name.offset as usize..][..self.name.length as usize]
         } else {
@@ -1511,7 +1458,7 @@ impl ScannerResult {
     }
 
     #[inline]
-    pub fn raw_value<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
+    fn raw_value<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
         if self.value.length > 0 {
             &query_string[self.value.offset as usize..][..self.value.length as usize]
         } else {
@@ -1521,8 +1468,8 @@ impl ScannerResult {
 }
 
 pub struct CombinedScanner<'a> {
-    pub query: Scanner<'a>,
-    pub pathname: PathnameScanner<'a>,
+    pub(crate) query: Scanner<'a>,
+    pub(crate) pathname: PathnameScanner<'a>,
 }
 
 impl<'a> CombinedScanner<'a> {
@@ -1538,13 +1485,9 @@ impl<'a> CombinedScanner<'a> {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.query.reset();
         self.pathname.reset();
-    }
-
-    pub fn next(&mut self) -> Option<ScannerResult> {
-        self.pathname.next().or_else(|| self.query.next())
     }
 }
 
@@ -1570,23 +1513,23 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
 }
 
 pub struct PathnameScanner<'a> {
-    pub params: &'a ParamsList<'a>,
-    pub pathname: &'a [u8],
-    pub routename: &'a [u8],
-    pub i: usize,
+    pub(crate) params: &'a ParamsList<'a>,
+    pub(crate) pathname: &'a [u8],
+    pub(crate) routename: &'a [u8],
+    pub(crate) i: usize,
 }
 
 impl<'a> PathnameScanner<'a> {
     #[inline]
-    pub fn is_done(&self) -> bool {
+    pub(crate) fn is_done(&self) -> bool {
         self.params.len() <= self.i
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.i = 0;
     }
 
-    pub fn init(
+    pub(crate) fn init(
         pathname: &'a [u8],
         routename: &'a [u8],
         params: &'a ParamsList<'a>,
@@ -1599,7 +1542,7 @@ impl<'a> PathnameScanner<'a> {
         }
     }
 
-    pub fn next(&mut self) -> Option<ScannerResult> {
+    pub(crate) fn next(&mut self) -> Option<ScannerResult> {
         if self.is_done() {
             return None;
         }
@@ -1613,19 +1556,19 @@ impl<'a> PathnameScanner<'a> {
             name_needs_decoding: false,
             // TODO: fix this technical debt
             value: string_pointer_from_strings(self.pathname, param.value),
-            value_needs_decoding: strings::index_of_char(param.value, b'%').is_some(),
+            value_needs_decoding: false,
         })
     }
 }
 
 pub struct Scanner<'a> {
-    pub query_string: &'a [u8],
-    pub i: usize,
-    pub start: usize,
+    pub(crate) query_string: &'a [u8],
+    pub(crate) i: usize,
+    pub(crate) start: usize,
 }
 
 impl<'a> Scanner<'a> {
-    pub fn init(query_string: &'a [u8]) -> Scanner<'a> {
+    pub(crate) fn init(query_string: &'a [u8]) -> Scanner<'a> {
         if !query_string.is_empty() && query_string[0] == b'?' {
             return Scanner {
                 query_string,
@@ -1642,15 +1585,14 @@ impl<'a> Scanner<'a> {
     }
 
     #[inline]
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.i = self.start;
     }
 
     /// Get the next query string parameter without allocating memory.
-    pub fn next(&mut self) -> Option<ScannerResult> {
+    pub(crate) fn next(&mut self) -> Option<ScannerResult> {
         let mut relative_i: usize = 0;
-        // PORT NOTE: Zig used `defer this.i += relative_i;` — emulated by applying
-        // the deferred add at every return point.
+        // `relative_i` is added to `this.i` at every return point.
 
         // reuse stack space
         // otherwise we'd recursively call the function
@@ -1689,13 +1631,12 @@ impl<'a> Scanner<'a> {
                             relative_i += 1;
                         }
                         value.length = u32::try_from(relative_i - offset).unwrap();
+                        self.i += relative_i;
                         // If the name is empty and it's just a value, skip it.
                         // This is kind of an opinion. But, it's hard to see where that might be intentional.
                         if name.length == 0 {
-                            self.i += relative_i;
-                            return None;
+                            continue 'outer;
                         }
-                        self.i += relative_i;
                         return Some(ScannerResult {
                             name,
                             value,
@@ -1750,5 +1691,3 @@ impl<'a> Scanner<'a> {
         }
     }
 }
-
-// ported from: src/url/url.zig

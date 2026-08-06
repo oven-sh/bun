@@ -4,15 +4,13 @@ use std::io::Write as _;
 
 use bun_core::ZigString;
 use bun_io::KeepAlive;
-use bun_jsc::{
-    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
-};
-// `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
-// `bun_event_loop`); pull the concrete types out by name.
 use bun_jsc::event_loop::EventLoop;
+use bun_jsc::{
+    self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult,
+    WorkPoolTask,
+};
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
-use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString as JscZigString;
@@ -21,37 +19,16 @@ use bun_threading::work_pool::WorkPool;
 
 use crate::node::StringOrBuffer;
 
-// std.crypto.pwhash — Zig stdlib argon2/bcrypt. API-surface shim lives at
-// `crypto::pwhash` (this dir); vendor impl (Rust `argon2`/`bcrypt` crates or
-// Zig-stdlib staticlib) is wired there, not here.
+// The argon2/bcrypt API-surface shim lives at `crypto::pwhash` (this dir);
+// the implementation is wired there, not here.
 use super::pwhash;
 use bun_sha_hmac::SHA512;
-
-// ───────────────────────────────────────────────────────────────────────────
-// gated upstream in bun_jsc; provide a file-local shim matching the Zig
-// `globalObject.throwNotEnoughArguments(name, expected, got)` shape.
-// ───────────────────────────────────────────────────────────────────────────
-
-trait JSGlobalObjectPasswordExt {
-    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> JsError;
-}
-impl JSGlobalObjectPasswordExt for JSGlobalObject {
-    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> JsError {
-        self.throw_invalid_arguments(format_args!(
-            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
-        ))
-    }
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // PasswordObject
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct PasswordObject;
-
-impl PasswordObject {
-    // pub const pwhash = std.crypto.pwhash;  — re-export dropped; see `use` above.
-}
+pub(crate) struct PasswordObject;
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[repr(u8)]
@@ -66,22 +43,21 @@ pub enum Algorithm {
     Bcrypt,
 }
 
-/// Zig: `Algorithm.Value = union(Algorithm)`
 #[derive(Copy, Clone)]
 pub enum AlgorithmValue {
     Argon2i(Argon2Params),
     Argon2d(Argon2Params),
     Argon2id(Argon2Params),
     /// bcrypt only accepts "cost"
-    Bcrypt(u8), // Zig: u6
+    Bcrypt(u8),
 }
 
 impl AlgorithmValue {
-    pub const BCRYPT_DEFAULT: u8 = 10; // Zig name has typo `bcrpyt_default`; preserved as const
+    pub(crate) const BCRYPT_DEFAULT: u8 = 10;
 
-    pub const DEFAULT: AlgorithmValue = AlgorithmValue::Argon2id(Argon2Params::DEFAULT);
+    pub(crate) const DEFAULT: AlgorithmValue = AlgorithmValue::Argon2id(Argon2Params::DEFAULT);
 
-    pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<AlgorithmValue> {
+    fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<AlgorithmValue> {
         if value.is_object() {
             if let Some(algorithm_value) = value.get_truthy(global_object, "algorithm")? {
                 if !algorithm_value.is_string() {
@@ -94,7 +70,6 @@ impl AlgorithmValue {
 
                 let algorithm_string = algorithm_value.get_zig_string(global_object)?;
 
-                // Zig: ComptimeStringMap.getWithEql(ZigString, ZigString.eqlComptime) —
                 // ZigString may be UTF-16; compare each label via `eql_comptime`.
                 let Some(algo) = algorithm_from_zig_string(&algorithm_string) else {
                     return Err(global_object.throw_invalid_argument_type(
@@ -125,7 +100,6 @@ impl AlgorithmValue {
                             algorithm = AlgorithmValue::Bcrypt(
                                 u8::try_from(rounds).expect("int cast") & 0x3F,
                             );
-                            // Zig: @as(u6, @intCast(rounds))
                         }
 
                         return Ok(algorithm);
@@ -161,16 +135,18 @@ impl AlgorithmValue {
 
                             let memory_cost = memory_value.coerce_to_i32(global_object)?;
 
-                            if memory_cost < 1 {
+                            // argon2 requires `memoryCost >= 8 * parallelism`;
+                            // Bun hard-codes `parallelism = 1` (see
+                            // `Argon2Params::to_params`), so the floor is 8.
+                            if memory_cost < 8 {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Memory cost must be greater than 0"
+                                    "Memory cost must be at least 8"
                                 )));
                             }
 
                             argon.memory_cost = u32::try_from(memory_cost).expect("int cast");
                         }
 
-                        // Zig: @unionInit(Algorithm.Value, @tagName(tag), argon)
                         return Ok(match algo {
                             Algorithm::Argon2id => AlgorithmValue::Argon2id(argon),
                             Algorithm::Argon2d => AlgorithmValue::Argon2d(argon),
@@ -178,10 +154,6 @@ impl AlgorithmValue {
                             Algorithm::Bcrypt => unreachable!(),
                         });
                     }
-                }
-                #[allow(unreachable_code)]
-                {
-                    unreachable!()
                 }
             } else {
                 return Err(global_object.throw_invalid_argument_type(
@@ -218,15 +190,10 @@ impl AlgorithmValue {
         } else {
             return Err(global_object.throw_invalid_argument_type("hash", "algorithm", "string"));
         }
-        #[allow(unreachable_code)]
-        {
-            unreachable!()
-        }
     }
 }
 
-/// Zig: `Algorithm.label.getWithEql(input, ZigString.eqlComptime)`.
-/// `bun_core::ZigString` may be UTF-16 so a direct `phf` byte lookup is
+/// `bun_core::ZigString` may be UTF-16 so a direct byte-map lookup is
 /// unsound; compare each (4-entry) label via the encoding-aware `eql_comptime`.
 fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
     if s.eql_comptime(b"argon2i") {
@@ -245,19 +212,17 @@ fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
 #[derive(Copy, Clone)]
 pub struct Argon2Params {
     // we don't support the other options right now, but can add them later if someone asks
-    pub memory_cost: u32,
-    pub time_cost: u32,
+    pub(crate) memory_cost: u32,
+    pub(crate) time_cost: u32,
 }
 
 impl Argon2Params {
-    // TODO(port): pwhash.argon2.Params.interactive_2id.{m,t} — hard-code Zig stdlib's
-    // values here once the pwhash shim is settled.
-    pub const DEFAULT: Argon2Params = Argon2Params {
+    const DEFAULT: Argon2Params = Argon2Params {
         memory_cost: pwhash::argon2::Params::INTERACTIVE_2ID_M,
         time_cost: pwhash::argon2::Params::INTERACTIVE_2ID_T,
     };
 
-    pub fn to_params(self) -> pwhash::argon2::Params {
+    fn to_params(self) -> pwhash::argon2::Params {
         pwhash::argon2::Params {
             t: self.time_cost,
             m: self.memory_cost,
@@ -273,17 +238,6 @@ impl Default for Argon2Params {
 }
 
 impl Algorithm {
-    pub const ARGON2: Algorithm = Algorithm::Argon2id;
-
-    pub const LABEL: phf::Map<&'static [u8], Algorithm> = phf::phf_map! {
-        b"argon2i" => Algorithm::Argon2i,
-        b"argon2d" => Algorithm::Argon2d,
-        b"argon2id" => Algorithm::Argon2id,
-        b"bcrypt" => Algorithm::Bcrypt,
-    };
-
-    pub const DEFAULT: Algorithm = Algorithm::ARGON2;
-
     pub fn get(pw: &[u8]) -> Option<Algorithm> {
         if pw[0] != b'$' {
             return None;
@@ -313,14 +267,13 @@ impl Algorithm {
     }
 }
 
-/// Zig: `pub const HashError = pwhash.Error || error{UnsupportedAlgorithm};`
-/// Phase A: collapse into bun_core::Error (NonZeroU16 tag). The pwhash shim
-/// must `impl From<pwhash::Error> for bun_core::Error`.
-pub type HashError = bun_core::Error;
+/// `crate::Error` (NonZeroU16 tag). The pwhash shim
+/// must `impl From<pwhash::Error> for crate::Error`.
+pub(crate) type HashError = crate::Error;
 
 impl PasswordObject {
     // This is purposely simple because nobody asked to make it more complicated
-    pub fn hash(password: &[u8], algorithm: AlgorithmValue) -> Result<Box<[u8]>, HashError> {
+    pub(crate) fn hash(password: &[u8], algorithm: AlgorithmValue) -> Result<Box<[u8]>, HashError> {
         match algorithm {
             AlgorithmValue::Argon2i(argon)
             | AlgorithmValue::Argon2d(argon)
@@ -348,9 +301,8 @@ impl PasswordObject {
                 let mut outbuf = [0u8; 4096];
                 // bcrypt silently truncates passwords longer than 72 bytes
                 // we use SHA512 to hash the password if it's longer than 72 bytes
-                // PORT NOTE: reshaped for borrowck — Zig aliased `outbuf` for both the
-                // SHA digest and the remaining output slice; here the digest gets its own
-                // 64-byte buffer (SHA512::final wants `&mut [u8; DIGEST]`).
+                // The digest gets its own 64-byte buffer
+                // (SHA512::final wants `&mut [u8; DIGEST]`).
                 let mut digest = [0u8; SHA512::DIGEST];
                 let mut password_to_use = password;
                 let outbuf_slice: &mut [u8];
@@ -358,7 +310,6 @@ impl PasswordObject {
                     let mut sha_512 = SHA512::init();
                     sha_512.update(password);
                     sha_512.r#final(&mut digest);
-                    // sha_512 dropped here (Zig: defer sha_512.deinit())
                     password_to_use = &digest;
                     outbuf_slice = &mut outbuf[SHA512::DIGEST..];
                 } else {
@@ -380,7 +331,7 @@ impl PasswordObject {
         }
     }
 
-    pub fn verify(
+    pub(crate) fn verify(
         password: &[u8],
         previous_hash: &[u8],
         algorithm: Option<Algorithm>,
@@ -391,13 +342,13 @@ impl PasswordObject {
 
         let algo = match algorithm.or_else(|| Algorithm::get(previous_hash)) {
             Some(a) => a,
-            None => return Err(bun_core::err!("UnsupportedAlgorithm")),
+            None => return Err(crate::Error::UnsupportedAlgorithm),
         };
 
         Self::verify_with_algorithm(password, previous_hash, algo)
     }
 
-    pub fn verify_with_algorithm(
+    pub(crate) fn verify_with_algorithm(
         password: &[u8],
         previous_hash: &[u8],
         algorithm: Algorithm,
@@ -406,12 +357,8 @@ impl PasswordObject {
             Algorithm::Argon2id | Algorithm::Argon2d | Algorithm::Argon2i => {
                 match pwhash::argon2::str_verify(previous_hash, password, Default::default()) {
                     Ok(()) => Ok(true),
-                    Err(err) => {
-                        if err == bun_core::err!("PasswordVerificationFailed") {
-                            return Ok(false);
-                        }
-                        Err(err)
-                    }
+                    Err(crate::Error::PasswordVerificationFailed) => Ok(false),
+                    Err(err) => Err(err),
                 }
             }
             Algorithm::Bcrypt => {
@@ -434,12 +381,8 @@ impl PasswordObject {
                     },
                 ) {
                     Ok(()) => Ok(true),
-                    Err(err) => {
-                        if err == bun_core::err!("PasswordVerificationFailed") {
-                            return Ok(false);
-                        }
-                        Err(err)
-                    }
+                    Err(crate::Error::PasswordVerificationFailed) => Ok(false),
+                    Err(err) => Err(err),
                 }
             }
         }
@@ -450,7 +393,7 @@ impl PasswordObject {
 // JSPasswordObject
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct JSPasswordObject;
+pub(crate) struct JSPasswordObject;
 
 struct PascalToUpperUnderscoreCaseFormatter<'a> {
     input: &'a [u8],
@@ -473,7 +416,7 @@ impl fmt::Display for PascalToUpperUnderscoreCaseFormatter<'_> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JSValue {
+extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_object, 4);
     // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named
     // `__jsc_host_<fn>`; pass that (not the safe Rust fn) to JSFunction.
@@ -526,17 +469,17 @@ pub extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JS
 
 // ─── PasswordOp: generic hash/verify off-thread job ───────────────────────
 //
-// HashJob/HashResult and VerifyJob/VerifyResult in the Zig source are
-// byte-for-byte twins differing only in (a) extra input fields, (b) success
+// Hash and verify jobs differ only in (a) extra input fields, (b) success
 // payload type + JS conversion, (c) the verb in the error message. Collapse
 // both into one `PasswordJob<Op>` / `PasswordResult<Op>` parameterised on a
 // `PasswordOp` carrying exactly those three axes.
 
-trait PasswordOp: 'static {
+pub(crate) trait PasswordOp: 'static {
     /// Success payload (`Box<[u8]>` for hash, `bool` for verify).
     type Value;
     /// "hashing" | "verification" — slotted into the JS Error message.
     const ERR_VERB: &'static str;
+    const TASK_TAG: bun_event_loop::TaskTag;
     /// Off-thread compute. `self` borrows the op so its inputs stay owned by
     /// the job and are `free_sensitive`d in the job's / op's `Drop`.
     fn compute(&self, password: &[u8]) -> Result<Self::Value, HashError>;
@@ -544,22 +487,23 @@ trait PasswordOp: 'static {
     fn to_js(value: Self::Value, g: &JSGlobalObject) -> JSValue;
 }
 
-struct HashOp {
+pub(crate) struct HashOp {
     algorithm: AlgorithmValue,
 }
 impl PasswordOp for HashOp {
     type Value = Box<[u8]>;
     const ERR_VERB: &'static str = "hashing";
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PasswordHashResult;
     fn compute(&self, password: &[u8]) -> Result<Box<[u8]>, HashError> {
         PasswordObject::hash(password, self.algorithm)
     }
     fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
         JscZigString::init(&value).to_js(g)
-        // `value` drops here — Zig: defer bun.default_allocator.free(value)
+        // `value` drops here.
     }
 }
 
-struct VerifyOp {
+pub(crate) struct VerifyOp {
     prev_hash: Box<[u8]>,
     algorithm: Option<Algorithm>,
 }
@@ -573,6 +517,7 @@ impl Drop for VerifyOp {
 impl PasswordOp for VerifyOp {
     type Value = bool;
     const ERR_VERB: &'static str = "verification";
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PasswordVerifyResult;
     fn compute(&self, password: &[u8]) -> Result<bool, HashError> {
         PasswordObject::verify(password, &self.prev_hash, self.algorithm)
     }
@@ -582,7 +527,7 @@ impl PasswordOp for VerifyOp {
 }
 
 /// Build the JS `Error` instance for a failed hash/verify, with `code` set
-/// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>` (Zig: `toErrorInstance`).
+/// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>`.
 fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
     let mut error_code: Vec<u8> = Vec::new();
     write!(
@@ -624,47 +569,41 @@ impl<Op: PasswordOp> Drop for PasswordJob<Op> {
 bun_threading::owned_task!([Op: PasswordOp] PasswordJob<Op>, task);
 
 impl<Op: PasswordOp> PasswordJob<Op> {
+    // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local
+    // is a false positive on this macro contract.
+    #[allow(clippy::boxed_local)]
     fn run_owned(mut self: Box<Self>) {
         let value = self.op.compute(&self.password);
-        let result = bun_core::heap::into_raw(Box::new(PasswordResult::<Op> {
+        let result = Box::new(PasswordResult::<Op> {
             value,
-            task: AnyTask::default(), // overwritten below
             promise: core::mem::take(&mut self.promise),
             global: self.global,
             r#ref: core::mem::take(&mut self.r#ref),
-        }));
-        // SAFETY: `result` was just heap-allocated and is not yet shared
-        // (enqueue happens after this write).
-        unsafe {
-            (*result).task = AnyTask::from_typed(result, PasswordResult::<Op>::run_from_js_erased);
-        }
+        });
         // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the
-        // job; ownership of `result` transfers to the event loop here. `task` is
-        // an intrusive field at a stable address.
+        // job; ownership of `result` transfers to the event loop here.
         unsafe {
-            (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
-                core::ptr::addr_of_mut!((*result).task),
+            (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
+                bun_event_loop::Task::from_boxed(result),
             ));
         }
         // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
     }
 }
 
-struct PasswordResult<Op: PasswordOp> {
+pub(crate) struct PasswordResult<Op: PasswordOp> {
     value: Result<Op::Value, HashError>,
     r#ref: KeepAlive,
-    task: AnyTask,
     promise: JSPromiseStrong,
     global: *const JSGlobalObject,
 }
 
-impl<Op: PasswordOp> PasswordResult<Op> {
-    fn run_from_js_erased(p: *mut Self) -> AnyTaskJsResult<()> {
-        Self::run_from_js(p)
-            .map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
-    }
+impl<Op: PasswordOp> bun_event_loop::Taskable for PasswordResult<Op> {
+    const TAG: bun_event_loop::TaskTag = Op::TASK_TAG;
+}
 
-    fn run_from_js(this: *mut Self) -> Result<(), jsc::JsTerminated> {
+impl<Op: PasswordOp> PasswordResult<Op> {
+    pub(crate) fn run_from_js(this: *mut Self) -> Result<(), jsc::JsTerminated> {
         // SAFETY: `this` was produced by heap::into_raw in `run_owned` and the
         // event loop hands sole ownership to this callback. Reclaim the Box once
         // up-front so all fields drop on scope exit (no `mem::replace` dance).
@@ -674,7 +613,6 @@ impl<Op: PasswordOp> PasswordResult<Op> {
             mut r#ref,
             mut promise,
             global,
-            task: _,
         } = this;
         // SAFETY: `global` stored from a live `&JSGlobalObject`; VM outlives the task.
         let global = unsafe { &*global };
@@ -735,7 +673,7 @@ impl JSPasswordObject {
         Ok(promise_value)
     }
 
-    pub fn hash<const SYNC: bool>(
+    pub(crate) fn hash<const SYNC: bool>(
         global_object: &JSGlobalObject,
         password: Box<[u8]>,
         algorithm: AlgorithmValue,
@@ -743,7 +681,7 @@ impl JSPasswordObject {
         Self::run::<HashOp, SYNC>(global_object, password, HashOp { algorithm })
     }
 
-    pub fn verify<const SYNC: bool>(
+    pub(crate) fn verify<const SYNC: bool>(
         global_object: &JSGlobalObject,
         password: Box<[u8]>,
         prev_hash: Box<[u8]>,
@@ -764,12 +702,11 @@ impl JSPasswordObject {
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub fn js_password_object_hash(
+fn js_password_object_hash(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 1 {
         return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
@@ -804,12 +741,11 @@ pub fn js_password_object_hash(
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub fn js_password_object_hash_sync(
+fn js_password_object_hash_sync(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 1 {
         return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
@@ -836,9 +772,8 @@ pub fn js_password_object_hash_sync(
         );
     }
 
-    // PORT NOTE: sync path borrows the slice; pass as Box for unified signature.
-    // TODO(port): hash<true> only needs &[u8]; consider splitting sync/async to
-    // avoid the copy. Zig passed the borrowed slice directly.
+    // The sync path only needs `&[u8]`; copy into a Box to share the async
+    // signature.
     JSPasswordObject::hash::<true>(
         global_object,
         Box::<[u8]>::from(string_or_buffer.slice()),
@@ -850,12 +785,11 @@ pub fn js_password_object_hash_sync(
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub fn js_password_object_verify(
+fn js_password_object_verify(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<3>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 2 {
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
@@ -931,12 +865,11 @@ pub fn js_password_object_verify(
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub fn js_password_object_verify_sync(
+fn js_password_object_verify_sync(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<3>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 2 {
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
@@ -966,7 +899,7 @@ pub fn js_password_object_verify_sync(
         };
     }
 
-    let Some(password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
+    let Some(mut password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
         return Err(global_object.throw_invalid_argument_type(
             "verify",
             "password",
@@ -983,6 +916,10 @@ pub fn js_password_object_verify_sync(
         ));
     };
 
+    if let StringOrBuffer::Buffer(buffer) = &mut password {
+        buffer.buffer = ArrayBuffer::from_typed_array(global_object, buffer.buffer.value);
+    }
+
     // defer password.deinit() / hash_.deinit() — Drop at scope exit.
 
     if hash_.slice().is_empty() {
@@ -993,8 +930,8 @@ pub fn js_password_object_verify_sync(
         return Ok(JSValue::FALSE);
     }
 
-    // TODO(port): sync path only needs &[u8]; copying into Box here to share
-    // signature with async. Zig passed borrowed slices.
+    // The sync path only needs `&[u8]`; copy into Boxes to share the async
+    // signature.
     JSPasswordObject::verify::<true>(
         global_object,
         Box::<[u8]>::from(password.slice()),
@@ -1004,5 +941,3 @@ pub fn js_password_object_verify_sync(
 }
 
 const UNKNOWN_PASSWORD_ALGORITHM_MESSAGE: &str = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
-
-// ported from: src/runtime/crypto/PasswordObject.zig

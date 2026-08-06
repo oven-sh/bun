@@ -9,6 +9,14 @@ if (mode !== "clear" && mode !== "refresh" && mode !== "repeat") {
   throw new Error("usage: <clear|refresh|repeat>");
 }
 
+// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
+// run far higher under bun-asan; widen the threshold to avoid false positives.
+const isASAN = process.execPath.includes("bun-asan");
+const rss =
+  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
+
 const BATCH = 2_000;
 
 function gc() {
@@ -56,11 +64,11 @@ async function runBatch() {
 // warmup
 for (let i = 0; i < 15; i++) await runBatch();
 gc();
-const initial = process.memoryUsage.rss();
+const initial = rss();
 
 for (let i = 0; i < 100; i++) await runBatch();
 gc();
-const final = process.memoryUsage.rss();
+const final = rss();
 const deltaMB = (final - initial) / 1024 / 1024;
 console.log("mode:", mode);
 console.log("initial RSS:", (initial / 1024 / 1024) | 0, "MB");
@@ -75,7 +83,9 @@ if (globalThis.Bun) {
 }
 
 // Before the fix, 100 * 2_000 leaked TimeoutObjects (~100 bytes each) ≈ 20 MB.
-// After the fix the delta is ~0 MB (noise).
-if (deltaMB > 10) {
+// After the fix the delta is ~0 MB (noise). The ASAN threshold accounts for
+// quarantine + debug-assertions overhead (release-asan compiles with
+// debug-assertions on, which adds live code paths ASAN instruments).
+if (deltaMB > (isASAN ? 192 : 10)) {
   throw new Error("Memory leak detected: RSS grew by " + deltaMB.toFixed(1) + " MB");
 }

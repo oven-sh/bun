@@ -25,16 +25,11 @@ namespace Inspector {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorLifecycleAgent);
 
-// Zig bindings implementation
+// Rust bindings implementation
 extern "C" {
 
 void Bun__LifecycleAgentEnable(Inspector::InspectorLifecycleAgent* agent);
 void Bun__LifecycleAgentDisable(Inspector::InspectorLifecycleAgent* agent);
-
-void Bun__LifecycleAgentReportReload(Inspector::InspectorLifecycleAgent* agent)
-{
-    agent->reportReload();
-}
 
 void Bun__LifecycleAgentReportError(Inspector::InspectorLifecycleAgent* agent, ZigException* exception)
 {
@@ -43,9 +38,6 @@ void Bun__LifecycleAgentReportError(Inspector::InspectorLifecycleAgent* agent, Z
 
     agent->reportError(*exception);
 }
-
-void Bun__LifecycleAgentPreventExit(Inspector::InspectorLifecycleAgent* agent);
-void Bun__LifecycleAgentStopPreventingExit(Inspector::InspectorLifecycleAgent* agent);
 }
 
 InspectorLifecycleAgent::InspectorLifecycleAgent(JSC::JSGlobalObject& globalObject)
@@ -90,14 +82,6 @@ Protocol::ErrorStringOr<void> InspectorLifecycleAgent::disable()
     m_enabled = false;
     Bun__LifecycleAgentDisable(this);
     return {};
-}
-
-void InspectorLifecycleAgent::reportReload()
-{
-    if (!m_enabled)
-        return;
-
-    m_frontendDispatcher->reload();
 }
 
 void InspectorLifecycleAgent::reportError(ZigException& exception)

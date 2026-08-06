@@ -10,7 +10,7 @@ exports[`auto-install symlinks (and junctions) are created correctly in the inst
 
 exports[`text lockfile workspace sorting 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -45,7 +45,7 @@ exports[`text lockfile workspace sorting 1`] = `
 
 exports[`text lockfile workspace sorting 2`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -88,7 +88,7 @@ exports[`text lockfile workspace sorting 2`] = `
 
 exports[`text lockfile --frozen-lockfile 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -120,7 +120,7 @@ exports[`text lockfile --frozen-lockfile 1`] = `
 
 exports[`binaries each type of binary serializes correctly to text lockfile 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -170,7 +170,7 @@ exports[`binaries root resolution bins 1`] = `
 
 exports[`hoisting text lockfile is hoisted 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -280,7 +280,7 @@ exports[`outdated NO_COLOR works 1`] = `
 
 exports[`it should ignore peerDependencies within workspaces 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {

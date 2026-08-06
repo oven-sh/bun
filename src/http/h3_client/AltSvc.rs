@@ -22,8 +22,8 @@ use crate::h3_client::h3_client;
 /// lifetime in seconds (default 24 h per §3.1).
 #[derive(Copy, Clone)]
 pub struct Entry {
-    pub port: u16,
-    pub ma: u32,
+    pub(crate) port: u16,
+    pub(crate) ma: u32,
 }
 
 impl Default for Entry {
@@ -37,11 +37,6 @@ pub enum ParseError {
     #[error("Clear")]
     Clear,
 }
-impl From<ParseError> for bun_core::Error {
-    fn from(e: ParseError) -> Self {
-        bun_core::err!("Clear")
-    }
-}
 
 /// Parse the first usable `h3` alternative out of an `Alt-Svc` field-value, or
 /// `None` if none / `clear`. Tolerant of extra whitespace and unknown params.
@@ -54,7 +49,7 @@ impl From<ParseError> for bun_core::Error {
 ///
 /// Returns `Err(ParseError::Clear)` for the literal `clear` so the caller can
 /// drop the cache entry.
-pub fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
+pub(crate) fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
     let value = strings::trim(field_value, b" \t");
     if value.is_empty() {
         return Ok(None);
@@ -131,9 +126,8 @@ struct Record {
     expires_at: i64,
 }
 
-// TODO(port): module-level mutable state. Zig used a plain `var`; safe because
-// every access is on the single HTTP thread (see module doc). Phase B may want
-// a `SyncUnsafeCell` / thread-local instead of `static mut`.
+// module-level mutable state; safe because
+// every access is on the single HTTP thread (see module doc).
 // PORTING.md §Global mutable state: HTTP-thread-only map → RacyCell.
 static CACHE: bun_core::RacyCell<Option<StringHashMap<Record>>> = bun_core::RacyCell::new(None);
 
@@ -156,46 +150,30 @@ const MAX_ENTRIES: usize = 256;
 
 fn key<'a>(buf: &'a mut [u8], hostname: &[u8], port: u16) -> &'a [u8] {
     // Callers guard `hostname.len > 256` against a `256+8` buffer, and a u16
-    // port is at most 5 digits + ':' — bufPrint cannot overflow.
+    // port is at most 5 digits + ':' — the write cannot overflow.
     use std::io::Write;
     let mut cursor: &mut [u8] = buf;
-    // Zig `{s}` writes raw bytes; bstr Display would lossy-expand invalid UTF-8
+    // bstr Display would lossy-expand invalid UTF-8
     // (1 byte → 3-byte U+FFFD) and could overflow the bound above. Write the
     // hostname verbatim, then format only the port.
     cursor.write_all(hostname).expect("unreachable");
     write!(cursor, ":{}", port).expect("unreachable");
-    // PORT NOTE: reshaped for borrowck — capture remaining len before reborrowing buf.
+    // reshaped for borrowck — capture remaining len before reborrowing buf.
     let remaining = cursor.len();
     let written = buf.len() - remaining;
     &buf[..written]
 }
 
 fn sweep_expired(now: i64) {
-    let cache = cache();
-    // Unmanaged hash-map iteration is not removal-safe; restart after each removal.
-    // TODO(port): `StringHashMap` API — assumes `iter()` yielding `(&Box<[u8]>, &Record)`
-    // and `remove(&[u8])` that drops the owned key. Adjust to actual bun_collections API.
-    'outer: loop {
-        let mut to_remove: Option<Box<[u8]>> = None;
-        for (k, v) in cache.iter() {
-            if now >= v.expires_at {
-                to_remove = Some(Box::<[u8]>::from(&**k));
-                break;
-            }
-        }
-        match to_remove {
-            Some(k) => {
-                cache.remove(&k[..]);
-            }
-            None => break 'outer,
-        }
-    }
+    // `retain` (hashbrown, via DerefMut) is removal-safe during iteration;
+    // dropping each removed entry frees its owned key.
+    cache().retain(|_, v| now < v.expires_at);
 }
 
 /// Remember (or refresh / clear) the h3 alternative for `origin_host:origin_port`
 /// from a received `Alt-Svc` field-value. Runs on the HTTP thread inside
 /// `handleResponseMetadata`.
-pub fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
+pub(crate) fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
     let mut buf = [0u8; 256 + 8];
     if origin_host.len() > 256 {
         return;
@@ -222,7 +200,7 @@ pub fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
             return;
         }
     }
-    // PORT NOTE: `StringHashMap::put` dupes the key on insert (matches Zig getOrPut).
+    // `StringHashMap::put` dupes the key on insert.
     let _ = cache().put(
         k,
         Record {
@@ -242,7 +220,7 @@ pub fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
 /// Look up a previously-advertised h3 alternative for `origin_host:origin_port`.
 /// Expired entries are dropped on access. Runs on the HTTP thread inside
 /// `start_()`.
-pub fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
+pub(crate) fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
     let mut buf = [0u8; 256 + 8];
     if origin_host.len() > 256 {
         return None;
@@ -255,7 +233,3 @@ pub fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
     }
     Some(rec.h3_port)
 }
-
-// ─── helpers ──────────────────────────────────────────────────────────────
-
-// ported from: src/http/h3_client/AltSvc.zig

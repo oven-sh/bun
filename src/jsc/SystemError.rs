@@ -1,72 +1,78 @@
 use core::ffi::c_int;
 use core::fmt;
 
-use bun_core::String;
+use bun_core::{OwnedString, String};
 
 use crate::{JSGlobalObject, JSPromise, JSValue};
 
 #[repr(C)]
+#[derive(Clone)]
 pub struct SystemError {
     pub errno: c_int,
     /// label for errno
-    pub code: String,
+    pub code: OwnedString,
     /// it is illegal to have an empty message
-    pub message: String,
-    pub path: String,
-    pub syscall: String,
-    pub hostname: String,
+    pub message: OwnedString,
+    pub path: OwnedString,
+    pub syscall: OwnedString,
+    pub hostname: OwnedString,
     /// MinInt = no file descriptor
     pub fd: c_int,
-    pub dest: String,
+    pub dest: OwnedString,
 }
 
-// Zig `extern struct` field defaults: `errno=0, code/path/syscall/hostname/dest=.empty,
-// fd=c_int::MIN`. Provide `Default` so call sites can `..Default::default()`-init the
-// way Zig partial-inits.
 impl Default for SystemError {
     fn default() -> Self {
         Self {
             errno: 0,
-            code: String::default(),
-            message: String::default(),
-            path: String::default(),
-            syscall: String::default(),
-            hostname: String::default(),
+            code: OwnedString::default(),
+            message: OwnedString::default(),
+            path: OwnedString::default(),
+            syscall: OwnedString::default(),
+            hostname: OwnedString::default(),
             fd: c_int::MIN,
-            dest: String::default(),
+            dest: OwnedString::default(),
         }
     }
 }
 
-/// Reshape the T1 `bun_sys::SystemError` (non-`#[repr(C)]`, different field
-/// order) into the `#[repr(C)]` extern layout C++ reads. In Zig there is one
-/// `jsc.SystemError`; the Rust port split data (T1) from the JSC bridge (T6) —
-/// this `From` is the canonical layering seam (see PORTING.md §_jsc bridge).
+/// Reshape the T1 `bun_sys::SystemError` into the `#[repr(C)]` extern layout
+/// C++ reads. Data (T1) is split from the JSC bridge (T6) — this `From` is
+/// the canonical layering seam.
 impl From<bun_sys::SystemError> for SystemError {
     fn from(e: bun_sys::SystemError) -> Self {
+        let bun_sys::SystemError {
+            errno,
+            code,
+            message,
+            path,
+            syscall,
+            hostname,
+            fd,
+            dest,
+        } = e;
         Self {
-            errno: e.errno as c_int,
-            code: e.code,
-            message: e.message,
-            path: e.path,
-            syscall: e.syscall,
-            hostname: e.hostname,
-            fd: e.fd as c_int,
-            dest: e.dest,
+            errno: errno as c_int,
+            code,
+            message,
+            path,
+            syscall,
+            hostname,
+            fd: fd.unwrap_or(c_int::MIN),
+            dest,
         }
     }
 }
 
-/// `union(enum) { err: SystemError, result: Result }` — collapsed to a
-/// `core::result::Result` alias in Phase F so callers get `?` for free.
-pub type Maybe<R> = core::result::Result<R, SystemError>;
-
-// TODO(port): move to jsc_sys
 // SAFETY (safe fn): `SystemError` is `#[repr(C)]` and read-only on the C++ side;
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed handle, so `&JSGlobalObject`
 // is ABI-identical to a non-null `JSGlobalObject*` with write provenance.
 unsafe extern "C" {
     safe fn SystemError__toErrorInstance(this: &SystemError, global: &JSGlobalObject) -> JSValue;
+    safe fn SystemError__toTypeErrorInstance(
+        this: &SystemError,
+        global: &JSGlobalObject,
+    ) -> JSValue;
     safe fn SystemError__toErrorInstanceWithInfoObject(
         this: &SystemError,
         global: &JSGlobalObject,
@@ -74,49 +80,16 @@ unsafe extern "C" {
 }
 
 impl SystemError {
-    #[inline]
-    pub fn get_errno(&self) -> bun_sys::E {
-        bun_sys::e_from_negated(self.errno)
+    /// Converts to a JS `Error`, consuming `self`. C++ only borrows the string
+    /// fields; `Drop` releases them when `self` goes out of scope. `.clone()`
+    /// first when two `Error`s are genuinely wanted.
+    pub fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
+        SystemError__toErrorInstance(&self, global)
     }
 
-    pub fn deref(&self) {
-        self.path.deref();
-        self.code.deref();
-        self.message.deref();
-        self.syscall.deref();
-        self.hostname.deref();
-        self.dest.deref();
-    }
-
-    pub fn ref_(&mut self) {
-        self.path.ref_();
-        self.code.ref_();
-        self.message.ref_();
-        self.syscall.ref_();
-        self.hostname.ref_();
-        self.dest.ref_();
-    }
-
-    /// Bitwise-copy + bump every `bun_core::String` ref. Mirrors Zig
-    /// `var v = this.*; v.ref();` (used by `Body.ValueError.dupe`).
-    /// `bun_core::String` has no `Clone` impl (intrusive WTF refcount), so
-    /// `#[derive(Clone)]` is unavailable; this is the manual equivalent.
-    pub fn dupe(&self) -> SystemError {
-        // SAFETY: `SystemError` is `#[repr(C)]` and every field is either `c_int`
-        // (trivially copyable) or `bun_core::String` — a `#[repr(C)]` smart-ptr
-        // whose bitwise copy is sound provided we immediately bump each ref
-        // (preventing a double-free on drop). This is exactly the Zig spec
-        // `var v = this.*; v.ref();`.
-        let mut v: SystemError = unsafe { core::ptr::read(self) };
-        v.ref_();
-        v
-    }
-
-    pub fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        // Zig: defer this.deref();
-        let result = SystemError__toErrorInstance(self, global);
-        self.deref();
-        result
+    /// `to_error_instance` but as a JS `TypeError` (keeps `.code`/`.path`/...).
+    pub fn to_type_error_instance(self, global: &JSGlobalObject) -> JSValue {
+        SystemError__toTypeErrorInstance(&self, global)
     }
 
     /// Like `to_error_instance` but populates the error's stack trace with async
@@ -124,7 +97,7 @@ impl SystemError {
     /// from native code at the top of the event loop (threadpool callback) to
     /// reject a promise — otherwise the error will have an empty stack.
     pub fn to_error_instance_with_async_stack(
-        &self,
+        self,
         global: &JSGlobalObject,
         promise: &JSPromise,
     ) -> JSValue {
@@ -152,11 +125,8 @@ impl SystemError {
     /// Before using this function, consider if the Node.js API it is
     /// implementing follows this convention. It is exclusively used
     /// to match the error code that `node:os` throws.
-    pub fn to_error_instance_with_info_object(&self, global: &JSGlobalObject) -> JSValue {
-        // Zig: defer this.deref();
-        let result = SystemError__toErrorInstanceWithInfoObject(self, global);
-        self.deref();
-        result
+    pub fn to_error_instance_with_info_object(self, global: &JSGlobalObject) -> JSValue {
+        SystemError__toErrorInstanceWithInfoObject(&self, global)
     }
 }
 
@@ -166,7 +136,7 @@ impl SystemError {
 /// LAYERING: lives here (not `bun_runtime::socket::uws_jsc`) so both
 /// `bun_runtime` and `bun_sql_jsc` import the single canonical body — both
 /// crates already depend on `bun_jsc` + `bun_uws`, and the body touches
-/// nothing higher-tier. Spec: `src/runtime/socket/uws_jsc.zig`.
+/// nothing higher-tier.
 pub fn verify_error_to_js(
     err: &bun_uws::us_bun_verify_error_t,
     global: &JSGlobalObject,
@@ -175,8 +145,8 @@ pub fn verify_error_to_js(
     let reason: &[u8] = err.reason_bytes();
 
     let fallback = SystemError {
-        code: String::clone_utf8(code),
-        message: String::clone_utf8(reason),
+        code: String::clone_utf8(code).into(),
+        message: String::clone_utf8(reason).into(),
         ..Default::default()
     };
 
@@ -185,10 +155,9 @@ pub fn verify_error_to_js(
 
 impl fmt::Display for SystemError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): bun.Output.prettyFmt is a comptime color-tag → ANSI transformer that
-        // takes (fmt_str, comptime enable_colors) and returns a comptime-expanded format
-        // string. Phase B needs a `bun_core::pretty_fmt!` macro. The runtime bool → comptime
-        // dispatch (`switch (b) { inline else => |c| ... }`) is preserved as an if/else.
+        // Note: `bun_core::pretty_fmt!` expands color tags in the format
+        // string at compile time for both the colored and uncolored variants;
+        // the runtime ANSI-support check selects between them via if/else.
         if !self.path.is_empty() {
             // TODO: remove this hardcoding
             if bun_core::Output::enable_ansi_colors_stderr() {
@@ -224,5 +193,3 @@ impl fmt::Display for SystemError {
         }
     }
 }
-
-// ported from: src/jsc/SystemError.zig

@@ -27,8 +27,9 @@ expect.extend({
 
 let port: string;
 let add_dir: string;
+setDefaultTimeout(1000 * 60 * 5);
+
 beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
   port = new URL(root_url).port;
 });
 
@@ -2321,6 +2322,153 @@ it("should add local tarball dependency", async () => {
   expect(package_json.version).toBe("0.0.3");
   (expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
     await access(join(package_dir, "bun.lockb")));
+});
+
+it("should not add duplicate package.json entries when installing the same local folder twice (#30933)", async () => {
+  setHandler(dummyRegistry([]));
+  // `add_dir` is a fresh tmpdir created in beforeEach; use it as the local dep source.
+  await writeFile(
+    join(add_dir, "package.json"),
+    JSON.stringify({
+      name: "myproject",
+      version: "1.0.0",
+      bin: { myproject: "./index.js" },
+    }),
+  );
+  await writeFile(join(add_dir, "index.js"), 'console.log("hi")');
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "host",
+      version: "0.0.1",
+    }),
+  );
+
+  // The positional is the absolute path; parse_with_optional_tag will tag this as `.folder`.
+  // `bun add` normalises backslashes to forward slashes before writing package.json,
+  // so the stored literal uses `/` on Windows too.
+  const local_path = resolve(add_dir);
+  const stored_path = local_path.replace(/\\/g, "/");
+
+  // 1st run — clean, adds one entry keyed by the resolved package name.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", local_path],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    const out = await stdout.text();
+    expect(out).toContain("installed myproject@");
+    expect(await exited).toBe(0);
+  }
+
+  // 2nd run with the same path — must reuse the existing "myproject" key, not append a duplicate.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", local_path],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    // The meta-hash didn't change, but `bun add` re-saves every time.
+    expect(err).toContain("Saved lockfile");
+    const out = await stdout.text();
+    expect(out).toContain("installed myproject@");
+    expect(await exited).toBe(0);
+  }
+
+  // `JSON.parse` collapses duplicate keys — inspect the raw text to prove de-duplication.
+  const raw = await file(join(package_dir, "package.json")).text();
+  expect(raw.match(/"myproject"\s*:/g) ?? []).toHaveLength(1);
+  expect(JSON.parse(raw)).toStrictEqual({
+    name: "host",
+    version: "0.0.1",
+    dependencies: {
+      myproject: stored_path,
+    },
+  });
+});
+
+it("should not add duplicate package.json entries when installing the same tarball URL twice (#30499)", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(Bun.file(join(__dirname, "baz-0.0.3.tgz")));
+    },
+  });
+  const tarball_url = `${server.url.href.replace(/\/+$/, "")}/baz-0.0.3.tgz`;
+  setHandler(dummyRegistry([]));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+
+  // First install — key should be the package name from the tarball ("baz").
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", tarball_url],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).toContain("Saved lockfile");
+    const out = await stdout.text();
+    expect(out).toContain("installed baz@");
+    expect(await exited).toBe(0);
+  }
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      baz: tarball_url,
+    },
+  });
+
+  // Second install with the same URL — must not duplicate the "baz" key.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", tarball_url],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    // The meta-hash didn't change, but `bun add` re-saves every time.
+    expect(err).toContain("Saved lockfile");
+    const out = await stdout.text();
+    expect(out).toContain("installed baz@");
+    expect(await exited).toBe(0);
+  }
+
+  const raw = await file(join(package_dir, "package.json")).text();
+  expect(raw.match(/"baz"\s*:/g) ?? []).toHaveLength(1);
+  expect(JSON.parse(raw)).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      baz: tarball_url,
+    },
+  });
 });
 
 it("should add multiple dependencies specified on command line", async () => {

@@ -86,8 +86,8 @@ pub type z_free_func = free_func;
 // ---------------------------------------------------------------------------
 // zconf.h scalar typedefs — single source of truth.
 //
-// Previously duplicated in win32.rs (translate-c output) and bun_zlib::lib.rs
-// (hand-port of zlib.zig). All resolve to ABI-identical primitives on every
+// Previously duplicated in win32.rs and bun_zlib::lib.rs.
+// All resolve to ABI-identical primitives on every
 // target Bun ships; `uLong` = `unsigned long` (4B on LLP64 Windows, 8B on LP64
 // Unix) for the same reason zStream_struct above uses `c_ulong` directly.
 // ---------------------------------------------------------------------------
@@ -156,7 +156,7 @@ pub struct zStream_struct {
     pub user_data: *mut c_void,
 
     /// best guess about the data type: binary or text for deflate, or the decoding state for inflate
-    pub data_type: DataType,
+    pub data_type: c_int,
 
     /// Adler-32 or CRC-32 value of the uncompressed data
     pub adler: c_ulong,
@@ -166,13 +166,11 @@ pub struct zStream_struct {
 
 pub type z_stream = zStream_struct;
 pub type z_streamp = *mut z_stream;
-// translate-c spellings (win32.rs historically used these).
+// Alternate spellings (win32.rs historically used these).
 pub type struct_z_stream_s = zStream_struct;
 pub type z_stream_s = zStream_struct;
 
-// SAFETY: `#[repr(C)]` POD — raw pointers, integers, `Option<extern fn>`
-// allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
+// SAFETY: `#[repr(C)]` POD — raw pointers, integers, and `Option<extern fn>`
+// allocators. All-zero
 // is the documented pre-`inflateInit`/`deflateInit` state (S021).
 unsafe impl bun_core::ffi::Zeroable for zStream_struct {}
-
-// ported from: src/zlib_sys/shared.zig

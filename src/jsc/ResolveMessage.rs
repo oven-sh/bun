@@ -16,14 +16,13 @@ use crate::{
 #[crate::JsClass]
 pub struct ResolveMessage {
     pub msg: bun_ast::Msg,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator` here; dropped — fields own their
-    // allocations and free on Drop / finalize.
+    // Note: fields own their allocations and free on Drop / finalize.
     //
-    // PORT NOTE: Zig stored `referrer: ?Fs.Path` and only ever read `.text`;
+    // Note: only the referrer path's `.text` is ever read;
     // store the duped text directly so we don't pull in `bun_paths::fs::Path`
     // (which is lifetime-parameterised over its backing buffer).
-    pub referrer: Option<Box<[u8]>>,
-    pub logged: Cell<bool>,
+    pub(crate) referrer: Option<Box<[u8]>>,
+    pub(crate) logged: Cell<bool>,
 }
 
 impl Default for ResolveMessage {
@@ -63,7 +62,7 @@ impl ResolveMessage {
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<*mut ResolveMessage> {
-        Err(global.throw_illegal_constructor("ResolveMessage"))
+        Err(global.throw_illegal_constructor())
     }
 
     #[crate::host_fn(getter)]
@@ -134,7 +133,7 @@ impl ResolveMessage {
     pub fn fmt(
         specifier: &[u8],
         referrer: &[u8],
-        err: bun_core::Error,
+        err: crate::CrateError,
         import_kind: ImportKind,
     ) -> Vec<u8> {
         use bstr::BStr;
@@ -149,51 +148,57 @@ impl ResolveMessage {
             .ok();
             return out;
         }
-        // PORT NOTE: matching against interned bun_core::Error consts (Zig: `switch (err)`).
-        if err == bun_core::err!("ModuleNotFound") {
-            if referrer == b"bun:main" {
-                write!(&mut out, "Module not found '{}'", BStr::new(specifier)).ok();
+        // The same logical error can arrive nested (e.g. via
+        // `CrateError::Resolver(resolver::Error::ModuleNotFound)`), so dispatch
+        // on the tag string rather than structural equality.
+        match err.name() {
+            "ModuleNotFound" => {
+                if referrer == b"bun:main" {
+                    write!(&mut out, "Module not found '{}'", BStr::new(specifier)).ok();
+                    return out;
+                }
+                if bun_resolver::is_package_path(specifier)
+                    && !strings::contains_char(specifier, b'/')
+                {
+                    write!(
+                        &mut out,
+                        "Cannot find package '{}' from '{}'",
+                        BStr::new(specifier),
+                        BStr::new(referrer),
+                    )
+                    .ok();
+                } else {
+                    write!(
+                        &mut out,
+                        "Cannot find module '{}' from '{}'",
+                        BStr::new(specifier),
+                        BStr::new(referrer),
+                    )
+                    .ok();
+                }
                 return out;
             }
-            if bun_resolver::is_package_path(specifier) && !strings::contains_char(specifier, b'/')
-            {
+            "InvalidDataURL" => {
                 write!(
                     &mut out,
-                    "Cannot find package '{}' from '{}'",
+                    "Cannot resolve invalid data URL '{}' from '{}'",
                     BStr::new(specifier),
                     BStr::new(referrer),
                 )
                 .ok();
-            } else {
-                write!(
-                    &mut out,
-                    "Cannot find module '{}' from '{}'",
-                    BStr::new(specifier),
-                    BStr::new(referrer),
-                )
-                .ok();
+                return out;
             }
-            return out;
-        }
-        if err == bun_core::err!("InvalidDataURL") {
-            write!(
-                &mut out,
-                "Cannot resolve invalid data URL '{}' from '{}'",
-                BStr::new(specifier),
-                BStr::new(referrer),
-            )
-            .ok();
-            return out;
-        }
-        if err == bun_core::err!("InvalidURL") {
-            write!(
-                &mut out,
-                "Cannot resolve invalid URL '{}' from '{}'",
-                BStr::new(specifier),
-                BStr::new(referrer),
-            )
-            .ok();
-            return out;
+            "InvalidURL" => {
+                write!(
+                    &mut out,
+                    "Cannot resolve invalid URL '{}' from '{}'",
+                    BStr::new(specifier),
+                    BStr::new(referrer),
+                )
+                .ok();
+                return out;
+            }
+            _ => {}
         }
         // else
         if bun_resolver::is_package_path(specifier) {
@@ -218,7 +223,7 @@ impl ResolveMessage {
         out
     }
 
-    pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
         let mut text = Vec::new();
         if write!(
             &mut text,
@@ -237,8 +242,9 @@ impl ResolveMessage {
             return out;
         }
 
-        // TODO(port): `toExternalValue` transfers ownership of `text` to JSC; ensure
-        // `ZigString::to_external_value` consumes the Vec without double-free.
+        // `to_external_value` transfers ownership of `text` to JSC: the Box is
+        // leaked here (single transfer via `heap::release`) and freed exactly
+        // once by JSC's external-string finalizer with the global allocator.
         let leaked = text.into_boxed_slice();
         let mut str = ZigString::init(bun_core::heap::release(leaked));
         str.set_output_encoding();
@@ -261,8 +267,7 @@ impl ResolveMessage {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_ = callframe.arguments_old::<1>();
-        let args = &args_.ptr[0..args_.len];
+        let args = callframe.arguments();
         if !args.is_empty() {
             if !args[0].is_string() {
                 return Ok(JSValue::NULL);
@@ -294,7 +299,7 @@ impl ResolveMessage {
         Ok(object)
     }
 
-    /// Spec `ResolveMessage.create` (ResolveMessage.zig:166) — clone `msg` +
+    /// Clone `msg` +
     /// dupe `referrer` into a fresh heap-allocated `ResolveMessage` and wrap it
     /// in its JSC cell. `JsClass::to_js` boxes `self` and calls the C++-side
     /// `ResolveMessage__create(global, ptr)`; the resulting `m_ctx` is freed by
@@ -321,7 +326,7 @@ impl ResolveMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_message(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(&this.msg.data.text).to_js(global))
+        Ok(ZigString::init_utf8(&this.msg.data.text).to_js(global))
     }
 
     #[crate::host_fn(getter)]
@@ -333,10 +338,10 @@ impl ResolveMessage {
     pub fn get_specifier(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
-                ZigString::init(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
+                ZigString::init_utf8(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
             }
             // Unreachable in practice (ResolveMessage is only constructed for
-            // `.resolve` metadata) — Zig accessed the union arm unchecked.
+            // `.resolve` metadata).
             _ => ZigString::init(b"").to_js(global),
         })
     }
@@ -354,7 +359,7 @@ impl ResolveMessage {
     #[crate::host_fn(getter)]
     pub fn get_referrer(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(if let Some(referrer) = &this.referrer {
-            ZigString::init(referrer).to_js(global)
+            ZigString::init_utf8(referrer).to_js(global)
         } else {
             JSValue::NULL
         })
@@ -365,5 +370,3 @@ impl ResolveMessage {
         drop(self);
     }
 }
-
-// ported from: src/jsc/ResolveMessage.zig

@@ -1,29 +1,17 @@
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
-#![warn(unreachable_pub)]
-pub mod AnyTask;
 pub mod AnyTaskWithExtraContext;
-pub mod AutoFlusher;
 pub mod ConcurrentTask;
 pub mod DeferredTaskQueue;
 pub mod EventLoopTimer;
 pub mod ManagedTask;
 
 // ────────────────────────────────────────────────────────────────────────────
-// B-2 un-gated: AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop compile.
-// All `` gates removed this pass — bun_uws_sys::Loop and
-// bun_core::Timespec are now real types. `InternalLoopData::set_parent_event_loop`
-// is reached via the lower-tier `set_parent_raw(tag, ptr)` +
-// `EventLoopHandle::into_tag_ptr()`. Windows-only `MiniVM::platform_event_loop`
-// (`uws::Loop::uv_loop`) remains `#[cfg(windows)]`-guarded with a
-// `TODO(b2-blocked)` marker; the POSIX build is gate-free.
+// AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.
+// The parent event loop is wired via the lower-tier `set_parent_raw(tag, ptr)`
+// + `EventLoopHandle::into_tag_ptr()`. The Windows-only `uv_loop` projection
+// lives on `EventLoopHandle::uv_loop` (`#[cfg(windows)]`); the POSIX build is
+// gate-free.
 // ────────────────────────────────────────────────────────────────────────────
 
 #[path = "MiniEventLoop.rs"]
@@ -40,16 +28,14 @@ pub mod any_event_loop;
 
 // ─── public surface ─────────────────────────────────────────────────────────
 
-pub use AnyTask::{ErasedJsError, JsResult};
+pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;
 pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 
-// snake_case alias for the file-level-struct module so higher tiers can
-// `use bun_event_loop::auto_flusher::{AutoFlusher, HasAutoFlusher}` without
-// tripping the type/module namespace collision on the PascalCase form.
-pub use AutoFlusher as auto_flusher;
+// snake_case alias for the file-level-struct module so higher tiers avoid
+// the type/module namespace collision on the PascalCase form.
 pub use DeferredTaskQueue as deferred_task_queue;
 
-pub use MiniEventLoop::{EventLoopKind, PIPE_READ_BUFFER_SIZE, PipeReadBuffer, PlatformEventLoop};
+pub use MiniEventLoop::PipeReadBuffer;
 pub use any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr};
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`. `bun_event_loop` is
@@ -73,8 +59,8 @@ bun_dispatch::link_interface! {
         fn enter();
         fn exit();
         fn enqueue_task(task: Task);
-        fn enqueue_task_concurrent(task: *mut ConcurrentTask::ConcurrentTask);
-        fn env() -> *mut bun_dotenv::Loader<'static>;
+        fn enqueue_task_concurrent(task: core::ptr::NonNull<ConcurrentTask::ConcurrentTask>);
+        fn env() -> *mut bun_dotenv::Loader;
         fn top_level_dir() -> *const [u8];
         fn create_null_delimited_env_map() -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>;
     }
@@ -83,7 +69,7 @@ bun_dispatch::link_interface! {
 impl JsEventLoop {
     /// `jsc::VirtualMachine::get().event_loop()` for the current thread.
     #[inline]
-    pub fn current() -> Self {
+    pub(crate) fn current() -> Self {
         // SAFETY: `__bun_js_event_loop_current` returns the live per-thread
         // `jsc::EventLoop` (panics if none), so the `link_interface!` owner
         // invariant for `Self::new` is upheld for every dispatch on this handle.

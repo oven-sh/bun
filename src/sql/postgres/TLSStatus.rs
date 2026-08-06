@@ -10,5 +10,3 @@ pub enum TLSStatus {
     SslNotAvailable,
     SslOk,
 }
-
-// ported from: src/sql/postgres/TLSStatus.zig

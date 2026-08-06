@@ -1,7 +1,7 @@
 //! DEDUP(D202): the `SSLConfig` struct, its `Clone`/`Drop`/`Default`/hash/
 //! equality/registry impls, and `as_usockets*`/`for_client_verification` were
-//! double-ported (here and in `bun_http::ssl_config`). The lower-tier
-//! `bun_http` copy is canonical (JSC-free, matches the Zig `?[*:0]const u8`
+//! duplicated (here and in `bun_http::ssl_config`). The lower-tier
+//! `bun_http` copy is canonical (JSC-free, nullable NUL-terminated C-string
 //! field layout); this module now re-exports it and keeps ONLY the
 //! JSC-dependent constructors (`from_js` / `from_generated` / blob+path
 //! readers) plus the WebSocket C-ABI exports, which need `bun_jsc` /
@@ -24,18 +24,16 @@ use crate::webcore::blob::store::Data as StoreData;
 // Canonical re-exports (struct + registry live in bun_http now)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_http::ssl_config::{
-    GlobalRegistry, SSLConfig, SharedPtr, SslConfig, WeakPtr, global_registry,
-};
+pub use bun_http::ssl_config::SSLConfig;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ReadFromBlobError
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: cannot derive `thiserror::Error` because `JsError` is not
+// Cannot derive `thiserror::Error` because `JsError` is not
 // `std::error::Error`/`Display`. Manual `From<JsError>` instead.
 #[derive(Debug)]
-pub enum ReadFromBlobError {
+pub(crate) enum ReadFromBlobError {
     Js(JsError),
     NullStore,
     NotAFile,
@@ -53,24 +51,17 @@ impl From<JsError> for ReadFromBlobError {
 // Allocation helpers
 //
 // Every owned C-string field on `bun_http::SSLConfig` is freed via
-// `bun_core::free_sensitive` (== `mi_free` after secure-zero). Allocate via
-// `bun_core::dupe_z` (== `mi_malloc`) so the allocator pairing is exact, OR
-// leak a `Box<[u8]>` allocation directly (the process-global
-// `#[global_allocator]` is mimalloc, so `mi_free` pairs with `Box`-owned
-// memory too — same invariant the previous `into_http()` bridge relied on
-// via `CString::into_raw`).
+// `bun_core::free_sensitive` (the default-allocator free after secure-zero).
+// Allocate via `bun_core::dupe_z` (the matching default-allocator alloc) so the
+// pairing is exact. Do NOT leak a `Box<[u8]>` here: under `cfg(bun_asan)` the
+// process-global `#[global_allocator]` is `std::alloc::System`, not mimalloc,
+// so `free_sensitive` would not pair with `Box`-owned memory.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Transfer ownership of a `ZBox` (NUL-terminated `Box<[u8]>`) to a raw
-/// `*const c_char`. No reallocation. Freed by `bun_core::free_sensitive`
-/// (mimalloc) in `SSLConfig::deinit`.
+/// `ZBox` is global-allocator memory; re-allocate via `dupe_z` so `mi_free` can free it.
 #[inline]
-fn zbox_into_raw(z: bun_core::ZBox) -> *const c_char {
-    let mut b = z.into_vec_with_nul().into_boxed_slice();
-    debug_assert_eq!(b.last(), Some(&0));
-    let p = b.as_mut_ptr() as *const c_char;
-    core::mem::forget(b);
-    p
+fn zbox_into_raw(z: &bun_core::ZBox) -> *const c_char {
+    bun_core::dupe_z(z.as_bytes())
 }
 
 /// `dupeZ` a byte slice into a fresh mimalloc allocation.
@@ -120,7 +111,7 @@ fn read_from_blob(
     if zbox.is_empty() {
         return Err(ReadFromBlobError::EmptyFile);
     }
-    Ok(zbox_into_raw(zbox))
+    Ok(zbox_into_raw(&zbox))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -160,11 +151,11 @@ impl SSLConfigFromJs for SSLConfig {
         generated: &jsc::generated::SSLConfig,
     ) -> JsResult<Option<SSLConfig>> {
         let mut result = SSLConfig::zero();
-        // errdefer result.deinit() — handled by Drop on error-path `?`
+        // `result` cleanup handled by Drop on error-path `?`
         let mut any = false;
 
         if let Some(passphrase) = generated.passphrase.get() {
-            result.passphrase = zbox_into_raw(passphrase.to_owned_slice_z());
+            result.passphrase = zbox_into_raw(&passphrase.to_owned_slice_z());
             any = true;
         }
         if let Some(dh_params_file) = generated.dh_params_file.get() {
@@ -172,7 +163,7 @@ impl SSLConfigFromJs for SSLConfig {
             any = true;
         }
         if let Some(server_name) = generated.server_name.get() {
-            result.server_name = zbox_into_raw(server_name.to_owned_slice_z());
+            result.server_name = zbox_into_raw(&server_name.to_owned_slice_z());
             result.requires_custom_request_ctx = true;
         }
 
@@ -183,19 +174,50 @@ impl SSLConfigFromJs for SSLConfig {
             as i32;
         result.request_cert = generated.request_cert as i32;
         result.secure_options = generated.secure_options;
+        result.ssl_min_version = generated.ssl_min_version;
+        result.ssl_max_version = generated.ssl_max_version;
+        result.session_timeout = generated.session_timeout;
+        result.allow_partial_trust_chain = generated.allow_partial_trust_chain;
+        if let Some(sigalgs) = generated.sigalgs.get() {
+            result.sigalgs = zbox_into_raw(&sigalgs.to_owned_slice_z());
+            any = true;
+        }
+        if let Some(ecdh_curve) = generated.ecdh_curve.get() {
+            let bytes = ecdh_curve.to_owned_slice_z();
+            // Node treats `ecdhCurve: 'auto'` (the documented default) as
+            // "use the library's default group list", i.e. skip the
+            // SSL_CTX_set1_groups_list call entirely.
+            if bytes.as_bytes() != b"auto" {
+                result.ecdh_curve = zbox_into_raw(&bytes);
+                any = true;
+            }
+        }
         any = any
             || result.low_memory_mode
             || generated.reject_unauthorized.is_some()
             || generated.request_cert
-            || result.secure_options != 0;
+            || result.secure_options != 0
+            || result.ssl_min_version != 0
+            || result.ssl_max_version != 0
+            || result.session_timeout != 0
+            || result.allow_partial_trust_chain;
 
         result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
         result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
         result.key = handle_file_for_field(global, "key", &generated.key)?;
+        result.crl = handle_file_for_field(global, "crl", &generated.crl)?;
         result.requires_custom_request_ctx = result.requires_custom_request_ctx
             || result.ca.is_some()
             || result.cert.is_some()
-            || result.key.is_some();
+            || result.key.is_some()
+            || result.crl.is_some()
+            || result.secure_options != 0
+            || result.ssl_min_version != 0
+            || result.ssl_max_version != 0
+            || !result.sigalgs.is_null()
+            || !result.ecdh_curve.is_null()
+            || result.session_timeout != 0
+            || result.allow_partial_trust_chain;
 
         if let Some(key_file) = generated.key_file.get() {
             result.key_file_name = handle_path(global, "keyFile", &key_file)?;
@@ -213,7 +235,7 @@ impl SSLConfigFromJs for SSLConfig {
         let protocols: *const c_char = match &generated.alpn_protocols {
             jsc::generated::SSLConfigAlpnProtocols::None => core::ptr::null(),
             jsc::generated::SSLConfigAlpnProtocols::String(val) => {
-                zbox_into_raw(val.get().to_owned_slice_z())
+                zbox_into_raw(&val.get().to_owned_slice_z())
             }
             jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
                 // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
@@ -227,7 +249,7 @@ impl SSLConfigFromJs for SSLConfig {
             result.requires_custom_request_ctx = true;
         }
         if let Some(ciphers) = generated.ciphers.get() {
-            result.ssl_ciphers = zbox_into_raw(ciphers.to_owned_slice_z());
+            result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
             result.is_using_default_ciphers = false;
             result.requires_custom_request_ctx = true;
         }
@@ -244,45 +266,49 @@ impl SSLConfigFromJs for SSLConfig {
     }
 }
 
-/// Free-function aliases for callers that prefer module-path syntax.
-#[inline]
-pub fn from_js(
-    vm: &VirtualMachine,
-    global: &JSGlobalObject,
-    value: JSValue,
-) -> JsResult<Option<SSLConfig>> {
-    <SSLConfig as SSLConfigFromJs>::from_js(vm, global, value)
+/// The `SSLConfig` for the `tls: true` shorthand: every option at its
+/// documented default, unlike `SSLConfig::zero()`.
+pub fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
+    let mut cfg = SSLConfig::zero();
+    cfg.reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
+    cfg
 }
 
-#[inline]
-pub fn from_generated(
+/// Whether a new TLS socket must enforce `rejectUnauthorized`: close the
+/// connection when the peer certificate fails verification.
+pub fn resolve_reject_unauthorized(
     vm: &VirtualMachine,
-    global: &JSGlobalObject,
-    generated: &jsc::generated::SSLConfig,
-) -> JsResult<Option<SSLConfig>> {
-    <SSLConfig as SSLConfigFromJs>::from_generated(vm, global, generated)
+    cfg: Option<&SSLConfig>,
+    is_server: bool,
+) -> bool {
+    match cfg {
+        Some(cfg) => (!is_server || cfg.request_cert != 0) && cfg.reject_unauthorized != 0,
+        None => !is_server && vm.get_tls_reject_unauthorized(),
+    }
 }
 
 // ── handlePath / handleFile helpers ──────────────────────────────────
 
-// PERF(port): was comptime monomorphization (comptime field: []const u8) —
-// demoted to runtime &'static str since only used in cold error message.
+// `field` is a runtime &'static str (not monomorphized) since it is only
+// used in a cold error message.
 fn handle_path(
     global: &JSGlobalObject,
     field: &'static str,
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
-    // Zig: `std.posix.system.access(name, F_OK) != 0`. `bun_sys::access`
-    // routes to `access(2)` on POSIX and `GetFileAttributesW` on Windows
-    // (via `sys_uv`), so this is the cross-platform existence probe.
+    // `bun_sys::access` routes to `access(2)` on POSIX and
+    // `GetFileAttributesW` on Windows (via `sys_uv`), so this is the
+    // cross-platform existence probe.
     if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
-        // errdefer: free_sensitive(name) — zero before drop. Route through
+        // Error path: free_sensitive(name) — zero before drop. Route through
         // the canonical helper so the secure-zero core stays single-sourced.
-        bun_core::free_sensitive(zbox_into_raw(name));
+        // SAFETY: `zbox_into_raw` yields a `default_alloc::malloc`-backed,
+        // NUL-terminated buffer whose ownership we now hold exclusively.
+        unsafe { bun_core::free_sensitive(zbox_into_raw(&name)) };
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
     }
-    Ok(zbox_into_raw(name))
+    Ok(zbox_into_raw(&name))
 }
 
 fn handle_file_for_field(
@@ -314,14 +340,14 @@ fn handle_file(
         match file {
             jsc::generated::SSLConfigFile::None => return Ok(None),
             jsc::generated::SSLConfigFile::String(val) => SingleFile::String(val.get()),
-            // SAFETY: GenVal::get() yields a non-null pointer valid for the
-            // lifetime of `generated`; we narrow it to `&mut` for the call.
             jsc::generated::SSLConfigFile::Buffer(val) => {
+                // SAFETY: GenVal::get() yields a non-null pointer valid for the
+                // lifetime of `generated`; we narrow it to `&mut` for the call.
                 SingleFile::Buffer(unsafe { &mut *val.get() })
             }
-            // SAFETY: opaque `GenBlob` (`*mut c_void`) is the JS class `m_ctx`
-            // pointer, layout-identical to `crate::webcore::Blob`.
             jsc::generated::SSLConfigFile::File(val) => {
+                // SAFETY: opaque `GenBlob` (`*mut c_void`) is the JS class `m_ctx`
+                // pointer, layout-identical to `crate::webcore::Blob`.
                 SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
             }
             jsc::generated::SSLConfigFile::Array(list) => {
@@ -329,8 +355,8 @@ fn handle_file(
             }
         },
     )?;
-    // errdefer free_sensitive(single) — on the only fallible op below (alloc),
-    // Rust aborts on OOM, so no errdefer needed.
+    // The only fallible op below is alloc, and Rust aborts on OOM, so no
+    // error-path zeroing is needed.
     Ok(Some(vec![single].into_boxed_slice()))
 }
 
@@ -342,26 +368,27 @@ fn handle_file_array(
         return Ok(None);
     }
     let mut result: Vec<*const c_char> = Vec::with_capacity(elements.len());
-    // errdefer { free_sensitive each; drop result } — need zeroing on error:
+    // Error path: free_sensitive each, then drop result — need zeroing on error:
     let mut guard = scopeguard::guard(&mut result, |r| {
         for p in r.drain(..) {
-            bun_core::free_sensitive(p);
+            // SAFETY: every pushed `p` came from `handle_single_file` →
+            // `zbox_into_raw`, a `default_alloc::malloc`-backed NUL-terminated buffer.
+            unsafe { bun_core::free_sensitive(p) };
         }
     });
     for elem in elements {
-        // PERF(port): was appendAssumeCapacity
         guard.push(handle_single_file(
             global,
             match elem {
                 jsc::generated::SSLConfigSingleFile::String(val) => SingleFile::String(val.get()),
-                // SAFETY: see `handle_file` above — non-null GenVal pointers
-                // valid for the lifetime of `generated`.
                 jsc::generated::SSLConfigSingleFile::Buffer(val) => {
+                    // SAFETY: see `handle_file` above — non-null GenVal pointers
+                    // valid for the lifetime of `generated`.
                     SingleFile::Buffer(unsafe { &mut *val.get() })
                 }
-                // SAFETY: opaque `GenBlob` (`*mut c_void`) is layout-identical
-                // to `crate::webcore::Blob`.
                 jsc::generated::SSLConfigSingleFile::File(val) => {
+                    // SAFETY: opaque `GenBlob` (`*mut c_void`) is layout-identical
+                    // to `crate::webcore::Blob`.
                     SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
                 }
             },
@@ -371,7 +398,6 @@ fn handle_file_array(
     Ok(Some(core::mem::take(result).into_boxed_slice()))
 }
 
-// PORT NOTE: Zig used an anonymous `union(enum)` param; named here.
 enum SingleFile<'a> {
     String(bun_core::String),
     Buffer(&'a mut jsc::JSCArrayBuffer),
@@ -383,7 +409,7 @@ fn handle_single_file(
     file: SingleFile<'_>,
 ) -> Result<*const c_char, ReadFromBlobError> {
     match file {
-        SingleFile::String(string) => Ok(zbox_into_raw(string.to_owned_slice_z())),
+        SingleFile::String(string) => Ok(zbox_into_raw(&string.to_owned_slice_z())),
         SingleFile::Buffer(jsc_buffer) => {
             let buffer: jsc::ArrayBuffer = jsc_buffer.as_array_buffer();
             Ok(dupe_z(buffer.byte_slice()))
@@ -395,8 +421,8 @@ fn handle_single_file(
 // ──────────────────────────────────────────────────────────────────────────
 // WebSocket C-ABI exports (parseSSLConfig / freeSSLConfig)
 //
-// LAYERING: ground truth is `src/http_jsc/websocket_client/
-// WebSocketUpgradeClient.zig::parseSSLConfig`, but `SSLConfig::from_js`
+// LAYERING: the consumer is `src/http_jsc/websocket_client/
+// WebSocketUpgradeClient.rs`, but `SSLConfig::from_js`
 // dereferences Blob / JSCArrayBuffer / node_fs values (tier-6) and lives in
 // this crate. `bun_runtime → bun_http_jsc`, so hosting the export here breaks
 // the cycle without an opaque stub. The boxed payload is the canonical
@@ -409,7 +435,7 @@ fn handle_single_file(
 /// Returns null if parsing fails (an exception will be set on globalThis).
 /// The returned SSLConfig is heap-allocated and ownership is transferred to the caller.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebSocket__parseSSLConfig(
+extern "C" fn Bun__WebSocket__parseSSLConfig(
     global_this: &JSGlobalObject,
     tls_value: JSValue,
 ) -> Option<Box<bun_http::ssl_config::SSLConfig>> {
@@ -432,14 +458,16 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
 /// Exported for C++ so error/early-return paths in JSWebSocket.cpp and
 /// WebSocket.cpp can release ownership without leaking the heap allocation
 /// (and all duped cert/key/CA strings inside it) when `connect()` never
-/// hands the pointer off to a Zig upgrade client.
+/// hands the pointer off to an upgrade client.
+///
+/// # Safety
+/// `config` must be null or a pointer previously returned by
+/// `Bun__WebSocket__parseSSLConfig` whose ownership the caller is transferring
+/// back (i.e. not already freed or handed to an upgrade client).
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut bun_http::ssl_config::SSLConfig) {
-    // SAFETY: C++-only entry point; `config` was produced by `heap::alloc`
-    // (via `Option<Box<_>>` FFI niche) in `Bun__WebSocket__parseSSLConfig` and
-    // the caller transfers ownership back. `bun_http::SSLConfig::drop` runs
-    // `deinit()`.
+unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut bun_http::ssl_config::SSLConfig) {
+    // SAFETY: caller upholds the `# Safety` contract above — `config` is null
+    // or a live pointer from `Bun__WebSocket__parseSSLConfig` whose ownership
+    // is being transferred back. `heap::take` handles the null case.
     drop(unsafe { bun_core::heap::take(config) });
 }
-
-// ported from: src/runtime/socket/SSLConfig.zig

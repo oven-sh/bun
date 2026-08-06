@@ -46,7 +46,7 @@ public:
     // This list includes activeSpies
     JSC::Strong<JSC::Unknown> activeMocks;
 
-    // Called by Zig::GlobalObject::visitChildren
+    // Called by GlobalObject::visitChildren
     template<typename Visitor>
     void visit(Visitor& visitor);
 };
@@ -59,18 +59,7 @@ public:
 
     JS_EXPORT_PRIVATE static MockWithImplementationCleanupData* create(VM&, Structure*);
     static MockWithImplementationCleanupData* create(JSC::JSGlobalObject* globalObject, JSMockFunction* fn, JSValue impl, JSValue tail, JSValue fallback);
-    static MockWithImplementationCleanupData* createWithInitialValues(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-
-    static std::array<JSValue, numberOfInternalFields> initialValues()
-    {
-        return { {
-            jsUndefined(),
-            jsUndefined(),
-            jsUndefined(),
-            jsUndefined(),
-        } };
-    }
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

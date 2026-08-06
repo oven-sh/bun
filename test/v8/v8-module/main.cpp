@@ -4,6 +4,8 @@
 #endif
 #include <uv.h>
 
+#include <v8-profiler.h>
+
 #include <cinttypes>
 #include <cstdarg>
 #include <iomanip>
@@ -45,15 +47,15 @@ static std::string describe(Isolate *isolate, Local<Value> value) {
     return "false";
   } else if (value->IsString()) {
     char buf[1024] = {0};
-    value.As<String>()->WriteUtf8(isolate, buf, sizeof(buf) - 1);
+    value.As<String>()->WriteUtf8V2(isolate, buf, sizeof(buf) - 1);
     std::string result = "\"";
     result += buf;
     result += "\"";
     return result;
   } else if (value->IsFunction()) {
     char buf[1024] = {0};
-    value.As<Function>()->GetName().As<String>()->WriteUtf8(isolate, buf,
-                                                            sizeof(buf) - 1);
+    value.As<Function>()->GetName().As<String>()->WriteUtf8V2(
+        isolate, buf, sizeof(buf) - 1);
     std::string result = "function ";
     result += buf;
     result += "()";
@@ -131,36 +133,45 @@ static void perform_string_test(const FunctionCallbackInfo<Value> &info,
                                 Local<String> v8_string) {
   Isolate *isolate = info.GetIsolate();
   char buf[256] = {0x7f};
-  int retval;
-  int nchars;
+  size_t retval;
+  size_t nchars;
 
   LOG_VALUE_KIND(v8_string);
   LOG_EXPR(v8_string->Length());
-  LOG_EXPR(v8_string->Utf8Length(isolate));
+  LOG_EXPR(v8_string->Utf8LengthV2(isolate));
   LOG_EXPR(v8_string->IsOneByte());
   LOG_EXPR(v8_string->ContainsOnlyOneByte());
   LOG_EXPR(v8_string->IsExternal());
   LOG_EXPR(v8_string->IsExternalTwoByte());
   LOG_EXPR(v8_string->IsExternalOneByte());
 
-  // check string has the right contents
-  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, &nchars));
+  // check string has the right contents. The legacy WriteUtf8 null-terminated
+  // by default; with WriteUtf8V2 that behavior is requested explicitly via
+  // kNullTerminate so the buffer contents stay the same.
+  LOG_EXPR(retval = v8_string->WriteUtf8V2(isolate, buf, sizeof buf,
+                                           String::WriteFlags::kNullTerminate,
+                                           &nchars));
   LOG_EXPR(nchars);
-  log_buffer(buf, retval + 1);
+  log_buffer(buf, static_cast<int>(retval) + 1);
 
   memset(buf, 0x7f, sizeof buf);
 
-  // try with assuming the buffer is large enough
-  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, -1, &nchars));
+  // legacy WriteUtf8 accepted length = -1 to assume the buffer is large
+  // enough; WriteUtf8V2 always takes an explicit capacity
+  LOG_EXPR(retval = v8_string->WriteUtf8V2(isolate, buf, sizeof buf,
+                                           String::WriteFlags::kNullTerminate,
+                                           &nchars));
   LOG_EXPR(nchars);
-  log_buffer(buf, retval + 1);
+  log_buffer(buf, static_cast<int>(retval) + 1);
 
   memset(buf, 0x7f, sizeof buf);
 
   // try with ignoring nchars (it should not try to store anything in a
   // nullptr)
-  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, nullptr));
-  log_buffer(buf, retval + 1);
+  LOG_EXPR(retval = v8_string->WriteUtf8V2(isolate, buf, sizeof buf,
+                                           String::WriteFlags::kNullTerminate,
+                                           nullptr));
+  log_buffer(buf, static_cast<int>(retval) + 1);
 
   memset(buf, 0x7f, sizeof buf);
 
@@ -232,15 +243,63 @@ void test_v8_string_write_utf8(const FunctionCallbackInfo<Value> &info) {
   Local<String> s = String::NewFromUtf8(isolate, utf8_data).ToLocalChecked();
   for (int i = buf_size; i >= 0; i--) {
     memset(buf, 0xaa, buf_size);
-    int nchars;
-    int retval = s->WriteUtf8(isolate, buf, i, &nchars);
-    printf("buffer size = %2d, nchars = %2d, returned = %2d, data =", i, nchars,
-           retval);
+    size_t nchars;
+    // WriteUtf8V2 requires capacity >= 1 when null termination is requested,
+    // so only ask for it when the buffer is non-empty (legacy WriteUtf8 also
+    // wrote nothing for a zero-sized buffer).
+    size_t retval = s->WriteUtf8V2(isolate, buf, static_cast<size_t>(i),
+                                   i > 0 ? String::WriteFlags::kNullTerminate
+                                         : String::WriteFlags::kNone,
+                                   &nchars);
+    printf("buffer size = %2d, nchars = %2zu, returned = %2zu, data =", i,
+           nchars, retval);
     for (int j = 0; j < buf_size; j++) {
       printf("%c%02x", j == i ? '|' : ' ',
              reinterpret_cast<unsigned char *>(buf)[j]);
     }
     printf("\n");
+  }
+  return ok(info);
+}
+
+// Regression test for writing UTF-8 when a valid surrogate pair (astral
+// character) does not fit in the remaining buffer. V8's legacy WriteUtf8
+// encoded the unpaired lead surrogate as WTF-8 (3 bytes, 0xED 0xA0-0xAF ...)
+// in that case; WriteUtf8V2 instead refuses to write partial sequences and
+// stops before the astral character. The encoder that backs this on Bun
+// previously wrote U+FFFD (0xEF 0xBF 0xBD) here, diverging from V8.
+void test_v8_string_write_utf8_surrogate(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  struct {
+    const char *label;
+    const char *utf8;
+  } inputs[] = {
+      // "😀" = U+1F600 (surrogate pair D83D DE00), leading astral character
+      {"emoji", "\xF0\x9F\x98\x80"},
+      // "a😀" — one ASCII byte then the astral character
+      {"a+emoji", "a\xF0\x9F\x98\x80"},
+  };
+
+  constexpr int total = 8;
+  char buf[total];
+  for (auto &in : inputs) {
+    Local<String> s = String::NewFromUtf8(isolate, in.utf8).ToLocalChecked();
+    for (int i = total; i >= 0; i--) {
+      memset(buf, 0xaa, total);
+      size_t nchars;
+      size_t retval = s->WriteUtf8V2(isolate, buf, static_cast<size_t>(i),
+                                     i > 0 ? String::WriteFlags::kNullTerminate
+                                           : String::WriteFlags::kNone,
+                                     &nchars);
+      printf("%-7s size = %d, nchars = %zu, returned = %zu, data =", in.label,
+             i, nchars, retval);
+      for (int j = 0; j < total; j++) {
+        printf("%c%02x", j == i ? '|' : ' ',
+               reinterpret_cast<unsigned char *>(buf)[j]);
+      }
+      printf("\n");
+    }
   }
   return ok(info);
 }
@@ -339,6 +398,22 @@ void create_function_with_data(const FunctionCallbackInfo<Value> &info) {
   Local<String> name =
       String::NewFromUtf8(isolate, "function_with_data").ToLocalChecked();
   f->SetName(name);
+  info.GetReturnValue().Set(f);
+}
+
+void test_v8_function_template_set_class_name(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, return_data_callback);
+  Local<String> class_name =
+      String::NewFromUtf8(isolate, "MyNamedClass").ToLocalChecked();
+  tmp->SetClassName(class_name);
+
+  Local<Function> f = tmp->GetFunction(context).ToLocalChecked();
+  LOG_EXPR(describe(isolate, f->GetName()));
   info.GetReturnValue().Set(f);
 }
 
@@ -441,12 +516,14 @@ static void examine_object_fields(Isolate *isolate, Local<Object> o,
                                   int expected_field0, int expected_field1) {
   char buf[16];
   HandleScope hs(isolate);
-  o->GetInternalField(0).As<String>()->WriteUtf8(isolate, buf);
+  o->GetInternalField(0).As<String>()->WriteUtf8V2(
+      isolate, buf, sizeof buf, String::WriteFlags::kNullTerminate);
   assert(atoi(buf) == expected_field0);
 
   Local<Value> field1 = o->GetInternalField(1).As<Value>();
   if (field1->IsString()) {
-    field1.As<String>()->WriteUtf8(isolate, buf);
+    field1.As<String>()->WriteUtf8V2(isolate, buf, sizeof buf,
+                                     String::WriteFlags::kNullTerminate);
     assert(atoi(buf) == expected_field1);
   } else {
     assert(field1->IsUndefined());
@@ -504,7 +581,8 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
     // try to use all mini strings
     for (size_t j = 0; j < num_small_allocs; j++) {
       char buf[16];
-      mini_strings[j]->WriteUtf8(isolate, buf);
+      mini_strings[j]->WriteUtf8V2(isolate, buf, sizeof buf,
+                                   String::WriteFlags::kNullTerminate);
       assert(atoi(buf) == (int)j);
     }
 
@@ -531,7 +609,8 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
 
   memset(string_data, 0, string_size);
   for (size_t i = 0; i < num_strings; i++) {
-    huge_strings[i]->WriteUtf8(isolate, string_data);
+    huge_strings[i]->WriteUtf8V2(isolate, string_data, string_size,
+                                 String::WriteFlags::kNullTerminate);
     for (size_t j = 0; j < string_size - 1; j++) {
       assert(string_data[j] == (char)(i + 1));
     }
@@ -573,9 +652,81 @@ void test_v8_escapable_handle_scope(const FunctionCallbackInfo<Value> &info) {
   LOG_VALUE_KIND(t);
 
   char buf[16];
-  s->WriteUtf8(isolate, buf);
+  s->WriteUtf8V2(isolate, buf, sizeof buf, String::WriteFlags::kNullTerminate);
   LOG_EXPR(buf);
   LOG_EXPR(n->Value());
+}
+
+// Regression test: the escape slot must be reserved when the escapable scope
+// opens, not when Escape() is called. With Node 26 headers the inline
+// ~HandleScope calls DeleteExtensions, which frees every handle created
+// inside the scope — including, before the fix, an escape handle allocated at
+// Escape() time after in-scope Local copies.
+Local<String> escape_after_inline_handles(Isolate *isolate) {
+  EscapableHandleScope ehs(isolate);
+  Local<String> value =
+      String::NewFromUtf8(isolate, "escaped-after-inline").ToLocalChecked();
+  // These go through the headers' inline CreateHandle (HandleScope::Extend
+  // grants) and are swept by DeleteExtensions when the scope closes.
+  Local<Value> copy1 = Local<Value>::New(isolate, Local<Value>::Cast(value));
+  Local<Value> copy2 = Local<Value>::New(isolate, copy1);
+  (void)copy2;
+  Local<String> escaped = ehs.Escape(value);
+  return escaped;
+}
+
+void test_v8_escapable_handle_scope_inline_grants(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> s = escape_after_inline_handles(isolate);
+  // Create more handles so a freed escape slot would be overwritten before we
+  // read it back.
+  for (int i = 0; i < 16; i++) {
+    (void)Number::New(isolate, i * 1.5);
+  }
+  LOG_VALUE_KIND(s);
+  char buf[32];
+  s->WriteUtf8V2(isolate, buf, sizeof buf, String::WriteFlags::kNullTerminate);
+  LOG_EXPR(buf);
+}
+
+// Regression test: handles created through the headers' inline CreateHandle
+// must survive a Bun-internal HandleScope push/pop (Array::Iterate pushes one
+// around the iteration callback). If the pop leaves the isolate's
+// HandleScopeData pointing into the popped scope's buffer, a later inline
+// v8::HandleScope snapshots that stale limit and its DeleteExtensions sweeps
+// the enclosing buffer's grants — including `kept`.
+void test_v8_locals_survive_nested_call(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<String> value =
+      String::NewFromUtf8(isolate, "kept-across-call").ToLocalChecked();
+  // Inline grant before the nested scope push.
+  Local<Value> kept = Local<Value>::New(isolate, Local<Value>::Cast(value));
+  Local<Array> array = Array::New(isolate, 3);
+  // Array::Iterate pushes (and pops) a Bun-internal handle scope around the
+  // callback; the inline Local::New inside makes Extend run while that scope
+  // is current.
+  (void)array->Iterate(
+      context,
+      [](uint32_t index, Local<Value> element, void *data) {
+        Isolate *iso = static_cast<Isolate *>(data);
+        Local<Value> copy = Local<Value>::New(iso, element);
+        (void)copy;
+        return Array::CallbackResult::kContinue;
+      },
+      isolate);
+  // Inline scope after the pop: snapshots whatever HandleScopeData now holds.
+  {
+    HandleScope inner(isolate);
+    Local<Value> tmp = Local<Value>::New(isolate, kept);
+    (void)tmp;
+  } // ~HandleScope → DeleteExtensions
+  char buf[32];
+  Local<String>::Cast(kept)->WriteUtf8V2(isolate, buf, sizeof buf,
+                                         String::WriteFlags::kNullTerminate);
+  LOG_EXPR(buf);
 }
 
 void test_uv_os_getpid(const FunctionCallbackInfo<Value> &info) {
@@ -1138,6 +1289,484 @@ void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void test_v8_integer(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<Integer> small_int = Integer::New(isolate, 42);
+  LOG_EXPR(small_int->Value());
+  LOG_EXPR(small_int->IsNumber());
+  LOG_EXPR(small_int->IsInt32());
+
+  Local<Integer> neg = Integer::New(isolate, -7);
+  LOG_EXPR(neg->Value());
+
+  Local<Integer> int32_max = Integer::New(isolate, 2147483647);
+  LOG_EXPR(int32_max->Value());
+
+  Local<Integer> int32_min = Integer::New(isolate, -2147483647 - 1);
+  LOG_EXPR(int32_min->Value());
+
+  // Round-trip through Value -> ToInteger
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Value> as_value = small_int;
+  Local<Integer> back = as_value->ToInteger(context).ToLocalChecked();
+  LOG_EXPR(back->Value());
+
+  return ok(info);
+}
+
+void test_v8_define_own_property(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<Object> obj = Object::New(isolate);
+
+  Local<String> key_rw =
+      String::NewFromUtf8(isolate, "writable").ToLocalChecked();
+  Maybe<bool> r = obj->DefineOwnProperty(context, key_rw,
+                                         Number::New(isolate, 1.0), v8::None);
+  LOG_EXPR(r.IsJust());
+  LOG_EXPR(r.FromJust());
+
+  Local<String> key_ro =
+      String::NewFromUtf8(isolate, "readonly").ToLocalChecked();
+  r = obj->DefineOwnProperty(
+      context, key_ro, Number::New(isolate, 2.0),
+      static_cast<PropertyAttribute>(v8::ReadOnly | v8::DontDelete));
+  LOG_EXPR(r.FromJust());
+
+  Local<String> key_hidden =
+      String::NewFromUtf8(isolate, "hidden").ToLocalChecked();
+  r = obj->DefineOwnProperty(context, key_hidden, Number::New(isolate, 3.0),
+                             v8::DontEnum);
+  LOG_EXPR(r.FromJust());
+
+  LOG_EXPR(describe(isolate, obj->Get(context, key_rw).ToLocalChecked()));
+  LOG_EXPR(describe(isolate, obj->Get(context, key_ro).ToLocalChecked()));
+  LOG_EXPR(describe(isolate, obj->Get(context, key_hidden).ToLocalChecked()));
+
+  // GetIdentityHash: stable across calls on the same object, non-zero, and
+  // survives property definition. The actual value is engine-specific so only
+  // assert on the invariants, not the number.
+  int hash1 = obj->GetIdentityHash();
+  int hash2 = obj->GetIdentityHash();
+  LOG_EXPR(hash1 != 0);
+  LOG_EXPR(hash1 == hash2);
+  r = obj->DefineOwnProperty(
+      context, String::NewFromUtf8(isolate, "late").ToLocalChecked(),
+      Number::New(isolate, 4.0), v8::None);
+  LOG_EXPR(r.FromJust());
+  int hash3 = obj->GetIdentityHash();
+  LOG_EXPR(hash1 == hash3);
+  // A fresh, distinct object must also have a non-zero hash.
+  Local<Object> other = Object::New(isolate);
+  LOG_EXPR(other->GetIdentityHash() != 0);
+
+  // Let JS assert writability/enumerability/configurability by returning obj.
+  info.GetReturnValue().Set(obj);
+}
+
+void test_v8_bigint(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<BigInt> big = BigInt::New(isolate, 123456789012345LL);
+  LOG_EXPR(big->IsBigInt());
+  LOG_EXPR(big->IsNumber());
+
+  Local<BigInt> neg = BigInt::New(isolate, -987654321098765LL);
+  LOG_EXPR(neg->IsBigInt());
+
+  Local<BigInt> zero = BigInt::New(isolate, 0);
+  LOG_EXPR(zero->IsBigInt());
+
+  // Return the first BigInt so JS can assert the numeric value exactly.
+  info.GetReturnValue().Set(big);
+}
+
+void test_v8_string_from_utf8_literal(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<String> s = String::NewFromUtf8Literal(isolate, "hello literal");
+  LOG_EXPR(s->IsString());
+  LOG_EXPR(s->Length());
+  LOG_EXPR(describe(isolate, s));
+
+  // Internalized (interned) variant must also produce an equal string.
+  Local<String> interned = String::NewFromUtf8Literal(
+      isolate, "hello literal", NewStringType::kInternalized);
+  LOG_EXPR(s->StrictEquals(interned));
+
+  // Literal with embedded UTF-8 (non-ASCII) bytes.
+  Local<String> utf8 = String::NewFromUtf8Literal(isolate, "caf\xc3\xa9");
+  LOG_EXPR(utf8->Length());
+  LOG_EXPR(describe(isolate, utf8));
+
+  return ok(info);
+}
+
+static void proto_method_callback(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(isolate, "proto-method-called").ToLocalChecked());
+}
+
+static void native_data_getter(Local<Name> property,
+                               const PropertyCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  // Returning a fixed value proves the native-data-property getter was wired
+  // through Template::SetNativeDataProperty and invoked on property access.
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(isolate, "native-getter-value").ToLocalChecked());
+}
+
+void test_v8_prototype_template(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> ctor_t = FunctionTemplate::New(isolate);
+  ctor_t->InstanceTemplate()->SetInternalFieldCount(1);
+
+  // PrototypeTemplate()->Set: install a method on the prototype via a nested
+  // FunctionTemplate.
+  Local<ObjectTemplate> proto_t = ctor_t->PrototypeTemplate();
+  proto_t->Set(String::NewFromUtf8Literal(isolate, "protoMethod"),
+               FunctionTemplate::New(isolate, proto_method_callback));
+
+  // SetNativeDataProperty: install a native getter with a data payload on the
+  // prototype.
+  proto_t->SetNativeDataProperty(
+      String::NewFromUtf8Literal(isolate, "nativeProp"), native_data_getter,
+      nullptr, String::NewFromUtf8(isolate, "payload").ToLocalChecked());
+
+  Local<Function> ctor = ctor_t->GetFunction(context).ToLocalChecked();
+  Local<Object> inst = ctor->NewInstance(context).ToLocalChecked();
+  LOG_EXPR(inst->InternalFieldCount());
+
+  // Read the prototype method and accessor back from C++ to prove the
+  // template wiring resolved to real properties.
+  Local<Value> method =
+      inst->Get(context,
+                String::NewFromUtf8(isolate, "protoMethod").ToLocalChecked())
+          .ToLocalChecked();
+  LOG_EXPR(method->IsFunction());
+
+  Local<Value> native_prop =
+      inst->Get(context,
+                String::NewFromUtf8(isolate, "nativeProp").ToLocalChecked())
+          .ToLocalChecked();
+  LOG_EXPR(describe(isolate, native_prop));
+
+  // Return the instance so the JS driver can call protoMethod() and read
+  // nativeProp, asserting behavior matches Node.
+  info.GetReturnValue().Set(inst);
+}
+
+void test_v8_arraybuffer(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<ArrayBuffer> ab = ArrayBuffer::New(isolate, 16);
+  LOG_EXPR(ab->IsObject());
+
+  std::shared_ptr<BackingStore> store = ab->GetBackingStore();
+  if (store->Data() == nullptr) {
+    return fail(info, "BackingStore::Data() returned null for 16-byte buffer");
+  }
+  // Zero-initialized by default; write through the backing store and read
+  // it back through a Uint8Array view.
+  uint8_t *data = static_cast<uint8_t *>(store->Data());
+  for (size_t i = 0; i < 16; i++) {
+    LOG_EXPR((int)data[i]);
+  }
+  for (size_t i = 0; i < 16; i++) {
+    data[i] = static_cast<uint8_t>(i + 1);
+  }
+
+  Local<Uint8Array> u8 = Uint8Array::New(ab, 4, 8);
+  LOG_EXPR(u8->ByteOffset());
+  LOG_EXPR(u8->ByteLength());
+  LOG_EXPR(u8->IsUint8Array());
+  Local<ArrayBuffer> underlying = u8->Buffer();
+  LOG_EXPR(underlying->StrictEquals(ab));
+
+  return ok(info);
+}
+
+void test_v8_typedarray(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<ArrayBuffer> ab = ArrayBuffer::New(isolate, 32);
+  Local<Uint8Array> u8 = Uint8Array::New(ab, 0, 32);
+  LOG_EXPR(u8->ByteLength());
+  LOG_EXPR(u8->ByteOffset());
+  LOG_EXPR(u8->IsUint8Array());
+
+  Local<Uint32Array> u32 = Uint32Array::New(ab, 0, 8);
+  LOG_EXPR(u32->ByteLength());
+  LOG_EXPR(u32->ByteOffset());
+  LOG_EXPR(u32->IsUint8Array());
+
+  // view at nonzero offset
+  Local<Uint8Array> tail = Uint8Array::New(ab, 8, 24);
+  LOG_EXPR(tail->ByteOffset());
+  LOG_EXPR(tail->ByteLength());
+
+  return ok(info);
+}
+
+void test_v8_function_call(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  if (info.Length() < 1 || !info[0]->IsFunction()) {
+    return fail(info, "expected a function argument");
+  }
+  Local<Function> f = info[0].As<Function>();
+
+  Local<Value> argv[3] = {
+      Number::New(isolate, 7.0),
+      String::NewFromUtf8(isolate, "hello").ToLocalChecked(),
+      Boolean::New(isolate, true),
+  };
+  MaybeLocal<Value> result =
+      f->Call(context, Undefined(isolate), 3, argv);
+  LOG_EXPR(result.IsEmpty());
+  if (!result.IsEmpty()) {
+    LOG_EXPR(describe(isolate, result.ToLocalChecked()));
+  }
+
+  Local<Object> recv = Object::New(isolate);
+  (void)recv->Set(context,
+                  String::NewFromUtf8(isolate, "tag").ToLocalChecked(),
+                  Number::New(isolate, 99.0));
+  MaybeLocal<Value> result2 = f->Call(context, recv, 0, nullptr);
+  LOG_EXPR(result2.IsEmpty());
+  if (!result2.IsEmpty()) {
+    LOG_EXPR(describe(isolate, result2.ToLocalChecked()));
+  }
+
+  return ok(info);
+}
+
+static void construct_callback(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Object> self = info.This();
+  (void)self->Set(context,
+                  String::NewFromUtf8(isolate, "constructed").ToLocalChecked(),
+                  Boolean::New(isolate, true));
+  if (info.Length() > 0) {
+    (void)self->Set(context,
+                    String::NewFromUtf8(isolate, "arg0").ToLocalChecked(),
+                    info[0]);
+  }
+}
+
+void test_v8_function_new_instance(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, construct_callback);
+  tmp->InstanceTemplate()->SetInternalFieldCount(1);
+  Local<Function> ctor = tmp->GetFunction(context).ToLocalChecked();
+
+  Local<Value> argv[1] = {Number::New(isolate, 123.0)};
+  MaybeLocal<Object> maybe_inst = ctor->NewInstance(context, 1, argv);
+  LOG_EXPR(maybe_inst.IsEmpty());
+  Local<Object> inst = maybe_inst.ToLocalChecked();
+  LOG_EXPR(inst->IsObject());
+  LOG_EXPR(inst->InternalFieldCount());
+
+  Local<Value> constructed =
+      inst->Get(context,
+                String::NewFromUtf8(isolate, "constructed").ToLocalChecked())
+          .ToLocalChecked();
+  LOG_EXPR(describe(isolate, constructed));
+  Local<Value> arg0 =
+      inst->Get(context,
+                String::NewFromUtf8(isolate, "arg0").ToLocalChecked())
+          .ToLocalChecked();
+  LOG_EXPR(describe(isolate, arg0));
+
+  // zero-arg overload
+  MaybeLocal<Object> maybe_inst2 = ctor->NewInstance(context);
+  LOG_EXPR(maybe_inst2.IsEmpty());
+
+  return ok(info);
+}
+
+void test_v8_getfunction_memoized(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, construct_callback);
+  tmp->InstanceTemplate()->SetInternalFieldCount(1);
+  tmp->PrototypeTemplate()->Set(
+      String::NewFromUtf8(isolate, "tag").ToLocalChecked(),
+      Number::New(isolate, 7.0));
+
+  Local<Function> ctor1 = tmp->GetFunction(context).ToLocalChecked();
+  Local<Function> ctor2 = tmp->GetFunction(context).ToLocalChecked();
+
+  // V8 memoizes GetFunction per context, so repeat calls return the same
+  // Function with the same .prototype.
+  LOG_EXPR(ctor1->StrictEquals(ctor2));
+
+  Local<Value> proto1 =
+      ctor1
+          ->Get(context,
+                String::NewFromUtf8(isolate, "prototype").ToLocalChecked())
+          .ToLocalChecked();
+  Local<Value> proto2 =
+      ctor2
+          ->Get(context,
+                String::NewFromUtf8(isolate, "prototype").ToLocalChecked())
+          .ToLocalChecked();
+  LOG_EXPR(proto1->StrictEquals(proto2));
+
+  return ok(info);
+}
+
+void test_v8_map(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  if (info.Length() < 1 || !info[0]->IsMap()) {
+    return fail(info, "expected a Map argument");
+  }
+  Local<Map> map = info[0].As<Map>();
+
+  Local<String> key_a = String::NewFromUtf8(isolate, "a").ToLocalChecked();
+  Local<String> key_b = String::NewFromUtf8(isolate, "b").ToLocalChecked();
+
+  MaybeLocal<Map> set1 = map->Set(context, key_a, Number::New(isolate, 1.0));
+  LOG_EXPR(set1.IsEmpty());
+  MaybeLocal<Map> set2 = map->Set(context, key_b, Number::New(isolate, 2.0));
+  LOG_EXPR(set2.IsEmpty());
+  // Set must return the same Map (for chaining).
+  if (!set2.IsEmpty() &&
+      !set2.ToLocalChecked().As<Value>()->StrictEquals(info[0])) {
+    return fail(info, "Map::Set did not return the receiver map");
+  }
+
+  Maybe<bool> del_a = map->Delete(context, key_a);
+  LOG_EXPR(del_a.IsJust());
+  LOG_EXPR(del_a.FromJust());
+
+  Maybe<bool> del_missing = map->Delete(
+      context, String::NewFromUtf8(isolate, "missing").ToLocalChecked());
+  LOG_EXPR(del_missing.IsJust());
+  LOG_EXPR(del_missing.FromJust());
+
+  info.GetReturnValue().Set(map);
+}
+
+void test_v8_exception(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<String> msg =
+      String::NewFromUtf8(isolate, "boom from native").ToLocalChecked();
+
+  Local<Value> err = Exception::Error(msg);
+  LOG_EXPR(err->IsObject());
+  LOG_EXPR(
+      describe(isolate,
+               err.As<Object>()
+                   ->Get(isolate->GetCurrentContext(),
+                         String::NewFromUtf8(isolate, "message").ToLocalChecked())
+                   .ToLocalChecked()));
+
+  Local<Value> type_err = Exception::TypeError(
+      String::NewFromUtf8(isolate, "wrong type").ToLocalChecked());
+  LOG_EXPR(type_err->IsObject());
+
+  // Throw the Error so the JS driver can observe it.
+  isolate->ThrowException(err);
+}
+
+void test_v8_aligned_pointer_in_internal_field(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<ObjectTemplate> tmp = ObjectTemplate::New(isolate);
+  tmp->SetInternalFieldCount(2);
+  Local<Object> obj = tmp->NewInstance(context).ToLocalChecked();
+  LOG_EXPR(obj->InternalFieldCount());
+
+  static int target_a = 111;
+  static int target_b = 222;
+
+  obj->SetAlignedPointerInInternalField(0, &target_a,
+                                        kEmbedderDataTypeTagDefault);
+  obj->SetAlignedPointerInInternalField(1, &target_b,
+                                        kEmbedderDataTypeTagDefault);
+
+  void *got_a =
+      obj->GetAlignedPointerFromInternalField(0, kEmbedderDataTypeTagDefault);
+  void *got_b =
+      obj->GetAlignedPointerFromInternalField(1, kEmbedderDataTypeTagDefault);
+
+  if (got_a != &target_a) {
+    return fail(info, "aligned pointer slot 0 round-trip failed");
+  }
+  if (got_b != &target_b) {
+    return fail(info, "aligned pointer slot 1 round-trip failed");
+  }
+  LOG_EXPR(*static_cast<int *>(got_a));
+  LOG_EXPR(*static_cast<int *>(got_b));
+
+  // nullptr must round-trip too.
+  obj->SetAlignedPointerInInternalField(0, nullptr,
+                                        kEmbedderDataTypeTagDefault);
+  if (obj->GetAlignedPointerFromInternalField(0, kEmbedderDataTypeTagDefault) !=
+      nullptr) {
+    return fail(info, "aligned pointer slot 0 should be null after reset");
+  }
+
+  return ok(info);
+}
+
+void test_v8_cpu_profiler(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  CpuProfiler *profiler = CpuProfiler::New(isolate);
+  if (profiler == nullptr) {
+    return fail(info, "CpuProfiler::New returned null");
+  }
+  profiler->SetSamplingInterval(100);
+
+  Local<String> title =
+      String::NewFromUtf8(isolate, "bun-v8-test").ToLocalChecked();
+  CpuProfilingResult start_result = profiler->Start(
+      title, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)start_result.status);
+
+  // Do a little work so at least the root node exists; do NOT assert on sample
+  // counts because those are timing-dependent and differ across engines.
+  volatile double sink = 0;
+  for (int i = 0; i < 100000; i++) sink += i * 0.5;
+  (void)sink;
+
+  CpuProfile *profile = profiler->Stop(start_result.id);
+  if (profile == nullptr) {
+    return fail(info, "CpuProfiler::Stop returned null");
+  }
+  const CpuProfileNode *root = profile->GetTopDownRoot();
+  if (root == nullptr) {
+    return fail(info, "CpuProfile::GetTopDownRoot returned null");
+  }
+  LOG_EXPR(root->GetChildrenCount() >= 0);
+  LOG_EXPR(profile->GetSamplesCount() >= 0);
+  LOG_EXPR(profile->GetStartTime() <= profile->GetEndTime());
+
+  profile->Delete();
+  profiler->Dispose();
+
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -1153,12 +1782,16 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_string_latin1", test_v8_string_latin1);
   NODE_SET_METHOD(exports, "test_v8_string_write_utf8",
                   test_v8_string_write_utf8);
+  NODE_SET_METHOD(exports, "test_v8_string_write_utf8_surrogate",
+                  test_v8_string_write_utf8_surrogate);
   NODE_SET_METHOD(exports, "test_v8_external", test_v8_external);
   NODE_SET_METHOD(exports, "test_v8_object", test_v8_object);
   NODE_SET_METHOD(exports, "test_v8_array_new", test_v8_array_new);
   NODE_SET_METHOD(exports, "test_v8_object_template", test_v8_object_template);
   NODE_SET_METHOD(exports, "create_function_with_data",
                   create_function_with_data);
+  NODE_SET_METHOD(exports, "test_v8_function_template_set_class_name",
+                  test_v8_function_template_set_class_name);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "return_this", return_this);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
@@ -1167,6 +1800,10 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_handle_scope_gc", test_handle_scope_gc);
   NODE_SET_METHOD(exports, "test_v8_escapable_handle_scope",
                   test_v8_escapable_handle_scope);
+  NODE_SET_METHOD(exports, "test_v8_escapable_handle_scope_inline_grants",
+                  test_v8_escapable_handle_scope_inline_grants);
+  NODE_SET_METHOD(exports, "test_v8_locals_survive_nested_call",
+                  test_v8_locals_survive_nested_call);
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_key",
@@ -1191,9 +1828,31 @@ void initialize(Local<Object> exports, Local<Value> module,
                   perform_object_set_by_key);
   NODE_SET_METHOD(exports, "test_v8_value_type_checks",
                   test_v8_value_type_checks);
+  NODE_SET_METHOD(exports, "test_v8_integer", test_v8_integer);
+  NODE_SET_METHOD(exports, "test_v8_define_own_property",
+                  test_v8_define_own_property);
+  NODE_SET_METHOD(exports, "test_v8_bigint", test_v8_bigint);
+  NODE_SET_METHOD(exports, "test_v8_string_from_utf8_literal",
+                  test_v8_string_from_utf8_literal);
+  NODE_SET_METHOD(exports, "test_v8_prototype_template",
+                  test_v8_prototype_template);
+  NODE_SET_METHOD(exports, "test_v8_arraybuffer", test_v8_arraybuffer);
+  NODE_SET_METHOD(exports, "test_v8_typedarray", test_v8_typedarray);
+  NODE_SET_METHOD(exports, "test_v8_function_call", test_v8_function_call);
+  NODE_SET_METHOD(exports, "test_v8_function_new_instance",
+                  test_v8_function_new_instance);
+  NODE_SET_METHOD(exports, "test_v8_getfunction_memoized",
+                  test_v8_getfunction_memoized);
+  NODE_SET_METHOD(exports, "test_v8_map", test_v8_map);
+  NODE_SET_METHOD(exports, "test_v8_exception", test_v8_exception);
+  NODE_SET_METHOD(exports, "test_v8_aligned_pointer_in_internal_field",
+                  test_v8_aligned_pointer_in_internal_field);
+  NODE_SET_METHOD(exports, "test_v8_cpu_profiler", test_v8_cpu_profiler);
 
   // without this, node hits a UAF deleting the Global
-  node::AddEnvironmentCleanupHook(context->GetIsolate(),
+  // (Context::GetIsolate was removed in V8 14.6; the module initializer runs
+  // with the isolate entered, so take the current one)
+  node::AddEnvironmentCleanupHook(Isolate::GetCurrent(),
                                   GlobalTestWrapper::cleanup, nullptr);
 }
 

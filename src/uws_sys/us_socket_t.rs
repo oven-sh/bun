@@ -9,13 +9,13 @@ bun_core::declare_scope!(uws, visible);
 
 const MAX_I32: usize = i32::MAX as usize;
 
-/// Rust bindings for `us_socket_t`.
-///
-/// TLS is per-socket (`s->ssl != NULL` in C); there is no `int ssl` selector.
-/// Dispatch is by `kind()` — see `SocketKind` and `dispatch.rs`.
-///
-/// Higher-level wrappers (`uws::SocketTCP`/`SocketTLS`) cover named pipes,
-/// upgraded duplexes, and async DNS.
+// Rust bindings for `us_socket_t`.
+//
+// TLS is per-socket (`s->ssl != NULL` in C); there is no `int ssl` selector.
+// Dispatch is by `kind()` — see `SocketKind` and `dispatch.rs`.
+//
+// Higher-level wrappers (`uws::SocketTCP`/`SocketTLS`) cover named pipes,
+// upgraded duplexes, and async DNS.
 bun_opaque::opaque_ffi! { pub struct us_socket_t; }
 
 #[repr(i32)]
@@ -30,6 +30,14 @@ pub enum CloseCode {
     /// the JS wrapper detaches immediately so `.normal`'s deferral would
     /// orphan the `us_socket_t`, but already-written data must still drain.
     fast_shutdown = 2,
+}
+
+/// Layout-compatible with `struct us_iovec_t` in libusockets.h (== POSIX iovec).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UsIoVec {
+    pub base: *const core::ffi::c_void,
+    pub len: usize,
 }
 
 impl us_socket_t {
@@ -54,7 +62,7 @@ impl us_socket_t {
         }
     }
 
-    pub fn pause(&mut self) {
+    pub(crate) fn pause(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_pause({:p})", self);
         c::us_socket_pause(self);
     }
@@ -82,33 +90,50 @@ impl us_socket_t {
         c::us_socket_shutdown(self);
     }
 
-    pub fn shutdown_read(&mut self) {
+    pub(crate) fn shutdown_read(&mut self) {
         c::us_socket_shutdown_read(self);
     }
 
-    pub fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         c::us_socket_is_closed(self) > 0
     }
 
-    pub fn is_shutdown(&self) -> bool {
+    /// Write that also reports a fatal (non-would-block) send error so the
+    /// node:net path can fail the pending write instead of waiting forever.
+    /// The second element is 0 on success, otherwise the positive errno of
+    /// the failed `send()` on POSIX, or 1 on Windows (WSA→errno mapping is
+    /// not wired up here yet).
+    pub(crate) fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
+        let mut fatal: i32 = 0;
+        // SAFETY: `self` is a live `us_socket_t`; `data` is valid for its length
+        // (clamped to i32) and `fatal` outlives the call as the out-parameter.
+        let written = unsafe {
+            c::us_socket_write_check_error(
+                self,
+                data.as_ptr().cast(),
+                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
+                &raw mut fatal,
+            )
+        };
+        (written, fatal)
+    }
+
+    pub(crate) fn is_shutdown(&self) -> bool {
         c::us_socket_is_shut_down(self) > 0
     }
 
-    pub fn is_tls(&self) -> bool {
-        c::us_socket_is_tls(self) > 0
+    /// `None` when `getsockname()` fails or the address family has no port.
+    pub(crate) fn local_port(&self) -> Option<u16> {
+        u16::try_from(c::us_socket_local_port(self)).ok()
     }
 
-    pub fn local_port(&self) -> i32 {
-        c::us_socket_local_port(self)
-    }
-
-    pub fn remote_port(&self) -> i32 {
-        c::us_socket_remote_port(self)
+    /// `None` when `getpeername()` fails or the address family has no port.
+    pub(crate) fn remote_port(&self) -> Option<u16> {
+        u16::try_from(c::us_socket_remote_port(self)).ok()
     }
 
     /// Returned slice is a view into `buf`.
-    // TODO(port): narrow error set
-    pub fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub(crate) fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
@@ -117,16 +142,16 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            // TODO(port): bun.errnoToZigErr — map errno to bun_core::Error
-            return Err(bun_core::errno_to_zig_err(errno as i32));
+            return Err(crate::Error::Sys(
+                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
+            ));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
     }
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set.
-    // TODO(port): narrow error set
-    pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub(crate) fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
@@ -135,46 +160,62 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            // TODO(port): bun.errnoToZigErr — map errno to bun_core::Error
-            return Err(bun_core::errno_to_zig_err(errno as i32));
+            return Err(crate::Error::Sys(
+                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
+            ));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
     }
 
-    pub fn set_timeout(&mut self, seconds: u32) {
+    pub(crate) fn set_timeout(&mut self, seconds: u32) {
         c::us_socket_timeout(self, seconds);
     }
 
-    pub fn set_long_timeout(&mut self, minutes: u32) {
+    pub(crate) fn set_long_timeout(&mut self, minutes: u32) {
         c::us_socket_long_timeout(self, minutes);
     }
 
-    pub fn set_nodelay(&mut self, enabled: bool) {
+    pub(crate) fn set_nodelay(&mut self, enabled: bool) {
         c::us_socket_nodelay(self, enabled as c_int);
     }
 
-    pub fn set_keepalive(&mut self, enabled: bool, delay: u32) -> i32 {
+    pub(crate) fn set_keepalive(&mut self, enabled: bool, delay: u32) -> i32 {
         c::us_socket_keepalive(self, enabled as c_int, delay)
     }
 
-    /// `SSL*` if TLS, else null. Use `get_fd()` for the descriptor.
-    pub fn ssl(&mut self) -> Option<&mut bun_boringssl_sys::SSL> {
-        if !self.is_tls() {
-            return None;
-        }
-        unsafe {
-            // SAFETY: is_tls() guarantees the native handle is a non-null SSL*
-            c::us_socket_get_native_handle(self)
-                .cast::<bun_boringssl_sys::SSL>()
-                .as_mut()
-        }
+    /// Set the IP type-of-service / traffic class. Returns 0 on success or a
+    /// negative platform errno.
+    pub(crate) fn set_tos(&mut self, tos: i32) -> i32 {
+        c::us_socket_set_tos(self, tos)
+    }
+
+    /// Get the IP type-of-service / traffic class (>= 0) or a negative errno.
+    pub(crate) fn get_tos(&mut self) -> i32 {
+        c::us_socket_get_tos(self)
+    }
+
+    /// Resume a handshake suspended by an asynchronous SNICallback. `ctx`
+    /// carries an owned SSL_CTX reference that the call consumes (may be
+    /// null = fall through to the default context); `error` aborts instead.
+    pub(crate) fn sni_resolve(&mut self, ctx: *mut SslCtx, error: bool) {
+        c::us_socket_sni_resolve(self, ctx, error as c_int);
+    }
+
+    /// Install a socket-level SNI resolver on an already-adopted server-side
+    /// TLS socket (there is no listen socket to hang it off). Must run before
+    /// the handshake is driven.
+    pub fn on_server_name(
+        &mut self,
+        cb: extern "C" fn(*mut us_socket_t, *const core::ffi::c_char, *mut c_int) -> *mut SslCtx,
+    ) {
+        c::us_socket_on_server_name(self, cb);
     }
 
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
     /// plain TCP. Consumers that want one or the other should call `ssl()` /
     /// `get_fd()` directly; this is the round-trip-to-JS form.
-    pub fn get_native_handle(&mut self) -> Option<*mut c_void> {
+    pub(crate) fn get_native_handle(&mut self) -> Option<*mut c_void> {
         let p = c::us_socket_get_native_handle(self);
         if p.is_null() { None } else { Some(p) }
     }
@@ -189,8 +230,7 @@ impl us_socket_t {
 
     /// Type-erased ext storage — `LIBUS_EXT_ALIGNMENT`-aligned bytes
     /// immediately after the C struct. Prefer `ext<T>()`.
-    pub fn ext_ptr(&mut self) -> *mut u8 {
-        // TODO(port): Rust pointer types do not carry alignment; LIBUS_EXT_ALIGNMENT == 16
+    pub(crate) fn ext_ptr(&mut self) -> *mut u8 {
         c::us_socket_ext(self).cast::<u8>()
     }
 
@@ -200,7 +240,6 @@ impl us_socket_t {
             &mut *c::us_socket_group(self)
         }
     }
-    // Zig: `pub const rawGroup = group;`
     #[inline]
     pub fn raw_group(&mut self) -> &mut SocketGroup {
         self.group()
@@ -217,32 +256,21 @@ impl us_socket_t {
         c::us_socket_set_kind(self, k as u8);
     }
 
-    /// Move this socket to a new group/kind, optionally resizing its ext.
-    /// Returns the (possibly relocated) socket; `self` is invalid after.
-    // TODO(port): lifetime — self is consumed/invalidated; returned ptr may be a different allocation
-    pub fn adopt(
-        &mut self,
-        g: &mut SocketGroup,
-        k: SocketKind,
-        old_ext: i32,
-        new_ext: i32,
-    ) -> Option<NonNull<us_socket_t>> {
-        // SAFETY: self and g are live; C may realloc and return a different us_socket_t*
-        unsafe { NonNull::new(c::us_socket_adopt(self, g, k as u8, old_ext, new_ext)) }
-    }
-
     /// `adopt` + attach a fresh `SSL*` from `ssl_ctx` (refcounted by the C
     /// side for the socket's lifetime). Does NOT kick the handshake — the
     /// caller must repoint `ext` first (so any dispatch lands in the new
     /// owner) and then call `start_tls_handshake`. Replaces
     /// `us_socket_upgrade_to_tls` / `wrapTLS`.
-    // TODO(port): lifetime — self is consumed/invalidated; returned ptr may be a different allocation
+    // TODO: take `self` by value — it is consumed/invalidated; the returned ptr may be a different allocation
     pub fn adopt_tls(
         &mut self,
         g: &mut SocketGroup,
         k: SocketKind,
         ssl_ctx: &mut SslCtx,
         sni: Option<&core::ffi::CStr>,
+        is_client: bool,
+        request_cert: bool,
+        reject_unauthorized: bool,
         old_ext: i32,
         new_ext: i32,
     ) -> Option<NonNull<us_socket_t>> {
@@ -255,6 +283,9 @@ impl us_socket_t {
                 k as u8,
                 ssl_ctx,
                 sni.map_or(ptr::null(), |s| s.as_ptr()),
+                is_client as i32,
+                request_cert as i32,
+                reject_unauthorized as i32,
                 old_ext,
                 new_ext,
             ))
@@ -265,6 +296,29 @@ impl us_socket_t {
     /// repointed before any handshake/close dispatch can fire.
     pub fn start_tls_handshake(&mut self) {
         c::us_socket_start_tls_handshake(self);
+    }
+
+    /// Feed bytes that were already read off the wire (e.g. a ClientHello the
+    /// plain-TCP layer consumed before the upgrade) through the same decrypt
+    /// path as bytes arriving from the kernel.
+    pub fn tls_feed(&mut self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+        // The C side takes an `int` length: feed in i32-sized chunks instead of
+        // truncating the cast (a clamp would silently drop the tail and there is
+        // no return value to report a partial feed). Each chunk can re-enter the
+        // data dispatch, which may close the socket — stop feeding once it does.
+        for chunk in data.chunks(MAX_I32) {
+            if self.is_closed() {
+                return;
+            }
+            // SAFETY: `self` is a live TLS `us_socket_t`; `chunk` is valid for its
+            // length, which fits in an i32 by construction.
+            unsafe {
+                c::us_socket_tls_feed(self, chunk.as_ptr().cast(), chunk.len() as i32);
+            }
+        }
     }
 
     /// Tee inbound ciphertext to `us_dispatch_ssl_raw_tap` before `SSL_read`
@@ -288,7 +342,7 @@ impl us_socket_t {
     }
 
     #[cfg(not(windows))]
-    pub fn write_fd(&mut self, data: &[u8], file_descriptor: Fd) -> i32 {
+    pub(crate) fn write_fd(&mut self, data: &[u8], file_descriptor: Fd) -> i32 {
         let rc = unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes; fd is a valid native descriptor
             c::us_socket_ipc_write_fd(
@@ -310,10 +364,9 @@ impl us_socket_t {
     }
     #[cfg(windows)]
     pub fn write_fd(&mut self, _data: &[u8], _file_descriptor: Fd) -> i32 {
-        // Zig: `if (Environment.isWindows) @compileError(...)` — that fires only
-        // on call (lazy semantics). Rust evaluates `compile_error!` at item
-        // definition, so this would brick the windows build even with no callers.
-        // Mirror Zig intent with a runtime trap; no current Windows call site.
+        // A `compile_error!` here would brick the windows build even with no
+        // callers (it is evaluated at item definition), so use a runtime trap
+        // instead; no current Windows call site.
         unreachable!("us_socket_t::write_fd is not implemented on Windows")
     }
 
@@ -339,8 +392,25 @@ impl us_socket_t {
         rc
     }
 
+    /// Vectored raw write — all chunks reach the fd in one writev (sequential
+    /// sends on platforms without it). Same closed/shutdown gating and
+    /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
+    /// raw writes bypass TLS framing.
+    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec]) -> i32 {
+        bun_core::scoped_log!(uws, "us_socket_raw_writev({:p}, {})", self, iov.len());
+        // SAFETY: iov entries reference memory owned by the caller for the
+        // duration of this call; the C side only reads them synchronously.
+        unsafe {
+            c::us_socket_raw_writev(
+                self,
+                iov.as_ptr(),
+                i32::try_from(iov.len()).expect("int cast"),
+            )
+        }
+    }
+
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
-    pub fn raw_write(&mut self, data: &[u8]) -> i32 {
+    pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
         bun_core::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
         unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes
@@ -352,11 +422,11 @@ impl us_socket_t {
         }
     }
 
-    pub fn flush(&mut self) {
+    pub(crate) fn flush(&mut self) {
         c::us_socket_flush(self);
     }
 
-    pub fn send_file_needs_more(&mut self) {
+    pub(crate) fn send_file_needs_more(&mut self) {
         c::us_socket_sendfile_needs_more(self);
     }
 
@@ -375,15 +445,15 @@ impl us_socket_t {
         }
     }
 
-    pub fn get_verify_error(&self) -> us_bun_verify_error_t {
+    pub(crate) fn get_verify_error(&self) -> us_bun_verify_error_t {
         c::us_socket_verify_error(self)
     }
 
-    pub fn get_error(&self) -> i32 {
+    pub(crate) fn get_error(&self) -> i32 {
         c::us_socket_get_error(self)
     }
 
-    pub fn is_established(&self) -> bool {
+    pub(crate) fn is_established(&self) -> bool {
         c::us_socket_is_established(self) > 0
     }
 }
@@ -402,93 +472,133 @@ mod c {
     // Shims that take a (ptr,len) pair, nullable raw, or transfer ownership
     // stay unsafe.
     unsafe extern "C" {
-        pub safe fn us_socket_get_native_handle(s: &mut us_socket_t) -> *mut c_void;
+        pub(super) safe fn us_socket_get_native_handle(s: &mut us_socket_t) -> *mut c_void;
 
-        pub safe fn us_socket_local_port(s: &us_socket_t) -> i32;
-        pub safe fn us_socket_remote_port(s: &us_socket_t) -> i32;
-        pub fn us_socket_remote_address(s: *const us_socket_t, buf: *mut u8, length: *mut i32);
-        pub fn us_socket_local_address(s: *const us_socket_t, buf: *mut u8, length: *mut i32);
-        pub safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
-        pub safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
-        pub safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);
-        pub safe fn us_socket_keepalive(s: &mut us_socket_t, enable: c_int, delay: c_uint)
-        -> c_int;
+        pub(super) safe fn us_socket_local_port(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_remote_port(s: &us_socket_t) -> i32;
+        pub(super) fn us_socket_remote_address(
+            s: *const us_socket_t,
+            buf: *mut u8,
+            length: *mut i32,
+        );
+        pub(super) fn us_socket_local_address(
+            s: *const us_socket_t,
+            buf: *mut u8,
+            length: *mut i32,
+        );
+        pub(super) safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
+        pub(super) safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
+        pub(super) safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);
+        pub(super) safe fn us_socket_set_tos(s: &mut us_socket_t, tos: c_int) -> c_int;
+        pub(super) safe fn us_socket_get_tos(s: &mut us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_sni_resolve(
+            s: &mut us_socket_t,
+            ctx: *mut SslCtx,
+            error: c_int,
+        );
+        pub(super) safe fn us_socket_on_server_name(
+            s: &mut us_socket_t,
+            cb: extern "C" fn(
+                *mut us_socket_t,
+                *const core::ffi::c_char,
+                *mut c_int,
+            ) -> *mut SslCtx,
+        );
+        pub(super) safe fn us_socket_keepalive(
+            s: &mut us_socket_t,
+            enable: c_int,
+            delay: c_uint,
+        ) -> c_int;
 
-        pub safe fn us_socket_ext(s: &mut us_socket_t) -> *mut c_void;
-        pub safe fn us_socket_group(s: &mut us_socket_t) -> *mut SocketGroup;
-        pub safe fn us_socket_kind(s: &us_socket_t) -> u8;
-        pub safe fn us_socket_set_kind(s: &mut us_socket_t, kind: u8);
-        pub safe fn us_socket_set_ssl_raw_tap(s: &mut us_socket_t, enabled: c_int);
-        pub safe fn us_socket_is_tls(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_ext(s: &mut us_socket_t) -> *mut c_void;
+        pub(super) safe fn us_socket_group(s: &mut us_socket_t) -> *mut SocketGroup;
+        pub(super) safe fn us_socket_kind(s: &us_socket_t) -> u8;
+        pub(super) safe fn us_socket_set_kind(s: &mut us_socket_t, kind: u8);
+        pub(super) safe fn us_socket_set_ssl_raw_tap(s: &mut us_socket_t, enabled: c_int);
 
-        pub fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
-        pub fn us_socket_ipc_write_fd(
+        pub(super) fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
+        #[cfg(not(windows))]
+        pub(super) fn us_socket_ipc_write_fd(
             s: *mut us_socket_t,
             data: *const u8,
             length: i32,
             fd: i32,
         ) -> i32;
-        pub fn us_socket_write2(
+        pub(super) fn us_socket_write2(
             s: *mut us_socket_t,
             header: *const u8,
             len: usize,
             payload: *const u8,
             len2: usize,
         ) -> i32;
-        pub fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
-        pub safe fn us_socket_flush(s: &mut us_socket_t);
+        pub(super) fn us_socket_raw_writev(
+            s: *mut us_socket_t,
+            iov: *const super::UsIoVec,
+            count: i32,
+        ) -> i32;
+        pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)
+        -> i32;
+        pub(super) safe fn us_socket_flush(s: &mut us_socket_t);
 
-        pub fn us_socket_open(
+        pub(super) fn us_socket_open(
             s: *mut us_socket_t,
             is_client: i32,
             ip: *const u8,
             ip_length: i32,
         ) -> *mut us_socket_t;
-        pub safe fn us_socket_pause(s: &mut us_socket_t);
-        pub safe fn us_socket_resume(s: &mut us_socket_t);
-        pub fn us_socket_close(
+        pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
+        pub(super) fn us_socket_close(
             s: *mut us_socket_t,
             code: CloseCode,
             reason: *mut c_void,
         ) -> *mut us_socket_t;
-        pub safe fn us_socket_shutdown(s: &mut us_socket_t);
-        pub safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
-        pub safe fn us_socket_shutdown_read(s: &mut us_socket_t);
-        pub safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
-        pub safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
-        pub safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
-        pub safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
-        pub safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
-        pub safe fn us_socket_is_established(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
+        pub(super) fn us_socket_write_check_error(
+            s: &us_socket_t,
+            data: *const core::ffi::c_char,
+            length: i32,
+            fatal_write_error: *mut i32,
+        ) -> i32;
+        pub(super) safe fn us_socket_shutdown_read(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
+        pub(super) safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
+        pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
 
-        pub fn us_socket_adopt(
-            s: *mut us_socket_t,
-            group: *mut SocketGroup,
-            kind: u8,
-            old_ext_size: i32,
-            ext_size: i32,
-        ) -> *mut us_socket_t;
         /// ssl_ctx is required (the whole point); sni may be null.
-        pub fn us_socket_adopt_tls(
+        pub(super) fn us_socket_adopt_tls(
             s: *mut us_socket_t,
             group: *mut SocketGroup,
             kind: u8,
             ssl_ctx: *mut SslCtx,
             sni: *const c_char,
+            is_client: i32,
+            request_cert: i32,
+            reject_unauthorized: i32,
             old_ext_size: i32,
             ext_size: i32,
         ) -> *mut us_socket_t;
-        pub safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
+        /// Feed already-read bytes through the TLS decrypt path.
+        pub(super) fn us_socket_tls_feed(
+            s: *mut us_socket_t,
+            data: *const c_char,
+            length: i32,
+        ) -> *mut us_socket_t;
+        pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
     }
 }
 
 #[repr(C)]
 pub struct us_socket_stream_buffer_t {
-    pub list_ptr: *mut u8,
-    pub list_cap: usize,
-    pub list_len: usize,
-    pub total_bytes_written: usize,
-    pub cursor: usize,
+    pub(crate) list_ptr: *mut u8,
+    pub(crate) list_cap: usize,
+    pub(crate) list_len: usize,
+    pub(crate) total_bytes_written: usize,
+    pub(crate) cursor: usize,
 }
 
 impl Default for us_socket_stream_buffer_t {
@@ -512,7 +622,6 @@ pub struct StreamBuffer {
 }
 
 impl us_socket_stream_buffer_t {
-    // TODO(port): ownership — Zig does not free the previous list_ptr here; matches that.
     pub fn update(&mut self, stream_buffer: StreamBuffer) {
         // Decompose the Vec<u8> backing `stream_buffer.list` into raw parts so
         // the C side can read ptr/len/cap directly.
@@ -549,26 +658,23 @@ impl us_socket_stream_buffer_t {
     /// Explicit teardown — this struct is `#[repr(C)]` and freed via the
     /// exported `us_socket_free_stream_buffer`, so no `Drop` impl.
     ///
-    /// SAFETY: `this` must point to a live `us_socket_stream_buffer_t` whose
-    /// `list_ptr`/`list_cap` were produced by `update` (decomposed `Vec<u8>` on
-    /// the global mimalloc allocator). Not called more than once.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract — `this` is non-null and exclusively borrowed
-        let this = unsafe { &mut *this };
-        if !this.list_ptr.is_null() {
+    /// SAFETY: `list_ptr`/`list_cap` were produced by `update` (decomposed
+    /// `Vec<u8>` on the global mimalloc allocator). Not called more than once.
+    pub(crate) unsafe fn destroy(&mut self) {
+        if !self.list_ptr.is_null() {
             unsafe {
                 // SAFETY: list_ptr/list_cap came from a decomposed Vec<u8> (global mimalloc).
-                drop(Vec::from_raw_parts(this.list_ptr, 0, this.list_cap));
+                drop(Vec::from_raw_parts(self.list_ptr, 0, self.list_cap));
             }
+            self.list_ptr = core::ptr::null_mut();
+            self.list_cap = 0;
         }
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
+extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
     // SAFETY: caller (C) passes a live us_socket_stream_buffer_t*
-    unsafe { us_socket_stream_buffer_t::destroy(buffer) };
+    unsafe { (*buffer).destroy() };
 }
 // us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs
-
-// ported from: src/uws_sys/us_socket_t.zig

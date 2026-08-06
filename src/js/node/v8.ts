@@ -2,7 +2,14 @@
 
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
+const { validateString } = require("internal/validators");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
+const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler } = $cpp(
+  "NodeV8.cpp",
+  "Bun::createNodeV8Binding",
+);
+
+const DateNow = Date.now;
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -20,9 +27,90 @@ class Serializer {
 }
 class DefaultDeserializer extends Deserializer {}
 class DefaultSerializer extends Serializer {}
+// JSC manages one undivided heap, so a record carries a single space instead
+// of V8's thirteen, and counters JSC does not track are reported as 0 rather
+// than invented.
+function gcHeapSnapshot(used, capacity, external) {
+  const available = capacity > used ? capacity - used : 0;
+  return {
+    heapStatistics: {
+      totalHeapSize: capacity,
+      totalHeapSizeExecutable: 0,
+      totalPhysicalSize: capacity,
+      totalAvailableSize: available,
+      usedHeapSize: used,
+      heapSizeLimit: 0,
+      mallocedMemory: 0,
+      peakMallocedMemory: 0,
+      externalMemory: external,
+      totalGlobalHandlesSize: 0,
+      usedGlobalHandlesSize: 0,
+    },
+    heapSpaceStatistics: [
+      {
+        spaceName: "heap",
+        spaceSize: capacity,
+        spaceUsedSize: used,
+        spaceAvailableSize: available,
+        physicalSpaceSize: capacity,
+      },
+    ],
+  };
+}
+
+const kGCProfilerSession = Symbol("kGCProfilerSession");
+const kGCProfilerStartTime = Symbol("kGCProfilerStartTime");
+
+// A profiler that is started and then dropped without stop() would otherwise
+// leave its native session open for the life of the VM; the registry releases
+// it when the wrapper is collected, matching node's BaseObject finalizer.
+let gcProfilerRegistry: FinalizationRegistry<number> | undefined;
+
 class GCProfiler {
   constructor() {
-    notimpl("GCProfiler");
+    this[kGCProfilerSession] = null;
+    this[kGCProfilerStartTime] = 0;
+  }
+
+  start() {
+    if (this[kGCProfilerSession] !== null) return;
+    this[kGCProfilerStartTime] = DateNow();
+    const id = startGCProfiler();
+    this[kGCProfilerSession] = id;
+    (gcProfilerRegistry ??= new FinalizationRegistry(discardGCProfiler)).register(this, id, this);
+  }
+
+  stop() {
+    const session = this[kGCProfilerSession];
+    if (session === null) return undefined;
+    this[kGCProfilerSession] = null;
+    gcProfilerRegistry!.unregister(this);
+
+    const events = stopGCProfiler(session);
+    const statistics = [];
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
+      $arrayPush(statistics, {
+        // A JavaScriptCore eden collection only scans newly allocated objects,
+        // and a full collection sweeps the whole heap, so they line up with
+        // V8's minor and major collection types.
+        gcType: event.isFullCollection ? "MarkSweepCompact" : "Scavenge",
+        cost: event.cost,
+        beforeGC: gcHeapSnapshot(event.usedBefore, event.capacityBefore, event.externalBefore),
+        afterGC: gcHeapSnapshot(event.usedAfter, event.capacityAfter, event.externalAfter),
+      });
+    }
+
+    return {
+      version: 1,
+      startTime: this[kGCProfilerStartTime],
+      endTime: DateNow(),
+      statistics,
+    };
+  }
+
+  [Symbol.dispose]() {
+    this.stop();
   }
 }
 
@@ -91,7 +179,10 @@ function getHeapSpaceStatistics() {
 function getHeapCodeStatistics() {
   notimpl("getHeapCodeStatistics");
 }
-function setFlagsFromString() {
+function setFlagsFromString(flags) {
+  // Validate before reporting the gap: node rejects a non-string argument
+  // regardless of whether the flag itself can be applied.
+  validateString(flags, "flags");
   notimpl("setFlagsFromString");
 }
 function deserialize(value) {
@@ -170,11 +261,15 @@ const promiseHooks = {
     addDeserializeCallback: () => notimpl("addDeserializeCallback"),
     addSerializeCallback: () => notimpl("addSerializeCallback"),
     setDeserializeMainFunction: () => notimpl("setDeserializeMainFunction"),
-    isBuildingSnapshot: () => notimpl("isBuildingSnapshot"),
+    // Bun never builds a V8 startup snapshot, so this is always false, matching
+    // Node's behavior during normal execution.
+    isBuildingSnapshot: () => false,
   };
 
 export default {
   cachedDataVersionTag,
+  GCProfiler,
+  isStringOneByteRepresentation,
   getHeapSnapshot,
   getHeapStatistics,
   getHeapSpaceStatistics,
@@ -210,9 +305,6 @@ hideFromStack(
   setHeapSnapshotNearHeapLimit,
   Deserializer,
   Serializer,
-  DefaultDeserializer,
-  DefaultSerializer,
-  GCProfiler,
   DefaultDeserializer,
   DefaultSerializer,
 );

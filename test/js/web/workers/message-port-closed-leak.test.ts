@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 // https://bugs.webkit.org/show_bug.cgi?id=281662
 // Transferring buffers to a closed MessageChannel causes memory leaks
@@ -10,6 +10,7 @@ describe("MessagePortChannel closed port", () => {
         bunExe(),
         "-e",
         `
+          const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
           const { port1, port2 } = new MessageChannel();
           port2.close();
 
@@ -22,18 +23,19 @@ describe("MessagePortChannel closed port", () => {
 
           // Measure: second batch should reuse freed memory if messages
           // are dropped (not queued) for closed ports.
-          const rssBefore = process.memoryUsage().rss;
+          const rssBefore = rss();
           for (let i = 0; i < 5000; i++) {
             port1.postMessage(Buffer.alloc(64 * 1024).toString());
           }
           Bun.gc(true);
           Bun.gc(true);
-          const rssAfter = process.memoryUsage().rss;
+          const rssAfter = rss();
           const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
 
           // Without fix: ~300+ MB growth (5000 * 64KB queued)
           // With fix: ~0-5 MB (allocator reuses freed memory)
-          if (deltaMB > 50) {
+          // ASAN's quarantine retains freed allocations so widen the threshold there.
+          if (deltaMB > ${isASAN ? 256 : 50}) {
             console.error("FAIL: RSS grew by", deltaMB.toFixed(2), "MB on second batch");
             process.exit(1);
           }
@@ -63,6 +65,7 @@ describe("MessagePortChannel closed port", () => {
           bunExe(),
           "-e",
           `
+            const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
             const closeBeforePost = ${closeBeforePost};
             const ITERATIONS = 1000;
             const PAYLOAD_SIZE = 128 * 1024;
@@ -99,14 +102,15 @@ describe("MessagePortChannel closed port", () => {
             // Warm up to establish allocator high-water mark.
             round();
 
-            const rssBefore = process.memoryUsage().rss;
+            const rssBefore = rss();
             round();
-            const rssAfter = process.memoryUsage().rss;
+            const rssAfter = rss();
             const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
 
             // Without fix: ~130+ MB growth (1000 leaked channels each holding a 128KB string).
             // With fix: ~0-10 MB.
-            if (deltaMB > 60) {
+            // ASAN's quarantine retains freed allocations so widen the threshold there.
+            if (deltaMB > ${isASAN ? 256 : 60}) {
               console.error("FAIL: RSS grew by", deltaMB.toFixed(2), "MB on second batch");
               process.exit(1);
             }

@@ -1,11 +1,9 @@
 use core::ffi::c_void;
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
-use bun_jsc::console_object::Formatter;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
-use super::{get_signature, Expect};
+use super::{get_signature, throw, Expect};
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -26,12 +24,13 @@ extern "C" fn deep_equals_iterator(
     };
     if eq {
         *entry.pass = true;
-        // TODO(perf): break out of the `forEach` when a match is found
+        // PERF: break out of the `forEach` when a match is found
     }
 }
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_contain_equal(
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
+pub(crate) fn to_contain_equal(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -39,8 +38,7 @@ pub fn to_contain_equal(
     let this_value = frame.this();
     let (this, value, not) =
         this.matcher_prelude(global, this_value, "toContainEqual", "<green>expected<r>")?;
-    let arguments_ = frame.arguments_old::<1>();
-    let arguments = arguments_.slice();
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toContainEqual() takes 1 argument")));
@@ -72,7 +70,7 @@ pub fn to_contain_equal(
             // it immediately spreads the value into an array.
 
             let mut expected_codepoint_cursor = strings::Cursor::default();
-            let mut expected_iter = strings::CodepointIterator::init(expected_string.slice());
+            let expected_iter = strings::CodepointIterator::init(expected_string.slice());
             let _ = expected_iter.next(&mut expected_codepoint_cursor);
 
             pass = if expected_iter.next(&mut expected_codepoint_cursor) {
@@ -106,24 +104,26 @@ pub fn to_contain_equal(
     }
 
     // handle failure
-    // PORT NOTE: Zig shared one Formatter for both `toFmt` calls; Rust borrowck forbids two
-    // live `&mut formatter` borrows, so allocate a second Formatter for the expected value.
+    // Two live `&mut formatter` borrows cannot coexist, so allocate a second
+    // Formatter for the expected value.
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
     let value_fmt = value.to_fmt(&mut formatter);
     let expected_fmt = expected.to_fmt(&mut formatter2);
     if not {
         let signature: &str = get_signature("toContainEqual", "<green>expected<r>", true);
-        return this.throw_fmt(
+        return throw!(
+            this,
             global,
             signature,
             concat!("\n\n", "Expected to not contain: <green>{}<r>\n"),
-            format_args!("{}", expected_fmt),
+            expected_fmt,
         );
     }
 
     let signature: &str = get_signature("toContainEqual", "<green>expected<r>", false);
-    this.throw_fmt(
+    throw!(
+        this,
         global,
         signature,
         concat!(
@@ -131,8 +131,7 @@ pub fn to_contain_equal(
             "Expected to contain: <green>{}<r>\n",
             "Received: <red>{}<r>\n"
         ),
-        format_args!("{}{}", expected_fmt, value_fmt),
+        expected_fmt,
+        value_fmt,
     )
 }
-
-// ported from: src/test_runner/expect/toContainEqual.zig

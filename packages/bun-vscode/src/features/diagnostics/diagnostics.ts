@@ -1,4 +1,3 @@
-import * as fs from "node:fs/promises";
 import { Socket } from "node:net";
 import * as os from "node:os";
 import { inspect } from "node:util";
@@ -11,7 +10,6 @@ import {
 } from "../../../../bun-debug-adapter-protocol";
 import type { JSC } from "../../../../bun-inspector-protocol";
 import { getConfig } from "../../extension";
-import { typedGlobalState } from "../../global-state";
 
 const output = vscode.window.createOutputChannel("Bun - Diagnostics");
 
@@ -76,47 +74,15 @@ class BunDiagnosticsManager {
     return this.signal.url;
   }
 
-  private static async getOrRecreateSignal(context: vscode.ExtensionContext) {
-    const globalState = typedGlobalState(context.globalState);
-    const existing = globalState.get("BUN_INSPECT_CONNECT_TO");
-
-    const isWin = os.platform() === "win32";
-
-    if (existing) {
-      if (existing.type === "unix") {
-        output.appendLine(`Reusing existing unix socket: ${existing.url}`);
-
-        if ("url" in existing) {
-          await fs.unlink(existing.url).catch(() => {
-            // ? lol
-          });
-        }
-
-        return new UnixSignal(existing.url);
-      } else {
-        output.appendLine(`Reusing existing tcp socket on: ${existing.port}`);
-        return new TCPSocketSignal(existing.port);
-      }
-    }
-
-    if (isWin) {
+  private static async createSignal(): Promise<UnixSignal | TCPSocketSignal> {
+    if (os.platform() === "win32") {
       const port = await getAvailablePort();
-
-      await globalState.update("BUN_INSPECT_CONNECT_TO", {
-        type: "tcp",
-        port,
-      });
 
       output.appendLine(`Created new tcp socket on: ${port}`);
 
       return new TCPSocketSignal(port);
     } else {
       const signal = new UnixSignal();
-
-      await globalState.update("BUN_INSPECT_CONNECT_TO", {
-        type: "unix",
-        url: signal.url,
-      });
 
       output.appendLine(`Created new unix socket: ${signal.url}`);
 
@@ -137,7 +103,15 @@ class BunDiagnosticsManager {
   // );
 
   public static async initialize(context: vscode.ExtensionContext) {
-    const signal = await BunDiagnosticsManager.getOrRecreateSignal(context);
+    const signal = await BunDiagnosticsManager.createSignal();
+
+    try {
+      await signal.ready;
+    } catch (error) {
+      signal.close();
+      signal.removeAllListeners();
+      throw error;
+    }
 
     return new BunDiagnosticsManager(context, signal);
   }
@@ -271,7 +245,13 @@ export async function registerDiagnosticsSocket(context: vscode.ExtensionContext
 
   if (!getConfig("diagnosticsSocket.enabled")) return;
 
-  const manager = await BunDiagnosticsManager.initialize(context);
+  let manager: BunDiagnosticsManager;
+  try {
+    manager = await BunDiagnosticsManager.initialize(context);
+  } catch (error) {
+    output.appendLine(`Failed to start diagnostics socket: ${error}`);
+    return;
+  }
 
   context.environmentVariableCollection.replace("BUN_INSPECT_CONNECT_TO", manager.signalUrl);
 

@@ -7,8 +7,10 @@
 //! Must work on any host platform (macOS, Windows, Linux) for cross-compilation.
 
 use core::mem::size_of;
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::{AtomicU8, Ordering};
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::env_var;
 use bun_core::{slice_to_nul, strings};
 
@@ -31,8 +33,6 @@ pub enum ElfError {
     #[error("NewVaddrCollides")]
     NewVaddrCollides,
 }
-
-bun_core::named_error_set!(ElfError);
 
 pub struct ElfFile {
     pub data: Vec<u8>,
@@ -68,7 +68,8 @@ impl ElfFile {
 
         // Bounds-check the program header table up-front; --compile-executable-path
         // accepts arbitrary files, so a corrupt e_phoff/e_phnum must not panic.
-        let phdr_table_end = (ehdr.e_phoff as u64)
+        let phdr_table_end = ehdr
+            .e_phoff
             .saturating_add((ehdr.e_phnum as u64).saturating_mul(phdr_size as u64));
         if phdr_table_end > self.data.len() as u64 {
             return;
@@ -87,7 +88,7 @@ impl ElfFile {
                 return;
             }
 
-            // PORT NOTE: reshaped for borrowck — compute replacement under an
+            // reshaped for borrowck — compute replacement under an
             // immutable borrow, then take a mutable borrow for the writes.
             let replacement: &'static [u8] = {
                 let interp_region = &self.data[interp_offset..][..interp_filesz];
@@ -166,7 +167,7 @@ impl ElfFile {
         if strtab_end > self.data.len() as u64 {
             return;
         }
-        // PORT NOTE: reshaped for borrowck — copy strtab bounds out so we can
+        // reshaped for borrowck — copy strtab bounds out so we can
         // re-borrow self.data mutably below.
         let strtab_off = usize::try_from(strtab_shdr.sh_offset).expect("int cast");
         let strtab_len = usize::try_from(strtab_shdr.sh_size).expect("int cast");
@@ -211,17 +212,18 @@ impl ElfFile {
         let ehdr = read_ehdr(&self.data);
         let bun_section = self.find_bun_section(ehdr)?;
         let bun_section_offset = bun_section.file_offset;
+        let bun_section_vaddr = bun_section.vaddr;
         let page_size = Self::page_size(ehdr);
 
         let header_size: u64 = size_of::<u64>() as u64;
         let new_content_size: u64 = header_size + payload.len() as u64;
         let aligned_new_size = align_up(new_content_size, page_size);
 
-        // Locate the writable PT_LOAD we'll extend. .bun lives in this
-        // segment already (BlobHeader is `aligned(16K)` + PROGBITS with WA
-        // flags). Growing an existing PT_LOAD is the layout a linker would
-        // naturally produce; WSL1's kernel loader rejects binaries that
-        // instead add a late PT_LOAD by repurposing PT_GNU_STACK (#29963).
+        // Extend the writable PT_LOAD that contains `.bun` (matched by vaddr,
+        // not "first writable": patchelf'd templates have an extra writable
+        // PT_LOAD holding the relocated PHDR + `.interp`, #31023). Growing an
+        // existing PT_LOAD rather than adding a late one is required by
+        // WSL1's kernel loader (#29963).
         let phdr_size = size_of::<Elf64_Phdr>();
         let mut rw_phdr_index: Option<usize> = None;
         let mut rw_phdr: Elf64_Phdr = Elf64_Phdr::ZEROED;
@@ -238,7 +240,10 @@ impl ElfFile {
                 max_vaddr_end = vaddr_end;
             }
 
-            if (phdr.p_flags & PF_W) != 0 && rw_phdr_index.is_none() {
+            if (phdr.p_flags & PF_W) != 0
+                && phdr.p_vaddr <= bun_section_vaddr
+                && bun_section_vaddr < vaddr_end
+            {
                 rw_phdr_index = Some(i);
                 rw_phdr = phdr;
             }
@@ -251,7 +256,7 @@ impl ElfFile {
         // Place the new data at a page-aligned virtual address past every
         // existing mapping. page_size is ≥ 128 so this also guarantees the
         // 128-byte alignment that JSC's bytecode cache requires — see
-        // `target_mod = 120` in StandaloneModuleGraph.zig, which assumes the
+        // `target_mod = 120` in StandaloneModuleGraph.rs, which assumes the
         // payload starts on a 128-byte boundary so bytecode at payload-offset
         // 120 lands 128-aligned once the 8-byte `[u64 size]` header is
         // accounted for. A non-page-aligned `new_vaddr` (e.g. one inheriting
@@ -306,9 +311,8 @@ impl ElfFile {
 
         let total_new_size: u64 = move_dst_end;
 
-        // PERF(port): Zig used ensureTotalCapacity + raw len bump leaving the
-        // new region uninitialized; resize() zero-fills. The explicit @memset
-        // calls below become partially redundant but stay for parity.
+        // resize() zero-fills, so the explicit zero-fills below are
+        // partially redundant but harmless.
         let total_new_size_usz = usize::try_from(total_new_size).expect("int cast");
         self.data
             .reserve(total_new_size_usz.saturating_sub(self.data.len()));
@@ -426,13 +430,6 @@ impl ElfFile {
         Ok(())
     }
 
-    pub fn write(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig used `writer: anytype` (`std.Io.Writer`); std::io::Write
-        // is the canonical Rust equivalent. bun_io has no Write trait.
-        writer.write_all(&self.data)?;
-        Ok(())
-    }
-
     // --- Internal helpers ---
 
     /// Returns the file offset and section index of the `.bun` section.
@@ -469,6 +466,7 @@ impl ElfFile {
                 if name == b".bun" {
                     return Ok(BunSectionInfo {
                         file_offset: shdr.sh_offset,
+                        vaddr: shdr.sh_addr,
                         section_index: u16::try_from(i).expect("int cast"),
                     });
                 }
@@ -498,12 +496,11 @@ impl ElfFile {
     }
 }
 
-// `deinit` in Zig only freed `data` and destroyed `self` — both handled by
-// `Drop` on `Vec<u8>` / `Box<ElfFile>`. No explicit `Drop` impl needed.
-
 struct BunSectionInfo {
     /// File offset of the .bun section's data (sh_offset).
     file_offset: u64,
+    /// Virtual address of the .bun section (sh_addr).
+    vaddr: u64,
     /// Index of the .bun section in the section header table.
     section_index: u16,
 }
@@ -562,12 +559,12 @@ fn validate_elf64_le(data: &[u8]) -> Result<(), ElfError> {
 /// can run on macOS/Windows, in which case the host's linker layout is
 /// irrelevant and we want to normalize for portability (#24742).
 fn host_uses_nix_store_interpreter() -> bool {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         return false;
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         static COMPUTED: AtomicU8 = AtomicU8::new(0); // 0 unknown, 1 no, 2 yes
 
@@ -575,7 +572,7 @@ fn host_uses_nix_store_interpreter() -> bool {
             // Test-only override: lets #29290's regression test force the
             // Nix-host branch without mutating `/etc/NIXOS` on the shared
             // rootfs (which would poison concurrent test workers).
-            // PORT NOTE: env_var .get() returns Option<bool> (nullability
+            // env_var .get() returns Option<bool> (nullability
             // collapsed in the macro port); default-false makes None ≡ false.
             if env_var::BUN_DEBUG_FORCE_NIX_HOST.get() == Some(true) {
                 return true;
@@ -607,7 +604,7 @@ fn host_uses_nix_store_interpreter() -> bool {
                 Ok(fd) => fd,
                 Err(_) => return false,
             };
-            // PORT NOTE: close moved up; fd not needed after read (was `defer fd.close()`).
+            // close moved up; fd not needed after read (was `defer fd.close()`).
             let n = match bun_sys::read(fd, &mut buf) {
                 Ok(n) => n,
                 Err(_) => {
@@ -659,8 +656,7 @@ fn host_uses_nix_store_interpreter() -> bool {
     }
 }
 
-// --- ELF definitions (from Zig std.elf; defined locally for cross-platform use) ---
-// TODO(port): consider moving to a shared bun_exe_format::elf_defs module.
+// --- ELF definitions (defined locally for cross-platform use) ---
 
 const EI_CLASS: usize = 4;
 const EI_DATA: usize = 5;
@@ -677,7 +673,7 @@ const EM_AARCH64: u16 = 183;
 #[repr(C)]
 #[derive(Clone, Copy)]
 #[allow(non_camel_case_types, non_snake_case)]
-pub struct Elf64_Ehdr {
+pub(crate) struct Elf64_Ehdr {
     pub e_ident: [u8; 16],
     pub e_type: u16,
     pub e_machine: u16,
@@ -697,7 +693,7 @@ pub struct Elf64_Ehdr {
 #[repr(C)]
 #[derive(Clone, Copy)]
 #[allow(non_camel_case_types, non_snake_case)]
-pub struct Elf64_Phdr {
+pub(crate) struct Elf64_Phdr {
     pub p_type: u32,
     pub p_flags: u32,
     pub p_offset: u64,
@@ -724,7 +720,7 @@ impl Elf64_Phdr {
 #[repr(C)]
 #[derive(Clone, Copy)]
 #[allow(non_camel_case_types, non_snake_case)]
-pub struct Elf64_Shdr {
+pub(crate) struct Elf64_Shdr {
     pub sh_name: u32,
     pub sh_type: u32,
     pub sh_flags: u64,
@@ -737,11 +733,9 @@ pub struct Elf64_Shdr {
     pub sh_entsize: u64,
 }
 
-// --- byte helpers (Zig std.mem.writeInt) ---
+// --- byte helpers ---
 
 #[inline]
 fn write_u64_le(bytes: &mut [u8], value: u64) {
     bytes[..8].copy_from_slice(&value.to_le_bytes());
 }
-
-// ported from: src/exe_format/elf.zig

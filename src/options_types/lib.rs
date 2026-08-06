@@ -1,34 +1,29 @@
 #![feature(adt_const_params)]
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
-#![warn(unreachable_pub)]
 pub mod bundle_enums;
 pub mod code_coverage_options;
 pub mod command_tag;
 pub mod compile_target;
 pub mod context;
+pub mod error;
 pub mod global_cache;
 pub mod jsx;
 pub mod offline_mode;
 pub mod schema;
 
+pub use error::{Error, Result};
+
 pub use jsx as JSX;
 
-// ─── B-2 Track A: crate-root re-exports for dependents ───────────────────
+// ─── crate-root re-exports for dependents ────────────────────────────────
 // `ImportKind` / `ImportRecord` / `Loader` / `Target` / `Index` / `SideEffects`
 // are now canonical in `bun_ast` — callers import from there directly.
 // Only the `schema::api`-coupled extension traits and option-only types
 // (`Format`, `ModuleType`, …) are surfaced from this crate.
 pub use bundle_enums::{
-    BuiltInModule, BundlePackage, ForceNodeEnv, Format, ImportKindExt, LOADER_API_NAMES, LoaderExt,
-    LoaderOptionalExt, ModuleType, TargetExt, WindowsOptions,
+    BuiltInModule, BundlePackage, ForceNodeEnv, Format, LOADER_API_NAMES, LoaderExt, ModuleType,
+    TargetExt, WindowsOptions,
 };
 
 /// Compiled-standalone-binary virtual filesystem path prefix + predicate.
@@ -42,24 +37,17 @@ pub mod standalone_path {
     /// `/$bunfs/` (POSIX) — 8 bytes for one u64 compare; `$` avoids colliding
     /// with a real path. Windows uses a drive-letter form so file URLs validate.
     #[cfg(not(windows))]
-    pub const BASE_PATH: &str = "/$bunfs/";
+    pub(crate) const BASE_PATH: &str = "/$bunfs/";
     #[cfg(windows)]
-    pub const BASE_PATH: &str = "B:\\~BUN\\";
+    pub(crate) const BASE_PATH: &str = "B:\\~BUN\\";
 
     #[cfg(not(windows))]
-    pub const BASE_PUBLIC_PATH: &str = "/$bunfs/";
+    pub(crate) const BASE_PUBLIC_PATH: &str = "/$bunfs/";
     #[cfg(windows)]
-    pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
-
-    #[cfg(not(windows))]
-    pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str =
-        const_format::concatcp!(BASE_PUBLIC_PATH, "root/");
-    #[cfg(windows)]
-    pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str =
-        const_format::concatcp!(BASE_PUBLIC_PATH, "root/");
+    pub(crate) const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
 
     #[inline]
-    pub fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
+    fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
         str_.starts_with(BASE_PATH.as_bytes())
             || (cfg!(windows) && str_.starts_with(BASE_PUBLIC_PATH.as_bytes()))
     }

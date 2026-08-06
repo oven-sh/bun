@@ -2,11 +2,13 @@
 //! It exists because the standard pipeline is a bad fit when both the producer
 //! (`js_printer`) and the consumer (stack remapping, coverage) are us:
 //!
-//!     js_printer emits VLQ text
-//!       -> SavedSourceMap stores the VLQ bytes
-//!       -> first .stack lookup decodes the *entire* string into a
-//!          Mapping.List (MultiArrayList, 20 bytes/mapping)
-//!       -> every later lookup binary-searches that array
+//! ```text
+//! js_printer emits VLQ text
+//!   -> SavedSourceMap stores the VLQ bytes
+//!   -> first .stack lookup decodes the *entire* string into a
+//!      Mapping.List (MultiArrayList, 20 bytes/mapping)
+//!   -> every later lookup binary-searches that array
+//! ```
 //!
 //! That round-trip through a text wire format costs three times: base64 encode
 //! during printing, a full-file decode on the first stack trace, and a ~4x
@@ -39,12 +41,14 @@
 //!
 //! ## vs. VLQ + Mapping.List
 //!
-//!                      VLQ -> Mapping.List           InternalSourceMap
-//!     encode           base64-VLQ per mapping        buffer K, flush window
-//!     first lookup     decode entire file            none
-//!     resident size    20 B/mapping after decode     ~2.4 B/mapping, constant
-//!     per-lookup       bsearch over N (8B keys)      bsearch N/64 + <=63 deltas
-//!     interop .map     yes (it *is* the spec)        no -- call appendVLQTo()
+//! ```text
+//!                  VLQ -> Mapping.List           InternalSourceMap
+//! encode           base64-VLQ per mapping        buffer K, flush window
+//! first lookup     decode entire file            none
+//! resident size    20 B/mapping after decode     ~2.4 B/mapping, constant
+//! per-lookup       bsearch over N (8B keys)      bsearch N/64 + <=63 deltas
+//! interop .map     yes (it *is* the spec)        no -- call appendVLQTo()
+//! ```
 //!
 //! ## What this is not
 //!
@@ -56,6 +60,7 @@
 //!
 //! ## Blob layout (single allocation, byte-addressed; no alignment assumed):
 //!
+//! ```text
 //!     [ 0.. 8]  total_len:         u64   -- written by Chunk.Builder.generateChunk
 //!     [ 8..16]  mapping_count:     u64   -- written by Chunk.Builder.generateChunk
 //!     [16..24]  input_line_count:  u64   -- written by Chunk.Builder.generateChunk
@@ -64,11 +69,14 @@
 //!     [32..  ]  SyncEntry[sync_count]    -- 24 bytes each
 //!     [stream_offset..total_len-stream_tail_pad]  Window[sync_count]
 //!     [total_len-stream_tail_pad..total_len]      zero bytes (read-past pad)
+//! ```
 //!
 //! SyncEntry: absolute state of this window's first mapping plus stream offset
 //!            (i32 gen_line/col, u32 byte_offset, i32 orig_line/col/src_idx).
 //!
 //! Window (fixed 32-byte header then variable streams; see `win_hdr`):
+//!
+//! ```text
 //!     count: u8, flags: u8 (bit2 has_gen_line_exceptions, bit3 has_src_idx)
 //!     gen_col_len / orig_line_len / orig_col_len: 3 × u16 LE
 //!     gen_line_mask / orig_line_eq_mask / orig_col_eq_mask: 3 × 8 bytes
@@ -80,6 +88,7 @@
 //!       (idx:u8, varint d_gen_line) pairs for d_gen_line>1, 0xFF-terminated
 //!     if has_src_idx:
 //!       8-byte mask (bit=1 ⇒ d_src_idx==0) + varint per 0-bit
+//! ```
 //!
 //! Delta indices are 0..count-2 (first mapping is the seed; only count-1
 //! deltas are encoded).
@@ -87,15 +96,15 @@
 use core::mem::size_of;
 use core::ptr;
 
-use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
+use crate::Ordinal;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 
 use crate::vlq::decode as vlq_decode;
-use crate::{LineColumnOffset, Mapping, SourceMapState, VLQ, append_mapping_to_buffer};
+use crate::{LineColumnOffset, Mapping, SourceMapState, append_mapping_to_buffer};
 
 /// A sync entry is emitted every `SYNC_INTERVAL` mappings.
-pub const SYNC_INTERVAL: usize = 64;
+pub(crate) const SYNC_INTERVAL: usize = 64;
 
 pub const HEADER_SIZE: usize = 32;
 
@@ -116,12 +125,12 @@ pub struct InternalSourceMap {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct SyncEntry {
-    pub generated_line: i32,
-    pub generated_column: i32,
-    pub byte_offset: u32,
-    pub original_line: i32,
-    pub original_column: i32,
-    pub source_index: i32,
+    pub(crate) generated_line: i32,
+    pub(crate) generated_column: i32,
+    pub(crate) byte_offset: u32,
+    pub(crate) original_line: i32,
+    pub(crate) original_column: i32,
+    pub(crate) source_index: i32,
 }
 
 const _: () = assert!(size_of::<SyncEntry>() == 24);
@@ -146,7 +155,7 @@ impl SyncEntry {
 
 impl InternalSourceMap {
     #[inline]
-    pub fn total_len(self) -> usize {
+    pub(crate) fn total_len(self) -> usize {
         // SAFETY: blob is at least HEADER_SIZE bytes (validated by is_valid_blob / producer).
         unsafe { u64::from_ne_bytes(*self.data.cast::<[u8; 8]>()) as usize }
     }
@@ -158,24 +167,24 @@ impl InternalSourceMap {
     }
 
     #[inline]
-    pub fn input_line_count(self) -> usize {
+    pub(crate) fn input_line_count(self) -> usize {
         // SAFETY: blob is at least HEADER_SIZE bytes.
         unsafe { u64::from_ne_bytes(*self.data.add(16).cast::<[u8; 8]>()) as usize }
     }
 
     #[inline]
-    pub fn sync_count(self) -> u32 {
+    pub(crate) fn sync_count(self) -> u32 {
         // SAFETY: blob is at least HEADER_SIZE bytes.
         unsafe { u32::from_ne_bytes(*self.data.add(24).cast::<[u8; 4]>()) }
     }
 
     #[inline]
-    pub fn stream_offset(self) -> u32 {
+    pub(crate) fn stream_offset(self) -> u32 {
         // SAFETY: blob is at least HEADER_SIZE bytes.
         unsafe { u32::from_ne_bytes(*self.data.add(28).cast::<[u8; 4]>()) }
     }
 
-    pub fn sync_entry(self, index: usize) -> SyncEntry {
+    pub(crate) fn sync_entry(self, index: usize) -> SyncEntry {
         let off = HEADER_SIZE + index * size_of::<SyncEntry>();
         // SAFETY: index < sync_count, sync entries are laid out contiguously
         // starting at HEADER_SIZE; blob layout is byte-addressed (no alignment
@@ -184,9 +193,10 @@ impl InternalSourceMap {
     }
 
     #[inline]
-    pub fn stream(self) -> &'static [u8] {
-        // TODO(port): lifetime — this borrows the blob for as long as `self.data`
-        // is valid; callers in this file only use the slice while `self` is live.
+    pub(crate) fn stream(&self) -> &[u8] {
+        // The slice borrows `self` (a Copy view over the blob); the blob
+        // outlives every view by construction, so tying the slice to the view
+        // borrow is conservative.
         // SAFETY: stream_offset..total_len is within the blob (validated by
         // is_valid_blob / producer).
         unsafe {
@@ -200,29 +210,28 @@ impl InternalSourceMap {
     /// Only call this when the blob was heap-allocated by `Builder`/`from_vlq` (e.g.
     /// entries in `SavedSourceMap`). Do NOT call on views over the standalone
     /// module graph section or any other borrowed memory.
-    // TODO(port): conditional ownership — intentionally NOT `impl Drop` because
-    // `InternalSourceMap` is a Copy view and may borrow non-owned memory. Phase B
-    // should split into an owning newtype with `impl Drop`.
+    // Intentionally NOT `impl Drop`: `InternalSourceMap` is a Copy view and
+    // may borrow non-owned memory (e.g. the standalone module graph section),
+    // so ownership is the caller's responsibility here.
     pub fn free_owned(self) {
         // SAFETY: caller guarantees the blob was produced by Builder/from_vlq via
         // the global allocator with this exact length.
         unsafe {
-            drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(
+            drop(Box::<[u8]>::from_raw(std::ptr::slice_from_raw_parts_mut(
                 self.data.cast_mut(),
                 self.total_len(),
             )));
         }
     }
 
-    pub fn memory_cost(self) -> usize {
+    pub(crate) fn memory_cost(self) -> usize {
         self.total_len()
     }
 
     /// Sanity-check a blob's outer header against its actual length. See the
     /// module-level [`is_valid_blob`] for details.
     ///
-    /// Associated-fn alias so callers can write `InternalSourceMap::is_valid_blob(..)`
-    /// (Zig: `pub fn isValidBlob` is a decl on the file-struct `@This()`).
+    /// Associated-fn alias so callers can write `InternalSourceMap::is_valid_blob(..)`.
     #[inline]
     pub fn is_valid_blob(blob: &[u8]) -> bool {
         is_valid_blob(blob)
@@ -231,8 +240,7 @@ impl InternalSourceMap {
     /// Decode a standard VLQ "mappings" string and re-encode it as an
     /// `InternalSourceMap` blob. See the module-level [`from_vlq`] for details.
     ///
-    /// Associated-fn alias so callers can write `InternalSourceMap::from_vlq(..)`
-    /// (Zig: `pub fn fromVLQ` is a decl on the file-struct `@This()`).
+    /// Associated-fn alias so callers can write `InternalSourceMap::from_vlq(..)`.
     #[inline]
     pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, FromVlqError> {
         from_vlq(vlq, input_line_count_hint)
@@ -298,7 +306,6 @@ impl State {
             source_index: self.source_index,
             name_index: -1,
         }
-        // TODO(port): verify Mapping field shape (`generated`/`original` struct name) in bun_sourcemap.
     }
 }
 
@@ -317,13 +324,12 @@ const MAX_VARINT_LEN: usize = 5;
 
 // PERF: force-inline so the per-delta loops in `flush_window` see the 1-byte
 // fast path branchlessly and LLVM can hoist the `buf_ptr.add(w)` arithmetic.
-// Zig leaves this to LLVM (single-CGU); Rust needs the hint across CGUs.
+// The hint is needed for inlining across CGUs.
 #[inline(always)]
 fn write_varint(buf: *mut u8, signed: i32) -> usize {
     let mut v = zigzag_encode(signed);
     let mut i: usize = 0;
     loop {
-        // PERF(port): @intCast — masked to 7 bits, provably in-range
         let mut byte: u8 = (v & 0x7f) as u8;
         v >>= 7;
         if v != 0 {
@@ -390,8 +396,10 @@ mod win_hdr {
 
 /// Parses a window header and steps through its deltas in order. Exception
 /// streams are consumed in order, so a reader is forward-only.
-// TODO(port): lifetime — `bytes`/`base`/`src_idx_mask` borrow the blob; kept as
-// raw pointers to avoid struct lifetime params in Phase A.
+// Invariant: `bytes`/`base`/`src_idx_mask` point into the blob and are only
+// valid while the blob is live. They are raw pointers (not lifetimes) because
+// readers are stored in lifetime-less caches (`FindCacheSlot`, `Cursor`) that
+// follow `InternalSourceMap`'s Copy-view design.
 #[derive(Copy, Clone)]
 struct WindowReader {
     bytes: *const [u8],
@@ -426,7 +434,7 @@ impl WindowReader {
 
     #[inline]
     fn bytes<'a>(&self) -> &'a [u8] {
-        // PORT NOTE: returns an unbound lifetime so callers can mutate other
+        // returns an unbound lifetime so callers can mutate other
         // `self` fields while holding the slice — `self.bytes` is a raw `*const [u8]`
         // pointing into the blob, not into `self`, so this is sound.
         // SAFETY: `bytes` was set from `InternalSourceMap.stream()` which is
@@ -456,9 +464,11 @@ impl WindowReader {
         let gen_col_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::GEN_COL_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
+        // SAFETY: ORIG_LINE_LEN_OFF is a fixed offset within the 32-byte header at `b`.
         let orig_line_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_LINE_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
+        // SAFETY: ORIG_COL_LEN_OFF is a fixed offset within the 32-byte header at `b`.
         let orig_col_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_COL_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
@@ -569,112 +579,6 @@ impl WindowReader {
     }
 }
 
-/// One decoded-window prefix. See `FindCache` for the multi-slot wrapper that
-/// callers actually hold.
-pub struct FindCacheSlot {
-    data: *const u8,
-    sync_idx: u32,
-    decoded_count: u8,
-    reader: WindowReader,
-    decoded: [State; SYNC_INTERVAL],
-}
-
-impl Default for FindCacheSlot {
-    fn default() -> Self {
-        FindCacheSlot {
-            data: ptr::null(),
-            sync_idx: 0,
-            decoded_count: 0,
-            // PERF(port): was `undefined` init — profile in Phase B
-            reader: WindowReader::DANGLING,
-            decoded: [State::default(); SYNC_INTERVAL],
-        }
-    }
-}
-
-// Clone/Copy: bitwise OK — `data` is the blob's identity pointer (borrowed,
-// compared for equality only); see `InternalSourceMap` doc.
-#[derive(Copy, Clone)]
-struct FindCacheKey {
-    data: *const u8,
-    sync_idx: u32,
-}
-
-impl Default for FindCacheKey {
-    fn default() -> Self {
-        FindCacheKey {
-            data: ptr::null(),
-            sync_idx: 0,
-        }
-    }
-}
-
-/// Per-caller decode cache. A single stack trace typically touches a handful
-/// of distinct windows (frames at different depths in the same file, or in
-/// different small files), so a one-slot cache thrashes. This is a small
-/// fully-associative set keyed by `(blob ptr, sync_idx)` with round-robin
-/// eviction; once a window is decoded it stays warm across the whole stack and
-/// across subsequent stacks until evicted. ~21 KB per `SavedSourceMap`.
-pub struct FindCache {
-    /// Parallel key array kept hot and contiguous so the associative scan is a
-    /// single 256-byte sweep; the heavyweight `FindCacheSlot` payloads live in
-    /// a separate array so a miss doesn't drag them through the cache.
-    keys: [FindCacheKey; FindCache::SLOT_COUNT],
-    slots: [FindCacheSlot; FindCache::SLOT_COUNT],
-    next_victim: u8,
-}
-
-impl FindCache {
-    pub const SLOT_COUNT: usize = 16;
-
-    pub fn invalidate(&mut self, data: *const u8) {
-        for (k, s) in self.keys.iter_mut().zip(self.slots.iter_mut()) {
-            if k.data == data {
-                k.data = ptr::null();
-                s.data = ptr::null();
-            }
-        }
-    }
-
-    pub fn invalidate_all(&mut self) {
-        for (k, s) in self.keys.iter_mut().zip(self.slots.iter_mut()) {
-            k.data = ptr::null();
-            s.data = ptr::null();
-        }
-    }
-
-    #[inline]
-    fn slot_for(&mut self, data: *const u8, sync_idx: u32) -> &mut FindCacheSlot {
-        for (i, k) in self.keys.iter().enumerate() {
-            if k.data == data && k.sync_idx == sync_idx {
-                return &mut self.slots[i];
-            }
-        }
-        for (i, k) in self.keys.iter().enumerate() {
-            if k.data.is_null() {
-                self.keys[i] = FindCacheKey { data, sync_idx };
-                return &mut self.slots[i];
-            }
-        }
-        let v = self.next_victim as usize;
-        self.next_victim = ((v + 1) & (Self::SLOT_COUNT - 1)) as u8;
-        self.keys[v] = FindCacheKey { data, sync_idx };
-        &mut self.slots[v]
-    }
-}
-
-impl Default for FindCache {
-    fn default() -> Self {
-        // TODO(port): [T::default(); 16] requires T: Copy; FindCacheSlot is large.
-        // Phase B may want core::array::from_fn or a const ZEROED.
-        FindCache {
-            keys: [FindCacheKey::default(); FindCache::SLOT_COUNT],
-            slots: core::array::from_fn(|_| FindCacheSlot::default()),
-            next_victim: 0,
-        }
-    }
-}
-
 impl InternalSourceMap {
     fn locate_window(self, target_line: i32, target_col: i32) -> Option<u32> {
         let n_sync = self.sync_count();
@@ -703,57 +607,6 @@ impl InternalSourceMap {
         reader.parse(self.stream(), se.byte_offset as usize);
     }
 
-    pub fn find_with_cache(
-        self,
-        line: Ordinal,
-        column: Ordinal,
-        set: &mut FindCache,
-    ) -> Option<Mapping> {
-        let target_line = line.zero_based();
-        let target_col = column.zero_based();
-
-        let sync_idx = self.locate_window(target_line, target_col)?;
-        let cache = set.slot_for(self.data, sync_idx);
-
-        if cache.data != self.data || cache.sync_idx != sync_idx || cache.decoded_count == 0 {
-            self.seed_window(sync_idx, &mut cache.decoded[0], &mut cache.reader);
-            cache.data = self.data;
-            cache.sync_idx = sync_idx;
-            cache.decoded_count = 1;
-        }
-
-        {
-            let mut decoded_count = cache.decoded_count;
-            let mut state = cache.decoded[(decoded_count - 1) as usize];
-            while !cache.reader.done() && state.less_or_equal(target_line, target_col) {
-                cache.reader.next(&mut state);
-                cache.decoded[decoded_count as usize] = state;
-                decoded_count += 1;
-            }
-            cache.decoded_count = decoded_count;
-        }
-
-        let decoded = &cache.decoded[0..cache.decoded_count as usize];
-        let mut lo: usize = 0;
-        let mut hi: usize = decoded.len();
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            if decoded[mid].less_or_equal(target_line, target_col) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        if lo == 0 {
-            return None;
-        }
-        let best = decoded[lo - 1];
-        if best.generated_line != target_line {
-            return None;
-        }
-        Some(best.to_mapping())
-    }
-
     /// Matches the semantics of `Mapping.List.find`: returns the last mapping with
     /// generated position `<= (line, column)` whose generated line equals `line`.
     pub fn find(self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
@@ -763,7 +616,6 @@ impl InternalSourceMap {
         let sync_idx = self.locate_window(target_line, target_col)?;
 
         let mut state = State::default();
-        // PERF(port): was `undefined` init — profile in Phase B
         let mut reader = WindowReader::DANGLING;
         self.seed_window(sync_idx, &mut state, &mut reader);
 
@@ -801,12 +653,11 @@ pub struct Cursor {
 }
 
 impl Cursor {
-    pub fn init(map: InternalSourceMap) -> Cursor {
+    pub(crate) fn init(map: InternalSourceMap) -> Cursor {
         Cursor {
             map,
             state: State::default(),
             peek: None,
-            // PERF(port): was `undefined` init — profile in Phase B
             reader: WindowReader::DANGLING,
             sync_idx: 0,
             has_state: false,
@@ -877,7 +728,7 @@ impl Cursor {
 }
 
 impl InternalSourceMap {
-    pub fn cursor(self) -> Cursor {
+    pub(crate) fn cursor(self) -> Cursor {
         Cursor::init(self)
     }
 
@@ -885,13 +736,18 @@ impl InternalSourceMap {
     /// the inspector's inline-sourcemap path needs this.
     pub fn append_vlq_to(self, out: &mut MutableString) {
         let n_sync = self.sync_count();
+        // A 4-field VLQ segment averages ~5 bytes plus a separator. Cap by the
+        // structural bound so a crafted header can't force an unbounded reserve.
+        let count = self
+            .mapping_count()
+            .min((n_sync as usize).saturating_mul(SYNC_INTERVAL));
+        let _ = out.grow_if_needed(count.saturating_mul(6));
         let mut prev = SourceMapState::default();
         let mut generated_line: i32 = 0;
 
         let mut idx: u32 = 0;
         while idx < n_sync {
             let mut state = State::default();
-            // PERF(port): was `undefined` init — profile in Phase B
             let mut reader = WindowReader::DANGLING;
             self.seed_window(idx, &mut state, &mut reader);
             emit_vlq(&state, &mut prev, &mut generated_line, out);
@@ -910,10 +766,11 @@ fn emit_vlq(
     generated_line: &mut i32,
     out: &mut MutableString,
 ) {
-    while *generated_line < state.generated_line {
-        out.list.push(b';');
+    if *generated_line < state.generated_line {
+        let gap = (state.generated_line - *generated_line) as usize;
+        out.list.resize(out.list.len() + gap, b';');
         prev.generated_column = 0;
-        *generated_line += 1;
+        *generated_line = state.generated_line;
     }
     let current = SourceMapState {
         generated_line: state.generated_line,
@@ -931,8 +788,8 @@ fn emit_vlq(
 // (`generated_line`, `pending_generated_line_delta`, `count`, `pending_n` —
 // 13 bytes) lands at offset 0 in the head cache line, with `sync_entries`'
 // NonNull ptr (the `Option<Builder>` niche) immediately after in the *same*
-// line. The inlined `VLQSourceMap::append`/`append_line_separator` (Chunk.zig
-// 103/107 are `pub inline fn`) thus touch one line on the fast path instead of
+// line. The inlined `VLQSourceMap::append`/`append_line_separator`
+// thus touch one line on the fast path instead of
 // straddling the five 256-byte `pending_*` lanes. (benches: lint/create-vue)
 //
 // The pending window is stored column-wise — five parallel `[i32; SYNC_INTERVAL]`
@@ -980,19 +837,19 @@ impl Default for Builder {
 }
 
 impl Builder {
-    pub fn init() -> Builder {
+    pub(crate) fn init() -> Builder {
         Builder::default()
     }
 
     // `deinit` deleted: Vec/Option<MutableString> fields drop automatically.
 
     #[inline(always)]
-    pub fn append_line_separator(&mut self) {
+    pub(crate) fn append_line_separator(&mut self) {
         self.pending_generated_line_delta += 1;
     }
 
     #[inline(always)]
-    pub fn append_mapping(&mut self, current: &SourceMapState) {
+    pub(crate) fn append_mapping(&mut self, current: &SourceMapState) {
         let generated_line = self.generated_line + self.pending_generated_line_delta;
         self.generated_line = generated_line;
         self.pending_generated_line_delta = 0;
@@ -1002,7 +859,7 @@ impl Builder {
         // SAFETY: invariant `pending_n < SYNC_INTERVAL` between flushes — the
         // tail of this fn flushes (resetting to 0) the moment it would reach
         // SYNC_INTERVAL, so on entry `pending_n <= SYNC_INTERVAL-1`. Elides the
-        // per-mapping bounds check (Zig stores into `self.pending[n]` unchecked).
+        // per-mapping bounds check.
         unsafe {
             *self.pending_generated_line.get_unchecked_mut(i) = generated_line;
             *self.pending_generated_column.get_unchecked_mut(i) = current.generated_column;
@@ -1031,7 +888,7 @@ impl Builder {
         let src_idx = &self.pending_source_index[..nn];
         let orig_line = &self.pending_original_line[..nn];
         let orig_col = &self.pending_original_column[..nn];
-        // PERF(port): @intCast — win_stream is bounded by total mapping count × ~5B/mapping;
+        // win_stream is bounded by total mapping count × ~5B/mapping;
         // u32 overflow would mean a >4 GiB sourcemap stream, unreachable in practice.
         debug_assert!(self.win_stream.len() <= u32::MAX as usize);
         let start_off: u32 = self.win_stream.len() as u32;
@@ -1107,9 +964,9 @@ impl Builder {
             let d_src_idx = src_idx[k + 1] - src_idx[k];
 
             let bit = 1u8 << (k & 7);
-            // SAFETY: k < n_deltas <= SYNC_INTERVAL-1 == 63, so `k >> 3 <= 7`
-            // and the header mask byte offset is within the zeroed 32-byte header.
             if d_gen_line >= 1 {
+                // SAFETY: k < n_deltas <= SYNC_INTERVAL-1 == 63, so `k >> 3 <= 7`
+                // and the header mask byte offset is within the zeroed 32-byte header.
                 unsafe { *buf_ptr.add(win_hdr::GEN_LINE_MASK_OFF + (k >> 3)) |= bit };
             }
 
@@ -1144,6 +1001,8 @@ impl Builder {
                 // +1 byte (for the 0xFF terminator) is written after the loop.
                 unsafe { *buf_ptr.add(w_gen_line) = k as u8 };
                 w_gen_line += 1;
+                // SAFETY: same sub-range bound as above; after the +1 advance still within
+                // [gen_line_base, gen_line_base + nd*(1+MAX_VARINT_LEN)).
                 w_gen_line += write_varint(unsafe { buf_ptr.add(w_gen_line) }, d_gen_line);
             }
 
@@ -1180,12 +1039,14 @@ impl Builder {
         } else {
             0
         };
-        // PERF(port): @intCast — n_deltas <= 63, MAX_VARINT_LEN == 5, so each
+        // n_deltas <= 63, MAX_VARINT_LEN == 5, so each
         // length field is <= 315 bytes < u16::MAX. Drop the panic edge so the hot
         // window-emit path has no unwind landing pads.
         debug_assert!(gen_col_len <= u16::MAX as usize);
         debug_assert!(orig_line_len <= u16::MAX as usize);
         debug_assert!(orig_col_len <= u16::MAX as usize);
+        // SAFETY: GEN_COL_LEN_OFF/ORIG_LINE_LEN_OFF/ORIG_COL_LEN_OFF are fixed
+        // offsets within the zeroed 32-byte header at `buf_ptr`.
         unsafe {
             buf_ptr
                 .add(win_hdr::GEN_COL_LEN_OFF)
@@ -1229,9 +1090,7 @@ impl Builder {
     /// bytes are left for `Chunk.Builder.generateChunk` to fill in (length,
     /// count, input line count) so this path flows through the existing
     /// `Chunk.buffer` plumbing unchanged.
-    pub fn finalize(&mut self) -> &mut MutableString {
-        // PORT NOTE: reshaped for borrowck — Zig early-returns `&self.finalized.?`
-        // before populating; we check first then fall through to the trailing borrow.
+    pub(crate) fn finalize(&mut self) -> &mut MutableString {
         if self.finalized.is_none() {
             self.flush_window();
 
@@ -1240,7 +1099,6 @@ impl Builder {
             let total: usize = stream_offset as usize + self.win_stream.len() + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // Zig: `out.list.resize(allocator, total)` leaves new bytes undefined.
             // Every byte in [0..total) is written below: [0..24] zero-filled,
             // [24..32] header u32s, [32..32+sync_bytes] sync table memcpy,
             // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
@@ -1277,8 +1135,8 @@ impl Builder {
         self.finalized.as_mut().unwrap()
     }
 
-    /// Move the finalized buffer out (Zig: `b.finalize().*` then `b.finalized = null`).
-    pub fn finalize_take(&mut self) -> MutableString {
+    /// Move the finalized buffer out.
+    pub(crate) fn finalize_take(&mut self) -> MutableString {
         let _ = self.finalize();
         self.finalized.take().unwrap()
     }
@@ -1287,12 +1145,6 @@ impl Builder {
 #[derive(Debug, Copy, Clone)]
 pub enum FromVlqError {
     InvalidSourceMap,
-}
-
-impl From<FromVlqError> for bun_core::Error {
-    fn from(_e: FromVlqError) -> Self {
-        bun_core::err!("InvalidSourceMap")
-    }
 }
 
 /// Decode a standard VLQ "mappings" string and re-encode it as an
@@ -1304,6 +1156,18 @@ impl From<FromVlqError> for bun_core::Error {
 /// (`name_index`) is decoded but discarded; nothing in the stack-trace remap
 /// path reads it.
 pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, FromVlqError> {
+    /// Accumulate a VLQ delta into an absolute value. Like `Mapping::parse`,
+    /// reject streams whose absolute value overflows `i32` or goes negative —
+    /// both make the mapping meaningless, and unchecked garbage here would
+    /// flow into every downstream size/index computation.
+    #[inline]
+    fn accumulate(absolute: i32, delta: i32) -> Result<i32, FromVlqError> {
+        absolute
+            .checked_add(delta)
+            .filter(|v| *v >= 0)
+            .ok_or(FromVlqError::InvalidSourceMap)
+    }
+
     let mut builder = Builder::init();
 
     let mut generated_column: i32 = 0;
@@ -1329,7 +1193,7 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
         if gc.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
-        generated_column += gc.value;
+        generated_column = accumulate(generated_column, gc.value)?;
         remain = &remain[gc.start as usize..];
 
         if remain.is_empty() || remain[0] == b',' || remain[0] == b';' {
@@ -1343,21 +1207,21 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
         if si.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
-        source_index += si.value;
+        source_index = accumulate(source_index, si.value)?;
         remain = &remain[si.start as usize..];
 
         let ol = vlq_decode(remain, 0);
         if ol.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
-        original_line += ol.value;
+        original_line = accumulate(original_line, ol.value)?;
         remain = &remain[ol.start as usize..];
 
         let oc = vlq_decode(remain, 0);
         if oc.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
-        original_column += oc.value;
+        original_column = accumulate(original_column, oc.value)?;
         remain = &remain[oc.start as usize..];
 
         if !remain.is_empty() && remain[0] != b',' && remain[0] != b';' {
@@ -1381,7 +1245,7 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
         });
     }
 
-    // PORT NOTE: reshaped for borrowck — capture `builder.count` before borrowing
+    // reshaped for borrowck — capture `builder.count` before borrowing
     // `builder.finalized` mutably.
     let mapping_count: u64 = builder.count as u64;
     let out = builder.finalize();
@@ -1397,8 +1261,3 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
     builder.finalized = None;
     Ok(owned)
 }
-
-// `pub const TestingAPIs = @import("../sourcemap_jsc/internal_jsc.zig").TestingAPIs;`
-// deleted — *_jsc alias; extension-trait lives in bun_sourcemap_jsc.
-
-// ported from: src/sourcemap/InternalSourceMap.zig

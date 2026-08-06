@@ -55,7 +55,7 @@ Stream.prototype.pipe = function (dest, options) {
   // Don't leave dangling pipes when there are errors.
   function onerror(er) {
     cleanup();
-    if (EE.listenerCount(this, "error") === 0) {
+    if (this.listenerCount?.("error") === 0) {
       this.emit("error", er);
     }
   }
@@ -109,9 +109,12 @@ function prependListener(emitter, event, fn) {
   // userland ones.  NEVER DO THIS. This is here only because this code needs
   // to continue to work with older versions of Node.js that do not include
   // the prependListener() method. The goal is to eventually remove this hack.
-  if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);
-  else if (ArrayIsArray(emitter._events[event])) emitter._events[event].unshift(fn);
-  else emitter._events[event] = [fn, emitter._events[event]];
+  let events, existing;
+  if (!(events = emitter._events) || !(existing = events[event])) emitter.on(event, fn);
+  // A fresh array, not unshift(): node:events iterates stored arrays without
+  // cloning, so a stored `_events` array must never be mutated in place.
+  else if (ArrayIsArray(existing)) events[event] = [fn, ...existing];
+  else events[event] = [fn, existing];
 }
 
 // Add helper methods to Stream

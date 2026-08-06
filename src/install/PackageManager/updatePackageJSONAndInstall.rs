@@ -5,26 +5,53 @@ use std::borrow::Cow;
 
 use bstr::BStr;
 
+use crate::Error;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use crate::bun_json as json;
-use bun_core::{Error, Global, Output, err};
+use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_install::PackageNameHash;
 use bun_js_printer as js_printer;
-use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
 
+use super::command_line_arguments::CommandLineArguments;
+use super::package_json_editor as PackageJSONEditor;
+use super::update_request::Array as UpdateRequestArray;
 use super::{
     Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
-// Zig's `PackageJSONEditor` is a file-namespace struct; the Rust port exposes
-// its functions directly on the `package_json_editor` module.
-use super::command_line_arguments::CommandLineArguments;
-use super::package_json_editor as PackageJSONEditor;
-use super::patch_package::{do_patch_commit, prepare_patch};
-use super::update_request::Array as UpdateRequestArray;
+
+fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
+    let preserve_trailing_newline = entry.source.contents.last() == Some(&b'\n');
+    let mut buffer_writer = js_printer::BufferWriter::init();
+    buffer_writer
+        .buffer
+        .list
+        .reserve((entry.source.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
+    buffer_writer.append_newline = preserve_trailing_newline;
+    let mut writer = js_printer::BufferPrinter::init(buffer_writer);
+
+    if let Err(e) = js_printer::print_json(
+        &mut writer,
+        root,
+        &entry.source,
+        js_printer::PrintJsonOptions {
+            indent: entry.indentation,
+            mangled_props: None,
+            ..Default::default()
+        },
+    ) {
+        bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
+        Global::crash();
+    }
+    let old = core::mem::replace(
+        &mut entry.source.contents,
+        Cow::Owned(writer.ctx.written_without_trailing_zero().to_vec()),
+    );
+    entry.stale_contents.push(old);
+}
 
 pub fn update_package_json_and_install_with_manager(
     manager: &mut PackageManager,
@@ -55,7 +82,7 @@ pub fn update_package_json_and_install_with_manager(
         }
     }
 
-    // PORT NOTE: `manager.options.positionals` is `&'static [&'static [u8]]` so the
+    // `manager.options.positionals` is `&'static [&'static [u8]]` so the
     // sub-slice does not borrow `*manager` and can flow alongside `&mut manager`.
     let positionals: &'static [&'static [u8]] = &manager.options.positionals[1..];
     update_package_json_and_install_with_manager_with_updates_and_update_requests(
@@ -74,12 +101,11 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
     positionals: &[&[u8]],
     update_requests: &mut UpdateRequestArray,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let subcommand = manager.subcommand;
     if subcommand != Subcommand::PatchCommit && subcommand != Subcommand::Patch {
-        // PORT NOTE: reshaped for borrowck — `parse` returns a `&mut [UpdateRequest]`
+        // reshaped for borrowck — `parse` returns a `&mut [UpdateRequest]`
         // sub-slice of `update_requests`; we take its length and truncate the Vec so
-        // the next call can take the Vec by value (Zig threaded `*[]UpdateRequest`).
+        // the next call can take the Vec by value.
         let len = UpdateRequest::parse(
             // `dependency::parse_with_tag` is the only consumer of `pm`; it inserts
             // into `pm.known_npm_aliases` for `npm:`-aliased positionals.
@@ -108,9 +134,9 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
 fn update_package_json_and_install_with_manager_with_updates(
     manager: &mut PackageManager,
     ctx: Command::Context,
-    // PORT NOTE: reshaped for borrowck — Zig was `*[]UpdateRequest`. Taking by
-    // value lets us hand ownership to `manager.update_requests` (which the Rust
-    // port types as `Box<[UpdateRequest]>`) and re-borrow afterwards without
+    // reshaped for borrowck — taking by
+    // value lets us hand ownership to `manager.update_requests` (typed
+    // `Box<[UpdateRequest]>`) and re-borrow afterwards without
     // aliasing `&mut manager`.
     mut updates: Vec<UpdateRequest>,
     subcommand: Subcommand,
@@ -126,12 +152,11 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    // PORT NOTE: reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
+    // reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
     // borrowed from `manager.workspace_package_json_cache`, but we then need
     // `&mut *manager` for `PackageJSONEditor::edit` / `do_patch_commit` while still
-    // holding the entry. Zig held `*MapEntry` and `*PackageManager` simultaneously
-    // (no aliasing rules); mirror that by demoting to `*mut MapEntry` and re-
-    // borrowing at point of use. The cache map is not mutated again until the
+    // holding the entry. Demote to `*mut MapEntry` and re-
+    // borrow at point of use. The cache map is not mutated again until the
     // next `get_with_path` call below, so the pointer remains valid.
     let current_package_json_ptr: *mut MapEntry =
         match manager.workspace_package_json_cache.get_with_path(
@@ -167,12 +192,12 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
             GetResult::Entry(entry) => core::ptr::from_mut(entry),
         };
-    // SAFETY: see PORT NOTE above — pointer into `manager.workspace_package_json_cache`,
+    // SAFETY: see note above — pointer into `manager.workspace_package_json_cache`,
     // valid until the next `get_with_path`. No `&mut manager.workspace_package_json_cache`
     // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
     // disjoint manager fields.
     let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
-    let mut current_package_json_root: bun_ast::Expr = current_package_json.root.into();
+    let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
     let current_package_json_indent = current_package_json.indentation;
 
     // If there originally was a newline at the end of their package.json, preserve it
@@ -213,23 +238,15 @@ fn update_package_json_and_install_with_manager_with_updates(
                 .as_property(b"peerDependencies")
                 .is_none()
         {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "package.json doesn't have dependencies, there's nothing to {}!",
                 <&'static str>::from(subcommand),
-            ));
+            );
             Global::exit(0);
         }
     }
 
-    let dependency_list: &'static [u8] = if manager.options.update.development {
-        b"devDependencies"
-    } else if manager.options.update.optional {
-        b"optionalDependencies"
-    } else if manager.options.update.peer {
-        b"peerDependencies"
-    } else {
-        b"dependencies"
-    };
+    let dependency_list: &'static [u8] = manager.options.update.prop;
     let mut any_changes = false;
 
     let mut not_in_workspace_root: Option<PatchCommitResult> = None;
@@ -238,7 +255,6 @@ fn update_package_json_and_install_with_manager_with_updates(
             // if we're removing, they don't have to specify where it is installed in the dependencies list
             // they can even put it multiple times and we will just remove all of them
             for request in updates.iter() {
-                // PERF(port): was `inline for` — profile in Phase B
                 const LISTS: [&[u8]; 4] = [
                     b"dependencies",
                     b"devDependencies",
@@ -248,20 +264,20 @@ fn update_package_json_and_install_with_manager_with_updates(
                 for list in LISTS {
                     if let Some(query) = current_package_json_root.as_property(list) {
                         if query.expr.data.is_e_object() {
-                            // PORT NOTE: reshaped for borrowck — Zig held `data.e_object` (a
-                            // `*E.Object`) across writes to both the inner list and the parent
-                            // object. `StoreRef<E::Object>` is `Copy` and derefs to a raw arena
-                            // pointer, so taking it once mirrors that exactly.
+                            // reshaped for borrowck —
+                            // `StoreRef<E::Object>` is `Copy` and derefs to a raw arena
+                            // pointer, so taking it once works across writes to both the
+                            // inner list and the parent object.
                             let mut e_object = query.expr.data.as_e_object();
                             let dependencies = e_object.properties.slice_mut();
                             let mut i: usize = 0;
                             let mut new_len = dependencies.len();
-                            // PORT NOTE: Zig copies `dependencies[i] = dependencies[new_len - 1]`
-                            // and iterates to the original length. `G::Property` is not `Copy` in
-                            // Rust, so we `swap` instead — but the swapped-out matched element
+                            // `G::Property` is not `Copy`,
+                            // so we `swap` instead of copy-from-tail — but the swapped-out
+                            // matched element
                             // lands in the truncated tail and MUST NOT be revisited (it would
                             // match again and over-truncate). Bounding by `new_len` yields the
-                            // same result as Zig for the unique-key case package.json guarantees.
+                            // correct result for the unique-key case package.json guarantees.
                             while i < new_len {
                                 let key = dependencies[i].key.unwrap();
                                 if key.data.is_e_string() {
@@ -281,7 +297,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
                             let changed = new_len != dependencies.len();
                             if changed {
-                                e_object.properties.truncate((new_len) as usize);
+                                e_object.properties.truncate(new_len);
 
                                 // If the dependencies list is now empty, remove it from the package.json
                                 // since we're swapRemove, we have to re-sort it
@@ -325,7 +341,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                         ..Default::default()
                     },
                 )?;
-                // `edit` may shrink the slice (Zig `updates.* = updates.*[0..n]`).
+                // `edit` may shrink the slice.
                 let new_len = updates_slice.len();
                 updates.truncate(new_len);
             } else if subcommand == Subcommand::Update {
@@ -365,8 +381,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     manager.to_update = subcommand == Subcommand::Update;
 
-    // PORT NOTE: reshaped for borrowck — Zig stored a slice header (`manager.update_requests
-    // = updates.*`) so both names alias the same backing array; the Rust field is owning
+    // reshaped for borrowck — the field is owning
     // (`Box<[UpdateRequest]>`), so we transfer ownership here and re-borrow from
     // `manager.update_requests` after `install_with_manager` (which is the only writer).
     manager.update_requests = updates.into_boxed_slice();
@@ -391,10 +406,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     ) {
         Ok(n) => n,
         Err(e) => {
-            Output::pretty_errorln(format_args!(
-                "package.json failed to write due to error {}",
-                e.name(),
-            ));
+            bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
             Global::crash();
         }
     };
@@ -413,23 +425,20 @@ fn update_package_json_and_install_with_manager_with_updates(
         .ctx
         .written_without_trailing_zero()
         .to_vec();
-    // Zig: `manager.allocator.dupe(u8, …)` — heap-owned, never freed (process-lifetime).
     // The cache entry (`Cow<'static, [u8]>`) outlives this stack frame, and
     // `new_package_json_source` is reassigned below on the add/update/link path, so we
-    // must store an *owning* copy to avoid a dangling borrow. PERF(port): one extra
-    // alloc+copy vs Zig's single dupe — profile in Phase B.
+    // must store an *owning* copy to avoid a dangling borrow.
     current_package_json.source.contents = Cow::Owned(new_package_json_source.clone());
-    // PORT NOTE: Zig edited `current_package_json.root` in place above; we edited a
-    // promoted T4 copy (`current_package_json_root`). Re-parse the printed source so
-    // the cached T2 AST (consumed by `FolderResolver` for workspace members during
-    // `install_with_manager`) reflects the new dependency list.
+    // The edits above went into a promoted copy
+    // (`current_package_json_root`), so re-parse the
+    // printed source so the cached AST (consumed by `FolderResolver` for workspace
+    // members during `install_with_manager`) reflects the new dependency list.
     if let Err(err) = current_package_json.reparse_root(manager.log_mut()) {
-        Output::pretty_errorln(format_args!(
-            "package.json failed to parse due to error {}",
-            err.name(),
-        ));
+        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name(),);
         Global::crash();
     }
+
+    let mut editing_catalogs = false;
 
     // may or may not be the package json we are editing
     let top_level_dir_without_trailing_slash =
@@ -449,7 +458,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
         // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
         // https://github.com/oven-sh/bun/issues/12288
-        // PORT NOTE: reshaped for borrowck — see `current_package_json_ptr` above.
+        // reshaped for borrowck — see `current_package_json_ptr` above.
         let root_package_json_ptr: *mut MapEntry =
             match manager.workspace_package_json_cache.get_with_path(
                 manager.log_mut(),
@@ -487,9 +496,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
 
         if let Some(stuff) = &not_in_workspace_root {
-            // PORT NOTE (layering): see `current_package_json_root` above — promote
-            // T2 → T4 for `PackageJSONEditor` / `print_json`.
-            let mut root_package_json_root: bun_ast::Expr = root_package_json.root.into();
+            let mut root_package_json_root: bun_ast::Expr = root_package_json.root;
             PackageJSONEditor::edit_patched_dependencies(
                 manager,
                 &mut root_package_json_root,
@@ -516,10 +523,10 @@ fn update_package_json_and_install_with_manager_with_updates(
             ) {
                 Ok(n) => n,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "package.json failed to write due to error {}",
                         e.name(),
-                    ));
+                    );
                     Global::crash();
                 }
             };
@@ -531,6 +538,25 @@ fn update_package_json_and_install_with_manager_with_updates(
             );
         }
 
+        if subcommand == Subcommand::Update && manager.update_requests.is_empty() {
+            let root_package_json_root: bun_ast::Expr = root_package_json.root;
+            if PackageJSONEditor::edit_catalogs_before_update(manager, &root_package_json_root)? {
+                editing_catalogs = true;
+
+                if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
+                    // entries now hold a temporary `latest`; refresh the cache so install resolves those.
+                    print_package_json_into_cache_entry(root_package_json, root_package_json_root);
+                    if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
+                        bun_core::pretty_errorln!(
+                            "package.json failed to parse due to error {}",
+                            err.name(),
+                        );
+                        Global::crash();
+                    }
+                }
+            }
+        }
+
         // SAFETY: root_package_json_path_buf[root_package_json_path_len] == 0 written above
         break 'root_package_json_path ZStr::from_buf(
             &root_package_json_path_buf[..],
@@ -540,9 +566,9 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     install_with_manager::install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
 
-    // PORT NOTE: reshaped for borrowck — see assignment above. `install_with_manager`
+    // reshaped for borrowck — see assignment above. `install_with_manager`
     // is the only writer to `manager.update_requests` between the assignment and
-    // here, so taking it back yields exactly the slice Zig observed via `updates.*`.
+    // here, so taking it back yields exactly the slice assigned above.
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
 
     if subcommand == Subcommand::Update
@@ -563,12 +589,12 @@ fn update_package_json_and_install_with_manager_with_updates(
         let json_arena = bun_alloc::Arena::new();
         let mut new_package_json: bun_ast::Expr =
             match json::parse_package_json_utf8(&source, manager.log_mut(), &json_arena) {
-                Ok(v) => v.into(),
+                Ok(v) => v,
                 Err(err) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "package.json failed to parse due to error {}",
                         err.name(),
-                    ));
+                    );
                     Global::crash();
                 }
             };
@@ -582,6 +608,18 @@ fn update_package_json_and_install_with_manager_with_updates(
                     ..Default::default()
                 },
             )?;
+
+            if editing_catalogs && manager.workspace_name_hash.is_none() {
+                // running from root: catalogs live in this file.
+                let _ = PackageJSONEditor::edit_catalogs_after_update(
+                    manager,
+                    &new_package_json,
+                    EditOptions {
+                        exact_versions: manager.options.enable.exact_versions(),
+                        ..Default::default()
+                    },
+                )?;
+            }
         } else {
             let mut updates_slice: &mut [UpdateRequest] = &mut updates[..];
             PackageJSONEditor::edit(
@@ -618,10 +656,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         ) {
             Ok(n) => n,
             Err(e) => {
-                Output::pretty_errorln(format_args!(
-                    "package.json failed to write due to error {}",
-                    e.name(),
-                ));
+                bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
                 Global::crash();
             }
         };
@@ -630,6 +665,71 @@ fn update_package_json_and_install_with_manager_with_updates(
             .ctx
             .written_without_trailing_zero()
             .to_vec();
+    }
+
+    if editing_catalogs
+        && manager.workspace_name_hash.is_some()
+        && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
+    {
+        // running from a workspace: catalogs live in the root package.json (a separate file).
+        let root_package_json_ptr: *mut MapEntry =
+            match manager.workspace_package_json_cache.get_with_path(
+                manager.log_mut(),
+                root_package_json_path.as_bytes(),
+                GetJSONOptions {
+                    guess_indentation: true,
+                    ..Default::default()
+                },
+            ) {
+                GetResult::ParseErr(err) => {
+                    let _ = manager
+                        .log_mut()
+                        .print(std::ptr::from_mut(Output::error_writer()));
+                    Output::err_generic(
+                        "failed to parse package.json \"{s}\": {s}",
+                        (BStr::new(root_package_json_path.as_bytes()), err.name()),
+                    );
+                    Global::crash();
+                }
+                GetResult::ReadErr(err) => {
+                    Output::err_generic(
+                        "failed to read package.json \"{s}\": {s}",
+                        (BStr::new(root_package_json_path.as_bytes()), err.name()),
+                    );
+                    Global::crash();
+                }
+                GetResult::Entry(entry) => core::ptr::from_mut(entry),
+            };
+        // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until
+        // the next `get_with_path`. `edit_catalogs_after_update` touches only
+        // disjoint manager fields.
+        let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
+        let root_package_json_root: bun_ast::Expr = root_package_json.root;
+
+        let root_catalogs_changed = PackageJSONEditor::edit_catalogs_after_update(
+            manager,
+            &root_package_json_root,
+            EditOptions {
+                exact_versions: manager.options.enable.exact_versions(),
+                ..Default::default()
+            },
+        )?;
+
+        if root_catalogs_changed {
+            print_package_json_into_cache_entry(root_package_json, root_package_json_root);
+
+            let root_package_json_file =
+                File::openat(Fd::cwd(), root_package_json_path, bun_sys::O::RDWR, 0)
+                    .map_err(Error::from)?;
+            root_package_json_file
+                .pwrite_all(&root_package_json.source.contents, 0)
+                .map_err(Error::from)?;
+            let _ = bun_sys::ftruncate(
+                root_package_json_file.handle,
+                root_package_json.source.contents.len() as i64,
+            );
+            let _ = root_package_json_file.close(); // close error is non-actionable
+        }
     }
 
     let _ = written;
@@ -679,7 +779,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             .pwrite_all(source, 0)
             .map_err(Error::from)?;
         let _ = bun_sys::ftruncate(workspace_package_json_file.handle, source.len() as i64);
-        let _ = workspace_package_json_file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = workspace_package_json_file.close(); // close error is non-actionable
 
         if subcommand == Subcommand::Remove {
             if !any_changes {
@@ -749,7 +849,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 Err(err) => {
                     if err.get_errno() != bun_sys::E::ENOENT {
                         Output::err(
-                            bun_core::Error::from(err),
+                            crate::Error::from(err),
                             "while reading node_modules/.bin",
                             (),
                         );
@@ -768,29 +868,22 @@ pub fn update_package_json_and_install_and_cli(
     subcommand: Subcommand,
     cli: CommandLineArguments,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let (manager_ptr, original_cwd) = 'brk: {
         match super::init(ctx, cli.clone(), subcommand) {
             Ok(v) => v,
             Err(e) => {
-                if e == bun_core::err!("MissingPackageJSON") {
+                if e == crate::Error::MissingPackageJSON {
                     match subcommand {
                         Subcommand::Update => {
-                            Output::pretty_errorln(format_args!(
-                                "<r>No package.json, so nothing to update"
-                            ));
+                            bun_core::pretty_errorln!("<r>No package.json, so nothing to update");
                             Global::crash();
                         }
                         Subcommand::Remove => {
-                            Output::pretty_errorln(format_args!(
-                                "<r>No package.json, so nothing to remove"
-                            ));
+                            bun_core::pretty_errorln!("<r>No package.json, so nothing to remove");
                             Global::crash();
                         }
                         Subcommand::Patch | Subcommand::PatchCommit => {
-                            Output::pretty_errorln(format_args!(
-                                "<r>No package.json, so nothing to patch"
-                            ));
+                            bun_core::pretty_errorln!("<r>No package.json, so nothing to patch");
                             Global::crash();
                         }
                         _ => {
@@ -808,21 +901,20 @@ pub fn update_package_json_and_install_and_cli(
     let _original_cwd_owner: Box<[u8]> = original_cwd;
     let original_cwd: &[u8] = &_original_cwd_owner;
     // SAFETY: `super::init` returns a `*mut PackageManager` to the process-static
-    // singleton (Zig `*PackageManager`). We are on the single CLI thread; no worker
+    // singleton. We are on the single CLI thread; no worker
     // threads deref `get()` until `install_with_manager` spawns the HTTP thread.
-    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
+    let manager: &mut PackageManager = &mut *manager_ptr;
 
     if manager.options.should_print_command_name() {
-        // Zig: `"..." ++ Global.package_json_version_with_sha ++ "..."` (comptime concat).
         // `concatcp!` yields `&'static str`, but `format_args!` requires a string *literal*
         // for its template. Splice the version as a runtime arg instead — this matches the
         // approach taken by every other CLI subcommand banner (see e.g. `outdated_command.rs`,
         // `update_interactive_command.rs`).
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun {} <r><d>v{}<r>\n",
             <&'static str>::from(subcommand),
             bun_core::Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
     }
 
@@ -889,9 +981,9 @@ pub fn update_package_json_and_install_and_cli(
                     };
 
                     if needs_to_print {
-                        Output::pretty_error(format_args!("\n"));
+                        bun_core::pretty_error!("\n");
 
-                        Output::warn(format_args!(
+                        bun_core::warn!(
                             "To run {}, add the global bin folder to $PATH:\n\n<cyan>{}<r>\n",
                             bun_core::fmt::quote(basename),
                             MoreInstructions {
@@ -900,7 +992,7 @@ pub fn update_package_json_and_install_and_cli(
                                 ),
                                 folder: manager.options.bin_path.as_bytes(),
                             },
-                        ));
+                        );
                         Output::flush();
                     }
                 }
@@ -1006,5 +1098,3 @@ use super::TrackInstalledBin;
 use super::options::{Do, LogLevel, PatchFeatures};
 use super::package_json_editor::EditOptions;
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
-
-// ported from: src/install/PackageManager/updatePackageJSONAndInstall.zig

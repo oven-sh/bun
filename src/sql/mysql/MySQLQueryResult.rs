@@ -4,5 +4,3 @@ pub struct MySQLQueryResult {
     pub affected_rows: u64,
     pub is_last_result: bool,
 }
-
-// ported from: src/sql/mysql/MySQLQueryResult.zig

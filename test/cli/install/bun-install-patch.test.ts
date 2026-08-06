@@ -1,7 +1,7 @@
 import { $ } from "bun";
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDir } from "harness";
 import { join } from "path";
 
 const normalizeBunSnapshot = (str: string) => {
@@ -11,9 +11,7 @@ const normalizeBunSnapshot = (str: string) => {
   return str;
 };
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
+setDefaultTimeout(1000 * 60 * 5);
 
 describe("patch", async () => {
   const is_even_patch = /* patch */ `diff --git a/index.js b/index.js
@@ -123,7 +121,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -151,7 +149,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   });
 
   test("should patch a non-hoisted dependency", async () => {
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -181,7 +179,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -210,7 +208,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   test("should patch a transitive dependency", async () => {
     const version = "0.1.2";
     const patchFilename = filepathEscape(`is-odd@${version}.patch`);
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -239,7 +237,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchfileName = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -282,7 +280,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   });
 
   it("should patch a transitive dependency after it was already installed", async () => {
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -328,7 +326,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -362,7 +360,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -410,7 +408,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
 
   it("should update a transitive dependency when the patchfile changes", async () => {
     $.throws(true);
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -464,7 +462,7 @@ index aa7c7012cda790676032d1b01d78c0b69ec06360..6048e7cb462b3f9f6ac4dc21aacf9a09
 `;
 
     $.throws(true);
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -503,7 +501,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
   };
 `;
 
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -576,7 +574,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     const patchEnv = bunEnv;
 
     test("should create patch for package and commit it", async () => {
-      const filedir = tempDirWithFiles("patch-isolated", {
+      await using filedir = tempDir("patch-isolated", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-test",
           "module": "index.ts",
@@ -637,7 +635,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should patch transitive dependency with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-transitive", {
+      await using filedir = tempDir("patch-isolated-transitive", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-transitive-test",
           "module": "index.ts",
@@ -692,7 +690,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should handle scoped packages with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-scoped", {
+      await using filedir = tempDir("patch-isolated-scoped", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-scoped-test",
           "module": "index.ts",
@@ -750,7 +748,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should work with workspaces and isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-workspace", {
+      await using filedir = tempDir("patch-isolated-workspace", {
         "package.json": JSON.stringify({
           "name": "workspace-root",
           "workspaces": ["packages/*"],
@@ -813,7 +811,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should preserve patch after reinstall with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-reinstall", {
+      await using filedir = tempDir("patch-isolated-reinstall", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-reinstall-test",
           "module": "index.ts",
@@ -858,7 +856,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should handle multiple patches with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-multiple", {
+      await using filedir = tempDir("patch-isolated-multiple", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-multiple-test",
           "module": "index.ts",
@@ -942,5 +940,86 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
         "is-odd@3.0.1": "patches/is-odd@3.0.1.patch",
       });
     });
+  });
+});
+
+describe("removing a patched dependency", () => {
+  // A patch that only adds a new file applies cleanly to any package contents.
+  const isOddNewFilePatch = `diff --git a/bun-patch-test.txt b/bun-patch-test.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a24a42dcab
+--- /dev/null
++++ b/bun-patch-test.txt
+@@ -0,0 +1 @@
++patched
+`;
+
+  test("install with an empty cache downloads the package unpatched", async () => {
+    await using filedir = tempDir("patch-remove", {
+      "package.json": JSON.stringify({
+        name: "remove-patch-test",
+        dependencies: {
+          "is-odd": "3.0.1",
+        },
+        patchedDependencies: {
+          "is-odd@3.0.1": "patches/is-odd@3.0.1.patch",
+        },
+      }),
+      patches: {
+        "is-odd@3.0.1.patch": isOddNewFilePatch,
+      },
+    });
+
+    // First install: bun.lock records the patched dependency and the patch is applied.
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: filedir,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(filedir, "cache-with-patch") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(true);
+    expect(await Bun.file(join(filedir, "bun.lock")).text()).toContain("patchedDependencies");
+
+    // Remove the patch from package.json (bun.lock still references it) and
+    // install again with an empty cache so the package has to be downloaded.
+    await Bun.write(
+      join(filedir, "package.json"),
+      JSON.stringify({
+        name: "remove-patch-test",
+        dependencies: {
+          "is-odd": "3.0.1",
+        },
+      }),
+    );
+
+    // This used to panic with `called Option::unwrap() on a None value` while
+    // creating the download task: the patch entry had already been moved out of
+    // `lockfile.patched_dependencies` into the to-remove list.
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: filedir,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(filedir, "cache-empty") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    // The package is reinstalled without the patch.
+    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "package.json")).json()).toMatchObject({
+      name: "is-odd",
+      version: "3.0.1",
+    });
+    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(false);
+    expect(await Bun.file(join(filedir, "bun.lock")).text()).not.toContain("patchedDependencies");
   });
 });

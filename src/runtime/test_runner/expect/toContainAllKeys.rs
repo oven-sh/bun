@@ -1,10 +1,9 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt};
 use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_contain_all_keys(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_contain_all_keys(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.contain_matcher(global, frame, "toContainAllKeys", ExpectedArray::AfterValue,
             ContainMsgs { verb: "contain all keys", not_verb: "contain all keys" },
             |g, value, expected| {
@@ -27,4 +26,3 @@ impl Expect {
             })
     }
 }
-// ported from: src/test_runner/expect/toContainAllKeys.zig

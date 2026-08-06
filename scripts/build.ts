@@ -24,13 +24,24 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  canTraceOrderFile,
   downloadArtifacts,
+  inheritOrderFile,
   isCI,
+  mustGenerateOrderFile,
+  orderFileContext,
+  orderFileEligible,
   packageAndUpload,
   printEnvironment,
+  regenerateOrderFile,
+  reportOrderFileBootstrap,
+  reportOrderFileCannotTrace,
+  reportOrderFileFailure,
+  shouldGenerateOrderFile,
   spawnWithAnnotations,
   startGroup,
   uploadArtifacts,
+  verifyOrderFileApplied,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
@@ -41,16 +52,6 @@ import { interactive, nameColor, status } from "./build/tty.ts";
 // ───────────────────────────────────────────────────────────────────────────
 // Main
 // ───────────────────────────────────────────────────────────────────────────
-
-try {
-  await main();
-} catch (err) {
-  if (err instanceof BuildError) {
-    process.stderr.write(err.format());
-    process.exit(1);
-  }
-  throw err;
-}
 
 async function main(): Promise<void> {
   // Windows: re-exec inside the VS dev shell if not already there.
@@ -95,7 +96,23 @@ async function main(): Promise<void> {
     : { profile: args.profile, overrides: args.overrides };
 
   const ninjaArgv = (cfg: { buildDir: string }) => ["-C", cfg.buildDir, ...args.ninjaArgs, ...args.ninjaTargets];
-  const ninjaEnv = (env: Record<string, string>) => ({ ...process.env, ...env });
+  // GNU-style include-path vars (CPATH, C_INCLUDE_PATH, CPLUS_INCLUDE_PATH,
+  // OBJC_INCLUDE_PATH) apply to every clang invocation regardless of
+  // --target. The CI build containers set them for the *host* gcc toolchain
+  // (.buildkite/Dockerfile), which hijacks <vector> & co. away from the MSVC
+  // STL when cross-compiling for Windows ("'bits/c++config.h' file not
+  // found"). Scrub them for Windows cross builds — they are host-targeted by
+  // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
+  // every other target keep the environment as provisioned.
+  const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
+    const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
+    if (cfg.windows && cfg.host.os !== "windows") {
+      for (const name of ["CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH"]) {
+        delete merged[name];
+      }
+    }
+    return merged;
+  };
 
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
@@ -108,17 +125,72 @@ async function main(): Promise<void> {
       await startGroup("Download artifacts", () => downloadArtifacts(result.cfg));
     }
 
-    await startGroup("Build", () =>
-      spawnWithAnnotations("ninja", ninjaArgv(result.cfg), { label: "ninja", env: ninjaEnv(result.env) }),
-    );
+    // The order file is a link input, so it must land before the linking ninja
+    // pass. In rust-and-link mode it runs between cargo and the build-cpp
+    // poll (whose sleep loop yields cleanly) so it doesn't stall cargo.
+    const orderCtx = orderFileContext();
+    const runInherit = () =>
+      (orderFileEligible(result.cfg, orderCtx) && !shouldGenerateOrderFile(result.cfg, orderCtx)
+        ? inheritOrderFile(result.cfg, orderCtx)
+        : Promise.resolve(false)
+      ).catch(e => {
+        console.log(`~ symbol order: inherit failed (${(e as Error)?.message ?? e}); linking unordered`);
+        return false;
+      });
+    let inherited = false;
+
+    const runNinja = (targets: string[] = args.ninjaTargets) =>
+      spawnWithAnnotations("ninja", ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
+        label: "ninja",
+        env: ninjaEnv(result.cfg, result.env),
+      });
+
+    // rust-and-link: build libbun_rust.a first so cargo overlaps with the
+    // sibling build-cpp job, THEN poll for build-cpp's outcome + download
+    // its archive, THEN link. link-only skips straight to the full build
+    // (its artifacts were downloaded above).
+    if (result.cfg.buildkite && result.cfg.mode === "rust-and-link") {
+      await startGroup("Build Rust", () => runNinja(["bun-rust"]));
+      inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
+      await startGroup("Wait for build-cpp & download artifacts", () => downloadArtifacts(result.cfg));
+    } else {
+      inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
+    }
+
+    await startGroup("Build", () => runNinja());
+
+    // Trace and relink when we are a release, when a commit asked for it, or when
+    // there was nothing to inherit. A failed trace is not fatal: the order file is
+    // an optimization, and a flaky workload must not kill a release 40 minutes in.
+    if (mustGenerateOrderFile(result.cfg, orderCtx, inherited)) {
+      if (!inherited && !shouldGenerateOrderFile(result.cfg, orderCtx)) reportOrderFileBootstrap(result.cfg);
+      let traced = true;
+      await startGroup("Generate symbol order file", () => {
+        try {
+          regenerateOrderFile(result.cfg, orderCtx);
+        } catch (error) {
+          traced = false;
+          reportOrderFileFailure(error as Error);
+        }
+      });
+      if (traced) {
+        await startGroup("Relink against symbol order file", runNinja);
+        // We traced this exact binary: nearly every symbol must resolve. Hard-fail.
+        if (result.output.exe) verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe);
+      }
+    } else if (orderFileEligible(result.cfg, orderCtx) && result.output.exe) {
+      // Inherited: a stale file is a slower binary, not a broken one.
+      if (!inherited && !canTraceOrderFile(result.cfg)) reportOrderFileCannotTrace(result.cfg);
+      verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
+    }
 
     // cpp-only/rust-only: upload build outputs for downstream link-only.
-    // link-only: package + upload zips for downstream test steps.
+    // link-only/rust-and-link: package + upload zips for downstream test steps.
     if (result.cfg.buildkite) {
       if (result.cfg.mode === "cpp-only" || result.cfg.mode === "rust-only") {
         await startGroup("Upload artifacts", () => uploadArtifacts(result.cfg, result.output));
       }
-      if (result.cfg.mode === "link-only") {
+      if (result.cfg.mode === "link-only" || result.cfg.mode === "rust-and-link") {
         await startGroup("Package and upload", () => packageAndUpload(result.cfg, result.output));
       }
     }
@@ -182,7 +254,7 @@ async function main(): Promise<void> {
     }
     const ninja = spawnSync("ninja", ninjaArgv(result.cfg), {
       stdio,
-      env: ninjaEnv(result.env),
+      env: ninjaEnv(result.cfg, result.env),
       // cargo's compile output (now part of the ninja graph via emitRust) can
       // be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
       maxBuffer: 1024 * 1024 * 1024,
@@ -368,6 +440,7 @@ function parseArgs(argv: string[]): CliArgs {
     "tinycc",
     "valgrind",
     "fuzzilli",
+    "socketFaultInjection",
     "unifiedSources",
     "archiveDeps",
     "timeTrace",
@@ -390,6 +463,11 @@ function parseArgs(argv: string[]): CliArgs {
     "pgoGenerate",
     "pgoUse",
     "androidNdk",
+    "macosSdk",
+    "osxDeploymentTarget",
+    "winsysroot",
+    "linuxSysroot",
+    "freebsdSysroot",
   ]);
 
   for (let i = 0; i < argv.length; i++) {
@@ -499,13 +577,16 @@ Options:
   --profile=<name>        Build profile (default: debug)
                           Profiles: debug, debug-local, debug-no-asan,
                                     release, release-local, release-asan,
-                                    release-assertions, ci-*
+                                    release-assertions, ci-*,
+                                    windows-{x64,arm64}[-release] (cross-compile
+                                    from a non-Windows host)
   --<field>=<value>       Override a config field. Boolean fields take
                           on/off/true/false/yes/no/1/0.
                           Fields: asan, lto, assertions, logs, baseline,
                                   canary, valgrind, webkit (prebuilt|local),
                                   buildDir, mode (full|cpp-only|link-only),
-                                  unifiedSources, timeTrace
+                                  unifiedSources, timeTrace, os, arch, abi,
+                                  winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it
   -j<N>, -v, -k<N>        Passed through to ninja
@@ -523,3 +604,15 @@ Examples:
   bun scripts/build.ts --target=bun-rust
   bun scripts/build.ts --configure-only
 `;
+
+// Entry point — must run after all module-level declarations (USAGE) are
+// initialized, otherwise parseArgs hits a TDZ ReferenceError on --help.
+try {
+  await main();
+} catch (err) {
+  if (err instanceof BuildError) {
+    process.stderr.write(err.format());
+    process.exit(1);
+  }
+  throw err;
+}

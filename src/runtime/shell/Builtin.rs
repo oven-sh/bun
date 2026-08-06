@@ -1,10 +1,7 @@
-//! A builtin command runs inside a `Cmd` state node. In Zig the builtin
-//! recovered its parent `*Cmd` via `container_of`; in the NodeId port the
-//! builtin stores the `NodeId` of its owning Cmd and every method takes
-//! `&Interpreter`.
+//! A builtin command runs inside a `Cmd` state node. The builtin stores the
+//! `NodeId` of its owning Cmd and every method takes `&Interpreter`.
 
-use bun_collections::{ByteVecExt, VecExt};
-use bun_ptr::AsCtxPtr;
+use bun_collections::VecExt;
 use core::ffi::c_char;
 use std::sync::Arc;
 
@@ -20,32 +17,22 @@ use crate::shell::states::cmd::{Cmd, CmdState};
 use crate::shell::yield_::Yield;
 
 pub struct Builtin {
-    /// Owning Cmd node. Replaces Zig's `@fieldParentPtr("impl", ...)` chain.
-    pub cmd: NodeId,
-    pub kind: Kind,
+    pub(crate) kind: Kind,
     /// argv[1..] as NUL-terminated strings (argv[0] is the builtin name).
     /// Points into the Cmd's `args` storage.
     pub args: Vec<*const c_char>,
-    pub stdin: BuiltinInput,
-    pub stdout: BuiltinIO,
-    pub stderr: BuiltinIO,
-    /// Set by `done()` and stashed by `write_failing_error` so the async
-    /// `on_io_writer_chunk` path can recover the intended exit code.
-    pub exit_code: Option<ExitCode>,
-    /// Scratch for `fmt_error_arena` (replaces the Zig per-Cmd bump arena).
-    /// One outstanding error string at a time — same constraint as Zig, where
-    /// the arena is reset per-builtin.
-    pub err_buf: Vec<u8>,
-    pub impl_: Impl,
+    pub(crate) stdin: BuiltinInput,
+    pub(crate) stdout: BuiltinIO,
+    pub(crate) stderr: BuiltinIO,
+    /// Scratch for `fmt_error_arena`. One outstanding error string at a time.
+    pub(crate) err_buf: Vec<u8>,
+    pub(crate) impl_: Impl,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // shell_builtins! — single source of truth for the builtin set.
 //
-// Zig (Builtin.zig) gets this for free via comptime reflection: `@tagName`,
-// `std.meta.stringToEnum`, `@unionInit`, and one shared `callImpl` switch
-// cover what Rust hand-unrolled into eight parallel 19-arm matches. This
-// table macro restores the single-definition property: each row declares
+// This table macro keeps the single-definition property: each row declares
 // {Variant, argv0 name, module path, storage shape, usage, posix-gate} once
 // and the macro emits `Kind`, `Impl`, `as_str`, `usage_string`,
 // `from_argv0_raw`, `DISABLED_ON_POSIX`, `make_impl`, `start`,
@@ -60,15 +47,14 @@ pub struct Builtin {
 /// Per-builtin state downcast. Replaces the 17 hand-rolled
 /// `fn state_mut(interp, cmd) -> &mut Self { match Builtin::of_mut(..).impl_ {
 /// Impl::X(v) => v, _ => unreachable!() } }` copies that every
-/// `src/runtime/shell/builtin/*.rs` carried — the Rust analogue of Zig's
-/// per-file `fn bltn(this: *Self) *Builtin { @fieldParentPtr(...) }`.
+/// `src/runtime/shell/builtin/*.rs` carried.
 ///
 /// `extract` is the bare variant projection (knows whether the payload is
 /// boxed in `Impl`); `state_mut` is the convenience entry point every builtin
 /// actually calls. Call sites keep writing `Self::state_mut(interp, cmd)` —
 /// they only need this trait in scope. Impls are generated per-row by
 /// [`shell_builtins!`].
-pub trait BuiltinState: Sized {
+pub(crate) trait BuiltinState: Sized {
     /// Project `&mut Impl` → `&mut Self`. `unreachable!` on variant mismatch.
     fn extract(impl_: &mut Impl) -> &mut Self;
 
@@ -90,7 +76,7 @@ macro_rules! shell_builtins {
         #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
         pub enum Kind { $( $UV, )* $( $IV, )* $( $BV, )* }
 
-        /// Per-builtin state. In Zig this was a `union(Kind)`; in Rust an enum.
+        /// Per-builtin state.
         pub enum Impl {
             $( $UV, )*
             $( $IV(crate::shell::builtins::$i_mod::$IT), )*
@@ -100,12 +86,10 @@ macro_rules! shell_builtins {
 
         impl Kind {
             /// Builtins disabled on POSIX (delegate to the system binary) unless
-            /// the experimental feature flag is set. Spec: Builtin.zig
-            /// `Kind.DISABLED_ON_POSIX`.
+            /// the experimental feature flag is set.
             pub const DISABLED_ON_POSIX: &'static [Kind] = &[ $( Kind::$PD ),* ];
 
-            /// Lowercase tag for error prefixes (`"{kind}: ..."`). Spec: Zig
-            /// `@tagName(kind)`.
+            /// Lowercase tag for error prefixes (`"{kind}: ..."`).
             pub fn as_str(self) -> &'static str {
                 match self {
                     $( Kind::$UV => $u_name, )*
@@ -114,7 +98,6 @@ macro_rules! shell_builtins {
                 }
             }
 
-            /// Spec: Builtin.zig `Kind.usageString`.
             pub fn usage_string(self) -> &'static [u8] {
                 match self {
                     $( Kind::$UV => $u_usage, )*
@@ -123,8 +106,7 @@ macro_rules! shell_builtins {
                 }
             }
 
-            /// argv[0] → `Kind`, no POSIX gating. Spec: Builtin.zig
-            /// `std.meta.stringToEnum(Kind, str)`.
+            /// argv[0] → `Kind`, no POSIX gating.
             fn from_argv0_raw(s: &[u8]) -> Option<Kind> {
                 $( if s == $u_name.as_bytes() { return Some(Kind::$UV); } )*
                 $( if s == $i_name.as_bytes() { return Some(Kind::$IV); } )*
@@ -158,7 +140,7 @@ macro_rules! shell_builtins {
 
             /// Hoisted dispatch: start the builtin's state machine.
             pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-                // PORT NOTE: reshaped for borrowck — match on a copied Kind, then
+                // Match on a copied Kind, then
                 // call the per-builtin `start(interp, cmd)`. Each builtin reaches its
                 // own state via `Builtin::of_mut(interp, cmd).impl_`.
                 match Self::kind_of(interp, cmd) {
@@ -221,9 +203,9 @@ impl Kind {
             .unwrap_or(false)
     }
 
-    /// Spec: Builtin.zig `Kind.fromStr`. Maps argv[0] to a builtin kind, or
-    /// `None` to fall through to subprocess spawn.
-    pub fn from_argv0(s: &[u8]) -> Option<Kind> {
+    /// Maps argv[0] to a builtin kind, or `None` to fall through to
+    /// subprocess spawn.
+    pub(crate) fn from_argv0(s: &[u8]) -> Option<Kind> {
         let result = Self::from_argv0_raw(s)?;
         if cfg!(windows) || Self::force_enable_on_posix() {
             return Some(result);
@@ -243,7 +225,7 @@ pub enum IoKind {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BuiltinIO — Spec: Builtin.zig `BuiltinIO.{Output,Input}`.
+// BuiltinIO
 //
 // Distinct from `IO::OutKind` because builtins can target ArrayBuffer/Blob
 // JS objects (`> ${buf}`) and accumulate into a per-builtin `.buf` when the
@@ -251,48 +233,66 @@ pub enum IoKind {
 // of a local Vec flushed in `done()`, `write_no_io` appends straight to the
 // shell env's captured buffer (one less copy). The variant carries its flush
 // target so `2>&1` (which makes `stderr` a shallow copy of `stdout`) routes
-// stderr writes to `buffered_stdout`, matching the Zig aliasing semantics.
+// stderr writes to `buffered_stdout`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// One output stream of a builtin (stdout or stderr). Spec: Builtin.zig
-/// `BuiltinIO.Output`.
+/// One output stream of a builtin (stdout or stderr).
 pub enum BuiltinIO {
     /// Async writer (real fd). `needs_io()` returns Some.
     Fd(OutFd),
     /// Captured pipe — writes go to the shell env's `_buffered_{stdout,stderr}`.
-    /// PORT NOTE: Zig kept a local `ArrayList(u8)` here and flushed it in
-    /// `done()`; the NodeId port writes through immediately (see module doc).
+    /// Writes go through immediately (see module doc).
     /// The payload names which shell-env bytelist to append to — set at
     /// `from_out_kind` and copied verbatim by `dup_ref` so `2>&1` keeps
     /// stderr aimed at stdout's buffer.
     Buf(IoKind),
     ArrayBuf {
-        buf: crate::jsc::array_buffer::ArrayBufferStrong,
+        buf: PinnedArrayBuf,
         i: u32,
     },
     Blob(Arc<BuiltinBlob>),
     Ignore,
 }
 
-/// Input stream of a builtin. Spec: Builtin.zig `BuiltinIO.Input`.
+/// Input stream of a builtin.
 pub enum BuiltinInput {
     Fd(Arc<IOReader>),
-    /// Buffer not owned by the builtin (Zig: `array list not owned by this
-    /// type`). In the NodeId port no producer wires this yet; reserved for
-    /// pipeline-from-builtin.
-    Buf(Vec<u8>),
-    ArrayBuf {
-        buf: crate::jsc::array_buffer::ArrayBufferStrong,
-        i: u32,
-    },
+    ArrayBuf { buf: PinnedArrayBuf, i: u32 },
     Blob(Arc<BuiltinBlob>),
     Ignore,
 }
 
-/// Spec: Builtin.zig `BuiltinIO.Blob` — refcounted wrapper around a
-/// `webcore.Blob`. `Arc` provides the refcount; `Drop` runs `Blob::deinit`.
+pub struct PinnedArrayBuf {
+    buf: crate::jsc::array_buffer::ArrayBufferStrong,
+    pinned: bool,
+}
+
+impl core::ops::Deref for PinnedArrayBuf {
+    type Target = crate::jsc::array_buffer::ArrayBufferStrong;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buf
+    }
+}
+
+impl core::ops::DerefMut for PinnedArrayBuf {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buf
+    }
+}
+
+impl Drop for PinnedArrayBuf {
+    fn drop(&mut self) {
+        if self.pinned {
+            self.buf.array_buffer.unpin();
+        }
+    }
+}
+
+/// Refcounted wrapper around a `webcore.Blob`. `Arc` provides the refcount;
+/// `Drop` runs `Blob::deinit`.
 pub struct BuiltinBlob {
-    pub blob: crate::webcore::Blob,
+    pub(crate) blob: crate::webcore::Blob,
 }
 // `BuiltinBlob` is auto-`Send + Sync`: its sole field is `webcore::Blob`,
 // which already asserts `Send + Sync`. No `unsafe impl` needed.
@@ -302,11 +302,9 @@ const _: fn() = || {
 };
 
 impl BuiltinIO {
-    /// From the Cmd's IO::OutKind. Spec: Builtin.zig `init` stdin/stdout/stderr
-    /// switch — `.fd` → `dupeRef`, `.pipe` → `.buf`, `.ignore` → `.ignore`.
-    /// `Arc::clone` (via `OutFd: Clone`) IS the `dupeRef` — it bumps the
-    /// `IOWriter` refcount; `Drop` decrements it symmetrically. `target` is
-    /// the shell-env bytelist this stream flushes to (Stdout or Stderr).
+    /// From the Cmd's IO::OutKind. `Arc::clone` (via `OutFd: Clone`) bumps
+    /// the `IOWriter` refcount; `Drop` decrements it symmetrically. `target`
+    /// is the shell-env bytelist this stream flushes to (Stdout or Stderr).
     fn from_out_kind(ok: &OutKind, target: IoKind) -> BuiltinIO {
         match ok {
             OutKind::Fd(fd) => BuiltinIO::Fd(fd.clone()),
@@ -315,18 +313,17 @@ impl BuiltinIO {
         }
     }
 
-    /// Spec: Builtin.zig `BuiltinIO.Output.ref` — bump refcounts and return a
-    /// shallow copy. Only reachable from the `duplicate_out` path, which fires
-    /// before any `.jsbuf` redirect, so `ArrayBuf`/`Blob` are unreachable here.
-    /// The `Buf` target is copied verbatim: in Zig `stderr = stdout.ref().*`
-    /// shallow-copies stdout's ArrayList so stderr writes accumulate in (and
-    /// flush from) stdout's buffer; here that aliasing is the carried `IoKind`.
+    /// Bump refcounts and return a shallow copy. Only reachable from the
+    /// `duplicate_out` path, which fires before any `.jsbuf` redirect, so
+    /// `ArrayBuf`/`Blob` are unreachable here. The `Buf` target is copied
+    /// verbatim so stderr writes accumulate in (and flush from) stdout's
+    /// buffer; that aliasing is the carried `IoKind`.
     fn dup_ref(&self) -> BuiltinIO {
         match self {
             BuiltinIO::Fd(fd) => BuiltinIO::Fd(fd.clone()),
             BuiltinIO::Buf(target) => BuiltinIO::Buf(*target),
             BuiltinIO::Ignore => BuiltinIO::Ignore,
-            BuiltinIO::Blob(b) => BuiltinIO::Blob(b.clone()),
+            BuiltinIO::Blob(b) => BuiltinIO::Blob(Arc::clone(b)),
             BuiltinIO::ArrayBuf { .. } => {
                 unreachable!("duplicate_out precedes jsbuf redirects")
             }
@@ -334,7 +331,7 @@ impl BuiltinIO {
     }
 
     #[inline]
-    pub fn needs_io(&self) -> Option<OutputNeedsIOSafeGuard> {
+    pub(crate) fn needs_io(&self) -> Option<OutputNeedsIOSafeGuard> {
         match self {
             BuiltinIO::Fd(_) => Some(OutputNeedsIOSafeGuard::OutputNeedsIo),
             _ => None,
@@ -346,13 +343,11 @@ impl BuiltinIO {
     /// `Builtin.impl_` (disjoint from `stdout`/`stderr`) can write a borrowed
     /// slice without an intermediate heap clone.
     ///
-    /// Spec: Builtin.zig `writeNoIO` (match arm body).
-    ///
     /// # Safety
     /// `shell` must point to the live `ShellExecEnv` owning this builtin
     /// (i.e. `cmd.base.shell`); only dereferenced for the [`BuiltinIO::Buf`]
     /// arm.
-    pub unsafe fn write_no_io_to(
+    pub(crate) unsafe fn write_no_io_to(
         &mut self,
         shell: *mut crate::shell::interpreter::ShellExecEnv,
         buf: &[u8],
@@ -365,12 +360,10 @@ impl BuiltinIO {
                 panic!("write_no_io called on fd output; caller must check needs_io()")
             }
             BuiltinIO::Buf(target) => {
-                // PORT NOTE: Zig appended to a local `io.buf` and flushed in
-                // `done()` to `buffered_{stdout,stderr}` keyed on which field
-                // the buffer lives in. The NodeId port writes straight through;
-                // `target` is that field identity, fixed at construction and
-                // preserved across `dup_ref` so `2>&1` lands in stdout's
-                // bytelist (matching Zig's shallow-copied ArrayList aliasing).
+                // Writes go straight through to `buffered_{stdout,stderr}`;
+                // `target` is the destination identity, fixed at construction
+                // and preserved across `dup_ref` so `2>&1` lands in stdout's
+                // bytelist.
                 // SAFETY: caller contract — shell env outlives the Cmd node
                 // (single-threaded); `captured` points into a live
                 // `ShellExecEnv` Bufio.
@@ -384,9 +377,9 @@ impl BuiltinIO {
                 Ok(buf.len())
             }
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
-                // Spec: Builtin.zig writeNoIO .arraybuf — `len = buf.len` stays
-                // usize so `i + len > byte_len` is computed at usize width and
-                // cannot overflow. Mirror that here; only the stored cursor is u32.
+                // `len = buf.len` stays usize so `i + len > byte_len` is
+                // computed at usize width and cannot overflow; only the
+                // stored cursor is u32.
                 let idx = *i as usize;
                 let total = arraybuf.array_buffer.byte_len as usize;
                 if idx >= total {
@@ -406,12 +399,11 @@ impl BuiltinIO {
     }
 
     /// Queue `buf` on this stream's IOWriter and arrange for `child`'s
-    /// `on_io_writer_chunk` to fire when the chunk completes. Spec: Builtin.zig
-    /// `BuiltinIO.Output.enqueue` — delegates to `fd.writer.enqueue` passing
-    /// `fd.captured` as the tee bytelist.
+    /// `on_io_writer_chunk` to fire when the chunk completes. Delegates to
+    /// `fd.writer.enqueue` passing `fd.captured` as the tee bytelist.
     ///
     /// `_safeguard` proves the caller checked `needs_io()`.
-    pub fn enqueue(
+    pub(crate) fn enqueue(
         &mut self,
         child: io_writer::ChildPtr,
         buf: &[u8],
@@ -423,9 +415,9 @@ impl BuiltinIO {
         }
     }
 
-    /// Spec: Builtin.zig `BuiltinIO.Output.enqueueFmtBltn` — format with the
-    /// optional `"{kind}: "` prefix and enqueue on the underlying IOWriter.
-    pub fn enqueue_fmt(
+    /// Format with the optional `"{kind}: "` prefix and enqueue on the
+    /// underlying IOWriter.
+    pub(crate) fn enqueue_fmt(
         &mut self,
         child: io_writer::ChildPtr,
         kind: Option<Kind>,
@@ -442,21 +434,21 @@ impl BuiltinIO {
 impl BuiltinInput {
     fn from_in_kind(ik: &InKind) -> BuiltinInput {
         match ik {
-            // `Arc::clone` IS the `dupeRef` (bumps the IOReader refcount).
-            InKind::Fd(r) => BuiltinInput::Fd(r.clone()),
+            // `Arc::clone` bumps the IOReader refcount.
+            InKind::Fd(r) => BuiltinInput::Fd(Arc::clone(r)),
             InKind::Ignore => BuiltinInput::Ignore,
         }
     }
 
     #[inline]
-    pub fn needs_io(&self) -> bool {
+    pub(crate) fn needs_io(&self) -> bool {
         matches!(self, BuiltinInput::Fd(_))
     }
 }
 
 impl Builtin {
     #[inline]
-    pub fn args_slice(&self) -> &[*const c_char] {
+    pub(crate) fn args_slice(&self) -> &[*const c_char] {
         &self.args
     }
 
@@ -477,7 +469,7 @@ impl Builtin {
     /// argv storage is a separate heap allocation that is not freed or
     /// reallocated while the `Builtin` is live — not on `'a`.
     #[inline]
-    pub fn arg_bytes<'a>(&self, idx: usize) -> &'a [u8] {
+    pub(crate) fn arg_bytes<'a>(&self, idx: usize) -> &'a [u8] {
         let p: *const c_char = self.args[idx];
         // SAFETY: see doc comment — `p` is a valid NUL-terminated pointer
         // into the Cmd's argv storage, live for the Builtin's lifetime.
@@ -490,7 +482,7 @@ impl Builtin {
     /// that need to pass the argument to a `&ZStr`-taking syscall wrapper
     /// without re-copying.
     #[inline]
-    pub fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
+    pub(crate) fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
         let p: *const c_char = self.args[idx];
         // SAFETY: see `arg_bytes` — valid NUL-terminated argv pointer.
         bun_core::ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(p) })
@@ -501,9 +493,7 @@ impl Builtin {
     /// `None` (meaning: caller should now call `Builtin::start`). A
     /// `Some(yield)` return means setup wrote a failing error (or threw) and
     /// the caller should propagate that yield instead.
-    ///
-    /// Spec: Builtin.zig `init()`.
-    pub fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
+    pub(crate) fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
         use crate::shell::states::cmd::Exec;
 
         // Borrow argv[1..] as `*const c_char` into the Cmd's `args` storage.
@@ -515,9 +505,9 @@ impl Builtin {
             for a in me.args.iter().skip(1) {
                 argv.push(a.as_ptr().cast::<c_char>());
             }
-            // Spec: `.fd → dupeRef`. `Arc::clone` (inside `OutFd: Clone` /
-            // `InKind: Clone`) bumps the `IOWriter`/`IOReader` refcount; the
-            // builtin's `Drop` decrements it symmetrically. No double-deref.
+            // `Arc::clone` (inside `OutFd: Clone` / `InKind: Clone`) bumps
+            // the `IOWriter`/`IOReader` refcount; the builtin's `Drop`
+            // decrements it symmetrically. No double-deref.
             (
                 argv,
                 BuiltinInput::from_in_kind(&me.io.stdin),
@@ -527,13 +517,11 @@ impl Builtin {
         };
 
         interp.as_cmd_mut(cmd).exec = Exec::Builtin(Box::new(Builtin {
-            cmd,
             kind,
             args,
             stdin,
             stdout,
             stderr,
-            exit_code: None,
             err_buf: Vec::new(),
             impl_: Self::make_impl(kind),
         }));
@@ -541,12 +529,11 @@ impl Builtin {
         Self::init_redirections(interp, cmd, kind)
     }
 
-    /// Spec: Builtin.zig `initRedirections` (lines 413-627). Opens redirect
-    /// files / wires ArrayBuffer & Blob targets / handles `2>&1` (`duplicate_out`).
+    /// Opens redirect files / wires ArrayBuffer & Blob targets / handles
+    /// `2>&1` (`duplicate_out`).
     fn init_redirections(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
-        // SAFETY: `node` points into the AST arena which outlives every state
-        // node (see Cmd::next).
-        let node: &ast::Cmd = unsafe { &*interp.as_cmd(cmd).node };
+        // `node` points into the AST arena which outlives every state node (see Cmd::next).
+        let node: &ast::Cmd = &*interp.as_cmd(cmd).node;
         let redirect = node.redirect;
 
         match &node.redirect_file {
@@ -562,7 +549,7 @@ impl Builtin {
 
                 // `redirection_file` was NUL-terminated by Expansion; build a
                 // `&ZStr` over it (path = bytes excluding the trailing NUL).
-                // PORT NOTE: reshaped for borrowck — clone path bytes so the
+                // Clone the path bytes so the
                 // `&mut interp` open call below doesn't overlap a borrow into
                 // the Cmd node.
                 let path_buf: Vec<u8> = {
@@ -577,9 +564,6 @@ impl Builtin {
                 let perm: bun_sys::Mode = 0o666;
                 let cwd_fd = Self::cwd(interp, cmd);
                 let evtloop = interp.event_loop;
-
-                // Regular files are not pollable on linux/macos.
-                let is_pollable_default: bool = cfg!(windows);
 
                 let mut pollable = false;
                 let mut is_socket = false;
@@ -604,7 +588,7 @@ impl Builtin {
                 } else {
                     let result = bun_io::open_for_writing_impl(
                         cwd_fd,
-                        path,
+                        &path,
                         redirect.to_flags(),
                         perm,
                         &mut pollable,
@@ -614,9 +598,6 @@ impl Builtin {
                         (),
                         |_| {},
                         is_pollable_from_mode,
-                        // Spec: passes `ShellSyscall.openat`. The Rust
-                        // `shell_openat` has the matching `(Fd,&ZStr,i32,Mode)`
-                        // signature.
                         shell_openat,
                     );
                     match result {
@@ -674,16 +655,13 @@ impl Builtin {
                     return None;
                 }
 
-                // Spec (Builtin.zig:429/502): the IOWriter receives the
-                // hardcoded platform const `is_pollable` (false on POSIX, true
-                // on Windows); the `var pollable` out-param populated by
-                // `openForWritingImpl` is a dead store in Zig and is ignored
-                // here too so polling behaviour matches the spec exactly.
-                let _ = pollable;
+                // Honor the `pollable` computed by `open_for_writing_impl` on
+                // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
+                // takes the pollable path; Windows keeps the async writer.
                 let redirect_writer = IOWriter::init(
                     redirfd,
                     io_writer::Flags {
-                        pollable: is_pollable_default,
+                        pollable: if cfg!(windows) { true } else { pollable },
                         nonblock: is_nonblocking,
                         is_socket,
                         ..Default::default()
@@ -691,20 +669,18 @@ impl Builtin {
                     evtloop,
                 );
                 redirect_writer.set_interp(interp_ptr);
-                // `defer redirect_writer.deref()` — `redirect_writer: Arc` drops
-                // here; each assigned slot holds its own clone.
 
                 if redirect.stdout() {
                     let me = Self::of_mut(interp, cmd);
                     me.stdout = BuiltinIO::Fd(OutFd {
-                        writer: redirect_writer.clone(),
+                        writer: Arc::clone(&redirect_writer),
                         captured: None,
                     });
                 }
                 if redirect.stderr() {
                     let me = Self::of_mut(interp, cmd);
                     me.stderr = BuiltinIO::Fd(OutFd {
-                        writer: redirect_writer.clone(),
+                        writer: redirect_writer,
                         captured: None,
                     });
                 }
@@ -730,9 +706,15 @@ impl Builtin {
                 if let Some(buf) = jsval.as_array_buffer(global) {
                     // Each slot gets its own Strong (sharing one would
                     // double-free on Drop).
-                    let mk = || crate::jsc::array_buffer::ArrayBufferStrong {
-                        array_buffer: buf,
-                        held: crate::jsc::StrongOptional::create(buf.value, global),
+                    let mk = || {
+                        let pinned = jsval.as_pinned_arraybuffer(global);
+                        PinnedArrayBuf {
+                            buf: crate::jsc::array_buffer::ArrayBufferStrong {
+                                array_buffer: pinned.unwrap_or(buf),
+                                held: crate::jsc::StrongOptional::create(buf.value, global),
+                            },
+                            pinned: pinned.is_some(),
+                        }
                     };
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
@@ -750,7 +732,6 @@ impl Builtin {
                     // SAFETY: returned a live JSC-owned `*mut Value` borrowed
                     // from a Response/Request wrapper.
                     let body = unsafe { &mut *body };
-                    // Spec: `body.* == .Blob and !body.Blob.needsToReadFile()`.
                     let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
                         if !b.needs_to_read_file());
                     if (redirect.stdout() || redirect.stderr()) && !is_file_blob {
@@ -770,13 +751,13 @@ impl Builtin {
                     drop(original_blob);
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
-                        me.stdin = BuiltinInput::Blob(blob.clone());
+                        me.stdin = BuiltinInput::Blob(Arc::clone(&blob));
                     }
                     if redirect.stdout() {
-                        me.stdout = BuiltinIO::Blob(blob.clone());
+                        me.stdout = BuiltinIO::Blob(Arc::clone(&blob));
                     }
                     if redirect.stderr() {
-                        me.stderr = BuiltinIO::Blob(blob.clone());
+                        me.stderr = BuiltinIO::Blob(blob);
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
                     if (redirect.stdout() || redirect.stderr()) && !blob_ref.needs_to_read_file() {
@@ -821,7 +802,7 @@ impl Builtin {
         None
     }
 
-    /// Spec: Cmd.zig `writeFailingError` — sets the owning Cmd's state to
+    /// Sets the owning Cmd's state to
     /// `WaitingWriteErr` and writes to the *Cmd's* `io.stderr` (not the
     /// builtin's, which may already have been redirected). Hoisted here
     /// because `init_redirections` and `Cmd::transition_to_exec` (the
@@ -835,7 +816,7 @@ impl Builtin {
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
         if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
-            // Spec: `enqueueCb(ctx)` — only the `.fd` arm transitions state.
+            // Only the `Fd` arm transitions state.
             interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
             // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
@@ -863,19 +844,16 @@ impl Builtin {
     }
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.
-    /// Spec: Builtin.zig `done`.
-    pub fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
-        Self::of_mut(interp, cmd).exit_code = Some(exit_code);
-        // PORT NOTE: Zig `done` flushes `.buf` into `shell.buffered_stdout()`
-        // here. The NodeId port writes through immediately in `write_no_io`,
-        // so there is nothing to flush.
+    pub(crate) fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
+        // Output is written through immediately in `write_no_io`, so there
+        // is nothing to flush here.
         Cmd::on_exec_done(interp, cmd, exit_code)
     }
 
     /// Look up the Builtin inside a Cmd's `exec` slot.
     #[inline]
     #[track_caller]
-    pub fn of<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Builtin {
+    pub(crate) fn of<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Builtin {
         match &interp.as_cmd(cmd).exec {
             crate::shell::states::cmd::Exec::Builtin(b) => b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
@@ -884,7 +862,7 @@ impl Builtin {
 
     #[inline]
     #[track_caller]
-    pub fn of_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Builtin {
+    pub(crate) fn of_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Builtin {
         match &mut interp.as_cmd_mut(cmd).exec {
             crate::shell::states::cmd::Exec::Builtin(b) => b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
@@ -896,12 +874,11 @@ impl Builtin {
         Self::of(interp, cmd).kind
     }
 
-    /// Spec: Builtin.zig `readStdinNoIO`. Returns the bytes available on
-    /// stdin when it is *not* an async fd (arraybuf / piped buf / blob).
-    pub fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
+    /// Returns the bytes available on stdin when it is *not* an async fd
+    /// (arraybuf / piped buf / blob).
+    pub(crate) fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
         match &Self::of(interp, cmd).stdin {
             BuiltinInput::ArrayBuf { buf, .. } => buf.slice(),
-            BuiltinInput::Buf(b) => &b[..],
             BuiltinInput::Blob(b) => b.blob.shared_view(),
             BuiltinInput::Fd(_) | BuiltinInput::Ignore => b"",
         }
@@ -910,10 +887,9 @@ impl Builtin {
     /// Write `buf` to stdout/stderr without going through IOWriter (the
     /// stream is a captured buffer / arraybuffer / blob / /dev/null).
     ///
-    /// Spec: Builtin.zig `writeNoIO`. Returns `Err(ENOSPC)` when an
-    /// ArrayBuffer target is already full (Zig: `Maybe(usize).initErr`).
+    /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
     /// **WARNING**: caller must have checked `needs_io() == None` first.
-    pub fn write_no_io(
+    pub(crate) fn write_no_io(
         interp: &Interpreter,
         cmd: NodeId,
         io_kind: IoKind,
@@ -922,7 +898,7 @@ impl Builtin {
         if buf.is_empty() {
             return Ok(0);
         }
-        // PORT NOTE: reshaped for borrowck — split-borrow the Cmd so `shell`
+        // Split-borrow the Cmd so `shell`
         // and the builtin's stdout/stderr are accessible simultaneously.
         let cmd_node = interp.as_cmd_mut(cmd);
         let shell = cmd_node.base.shell;
@@ -947,50 +923,26 @@ impl Builtin {
         interp.as_cmd(cmd).base.shell()
     }
 
-    /// The owning `Cmd` state node. Spec: Builtin.zig `parentCmd` (Zig used
-    /// `@fieldParentPtr`; in the NodeId port the builtin already stores `cmd`).
+    /// Event loop handle (forwarded from the interpreter).
     #[inline]
-    pub fn parent_cmd<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Cmd {
-        interp.as_cmd(cmd)
-    }
-
-    #[inline]
-    pub fn parent_cmd_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Cmd {
-        interp.as_cmd_mut(cmd)
-    }
-
-    /// Event loop handle (forwarded from the interpreter). Spec: Builtin.zig
-    /// `eventLoop` → `parentCmd().base.eventLoop()`.
-    #[inline]
-    pub fn event_loop(
+    pub(crate) fn event_loop(
         interp: &Interpreter,
         _cmd: NodeId,
     ) -> crate::shell::interpreter::EventLoopHandle {
         interp.event_loop
     }
 
-    /// Spec: Builtin.zig `throw` → `parentCmd().base.throw(err)`. In the
-    /// NodeId port the interpreter owns the throw path directly.
+    /// Cwd fd of the owning Cmd's shell env.
     #[inline]
-    pub fn throw(interp: &Interpreter, _cmd: NodeId, err: crate::shell::ShellErr) {
-        interp.throw(err);
-    }
-
-    /// Cwd fd of the owning Cmd's shell env. Spec: Builtin.zig `this.cwd` /
-    /// `parentCmd().base.shell.cwd_fd`.
-    #[inline]
-    pub fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
+    pub(crate) fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
         Self::shell(interp, cmd).cwd_fd
     }
 
-    /// Format `"{kind}: {fmt}"` into a fresh heap buffer. Spec: Builtin.zig
-    /// `fmtErrorArena` (Zig allocates from the Cmd's bump arena; we use a
-    /// `Vec` — the per-builtin arena isn't ported yet).
+    /// Format `"{kind}: {fmt}"` into a fresh heap buffer.
     ///
     /// Stored on the `Builtin` so the returned `&[u8]` borrow stays valid
-    /// across the immediate `write_no_io` / `enqueue` call (matches the Zig
-    /// arena lifetime).
-    pub fn fmt_error_arena<'a>(
+    /// across the immediate `write_no_io` / `enqueue` call.
+    pub(crate) fn fmt_error_arena<'a>(
         interp: &'a Interpreter,
         cmd: NodeId,
         kind: Option<Kind>,
@@ -1007,10 +959,9 @@ impl Builtin {
         &me.err_buf
     }
 
-    /// Error messages formatted to match bash. Spec: Builtin.zig
-    /// `taskErrorToString` (the `bun.shell.ShellErr` arm — dispatches on the
-    /// variant; `.sys` recurses into the `jsc.SystemError` formatter).
-    pub fn shell_err_to_string<'a>(
+    /// Error messages formatted to match bash. Dispatches on the variant;
+    /// `Sys` recurses into the system-error formatter.
+    pub(crate) fn shell_err_to_string<'a>(
         interp: &'a Interpreter,
         cmd: NodeId,
         kind: Kind,
@@ -1019,8 +970,7 @@ impl Builtin {
         use crate::shell::ShellErr;
         match err {
             ShellErr::Sys(sys) => {
-                // Spec: Builtin.zig `taskErrorToString` (the `jsc.SystemError`
-                // arm) — `"{message}\n"` or `"{message}: {path}\n"`.
+                // `"{message}\n"` or `"{message}: {path}\n"`.
                 if sys.path.is_empty() {
                     Self::fmt_error_arena(
                         interp,
@@ -1062,12 +1012,11 @@ impl Builtin {
         }
     }
 
-    /// Error messages formatted to match bash. Spec: Builtin.zig
-    /// `taskErrorToString` (the `Syscall.Error` arm) — maps the errno through
-    /// `bun.sys.coreutils_error_map` so output matches GNU coreutils
+    /// Error messages formatted to match bash. Maps the errno through
+    /// `bun_sys::coreutils_error_map` so output matches GNU coreutils
     /// (e.g. `ENOENT` → "No such file or directory"); falls back to
     /// `"unknown error {errno}"` when unmapped.
-    pub fn task_error_to_string<'a>(
+    pub(crate) fn task_error_to_string<'a>(
         interp: &'a Interpreter,
         cmd: NodeId,
         kind: Kind,
@@ -1104,17 +1053,14 @@ impl Builtin {
     /// (`illegal option` / usage / `unsupported option`), runs `set_wait_err`
     /// so the per-builtin state machine can move to its `WaitingWriteErr`
     /// variant, then writes the message to stderr and finishes with exit 1.
-    ///
-    /// Spec: open-coded `switch (e)` in cat.zig:45, mkdir.zig:52, cp.zig:74,
-    /// touch.zig:33 — Zig duplicates this per builtin; hoisted once here.
-    pub fn fail_parse(
+    pub(crate) fn fail_parse(
         interp: &Interpreter,
         cmd: NodeId,
         kind: Kind,
-        e: ParseError,
+        e: &ParseError,
         set_wait_err: impl FnOnce(),
     ) -> Yield {
-        let buf: Vec<u8> = match &e {
+        let buf: Vec<u8> = match e {
             ParseError::IllegalOption(_) => Self::fmt_error_arena(
                 interp,
                 cmd,
@@ -1140,22 +1086,16 @@ impl Builtin {
 
     /// Write `buf` to stderr (async if needed) then finish with `exit_code`.
     /// Shared helper for builtins whose only failure path is "print error and
-    /// exit". Spec: per-builtin `writeFailingError` in Zig — hoisted here so
-    /// the NodeId-style builtins don't each repeat the needs_io branch.
-    ///
-    /// Stashes `exit_code` on the `Builtin` so the async path
-    /// (`on_io_writer_chunk`) can finish with it; callers that need to mark a
-    /// per-builtin `state = WaitingWriteErr` must still do so before calling.
-    pub fn write_failing_error(
+    /// exit", so each builtin doesn't repeat the needs_io branch.
+    pub(crate) fn write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],
         exit_code: crate::shell::ExitCode,
     ) -> Yield {
-        Self::of_mut(interp, cmd).exit_code = Some(exit_code);
         if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
-            // PORT NOTE: reshaped for borrowck — clone buf so the &mut on
+            // Clone buf so the &mut on
             // `stderr` doesn't overlap a borrow into `err_buf`.
             let owned = buf.to_vec();
             return Self::of_mut(interp, cmd)
@@ -1167,11 +1107,8 @@ impl Builtin {
     }
 }
 
-// `deinit`: Spec Builtin.zig `deinit` — per-impl cleanup + `stdin/stdout/
-// stderr.deref()`. In the Rust port every `Impl` variant owns its state via
-// `Box`/`Vec`/`Arc`, and `BuiltinIO`/`BuiltinInput` hold `Arc<IOWriter>` /
-// `Arc<IOReader>` / `ArrayBufferStrong` / `Arc<BuiltinBlob>` whose `Drop`
-// already decrements the refcount. So `deinit` is fully covered by `Drop` on
-// `Box<Builtin>` (called from `Cmd::deinit`). No explicit body needed.
-
-// ported from: src/shell/Builtin.zig
+// Cleanup: every `Impl` variant owns its state via `Box`/`Vec`/`Arc`, and
+// `BuiltinIO`/`BuiltinInput` hold `Arc<IOWriter>` / `Arc<IOReader>` /
+// `ArrayBufferStrong` / `Arc<BuiltinBlob>` whose `Drop` already decrements
+// the refcount. So cleanup is fully covered by `Drop` on `Box<Builtin>`
+// (called from `Cmd::deinit`). No explicit deinit needed.

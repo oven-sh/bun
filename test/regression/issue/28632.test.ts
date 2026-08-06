@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/28632
 import { SQL } from "bun";
 import { beforeAll, expect, test } from "bun:test";
-import { describeWithContainer, isASAN, isDockerEnabled } from "harness";
+import { describeWithContainer, isASAN, isDebug, isDockerEnabled, rss } from "harness";
 
 if (isDockerEnabled()) {
   describeWithContainer(
@@ -52,23 +52,33 @@ if (isDockerEnabled()) {
         }
         Bun.gc(true);
         await Bun.sleep(50);
-        const rssAfterWarmup = process.memoryUsage.rss();
+        const rssAfterWarmup = rss();
 
-        // Run queries — each re-decodes 50 column definitions
+        // Run queries — each re-decodes 50 column definitions. Collect every 500
+        // so the RSS delta reflects the name_or_index leak rather than the
+        // controller's opportunistic-GC cadence (which no longer fires at this
+        // allocation volume): without this, peak uncollected garbage between
+        // opportunistic passes commits extra MarkedBlock pages that Bun.gc(true)
+        // at the end does not synchronously decommit.
         for (let i = 0; i < 5000; i++) {
           await sql`SELECT * FROM leak_test_28632 WHERE primary_id = ${"123"} LIMIT 1`;
+          if (i % 500 === 499) Bun.gc(true);
         }
         Bun.gc(true);
         await Bun.sleep(50);
-        const rssAfterQueries = process.memoryUsage.rss();
+        const rssAfterQueries = rss();
 
         const growthMB = (rssAfterQueries - rssAfterWarmup) / 1024 / 1024;
 
         // Without the fix, ~17MB growth (50 leaked name_or_index allocs × 5000 queries).
-        // With the fix, ~7MB (allocator noise + ASAN shadow memory). Double the
-        // threshold under ASAN where RSS measurements are noisier and the
-        // shadow memory makes the headroom much tighter.
-        expect(growthMB).toBeLessThan(isASAN ? 24 : 12);
+        // With the fix, ~7MB (allocator noise + ASAN shadow memory). Under ASAN the
+        // Rust global allocator routes every alloc through the interceptor, so the
+        // per-query free/alloc churn (row cells, etc.) lands in ASAN's 256 MB
+        // quarantine and shows up as RSS even though nothing leaks — give it 3×
+        // headroom there. Debug builds enable ASAN by default on Linux/macOS, so
+        // treat them the same. The non-ASAN bound is what guards the actual
+        // regression.
+        expect(growthMB).toBeLessThan(isASAN || isDebug ? 36 : 12);
 
         await sql`DROP TABLE IF EXISTS leak_test_28632`.catch(() => {});
       });

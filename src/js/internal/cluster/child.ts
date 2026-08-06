@@ -2,8 +2,8 @@ const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
 
-const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
-const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessageChild", 2);
+const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
+const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
 
 const FunctionPrototype = Function.prototype;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -15,7 +15,7 @@ const indexes = new Map();
 const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
-const owner_symbol = Symbol("owner_symbol");
+const { owner_symbol } = require("internal/async_hooks").symbols;
 
 export default cluster;
 
@@ -36,7 +36,7 @@ cluster._setupWorker = function () {
 
   // make sure the process.once("disconnect") doesn't count as a ref
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
-  $newZigFunction("node_cluster_binding.zig", "channelIgnoreOneDisconnectEventListener", 0)();
+  $newRustFunction("node_cluster_binding.rs", "channelIgnoreOneDisconnectEventListener", 0)();
   process.once("disconnect", () => {
     process.channel = null;
     worker.emit("disconnect");
@@ -144,7 +144,8 @@ function shared(message, { handle, indexesKey, index }, cb) {
 
 // Round-robin. Master distributes handles across workers.
 function rr(message, { indexesKey, index }, cb) {
-  if (message.errno) return cb(message.errno, null);
+  const errno = message.errno;
+  if (errno) return cb(errno, null);
 
   let key = message.key;
 
@@ -215,7 +216,7 @@ function onconnection(message, handle) {
 
   if (accepted && server[owner_symbol]) {
     const self = server[owner_symbol];
-    if (self.maxConnections != null && self._connections >= self.maxConnections) {
+    if (self.maxConnections != null && self._connections >= self.maxConnections && !self.dropMaxConnection) {
       accepted = false;
     }
   }

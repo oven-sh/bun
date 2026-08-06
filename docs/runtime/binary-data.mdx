@@ -3,31 +3,31 @@ title: Binary Data
 description: Working with binary data in JavaScript
 ---
 
-This page is intended as an introduction to working with binary data in JavaScript. Bun implements several data types and utilities for working with binary data, most of which are Web-standard. Any Bun-specific APIs will be noted as such.
+Bun implements several data types and utilities for working with binary data in JavaScript, most of which are Web-standard. Bun-specific APIs are noted as such.
 
-Below is a cheat sheet that doubles as a table of contents. Click an item in the left column to jump to that section.
+This cheat sheet doubles as a table of contents; click a class in the left column to jump to its section.
 
-| Class                       | Description                                                                                                                                                                                             |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`TypedArray`](#typedarray) | A family of classes that provide an `Array`-like interface for interacting with binary data. Includes `Uint8Array`, `Uint16Array`, `Int8Array`, and more.                                               |
-| [`Buffer`](#buffer)         | A subclass of `Uint8Array` that implements a wide range of convenience methods. Unlike the other elements in this table, this is a Node.js API (which Bun implements). It can't be used in the browser. |
-| [`DataView`](#dataview)     | A class that provides a `get/set` API for writing some number of bytes to an `ArrayBuffer` at a particular byte offset. Often used reading or writing binary protocols.                                 |
-| [`Blob`](#blob)             | A readonly blob of binary data usually representing a file. Has a MIME `type`, a `size`, and methods for converting to `ArrayBuffer`, `ReadableStream`, and string.                                     |
-| [`File`](#file)             | A subclass of `Blob` that represents a file. Has a `name` and `lastModified` timestamp. There is experimental support in Node.js v20.                                                                   |
-| [`BunFile`](#bunfile)       | _Bun only_. A subclass of `Blob` that represents a lazily-loaded file on disk. Created with `Bun.file(path)`.                                                                                           |
+| Class                       | Description                                                                                                                                                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`TypedArray`](#typedarray) | A family of classes that provide an `Array`-like interface for interacting with binary data. Includes `Uint8Array`, `Uint16Array`, `Int8Array`, and more.                                      |
+| [`Buffer`](#buffer)         | A subclass of `Uint8Array` that implements a wide range of convenience methods. Unlike the others in this table, it's a Node.js API (which Bun implements). It isn't available in the browser. |
+| [`DataView`](#dataview)     | A class that provides a `get/set` API for writing some number of bytes to an `ArrayBuffer` at a particular byte offset. Often used for reading or writing binary protocols.                    |
+| [`Blob`](#blob)             | A readonly blob of binary data usually representing a file. Has a MIME `type`, a `size`, and methods for converting to `ArrayBuffer`, `ReadableStream`, and string.                            |
+| [`File`](#file)             | A subclass of `Blob` that represents a file. Has a `name` and `lastModified` timestamp. Node.js v20 has experimental support.                                                                  |
+| [`BunFile`](#bunfile)       | _Bun only_. A subclass of `Blob` that represents a lazily-loaded file on disk. Created with `Bun.file(path)`.                                                                                  |
 
 ---
 
 ## `ArrayBuffer` and views
 
-Until 2009, there was no language-native way to store and manipulate binary data in JavaScript. ECMAScript v5 introduced a range of new mechanisms for this. The most fundamental building block is `ArrayBuffer`, a data structure that represents a sequence of bytes in memory.
+JavaScript had no language-native way to store and manipulate binary data until ECMAScript v5 (2009) introduced a range of mechanisms for it. The most fundamental building block is `ArrayBuffer`, a data structure that represents a sequence of bytes in memory.
 
 ```ts
 // this buffer can store 8 bytes
 const buf = new ArrayBuffer(8);
 ```
 
-Despite the name, it isn't an array and supports none of the array methods and operators one might expect. In fact, there is no way to directly read or write values from an `ArrayBuffer`. There's very little you can do with one except check its size and create "slices" from it.
+Despite the name, it isn't an array and supports none of the array methods and operators you might expect. You can't read or write values from an `ArrayBuffer` directly; all you can do is check its size and create "slices" from it.
 
 ```ts
 const buf = new ArrayBuffer(8);
@@ -37,13 +37,13 @@ const slice = buf.slice(0, 4); // returns new ArrayBuffer
 slice.byteLength; // => 4
 ```
 
-To do anything interesting we need a construct known as a "view". A view is a class that _wraps_ an `ArrayBuffer` instance and lets you read and manipulate the underlying data. There are two types of views: _typed arrays_ and `DataView`.
+To read or write the data, you need a "view": a class that _wraps_ an `ArrayBuffer` instance and lets you read and manipulate the underlying data. There are two types of views: _typed arrays_ and `DataView`.
 
 ### `DataView`
 
 The `DataView` class is a lower-level interface for reading and manipulating the data in an `ArrayBuffer`.
 
-Below we create a new `DataView` and set the first byte to 3.
+The following creates a `DataView` and sets the first byte to 3.
 
 ```ts
 const buf = new ArrayBuffer(4);
@@ -55,7 +55,7 @@ dv.getUint8(0); // => 3
 // [0b00000011, 0b00000000, 0b00000000, 0b00000000]
 ```
 
-Now let's write a `Uint16` at byte offset `1`. This requires two bytes. We're using the value `513`, which is `2 * 256 + 1`; in bytes, that's `00000010 00000001`.
+Next, write a `Uint16` at byte offset `1`. This requires two bytes. The value `513` is `2 * 256 + 1`; in bytes, that's `00000010 00000001`.
 
 ```ts
 dv.setUint16(1, 513);
@@ -64,14 +64,14 @@ dv.setUint16(1, 513);
 console.log(dv.getUint16(1)); // => 513
 ```
 
-We've now assigned a value to the first three bytes in our underlying `ArrayBuffer`. Even though the second and third bytes were created using `setUint16()`, we can still read each of its component bytes using `getUint8()`.
+The first three bytes of the underlying `ArrayBuffer` now have values. Even though the second and third bytes were written with `setUint16()`, you can still read each component byte with `getUint8()`.
 
 ```ts
 console.log(dv.getUint8(1)); // => 2
 console.log(dv.getUint8(2)); // => 1
 ```
 
-Attempting to write a value that requires more space than is available in the underlying `ArrayBuffer` will cause an error. Below we attempt to write a `Float64` (which requires 8 bytes) at byte offset `0`, but there are only four total bytes in the buffer.
+Writing a value that needs more space than the underlying `ArrayBuffer` has throws an error. The following writes a `Float64` (which requires 8 bytes) at byte offset `0`, but the buffer is only four bytes long.
 
 ```ts
 dv.setFloat64(0, 3.1415);
@@ -98,7 +98,7 @@ The following methods are available on `DataView`:
 Typed arrays are a family of classes that provide an `Array`-like interface for interacting with data in an `ArrayBuffer`. Whereas a `DataView` lets you write numbers of varying size at a particular offset, a `TypedArray` interprets the underlying bytes as an array of numbers, each of a fixed size.
 
 <Note>
-  It's common to refer to this family of classes collectively by their shared superclass `TypedArray`. This class as
+  It's common to refer to this family of classes collectively by their shared superclass `TypedArray`. This class is
   _internal_ to JavaScript; you can't directly create instances of it, and `TypedArray` is not defined in the global
   scope. Think of it as an `interface` or an abstract class.
 </Note>
@@ -117,12 +117,7 @@ arr[2] = 255;
 arr[3] = 255; // no-op, out of bounds
 ```
 
-While an `ArrayBuffer` is a generic sequence of bytes, these typed array classes interpret the bytes as an array of numbers of a given byte size.
-The top row contains the raw bytes, and the later rows contain how these bytes will be interpreted when _viewed_ using different typed array classes.
-
-The following classes are typed arrays, along with a description of how they interpret the bytes in an `ArrayBuffer`:
-
-Here's the first table formatted as a markdown table:
+The typed array classes, and how each interprets the bytes in an `ArrayBuffer`:
 
 | Class                                                                                                                     | Description                                                                                                                                                                |
 | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -139,7 +134,7 @@ Here's the first table formatted as a markdown table:
 | [`BigUint64Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigUint64Array)       | Every eight (8) bytes are interpreted as an unsigned `BigInt`. Range 0 to 18446744073709551615 (though `BigInt` is capable of representing larger numbers).                |
 | [`Uint8ClampedArray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8ClampedArray) | Same as `Uint8Array`, but automatically "clamps" to the range 0-255 when assigning a value to an element.                                                                  |
 
-The table below demonstrates how the bytes in an `ArrayBuffer` are interpreted when viewed using different typed array classes.
+The following table shows how the same bytes in an `ArrayBuffer` are interpreted by different typed array classes.
 
 |                  | Byte 0              | Byte 1     | Byte 2              | Byte 3     | Byte 4               | Byte 5     | Byte 6               | Byte 7     |
 | ---------------- | ------------------- | ---------- | ------------------- | ---------- | -------------------- | ---------- | -------------------- | ---------- |
@@ -163,7 +158,7 @@ arr[1] = 60;
 console.log(arr); // => Uint8Array(10) [ 30, 60, 0, 0, 0, 0, 0, 0, 0, 0 ];
 ```
 
-If we tried to instantiate a `Uint32Array` from this same `ArrayBuffer`, we'd get an error.
+Instantiating a `Uint32Array` from this same `ArrayBuffer` throws an error.
 
 ```ts
 const buf = new ArrayBuffer(10);
@@ -172,9 +167,9 @@ const arr = new Uint32Array(buf);
 //             is not a multiple of the element size
 ```
 
-A `Uint32` value requires four bytes (16 bits). Because the `ArrayBuffer` is 10 bytes long, there's no way to cleanly divide its contents into 4-byte chunks.
+A `Uint32` value requires four bytes (32 bits). Because the `ArrayBuffer` is 10 bytes long, there's no way to cleanly divide its contents into 4-byte chunks.
 
-To fix this, we can create a typed array over a particular "slice" of an `ArrayBuffer`. The `Uint16Array` below only "views" the _first_ 8 bytes of the underlying `ArrayBuffer`. To achieve these, we specify a `byteOffset` of `0` and a `length` of `2`, which indicates the number of `Uint32` numbers we want our array to hold.
+To fix this, create a typed array over a particular "slice" of the `ArrayBuffer`. The following `Uint32Array` only "views" the _first_ 8 bytes of the underlying `ArrayBuffer`: a `byteOffset` of `0` and a `length` of `2`, the number of `Uint32` values the array holds.
 
 ```ts
 // create typed array from ArrayBuffer slice
@@ -190,7 +185,7 @@ arr.byteOffset; // 0
 arr.length; // 2
 ```
 
-You don't need to explicitly create an `ArrayBuffer` instance; you can instead directly specify a length in the typed array constructor:
+You don't need to create an `ArrayBuffer` instance first; pass a length to the typed array constructor instead:
 
 ```ts
 const arr2 = new Uint8Array(5);
@@ -211,7 +206,7 @@ arr1[7]; // => 7;
 const arr2 = new Uint8Array(arr);
 ```
 
-Broadly speaking, typed arrays provide the same methods as regular arrays, with a few exceptions. For example, `push` and `pop` are not available on typed arrays, because they would require resizing the underlying `ArrayBuffer`.
+Typed arrays provide the same methods as regular arrays, with a few exceptions. For example, `push` and `pop` are not available, because they would require resizing the underlying `ArrayBuffer`.
 
 ```ts
 const arr = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]);
@@ -227,23 +222,23 @@ arr.includes(5); // true
 arr.indexOf(5); // 5
 ```
 
-Refer to the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray) for more information on the properties and methods of typed arrays.
+See the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray) for more on typed array properties and methods.
 
 ### `Uint8Array`
 
-It's worth specifically highlighting `Uint8Array`, as it represents a classic "byte array"—a sequence of 8-bit unsigned integers between 0 and 255. This is the most common typed array you'll encounter in JavaScript.
+`Uint8Array` is the most common typed array in JavaScript. It represents a classic "byte array": a sequence of 8-bit unsigned integers between 0 and 255.
 
-In Bun, and someday in other JavaScript engines, it has methods available for converting between byte arrays and serialized representations of those arrays as base64 or hex strings.
+In Bun, it has methods for converting between byte arrays and their base64 or hex string representations.
 
 ```ts
-new Uint8Array([1, 2, 3, 4, 5]).toBase64(); // "AQIDBA=="
-Uint8Array.fromBase64("AQIDBA=="); // Uint8Array(4) [1, 2, 3, 4, 5]
+new Uint8Array([1, 2, 3, 4, 5]).toBase64(); // "AQIDBAU="
+Uint8Array.fromBase64("AQIDBAU="); // Uint8Array(5) [1, 2, 3, 4, 5]
 
-new Uint8Array([255, 254, 253, 252, 251]).toHex(); // "fffefdfcfb=="
+new Uint8Array([255, 254, 253, 252, 251]).toHex(); // "fffefdfcfb"
 Uint8Array.fromHex("fffefdfcfb"); // Uint8Array(5) [255, 254, 253, 252, 251]
 ```
 
-It is the return value of [`TextEncoder#encode`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder), and the input type of [`TextDecoder#decode`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder), two utility classes designed to translate strings and various binary encodings, most notably `"utf-8"`.
+It is the return value of [`TextEncoder#encode`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder), and the input type of [`TextDecoder#decode`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder), two utility classes that translate between strings and various binary encodings, most notably `"utf-8"`.
 
 ```ts
 const encoder = new TextEncoder();
@@ -271,13 +266,13 @@ console.log(buf.toString());
 // => Hello world
 ```
 
-For complete documentation, refer to the [Node.js documentation](https://nodejs.org/api/buffer.html).
+See the [Node.js documentation](https://nodejs.org/api/buffer.html).
 
 ## `Blob`
 
-`Blob` is a Web API commonly used for representing files. `Blob` was initially implemented in browsers (unlike `ArrayBuffer` which is part of JavaScript itself), but it is now supported in Node and Bun.
+`Blob` is a Web API commonly used for representing files. It originated in browsers (unlike `ArrayBuffer`, which is part of JavaScript itself), but Node.js and Bun support it too.
 
-It isn't common to directly create `Blob` instances. More often, you'll receive instances of `Blob` from an external source (like an `<input type="file">` element in the browser) or library. That said, it is possible to create a `Blob` from one or more string or binary "blob parts".
+You rarely create `Blob` instances directly; they usually come from an external source (like an `<input type="file">` element in the browser) or a library. That said, you can create a `Blob` from one or more string or binary "blob parts".
 
 ```ts
 const blob = new Blob(["<html>Hello</html>"], {
@@ -285,10 +280,10 @@ const blob = new Blob(["<html>Hello</html>"], {
 });
 
 blob.type; // => text/html
-blob.size; // => 19
+blob.size; // => 18
 ```
 
-These parts can be `string`, `ArrayBuffer`, `TypedArray`, `DataView`, or other `Blob` instances. The blob parts are concatenated together in the order they are provided.
+These parts can be `string`, `ArrayBuffer`, `TypedArray`, `DataView`, or other `Blob` instances. The parts are concatenated in the order they're given.
 
 ```ts
 const blob = new Blob([
@@ -299,18 +294,18 @@ const blob = new Blob([
 ]);
 ```
 
-The contents of a `Blob` can be asynchronously read in various formats.
+Read the contents of a `Blob` asynchronously in various formats.
 
 ```ts
 await blob.text(); // => <html><body>hello</body></html>
 await blob.bytes(); // => Uint8Array (copies contents)
 await blob.arrayBuffer(); // => ArrayBuffer (copies contents)
-await blob.stream(); // => ReadableStream
+blob.stream(); // => ReadableStream
 ```
 
 ### `BunFile`
 
-`BunFile` is a subclass of `Blob` used to represent a lazily-loaded file on disk. Like `File`, it adds a `name` and `lastModified` property. Unlike `File`, it does not require the file to be loaded into memory.
+`BunFile` is a subclass of `Blob` that represents a lazily-loaded file on disk. Like `File`, it adds a `name` and `lastModified` property. Unlike `File`, it does not require the file to be loaded into memory.
 
 ```ts
 const file = Bun.file("index.txt");
@@ -319,9 +314,7 @@ const file = Bun.file("index.txt");
 
 ### `File`
 
-<Warning>Browser only. Experimental support in Node.js 20.</Warning>
-
-[`File`](https://developer.mozilla.org/en-US/docs/Web/API/File) is a subclass of `Blob` that adds a `name` and `lastModified` property. It's commonly used in the browser to represent files uploaded via a `<input type="file">` element. Node.js and Bun implement `File`.
+[`File`](https://developer.mozilla.org/en-US/docs/Web/API/File) is a subclass of `Blob` that adds a `name` and `lastModified` property. It's commonly used in the browser to represent files uploaded with an `<input type="file">` element. Node.js and Bun implement `File`.
 
 ```ts
 // on browser!
@@ -337,13 +330,13 @@ const file = new File(["<html>Hello</html>"], "index.html", {
 });
 ```
 
-Refer to the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/API/Blob) for complete docs information.
+See the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/API/Blob).
 
 ---
 
 ## Streams
 
-Streams are an important abstraction for working with binary data without loading it all into memory at once. They are commonly used for reading and writing files, sending and receiving network requests, and processing large amounts of data.
+Streams let you work with binary data without loading it all into memory at once. They're commonly used for reading and writing files, sending and receiving network requests, and processing large amounts of data.
 
 Bun implements the Web APIs [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) and [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream).
 
@@ -367,7 +360,7 @@ const stream = new ReadableStream({
 });
 ```
 
-The contents of this stream can be read chunk-by-chunk with `for await` syntax.
+Read the stream chunk-by-chunk with `for await`.
 
 ```ts
 for await (const chunk of stream) {
@@ -378,17 +371,17 @@ for await (const chunk of stream) {
 // => "world"
 ```
 
-For a more complete discussion of streams in Bun, see [API > Streams](/runtime/streams).
+For more on streams in Bun, see [Streams](/runtime/streams).
 
 ---
 
 ## Conversion
 
-Converting from one binary format to another is a common task. This section is intended as a reference.
+Use this section as a reference for converting one binary format to another.
 
 ### From `ArrayBuffer`
 
-Since `ArrayBuffer` stores the data that underlies other binary structures like `TypedArray`, the snippets below are not _converting_ from `ArrayBuffer` to another format. Instead, they are _creating_ a new instance using the data stored underlying data.
+Since `ArrayBuffer` stores the data that underlies other binary structures like `TypedArray`, the following snippets are not _converting_ from `ArrayBuffer` to another format. Instead, they _create_ a new instance using the underlying data.
 
 #### To `TypedArray`
 
@@ -468,7 +461,7 @@ new ReadableStream({
 
 #### To `ArrayBuffer`
 
-This retrieves the underlying `ArrayBuffer`. Note that a `TypedArray` can be a view of a _slice_ of the underlying buffer, so the sizes may differ.
+The `buffer` property is the underlying `ArrayBuffer`. A `TypedArray` can be a view of a _slice_ of that buffer, so the sizes may differ.
 
 ```ts
 arr.buffer;
@@ -476,7 +469,7 @@ arr.buffer;
 
 #### To `DataView`
 
-To creates a `DataView` over the same byte range as the TypedArray.
+To create a `DataView` over the same byte range as the `TypedArray`:
 
 ```ts
 new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -692,8 +685,6 @@ new ReadableStream({
 
 #### To `ArrayBuffer`
 
-The `Blob` class provides a convenience method for this purpose.
-
 ```ts
 await blob.arrayBuffer();
 ```
@@ -738,7 +729,7 @@ blob.stream();
 
 ### From `ReadableStream`
 
-It's common to use [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) as a convenient intermediate representation to make it easier to convert `ReadableStream` to other formats.
+[`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) is a common intermediate for converting a `ReadableStream` to other formats.
 
 ```ts
 stream; // ReadableStream
@@ -746,7 +737,7 @@ stream; // ReadableStream
 const buffer = new Response(stream).arrayBuffer();
 ```
 
-However this approach is verbose and adds overhead that slows down overall performance unnecessarily. Bun implements a set of optimized convenience functions for converting `ReadableStream` various binary formats.
+But this approach is verbose and adds unnecessary overhead. Bun implements optimized convenience functions for converting a `ReadableStream` to various binary formats.
 
 #### To `ArrayBuffer`
 

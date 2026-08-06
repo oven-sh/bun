@@ -4,14 +4,13 @@ use crate::host_fn::from_js_host_call_generic;
 use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
 use bun_core as bstr;
 
-/// Comptime config struct in Zig (`JSPropertyIterator.zig:1-7`); ported as a runtime
-/// flag set passed to [`JSPropertyIterator::init`].
+/// Runtime flag set passed to [`JSPropertyIterator::init`].
 ///
-/// `Default` mirrors the Zig field defaults: `own_properties_only = true`,
+/// `Default` is `own_properties_only = true`,
 /// `observable = true`, `only_non_index_properties = false`.
-// PERF(port): was comptime monomorphization (`fn JSPropertyIterator(comptime options) type`).
-// Demoted to runtime flags because the branches gate per-property work, not a hot inner
-// loop, and the monomorphization fan-out would be 32 instantiations. Profile in Phase B.
+// Runtime flags (not const generics) because the branches gate per-property work, not a
+// hot inner loop, and the monomorphization fan-out would be 32 instantiations. Profile
+// if hot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JSPropertyIteratorOptions {
     pub skip_empty_name: bool,
@@ -22,9 +21,8 @@ pub struct JSPropertyIteratorOptions {
 }
 
 impl JSPropertyIteratorOptions {
-    /// Shorthand matching the Zig spec's most common call-site shape
-    /// `.{ .skip_empty_name = …, .include_value = … }`; the remaining three options
-    /// take the Zig struct defaults.
+    /// Shorthand for the most common call-site shape; the remaining three
+    /// options take the [`Default`] values.
     pub const fn new(skip_empty_name: bool, include_value: bool) -> Self {
         Self {
             skip_empty_name,
@@ -50,7 +48,7 @@ impl Default for JSPropertyIteratorOptions {
 }
 
 /// Two-field shorthand of [`JSPropertyIteratorOptions`]; the remaining three options
-/// take the Zig struct defaults via the `From` conversion.
+/// take the default values via the `From` conversion.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PropertyIteratorOptions {
     pub skip_empty_name: bool,
@@ -64,8 +62,8 @@ impl From<PropertyIteratorOptions> for JSPropertyIteratorOptions {
     }
 }
 
-/// Conversion shim so [`JSPropertyIterator::init`]'s `object` argument accepts the
-/// same operand shapes Zig callers use (`*JSObject`, `&JSObject`).
+/// Conversion shim so [`JSPropertyIterator::init`]'s `object` argument accepts
+/// both `*mut JSObject` and `&JSObject`.
 pub trait IntoIterObject {
     fn into_iter_object(self) -> *mut JSObject;
 }
@@ -102,16 +100,16 @@ impl IntoIterObject for &mut JSObject {
 
 pub struct JSPropertyIterator<'a> {
     pub len: usize,
-    pub i: u32,
-    pub iter_i: u32,
+    pub(crate) i: u32,
+    pub(crate) iter_i: u32,
     /// null if and only if `object` has no properties (i.e. `len == 0`)
-    pub impl_: Option<NonNull<JSPropertyIteratorImpl>>,
+    pub(crate) impl_: Option<NonNull<JSPropertyIteratorImpl>>,
 
-    pub global_object: &'a JSGlobalObject,
-    pub object: *mut JSObject,
+    pub(crate) global_object: &'a JSGlobalObject,
+    pub(crate) object: *mut JSObject,
     /// Current property value being yielded (only meaningful when
     /// `options.include_value` is set).
-    // PORT NOTE: bare JSValue field is sound because this struct is stack-only (`'a` borrow);
+    // The bare JSValue field is sound because this struct is stack-only (`'a` borrow);
     // conservative stack scan keeps it alive. Do NOT box this struct.
     pub value: JSValue,
 
@@ -119,7 +117,7 @@ pub struct JSPropertyIterator<'a> {
 }
 
 impl<'a> JSPropertyIterator<'a> {
-    pub fn get_longest_property_name(&self) -> usize {
+    pub(crate) fn get_longest_property_name(&self) -> usize {
         if let Some(iter) = self.impl_ {
             // `JSPropertyIteratorImpl`/`JSObject` are opaque ZST handles;
             // `opaque_mut`/`opaque_ref` are the centralised zero-byte deref proofs.
@@ -168,11 +166,6 @@ impl<'a> JSPropertyIterator<'a> {
             value: JSValue::ZERO,
             options,
         })
-    }
-
-    pub fn reset(&mut self) {
-        self.iter_i = 0;
-        self.i = 0;
     }
 
     /// The bun.String returned has not incremented its reference count.
@@ -248,7 +241,6 @@ impl<'a> Drop for JSPropertyIterator<'a> {
             // freed (we only free here, once).
             unsafe { Bun__JSPropertyIterator__deinit(impl_.as_ptr()) };
         }
-        // Zig: `this.* = undefined;` — no-op in Rust.
     }
 }
 
@@ -256,7 +248,7 @@ impl<'a> Drop for JSPropertyIterator<'a> {
 bun_opaque::opaque_ffi! { pub struct JSPropertyIteratorImpl; }
 
 impl JSPropertyIteratorImpl {
-    pub fn init(
+    pub(crate) fn init(
         global_object: &JSGlobalObject,
         object: *mut JSObject,
         count: &mut usize,
@@ -276,23 +268,22 @@ impl JSPropertyIteratorImpl {
         Ok(NonNull::new(raw))
     }
 
-    pub fn get_name_and_value(
+    pub(crate) fn get_name_and_value(
         iter: &mut JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
         property_name: &mut bstr::String,
         i: usize,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: Zig wrapped this in a manual `TopExceptionScope.init/deinit` +
-        // `returnIfException`; that is exactly `from_js_host_call_generic`'s contract
-        // (the FFI may return `.zero` without throwing, so the non-generic
-        // `from_js_host_call` — which treats empty as thrown — is wrong here).
+        // The FFI may return `.zero` without throwing, so the non-generic
+        // `from_js_host_call` — which treats empty as thrown — is wrong here;
+        // `from_js_host_call_generic` checks the exception scope instead.
         from_js_host_call_generic(global_object, || {
             Bun__JSPropertyIterator__getNameAndValue(iter, global_object, object, property_name, i)
         })
     }
 
-    pub fn get_name_and_value_non_observable(
+    pub(crate) fn get_name_and_value_non_observable(
         iter: &mut JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
@@ -351,5 +342,3 @@ unsafe extern "C" {
         object: &JSObject,
     ) -> usize;
 }
-
-// ported from: src/jsc/JSPropertyIterator.zig

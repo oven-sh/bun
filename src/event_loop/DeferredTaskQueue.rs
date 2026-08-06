@@ -25,13 +25,22 @@
 //!
 //! The DeferredTaskQueue is drained after the microtask queue, but before other tasks are executed. This avoids re-entrancy
 //! issues with the event loop.
+//!
+//! `run()` must tolerate re-entrant mutation of the map: a callback can reach user JS, which can
+//! `post_task` / `unregister_task` any entry (for example, `H2FrameParser`'s auto-flush unregisters
+//! itself and then returns `true`, and before the cork slot became self-scoped one parser's flush
+//! could unregister another's). Each pass is capped at the number of entries present when it
+//! started; that cap is a livelock bound, not a strict "no new entries this pass" frontier, because
+//! a swap-remove can pull a freshly appended entry forward. Every callback flushes its own object's
+//! buffer to its own fd or socket, so relative order within a pass has no correctness effect, and
+//! anything a pass skips runs on the next one.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_collections::ArrayHashMap;
 
-// PORT NOTE: Zig `*const fn(*anyopaque) bool`. Declared `extern "C"` so the
+// Declared `extern "C"` so the
 // same fn-pointer type can flow across the FFI boundary (e.g.
 // `Bun__VM__postDeferredTask`) without an ABI-crossing fn-ptr cast. All in-tree
 // producers go through monomorphic `extern "C"` trampolines (see
@@ -40,14 +49,13 @@ pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 
 #[derive(Default)]
 pub struct DeferredTaskQueue {
-    pub map: ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>,
+    pub(crate) map: ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>,
 }
 
 impl DeferredTaskQueue {
     pub fn post_task(&mut self, ctx: Option<NonNull<c_void>>, task: DeferredRepeatingTask) -> bool {
-        // Zig: `getOrPutValue(ctx, task).found_existing`.
-        // PORT NOTE: `ArrayHashMap` is currently aliased to std `HashMap`; the
-        // entry API gives the same semantics (insert-if-absent + report-existing).
+        // `ArrayHashMap` is currently aliased to std `HashMap`; the entry API
+        // gives insert-if-absent + report-existing semantics.
         match self.map.entry(ctx) {
             bun_collections::hash_map::Entry::Occupied(_) => true,
             bun_collections::hash_map::Entry::Vacant(v) => {
@@ -58,46 +66,38 @@ impl DeferredTaskQueue {
     }
 
     pub fn unregister_task(&mut self, ctx: Option<NonNull<c_void>>) -> bool {
-        // Zig: `swapRemove(ctx) -> bool`. Order is irrelevant for this map's
-        // contract (see file doc — "order may not particularly matter"), so
-        // plain `remove().is_some()` is equivalent.
-        self.map.remove(&ctx).is_some()
+        // Order is irrelevant for this map's contract (see file doc), so
+        // swap-remove is fine and O(1).
+        self.map.swap_remove(&ctx)
     }
 
     pub fn run(&mut self) {
-        // PORT NOTE: Zig used `swapRemoveAt(i)` (O(1) by index). The current
-        // `ArrayHashMap` exposes `keys()/values()` slices and `swap_remove(&K)`
-        // (O(n) hash lookup) but not `swap_remove_at`. Keys here are `Copy`
-        // pointers, so copy the key out and remove by key — semantically
-        // identical (keys are unique), just an extra hash per removal.
-        // PERF(port): swap_remove(&K) re-hashes; restore swap_remove_at when
-        // bun_collections::ArrayHashMap grows it — profile in Phase B.
+        // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
+        // note in the file doc), so re-read `len()` every iteration and
+        // re-check slot `i` after each callback. `remaining` is a livelock bound.
         let mut i: usize = 0;
-        let mut last = self.map.len();
-        while i < last {
+        let mut remaining = self.map.len();
+        while remaining > 0 && i < self.map.len() {
+            remaining -= 1;
             let key = self.map.keys()[i];
             let Some(nn) = key else {
-                self.map.swap_remove(&key);
-                last = self.map.len();
+                self.map.swap_remove_at(i);
                 continue;
             };
 
-            // PORT NOTE: reshaped for borrowck — copy fn ptr out before calling
             let task = self.map.values()[i];
             // SAFETY: `nn` is the live `*mut T` registered by the caller; the
-            // callback contract (Zig `Type.onAutoFlush`) is that `task` may be
-            // invoked with exactly that pointer until it returns `false` or is
-            // explicitly unregistered.
-            if !unsafe { task(nn.as_ptr()) } {
+            // callback contract (`HasAutoFlusher::on_auto_flush`) is that
+            // `task` may be invoked with exactly that pointer until it returns
+            // `false` or is explicitly unregistered.
+            let keep = unsafe { task(nn.as_ptr()) };
+            if !keep {
+                // `key` may already be gone (callback unregistered it) or may
+                // have moved; remove by key, not index.
                 self.map.swap_remove(&key);
-                last = self.map.len();
-            } else {
+            } else if self.map.keys().get(i) == Some(&key) {
                 i += 1;
             }
         }
     }
 }
-
-// Zig `deinit` only freed the map's backing storage; `ArrayHashMap: Drop` handles that.
-
-// ported from: src/event_loop/DeferredTaskQueue.zig

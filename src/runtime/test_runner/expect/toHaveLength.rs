@@ -1,12 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_length(
+pub(crate) fn to_have_length(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -14,8 +12,7 @@ pub fn to_have_length(
     let (this, value, not) =
         this.matcher_prelude(global, frame.this(), "toHaveLength", "<green>expected<r>")?;
 
-    let arguments_ = frame.arguments_old::<1>();
-    let arguments = arguments_.slice();
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toHaveLength() takes 1 argument")));
@@ -82,25 +79,21 @@ pub fn to_have_length(
 
     // handle failure
     if not {
-        // PERF(port): was comptime getSignature — const fn evaluated at compile time
         let signature: &str = get_signature("toHaveLength", "<green>expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!("\n\nExpected length: not <green>{}<r>\n", expected_length),
+            "\n\nExpected length: not <green>{}<r>\n", expected_length,
         );
     }
 
-    // PERF(port): was comptime getSignature — const fn evaluated at compile time
     let signature: &str = get_signature("toHaveLength", "<green>expected<r>", false);
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            "\n\nExpected length: <green>{}<r>\nReceived length: <red>{}<r>\n",
-            expected_length, actual_length,
-        ),
+        "\n\nExpected length: <green>{}<r>\nReceived length: <red>{}<r>\n",
+        expected_length, actual_length,
     )
 }
-
-// ported from: src/test_runner/expect/toHaveLength.zig

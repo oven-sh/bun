@@ -43,7 +43,7 @@
 /// bun_opaque::opaque_ffi! {
 ///     /// `struct ssl_st` (`typedef ... SSL`).
 ///     pub struct SSL;
-///     pub(crate) struct BIO;
+///     pub struct BIO;
 /// }
 /// ```
 ///
@@ -271,9 +271,9 @@ macro_rules! assert_ffi_discr {
 /// [`opaque_deref_nn`] instead to elide the release-mode `testq; je <panic>`.
 #[inline(always)]
 pub fn opaque_deref<'a, T>(p: *const T) -> &'a T {
-    assert!(!p.is_null(), "opaque_deref: null FFI handle");
-    // SAFETY: non-null asserted above.
-    unsafe { opaque_deref_nn(p) }
+    let p = ::core::ptr::NonNull::new(p.cast_mut()).expect("opaque_deref: null FFI handle");
+    // SAFETY: non-null established above.
+    unsafe { opaque_deref_nn(p.as_ptr()) }
 }
 
 /// Unchecked `*const T → &T` for a `#[repr(C)]` zero-sized, align-1 opaque FFI
@@ -314,9 +314,9 @@ pub unsafe fn opaque_deref_nn<'a, T>(p: *const T) -> &'a T {
 /// mutable borrow of zero bytes cannot overlap any other borrow).
 #[inline(always)]
 pub fn opaque_deref_mut<'a, T>(p: *mut T) -> &'a mut T {
-    assert!(!p.is_null(), "opaque_deref_mut: null FFI handle");
-    // SAFETY: non-null asserted above.
-    unsafe { opaque_deref_mut_nn(p) }
+    let p = ::core::ptr::NonNull::new(p).expect("opaque_deref_mut: null FFI handle");
+    // SAFETY: non-null established above.
+    unsafe { opaque_deref_mut_nn(p.as_ptr()) }
 }
 
 /// Unchecked `*mut T → &mut T`. See [`opaque_deref_nn`] / [`opaque_deref_mut`].
@@ -345,17 +345,17 @@ pub unsafe fn opaque_deref_mut_nn<'a, T>(p: *mut T) -> &'a mut T {
 /// `core`-only FFI slice/string primitives shared between `bun_core::ffi` and
 /// the freestanding `bun_shim_impl` PE. Lives here (not `bun_core`) because
 /// `bun_core` carries `#[no_mangle]` C-ABI exports that become unsatisfiable
-/// link roots in a `#![no_std]`/`no_main` binary; this crate has none. Mirrors
-/// Zig `std.mem.{len,span}` / `bun.sliceTo`, which both consumers re-spelled
-/// verbatim before this single audited copy existed.
+/// link roots in a `#![no_std]`/`no_main` binary; this crate has none. Both
+/// consumers re-spelled these primitives verbatim before this single audited
+/// copy existed.
 pub mod ffi {
-    /// `std.mem.len` for `[*:0]const u16` — count u16 code units up to (and
+    /// Count u16 code units up to (and
     /// excluding) the first NUL. Single audited funnel for the hand-rolled
     /// `while *p.add(n) != 0 { n += 1 }` loop that appeared at every
     /// `LPCWSTR` / `char16_t*` ingestion point (Windows path APIs, N-API
     /// `napi_create_string_utf16`, libarchive `_w` accessors, env-block
     /// scan). Adds a `debug_assert!(!p.is_null())` — same precondition as
-    /// `CStr::from_ptr` and Zig `std.mem.len([*:0]const u16)`.
+    /// `CStr::from_ptr`.
     ///
     /// # Safety
     /// `p` must be non-null and point to a NUL-terminated u16 sequence
@@ -372,8 +372,7 @@ pub mod ffi {
     }
 
     /// UTF-16 analogue of `cstr_bytes`: scan to NUL and borrow the code units
-    /// as a `&[u16]`. Dominant shape at call sites (Zig
-    /// `std.mem.span([*:0]const u16)` port).
+    /// as a `&[u16]`. Dominant shape at call sites.
     ///
     /// # Safety
     /// Same contract as [`wcslen`]; the returned borrow must not outlive the

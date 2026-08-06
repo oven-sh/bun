@@ -2,12 +2,11 @@ use core::ffi::c_void;
 
 use crate::host_fn::to_js_host_call;
 use crate::js_promise::{Status, UnwrapMode, Unwrapped};
-use crate::top_exception_scope::{SourceLocation, TopExceptionScope};
 use crate::{JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsResult, JsTerminated, VM};
 
-/// `jsc.AnyPromise` — `JSPromise | JSInternalPromise` (AnyPromise.zig).
+/// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
 ///
-/// Variants hold raw `*mut` (mirroring Zig's `*JSPromise`): the pointee is a
+/// Variants hold raw `*mut`: the pointee is a
 /// GC-managed JSC heap cell whose lifetime is governed by the VM, not by a
 /// Rust borrow. Callers must keep the cell reachable (e.g. via `Strong` or an
 /// on-stack `JSValue`) for as long as the `AnyPromise` is used.
@@ -54,11 +53,6 @@ impl AnyPromise {
     }
 
     #[inline]
-    pub fn is_handled(self) -> bool {
-        any_promise_dispatch!(self, |p| p.is_handled())
-    }
-
-    #[inline]
     pub fn set_handled(self, vm: &VM) {
         let _ = vm;
         any_promise_dispatch!(self, |p| p.set_handled())
@@ -71,8 +65,6 @@ impl AnyPromise {
 
     #[inline]
     pub fn reject(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
-        // Zig: `promise.reject(globalThis, value)` — `JSValue` coerces to `JSError!JSValue`
-        // implicitly in Zig; map that with `Ok(value)` here.
         any_promise_dispatch!(self, |p| p.reject(global_this, Ok(value)))
     }
 
@@ -96,22 +88,13 @@ impl AnyPromise {
     /// JSInternalPromise subclasses JSPromise in C++ — this cast is safe for
     /// any C++ function taking JSPromise*.
     #[inline]
-    pub fn as_js_promise(self) -> *mut JSPromise {
+    pub(crate) fn as_js_promise(self) -> *mut JSPromise {
         match self {
             Self::Normal(p) => p,
             // SAFETY: JSInternalPromise subclasses JSPromise in C++; the
             // pointer reinterpretation is valid for any C++ API taking JSPromise*.
             Self::Internal(p) => p.cast::<JSPromise>(),
         }
-    }
-
-    #[inline]
-    pub fn reject_as_handled(
-        self,
-        global_this: &JSGlobalObject,
-        value: JSValue,
-    ) -> Result<(), JsTerminated> {
-        any_promise_dispatch!(self, |p| p.reject_as_handled(global_this, value))
     }
 
     #[inline]
@@ -122,16 +105,11 @@ impl AnyPromise {
         }
     }
 
-    /// `AnyPromise.wrap` (AnyPromise.zig:76) — run `f` through the host-call
+    /// Run `f` through the host-call
     /// wrapper so a thrown exception (or returned `ErrorInstance`) is converted
     /// into a rejection of this existing promise; otherwise resolve with the
     /// result. The C++ side (`JSC__AnyPromise__wrap`, bindings.cpp) owns the
     /// resolve/reject decision.
-    ///
-    /// Zig used `std.meta.ArgsTuple(@TypeOf(Function))` to forward arbitrary
-    /// argument tuples through a `callconv(.c)` trampoline. Rust has no
-    /// compile-time fn-signature reflection, so this takes a closure that
-    /// captures those arguments instead.
     pub fn wrap<F>(self, global_object: &JSGlobalObject, f: F) -> Result<(), JsTerminated>
     where
         F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
@@ -149,13 +127,11 @@ impl AnyPromise {
             // call (`&T` ≡ non-null `*const T` at the C ABI).
             let wrap_ = unsafe { bun_ptr::callback_ctx::<Wrapper<F>>(wrap_) };
             let f = wrap_.f.take().expect("AnyPromise::wrap called twice");
-            // Zig: `jsc.toJSHostCall(global, @src(), Fn, wrap_.args)` — installs the
-            // host-call exception/return-value validation around the invocation.
-            // `to_js_host_call` is `#[track_caller]`, so `@src()` is propagated.
+            // `to_js_host_call` installs the host-call exception/return-value
+            // validation around the invocation.
             to_js_host_call(global, move || f(global))
         }
 
-        // Zig: `var scope: jsc.TopExceptionScope = undefined; scope.init(global, @src()); defer scope.deinit();`
         crate::top_scope!(scope, global_object);
 
         let mut ctx = Wrapper { f: Some(f) };
@@ -188,5 +164,3 @@ unsafe extern "C" {
         f: extern "C" fn(*mut c_void, &JSGlobalObject) -> JSValue,
     );
 }
-
-// ported from: src/jsc/AnyPromise.zig

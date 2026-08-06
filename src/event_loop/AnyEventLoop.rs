@@ -1,30 +1,28 @@
 use core::ptr::NonNull;
 
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_io::FilePoll;
 use bun_ptr::BackRef;
+use bun_ptr::Mut;
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use crate::ConcurrentTask::ConcurrentTask;
-use crate::MiniEventLoop::{EventLoopKind, MiniEventLoop};
+use crate::MiniEventLoop::MiniEventLoop;
 use crate::{JsEventLoop, JsEventLoopKind};
 
-/// JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`.
-///
-/// LAYERING: `bun_event_loop` is a lower tier than `bun_jsc`, so it cannot name
-/// `jsc::EventLoop` / `jsc::VirtualMachine` directly. Zig has no crate
-/// boundaries and just calls `this.js.tick()` etc. inline (see
-/// `src/event_loop/AnyEventLoop.zig` / `src/jsc/EventLoopHandle.zig`). To match
-/// that — direct calls, no runtime registration — the concrete bodies live in
-/// `bun_jsc::event_loop` as `#[no_mangle]` Rust-ABI functions and are declared
-/// here as `extern "Rust"`. The linker resolves them at link time, so there is
-/// no vtable, no `AtomicPtr`, and no init-order hazard.
-///
-/// The `Js` variant stores a [`JsEventLoop`] handle (the `link_interface!`
-/// newtype around the erased `*mut jsc::EventLoop`). The single `unsafe` is at
-/// handle construction (`JsEventLoop::new`); all dispatch sites are safe method
-/// calls.
+// JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`.
+//
+// LAYERING: `bun_event_loop` is a lower tier than `bun_jsc`, so it cannot name
+// `jsc::EventLoop` / `jsc::VirtualMachine` directly. To keep
+// direct calls with no runtime registration, the concrete bodies live in
+// `bun_jsc::event_loop` as `#[no_mangle]` Rust-ABI functions and are declared
+// here as `extern "Rust"`. The linker resolves them at link time, so there is
+// no vtable, no `AtomicPtr`, and no init-order hazard.
+//
+// The `Js` variant stores a [`JsEventLoop`] handle (the `link_interface!`
+// newtype around the erased `*mut jsc::EventLoop`). The single `unsafe` is at
+// handle construction (`JsEventLoop::new`); all dispatch sites are safe method
+// calls.
 unsafe extern "Rust" {
     /// `jsc::VirtualMachine::get().event_loop()` — erased `*mut jsc::EventLoop`
     /// for the current thread. Kept as a bare extern (no owner). No caller-side
@@ -32,33 +30,43 @@ unsafe extern "Rust" {
     pub(crate) safe fn __bun_js_event_loop_current() -> *mut ();
 }
 
+/// Wrap an erased `*mut jsc::EventLoop` in a
+/// [`JsEventLoop`] handle. The pointer is stored opaquely — never dereferenced
+/// here — and the back-reference invariant (owner outlives every dispatch) is
+/// documented on the public callers ([`AnyEventLoop::js`],
+/// [`EventLoopHandle::init`]). Kept private so the safe public constructors
+/// that take the opaque `*mut ()` are not flagged by
+/// `clippy::not_unsafe_ptr_arg_deref` — the precondition is structural, not a
+/// dereference.
+#[inline]
+fn jsc_event_loop_handle(js_event_loop: *mut ()) -> JsEventLoop {
+    // SAFETY: stored opaquely; back-reference invariant (owner outlives every
+    // dispatch) is the caller's structural guarantee.
+    unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) }
+}
+
 /// Useful for code that may need an event loop and could be used from either JavaScript or directly without JavaScript.
 /// Unlike jsc.EventLoopHandle, this owns the event loop when it's not a JavaScript event loop.
-// PORT NOTE: Zig `union(EventLoopKind)` — variant order/discriminant must match `crate::EventLoopKind`.
-pub enum AnyEventLoop<'a> {
+pub enum AnyEventLoop {
     Js {
         /// Typed handle wrapping the erased `*mut jsc::EventLoop`. The
         /// `link_interface!` invariant ("owner is live for every dispatch") is
         /// established once at construction; dispatch is safe.
         owner: JsEventLoop,
     },
-    Mini(MiniEventLoop<'a>),
+    Mini(Box<MiniEventLoop>),
 }
 
-// PORT NOTE: Zig had `pub const Task = AnyTaskWithExtraContext;` as an associated decl.
-// Inherent associated types are unstable in Rust, so expose at module level.
-pub type Task = AnyTaskWithExtraContext;
-
-impl<'a> Default for AnyEventLoop<'a> {
+impl Default for AnyEventLoop {
     /// Stub default for `#[derive(Default)]` containers (e.g. the
     /// `bun_install::PackageManager` stub). Real consumers always overwrite
     /// this via `init()` / `js_current()` before use.
     fn default() -> Self {
-        AnyEventLoop::Mini(MiniEventLoop::init())
+        AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
     }
 }
 
-impl<'a> AnyEventLoop<'a> {
+impl AnyEventLoop {
     pub fn iteration_number(&self) -> u64 {
         match self {
             AnyEventLoop::Js { owner } => owner.iteration_number(),
@@ -68,62 +76,41 @@ impl<'a> AnyEventLoop<'a> {
     }
 
     /// Convert to an owned [`EventLoopHandle`]. Thin alias for
-    /// [`EventLoopHandle::from_any`] kept for Zig-shape parity — callers that
-    /// were `jsc.EventLoopHandle.init(any_loop)` in Zig spell it
-    /// `AnyEventLoop::as_handle(any_loop)` in Rust.
+    /// [`EventLoopHandle::from_any`].
     #[inline]
-    pub fn as_handle(this: &mut AnyEventLoop<'static>) -> EventLoopHandle {
+    pub fn as_handle(this: &mut AnyEventLoop) -> EventLoopHandle {
         EventLoopHandle::from_any(this)
     }
 
-    pub fn init() -> AnyEventLoop<'a> {
-        // PORT NOTE: Zig took `std.mem.Allocator param`; dropped per §Allocators (non-AST crate).
-        AnyEventLoop::Mini(MiniEventLoop::init())
+    pub fn init() -> AnyEventLoop {
+        AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
     }
 
     /// Construct the `Js` variant wrapping a specific erased
-    /// `*mut jsc::EventLoop`. Mirrors Zig's `.{ .js = vm.eventLoop() }`
-    /// literal — callers that already hold a VM pointer use this instead of
+    /// `*mut jsc::EventLoop` — callers that already hold a VM pointer use this instead of
     /// the thread-local lookup in [`js_current`].
+    ///
+    /// `js_event_loop` is a live erased `*mut jsc::EventLoop`
+    /// that outlives every dispatch through the returned
+    /// `AnyEventLoop`. The pointer is not dereferenced here — it's stored
+    /// opaquely in [`JsEventLoop`] and only dereferenced at dispatch sites.
     #[inline]
-    pub fn js(js_event_loop: *mut ()) -> AnyEventLoop<'static> {
-        // SAFETY: caller passes a live erased `*mut jsc::EventLoop` (Zig
-        // `vm.eventLoop()`). This is the single `unsafe` boundary for the
-        // `AnyEventLoop::Js` arm — all subsequent dispatch is safe.
+    pub fn js(js_event_loop: *mut ()) -> AnyEventLoop {
         AnyEventLoop::Js {
-            owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) },
+            owner: jsc_event_loop_handle(js_event_loop),
         }
     }
 
     /// Construct the `Js` variant for the current thread's JS event loop.
     /// Replaces `jsc::VirtualMachine::get().event_loop()` for tier-≤4 callers
     /// (e.g. `bun_install::PackageManager`).
-    pub fn js_current() -> AnyEventLoop<'static> {
+    pub fn js_current() -> AnyEventLoop {
         AnyEventLoop::Js {
             owner: JsEventLoop::current(),
         }
     }
 
-    // PORT NOTE: Zig `context: anytype` + `@ptrCast(isDone)` erases the fn-ptr
-    // type at the call into `mini.tick(ctx, *const fn(*anyopaque) bool)`. All
-    // callers pass a pointer, so we take the erased form directly; callers cast.
-    pub fn tick(
-        &mut self,
-        context: *mut core::ffi::c_void,
-        is_done: fn(*mut core::ffi::c_void) -> bool,
-    ) {
-        match self {
-            AnyEventLoop::Js { owner } => {
-                while !is_done(context) {
-                    owner.tick();
-                    owner.auto_tick();
-                }
-            }
-            AnyEventLoop::Mini(mini) => mini.tick(context, is_done),
-        }
-    }
-
-    /// Raw-pointer variant of [`Self::tick`] for callers whose `is_done`
+    /// Raw-pointer tick loop for callers whose `is_done`
     /// callback may reborrow the struct that *contains* this `AnyEventLoop`
     /// (e.g. `bun_install::PackageManager::sleep_until`, where the closure's
     /// `is_done` does `&mut *closure.manager` and that `PackageManager` owns
@@ -131,8 +118,7 @@ impl<'a> AnyEventLoop<'a> {
     /// case is UB under Stacked Borrows — the callback's whole-struct Unique
     /// retag pops the field borrow. This variant reborrows `*this`
     /// per-iteration *after* `is_done` returns, so no `&mut Self` is live
-    /// while the callback runs. Zig spec (`jsc.EventLoop.tick`) has no such
-    /// constraint because Zig `*T` is non-exclusive.
+    /// while the callback runs.
     ///
     /// # Safety
     /// `this` must be valid for `&mut` access for the duration of the call,
@@ -159,8 +145,7 @@ impl<'a> AnyEventLoop<'a> {
                     // `MiniEventLoop::tick` here because that would hold
                     // `&mut mini` across `is_done`. A single `tick_once`
                     // borrow ends at the bottom of this match arm before the
-                    // next `is_done` reborrow. Spec: MiniEventLoop.zig `tick`
-                    // loop body.
+                    // next `is_done` reborrow.
                     mini.tick_once(context);
                 }
             }
@@ -177,56 +162,20 @@ impl<'a> AnyEventLoop<'a> {
             AnyEventLoop::Mini(mini) => mini.tick_without_idle(context),
         }
     }
-
-    pub fn enqueue_task_concurrent<Context, ParentContext>(
-        &mut self,
-        ctx: *mut Context,
-        callback: fn(*mut Context, *mut ParentContext),
-        // Zig param `comptime field: std.meta.FieldEnum(Context)` — replaced per
-        // PORTING.md (§reflection) with a caller-supplied byte offset to the
-        // embedded `AnyTaskWithExtraContext` (`core::mem::offset_of!(Context, field)`).
-        field_offset: usize,
-    ) {
-        match self {
-            AnyEventLoop::Js { .. } => {
-                let _ = (ctx, callback, field_offset);
-                // Zig: `bun.todoPanic(@src(), "AnyEventLoop.enqueueTaskConcurrent", .{});`
-                // — intentionally unreachable in Zig too.
-                unreachable!("AnyEventLoop.enqueueTaskConcurrent");
-                // const TaskType = AnyTask.New(Context, Callback);
-                // @field(ctx, field) = TaskType.init(ctx);
-                // var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;
-                // _ = concurrent.from(jsc.Task.init(&@field(ctx, field)));
-                // concurrent.auto_delete = true;
-                // this.virtual_machine.jsc.enqueueTaskConcurrent(concurrent);
-            }
-            AnyEventLoop::Mini(mini) => {
-                mini.enqueue_task_concurrent_with_extra_ctx::<Context, ParentContext>(
-                    ctx,
-                    callback,
-                    field_offset,
-                );
-            }
-        }
-    }
 }
 
 // ─── AnyEventLoop → EventLoopHandle forwarders ──────────────────────────────
 // `EventLoopHandle` (below, same file) is the canonical Js/Mini dispatcher for
 // these four methods. `AnyEventLoop` forwards through `from_any` instead of
-// duplicating each `match`. Bound to `'static` because `from_any` stores
-// `BackRef<MiniEventLoop<'static>>`; every concrete `AnyEventLoop`
-// instantiation in the tree is already `'static` (verified: install, patch,
-// build_command, ChangedFilesFilter, `js()`/`js_current()`).
-impl AnyEventLoop<'static> {
-    // PORT NOTE: renamed via raw identifier — `loop` is a Rust keyword.
+// duplicating each `match`.
+impl AnyEventLoop {
     #[inline]
     pub fn r#loop(&mut self) -> *mut UwsLoop {
         EventLoopHandle::from_any(self).r#loop()
     }
 
     /// Alias for [`r#loop`](Self::r#loop) so callers spell `event_loop.loop_()`
-    /// (Zig: `eventLoop().loop()`) without the raw-identifier escape.
+    /// without the raw-identifier escape.
     #[inline]
     pub fn loop_(&mut self) -> *mut UwsLoop {
         self.r#loop()
@@ -244,30 +193,10 @@ impl AnyEventLoop<'static> {
         // SAFETY: `r#loop()` returns a valid live loop pointer.
         unsafe { (*self.r#loop()).wakeup() };
     }
-
-    /// Returns the FilePoll store as a raw pointer (mirrors Zig
-    /// `*FilePoll.Store`). See [`EventLoopHandle::file_polls`] for the aliasing
-    /// contract — callers deref locally for the brief region they need `&mut`.
-    #[inline]
-    pub fn file_polls(&mut self) -> *mut bun_io::file_poll::Store {
-        EventLoopHandle::from_any(self).file_polls()
-    }
-
-    #[inline]
-    pub fn put_file_poll(&mut self, poll: &mut FilePoll) {
-        EventLoopHandle::from_any(self).put_file_poll(poll)
-    }
-
-    /// Returns the shared pipe-read scratch buffer as a raw fat ptr (mirrors
-    /// Zig `[]u8`). See [`EventLoopHandle::pipe_read_buffer`].
-    #[inline]
-    pub fn pipe_read_buffer(&mut self) -> *mut [u8] {
-        EventLoopHandle::from_any(self).pipe_read_buffer()
-    }
 }
 
 // ─────────────────────────── EventLoopHandle ───────────────────────────────
-// MOVE-IN: relocated from `bun_jsc::EventLoopHandle` (src/jsc/EventLoopHandle.zig)
+// MOVE-IN: relocated from `bun_jsc::EventLoopHandle`.
 // Non-owning reference to either the JS event
 // loop or the mini event loop. The `.js` arm holds a `JsEventLoop` handle
 // (link-time-resolved dispatch; impls in `bun_jsc`).
@@ -280,18 +209,18 @@ pub enum EventLoopHandle {
         /// `Copy`.
         owner: JsEventLoop,
     },
-    // PORT NOTE: `BackRef<MiniEventLoop>` (not `&mut`) because the handle is
-    // `Copy` and stored in `uws::InternalLoopData` as a non-owning backref —
-    // matches Zig `*MiniEventLoop`. The pointee is the per-thread singleton
+    // `BackRef<MiniEventLoop>` (not `&mut`) because the handle is `Copy` and
+    // stored in `uws::InternalLoopData` as a non-owning backref.
+    // The pointee is the per-thread singleton
     // (`init_global`) or an `AnyEventLoop::Mini`-owned loop, both of which
     // strictly outlive every `EventLoopHandle` derived from them — the
     // [`BackRef`] invariant. Read-only sites use safe `Deref`; the few
     // `&mut`-taking dispatch sites go through [`mini_mut`] (single deref site).
-    Mini(BackRef<MiniEventLoop<'static>>),
+    Mini(BackRef<MiniEventLoop, Mut>),
 }
 
 /// Single `unsafe` deref site for the `EventLoopHandle::Mini` arm — collapses
-/// the half-dozen identical `unsafe { mini.get_mut() }` dispatch sites below.
+/// the identical `unsafe { mini.get_mut() }` dispatch sites below.
 ///
 /// Soundness: the `MiniEventLoop` behind every `EventLoopHandle::Mini` is the
 /// per-thread `!Send` singleton (see [`EventLoopHandle::init_mini`] /
@@ -302,34 +231,27 @@ pub enum EventLoopHandle {
 /// [`BackRef::get_mut`] precondition, discharged once here instead of at each
 /// dispatch site. Private to this module so the invariant is local.
 #[inline]
-fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop<'static>>) -> &'a mut MiniEventLoop<'static> {
+fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop, Mut>) -> &'a mut MiniEventLoop {
     // SAFETY: see fn doc — per-thread `!Send` singleton, exclusive for the
     // returned borrow's duration.
     unsafe { mini.get_mut() }
 }
 
 /// Untagged pointer to either kind of concurrent task. Tag is the surrounding
-/// `EventLoopHandle` discriminant — Zig `EventLoopTaskPtr` was an untagged union.
+/// `EventLoopHandle` discriminant.
 #[derive(Copy, Clone)]
 pub union EventLoopTaskPtr {
     pub js: *mut ConcurrentTask,
     pub mini: *mut AnyTaskWithExtraContext,
 }
 
-/// Owned storage for either kind of concurrent task (Zig `EventLoopTask`).
+/// Owned storage for either kind of concurrent task.
 pub enum EventLoopTask {
     Js(ConcurrentTask),
     Mini(AnyTaskWithExtraContext),
 }
 
 impl EventLoopTask {
-    pub fn init(kind: EventLoopKind) -> EventLoopTask {
-        match kind {
-            EventLoopKind::Js => EventLoopTask::Js(ConcurrentTask::default()),
-            EventLoopKind::Mini => EventLoopTask::Mini(AnyTaskWithExtraContext::default()),
-        }
-    }
-
     pub fn from_event_loop(loop_: EventLoopHandle) -> EventLoopTask {
         match loop_ {
             EventLoopHandle::Js { .. } => EventLoopTask::Js(ConcurrentTask::default()),
@@ -352,34 +274,39 @@ impl Drop for EnteredEventLoop {
 }
 
 impl EventLoopHandle {
-    /// Wrap an erased `*mut jsc::EventLoop`.
-    // PORT NOTE: Zig `init(anytype)` dispatched on `@TypeOf` over five input
-    // types. Rust splits by overload: `init` (jsc::EventLoop), `init_mini`,
-    // `from_any`, plus the trivial `EventLoopHandle → EventLoopHandle` is
-    // identity. The `*VirtualMachine` overload moves to bun_runtime (it must
-    // call `vm.eventLoop()`).
+    /// Wrap an erased `*mut jsc::EventLoop`. (Sibling constructors:
+    /// `init_mini`, `from_any`; the `*VirtualMachine` form lives in
+    /// bun_runtime since it must call `vm.eventLoop()`.)
+    ///
+    /// `js_event_loop` is a live erased `*mut jsc::EventLoop` whose owner
+    /// outlives every dispatch through the returned handle. The pointer is not
+    /// dereferenced here — it's stored opaquely in [`JsEventLoop`] and only
+    /// dereferenced at dispatch sites. A null pointer is a documented sentinel
+    /// for "never dispatched" placeholders (e.g. struct field initialisers
+    /// that are overwritten before use).
     #[inline]
     pub fn init(js_event_loop: *mut ()) -> EventLoopHandle {
-        // SAFETY: caller passes a live erased `*mut jsc::EventLoop` (the
-        // back-reference invariant — owner outlives every dispatch through this
-        // handle). This is the single `unsafe` boundary for the
-        // `EventLoopHandle::Js` arm.
         EventLoopHandle::Js {
-            owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) },
+            owner: jsc_event_loop_handle(js_event_loop),
         }
     }
 
     #[inline]
-    pub fn init_mini(mini: *mut MiniEventLoop<'static>) -> EventLoopHandle {
+    pub fn init_mini(mini: *mut MiniEventLoop) -> EventLoopHandle {
         // `mini` is the live per-thread singleton (or an `AnyEventLoop::Mini`
-        // payload) — never null at any call site. `BackRef: From<NonNull<T>>`
-        // wraps it without an `unsafe` block; the back-reference invariant
+        // payload) — never null at any call site; the back-reference invariant
         // (pointee outlives every copy of the handle) is the caller's
         // structural guarantee, same as before.
         EventLoopHandle::Mini(
-            NonNull::new(mini)
-                .expect("MiniEventLoop ptr is non-null")
-                .into(),
+            // SAFETY: `mini` is a live, write-capable `*mut MiniEventLoop`
+            // (checked non-null above the call chain).
+            unsafe {
+                BackRef::from_raw_mut(
+                    NonNull::new(mini)
+                        .expect("MiniEventLoop ptr is non-null")
+                        .as_ptr(),
+                )
+            },
         )
     }
 
@@ -393,13 +320,16 @@ impl EventLoopHandle {
             EventLoopHandle::Js { owner } => unsafe {
                 bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, owner.bun_vm())
             },
-            EventLoopHandle::Mini(mini) => MiniEventLoop::as_event_loop_ctx(mini.as_ptr()),
+            // `mini` is a `BackRef` to the live per-thread singleton (see
+            // `mini_mut` doc) — valid for the ctx's lifetime.
+            EventLoopHandle::Mini(mut mini) => {
+                MiniEventLoop::as_event_loop_ctx(mini_mut(&mut mini))
+            }
         }
     }
 
     /// Erase to the `(tag, ptr)` pair stored in `uws::InternalLoopData`
-    /// (`parent_tag` / `parent_ptr`). Tag 1 = JS, tag 2 = mini — matches Zig
-    /// `setParentEventLoop`.
+    /// (`parent_tag` / `parent_ptr`). Tag 1 = JS, tag 2 = mini.
     #[inline]
     pub fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
         match self {
@@ -409,7 +339,7 @@ impl EventLoopHandle {
     }
 
     /// Inverse of [`into_tag_ptr`] — recover from the `(tag, ptr)` pair stored
-    /// in `uws::InternalLoopData` (Zig: `loop.internal_loop_data.getParent()`).
+    /// in `uws::InternalLoopData`.
     ///
     /// `(tag, ptr)` must have been produced by [`into_tag_ptr`] on a still-live
     /// event loop (i.e. read from `internal_loop_data` while the loop is alive).
@@ -434,48 +364,34 @@ impl EventLoopHandle {
                 owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, ptr.cast::<()>()) },
             },
             // `(tag, ptr)` came from `into_tag_ptr` on a live loop, so `ptr`
-            // is non-null. `BackRef: From<NonNull<T>>`.
-            2 => EventLoopHandle::Mini(NonNull::new(ptr.cast()).expect("non-null mini ptr").into()),
+            // is non-null.
+            // SAFETY: `ptr` is the write-capable pointer from `into_tag_ptr`.
+            2 => EventLoopHandle::Mini(unsafe {
+                BackRef::from_raw_mut(
+                    NonNull::new(ptr.cast())
+                        .expect("non-null mini ptr")
+                        .as_ptr(),
+                )
+            }),
             _ => unreachable!("invalid parent event-loop tag {}", tag),
         }
     }
 }
 
-/// Carrier-trait impl so `bun_uws::InternalLoopDataExt::set_parent_event_loop`
-/// accepts `EventLoopHandle` directly. Kept here (not in `bun_uws`) because
-/// `bun_uws` is a lower tier than `bun_event_loop` and cannot name this enum.
-impl bun_uws::ParentEventLoopHandle for EventLoopHandle {
-    #[inline]
-    fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
-        EventLoopHandle::into_tag_ptr(self)
-    }
-}
-
 impl EventLoopHandle {
-    /// Zig: `loop.internal_loop_data.setParentEventLoop(jsc.EventLoopHandle.init(..))`.
     /// Convenience wrapper so callers don't need both `bun_uws::InternalLoopDataExt`
-    /// (the trait) and the `*mut Loop` deref dance in scope.
+    /// (the trait) and the `*mut Loop` deref dance in scope. `uws_loop` is the
+    /// process-global loop returned by `AnyEventLoop::r#loop()` — never null.
     #[inline]
-    pub fn set_as_parent_of(self, uws_loop: *mut UwsLoop) {
+    pub fn set_as_parent_of(self, uws_loop: &mut UwsLoop) {
         let (tag, ptr) = self.into_tag_ptr();
-        // SAFETY: `uws_loop` is the live process-global loop returned by
-        // `AnyEventLoop::r#loop()`; `internal_loop_data` is the first field
-        // (#[repr(C)]) and outlives every event-loop user.
-        unsafe { (*uws_loop).internal_loop_data.set_parent_raw(tag, ptr) };
+        uws_loop.internal_loop_data.set_parent_raw(tag, ptr);
     }
 
-    pub fn from_any(any: &mut AnyEventLoop<'static>) -> EventLoopHandle {
+    pub fn from_any(any: &mut AnyEventLoop) -> EventLoopHandle {
         match any {
             AnyEventLoop::Js { owner } => EventLoopHandle::Js { owner: *owner },
-            AnyEventLoop::Mini(mini) => EventLoopHandle::Mini(BackRef::new_mut(mini)),
-        }
-    }
-
-    /// `EventLoopHandle` for the current thread's JS event loop. Replaces
-    /// `jsc::EventLoopHandle.init(jsc::VirtualMachine.get())` for tier-≤4 callers.
-    pub fn js_current() -> EventLoopHandle {
-        EventLoopHandle::Js {
-            owner: JsEventLoop::current(),
+            AnyEventLoop::Mini(mini) => EventLoopHandle::Mini(BackRef::new_mut(&mut **mini)),
         }
     }
 
@@ -492,22 +408,6 @@ impl EventLoopHandle {
         match self {
             EventLoopHandle::Js { owner } => owner.bun_vm(),
             EventLoopHandle::Mini(_) => core::ptr::null_mut(),
-        }
-    }
-
-    /// Erased `*mut webcore::blob::Store`.
-    pub fn stdout(self) -> *mut () {
-        match self {
-            EventLoopHandle::Js { owner } => owner.stdout(),
-            EventLoopHandle::Mini(mut mini) => mini_mut(&mut mini).stdout(),
-        }
-    }
-
-    /// Erased `*mut webcore::blob::Store`.
-    pub fn stderr(self) -> *mut () {
-        match self {
-            EventLoopHandle::Js { owner } => owner.stderr(),
-            EventLoopHandle::Mini(mut mini) => mini_mut(&mut mini).stderr(),
         }
     }
 
@@ -531,42 +431,21 @@ impl EventLoopHandle {
         self.enter();
         EnteredEventLoop(self)
     }
-    /// Returns the FilePoll store as a raw pointer (mirrors Zig `*FilePoll.Store`).
-    /// `EventLoopHandle` is `Copy`; promoting to `&'static mut` would let two
-    /// calls produce aliased exclusive references (UB). Callers deref locally
-    /// for the brief region they need `&mut`.
-    pub fn file_polls(self) -> *mut bun_io::file_poll::Store {
-        match self {
-            EventLoopHandle::Js { owner } => owner.file_polls(),
-            EventLoopHandle::Mini(mut mini) => std::ptr::from_mut(mini_mut(&mut mini).file_polls()),
-        }
-    }
-
-    pub fn put_file_poll(&mut self, poll: &mut FilePoll) {
-        let was_ever_registered = poll
-            .flags
-            .contains(bun_io::file_poll::Flags::WasEverRegistered);
-        match self {
-            EventLoopHandle::Js { owner } => owner.put_file_poll(poll, was_ever_registered),
-            // ctx only touches `after_event_loop_callback{,_ctx}`, field-disjoint
-            // from `file_polls_` — safe to hold both across `Store::put`.
-            EventLoopHandle::Mini(mini) => {
-                let ctx = MiniEventLoop::as_event_loop_ctx(mini.as_ptr());
-                mini_mut(mini)
-                    .file_polls()
-                    .put(poll, ctx, was_ever_registered);
-            }
-        }
-    }
 
     pub fn enqueue_task_concurrent(self, task: EventLoopTaskPtr) {
         match self {
-            // SAFETY: caller guarantees `task.js` is the active union member when `self` is `Js`.
-            EventLoopHandle::Js { owner } => owner.enqueue_task_concurrent(unsafe { task.js }),
-            // SAFETY: caller guarantees `task.mini` is the active union member
-            // when `self` is `Mini`.
+            EventLoopHandle::Js { owner } => {
+                // SAFETY: caller guarantees `task.js` is the active union member
+                // when `self` is `Js`, and points at a live `ConcurrentTask`
+                // (non-null).
+                owner.enqueue_task_concurrent(unsafe { NonNull::new_unchecked(task.js) })
+            }
             EventLoopHandle::Mini(mut mini) => {
-                mini_mut(&mut mini).enqueue_task_concurrent(unsafe { task.mini })
+                // SAFETY: caller guarantees `task.mini` is the active union
+                // member when `self` is `Mini`, and that it points at a live
+                // `AnyTaskWithExtraContext` (always non-null).
+                let task = unsafe { NonNull::new_unchecked(task.mini) };
+                mini_mut(&mut mini).enqueue_task_concurrent(task);
             }
         }
     }
@@ -585,7 +464,7 @@ impl EventLoopHandle {
     }
 
     /// Alias for [`r#loop`](Self::r#loop) so callers spell `handle.loop_()`
-    /// without the raw-identifier escape (Zig: `handle.loop()`).
+    /// without the raw-identifier escape.
     #[inline]
     pub fn loop_(self) -> *mut UwsLoop {
         self.r#loop()
@@ -608,34 +487,12 @@ impl EventLoopHandle {
         self.native_loop()
     }
 
-    /// Returns the shared pipe-read scratch buffer as a raw fat ptr (mirrors
-    /// Zig `[]u8`). Same `Copy`-handle aliasing concern as [`file_polls`].
-    pub fn pipe_read_buffer(self) -> *mut [u8] {
-        match self {
-            EventLoopHandle::Js { owner } => owner.pipe_read_buffer(),
-            EventLoopHandle::Mini(mut mini) => {
-                std::ptr::from_mut::<[u8]>(mini_mut(&mut mini).pipe_read_buffer())
-            }
-        }
-    }
-
-    pub fn ref_(self) {
-        // SAFETY: `r#loop` returns a valid live loop.
-        unsafe { (*self.r#loop()).ref_() };
-    }
-
-    pub fn unref(self) {
-        // SAFETY: `r#loop` returns a valid live loop.
-        unsafe { (*self.r#loop()).unref() };
-    }
-
-    pub fn env(self) -> *mut DotEnvLoader<'static> {
+    pub fn env(self) -> *mut DotEnvLoader {
         match self {
             EventLoopHandle::Js { owner } => owner.env(),
-            // Zig unwraps `mini.env.?` — caller invariant. `env_ptr()` takes
+            // `env` must be set — caller invariant. `env_ptr()` takes
             // `&self` and returns `Option<NonNull<DotEnvLoader>>` (mutable
-            // provenance; Zig field is `?*DotEnvLoader`). Safe via
-            // `BackRef: Deref`.
+            // provenance). Safe via `BackRef: Deref`.
             EventLoopHandle::Mini(mini) => mini
                 .env_ptr()
                 .expect("MiniEventLoop.env unset")
@@ -661,8 +518,8 @@ impl EventLoopHandle {
         match self {
             EventLoopHandle::Js { owner } => owner.create_null_delimited_env_map(),
             EventLoopHandle::Mini(mini) => {
-                // `env_ptr()` takes `&self` — safe via `BackRef: Deref`. Zig
-                // unwraps `mini.env.?` (caller invariant).
+                // `env_ptr()` takes `&self` — safe via `BackRef: Deref`.
+                // `env` must be set (caller invariant).
                 let env = mini.env_ptr().expect("MiniEventLoop.env unset");
                 // SAFETY: `env` is a `NonNull<DotEnvLoader>` backref; the
                 // loader is a thread-/process-lifetime singleton (see
@@ -671,10 +528,4 @@ impl EventLoopHandle {
             }
         }
     }
-
-    // PORT NOTE: Zig `cast(tag)` returned `tag.Type()` at comptime — no Rust
-    // equivalent. Callers should pattern-match the enum directly.
-    // PORT NOTE: Zig `allocator()` dropped per §Allocators (non-AST crate).
 }
-
-// ported from: src/event_loop/AnyEventLoop.zig

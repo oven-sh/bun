@@ -26,7 +26,7 @@ pub enum SocketKind {
     /// only known at runtime (uWS C++ via per-App vtable, tests).
     Dynamic,
 
-    // ── Bun.connect / Bun.listen (src/runtime/api/bun/socket.zig) ──────────
+    // ── Bun.connect / Bun.listen ───────────────────────────────────────────
     BunSocketTcp,
     BunSocketTls,
     /// Server-accepted socket; ext is the `*Listener` so onCreate can attach
@@ -34,7 +34,7 @@ pub enum SocketKind {
     BunListenerTcp,
     BunListenerTls,
 
-    // ── HTTP client thread (src/http/HTTPContext.zig) ─────────────────────
+    // ── HTTP client thread (src/http/HTTPContext.rs) ──────────────────────
     HttpClient,
     HttpClientTls,
 
@@ -65,12 +65,11 @@ pub enum SocketKind {
 
 impl SocketKind {
     /// Checked conversion from the raw `u8` returned by C (`us_socket_kind`).
-    /// Mirrors Zig's `@enumFromInt`, which traps on out-of-range values in
-    /// safe builds. An invalid discriminant in a `#[repr(u8)]` enum is
+    /// An invalid discriminant in a `#[repr(u8)]` enum is
     /// immediate UB in Rust, so this is an exhaustive match — LLVM folds the
     /// contiguous arms to a single range-check + reinterpret.
     #[inline]
-    pub fn from_u8(v: u8) -> Self {
+    pub(crate) fn from_u8(v: u8) -> Self {
         match v {
             0 => SocketKind::Invalid,
             1 => SocketKind::Dynamic,
@@ -98,28 +97,10 @@ impl SocketKind {
             _ => unreachable!("invalid SocketKind discriminant {v} from C"),
         }
     }
-
-    #[inline]
-    pub const fn is_tls(self) -> bool {
-        matches!(
-            self,
-            SocketKind::BunSocketTls
-                | SocketKind::BunListenerTls
-                | SocketKind::HttpClientTls
-                | SocketKind::WsClientUpgradeTls
-                | SocketKind::WsClientTls
-                | SocketKind::PostgresTls
-                | SocketKind::MysqlTls
-                | SocketKind::ValkeyTls
-                | SocketKind::UwsHttpTls
-                | SocketKind::UwsWsTls
-        )
-    }
 }
 
 // `unsigned char kind` on us_socket_t — full byte, not the flags bitfield.
-// Zig: `comptime bun.assert(@typeInfo(SocketKind).@"enum".fields.len <= 256)`.
-// In Rust, `#[repr(u8)]` already refuses to compile with >256 variants, so the
+// `#[repr(u8)]` already refuses to compile with >256 variants, so the
 // invariant is enforced by the type system; no explicit assert needed.
 
 /// The four kinds whose handlers live in C++ are also referenced from C++
@@ -127,14 +108,16 @@ impl SocketKind {
 /// side links against the Rust source of truth instead of mirroring literals
 /// that silently rot if this enum is reordered.
 #[unsafe(no_mangle)]
-pub static BUN_SOCKET_KIND_DYNAMIC: u8 = SocketKind::Dynamic as u8;
+static BUN_SOCKET_KIND_DYNAMIC: u8 = SocketKind::Dynamic as u8;
 #[unsafe(no_mangle)]
-pub static BUN_SOCKET_KIND_UWS_HTTP: u8 = SocketKind::UwsHttp as u8;
+static BUN_SOCKET_KIND_UWS_HTTP: u8 = SocketKind::UwsHttp as u8;
 #[unsafe(no_mangle)]
-pub static BUN_SOCKET_KIND_UWS_HTTP_TLS: u8 = SocketKind::UwsHttpTls as u8;
+static BUN_SOCKET_KIND_UWS_HTTP_TLS: u8 = SocketKind::UwsHttpTls as u8;
 #[unsafe(no_mangle)]
-pub static BUN_SOCKET_KIND_UWS_WS: u8 = SocketKind::UwsWs as u8;
+static BUN_SOCKET_KIND_UWS_WS: u8 = SocketKind::UwsWs as u8;
 #[unsafe(no_mangle)]
-pub static BUN_SOCKET_KIND_UWS_WS_TLS: u8 = SocketKind::UwsWsTls as u8;
-
-// ported from: src/uws_sys/SocketKind.zig
+static BUN_SOCKET_KIND_UWS_WS_TLS: u8 = SocketKind::UwsWsTls as u8;
+/// Referenced from `openssl.c` so the new-session callback's per-SSL marker is
+/// only set for the sockets that actually surface the `'session'` event.
+#[unsafe(no_mangle)]
+static BUN_SOCKET_KIND_BUN_SOCKET_TLS: u8 = SocketKind::BunSocketTls as u8;

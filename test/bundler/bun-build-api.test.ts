@@ -1,8 +1,19 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isASAN,
+  isDebug,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tempDirWithFilesAnon,
+} from "harness";
 import path, { join } from "path";
+import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -57,7 +68,7 @@ describe("Bun.build", () => {
     expect(build.outputs).toHaveLength(2);
     expect(build.outputs[0].kind).toBe("entry-point");
     expect(build.outputs[1].kind).toBe("bytecode");
-    expect([build.outputs[0].path]).toRun("world\n");
+    expect(await bunRun(build.outputs[0].path)).toSpawn("world");
   });
 
   test("passing undefined doesnt segfault", () => {
@@ -68,6 +79,41 @@ describe("Bun.build", () => {
       return;
     }
     throw new Error("should have thrown");
+  });
+
+  // A `define:` value that isn't valid JSON or a JS identifier is auto-quoted
+  // (treated as a string literal). The JSON lexer must not error eagerly on the
+  // first character — a raw minified CSS string starts with `*{...}`, which
+  // src/codegen/bake-codegen.ts passes verbatim as `OVERLAY_CSS`.
+  describe.each([
+    "*{box-sizing:border-box}.root{all:initial}",
+    "?foo",
+    "(parenthesized)",
+    ")close",
+    "abc{not json}",
+    // Leading-operator chars must `step()` before falling back to auto-quote so
+    // `parse_string_literal`'s leading `step()` lands past index 1 (matching the
+    // reference lexer). Otherwise a LF at index 1 truncates the value to `"("`.
+    "(\nrest",
+    "*\nrest",
+  ])("define value %j is auto-quoted when not valid JSON", value => {
+    test("emits a quoted string literal", async () => {
+      const dir = tempDirWithFiles("bun-build-define-auto-quote", {
+        "entry.ts": `declare const X: string; console.log(X);`,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(dir, "entry.ts")],
+        define: { X: value },
+      });
+      expect(result.success).toBe(true);
+      const out = await result.outputs[0].text();
+      // The printer emits the define as a `"..."` string literal, or as a
+      // `` `...` `` template literal when the value contains a literal newline.
+      // Either way the full value — not a truncated prefix — must round-trip.
+      if (!out.includes("`" + value + "`")) {
+        expect(out).toContain(JSON.stringify(value));
+      }
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/12818
@@ -283,6 +329,44 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  test("BuildArtifact sourcemap is traced from the owner, not rooted separately", async () => {
+    // `.sourcemap` is the wrapper's `m_sourcemap` WriteBarrier slot (visited in
+    // visitChildren); it must not also be held by a Strong root.
+    using dir = tempDir("build-artifact-sourcemap-gc", {
+      "index.js": "export const x = 1;\n",
+      "run.js": `
+        const { heapStats } = require("bun:jsc");
+        const result = await Bun.build({
+          entrypoints: ["./index.js"],
+          sourcemap: "external",
+          outdir: ".",
+        });
+        const entry = result.outputs[0];
+        const map = result.outputs[1];
+        console.log(JSON.stringify({
+          sourcemapIsMap: entry.sourcemap === map,
+          inspectShowsSourcemap: Bun.inspect(entry).includes("sourcemap: BuildArtifact (sourcemap)"),
+          protectedBuildArtifact: heapStats().protectedObjectTypeCounts.BuildArtifact ?? 0,
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      sourcemapIsMap: true,
+      inspectShowsSourcemap: true,
+      protectedBuildArtifact: 0,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // test("BuildArtifact properties splitting", async () => {
   //   Bun.gc(true);
   //   const x = await Bun.build({
@@ -409,6 +493,49 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
     Bun.gc(true);
   });
+
+  // https://github.com/oven-sh/bun/issues/33099
+  // A package reached through a symlinked node_modules entry caches its file
+  // descriptor in the resolver. A second in-process Bun.build() used to reuse a
+  // descriptor the first build had already closed, failing with EBADF. The test
+  // host must also import the package so its fd is cached before the builds run.
+  test.concurrent.skipIf(isWindows)(
+    "repeated in-process builds of a symlinked package do not reuse a closed fd",
+    async () => {
+      using dir = tempDir("build-symlink-fd-cache", {
+        "vendor/pkg/package.json": `{"name":"pkg","version":"1.0.0","type":"module","exports":"./index.js"}`,
+        "vendor/pkg/index.js": `export const value = 1;\n`,
+        "entry.ts": `import { value } from "pkg";\nconsole.log(value);\n`,
+        "repro.test.ts": `
+        import { it } from "bun:test";
+        import { value } from "pkg";
+        void value;
+        it("builds", async () => {
+          for (let i = 1; i <= 3; i++) {
+            const result = await Bun.build({ entrypoints: ["./entry.ts"] });
+            if (!result.success) {
+              throw new AggregateError(result.logs, "build " + i + " failed");
+            }
+          }
+          console.log("ALL_BUILDS_OK");
+        });
+      `,
+      });
+      mkdirSync(join(String(dir), "node_modules"), { recursive: true });
+      symlinkSync("../vendor/pkg", join(String(dir), "node_modules", "pkg"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "repro.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain("ALL_BUILDS_OK");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({
@@ -874,6 +1001,46 @@ describe.concurrent("sourcemap boolean values", () => {
   });
 });
 
+describe.concurrent("sourcemap positions", () => {
+  // Source-map columns count UTF-16 code units. Tokens after the first
+  // non-ASCII character on a line (Latin-1, astral, CJK) must still map to
+  // their exact original column.
+  test("original columns after non-ASCII characters on the same line", async () => {
+    const source = [
+      `export function a1() { throw new Error("A"); } export const za = "e";`,
+      `export const zb = "é"; export function b1() { throw new Error("B"); }`,
+      `export const zc = "🎉"; export function c1() { throw new Error("C"); }`,
+      `export const zd = "汉字 wörld"; export function d1() { throw new Error("D"); }`,
+      ``,
+    ].join("\n");
+    const dir = tempDirWithFiles("build-sourcemap-unicode-columns", { "in.ts": source });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "in.ts")],
+      outdir: join(dir, "out"),
+      sourcemap: "external",
+    });
+    expect(build.success).toBe(true);
+
+    const generated = await build.outputs.find(o => o.kind === "entry-point")!.text();
+    const map = await build.outputs.find(o => o.kind === "sourcemap")!.json();
+
+    // 1-based line, 0-based UTF-16 column: the convention `source-map` uses on
+    // both sides of originalPositionFor.
+    const lineColumn = (text: string, index: number) => {
+      const before = text.slice(0, index);
+      return { line: before.split("\n").length, column: index - (before.lastIndexOf("\n") + 1) };
+    };
+
+    await SourceMapConsumer.with(map, null, consumer => {
+      for (const token of ['new Error("A")', 'new Error("B")', 'new Error("C")', 'new Error("D")']) {
+        const { line, column } = consumer.originalPositionFor(lineColumn(generated, generated.indexOf(token)));
+        expect({ token, line, column }).toEqual({ token, ...lineColumn(source, source.indexOf(token)) });
+      }
+    });
+  });
+});
+
 const originalCwd = process.cwd() + "";
 
 describe("tsconfig option", () => {
@@ -1177,6 +1344,7 @@ test.skipIf(!isDebug && !isASAN)(
     const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
       "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
       "run.ts": `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
@@ -1187,10 +1355,10 @@ test.skipIf(!isDebug && !isASAN)(
         }
         for (let i = 0; i < 2; i++) await build();
         await settle();
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 8; i++) await build();
         await settle();
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(JSON.stringify({ before, after, growth: after - before }));
       `,
     });
@@ -1255,6 +1423,7 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   const dir = tempDirWithFiles("bun-build-number-renamer-leak", {
     "entry.js": entry,
     "run.ts": `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           // No identifier minification → NumberRenamer path (not MinifyRenamer).
@@ -1268,10 +1437,10 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
         // steady-state so the measured window only reflects per-build retention.
         for (let i = 0; i < 2; i++) await build();
         await settle();
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 20; i++) await build();
         await settle();
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(JSON.stringify({ before, after, growth: after - before }));
       `,
   });
@@ -1294,3 +1463,87 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   expect(growth).toBeLessThan(48 * 1024 * 1024);
   expect(exitCode).toBe(0);
 }, 120_000);
+
+// Regression: repeated in-process `Bun.build()` calls panicked with
+// `index out of bounds: the len is 4095 but the index is 4095` (SIGTRAP) after
+// a couple thousand builds. `Path.dupeAlloc` interns every module path into the
+// process-lifetime `FilenameStore`. The Rust port had dropped two things the
+// Zig original does: (1) the `isSliceInBuffer` short-circuit that returns an
+// already-interned path unchanged, and (2) routing the disjoint `text`/`pretty`
+// case (a freshly-relativized display path, recomputed every build) into the
+// per-build arena instead of the store. Without them, each build re-appended
+// every path, and once the store's overflow blocks filled
+// (`OVERFLOW_GROUP_MAX` = 4095 blocks), the next append indexed one past the
+// fixed-capacity pointer array and panicked.
+//
+// Many modules per build reaches the cap in far fewer builds: with 500 modules
+// the broken binary panics roughly a third of the way through this loop, while
+// the fixed binary keeps the store bounded and exits cleanly after all 400.
+// (MODULES stays well under the ~550 where the unrelated recursive tree-shaker
+// overflows its thread stack.) Not gated to debug/ASAN — the panic reproduces
+// on release builds too.
+//
+// An explicit timeout is required (not optional): this runs hundreds of real
+// bundles, far past bun:test's 5s default. The sibling leak tests above do the
+// same. 180s matches the CI runner's own per-test ceiling.
+test("Bun.build can be called thousands of times in one process without crashing", async () => {
+  const MODULES = 500;
+  const BUILDS = 400;
+  const files: Record<string, string> = {};
+  for (let i = 0; i < MODULES; i++) {
+    files[`m${i}.js`] =
+      `import { f${(i + 1) % MODULES} } from "./m${(i + 1) % MODULES}.js";\n` +
+      `export const v${i} = ${i};\n` +
+      `export function f${i}() { return v${i}; }\n`;
+  }
+  files["entry.js"] = Array.from(
+    { length: MODULES },
+    (_, i) => `import { f${i} } from "./m${i}.js"; console.log(f${i}());`,
+  ).join("\n");
+  files["run.ts"] = `
+    const entry = process.argv[2];
+    const BUILDS = ${BUILDS};
+    for (let i = 1; i <= BUILDS; i++) {
+      const res = await Bun.build({ entrypoints: [entry], minify: true, sourcemap: "external" });
+      if (!res.success) throw new AggregateError(res.logs, "build failed");
+      for (const o of res.outputs) await o.arrayBuffer();
+    }
+    console.log("OK " + BUILDS);
+  `;
+  const dir = tempDirWithFiles("bun-build-filename-store-overflow", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.ts"), join(dir, "entry.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A crash surfaces as a non-zero (signal) exit and a panic on stderr; assert
+  // the run completed cleanly instead.
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK 400");
+  expect(exitCode).toBe(0);
+}, 180_000);
+
+test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
+  // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v
+  // and \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used
+  // to leak through as \v / \x07 and break JSON.parse on the .map file.
+  const controls = Array.from({ length: 0x20 }, (_, i) => String.fromCharCode(i)).join("");
+  const source = `/* ctrl: [${controls}] */\nexport const x = 1;\n`;
+  using dir = tempDir("sourcemap-json-ctrl", { "in.js": source });
+
+  const res = await Bun.build({
+    entrypoints: [join(String(dir), "in.js")],
+    sourcemap: "external",
+    outdir: String(dir),
+  });
+  expect(res.success).toBe(true);
+
+  const map = res.outputs.find(o => o.kind === "sourcemap")!;
+  const text = await map.text();
+  expect(text).not.toMatch(/\\v|\\x[0-9A-Fa-f]{2}/);
+  const parsed = JSON.parse(text);
+  expect(parsed.sourcesContent[0]).toBe(source);
+});

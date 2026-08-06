@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "fs";
 import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
-import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
+import { writeIfNotChanged } from "./helpers";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};
@@ -76,36 +76,6 @@ function DOMJITType(type) {
     ["JSUint8Array"]: "JSC::SpecUint8Array",
     ["JSString"]: "JSC::SpecString",
     ["JSValue"]: "JSC::SpecHeapTop",
-  }[type];
-}
-
-function ZigDOMJITArgType(type) {
-  return {
-    ["bool"]: "bool",
-    ["int"]: "i32",
-    ["JSUint8Array"]: "*jsc.JSUint8Array",
-    ["JSString"]: "*jsc.JSString",
-    ["JSValue"]: "jsc.JSValue",
-  }[type];
-}
-
-function ZigDOMJITArgTypeDefinition(type, index) {
-  return `arg${index}: ${ZigDOMJITArgType(type)}`;
-}
-
-function ZigDOMJITFunctionType(thisName, { args, returns }) {
-  return `fn (*${thisName}, *jsc.JSGlobalObject, ${args
-    .map(ZigDOMJITArgType)
-    .join(", ")}) callconv(jsc.conv) ${ZigDOMJITArgType("JSValue")}`;
-}
-
-function DOMJITReturnType(type) {
-  return {
-    ["bool"]: "bool",
-    ["int"]: "int32_t",
-    ["JSUint8Array"]: "JSC::JSUint8Array*",
-    ["JSString"]: "JSString*",
-    ["JSValue"]: "EncodedJSValue",
   }[type];
 }
 
@@ -310,17 +280,6 @@ function propRow(
 
   throw "Unsupported property";
 }
-function ownRow(
-  symbolName: (a: string, b: string) => string,
-  typeName: string,
-  name: string,
-  prop: Field,
-  isWrapped = true,
-  defaultPropertyAttributes,
-  supportsObjectCreate = false,
-) {
-  throw "Unsupported property";
-}
 
 export function generateHashTable(nameToUse, symbolName, typeName, obj, props = {}, wrapped) {
   const rows = [];
@@ -513,7 +472,6 @@ ${generateHashTable(
   true,
 )}
 
-
 const ClassInfo ${proto}::s_info = { "${typeName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${proto}) };
 
 ${renderFieldsImpl(protoSymbolName, typeName, obj, protoFields, obj.values || [])}
@@ -528,8 +486,6 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     }${specialSymbols}${staticPrototypeValues}
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
-
-
 
 `;
 }
@@ -709,7 +665,6 @@ ${
 }
 }
 
-
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     Zig::GlobalObject *globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -775,7 +730,6 @@ ${
   }`
     : ""
 }
-
 
       `
   );
@@ -863,59 +817,6 @@ function renderCallbacksCppImpl(typeName, callbacks: Record<string, string>) {
 `);
 
   return rows.map(a => a.trim()).join("\n");
-}
-
-function renderCallbacksZig(typeName, callbacks: Record<string, string>) {
-  if (Object.keys(callbacks).length === 0) return "";
-
-  var out =
-    "\n" +
-    `pub const Callbacks = struct {
-      instance: jsc.JSValue,` +
-    "\n";
-
-  for (const name in callbacks) {
-    const get = symbolName(typeName, "_callback_get_" + name);
-    const set = symbolName(typeName, "_callback_set_" + name);
-    out += `
-      extern fn ${get}(jsc.JSValue) callconv(jsc.conv) jsc.JSValue;
-      extern fn ${set}(jsc.JSValue, jsc.JSValue) callconv(jsc.conv) void;
-      pub const ${pascalCase(name)}Callback = jsc.Codegen.CallbackWrapper(${get}, ${set});
-      pub fn ${camelCase(name)}(cb: @This(), thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, args: []const jsc.JSValue) ?jsc.JSValue {
-        return ${pascalCase(name)}Callback.call(.{.instance = cb.instance}, thisValue, globalObject, args);
-      }
-    `;
-  }
-
-  out = out.trim();
-
-  out += `
-  extern fn ${symbolName(typeName, "_setAllCallbacks")}(jsc.JSValue, ${Object.keys(callbacks)
-    .map((a, i) => `callback${i}: jsc.JSValue`)
-    .join(", ")}) callconv(jsc.conv) void;
-
-  pub inline fn set(this: @This(), values: struct {
-    ${Object.keys(callbacks)
-      .map((name, i) => `${camelCase(name)}: jsc.JSValue = .zero,`)
-      .join("\n")}
-  }) void {
-    ${symbolName(typeName, "_setAllCallbacks")}(this.instance, ${Object.keys(callbacks)
-      .map((name, i) => `values.${camelCase(name)}`)
-      .join(", ")},);
-  }
-  `;
-
-  out += "\n};\n";
-
-  out += `
-
-  pub fn callbacks(_: *const ${typeName}, instance: jsc.JSValue) Callbacks {
-    return .{.instance = instance };
-  }
-
-`;
-
-  return "\n" + out;
 }
 
 function renderDecls(symbolName, typeName, proto, supportsObjectCreate = false) {
@@ -1128,7 +1029,11 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
+    if (!thisObject) [[unlikely]] {
+        throwDOMAttributeSetterTypeError(lexicalGlobalObject, throwScope, ${className(typeName)}::info(), attributeName);
+        return false;
+    }
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(encodedValue));
     RELEASE_AND_RETURN(throwScope, true);
@@ -1229,7 +1134,11 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
+    if (!thisObject) [[unlikely]] {
+        throwDOMAttributeSetterTypeError(lexicalGlobalObject, throwScope, ${className(typeName)}::info(), attributeName);
+        return false;
+    }
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     bool result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
@@ -1368,6 +1277,10 @@ function allCachedValues(obj: ClassDefinition) {
     }
   }
 
+  for (const name in obj.callbacks ?? {}) {
+    values.push([name, `m_callback_${name}`]);
+  }
+
   return values;
 }
 
@@ -1407,7 +1320,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     weakOwner = `
     JSC::Weak<${name}> m_weakThis;
 
-
     static bool hasPendingActivity(void* ctx);
 
     class Owner final : public JSC::WeakHandleOwner {
@@ -1437,12 +1349,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
       }
       `;
   }
-  var suffix = "";
-
-  if (obj.getInternalProperties) {
-    suffix += `JSC::JSValue getInternalProperties(JSC::VM &vm, JSC::JSGlobalObject *globalObject, ${name}*);`;
-  }
-
   const final = obj.final ?? true;
 
   return `
@@ -1568,7 +1474,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         ${callbacks ? renderCallbacksHeader(typeName, obj.callbacks) : ""}
         ${obj.valuesArray ? "WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray;" : ""}
     };
-    ${suffix}
   `.trim();
 }
 
@@ -1597,25 +1502,26 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     construct,
     estimatedSize,
     hasPendingActivity = false,
-    getInternalProperties = false,
     callbacks = {},
     own,
   } = obj;
   const name = className(typeName);
 
+  // analyzeHeap reports these as named property edges (see allCachedValues); appendHidden
+  // marks for GC without emitting a duplicate anonymous internal edge. klass caches are
+  // marked but never reported, which is moot: no setter is generated, so they stay empty.
   let DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
     .filter(([name, { cache = false }]) => cache === true)
-    .map(([name]) => `visitor.append(thisObject->m_${name});`)
+    .map(([name]) => `visitor.appendHidden(thisObject->m_${name});`)
     .join("\n");
 
   for (const name in callbacks) {
-    // Use appendHidden so it doesn't show up in the heap snapshot twice.
     DEFINE_VISIT_CHILDREN_LIST += "\n" + `    visitor.appendHidden(thisObject->m_callback_${name});`;
   }
 
   const values = (obj.values || [])
     .map(val => {
-      return `visitor.append(thisObject->m_${val});`;
+      return `visitor.appendHidden(thisObject->m_${val});`;
     })
     .join("\n");
   var DEFINE_VISIT_CHILDREN = "";
@@ -1670,8 +1576,6 @@ DEFINE_VISIT_CHILDREN(${name});
 
 ${renderCallbacksCppImpl(typeName, callbacks)}
 
-
-
         `.trim();
   }
 
@@ -1692,17 +1596,6 @@ ${renderCallbacksCppImpl(typeName, callbacks)}
         return ${symbolName(typeName, "hasPendingActivity")}(ctx);
     }
 `;
-  }
-
-  if (getInternalProperties) {
-    externs += `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${symbolName(typeName, "getInternalProperties")}(void* ptr, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue thisValue);`;
-    output += `
-    JSC::JSValue getInternalProperties(JSC::VM &, JSC::JSGlobalObject *globalObject, ${name}* castedThis)
-    {
-      return JSValue::decode(${symbolName(typeName, "getInternalProperties")}(castedThis->impl(), globalObject, JSValue::encode(castedThis)));
-    }
-
-    `;
   }
 
   if (obj.hasOwnProperties()) {
@@ -1986,8 +1879,6 @@ ${
 
 ${DEFINE_VISIT_CHILDREN}
 
-
-
     `.trim();
 
   return output;
@@ -2029,536 +1920,10 @@ function generateImpl(typeName, obj: ClassDefinition) {
     .join("\n\n");
 }
 
-function generateZig(
-  typeName,
-  {
-    klass = {},
-    proto = {},
-    own = {},
-    construct,
-    constructNeedsThis = false,
-    finalize,
-    noConstructor = false,
-    overridesToJS = false,
-    estimatedSize,
-    call = false,
-    memoryCost,
-    values = [],
-    valuesArray = false,
-    hasPendingActivity = false,
-    structuredClone = false,
-    getInternalProperties = false,
-    callbacks = {},
-  } = {} as ClassDefinition,
-) {
-  const exports = new Map<string, string>();
-
-  if (hasPendingActivity) {
-    exports.set("hasPendingActivity", symbolName(typeName, "hasPendingActivity"));
-  }
-
-  if (getInternalProperties) {
-    exports.set("getInternalProperties", symbolName(typeName, "getInternalProperties"));
-  }
-
-  if (structuredClone) {
-    exports.set("onStructuredCloneSerialize", symbolName(typeName, "onStructuredCloneSerialize"));
-
-    if (typeof structuredClone === "object" && structuredClone.transferable) {
-      exports.set("onStructuredCloneTransfer", symbolName(typeName, "onStructuredCloneTransfer"));
-    }
-
-    exports.set("onStructuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
-  }
-
-  proto = {
-    ...Object.fromEntries(Object.entries(own || {}).map(([name, getterName]) => [name, { getter: getterName }])),
-    ...proto,
-  };
-
-  const gc_fields = Object.entries({
-    ...proto,
-    ...Object.fromEntries((values || []).map(a => [a, { internal: true }])),
-  }).filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal);
-
-  const cached_values_string =
-    gc_fields.length > 0
-      ? `
-    pub const gc = enum (u8) {
-      ${gc_fields.map(([name]) => `${name},`).join("\n")}
-
-        pub fn get(comptime field: gc, thisValue: jsc.JSValue) ?jsc.JSValue {
-          const value = switch (field) {
-            ${gc_fields
-              .map(([name]) => `    .${name} => ${protoSymbolName(typeName, name)}GetCachedValue(thisValue),`)
-              .join("\n        ")}
-          };
-
-          if (value == .zero) {
-            return null;
-          }
-
-          return value;
-        }
-
-        pub fn clear(comptime field: gc, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
-          field.set(thisValue, globalObject, .zero);
-        }
-
-        pub fn set(comptime field: gc, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
-          switch (field) {
-            ${gc_fields
-              .map(
-                ([name]) =>
-                  `    .${name} => ${protoSymbolName(typeName, name)}SetCachedValue(thisValue, globalObject, value),`,
-              )
-              .join("\n")}
-          }
-        }
-    };
-  `
-      : "";
-
-  const externs = gc_fields
-    .map(
-      ([name]) =>
-        `extern fn ${protoSymbolName(typeName, name)}SetCachedValue(jsc.JSValue, *jsc.JSGlobalObject, jsc.JSValue) callconv(jsc.conv) void;
-
-        extern fn ${protoSymbolName(typeName, name)}GetCachedValue(jsc.JSValue) callconv(jsc.conv) jsc.JSValue;
-
-        /// \`${typeName}.${name}\` setter
-        /// This value will be visited by the garbage collector.
-        pub fn ${name}SetCached(thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
-          jsc.markBinding(@src());
-          ${protoSymbolName(typeName, name)}SetCachedValue(thisValue, globalObject, value);
-        }
-
-        /// \`${typeName}.${name}\` getter
-        /// This value will be visited by the garbage collector.
-        pub fn ${name}GetCached(thisValue: jsc.JSValue) ?jsc.JSValue {
-          jsc.markBinding(@src());
-          const result = ${protoSymbolName(typeName, name)}GetCachedValue(thisValue);
-          if (result == .zero)
-            return null;
-
-          return result;
-        }
-`.trim() + "\n",
-    )
-    .join("\n");
-
-  var renderedCallbacks = "";
-  if (Object.keys(callbacks).length) {
-    renderedCallbacks = renderCallbacksZig(typeName, callbacks);
-  }
-
-  function renderMethods() {
-    const exports = new Map();
-    var output = `
-const JavaScriptCoreBindings = struct {
-
-`;
-
-    if (memoryCost) {
-      exports.set("memoryCost", symbolName(typeName, "memoryCost"));
-      output += `
-    pub fn ${symbolName(typeName, "memoryCost")}(thisValue: *${typeName}) callconv(jsc.conv) usize {
-      return @call(bun.callmod_inline, ${typeName}.memoryCost, .{thisValue});
-    }
-  `;
-    }
-
-    if (estimatedSize) {
-      exports.set("estimatedSize", symbolName(typeName, "estimatedSize"));
-      output += `
-        pub fn ${symbolName(typeName, "estimatedSize")}(thisValue: *${typeName}) callconv(jsc.conv) usize {
-          return @call(bun.callmod_inline, ${typeName}.estimatedSize, .{thisValue});
-        }
-      `;
-    } else if (!memoryCost && !estimatedSize) {
-      output += `
-        export const ${symbolName(typeName, "ZigStructSize")}: usize = @sizeOf(${typeName});
-      `;
-    }
-
-    if (hasPendingActivity) {
-      exports.set("hasPendingActivity", symbolName(typeName, "hasPendingActivity"));
-      output += `
-        pub fn ${symbolName(typeName, "hasPendingActivity")}(thisValue: *${typeName}) callconv(jsc.conv) bool {
-          return @call(bun.callmod_inline, ${typeName}.hasPendingActivity, .{thisValue});
-        }
-      `;
-    }
-
-    if (finalize) {
-      exports.set("finalize", classSymbolName(typeName, "finalize"));
-      output += `
-        pub fn ${classSymbolName(typeName, "finalize")}(thisValue: *${typeName}) callconv(jsc.conv) void {
-          if (comptime Environment.enable_logs) log_zig_finalize("${typeName}", thisValue);
-          @call(bun.callmod_inline, ${typeName}.finalize, .{thisValue});
-        }
-      `;
-    }
-
-    if (construct && !noConstructor) {
-      exports.set("construct", classSymbolName(typeName, "construct"));
-      if (constructNeedsThis) {
-        output += `
-        pub fn ${classSymbolName(typeName, "construct")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, thisValue: jsc.JSValue) callconv(jsc.conv) ?*anyopaque {
-          if (comptime Environment.enable_logs) log_zig_constructor("${typeName}", callFrame);
-          return @as(*${typeName}, ${typeName}.constructor(globalObject, callFrame, thisValue) catch |err| switch (err) {
-            error.JSError => return null,
-            error.OutOfMemory => {
-              globalObject.throwOutOfMemory() catch {};
-              return null;
-            },
-            error.JSTerminated => return null,
-          });
-        }
-      `;
-      } else {
-        output += `
-        pub fn ${classSymbolName(typeName, "construct")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) ?*anyopaque {
-          if (comptime Environment.enable_logs) log_zig_constructor("${typeName}", callFrame);
-          return @as(*${typeName}, ${typeName}.constructor(globalObject, callFrame) catch |err| switch (err) {
-            error.JSError => return null,
-            error.OutOfMemory => {
-              globalObject.throwOutOfMemory() catch {};
-              return null;
-            },
-            error.JSTerminated => return null,
-          });
-        }
-      `;
-      }
-    }
-
-    if (call) {
-      exports.set("call", classSymbolName(typeName, "call"));
-      output += `
-        pub fn ${classSymbolName(typeName, "call")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
-          if (comptime Environment.enable_logs) log_zig_call("${typeName}", callFrame);
-          return @call(bun.callmod_inline, jsc.toJSHostFn(${typeName}.call), .{globalObject, callFrame});
-        }
-      `;
-    }
-
-    if (getInternalProperties) {
-      exports.set("getInternalProperties", classSymbolName(typeName, "getInternalProperties"));
-      output += `
-        pub fn ${classSymbolName(typeName, "getInternalProperties")}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue) callconv(jsc.conv) jsc.JSValue {
-          if (comptime Environment.enable_logs) log_zig_get_internal_properties("${typeName}");
-          return @call(bun.callmod_inline, ${typeName}.getInternalProperties, .{thisValue, globalObject, thisValue});
-        }
-      `;
-    }
-
-    {
-      const exportNames = name => zigExportName(exports, name => protoSymbolName(typeName, name), proto[name]);
-      for (const name in proto) {
-        const { getter, setter, accessor, fn, this: thisValue = false, cache, DOMJIT } = proto[name];
-        const names = exportNames(name);
-        if (names.getter) {
-          output += `
-        pub fn ${names.getter}(this: *${typeName}, ${thisValue ? "thisValue: jsc.JSValue," : ""} globalObject: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
-          if (comptime Environment.enable_logs) log_zig_getter("${typeName}", "${name}");
-          return switch (@typeInfo(@typeInfo(@TypeOf(${typeName}.${getter})).@"fn".return_type.?)) {
-            .error_union => {
-              return @call(bun.callmod_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject}});
-            },
-            else => @call(bun.callmod_inline, ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject}),
-          };
-        }
-      `;
-        }
-
-        if (names.setter) {
-          output += `
-        pub fn ${names.setter}(this: *${typeName}, ${thisValue ? "thisValue: jsc.JSValue," : ""} globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) callconv(jsc.conv) bool {
-          if (comptime Environment.enable_logs) log_zig_setter("${typeName}", "${name}", value);
-          switch (@typeInfo(@typeInfo(@TypeOf(${typeName}.${setter})).@"fn".return_type.?)) {
-            .error_union => |error_union| {
-              if (error_union.payload != void) {
-                @compileError("Setter return type must be JSError!void or void");
-              }
-              return @call(bun.callmod_inline, jsc.host_fn.toJSHostSetterValue, .{globalObject, @call(bun.callmod_inline, ${typeName}.${setter}, .{this, ${thisValue ? "thisValue," : ""} globalObject, value})});
-            },
-            .void => {
-              @call(bun.callmod_inline, ${typeName}.${setter}, .{this, ${thisValue ? "thisValue," : ""} globalObject, value});
-              return true;
-            },
-            else => @compileError("Setter return type must be JSError!void or void"),
-          }
-        }
-      `;
-        }
-
-        if (names.fn) {
-          if (names.DOMJIT) {
-            const { args, returns } = DOMJIT;
-            output += `
-          pub fn ${names.DOMJIT}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, ${args
-            .map(ZigDOMJITArgTypeDefinition)
-            .join(", ")}) callconv(jsc.conv) jsc.JSValue {
-            return @call(bun.callmod_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
-          }
-          `;
-          }
-
-          output += `
-        pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame${proto[name].passThis ? ", js_this_value: jsc.JSValue" : ""}) callconv(jsc.conv) jsc.JSValue {
-          if (comptime Environment.enable_logs) log_zig_method("${typeName}", "${name}", callFrame);
-          return @call(bun.callmod_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}}});
-        }
-        `;
-        }
-      }
-    }
-
-    {
-      const exportNames = name => zigExportName(exports, name => classSymbolName(typeName, name), klass[name]);
-      for (const name in klass) {
-        const { getter, setter, accessor, fn, this: thisValue = true, cache, DOMJIT } = klass[name];
-        const names = exportNames(name);
-        if (names.getter) {
-          output += `
-        pub fn ${names.getter}(globalObject: *jsc.JSGlobalObject, ${thisValue ? "thisValue: jsc.JSValue," : ""} propertyName: jsc.JSValue) callconv(jsc.conv) jsc.JSValue {
-          if (comptime Environment.enable_logs) log_zig_class_getter("${typeName}", "${name}");
-          return switch (@typeInfo(@typeInfo(@TypeOf(${typeName}.${getter})).@"fn".return_type.?)) {
-            .error_union => {
-              return @call(bun.callmod_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${getter}, .{globalObject, ${thisValue ? "thisValue," : ""} propertyName}});
-            },
-            else => {
-              return @call(bun.callmod_inline, ${typeName}.${getter}, .{globalObject, ${thisValue ? "thisValue," : ""} propertyName});
-            },
-          };
-        }
-        `;
-        }
-
-        if (names.setter) {
-          output += `
-        pub fn ${names.setter}(globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, target: jsc.JSValue) callconv(jsc.conv) bool {
-          if (comptime Environment.enable_logs) log_zig_class_setter("${typeName}", "${name}", target);
-          return @call(bun.callmod_inline, ${typeName}.${setter || accessor.setter}, .{thisValue, globalObject, target});
-        }
-        `;
-        }
-
-        if (names.fn) {
-          if (DOMJIT) {
-            const { args, returns } = DOMJIT;
-
-            output += `
-          pub fn ${names.DOMJIT}(globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, ${args
-            .map(ZigDOMJITArgTypeDefinition)
-            .join(", ")}) callconv(jsc.conv) jsc.JSValue {
-            if (comptime Environment.enable_logs) log_zig_class_domjit("${typeName}", "${name}");
-            return @call(bun.callmod_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
-          }
-          `;
-          }
-
-          output += `
-        pub fn ${names.fn}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
-          if (comptime Environment.enable_logs) log_zig_class_method("${typeName}", "${name}", callFrame);
-          return @call(bun.callmod_inline, jsc.toJSHostFn(${typeName}.${fn}), .{globalObject, callFrame});
-        }
-        `;
-        }
-      }
-    }
-
-    if (structuredClone) {
-      exports.set("structuredClone", symbolName(typeName, "onStructuredCloneSerialize"));
-      output += `
-      pub fn ${symbolName(typeName, "onStructuredCloneSerialize")}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, ctx: *anyopaque, writeBytes: WriteBytesFn) callconv(jsc.conv) void {
-        if (comptime Environment.enable_logs) log_zig_structured_clone_serialize("${typeName}");
-        @call(bun.callmod_inline, ${typeName}.onStructuredCloneSerialize, .{thisValue, globalObject, ctx, writeBytes});
-      }
-      `;
-
-      if (typeof structuredClone === "object" && structuredClone.transferable) {
-        exports.set("structuredClone_transferable", symbolName(typeName, "onStructuredCloneTransfer"));
-        output += `
-        pub fn ${exports.get("structuredClone_transferable")}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, ctx: *anyopaque, write: WriteBytesFn) callconv(jsc.conv) void {
-          if (comptime Environment.enable_logs) log_zig_structured_clone_transfer("${typeName}");
-          @call(bun.callmod_inline, ${typeName}.onStructuredCloneTransfer, .{thisValue, globalObject, ctx, write});
-        }
-        `;
-      }
-
-      exports.set("structuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
-
-      output += `
-      pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *jsc.JSGlobalObject, ptr: *[*]u8, end: [*]u8) callconv(jsc.conv) jsc.JSValue {
-        if (comptime Environment.enable_logs) log_zig_structured_clone_deserialize("${typeName}");
-        return @call(bun.callmod_inline, jsc.toJSHostCall, .{ globalObject, @src(), ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end} });
-      }
-      `;
-    } else {
-      output += `
-      pub fn ${symbolName(typeName, "onStructuredCloneSerialize")}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, ctx: *anyopaque, writeBytes: WriteBytesFn) callconv(jsc.conv) void {
-        _ = thisValue;
-        _ = globalObject;
-        _ = ctx;
-        _ = writeBytes;
-        @compileLog("onStructuredCloneSerialize not implemented for ${typeName}");
-      }
-      `;
-    }
-
-    return (
-      output.trim() +
-      `
-  };
-  comptime {
-${[...exports.values()].map(name => `      @export(&JavaScriptCoreBindings.${name}, .{ .name = "${name}" });`).join("\n")}
-    }`
-    );
-  }
-
-  return `
-
-pub const ${className(typeName)} = struct {
-    const ${typeName} = Classes.${typeName};
-
-    /// Return the pointer to the wrapped object.
-    /// If the object does not match the type, return null.
-    pub fn fromJS(value: jsc.JSValue) ?*${typeName} {
-        if (comptime Environment.enable_logs) log_zig_from_js("${typeName}");
-        return ${symbolName(typeName, "fromJS")}(value);
-    }
-
-    /// Return the pointer to the wrapped object only if it is a direct instance of the type.
-    /// If the object does not match the type, return null.
-    /// If the object is a subclass of the type or has mutated the structure, return null.
-    /// Note: this may return null for direct instances of the type if the user adds properties to the object.
-    pub fn fromJSDirect(value: jsc.JSValue) ?*${typeName} {
-        if (comptime Environment.enable_logs) log_zig_from_js_direct("${typeName}");
-        return ${symbolName(typeName, "fromJSDirect")}(value);
-    }
-
-    ${externs}
-    ${cached_values_string}
-
-    ${
-      !noConstructor
-        ? `
-    /// Get the ${typeName} constructor value.
-    /// This loads lazily from the global object.
-    pub fn getConstructor(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
-        if (comptime Environment.enable_logs) log_zig_get_constructor("${typeName}");
-        return ${symbolName(typeName, "getConstructor")}(globalObject);
-    }
-  `
-        : ""
-    }
-
-    ${
-      !overridesToJS
-        ? `
-    /// Create a new instance of ${typeName}
-    pub fn toJS(this: *${typeName}, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
-        if (comptime Environment.enable_logs) log_zig_to_js("${typeName}");
-        if (comptime Environment.allow_assert) {
-            const value__ = ${symbolName(typeName, "create")}(globalObject, this);
-            @import("bun").assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
-            return value__;
-        } else {
-            return ${symbolName(typeName, "create")}(globalObject, this);
-        }
-    }`
-        : ""
-    }
-
-    ${
-      valuesArray && !overridesToJS
-        ? `
-    /// Create a new instance of ${typeName} with a MarkedArgumentBuffer
-    pub fn toJSWithValues(this: *${typeName}, globalObject: *jsc.JSGlobalObject, markedArgumentBuffer: *jsc.MarkedArgumentBuffer) jsc.JSValue {
-        if (comptime Environment.enable_logs) log_zig_to_js("${typeName}");
-        if (comptime Environment.allow_assert) {
-            const value__ = ${symbolName(typeName, "createWithValues")}(globalObject, this, markedArgumentBuffer);
-            @import("bun").assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
-            return value__;
-        } else {
-            return ${symbolName(typeName, "createWithValues")}(globalObject, this, markedArgumentBuffer);
-        }
-    }`
-        : ""
-    }
-
-    ${
-      valuesArray && values.length > 0 && !overridesToJS
-        ? `
-    /// Create a new instance of ${typeName} with initial values
-    pub fn toJSWithInitialValues(this: *${typeName}, globalObject: *jsc.JSGlobalObject${values.map(v => `, ${v}: jsc.JSValue`).join("")}) jsc.JSValue {
-        if (comptime Environment.enable_logs) log_zig_to_js("${typeName}");
-        if (comptime Environment.allow_assert) {
-            const value__ = ${symbolName(typeName, "createWithInitialValues")}(globalObject, this${values.map(v => `, ${v}`).join("")});
-            @import("bun").assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
-            return value__;
-        } else {
-            return ${symbolName(typeName, "createWithInitialValues")}(globalObject, this${values.map(v => `, ${v}`).join("")});
-        }
-    }`
-        : ""
-    }
-
-    ${
-      valuesArray && values.length > 0 && !overridesToJS
-        ? `
-    /// Create a new instance of ${typeName} with both a MarkedArgumentBuffer and initial values
-    pub fn toJSWithValuesAndInitialValues(this: *${typeName}, globalObject: *jsc.JSGlobalObject, markedArgumentBuffer: *jsc.MarkedArgumentBuffer${values.map(v => `, ${v}: jsc.JSValue`).join("")}) jsc.JSValue {
-        if (comptime Environment.enable_logs) log_zig_to_js("${typeName}");
-        if (comptime Environment.allow_assert) {
-            const value__ = ${symbolName(typeName, "createWithValuesAndInitialValues")}(globalObject, this, markedArgumentBuffer${values.map(v => `, ${v}`).join("")});
-            @import("bun").assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
-            return value__;
-        } else {
-            return ${symbolName(typeName, "createWithValuesAndInitialValues")}(globalObject, this, markedArgumentBuffer${values.map(v => `, ${v}`).join("")});
-        }
-    }`
-        : ""
-    }
-
-    /// Modify the internal ptr to point to a new instance of ${typeName}.
-    pub fn dangerouslySetPtr(value: jsc.JSValue, ptr: ?*${typeName}) bool {
-      jsc.markBinding(@src());
-      return ${symbolName(typeName, "dangerouslySetPtr")}(value, ptr);
-    }
-
-    /// Detach the ptr from the thisValue
-    pub fn detachPtr(_: *${typeName}, value: jsc.JSValue) void {
-      jsc.markBinding(@src());
-      bun.assert(${symbolName(typeName, "dangerouslySetPtr")}(value, null));
-    }
-
-    extern fn ${symbolName(typeName, "fromJS")}(jsc.JSValue) callconv(jsc.conv) ?*${typeName};
-    extern fn ${symbolName(typeName, "fromJSDirect")}(jsc.JSValue) callconv(jsc.conv) ?*${typeName};
-    extern fn ${symbolName(typeName, "getConstructor")}(*jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
-    extern fn ${symbolName(typeName, "create")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}) callconv(jsc.conv) jsc.JSValue;
-    ${valuesArray ? `extern fn ${symbolName(typeName, "createWithValues")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}, markedArgumentBuffer: *anyopaque) callconv(jsc.conv) jsc.JSValue;` : ""}
-    ${valuesArray && values.length > 0 ? `extern fn ${symbolName(typeName, "createWithInitialValues")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}${values.map(v => `, ${v}: jsc.JSValue`).join("")}) callconv(jsc.conv) jsc.JSValue;` : ""}
-    ${valuesArray && values.length > 0 ? `extern fn ${symbolName(typeName, "createWithValuesAndInitialValues")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}, markedArgumentBuffer: *anyopaque${values.map(v => `, ${v}: jsc.JSValue`).join("")}) callconv(jsc.conv) jsc.JSValue;` : ""}
-
-    /// Create a new instance of ${typeName} without validating it works.
-    pub const toJSUnchecked = ${symbolName(typeName, "create")};
-
-    extern fn ${typeName}__dangerouslySetPtr(jsc.JSValue, ?*${typeName}) callconv(jsc.conv) bool;
-
-${renderMethods()}
-
-};
-
-`;
-}
-
 // ──────────────────────────────────────────────────────────────────────────
-// Rust emitter — sibling of generateZig().
+// Rust emitter.
 //
-// Emits, per class with \`lang === "rust"\`, a block of \`#[unsafe(no_mangle)]
+// Emits, per class, a block of \`#[unsafe(no_mangle)]
 // pub extern "C" fn\` thunks whose unmangled names and signatures are
 // byte-identical to the externs the C++ side declares (renderDecls /
 // renderStaticDecls / generateConstructorImpl). The C++ output is invariant;
@@ -2732,7 +2097,7 @@ const rustModuleResolver = (() => {
       // `pub use bun_jsc::{BuildMessage, ResolveMessage};` so route there.
       return `crate::api::${name}`;
     },
-    /** Resolve an absolute `.rs` (or `.zig`) file path to its `crate::…` module path. */
+    /** Resolve an absolute `.rs` file path to its `crate::…` module path. */
     resolveFile(absRs: string): string | null {
       return fileToMod.get(path.resolve(absRs)) ?? null;
     },
@@ -2818,7 +2183,6 @@ function generateRust(
     values = [],
     hasPendingActivity = false,
     structuredClone = false,
-    getInternalProperties = false,
     rustPath,
     sharedThis = true,
   } = {} as ClassDefinition,
@@ -2836,8 +2200,7 @@ function generateRust(
   // ── exported #[no_mangle] thunks ─────────────────────────────────────────
   // Direct dispatch: each thunk calls an *inherent* method on the user's real
   // Rust struct (re-exported as `${typeName}` below). No trait, no opaque
-  // placeholder, no `unimplemented!()` — a missing method is a compile error,
-  // mirroring the Zig path's `@import("…").${T}.${fn}` behaviour.
+  // placeholder, no `unimplemented!()` — a missing method is a compile error.
   const thunks: string[] = [];
   const symbols: string[] = [];
   function thunk(sym: string, sig: string, body: string) {
@@ -2855,6 +2218,7 @@ function generateRust(
     // be `extern "sysv64"` on win-x64. `jsc_host_abi!` does the cfg-split.
     thunks.push(
       `bun_jsc::jsc_host_abi! {\n` +
+        `    #[allow(dead_code, unreachable_pub, unused)]\n` +
         `    #[unsafe(no_mangle)]\n` +
         `    pub unsafe fn ${sym}${sig} {\n` +
         `    ${body}\n` +
@@ -2867,8 +2231,8 @@ function generateRust(
   // host-fn now receives `&${T}` (no `noalias` on the LLVM arg, so re-entrant
   // JS that re-derives `&Self` from the wrapper's `m_ctx` cannot miscompile).
   // `sharedThis: false` remains an explicit opt-out for types that have not
-  // yet migrated their fields to `Cell`/`JsCell`. `_shared` helpers live in
-  // `src/jsc/host_fn.rs` alongside the legacy `&mut` originals.
+  // yet migrated their fields to `Cell`/`JsCell`; only the `_getter`/`_setter`
+  // (no `this`) `&mut` helpers survive in `src/jsc/host_fn.rs` for it.
   const recv = sharedThis ? `&${T}` : `&mut ${T}`;
   const helper = (base: string) => (sharedThis ? `host_fn::${base}_shared` : `host_fn::${base}`);
 
@@ -2882,7 +2246,7 @@ function generateRust(
   if (!memoryCost && !estimatedSize) {
     symbols.push(symbolName(typeName, "ZigStructSize"));
     thunks.push(
-      `#[unsafe(no_mangle)]\npub static ${symbolName(typeName, "ZigStructSize")}: usize = core::mem::size_of::<${T}>();`,
+      `#[allow(dead_code, unreachable_pub, unused)]\n#[unsafe(no_mangle)]\npub static ${symbolName(typeName, "ZigStructSize")}: usize = core::mem::size_of::<${T}>();`,
     );
   }
 
@@ -2893,12 +2257,11 @@ function generateRust(
   if (finalize) {
     // `host_fn_finalize` does the single `Box::from_raw(this)` and hands the
     // user impl an owned `Box<Self>` — genuinely safe (ownership transferred).
-    // SAFETY: `this` is the unique GC-owned `m_ctx` pointer, valid and not
-    // aliased — `JS${T}::~JS${T}` is the only caller.
     thunk(
       classSymbolName(typeName, "finalize"),
       `(this: *mut ${T}) -> ()`,
-      `    host_fn::host_fn_finalize(this, |b| ${T}::finalize(b))`,
+      `    // SAFETY: this is the unique GC-owned m_ctx pointer from Box::into_raw in the construct path.\n` +
+        `    unsafe { host_fn::host_fn_finalize(this, |b| ${T}::finalize(b)) }`,
     );
   }
 
@@ -2926,14 +2289,6 @@ function generateRust(
     );
   }
 
-  if (getInternalProperties) {
-    thunk(
-      symbolName(typeName, "getInternalProperties"),
-      `(this: ${recv}, global: &JSGlobalObject, this_value: JSValue) -> JSValue`,
-      `    ${helper("host_fn_internal_props")}(this, global, this_value, |t, g, v| ${T}::get_internal_properties(t, g, v))`,
-    );
-  }
-
   // ── proto getters / setters / fns ────────────────────────────────────────
   // Closure form (`|t, g, c| T::method(t, g, c)`) rather than bare `T::method`
   // so `&mut T → &T` autoref/coercion applies — many user impls take `&self`.
@@ -2946,13 +2301,17 @@ function generateRust(
       const g = accessor ? accessor.getter : getter;
       const s = accessor ? accessor.setter : setter;
 
+      if (thisValue && !sharedThis && (names.getter || names.setter)) {
+        throw new Error(`${typeName}.${name}: \`this: true\` accessors require \`sharedThis: true\``);
+      }
+
       if (names.getter) {
         const id = rustSnakeIdent(g);
         thunk(
           names.getter,
           `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject) -> JSValue`,
           thisValue
-            ? `    ${helper("host_fn_getter_this")}(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
+            ? `    host_fn::host_fn_getter_this_shared(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
             : `    ${helper("host_fn_getter")}(this, global, |t, g| ${T}::${id}(t, g))`,
         );
       }
@@ -2963,7 +2322,7 @@ function generateRust(
           names.setter,
           `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject, value: JSValue) -> bool`,
           thisValue
-            ? `    ${helper("host_fn_setter_this")}(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
+            ? `    host_fn::host_fn_setter_this_shared(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
             : `    ${helper("host_fn_setter")}(this, global, value, |t, g, v| ${T}::${id}(t, g, v))`,
         );
       }
@@ -3064,9 +2423,9 @@ function generateRust(
   }
 
   // ── C++→Rust extern imports + safe wrappers ──────────────────────────────
-  // Emitted as free functions in a per-class `js_${T}` sub-module (mirrors
-  // Zig's `pub const js = jsc.Codegen.JS${T};`) so they don't collide with
-  // inherent `from_js`/`to_js` already defined on the real struct.
+  // Emitted as free functions in a per-class `js_${T}` sub-module so they
+  // don't collide with inherent `from_js`/`to_js` already defined on the
+  // real struct.
   const cachedExterns = gc_fields
     .map(
       ([name]) =>
@@ -3099,12 +2458,17 @@ function generateRust(
   // Calling convention: every C++ definition uses `extern JSC_CALLCONV` =
   // `extern "C" SYSV_ABI` on Windows, so import them via `jsc_abi_extern!`
   // (sysv64 on win-x64, "C" elsewhere).
-  const jsModule = `pub mod js_${typeName} {
+  const jsModule = `#[allow(dead_code, unreachable_pub, unused)]
+pub mod js_${typeName} {
     use super::*;
     bun_jsc::jsc_abi_extern! {
         safe fn ${symbolName(typeName, "fromJS")}(value: JSValue) -> *mut ${typeName};
-        safe fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};
-        safe fn ${symbolName(typeName, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;
+        safe fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};${
+          !noConstructor
+            ? `
+        safe fn ${symbolName(typeName, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;`
+            : ""
+        }
         safe fn ${symbolName(typeName, "create")}(global: *mut JSGlobalObject, ptr: *mut ${typeName}) -> JSValue;
         safe fn ${symbolName(typeName, "dangerouslySetPtr")}(value: JSValue, ptr: *mut ${typeName}) -> bool;
 ${cachedExterns}
@@ -3146,9 +2510,9 @@ ${gcAccessors}
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Native backing type for \`JS${typeName}.m_ctx\`. Re-export of the real
-/// hand-ported struct so the thunks below call its inherent methods directly
-/// (mirrors Zig's \`@import("…").${typeName}.<fn>\`). A missing method is a
-/// compile error — fix it in \`${rustPath}\`, not here.
+/// struct so the thunks below call its inherent methods directly. A missing
+/// method is a compile error — fix it in \`${rustPath}\`, not here.
+#[allow(dead_code, unreachable_pub, unused)]
 pub use ${rustPath} as ${typeName};
 
 ${thunks.join("\n\n")}
@@ -3172,16 +2536,21 @@ const RUST_GENERATED_CLASSES_HEADER = `// Auto-generated by src/codegen/generate
 // Windows), so the file uses \`bun_jsc::jsc_host_abi!\` / \`jsc_abi_extern!\`
 // for the cfg-split.
 
+#[allow(dead_code, unreachable_pub, unused)]
 use core::ffi::c_void;
+#[allow(dead_code, unreachable_pub, unused)]
 use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, JsFinalize as _};
 
 /// \`SYSV_ABI void (*)(CloneSerializer*, const uint8_t*, uint32_t)\`
+#[allow(dead_code, unreachable_pub, unused)]
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub type WriteBytesFn = unsafe extern "sysv64" fn(*mut c_void, *const u8, u32);
+#[allow(dead_code, unreachable_pub, unused)]
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 pub type WriteBytesFn = unsafe extern "C" fn(*mut c_void, *const u8, u32);
 
 /// \`JSC::PropertyName\` — opaque pointer-sized handle (UniquedStringImpl*).
+#[allow(dead_code, unreachable_pub, unused)]
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct PropertyName(pub *const c_void);
@@ -3214,7 +2583,6 @@ function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noCo
                        )}::createConstructor(init.vm, init.global, init.prototype));`
                  }
               });
-
 
       `.trim();
 }
@@ -3369,48 +2737,6 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
   `.trim();
 }
 
-const ZIG_GENERATED_CLASSES_HEADER = `
-/// Generated code! To regenerate, run:
-///
-///    bun run build
-///
-/// This file is generated by:
-///  1. \`bun src/codegen/generate-classes.ts\`
-///  2. Scan for **/*.classes.ts files in src/
-///  3. Generate a JS wrapper for each class in:
-///        - Zig: generated_classes.zig
-///        - C++: ZigGeneratedClasses.h, ZigGeneratedClasses.cpp
-///  4. For the Zig code to successfully compile:
-///        - Add it to generated_classes_list.zig
-///        - \`\`\`
-///          pub const js = jsc.Codegen.JSMyClassName;
-///          pub const toJS = js.toJS;
-///          pub const fromJS = js.fromJS;
-///          pub const fromJSDirect = js.fromJSDirect;
-///          \`\`\`
-///  5. bun run build
-///
-const bun = @import("bun");
-const jsc = bun.jsc;
-const Classes = jsc.GeneratedClassesList;
-const Environment = bun.Environment;
-const std = @import("std");
-const zig = bun.Output.scoped(.zig, .hidden);
-
-const wrapHostFunction = bun.gen_classes_lib.wrapHostFunction;
-const wrapMethod = bun.gen_classes_lib.wrapMethod;
-const wrapMethodWithThis = bun.gen_classes_lib.wrapMethodWithThis;
-const wrapConstructor = bun.gen_classes_lib.wrapConstructor;
-const wrapGetterCallback = bun.gen_classes_lib.wrapGetterCallback;
-const wrapGetterWithValueCallback = bun.gen_classes_lib.wrapGetterWithValueCallback;
-
-pub const StaticGetterType = fn(*jsc.JSGlobalObject, jsc.JSValue, jsc.JSValue) callconv(jsc.conv) jsc.JSValue;
-pub const StaticSetterType = fn(*jsc.JSGlobalObject, jsc.JSValue, jsc.JSValue, jsc.JSValue) callconv(jsc.conv) bool;
-pub const StaticCallbackType = jsc.JSHostFn;
-pub const WriteBytesFn = *const fn(*anyopaque, ptr: [*]const u8, len: u32) callconv(jsc.conv) void;
-
-`;
-
 const classes: ClassDefinition[] = [];
 {
   let errors = [];
@@ -3537,12 +2863,9 @@ function writeCppSerializers() {
   return output;
 }
 
-// ── Rust output: per-class thunks for `lang === "rust"` (default). ─────────
-// Zig output is still emitted for every class so the C++ side's `extern`
-// declarations stay satisfied during incremental migration; the Zig thunks for
-// rust-lang classes simply go unreferenced once the Rust crate links.
+// ── Rust output: per-class thunks ──────────────────────────────────────────
 {
-  const rustClasses = classes.filter(a => (a.lang ?? "rust") === "rust");
+  const rustClasses = classes;
   let totalSyms = 0;
   let resolved = 0;
   const blocks = rustClasses.map(a => {
@@ -3561,137 +2884,6 @@ function writeCppSerializers() {
     `generated_classes.rs: ${rustClasses.length} classes (${resolved} resolved), ${totalSyms} exported symbols`,
   );
 }
-
-await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.zig`, [
-  ZIG_GENERATED_CLASSES_HEADER,
-
-  ...classes.map(a => generateZig(a.name, a).trim()).join("\n"),
-  "\n",
-  `
-comptime {
-  ${classes.map(a => `_ = ${className(a.name)};`).join("\n  ")}
-}
-
-
-
-// -- Avoid instantiating these log functions too many times
-fn log_zig_method_call(typename: []const u8, method_name: []const u8, callframe: *jsc.CallFrame) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<d>{s}<r>.{s}<d>({d} args)<r>", .{typename, method_name, callframe.arguments().len});
-  }
-}
-
-fn log_zig_getter(typename: []const u8, property_name: []const u8) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><blue>get<r> {s}<d>.<r>{s}", .{typename, property_name});
-  }
-}
-
-fn log_zig_setter(typename: []const u8, property_name: []const u8, value: jsc.JSValue) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><blue>set<r> {s}<d>.<r>{s} = {?s}", .{typename, property_name, bun.tagName(jsc.JSValue, value)});
-  }
-}
-
-fn log_zig_finalize(typename: []const u8, ptr: *const anyopaque) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<d>~{s} 0x{x:8}<r>", .{typename, @intFromPtr(ptr)});
-  }
-}
-
-fn log_zig_function_call(typename: []const u8, callframe: *jsc.CallFrame) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("{s}<d>({d} args)<r>", .{typename, callframe.arguments().len});
-  }
-}
-
-fn log_zig_constructor(typename: []const u8, callframe: *jsc.CallFrame) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><blue>new<r> {s}<d>({d} args)<r>", .{typename, callframe.arguments().len});
-  }
-}
-
-fn log_zig_call(typename: []const u8, callframe: *jsc.CallFrame) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<d>{s}<d>({d} args)<r>", .{typename, callframe.arguments().len});
-  }
-}
-
-fn log_zig_get_internal_properties(typename: []const u8) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><blue>getInternalProperties<r> {s}", .{typename});
-  }
-}
-
-fn log_zig_method(typename: []const u8, method_name: []const u8, callframe: *jsc.CallFrame) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<d>{s}.<r>{s}<d>({d} args)<r>", .{typename, method_name, callframe.arguments().len});
-  }
-}
-
-fn log_zig_structured_clone_serialize(typename: []const u8) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><blue>structuredCloneSerialize<r> {s}", .{typename});
-  }
-}
-
-fn log_zig_structured_clone_transfer(typename: []const u8) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><blue>structuredCloneTransfer<r> {s}", .{typename});
-  }
-}
-
-fn log_zig_structured_clone_deserialize(typename: []const u8) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><blue>structuredCloneDeserialize<r> {s}", .{typename});
-  }
-}
-
-fn log_zig_from_js(typename: []const u8) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><blue>{s}<r><d>.fromJS<r>", .{typename});
-  }
-}
-
-fn log_zig_from_js_direct(typename: []const u8) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><blue>{s}<r><d>.fromJSDirect<r>", .{typename});
-  }
-}
-
-fn log_zig_get_constructor(typename: []const u8) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><blue>{s}<r><d>.constructor<r>", .{typename});
-  }
-}
-
-
-fn log_zig_to_js(typename: []const u8) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><d>{s}.toJS<r>", .{typename});
-  }
-}
-
-fn log_zig_class_method(typename: []const u8, method_name: []const u8, callframe: *jsc.CallFrame) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><blue>{s}<r><d>.{s}<d>({d} args)<r>", .{typename, method_name, callframe.arguments().len});
-  }
-}
-
-fn log_zig_class_getter(typename: []const u8, property_name: []const u8) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><d>static<r> <blue>get<r> {s}<d>.<r>{s}", .{typename, property_name});
-  }
-}
-
-fn log_zig_class_setter(typename: []const u8, property_name: []const u8, value: jsc.JSValue) callconv(bun.callconv_inline) void {
-  if (comptime Environment.enable_logs) {
-    zig("<r><d>static<r> <blue>set<r> {s}<d>.<r>{s} = {?s}", .{typename, property_name, bun.tagName(jsc.JSValue, value)});
-  }
-}
-
-  `,
-]);
 
 if (!process.env.ONLY_ZIG) {
   const allHeaders = classes.map(a => generateHeader(a.name, a));
@@ -3746,8 +2938,8 @@ if (!process.env.ONLY_ZIG) {
 }
 
 /**
- * Generates a basic TypeScript type signature string and corresponding Zig source comment
- * for a given property definition.
+ * Generates a basic TypeScript type signature string for a given property
+ * definition.
  * Returns null if the property should not be included in the types (e.g., private).
  */
 function getPropertySignatureWithComment(
@@ -3959,7 +3151,6 @@ export function generateBuiltinTypes(classes: ClassDefinition[]): string {
   // --- Assemble Final File Content ---
   return `// GENERATED CODE - DO NOT MODIFY BY HAND
 // Generated by generate-classes.ts
-
 
 /**
  * Type definitions for Bun's built-in classes implemented in Zig.

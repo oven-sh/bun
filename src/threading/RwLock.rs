@@ -1,22 +1,19 @@
 //! A lock that supports one writer or many readers.
 //!
-//! Port of `std.Thread.RwLock.DefaultRwLock` (Zig 0.14.1) on top of Bun's
-//! `Mutex` + `Semaphore`, wrapped in a data-owning `RwLock<T>` with RAII
+//! Built on top of Bun's `Mutex` + `Semaphore`, wrapped in a data-owning `RwLock<T>` with RAII
 //! guards so it drops in for `parking_lot::RwLock<T>`:
 //!
 //! - `const fn new(T)` — usable in `static`.
 //! - `.read()` / `.write()` return guards with `Deref` / `DerefMut`.
-//! - `.try_read()` / `.try_write()` return `Option<guard>`.
-//! - No poisoning (Zig has none; matches `parking_lot`).
+//! - No poisoning (matches `parking_lot`).
 //!
 //! Writer-preferring: a pending writer blocks new readers from acquiring on
 //! the CAS fast path (they fall through to the mutex, which the writer holds).
 //! Fairness beyond that is whatever the underlying `Mutex`/Futex provides.
 //!
-//! The `PthreadRwLock` and `SingleThreadedRwLock` variants from Zig std are
-//! intentionally omitted — Bun never builds single-threaded, and the
-//! `DefaultRwLock` algorithm is portable across all Bun targets while keeping
-//! `const fn new` (which `pthread_rwlock_t` cannot guarantee).
+//! `pthread_rwlock_t` is intentionally not used — this algorithm is portable
+//! across all Bun targets while keeping `const fn new` (which
+//! `pthread_rwlock_t` cannot guarantee).
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
@@ -25,7 +22,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{Mutex, Semaphore};
 
-// ── raw state machine (Zig: `DefaultRwLock`) ──────────────────────────────
+// ── raw state machine ──────────────────────────────────────────────────────
 
 struct RawRwLock {
     state: AtomicUsize,
@@ -33,7 +30,7 @@ struct RawRwLock {
     semaphore: Semaphore,
 }
 
-// Bit layout of `state` (matches Zig exactly):
+// Bit layout of `state`:
 //
 //   bit 0                : IS_WRITING — a writer holds the lock
 //   bits 1..=COUNT_BITS  : pending-writer count (WRITER_MASK)
@@ -59,26 +56,12 @@ impl RawRwLock {
         }
     }
 
-    fn try_lock(&self) -> bool {
-        if self.mutex.try_lock() {
-            let state = self.state.load(Ordering::SeqCst);
-            if state & READER_MASK == 0 {
-                let _ = self.state.fetch_or(IS_WRITING, Ordering::SeqCst);
-                return true;
-            }
-
-            self.mutex.unlock();
-        }
-
-        false
-    }
-
     fn lock(&self) {
         let _ = self.state.fetch_add(WRITER, Ordering::SeqCst);
         self.mutex.lock();
 
-        // Zig: `IS_WRITING -% WRITER` — wrapping sub so the single fetch_add
-        // both sets IS_WRITING and clears the pending-writer reservation.
+        // Wrapping sub so the single fetch_add both sets IS_WRITING and clears
+        // the pending-writer reservation.
         let state = self
             .state
             .fetch_add(IS_WRITING.wrapping_sub(WRITER), Ordering::SeqCst);
@@ -92,32 +75,9 @@ impl RawRwLock {
         self.mutex.unlock();
     }
 
-    fn try_lock_shared(&self) -> bool {
-        let state = self.state.load(Ordering::SeqCst);
-        if state & (IS_WRITING | WRITER_MASK) == 0 {
-            // Zig: `@cmpxchgStrong(...) orelse return true`
-            if self
-                .state
-                .compare_exchange(state, state + READER, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-            {
-                return true;
-            }
-        }
-
-        if self.mutex.try_lock() {
-            let _ = self.state.fetch_add(READER, Ordering::SeqCst);
-            self.mutex.unlock();
-            return true;
-        }
-
-        false
-    }
-
     fn lock_shared(&self) {
         let mut state = self.state.load(Ordering::SeqCst);
         while state & (IS_WRITING | WRITER_MASK) == 0 {
-            // Zig: `@cmpxchgWeak(...) orelse return`
             match self.state.compare_exchange_weak(
                 state,
                 state + READER,
@@ -155,6 +115,9 @@ pub struct RwLock<T> {
 // guarantees either many shared `&T` or one exclusive `&mut T`. Same bounds
 // `parking_lot::RwLock<T>` uses.
 unsafe impl<T: Send> Send for RwLock<T> {}
+// SAFETY: `&RwLock<T>` only exposes `value` through guards obtained from `raw`,
+// yielding either shared `&T` (requires `T: Sync`) or, on a single thread, an
+// exclusive `&mut T` (requires `T: Send`). `raw` itself is built from atomics.
 unsafe impl<T: Send + Sync> Sync for RwLock<T> {}
 
 impl<T: Default> Default for RwLock<T> {
@@ -193,45 +156,6 @@ impl<T> RwLock<T> {
             lock: self,
             _not_send: PhantomData,
         }
-    }
-
-    /// Non-blocking [`read`](Self::read).
-    #[inline]
-    pub fn try_read(&self) -> Option<RwLockReadGuard<'_, T>> {
-        if self.raw.try_lock_shared() {
-            Some(RwLockReadGuard {
-                lock: self,
-                _not_send: PhantomData,
-            })
-        } else {
-            None
-        }
-    }
-
-    /// Non-blocking [`write`](Self::write).
-    #[inline]
-    pub fn try_write(&self) -> Option<RwLockWriteGuard<'_, T>> {
-        if self.raw.try_lock() {
-            Some(RwLockWriteGuard {
-                lock: self,
-                _not_send: PhantomData,
-            })
-        } else {
-            None
-        }
-    }
-
-    /// Lock-free mutable access via `&mut self` (exclusive borrow proves no
-    /// other thread holds the lock). Parity with `parking_lot::RwLock::get_mut`.
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.value.get_mut()
-    }
-
-    /// Consume the lock, returning the inner value.
-    #[inline]
-    pub fn into_inner(self) -> T {
-        self.value.into_inner()
     }
 }
 
@@ -304,31 +228,14 @@ mod tests {
 
         {
             let mut w = rwl.write();
-            assert!(rwl.try_write().is_none());
-            assert!(rwl.try_read().is_none());
             *w = 1;
         }
 
         {
-            let w = rwl.try_write().unwrap();
-            assert!(rwl.try_write().is_none());
-            assert!(rwl.try_read().is_none());
-            drop(w);
-        }
-
-        {
             let r1 = rwl.read();
-            assert!(rwl.try_write().is_none());
-            let r2 = rwl.try_read().unwrap();
+            let r2 = rwl.read();
             assert_eq!(*r1, 1);
             assert_eq!(*r2, 1);
-        }
-
-        {
-            let r1 = rwl.try_read().unwrap();
-            assert!(rwl.try_write().is_none());
-            let r2 = rwl.try_read().unwrap();
-            drop((r1, r2));
         }
 
         let _w = rwl.write();
@@ -336,13 +243,10 @@ mod tests {
 
     #[test]
     fn raw_internal_state() {
-        // Zig: "DefaultRwLock - internal state" — regression for ziglang #13163,
-        // where the WRITER flag was subtracted instead of cleared by lock().
+        // Regression test: the WRITER flag must be cleared (not subtracted) by lock().
         let raw = RawRwLock::new();
         raw.lock();
         raw.unlock();
         assert_eq!(raw.state.load(Ordering::SeqCst), 0);
     }
 }
-
-// ported from: vendor/zig/lib/std/Thread/RwLock.zig (DefaultRwLock)

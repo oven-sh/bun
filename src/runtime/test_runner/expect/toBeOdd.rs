@@ -1,9 +1,9 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{Expect, JSValueTestExt};
+use super::Expect;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_be_odd(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_be_odd(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
         self.run_unary_predicate(g, f, "toBeOdd", |v| {
             if v.is_big_int32() {
                 v.to_int32() & 1 == 1
@@ -22,4 +22,3 @@ impl Expect {
         })
     }
 }
-// ported from: src/test_runner/expect/toBeOdd.zig

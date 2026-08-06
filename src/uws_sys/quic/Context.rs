@@ -1,6 +1,6 @@
 //! `us_quic_socket_context_t` — one lsquic engine + its event-loop wiring.
 //! For the client there is exactly one of these per HTTP-thread loop and it
-//! lives for the process; the server creates one per `Bun.serve({h3:true})`.
+//! lives for the process; the server creates one per `Bun.serve({http3:true})`.
 
 use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
@@ -80,9 +80,9 @@ pub enum ConnectResult {
 impl Context {
     /// # Safety
     /// `loop_` must point to a live `us_loop_t`. Takes a raw pointer (not `&mut Loop`)
-    /// because the Loop is shared across every context/socket/timer on the thread —
-    /// Zig `*uws.Loop` freely aliases — so requiring `&mut` would force callers to
-    /// assert uniqueness that does not hold.
+    /// because the Loop is shared across every context/socket/timer on the thread,
+    /// so requiring `&mut` would force callers to assert uniqueness that does not
+    /// hold.
     #[inline]
     pub unsafe fn create_client(
         loop_: *mut Loop,
@@ -98,7 +98,7 @@ impl Context {
     #[inline]
     pub fn r#loop(&mut self) -> *mut Loop {
         // Returns a raw pointer because the Loop is shared across every
-        // context/socket/timer on the thread (Zig `*uws.Loop` freely aliases) —
+        // context/socket/timer on the thread —
         // materializing `&mut Loop` here would assert uniqueness we cannot
         // guarantee.
         us_quic_socket_context_loop(self)
@@ -170,5 +170,3 @@ impl Context {
         us_quic_socket_context_on_stream_close(self, cb)
     }
 }
-
-// ported from: src/uws_sys/quic/Context.zig

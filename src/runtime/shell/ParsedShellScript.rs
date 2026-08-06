@@ -8,36 +8,33 @@ use bun_jsc::{
     JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
 
+use super::env_map::EnvMap;
 use super::interpreter::ShellArgs;
 use super::shell_body::{JsStrings, shell_cmd_from_js};
-use super::{EnvMap, EnvStr, Interpreter};
+use super::{EnvStr, Interpreter};
 
 // NOTE: `pub const js = jsc.Codegen.JSParsedShellScript;` and the
 // `toJS`/`fromJS`/`fromJSDirect` re-exports are provided by the
 // `#[bun_jsc::JsClass]` derive in Rust — do not hand-port them.
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut ParsedShellScript` until Phase 1 lands —
-// `&mut T` auto-derefs to `&T` so the impls below compile against either.
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
 pub struct ParsedShellScript {
     pub args: JsCell<Option<Box<ShellArgs>>>,
-    /// allocated with arena in jsobjs
-    // PORT NOTE: in Zig this Vec's backing storage lives in `args.arena` (self-referential
-    // with the `args` field). Phase A uses a global-alloc Vec; revisit if profiling shows
+    // Uses a global-alloc Vec; revisit if profiling shows
     // the extra alloc matters. JSValues here are GC-rooted via `toJSWithValues` codegen
     // (own: array on the C++ wrapper), so storing them on the Rust heap is sound.
-    pub jsobjs: JsCell<Vec<JSValue>>,
-    pub export_env: JsCell<Option<EnvMap>>,
-    pub quiet: Cell<bool>,
-    pub cwd: Cell<Option<BunString>>,
+    pub(crate) jsobjs: JsCell<Vec<JSValue>>,
+    pub(crate) export_env: JsCell<Option<EnvMap>>,
+    pub(crate) quiet: Cell<bool>,
+    pub(crate) cwd: Cell<Option<BunString>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
     /// sound: codegen calls `finalize()` which flips this to `.Finalized` before sweep.
     /// Read-only after construction; mutated only in `finalize(mut self: Box<Self>)`.
-    pub this_jsvalue: JsRef,
+    pub(crate) this_jsvalue: JsRef,
     /// Read-only after construction (set once before the JS wrapper exists).
-    pub estimated_size_for_gc: usize,
+    pub(crate) estimated_size_for_gc: usize,
 }
 
 impl Default for ParsedShellScript {
@@ -70,17 +67,16 @@ impl ParsedShellScript {
         size
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         self.compute_estimated_size_for_gc()
     }
 
-    pub fn estimated_size(&self) -> usize {
+    pub(crate) fn estimated_size(&self) -> usize {
         self.estimated_size_for_gc
     }
 
-    // PORT NOTE: reshaped from 5 out-params to a returned tuple; Zig used out-params
-    // because the caller pre-declares slots. Rust callers destructure the tuple.
-    pub fn take(
+    // Returns a tuple; callers destructure it.
+    pub(crate) fn take(
         &self,
         _global: &JSGlobalObject,
     ) -> (
@@ -100,6 +96,10 @@ impl ParsedShellScript {
 
     /// Called from the generated C++ wrapper's `finalize()`. Runs on the mutator
     /// thread during lazy sweep — must not touch live JS cells.
+    // Codegen's `host_fn_finalize` thunk calls `ParsedShellScript::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(mut self: Box<Self>) {
         // Per PORTING.md §JSC: flip the self-wrapper ref to `.Finalized` first; other
         // cells may already be swept so the weak JSValue must not be touched again.
@@ -112,11 +112,14 @@ impl ParsedShellScript {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_cwd(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
+    pub(crate) fn set_cwd(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` is non-null for a Bun-owned global.
         let vm = global.bun_vm();
-        let mut arguments = bun_jsc::ArgumentsSlice::init(vm, arguments.slice());
+        let mut arguments = bun_jsc::ArgumentsSlice::init(vm, callframe.arguments());
         let Some(str_js) = arguments.next_eat() else {
             return Err(global.throw(format_args!("$`...`.cwd(): expected a string argument")));
         };
@@ -129,14 +132,22 @@ impl ParsedShellScript {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_quiet(&self, _global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn set_quiet(
+        &self,
+        _global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arg = callframe.argument(0);
         self.quiet.set(arg.to_boolean());
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_env(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn set_env(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let Some(value1) = callframe.argument(0).get_object() else {
             return Err(global.throw_invalid_arguments(format_args!("env must be an object")));
         };
@@ -168,12 +179,12 @@ impl ParsedShellScript {
             let keyslice = key.to_owned_slice();
             // errdefer free(keyslice) — Drop on early-return handles this.
             let value_str = value.get_zig_string(global)?;
-            // `ZigString::to_owned_slice` is infallible in the Rust port (global alloc
-            // aborts on OOM); Zig wrapped in `bun.handleOom`.
+            // `ZigString::to_owned_slice` is infallible (global alloc aborts
+            // on OOM).
             let slice = value_str.to_owned_slice();
-            let keyref = EnvStr::init_ref_counted(&keyslice);
+            let keyref = EnvStr::init_ref_counted(keyslice.into_boxed_slice());
             // defer keyref.deref() — done below (insert refs again).
-            let valueref = EnvStr::init_ref_counted(&slice);
+            let valueref = EnvStr::init_ref_counted(slice.into_boxed_slice());
             // defer valueref.deref() — done below.
 
             env.insert(keyref, valueref);
@@ -188,7 +199,7 @@ impl ParsedShellScript {
 
 /// `jsc.MarkedArgumentBuffer.wrap` generates a host-fn shim that allocates a
 /// `MarkedArgumentBuffer` on the C++ stack and forwards to the impl.
-pub const CREATE_PARSED_SHELL_SCRIPT: bun_jsc::JSHostFnZig =
+pub(crate) const CREATE_PARSED_SHELL_SCRIPT: bun_jsc::JSHostFnZig =
     bun_jsc::marked_argument_buffer_wrap!(create_parsed_shell_script_impl);
 
 // `jsc.Codegen.JSParsedShellScript.toJSWithValues` — generated by
@@ -219,13 +230,11 @@ fn create_parsed_shell_script_impl(
     callframe: &CallFrame,
     marked_argument_buffer: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
-    // Zig: `defer if (needs_to_free_shargs) shargs.deinit()` — semantically `errdefer` on an
-    // owned local. Box<ShellArgs> drops automatically on every early `return`/`?` below, so
-    // no scopeguard is needed (PORTING.md: errdefer-on-owned-local → delete).
+    // Box<ShellArgs> drops automatically on every early `return`/`?` below,
+    // so no scopeguard is needed.
     let mut shargs: Box<ShellArgs> = ShellArgs::init();
 
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = arguments_.slice();
+    let arguments = callframe.arguments();
     if arguments.len() < 2 {
         return Err(global.throw_not_enough_arguments("Bun.$", 2, arguments.len()));
     }
@@ -233,14 +242,13 @@ fn create_parsed_shell_script_impl(
     let template_args_js = arguments[1];
     let mut template_args = template_args_js.array_iterator(global)?;
 
-    // PERF(port): was std.heap.stackFallback(@sizeOf(bun.String) * 4, arena) — profile in Phase B
-    // Zig: `defer { for jsstrings |s| s.deref(); jsstrings.deinit() }` — handled by
-    // `JsStrings`'s `Drop` (per-element `bun.String::deref()` then Vec free).
+    // PERF: a stack-fallback allocation may be worth it — profile if hot.
+    // Cleanup is handled by `JsStrings`'s `Drop` (per-element
+    // `bun.String::deref()` then Vec free).
     let mut jsstrings = JsStrings::with_capacity(4);
 
-    // PORT NOTE: in Zig `jsobjs` and `script` are allocated from `shargs.arena_allocator()`.
-    // Shell is an AST crate (arena-backed); Phase A uses global Vec to sidestep the
-    // self-referential borrow against `shargs` (it later moves into `ParsedShellScript`).
+    // Uses global Vecs here to sidestep a self-referential borrow against
+    // `shargs`'s arena (it later moves into `ParsedShellScript`).
     let mut jsobjs: Vec<JSValue> = Vec::new();
     let mut script: Vec<u8> = Vec::new();
     shell_cmd_from_js(
@@ -253,7 +261,7 @@ fn create_parsed_shell_script_impl(
         marked_argument_buffer,
     )?;
 
-    // PORT NOTE: reshaped for borrowck — `out_parser`/`out_lex_result` borrow
+    // Reshaped for borrowck — `out_parser`/`out_lex_result` borrow
     // `shargs.__arena`, so they're scoped to a block that ends before
     // `shargs.script_ast = script` below. The arena reference is taken via raw
     // pointer so the `&shargs` borrow doesn't outlive the call (the returned
@@ -280,13 +288,13 @@ fn create_parsed_shell_script_impl(
                 if let Some(lex) = out_lex_result.as_ref() {
                     debug_assert!(!lex.errors.is_empty());
                     let str = lex.combine_errors(arena);
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
                 }
 
                 if let Some(p) = out_parser.as_mut() {
                     debug_assert!(!p.errors.is_empty());
                     let errstr = p.combine_errors();
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
                 return Err(global.throw_error(err, "failed to lex/parse shell"));
@@ -317,5 +325,3 @@ fn create_parsed_shell_script_impl(
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_jsvalue)
 }
-
-// ported from: src/shell/ParsedShellScript.zig

@@ -1,4 +1,3 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
 use crate::p::P;
 use bun_alloc::Arena as Bump;
@@ -7,11 +6,7 @@ use bun_ast::symbol;
 use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
 use bun_collections::VecExt;
 
-// PORT NOTE: round-E un-gate. SideEffects in Zig is an enum with associated fns that
-// take `p: anytype`. Round-E converts the unbounded `<P>` generic to concrete
-// `P<'a, TS, SCAN>`. Method bodies gated; the `Result` type and enum surface are real.
-
-#[repr(u8)] // Zig: enum(u1) — Rust has no u1 repr; u8 is the smallest
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SideEffects {
     #[default]
@@ -20,30 +15,19 @@ pub enum SideEffects {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Result {
-    pub side_effects: SideEffects,
-    pub ok: bool,
-    pub value: bool,
-}
-
-impl Default for Result {
-    fn default() -> Self {
-        Self {
-            side_effects: SideEffects::CouldHaveSideEffects,
-            ok: false,
-            value: false,
-        }
-    }
+pub struct Known {
+    pub(crate) value: bool,
+    pub(crate) side_effects: SideEffects,
 }
 
 #[derive(Clone, Copy)]
 pub struct BinaryExpressionSimplifyVisitor {
     // ARENA: points into the AST store (see LIFETIMES.tsv)
-    pub bin: *const E::Binary,
+    pub(crate) bin: StoreRef<E::Binary>,
 }
 
 impl SideEffects {
-    pub fn can_change_strict_to_loose(lhs: &ExprData, rhs: &ExprData) -> bool {
+    pub(crate) fn can_change_strict_to_loose(lhs: &ExprData, rhs: &ExprData) -> bool {
         let left = lhs.known_primitive();
         let right = rhs.known_primitive();
         left == right
@@ -51,7 +35,7 @@ impl SideEffects {
             && left != bun_ast::expr::PrimitiveType::Mixed
     }
 
-    pub fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
         expr: Expr,
     ) -> Expr {
@@ -83,25 +67,22 @@ impl SideEffects {
                 }
                 ExprData::EBinary(e) => match e.op {
                     Op::Code::BinLogicalAnd => {
-                        let effects = SideEffects::to_boolean(p, &e.right.data);
-                        if effects.ok
-                            && effects.value
-                            && effects.side_effects == SideEffects::NoSideEffects
-                        {
-                            // "if (anything && truthyNoSideEffects)" => "if (anything)"
-                            *expr = e.left;
-                            continue;
+                        if let Some(effects) = SideEffects::to_boolean(p, &e.right.data) {
+                            if effects.value && effects.side_effects == SideEffects::NoSideEffects {
+                                // "if (anything && truthyNoSideEffects)" => "if (anything)"
+                                *expr = e.left;
+                                continue;
+                            }
                         }
                     }
                     Op::Code::BinLogicalOr => {
-                        let effects = SideEffects::to_boolean(p, &e.right.data);
-                        if effects.ok
-                            && !effects.value
-                            && effects.side_effects == SideEffects::NoSideEffects
-                        {
-                            // "if (anything || falsyNoSideEffects)" => "if (anything)"
-                            *expr = e.left;
-                            continue;
+                        if let Some(effects) = SideEffects::to_boolean(p, &e.right.data) {
+                            if !effects.value && effects.side_effects == SideEffects::NoSideEffects
+                            {
+                                // "if (anything || falsyNoSideEffects)" => "if (anything)"
+                                *expr = e.left;
+                                continue;
+                            }
                         }
                     }
                     _ => {}
@@ -112,21 +93,17 @@ impl SideEffects {
         }
     }
 
-    // Re-exports of ExprData methods (Zig: `pub const toNumber = Expr.Data.toNumber;`)
+    // Re-exports of ExprData methods.
     #[inline(always)]
-    pub fn to_number(data: &ExprData) -> Option<f64> {
+    pub(crate) fn to_number(data: &ExprData) -> Option<f64> {
         data.to_number()
     }
     #[inline(always)]
-    pub fn typeof_(data: &ExprData) -> Option<&'static [u8]> {
-        data.to_typeof()
-    }
-    #[inline(always)]
-    pub fn to_type_of(data: &ExprData) -> Option<&'static [u8]> {
+    pub(crate) fn typeof_(data: &ExprData) -> Option<&'static [u8]> {
         data.to_typeof()
     }
 
-    pub fn is_primitive_to_reorder(data: &ExprData) -> bool {
+    pub(crate) fn is_primitive_to_reorder(data: &ExprData) -> bool {
         matches!(
             data,
             ExprData::ENull(_)
@@ -141,14 +118,18 @@ impl SideEffects {
         )
     }
 
-    pub fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
         expr: Expr,
     ) -> Option<Expr> {
         if !p.options.features.dead_code_elimination {
             return Some(expr);
         }
-        // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are all `Copy`. We match on
+        if !p.stack_check.is_safe_to_recurse() || p.reported_stack_overflow.get() {
+            p.report_stack_overflow(expr.loc);
+            return Some(expr);
+        }
+        // `Expr`/`ExprData`/`StoreRef<_>` are all `Copy`. We match on
         // `expr.data` *by value* so `expr` itself is never borrowed across a
         // recursive `simplify_unused_expr(p, ..)` call. Mutations to boxed
         // payloads write through `StoreRef::DerefMut` into the arena, so they
@@ -193,14 +174,14 @@ impl SideEffects {
 
                 // "foo() ? 1 : 2" => "foo()"
                 if ternary.yes.is_empty() && ternary.no.is_empty() {
-                    return Self::simplify_unused_expr(p, ternary.test_);
+                    return Self::simplify_unused_expr(p, ternary.test);
                 }
 
                 // "foo() ? 1 : bar()" => "foo() || bar()"
                 if ternary.yes.is_empty() {
                     return Some(Expr::join_with_left_associative_op(
                         Op::Code::BinLogicalOr,
-                        ternary.test_,
+                        ternary.test,
                         ternary.no,
                     ));
                 }
@@ -209,7 +190,7 @@ impl SideEffects {
                 if ternary.no.is_empty() {
                     return Some(Expr::join_with_left_associative_op(
                         Op::Code::BinLogicalAnd,
-                        ternary.test_,
+                        ternary.test,
                         ternary.yes,
                     ));
                 }
@@ -239,7 +220,6 @@ impl SideEffects {
                 }
             }
 
-            // Zig: `inline .e_call, .e_new => |call|` — written out per variant.
             ExprData::ECall(call) => {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
@@ -250,7 +230,6 @@ impl SideEffects {
                             if call.can_be_unwrapped_if_unused
                                 == CallUnwrap::IfUnusedAndToStringSafe
                             {
-                                // PERF(port): @branchHint(.unlikely)
                                 // For now, only support this for 1 argument.
                                 if j.data.is_safe_to_string() {
                                     return None;
@@ -273,7 +252,6 @@ impl SideEffects {
                             if call.can_be_unwrapped_if_unused
                                 == CallUnwrap::IfUnusedAndToStringSafe
                             {
-                                // PERF(port): @branchHint(.unlikely)
                                 // For now, only support this for 1 argument.
                                 if j.data.is_safe_to_string() {
                                     return None;
@@ -305,8 +283,12 @@ impl SideEffects {
                     | Op::Code::BinGt
                     | Op::Code::BinLe
                     | Op::Code::BinGe => {
-                        if Self::is_primitive_with_side_effects(&bin.left.data)
-                            && Self::is_primitive_with_side_effects(&bin.right.data)
+                        if Self::is_primitive_with_side_effects(p, bin.left.loc, &bin.left.data)
+                            && Self::is_primitive_with_side_effects(
+                                p,
+                                bin.right.loc,
+                                &bin.right.data,
+                            )
                         {
                             let left = bin.left;
                             let right = bin.right;
@@ -333,9 +315,9 @@ impl SideEffects {
                                 // We only do this optimization if the other side is a known primitive with side effects
                                 // to avoid corrupting shared nodes when the other side is an undefined identifier
                                 if matches!(bin.left.data, ExprData::ENumber(_)) {
-                                    bin.left.data = ExprData::ENumber(E::Number { value: 0.0 });
+                                    bin.left.data = ExprData::ENumber(E::Number::new(0.0));
                                 } else if matches!(bin.right.data, ExprData::ENumber(_)) {
-                                    bin.right.data = ExprData::ENumber(E::Number { value: 0.0 });
+                                    bin.right.data = ExprData::ENumber(E::Number::new(0.0));
                                 }
                             }
                             _ => {}
@@ -391,14 +373,13 @@ impl SideEffects {
                             } else if !is_computed {
                                 continue;
                             } else {
-                                let zero = p.new_expr(E::Number { value: 0.0 }, prev_value.loc);
+                                let zero = p.new_expr(E::Number::new(0.0), prev_value.loc);
                                 e_object.properties.mut_(j).value = Some(zero);
                             }
                         }
 
-                        // PORT NOTE: G::Property is not Copy (Vec ts_decorators
-                        // field). The Zig spec does an in-place struct copy; here we
-                        // swap so the kept property lands at `end` without cloning.
+                        // G::Property is not Copy (Vec ts_decorators field), so swap
+                        // so the kept property lands at `end` without cloning.
                         e_object.properties.slice_mut().swap(end, j);
                         end += 1;
                     }
@@ -529,20 +510,19 @@ impl SideEffects {
             Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma
         ));
 
-        // PORT NOTE: Zig threads `p.binary_expression_simplify_stack` (a reusable
-        // ArrayList on `P`) to avoid per-call allocation. The Rust `P` field is
-        // currently `ListManaged<'a, ()>` (placeholder element type — see P.rs:537),
-        // so until that's reshaped to `BinaryExpressionSimplifyVisitor` we use a
-        // local Vec. Same iteration order; only the arena differs.
-        let mut stack: Vec<StoreRef<E::Binary>> = Vec::with_capacity(8);
-        stack.push(root_bin);
+        // This function recurses through `simplify_unused_expr`, so each frame
+        // only touches elements above its watermark and truncates back on exit.
+        let stack_bottom = p.binary_expression_simplify_stack.len();
+        p.binary_expression_simplify_stack
+            .push(BinaryExpressionSimplifyVisitor { bin: root_bin });
 
         // Build stack up of expressions
         let mut left: Expr = root_bin.left;
         while let ExprData::EBinary(left_bin) = left.data {
             match left_bin.op {
                 Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma => {
-                    stack.push(left_bin);
+                    p.binary_expression_simplify_stack
+                        .push(BinaryExpressionSimplifyVisitor { bin: left_bin });
                     left = left_bin.left;
                 }
                 _ => break,
@@ -550,15 +530,16 @@ impl SideEffects {
         }
 
         // Ride the stack downwards
-        let mut i = stack.len();
+        let mut i = p.binary_expression_simplify_stack.len();
         let mut result = Self::simplify_unused_expr(p, left).unwrap_or(Expr::EMPTY);
-        while i > 0 {
+        while i > stack_bottom {
             i -= 1;
-            let top = stack[i];
-            let right = top.right;
+            let top = p.binary_expression_simplify_stack[i];
+            let right = top.bin.right;
             let visited_right = Self::simplify_unused_expr(p, right).unwrap_or(Expr::EMPTY);
             result = Expr::join_with_comma(result, visited_right);
         }
+        p.binary_expression_simplify_stack.truncate(stack_bottom);
 
         if result.is_missing() {
             None
@@ -611,7 +592,7 @@ impl SideEffects {
     /// assign to a global variable instead.
     ///
     /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
-    pub fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
+    pub(crate) fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
         match stmt.data {
             // Omit these statements entirely
             StmtData::SEmpty(_)
@@ -652,6 +633,13 @@ impl SideEffects {
                     Self::find_identifiers(binding, &mut decls);
                 }
 
+                // Drop the statement entirely when the destructuring pattern binds no
+                // identifiers — e.g. `if (0) var []`. An empty `var;` is invalid syntax,
+                // and the printer asserts it never sees an empty decl list.
+                if decls.is_empty() {
+                    return false;
+                }
+
                 local.decls = G::DeclList::move_from_list(decls);
                 true
             }
@@ -664,7 +652,7 @@ impl SideEffects {
                 if Self::should_keep_stmts_in_dead_control_flow(try_stmt.body, bump) {
                     return true;
                 }
-                if let Some(catch_stmt) = &try_stmt.catch_ {
+                if let Some(catch_stmt) = &try_stmt.catch {
                     if Self::should_keep_stmts_in_dead_control_flow(catch_stmt.body, bump) {
                         return true;
                     }
@@ -722,7 +710,15 @@ impl SideEffects {
         }
     }
 
-    pub fn is_primitive_with_side_effects(data: &ExprData) -> bool {
+    pub(crate) fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
+        p: &P<'a, TS, SCAN>,
+        loc: bun_ast::Loc,
+        data: &ExprData,
+    ) -> bool {
+        if !p.stack_check.is_safe_to_recurse() {
+            p.report_stack_overflow(loc);
+            return false;
+        }
         match data {
             ExprData::ENull(_)
             | ExprData::EUndefined(_)
@@ -767,33 +763,28 @@ impl SideEffects {
                 Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr | Op::Code::BinNullishCoalescing
                 | Op::Code::BinLogicalAndAssign | Op::Code::BinLogicalOrAssign
                 | Op::Code::BinNullishCoalescingAssign => {
-                    Self::is_primitive_with_side_effects(&e.left.data)
-                        && Self::is_primitive_with_side_effects(&e.right.data)
+                    Self::is_primitive_with_side_effects(p, e.left.loc, &e.left.data)
+                        && Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data)
                 }
                 Op::Code::BinComma => {
-                    Self::is_primitive_with_side_effects(&e.right.data)
+                    Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data)
                 }
                 _ => false,
             },
             ExprData::EIf(e) => {
-                Self::is_primitive_with_side_effects(&e.yes.data)
-                    && Self::is_primitive_with_side_effects(&e.no.data)
+                Self::is_primitive_with_side_effects(p, e.yes.loc, &e.yes.data)
+                    && Self::is_primitive_with_side_effects(p, e.no.loc, &e.no.data)
             }
             _ => false,
         }
     }
 
-    pub fn to_null_or_undefined<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn to_null_or_undefined<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
         exp: &ExprData,
-    ) -> Result {
+    ) -> Option<Known> {
         if !p.options.features.dead_code_elimination {
-            // value should not be read if ok is false, all existing calls already adhere to this
-            return Result {
-                ok: false,
-                value: false,
-                side_effects: SideEffects::CouldHaveSideEffects,
-            };
+            return None;
         }
         match exp {
             // Never null or undefined
@@ -804,22 +795,19 @@ impl SideEffects {
             | ExprData::ERegExp(_)
             | ExprData::EFunction(_)
             | ExprData::EArrow(_)
-            | ExprData::EBigInt(_) => Result {
+            | ExprData::EBigInt(_) => Some(Known {
                 value: false,
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => Result {
+            }),
+            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => Some(Known {
                 value: false,
                 side_effects: SideEffects::CouldHaveSideEffects,
-                ok: true,
-            },
+            }),
             // Always null or undefined
-            ExprData::ENull(_) | ExprData::EUndefined(_) => Result {
+            ExprData::ENull(_) | ExprData::EUndefined(_) => Some(Known {
                 value: true,
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
+            }),
             ExprData::EUnary(e) => match e.op {
                 // Always number or bigint
                 Op::Code::UnPos | Op::Code::UnNeg | Op::Code::UnCpl
@@ -827,13 +815,13 @@ impl SideEffects {
                 | Op::Code::UnPostDec | Op::Code::UnPostInc
                 // Always boolean
                 | Op::Code::UnNot | Op::Code::UnTypeof | Op::Code::UnDelete => {
-                    Result { value: false, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                    Some(Known { value: false, side_effects: SideEffects::CouldHaveSideEffects })
                 }
                 // Always undefined
                 Op::Code::UnVoid => {
-                    Result { value: true, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                    Some(Known { value: true, side_effects: SideEffects::CouldHaveSideEffects })
                 }
-                _ => Result::default(),
+                _ => None,
             },
             ExprData::EBinary(e) => match e.op {
                 // always string or number or bigint
@@ -853,207 +841,163 @@ impl SideEffects {
                 | Op::Code::BinLooseNe | Op::Code::BinLt | Op::Code::BinGt
                 | Op::Code::BinLe | Op::Code::BinGe | Op::Code::BinInstanceof
                 | Op::Code::BinIn => {
-                    Result { ok: true, value: false, side_effects: SideEffects::CouldHaveSideEffects }
+                    Some(Known { value: false, side_effects: SideEffects::CouldHaveSideEffects })
                 }
                 Op::Code::BinComma => {
-                    let res = Self::to_null_or_undefined(p, &e.right.data);
-                    if res.ok {
-                        Result { value: res.value, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
-                    } else {
-                        Result::default()
-                    }
+                    Self::to_null_or_undefined(p, &e.right.data).map(|res| Known {
+                        value: res.value,
+                        side_effects: SideEffects::CouldHaveSideEffects,
+                    })
                 }
-                _ => Result::default(),
+                _ => None,
             },
             ExprData::EInlinedEnum(e) => Self::to_null_or_undefined(p, &e.value.data),
-            _ => Result::default(),
+            _ => None,
         }
     }
 
-    pub fn to_boolean<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn to_boolean<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
         exp: &ExprData,
-    ) -> Result {
+    ) -> Option<Known> {
         if !p.options.features.dead_code_elimination {
-            return Result::default();
+            return None;
+        }
+        if !p.stack_check.is_safe_to_recurse() {
+            p.report_stack_overflow(bun_ast::Loc::EMPTY);
+            return None;
         }
         match exp {
-            ExprData::ENull(_) | ExprData::EUndefined(_) => Result {
+            ExprData::ENull(_) | ExprData::EUndefined(_) => Some(Known {
                 value: false,
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => Result {
+            }),
+            ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => Some(Known {
                 value: e.value,
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::ENumber(e) => Result {
-                value: e.value != 0.0 && !e.value.is_nan(),
+            }),
+            ExprData::ENumber(e) => Some(Known {
+                value: e.value() != 0.0 && !e.value().is_nan(),
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::EBigInt(e) => {
-                let v = e.value.slice();
-                Result {
-                    value: !bun_core::eql_comptime(v, b"0"),
-                    side_effects: SideEffects::NoSideEffects,
-                    ok: true,
-                }
-            }
-            ExprData::EString(e) => Result {
-                // Zig: `e.isPresent()` — open-coded to dodge an ambiguous inherent
-                // `len()` while E.rs's duplicate `impl EString` blocks are being merged.
+            }),
+            ExprData::EBigInt(e) => E::BigInt::check_equality(&e.value, b"0").map(|equal| Known {
+                value: !equal,
+                side_effects: SideEffects::NoSideEffects,
+            }),
+            ExprData::EString(e) => Some(Known {
+                // Open-coded `isPresent` to dodge an ambiguous inherent `len()`
+                // while E.rs's duplicate `impl EString` blocks are being merged.
                 value: e.rope_len > 0 || !e.data.is_empty(),
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::EFunction(_) | ExprData::EArrow(_) | ExprData::ERegExp(_) => Result {
+            }),
+            ExprData::EFunction(_) | ExprData::EArrow(_) | ExprData::ERegExp(_) => Some(Known {
                 value: true,
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => Result {
+            }),
+            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => Some(Known {
                 value: true,
                 side_effects: SideEffects::CouldHaveSideEffects,
-                ok: true,
-            },
+            }),
             ExprData::EUnary(e) => match e.op {
-                Op::Code::UnVoid => Result {
+                Op::Code::UnVoid => Some(Known {
                     value: false,
                     side_effects: SideEffects::CouldHaveSideEffects,
-                    ok: true,
-                },
+                }),
                 Op::Code::UnTypeof => {
                     // Never an empty string
-                    Result {
+                    Some(Known {
                         value: true,
                         side_effects: SideEffects::CouldHaveSideEffects,
-                        ok: true,
-                    }
+                    })
                 }
-                Op::Code::UnNot => {
-                    let res = Self::to_boolean(p, &e.value.data);
-                    if res.ok {
-                        Result {
-                            value: !res.value,
-                            side_effects: res.side_effects,
-                            ok: true,
-                        }
-                    } else {
-                        Result::default()
-                    }
-                }
-                _ => Result::default(),
+                Op::Code::UnNot => Self::to_boolean(p, &e.value.data).map(|res| Known {
+                    value: !res.value,
+                    side_effects: res.side_effects,
+                }),
+                _ => None,
             },
             ExprData::EBinary(e) => match e.op {
-                Op::Code::BinLogicalOr => {
-                    let res = Self::to_boolean(p, &e.right.data);
-                    if res.ok && res.value {
-                        Result {
-                            value: true,
-                            side_effects: SideEffects::CouldHaveSideEffects,
-                            ok: true,
-                        }
-                    } else {
-                        Result::default()
-                    }
-                }
-                Op::Code::BinLogicalAnd => {
-                    let res = Self::to_boolean(p, &e.right.data);
-                    if res.ok && !res.value {
-                        Result {
-                            value: false,
-                            side_effects: SideEffects::CouldHaveSideEffects,
-                            ok: true,
-                        }
-                    } else {
-                        Result::default()
-                    }
-                }
-                Op::Code::BinComma => {
-                    let res = Self::to_boolean(p, &e.right.data);
-                    if res.ok {
-                        Result {
-                            value: res.value,
-                            side_effects: SideEffects::CouldHaveSideEffects,
-                            ok: true,
-                        }
-                    } else {
-                        Result::default()
-                    }
-                }
+                Op::Code::BinLogicalOr => match Self::to_boolean(p, &e.right.data) {
+                    Some(res) if res.value => Some(Known {
+                        value: true,
+                        side_effects: SideEffects::CouldHaveSideEffects,
+                    }),
+                    _ => None,
+                },
+                Op::Code::BinLogicalAnd => match Self::to_boolean(p, &e.right.data) {
+                    Some(res) if !res.value => Some(Known {
+                        value: false,
+                        side_effects: SideEffects::CouldHaveSideEffects,
+                    }),
+                    _ => None,
+                },
+                Op::Code::BinComma => Self::to_boolean(p, &e.right.data).map(|res| Known {
+                    value: res.value,
+                    side_effects: SideEffects::CouldHaveSideEffects,
+                }),
                 Op::Code::BinGt => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result {
-                                ok: true,
+                            return Some(Known {
                                 value: left_num > right_num,
                                 side_effects: SideEffects::NoSideEffects,
-                            };
+                            });
                         }
                     }
-                    Result::default()
+                    None
                 }
                 Op::Code::BinLt => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result {
-                                ok: true,
+                            return Some(Known {
                                 value: left_num < right_num,
                                 side_effects: SideEffects::NoSideEffects,
-                            };
+                            });
                         }
                     }
-                    Result::default()
+                    None
                 }
                 Op::Code::BinLe => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result {
-                                ok: true,
+                            return Some(Known {
                                 value: left_num <= right_num,
                                 side_effects: SideEffects::NoSideEffects,
-                            };
+                            });
                         }
                     }
-                    Result::default()
+                    None
                 }
                 Op::Code::BinGe => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result {
-                                ok: true,
+                            return Some(Known {
                                 value: left_num >= right_num,
                                 side_effects: SideEffects::NoSideEffects,
-                            };
+                            });
                         }
                     }
-                    Result::default()
+                    None
                 }
-                _ => Result::default(),
+                _ => None,
             },
             ExprData::EInlinedEnum(e) => Self::to_boolean(p, &e.value.data),
             ExprData::ESpecial(special) => match special {
                 E::Special::ModuleExports
                 | E::Special::ResolvedSpecifierString(_)
-                | E::Special::HotData => Result::default(),
+                | E::Special::HotData => None,
                 E::Special::HotAccept | E::Special::HotAcceptVisited | E::Special::HotEnabled => {
-                    Result {
-                        ok: true,
+                    Some(Known {
                         value: true,
                         side_effects: SideEffects::NoSideEffects,
-                    }
+                    })
                 }
-                E::Special::HotDisabled => Result {
-                    ok: true,
+                E::Special::HotDisabled => Some(Known {
                     value: false,
                     side_effects: SideEffects::NoSideEffects,
-                },
+                }),
             },
-            _ => Result::default(),
+            _ => None,
         }
     }
 }
-
-// ported from: src/js_parser/ast/SideEffects.zig

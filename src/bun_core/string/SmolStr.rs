@@ -1,16 +1,15 @@
 use core::mem;
-use core::ptr;
 
 use bun_alloc::AllocError;
 
-// NOTE: the tag-bit scheme below only works on little-endian systems (matches Zig comment).
+// NOTE: the tag-bit scheme below only works on little-endian systems.
 const _: () = assert!(cfg!(target_endian = "little"));
 // NOTE: the packed layout assumes 64-bit pointers (`__ptr` occupies the upper 64 bits of the u128).
 const _: () = assert!(mem::size_of::<usize>() == 8);
 
 /// This is a string type that stores up to 15 bytes inline on the stack, and heap allocates if it is longer.
 ///
-/// Zig layout (`packed struct(u128)`, little-endian bit order):
+/// Layout (packed u128, little-endian bit order):
 ///   bits   0..32  = `__len: u32`
 ///   bits  32..64  = `cap: u32`
 ///   bits  64..128 = `__ptr: [*]u8`  (bit 127 is the inlined tag)
@@ -25,7 +24,7 @@ impl Clone for SmolStr {
             return SmolStr(self.0);
         }
         // Heap-backed: dupe the bytes into a fresh Vec allocation.
-        // bun.handleOom: panic on OOM (matches Zig allocator semantics).
+        // Panic on OOM.
         SmolStr::from_slice(self.slice()).expect("OOM")
     }
 }
@@ -63,15 +62,6 @@ impl SmolStr {
 
     // ---- public API -------------------------------------------------------
 
-    // TODO(port): Zig `jsonStringify` participates in std.json's structural protocol;
-    // map to whatever bun's JSON-serialize trait becomes in Phase B.
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), crate::Error>
-    where
-        W: JsonWriter,
-    {
-        writer.write(self.slice())
-    }
-
     pub fn empty() -> SmolStr {
         SmolStr::from_inlined(Inlined::EMPTY)
     }
@@ -87,32 +77,32 @@ impl SmolStr {
         (self.raw_ptr_bits() & NEGATED_TAG) as *mut u8
     }
 
-    pub fn ptr_const(&self) -> *const u8 {
+    pub(crate) fn ptr_const(&self) -> *const u8 {
         (self.raw_ptr_bits() & NEGATED_TAG) as *const u8
     }
 
-    pub fn mark_inlined(&mut self) {
+    pub(crate) fn mark_inlined(&mut self) {
         self.set_raw_ptr_bits(self.raw_ptr_bits() | TAG);
     }
 
-    pub fn mark_heap(&mut self) {
+    pub(crate) fn mark_heap(&mut self) {
         self.set_raw_ptr_bits(self.raw_ptr_bits() & NEGATED_TAG);
     }
 
-    pub fn is_inlined(&self) -> bool {
+    pub(crate) fn is_inlined(&self) -> bool {
         (self.raw_ptr_bits() & TAG) != 0
     }
 
     /// ## Panics
     /// if `self` is too long to fit in an inlined string
-    pub fn to_inlined(&self) -> Inlined {
+    pub(crate) fn to_inlined(&self) -> Inlined {
         debug_assert!(self.len() as usize <= Inlined::MAX_LEN);
         let mut inlined = Inlined(self.0);
         inlined.set_tag(1);
         inlined
     }
 
-    pub fn from_baby_list(baby_list: Vec<u8>) -> SmolStr {
+    pub(crate) fn from_baby_list(baby_list: Vec<u8>) -> SmolStr {
         // Take ownership of the Vec's storage; Drop on SmolStr frees it.
         let mut baby_list = mem::ManuallyDrop::new(baby_list);
         let len = baby_list.len() as u32;
@@ -126,7 +116,7 @@ impl SmolStr {
         smol_str
     }
 
-    pub fn from_inlined(inlined: Inlined) -> SmolStr {
+    pub(crate) fn from_inlined(inlined: Inlined) -> SmolStr {
         let mut smol_str = SmolStr(inlined.0);
         smol_str.mark_inlined();
         smol_str
@@ -141,10 +131,8 @@ impl SmolStr {
 
     pub fn from_slice(values: &[u8]) -> Result<SmolStr, AllocError> {
         if values.len() > Inlined::MAX_LEN {
-            // TODO(port): verify Vec::<u8>::init_capacity / append_slice_assume_capacity API.
             let mut baby_list = Vec::<u8>::with_capacity(values.len());
             baby_list.extend_from_slice(values);
-            // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
             return Ok(SmolStr::from_baby_list(baby_list));
         }
 
@@ -163,38 +151,6 @@ impl SmolStr {
         unsafe { core::slice::from_raw_parts(self.ptr_const(), self.raw_len() as usize) }
     }
 
-    pub fn append_char(&mut self, char: u8) -> Result<(), AllocError> {
-        if self.is_inlined() {
-            let mut inlined = self.to_inlined();
-            if inlined.len() as usize + 1 > Inlined::MAX_LEN {
-                let mut baby_list = Vec::<u8>::with_capacity(inlined.len() as usize + 1);
-                baby_list.extend_from_slice(inlined.slice());
-                // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
-                baby_list.push(char);
-                // Old value is inlined (no heap) so `Drop` is a no-op; plain assign is fine.
-                *self = SmolStr::from_baby_list(baby_list);
-                return Ok(());
-            }
-            let old_len = inlined.len() as usize;
-            inlined.all_chars()[old_len] = char;
-            inlined.set_len(u8::try_from(old_len + 1).expect("int cast"));
-            self.0 = inlined.0;
-            self.mark_inlined();
-            return Ok(());
-        }
-
-        // SAFETY: ptr/len/cap were produced by a prior Vec<u8> allocation.
-        let mut baby_list = unsafe {
-            Vec::<u8>::from_raw_parts(self.ptr(), self.raw_len() as usize, self.raw_cap() as usize)
-        };
-        // Ownership of the allocation has moved into `baby_list`; neutralize self so an
-        // error return below (which drops `baby_list`) does not double-free via SmolStr::drop.
-        self.0 = Inlined::EMPTY.0;
-        baby_list.push(char);
-        *self = SmolStr::from_baby_list(baby_list);
-        Ok(())
-    }
-
     pub fn append_slice(&mut self, values: &[u8]) -> Result<(), AllocError> {
         if self.is_inlined() {
             let mut inlined = self.to_inlined();
@@ -203,7 +159,6 @@ impl SmolStr {
                 let mut baby_list = Vec::<u8>::with_capacity(old_len + values.len());
                 baby_list.extend_from_slice(inlined.slice());
                 baby_list.extend_from_slice(values);
-                // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
                 // Old `*self` is inlined (no heap) so `Drop` is a no-op; plain assign is fine.
                 *self = SmolStr::from_baby_list(baby_list);
                 return Ok(());
@@ -235,7 +190,6 @@ impl Drop for SmolStr {
     fn drop(&mut self) {
         if !self.is_inlined() {
             // SAFETY: ptr/len/cap describe a Vec<u8> allocation we own; reconstruct to free.
-            // TODO(port): verify Vec<u8> Drop frees; else dealloc via global allocator directly.
             let list = unsafe {
                 Vec::<u8>::from_raw_parts(
                     self.ptr(),
@@ -248,14 +202,9 @@ impl Drop for SmolStr {
     }
 }
 
-// TODO(port): placeholder for the std.json `writer: anytype` protocol used by json_stringify.
-pub trait JsonWriter {
-    fn write(&mut self, bytes: &[u8]) -> Result<(), crate::Error>;
-}
-
 // ---------------------------------------------------------------------------
 
-/// Zig layout (`packed struct(u128)`, little-endian bit order):
+/// Layout (packed u128, little-endian bit order):
 ///   bits   0..120 = `data: u120`   (15 inline bytes)
 ///   bits 120..127 = `__len: u7`
 ///   bit  127      = `_tag: u1`
@@ -264,26 +213,27 @@ pub trait JsonWriter {
 pub struct Inlined(u128);
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
-pub enum InlinedError {
+pub(crate) enum InlinedError {
     #[error("StringTooLong")]
     StringTooLong,
 }
 
-impl From<InlinedError> for crate::Error {
+impl From<InlinedError> for crate::CrateError {
     fn from(e: InlinedError) -> Self {
-        crate::err!(from e)
+        match e {
+            InlinedError::StringTooLong => crate::CrateError::StringTooLong,
+        }
     }
 }
 
 impl Inlined {
-    pub const MAX_LEN: usize = 120 / 8; // = 15
-    pub const EMPTY: Inlined = Inlined(1u128 << 127); // data=0, __len=0, _tag=1
+    const MAX_LEN: usize = 120 / 8; // = 15
+    const EMPTY: Inlined = Inlined(1u128 << 127); // data=0, __len=0, _tag=1
 
     /// ## Errors
     /// if `str` is longer than `MAX_LEN`
-    pub fn init(str: &[u8]) -> Result<Inlined, InlinedError> {
+    fn init(str: &[u8]) -> Result<Inlined, InlinedError> {
         if str.len() > Self::MAX_LEN {
-            // PERF(port): @branchHint(.unlikely) — no stable Rust equivalent
             return Err(InlinedError::StringTooLong);
         }
         let mut inlined = Inlined::EMPTY;
@@ -296,11 +246,11 @@ impl Inlined {
     }
 
     #[inline]
-    pub fn len(&self) -> u8 {
+    fn len(&self) -> u8 {
         ((self.0 >> 120) & 0x7F) as u8
     }
 
-    pub fn set_len(&mut self, new_len: u8) {
+    fn set_len(&mut self, new_len: u8) {
         debug_assert!(new_len < 128); // u7
         self.0 = (self.0 & !(0x7Fu128 << 120)) | ((new_len as u128) << 120);
     }
@@ -311,19 +261,13 @@ impl Inlined {
         self.0 = (self.0 & !(1u128 << 127)) | ((tag as u128) << 127);
     }
 
-    pub fn slice(&self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         // Bytes 0..len of the backing u128 are the inline data on little-endian;
         // `u128: Pod` lets us view them safely.
         &crate::bytes_of(&self.0)[..self.len() as usize]
     }
 
-    pub fn slice_mut(&mut self) -> &mut [u8] {
-        let len = self.len() as usize;
-        // `u128: Pod` lets us view its bytes safely; first `len` are the data.
-        &mut crate::bytes_of_mut(&mut self.0)[..len]
-    }
-
-    pub fn all_chars(&mut self) -> &mut [u8; Self::MAX_LEN] {
+    fn all_chars(&mut self) -> &mut [u8; Self::MAX_LEN] {
         // SAFETY: the first 15 bytes of the u128 backing storage are the `data` field
         // (little-endian, asserted at module top). `ptr()` derives a `*mut u8` from
         // `&mut self.0`, so the resulting reference has provenance over the full u128 and
@@ -335,11 +279,6 @@ impl Inlined {
     #[inline]
     fn ptr(&mut self) -> *mut u8 {
         (&raw mut self.0).cast::<u8>()
-    }
-
-    #[inline]
-    fn ptr_const(&self) -> *const u8 {
-        (&raw const self.0).cast::<u8>()
     }
 }
 
@@ -396,12 +335,9 @@ mod tests {
 
     #[test]
     fn inlined_does_not_allocate() {
-        // TODO(port): Zig used std.testing.allocator to assert no allocation; no direct
-        // equivalent here. The is_inlined() check is the observable proxy.
+        // The is_inlined() check is the observable proxy for "no allocation".
         let hello = SmolStr::from_slice(b"hello").unwrap();
         assert_eq!(5, hello.len());
         assert!(hello.is_inlined());
     }
 }
-
-// ported from: src/string/SmolStr.zig

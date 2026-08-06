@@ -1,11 +1,9 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use super::DiffFormatter;
 use super::Expect;
+use super::throw;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_been_nth_called_with(
+pub(crate) fn to_have_been_nth_called_with(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -73,29 +71,27 @@ pub fn to_have_been_nth_called_with(
 
     if this.flags.get().not() {
         let signature = Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected call #{} not to be with: <green>{}<r>\nBut it was.",
-                nth_call_num,
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
+            "\n\nExpected call #{} not to be with: <green>{}<r>\nBut it was.",
+            nth_call_num,
+            expected_args_js_array.to_fmt(&mut formatter),
         );
     }
     let signature = Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false);
 
     // Handle case where function was not called enough times
     if total_calls < nth_call_num {
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nThe mock function was called {} time{}, but call {} was requested.",
-                total_calls,
-                if total_calls == 1 { "" } else { "s" },
-                nth_call_num,
-            ),
+            "\n\nThe mock function was called {} time{}, but call {} was requested.",
+            total_calls,
+            if total_calls == 1 { "" } else { "s" },
+            nth_call_num,
         );
     }
 
@@ -108,11 +104,10 @@ pub fn to_have_been_nth_called_with(
         global_this: Some(global),
         not: false,
     };
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!("\n\nCall #{}:\n{}\n", nth_call_num, diff_format),
+        "\n\nCall #{}:\n{}\n", nth_call_num, diff_format,
     )
 }
-
-// ported from: src/test_runner/expect/toHaveBeenNthCalledWith.zig

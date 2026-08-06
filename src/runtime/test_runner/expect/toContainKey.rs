@@ -1,10 +1,9 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt};
 use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome, make_formatter};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_contain_key(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_contain_key(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.contain_matcher(global, frame, "toContainKey", ExpectedArray::None, ContainMsgs::CONTAIN,
             |g, value, expected| {
                 if !value.is_object() {
@@ -16,4 +15,3 @@ impl Expect {
             })
     }
 }
-// ported from: src/test_runner/expect/toContainKey.zig

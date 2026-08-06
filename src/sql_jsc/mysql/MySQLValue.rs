@@ -1,10 +1,10 @@
-//! `Value` union + JSC bridges for MySQL type encoding. Split from
-//! `sql/mysql/MySQLTypes.zig` so the protocol layer keeps the pure
-//! `CharacterSet`/`FieldType` enums without `JSValue` references.
+//! `Value` union + JSC bridges for MySQL type encoding. Kept separate so the
+//! protocol layer keeps the pure `CharacterSet`/`FieldType` enums without
+//! `JSValue` references.
 
 use crate::jsc::{
     IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
-    MarkedArgumentBuffer, StringJsc as _, bun_string_jsc, js_error_to_mysql,
+    MarkedArgumentBuffer, StringJsc as _, js_error_to_mysql,
 };
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{OwnedString, String as BunString};
@@ -15,7 +15,7 @@ use bun_sql::shared::Data;
 
 use crate::jsc::webcore::Blob;
 
-pub fn field_type_from_js(
+pub(crate) fn field_type_from_js(
     global_object: &JSGlobalObject,
     value: JSValue,
     unsigned: &mut bool,
@@ -96,7 +96,7 @@ pub fn field_type_from_js(
                 *unsigned = true;
                 return Ok(FieldType::MYSQL_TYPE_LONG);
             }
-            if int >= i64::MAX {
+            if int == i64::MAX {
                 *unsigned = true;
                 return Ok(FieldType::MYSQL_TYPE_LONGLONG);
             }
@@ -119,7 +119,7 @@ pub fn field_type_from_js(
     Ok(FieldType::MYSQL_TYPE_VARCHAR)
 }
 
-pub enum Value {
+pub(crate) enum Value {
     Null,
     Bool(bool),
     Short(i16),
@@ -132,12 +132,9 @@ pub enum Value {
     Double(f64),
 
     String(ZigStringSlice),
-    StringData(Data),
     Bytes(Bytes),
-    BytesData(Data),
     Date(DateTime),
     Time(Time),
-    // Decimal(Decimal),
 }
 
 /// BLOB parameter bytes. `MySQLQuery.bind()` fills every `Value` before
@@ -152,13 +149,13 @@ pub enum Value {
 /// alive — `params` is on the malloc heap and isn't scanned. `Drop`
 /// unpins.
 pub struct Bytes {
-    pub slice: ZigStringSlice,
+    pub(crate) slice: ZigStringSlice,
     /// JS ArrayBuffer/view to `unpinArrayBuffer` in `Drop`. `JSValue::ZERO`
     /// when the slice is owned (FastTypedArray dupe), borrowed from a
     /// Blob store (nothing to unpin), or empty. GC rooting of this value
     /// is the caller's responsibility via the `MarkedArgumentBuffer`
     /// passed to `from_js`.
-    pub pinned: JSValue,
+    pub(crate) pinned: JSValue,
 }
 
 impl Default for Bytes {
@@ -181,70 +178,84 @@ impl Drop for Bytes {
     }
 }
 
-// Value's Zig `deinit` only forwarded to payload deinit; Rust auto-drops enum
-// payloads (ZigStringSlice, Bytes, Data all impl Drop), so no explicit Drop.
+// No explicit Drop for Value: the enum payloads (ZigStringSlice, Bytes, Data) all impl Drop.
+
+/// The integer branches of `Value::from_js` validate against the full range of
+/// the target type, so the bounds are derived from `T` rather than repeated at
+/// every call site.
+fn int_range<T: bun_core::Integer>(field_name: &'static [u8]) -> IntegerRange {
+    IntegerRange {
+        min: T::MIN_I128,
+        max: T::MAX_I128,
+        field_name,
+        ..Default::default()
+    }
+}
+
+fn validate_int<T: bun_core::Integer>(
+    global_object: &JSGlobalObject,
+    value: JSValue,
+    field_name: &'static [u8],
+) -> Result<T, any_mysql_error::Error> {
+    global_object
+        .validate_integer_range::<T>(value, T::ZERO, int_range::<T>(field_name))
+        .map_err(js_error_to_mysql)
+}
+
+fn validate_bigint<T: bun_core::Integer>(
+    global_object: &JSGlobalObject,
+    value: JSValue,
+    field_name: &'static [u8],
+) -> Result<T, any_mysql_error::Error> {
+    global_object
+        .validate_big_int_range::<T>(value, T::ZERO, int_range::<T>(field_name))
+        .map_err(js_error_to_mysql)
+}
 
 impl Value {
-    pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
+    pub(crate) fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
         let mut buffer = [0u8; 15]; // Large enough for all fixed-size types
-        let mut pos: usize = 0;
-        match self {
+
+        let pos: usize = match self {
             Value::Null => return Ok(Data::Empty),
             Value::Bool(b) => {
                 buffer[0] = if *b { 1 } else { 0 };
-                pos = 1;
+                1
             }
             Value::Short(s) => {
                 buffer[0..2].copy_from_slice(&s.to_le_bytes());
-                pos = 2;
+                2
             }
             Value::Ushort(s) => {
                 buffer[0..2].copy_from_slice(&s.to_le_bytes());
-                pos = 2;
+                2
             }
             Value::Int(i) => {
                 buffer[0..4].copy_from_slice(&i.to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Uint(i) => {
                 buffer[0..4].copy_from_slice(&i.to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Long(l) => {
                 buffer[0..8].copy_from_slice(&l.to_le_bytes());
-                pos = 8;
+                8
             }
             Value::Ulong(l) => {
                 buffer[0..8].copy_from_slice(&l.to_le_bytes());
-                pos = 8;
+                8
             }
             Value::Float(f) => {
                 buffer[0..4].copy_from_slice(&f.to_bits().to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Double(d) => {
                 buffer[0..8].copy_from_slice(&d.to_bits().to_le_bytes());
-                pos = 8;
+                8
             }
-            Value::Date(d) => {
-                pos = d.to_binary(field_type, &mut buffer) as usize;
-            }
-            Value::Time(d) => {
-                pos = d.to_binary(field_type, &mut buffer) as usize;
-            }
-            // Value::Decimal(dec) => return dec.to_binary(field_type),
-            Value::StringData(data) | Value::BytesData(data) => {
-                // TODO(port): Zig returned `data` by value (copy of Data union);
-                // `bun_sql::shared::Data` is not `Clone` in the Rust port, so
-                // return a `Temporary` aliasing the same bytes. `to_data` callers
-                // must keep `self` alive until the returned `Data` is consumed.
-                let s = data.slice();
-                return Ok(if s.is_empty() {
-                    Data::Empty
-                } else {
-                    Data::Temporary(bun_ptr::RawSlice::new(s))
-                });
-            }
+            Value::Date(d) => d.to_binary(field_type, &mut buffer) as usize,
+            Value::Time(d) => d.to_binary(field_type, &mut buffer) as usize,
             Value::String(slice) => {
                 let s = slice.slice();
                 return Ok(if s.is_empty() {
@@ -261,12 +272,12 @@ impl Value {
                     Data::Temporary(bun_ptr::RawSlice::new(s))
                 });
             }
-        }
+        };
 
         Data::create(&buffer[0..pos]).map_err(|_| any_mysql_error::Error::OutOfMemory)
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
         field_type: FieldType,
@@ -280,99 +291,24 @@ impl Value {
             FieldType::MYSQL_TYPE_TINY => Ok(Value::Bool(value.to_boolean())),
             FieldType::MYSQL_TYPE_SHORT => {
                 if unsigned {
-                    return Ok(Value::Ushort(
-                        global_object
-                            .validate_integer_range::<u16>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: u16::MIN as i128,
-                                    max: u16::MAX as i128,
-                                    field_name: b"u16",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Ushort(validate_int(global_object, value, b"u16")?))
+                } else {
+                    Ok(Value::Short(validate_int(global_object, value, b"i16")?))
                 }
-                Ok(Value::Short(
-                    global_object
-                        .validate_integer_range::<i16>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i16::MIN as i128,
-                                max: i16::MAX as i128,
-                                field_name: b"i16",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
             FieldType::MYSQL_TYPE_LONG => {
                 if unsigned {
-                    return Ok(Value::Uint(
-                        global_object
-                            .validate_integer_range::<u32>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: u32::MIN as i128,
-                                    max: u32::MAX as i128,
-                                    field_name: b"u32",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Uint(validate_int(global_object, value, b"u32")?))
+                } else {
+                    Ok(Value::Int(validate_int(global_object, value, b"i32")?))
                 }
-                Ok(Value::Int(
-                    global_object
-                        .validate_integer_range::<i32>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i32::MIN as i128,
-                                max: i32::MAX as i128,
-                                field_name: b"i32",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
             FieldType::MYSQL_TYPE_LONGLONG => {
                 if unsigned {
-                    return Ok(Value::Ulong(
-                        global_object
-                            .validate_big_int_range::<u64>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: 0,
-                                    max: u64::MAX as i128,
-                                    field_name: b"u64",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Ulong(validate_bigint(global_object, value, b"u64")?))
+                } else {
+                    Ok(Value::Long(validate_bigint(global_object, value, b"i64")?))
                 }
-                Ok(Value::Long(
-                    global_object
-                        .validate_big_int_range::<i64>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i64::MIN as i128,
-                                max: i64::MAX as i128,
-                                field_name: b"i64",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
 
             FieldType::MYSQL_TYPE_FLOAT => Ok(Value::Float(
@@ -484,22 +420,21 @@ impl Value {
 
 #[derive(Default, Clone, Copy)]
 pub struct DateTime {
-    pub year: u16,
-    pub month: u8,
-    pub day: u8,
-    pub hour: u8,
-    pub minute: u8,
-    pub second: u8,
-    pub microsecond: u32,
+    pub(crate) year: u16,
+    pub(crate) month: u8,
+    pub(crate) day: u8,
+    pub(crate) hour: u8,
+    pub(crate) minute: u8,
+    pub(crate) second: u8,
+    pub(crate) microsecond: u32,
 }
 
 impl DateTime {
-    pub fn from_data(data: &Data) -> Result<DateTime, bun_core::Error> {
-        // TODO(port): narrow error set
+    pub(crate) fn from_data(data: &Data) -> Result<DateTime, crate::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 
-    pub fn from_binary(val: &[u8]) -> DateTime {
+    pub(crate) fn from_binary(val: &[u8]) -> DateTime {
         match val.len() {
             4 => {
                 // Byte 1: [year LSB]     (8 bits of year)
@@ -559,11 +494,40 @@ impl DateTime {
                 }
             }
             _ => panic!("Invalid datetime length: {}", val.len()),
-            // TODO(port): Zig used bun.Output.panic; confirm bun_core panic helper
         }
     }
 
-    pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
+    /// Parse a MySQL text-protocol DATE/DATETIME/TIMESTAMP string
+    /// (`YYYY-MM-DD`, `YYYY-MM-DD HH:MM:SS`, or with `.ffffff` fractional
+    /// seconds) into components so the text path can treat them as UTC, the
+    /// same way the binary path does. Returns `None` for MySQL zero-date
+    /// sentinels (`0000-00-00`), impossible calendar values (`2024-02-31`), and
+    /// malformed input, so the caller surfaces `Invalid Date` — matching what
+    /// the previous `Date.parse` path produced for those.
+    pub(crate) fn from_text(text: &[u8]) -> Option<DateTime> {
+        let parsed = crate::shared::datetime_text::parse_mysql(text)?;
+        if parsed.month < 1
+            || parsed.month > 12
+            || parsed.day < 1
+            || parsed.day > days_in_month(parsed.year, parsed.month)
+            || parsed.hour > 23
+            || parsed.minute > 59
+            || parsed.second > 59
+        {
+            return None;
+        }
+        Some(DateTime {
+            year: parsed.year,
+            month: parsed.month,
+            day: parsed.day,
+            hour: parsed.hour,
+            minute: parsed.minute,
+            second: parsed.second,
+            microsecond: parsed.microsecond,
+        })
+    }
+
+    pub(crate) fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
         match field_type {
             FieldType::MYSQL_TYPE_YEAR => {
                 buffer[0] = 2;
@@ -596,8 +560,26 @@ impl DateTime {
         }
     }
 
-    pub fn to_js_timestamp(&self, global_object: &JSGlobalObject) -> JsResult<f64> {
-        global_object.gregorian_date_time_to_ms(
+    pub(crate) fn to_js_timestamp(&self, global_object: &JSGlobalObject) -> JsResult<f64> {
+        // MySQL in permissive sql_mode can store zero / partial-zero dates like
+        // "0000-00-00" or "2024-00-15" and send them over the binary protocol.
+        // WTF::GregorianDateTime would silently wrap month=0 to December of the
+        // prior year, so validate here and surface NaN instead — matching the
+        // Invalid Date the text path produces via from_text().
+        if self.month < 1
+            || self.month > 12
+            || self.day < 1
+            || self.day > days_in_month(self.year, self.month)
+            || self.hour > 23
+            || self.minute > 59
+            || self.second > 59
+        {
+            return Ok(f64::NAN);
+        }
+        // from_unix_timestamp() breaks a Date's UTC epoch into Y/M/D h:m:s with
+        // pure-UTC arithmetic, so decode must also treat the stored wall-clock
+        // as UTC — otherwise a Date round-trips shifted by the local UTC offset.
+        global_object.gregorian_date_time_to_ms_utc(
             i32::from(self.year),
             i32::from(self.month),
             i32::from(self.day),
@@ -612,7 +594,7 @@ impl DateTime {
         )
     }
 
-    pub fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> DateTime {
+    pub(crate) fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> DateTime {
         let mut ts = timestamp;
         let days = ts.div_euclid(86400);
         ts = ts.rem_euclid(86400);
@@ -635,24 +617,32 @@ impl DateTime {
         }
     }
 
-    pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        // TODO(port): Zig calls toJSTimestamp() with no args here but the fn takes globalObject and is fallible; preserved bug
-        JSValue::from_date_number(
-            global_object,
-            self.to_js_timestamp(global_object).unwrap_or(f64::NAN),
-        )
+    /// `from_unix_timestamp`/`gregorian_date` can only represent
+    /// 1970-01-01T00:00:00Z through 9999-12-31T23:59:59Z (the MySQL DATETIME
+    /// maximum). Anything outside that window panics on an integer cast, so
+    /// reject it with a catchable error instead.
+    fn check_range(ts: i64, global_object: &JSGlobalObject) -> Result<(), any_mysql_error::Error> {
+        const MAX_DATETIME_UNIX_TIMESTAMP: i64 = 253_402_300_799;
+        if !(0..=MAX_DATETIME_UNIX_TIMESTAMP).contains(&ts) {
+            return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                format_args!(
+                    "MySQL DATE/DATETIME value must be between 1970-01-01T00:00:00Z and 9999-12-31T23:59:59Z"
+                ),
+            )));
+        }
+        Ok(())
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<DateTime, any_mysql_error::Error> {
-        // TODO(port): narrow error set
         if value.is_date() {
             // this is actually ms not seconds
             let total_ms = value.get_unix_timestamp();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            Self::check_range(ts, global_object)?;
             return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
         }
 
@@ -660,6 +650,7 @@ impl DateTime {
             let total_ms = value.as_number();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            Self::check_range(ts, global_object)?;
             return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
         }
 
@@ -671,29 +662,43 @@ impl DateTime {
 
 #[derive(Default, Clone, Copy)]
 pub struct Time {
-    pub negative: bool,
-    pub days: u32,
-    pub hours: u8,
-    pub minutes: u8,
-    pub seconds: u8,
-    pub microseconds: u32,
+    pub(crate) negative: bool,
+    pub(crate) days: u32,
+    pub(crate) hours: u8,
+    pub(crate) minutes: u8,
+    pub(crate) seconds: u8,
+    pub(crate) microseconds: u32,
 }
 
 impl Time {
-    pub fn from_js(
+    /// `from_unix_timestamp` stores whole days in a `u32`; negative or
+    /// oversized values panic on an integer cast. Reject them with a
+    /// catchable error instead.
+    fn check_range(ts: i64, global_object: &JSGlobalObject) -> Result<(), any_mysql_error::Error> {
+        const MAX_TIME_SECONDS: i64 = (u32::MAX as i64) * 86400 + 86399;
+        if !(0..=MAX_TIME_SECONDS).contains(&ts) {
+            return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                format_args!("MySQL TIME value is out of range"),
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<Time, any_mysql_error::Error> {
-        // TODO(port): narrow error set
         if value.is_date() {
             let total_ms = value.get_unix_timestamp();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            Self::check_range(ts, global_object)?;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else if value.is_number() {
             let total_ms = value.as_number();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            Self::check_range(ts, global_object)?;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else {
             Err(js_error_to_mysql(global_object.throw_invalid_arguments(
@@ -702,7 +707,7 @@ impl Time {
         }
     }
 
-    pub fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> Time {
+    pub(crate) fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> Time {
         let days = timestamp.div_euclid(86400);
         let hours = timestamp.rem_euclid(86400).div_euclid(3600);
         let minutes = timestamp.rem_euclid(3600).div_euclid(60);
@@ -717,21 +722,11 @@ impl Time {
         }
     }
 
-    pub fn to_unix_timestamp(&self) -> i64 {
-        let mut total_ms: i64 = 0;
-        total_ms = total_ms.saturating_add((self.days as i64).saturating_mul(86400000));
-        total_ms = total_ms.saturating_add((self.hours as i64).saturating_mul(3600000));
-        total_ms = total_ms.saturating_add((self.minutes as i64).saturating_mul(60000));
-        total_ms = total_ms.saturating_add((self.seconds as i64).saturating_mul(1000));
-        total_ms
-    }
-
-    pub fn from_data(data: &Data) -> Result<Time, bun_core::Error> {
-        // TODO(port): narrow error set
+    pub(crate) fn from_data(data: &Data) -> Result<Time, crate::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 
-    pub fn from_binary(val: &[u8]) -> Time {
+    pub(crate) fn from_binary(val: &[u8]) -> Time {
         if val.is_empty() {
             return Time::default();
         }
@@ -752,27 +747,7 @@ impl Time {
 
         time
     }
-
-    pub fn to_js_timestamp(&self) -> f64 {
-        let mut total_ms: i64 = 0;
-        total_ms = total_ms.saturating_add((self.days as i64) * 86400000);
-        total_ms = total_ms.saturating_add((self.hours as i64) * 3600000);
-        total_ms = total_ms.saturating_add((self.minutes as i64) * 60000);
-        total_ms = total_ms.saturating_add((self.seconds as i64) * 1000);
-        total_ms = total_ms.saturating_add((self.microseconds / 1000) as i64);
-
-        if self.negative {
-            total_ms = -total_ms;
-        }
-
-        total_ms as f64
-    }
-
-    pub fn to_js(self, _global_object: &JSGlobalObject) -> JSValue {
-        JSValue::js_double_number(self.to_js_timestamp())
-    }
-
-    pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
+    pub(crate) fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
         match field_type {
             FieldType::MYSQL_TYPE_TIME | FieldType::MYSQL_TYPE_TIME2 => {
                 buffer[1] = if self.negative { 1 } else { 0 };
@@ -794,53 +769,9 @@ impl Time {
     }
 }
 
-pub struct Decimal {
-    // MySQL DECIMAL is stored as a sequence of base-10 digits
-    pub digits: Box<[u8]>,
-    pub scale: u8,
-    pub negative: bool,
-}
-
-impl Decimal {
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        // PERF(port): was stack-fallback (std.heap.stackFallback(64, ...)) — profile in Phase B
-        let mut str: Vec<u8> = Vec::new();
-
-        if self.negative {
-            str.push(b'-');
-        }
-
-        let decimal_pos = self.digits.len() - self.scale as usize;
-        for (i, digit) in self.digits.iter().enumerate() {
-            if i == decimal_pos && self.scale > 0 {
-                str.push(b'.');
-            }
-            str.push(digit + b'0');
-        }
-
-        bun_string_jsc::create_utf8_for_js(global_object, &str).unwrap_or(JSValue::ZERO)
-    }
-
-    pub fn to_binary(&self, _field_type: FieldType) -> Result<Data, bun_core::Error> {
-        // Zig: `bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});`
-        // Intentional shipped runtime "feature not yet implemented" — distinct
-        // from a Phase-A porting placeholder. The `Decimal` arm of `Value` is
-        // commented out, so this is unreachable today.
-        bun_core::todo_panic!("Decimal.toBinary not implemented")
-    }
-
-    // pub fn from_data(data: &Data) -> Result<Decimal, bun_core::Error> {
-    //     Ok(Self::from_binary(data.slice()))
-    // }
-
-    // pub fn from_binary(_: &[u8]) -> Decimal {
-    //     bun_core::todo_panic!("Decimal.fromBinary not implemented")
-    // }
-}
-
 // Helper functions for date calculations
 fn is_leap_year(year: u16) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 fn days_in_month(year: u16, month: u8) -> u8 {
@@ -880,7 +811,6 @@ fn gregorian_date(days: i32) -> Date {
     }
 }
 
-// TODO(port): move to sql_jsc_sys (or bun_jsc_sys)
 unsafe extern "C" {
     /// By-value `JSValue`; C++ side null-checks and reads its own heap state.
     /// No caller-side preconditions → `safe fn`.
@@ -895,5 +825,3 @@ unsafe extern "C" {
         out_len: &mut usize,
     ) -> i32;
 }
-
-// ported from: src/sql_jsc/mysql/MySQLValue.zig

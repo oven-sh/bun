@@ -1,12 +1,11 @@
-use bun_jsc::{CallFrame, ConsoleObject, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
 use super::mock;
+use super::throw;
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_been_called_with(
+pub(crate) fn to_have_been_called_with(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -66,25 +65,23 @@ pub fn to_have_been_called_with(
 
     if this.flags.get().not() {
         let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected mock function not to have been called with: <green>{}<r>\nBut it was.",
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
+            "\n\nExpected mock function not to have been called with: <green>{}<r>\nBut it was.",
+            expected_args_js_array.to_fmt(&mut formatter),
         );
     }
     let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", false);
 
     if calls_count == 0 {
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected: <green>{}<r>\nBut it was not called.",
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
+            "\n\nExpected: <green>{}<r>\nBut it was not called.",
+            expected_args_js_array.to_fmt(&mut formatter),
         );
     }
 
@@ -99,12 +96,11 @@ pub fn to_have_been_called_with(
             global_this: Some(global),
             not: false,
         };
-        return this.throw(global, signature, format_args!("\n\n{}\n", diff_format));
+        return throw!(this, global, signature, "\n\n{}\n", diff_format);
     }
 
     // If there are multiple calls, list them all to help debugging.
-    // PORT NOTE: reshaped for borrowck — Zig shares one `&formatter` between to_fmt and
-    // list_formatter; in Rust the AllCallsWithArgsFormatter holds an exclusive borrow, so
+    // The AllCallsWithArgsFormatter holds an exclusive borrow of the formatter, so
     // we allocate a second ConsoleObject formatter for the list.
     let mut list_fmt = super::make_formatter(global);
     let list_formatter = mock::AllCallsWithArgsFormatter {
@@ -113,20 +109,13 @@ pub fn to_have_been_called_with(
         formatter: core::cell::RefCell::new(&mut list_fmt),
     };
 
-    // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
-    // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
-    // Re-expand to `if b { throw::<true>() } else { throw::<false>() }` once `bun_core::pretty_fmt!` exists.
-    // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            "\n\n    <green>Expected<r>: {}\n    <red>Received<r>:\n{}\n\n    Number of calls: {}\n",
-            expected_args_js_array.to_fmt(&mut formatter),
-            list_formatter,
-            calls_count,
-        ),
+        "\n\n    <green>Expected<r>: {}\n    <red>Received<r>:\n{}\n\n    Number of calls: {}\n",
+        expected_args_js_array.to_fmt(&mut formatter),
+        list_formatter,
+        calls_count,
     )
 }
-
-// ported from: src/test_runner/expect/toHaveBeenCalledWith.zig

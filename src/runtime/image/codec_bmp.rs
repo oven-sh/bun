@@ -10,23 +10,23 @@
 
 use super::codecs;
 
-pub struct Header {
-    pub width: u32,
-    pub height: u32,
+pub(crate) struct Header {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
     /// y-stride direction: BMP rows are bottom-up unless biHeight < 0.
-    pub top_down: bool,
-    pub bpp: u16, // 24 or 32
-    pub pix_off: u32,
+    pub(crate) top_down: bool,
+    pub(crate) bpp: u16, // 24 or 32
+    pub(crate) pix_off: u32,
     /// BI_BITFIELDS masks; for BI_RGB these are the Windows defaults.
-    pub r_mask: u32,
-    pub g_mask: u32,
-    pub b_mask: u32,
-    pub a_mask: u32,
+    pub(crate) r_mask: u32,
+    pub(crate) g_mask: u32,
+    pub(crate) b_mask: u32,
+    pub(crate) a_mask: u32,
 }
 
 /// Read enough of BITMAPFILEHEADER + BITMAPINFOHEADER (any version ≥ 40)
 /// to size and locate the pixel array. Everything is little-endian.
-pub fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
+pub(crate) fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
     // BITMAPFILEHEADER(14) + at least BITMAPINFOHEADER(40).
     if b.len() < 54 || b[0] != b'B' || b[1] != b'M' {
         return Err(codecs::Error::DecodeFailed);
@@ -129,14 +129,14 @@ fn to8(v: u32, width: u32) -> u8 {
     }
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     let h = parse_header(bytes)?;
     codecs::guard(h.width, h.height, max_pixels)?;
 
     let bpp_bytes: u32 = (h.bpp / 8) as u32;
     // Rows are padded to 4-byte boundaries — DWORD alignment is the one
     // BMP rule everyone implements.
-    let stride: usize = ((h.width as usize * bpp_bytes as usize + 3) / 4) * 4;
+    let stride: usize = (h.width as usize * bpp_bytes as usize).div_ceil(4) * 4;
     let need = h.pix_off as usize + stride * h.height as usize;
     if need > bytes.len() {
         return Err(codecs::Error::DecodeFailed);
@@ -172,7 +172,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
                         .expect("infallible: size matches"),
                 )
             };
-            dst[xs * 4 + 0] = to8((pix >> rs) & (1u32 << rw).wrapping_sub(1), rw);
+            dst[xs * 4] = to8((pix >> rs) & (1u32 << rw).wrapping_sub(1), rw);
             dst[xs * 4 + 1] = to8((pix >> gs) & (1u32 << gw).wrapping_sub(1), gw);
             dst[xs * 4 + 2] = to8((pix >> bs) & (1u32 << bw).wrapping_sub(1), bw);
             dst[xs * 4 + 3] = if h.a_mask == 0 {
@@ -191,5 +191,3 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         icc_profile: None,
     })
 }
-
-// ported from: src/runtime/image/codec_bmp.zig

@@ -2,7 +2,6 @@ const { hideFromStack } = require("internal/shared");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ArrayIsArray = Array.isArray;
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
 /**
@@ -21,10 +20,19 @@ function checkIsHttpToken(val) {
   This regex validates any string surrounded by angle brackets
   (not necessarily a valid URI reference) followed by zero or more
   link-params separated by semicolons.
+
+  The parameter name excludes "=" so it cannot overlap with the optional
+  "=value" suffix; otherwise inputs like "<>;a=b;a=b;...;a=b " trigger
+  catastrophic backtracking.
 */
-const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s]+(?:=(")?[^;"\s]*\1)?)*$/;
+const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s=]+(?:=(")?[^;"\s]*\1)?)*$/;
+const linkValueForbiddenCharsRegExp = /[\r\n]/;
 function validateLinkHeaderFormat(value, name) {
-  if (typeof value === "undefined" || !RegExpPrototypeExec.$call(linkValueRegExp, value)) {
+  if (
+    typeof value === "undefined" ||
+    !RegExpPrototypeExec.$call(linkValueRegExp, value) ||
+    RegExpPrototypeExec.$call(linkValueForbiddenCharsRegExp, value) !== null
+  ) {
     throw $ERR_INVALID_ARG_VALUE(
       name,
       value,
@@ -77,18 +85,45 @@ function validateBoolean(value, name) {
   if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
-function validateUndefined(value, name) {
-  if (value !== undefined) throw $ERR_INVALID_ARG_TYPE(name, "undefined", value);
+/** Validate a string-or-URL path and return it resolved to an absolute path string. */
+function getValidatedPath(p: any) {
+  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
+  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+  if (p.startsWith("file:")) return Bun.fileURLToPath(p);
+  return require("node:path").resolve(p);
 }
 
-function validateInternalField(object, fieldKey, className) {
-  if (typeof object !== "object" || object === null || !ObjectPrototypeHasOwnProperty.$call(object, fieldKey)) {
-    throw $ERR_INVALID_ARG_TYPE("this", className, object);
+function throwIfNullBytesInFileName(filename: string) {
+  if (filename.indexOf("\u0000") !== -1) {
+    throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", filename);
   }
 }
 
-hideFromStack(validateLinkHeaderValue, validateInternalField);
-hideFromStack(validateString, validateFunction, validateBoolean, validateUndefined);
+/**
+ * node's fs getValidatedPath (lib/internal/fs/utils.js): converts URL
+ * *instances* via fileURLToPath, accepts strings and Buffers as-is (no
+ * path.resolve, no "file:"-prefix string sniffing), and rejects null bytes.
+ */
+function getValidatedFsPath(p: any, propName: string = "path") {
+  if (p instanceof URL) p = Bun.fileURLToPath(p);
+  if (typeof p === "string") {
+    if (p.indexOf("\u0000") !== -1) {
+      throw $ERR_INVALID_ARG_VALUE(propName, p, "must be a string, Uint8Array, or URL without null bytes");
+    }
+    return p;
+  }
+  if (p instanceof Uint8Array) {
+    if (p.indexOf(0) !== -1) {
+      throw $ERR_INVALID_ARG_VALUE(propName, p, "must be a string, Uint8Array, or URL without null bytes");
+    }
+    return p;
+  }
+  throw $ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], p);
+}
+
+hideFromStack(validateLinkHeaderValue);
+hideFromStack(validateString, validateFunction, validateBoolean);
+hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
 
 export default {
   /** (value, name) */
@@ -119,19 +154,16 @@ export default {
   validateInt32: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInt32", 0),
   /** `(value, name, positive = false)` */
   validateUint32: $newCppFunction("NodeValidator.cpp", "jsFunction_validateUint32", 0),
-  /** `(signal, name = 'signal')` */
-  validateSignalName: $newCppFunction("NodeValidator.cpp", "jsFunction_validateSignalName", 0),
   /** `(data, encoding)` */
   validateEncoding: $newCppFunction("NodeValidator.cpp", "jsFunction_validateEncoding", 0),
-  /** `(value, name)` */
-  validatePlainFunction: $newCppFunction("NodeValidator.cpp", "jsFunction_validatePlainFunction", 0),
-  /** `(value, name)` */
-  validateUndefined,
   /** `(buffer, name = 'buffer')` */
   validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
   /** `(value, name, oneOf)` */
   validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
   isUint8Array: value => value instanceof Uint8Array,
-  /** `(object, fieldKey, className)` */
-  validateInternalField,
+  /** `(path)` — accepts a string or file URL, returns it resolved to an absolute path string */
+  getValidatedPath,
+  getValidatedFsPath,
+  /** `(filename)` */
+  throwIfNullBytesInFileName,
 };

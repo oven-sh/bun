@@ -1,8 +1,10 @@
 use core::cell::Cell;
+use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
+use bun_jsc::{AbortSignal, AbortSignalRef, GlobalRef};
 
 use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
@@ -10,44 +12,26 @@ use crate::webcore::jsc::{
     JsResult, StringJsc as _,
 };
 use bun_core::Output;
-use bun_core::{
-    OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice,
-};
+use bun_core::{OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice};
 use bun_http_types::Method::Method;
-use bun_jsc::StringJsc as _;
 
 use super::blob::Internal as InternalBlob;
-use super::body::{Body, BodyMixin, Value as BodyValue};
+use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
 use super::{FetchHeaders, ReadableStream, Request};
 
-// PORT NOTE: codegen (`generated_classes.rs`) re-exports `Blob` from
-// `crate::webcore::response` because the Zig `.classes.ts` source path is
+// Codegen (`generated_classes.rs`) re-exports `Blob` from
+// `crate::webcore::response` because the `.classes.ts` source path is
 // `bun.jsc.WebCore.response.Blob`. Keep this `pub use` so that resolves.
 pub use super::blob::Blob;
 use bun_ptr::weak_ptr::WeakPtrData;
 
-// C++ helper functions for AsyncLocalStorage integration
-// TODO(port): move to <area>_sys
-unsafe extern "C" {
-    pub safe fn Response__getAsyncLocalStorageStore(
-        global: &JSGlobalObject,
-        als: JSValue,
-    ) -> JSValue;
-    pub safe fn Response__mergeAsyncLocalStorageOptions(
-        global: &JSGlobalObject,
-        als_store: JSValue,
-        init_options: JSValue,
-    );
-}
-
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.
 ///
 /// Holds exactly one ref on the C++ intrusive refcount; `Drop` releases it via
-/// `WebCore__FetchHeaders__deref`. This is the Rust shape for Zig's
-/// `?*FetchHeaders` field + manual `headers.deref()` in `deinit()` — NOT a
-/// `std::rc::Rc` (the payload lives on the C++ heap and is opaque here).
+/// `WebCore__FetchHeaders__deref`. NOT a `std::rc::Rc` (the payload lives on
+/// the C++ heap and is opaque here).
 ///
-/// Intentionally not `Clone`: the only "share" operation the Zig surface
+/// Intentionally not `Clone`: the only "share" operation the surface
 /// exposes is `clone_this()`, which deep-copies a fresh `FetchHeaders` on the
 /// C++ side. Transferring ownership is by-move.
 #[repr(transparent)]
@@ -60,47 +44,39 @@ impl HeadersRef {
     /// `ptr` must be a valid `WebCore::FetchHeaders*` and the caller must
     /// transfer ownership of one ref.
     #[inline]
-    pub unsafe fn adopt(ptr: NonNull<FetchHeaders>) -> Self {
+    pub(crate) unsafe fn adopt(ptr: NonNull<FetchHeaders>) -> Self {
         Self(ptr)
     }
 
-    /// Relinquish ownership without decrementing the ref. Inverse of `adopt`.
     #[inline]
-    pub fn into_raw(self) -> NonNull<FetchHeaders> {
-        let p = self.0;
-        core::mem::forget(self);
-        p
-    }
-
-    #[inline]
-    pub fn as_ptr(&self) -> *mut FetchHeaders {
+    pub(crate) fn as_ptr(&self) -> *mut FetchHeaders {
         self.0.as_ptr()
     }
 
     /// `FetchHeaders.createEmpty()` — fresh C++ allocation, refcount 1.
     #[inline]
-    pub fn create_empty() -> Self {
+    pub(crate) fn create_empty() -> Self {
         // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
         unsafe { Self::adopt(FetchHeaders::create_empty()) }
     }
 
     /// `FetchHeaders.createFromUWS(req)` — fresh C++ allocation, refcount 1.
     #[inline]
-    pub fn create_from_uws(uws_request: *mut core::ffi::c_void) -> Self {
+    pub(crate) fn create_from_uws(uws_request: *mut core::ffi::c_void) -> Self {
         // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
         unsafe { Self::adopt(FetchHeaders::create_from_uws(uws_request)) }
     }
 
     /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
     #[inline]
-    pub fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
+    fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
         Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
     }
 
     /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
     #[inline]
-    pub fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
+    pub(crate) fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
         Ok(bun_opaque::opaque_deref_mut(self.0.as_ptr())
             .clone_this(global)?
@@ -137,14 +113,62 @@ impl Drop for HeadersRef {
     }
 }
 
+/// Errors the owning fetch `Response`'s body on abort (Fetch spec "abort a fetch" step 4).
+pub(crate) struct BodyAbortListener {
+    signal: AbortSignalRef,
+    /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
+    response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,
+    global: GlobalRef,
+}
+
+impl BodyAbortListener {
+    unsafe extern "C" fn on_abort(ctx: *mut c_void, reason: JSValue) {
+        reason.ensure_still_alive();
+        // SAFETY: `ctx` is the `Box<BodyAbortListener>` registered in
+        // `attach_abort_signal`; `clean_native_bindings` removes it before the
+        // box is dropped, so it is live here. Copy out up front: erroring a
+        // still-streaming body can re-enter `Response::unref` via
+        // `FetchTasklet::ignore_remaining_response_body` and destroy this box.
+        let (response, global) =
+            unsafe { ((*ctx.cast::<Self>()).response, (*ctx.cast::<Self>()).global) };
+        Response::ref_(response.as_mut_ptr());
+        let _keepalive = scopeguard::guard((), move |()| Response::unref(response.as_mut_ptr()));
+        if !matches!(
+            response.get_body_value(),
+            BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
+        ) {
+            // Not `get_body_readable_stream`: its `js_ref()` path reads a raw
+            // JSValue to a wrapper that may be unmarked but not yet swept,
+            // reaching a `NewSource` box the source cell's (PreciseAllocation)
+            // destructor already freed. `Locked.readable` is a real `JSC::Weak`
+            // on the stream and reads `None` exactly when the box is gone.
+            if let BodyValue::Locked(locked) = response.get_body_value() {
+                if let Some(readable) = locked.readable.get(&global) {
+                    readable.value.ensure_still_alive();
+                    readable.error(&global, reason);
+                }
+            }
+            let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
+            // R-2: re-derive after `error()` ran JS.
+            let _ = response.get_body_value().to_error_instance(err, &global);
+        }
+    }
+}
+
+impl Drop for BodyAbortListener {
+    fn drop(&mut self) {
+        let ctx = core::ptr::from_mut(self).cast::<c_void>();
+        self.signal.clean_native_bindings(ctx);
+        self.signal.pending_activity_unref();
+    }
+}
+
 // `jsc.Codegen.JSResponse` — generated by `.classes.ts`. The Rust bindings
 // live in `bun_jsc::generated::JSResponse` (emitted by `js_class_module!`):
 // `from_js` / `from_js_direct` / `to_js` / `get_constructor` /
 // `dangerously_set_ptr` plus the cached-accessor pairs (`body_*_cached`,
 // `headers_*_cached`, `url_*_cached`, `statusText_*_cached`,
-// `stream_*_cached`). Zig's `js.gc.stream.{get,set,clear}` flatten to
-// `stream_{get,set}_cached`; `clear` is `set(.., .zero)` (see
-// ZigGeneratedClasses.zig `gc.clear`).
+// `stream_*_cached`).
 //
 // IMPORTANT: do NOT re-introduce `crate::webcore::jsc::codegen::JSResponse`
 // here — that module is a placeholder stub whose `to_js_unchecked` returns
@@ -154,16 +178,12 @@ pub mod js {
     pub use bun_jsc::generated::JSResponse::*;
 }
 // NOTE: toJS is overridden below.
-// Zig: `pub const fromJS = js.fromJS;` — typed re-exports. The `js::` module
-// erases the payload to `*mut ()` (Response is defined above the `bun_jsc`
-// crate, so `js_class_module!` can't name it); cast at this boundary.
+// Typed re-exports. The `js::` module erases the payload to `*mut ()`
+// (Response is defined above the `bun_jsc` crate, so `js_class_module!`
+// can't name it); cast at this boundary.
 #[inline]
 pub fn from_js(value: JSValue) -> Option<*mut Response> {
     js::from_js(value).map(<*mut ()>::cast::<Response>)
-}
-#[inline]
-pub fn from_js_direct(value: JSValue) -> Option<*mut Response> {
-    js::from_js_direct(value).map(<*mut ()>::cast::<Response>)
 }
 
 // `JsClass` impl delegates to `bun_jsc::generated::JSResponse` — the
@@ -188,7 +208,7 @@ bun_jsc::impl_js_class_via_generated!(Response => bun_jsc::generated::JSResponse
 pub struct Response {
     body: JsCell<Body>,
     init: JsCell<Init>,
-    // PORT NOTE: `OwnedString` is `#[repr(transparent)]` over `BunString`, so
+    // `OwnedString` is `#[repr(transparent)]` over `BunString`, so
     // the C ABI layout is unchanged. We use it (not raw `BunString`) so the
     // field's drop glue actually releases the WTF refcount — `BunString` is
     // `Copy` and has no `Drop`.
@@ -196,16 +216,19 @@ pub struct Response {
     redirected: Cell<bool>,
     /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
     /// In the server we use a flag response_protected to protect/unprotect the response
-    pub ref_count: Cell<u32>,
+    pub(crate) ref_count: Cell<u32>,
     /// Bun.serve's RequestContext holds a weak reference so `onAbort` /
     /// `handleResolveStream` / `handleRejectStream` can safely observe that the
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
-    pub weak_ptr_data: WeakPtrData,
+    pub(crate) weak_ptr_data: WeakPtrData,
     js_ref: JsCell<JsRef>,
 
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
+
+    /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
+    abort_listener: JsCell<Option<Box<BodyAbortListener>>>,
 }
 
 impl Default for Response {
@@ -219,23 +242,21 @@ impl Default for Response {
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
             reported_estimated_size: Cell::new(0),
+            abort_listener: JsCell::new(None),
         }
     }
 }
 
-// TODO(port): WeakPtr is intrusive (embedded WeakPtrData field). Keep raw-pointer
-// semantics; do NOT map to std::rc::Weak (owner is intrusive-refcounted).
 impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
     unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
         unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
     }
 }
-pub type WeakRef = bun_ptr::WeakPtr<Response>;
+pub(crate) type WeakRef = bun_ptr::WeakPtr<Response>;
 
 // Wire the codegen'd cached `body`/`stream` JS slot accessors + weak `js_ref`
-// so the [`BodyMixin`] twin defaults can run generically (Zig:
-// `T.js.bodyGetCached` / `T.js.gc.stream.*` / `this.#js_ref.tryGet()`).
+// so the [`BodyMixin`] twin defaults can run generically.
 impl crate::webcore::body::BodyOwnerJs for Response {
     #[inline]
     fn js_ref(&self) -> Option<JSValue> {
@@ -259,10 +280,10 @@ impl crate::webcore::body::BodyOwnerJs for Response {
     }
 }
 
-// BodyMixin(@This()) is a comptime type fn that generates getText/
+// BodyMixin is a trait with default methods providing getText/
 // getBody/getBytes/getBodyUsed/getJSON/getArrayBuffer/getBlob/getBlobWithoutCallFrame/
 // getFormData over any type exposing getBodyValue()/getFormDataEncoding()/etc.
-// In Rust this is a trait with default methods; Response implements it.
+// Response implements it.
 
 impl BodyMixin for Response {
     #[inline]
@@ -271,7 +292,7 @@ impl BodyMixin for Response {
     }
     #[inline]
     fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
-        // Zig: `?*FetchHeaders` — opaque C++ handle. Return the raw `*mut`
+        // Opaque C++ handle. Return the raw `*mut`
         // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
         // going through `as_deref()` would derive it from a `&FetchHeaders`
         // and make the later `as_mut()` UB under Stacked Borrows.
@@ -289,7 +310,12 @@ impl BodyMixin for Response {
 }
 
 impl Response {
-    pub fn init(response_init: Init, body: Body, url: BunString, redirected: bool) -> Response {
+    pub(crate) fn init(
+        response_init: Init,
+        body: Body,
+        url: BunString,
+        redirected: bool,
+    ) -> Response {
         Response {
             init: JsCell::new(response_init),
             body: JsCell::new(body),
@@ -301,64 +327,60 @@ impl Response {
 
     /// Takes ownership (+1) of `status_text`.
     #[inline]
-    pub fn set_init(&self, method: Method, status_code: u16, status_text: BunString) {
+    pub(crate) fn set_init(&self, method: Method, status_code: u16, status_text: BunString) {
         self.init.with_mut(|init| {
             init.method = method;
             init.status_code = status_code;
             // Assigning over an `OwnedString` runs its `Drop`, which `deref()`s the
-            // previous WTF impl — matching Zig's explicit `status_text.deref()`
-            // before reassignment (Response.zig:54).
+            // previous WTF impl.
             init.status_text = OwnedString::new(status_text);
         });
     }
 
     #[inline]
-    pub fn set_init_headers(&self, headers: Option<HeadersRef>) {
+    pub(crate) fn set_init_headers(&self, headers: Option<HeadersRef>) {
         // old headers dropped (HeadersRef::Drop derefs the C++ handle)
         self.init.with_mut(|init| init.headers = headers);
     }
 
     #[inline]
-    pub fn get_init_status_code(&self) -> u16 {
+    pub(crate) fn get_init_status_code(&self) -> u16 {
         self.init.get().status_code
     }
 
-    /// Borrowed (+0) — bitwise copy of the inner `BunString`, matching Zig's
-    /// `getInitStatusText` (Response.zig:67). Caller must NOT `deref()` the
-    /// result; call `.clone()` on it if a +1 is needed.
+    /// Borrowed (+0) — bitwise copy of the inner `BunString`. Caller must NOT
+    /// `deref()` the result; call `.clone()` on it if a +1 is needed.
     #[inline]
-    pub fn get_init_status_text(&self) -> BunString {
+    pub(crate) fn get_init_status_text(&self) -> BunString {
         self.init.get().status_text.get()
     }
 
     /// Takes ownership (+1) of `url`.
     #[inline]
-    pub fn set_url(&self, url: BunString) {
+    pub(crate) fn set_url(&self, url: BunString) {
         // Assigning over an `OwnedString` runs its `Drop`, which `deref()`s the
-        // previous WTF impl — matching Zig's explicit `this.#url.deref()`
-        // before reassignment (Response.zig:70).
+        // previous WTF impl.
         self.url.set(OwnedString::new(url));
     }
 
     #[inline]
-    pub fn get_utf8_url(&self) -> bun_core::ZigStringSlice {
+    pub(crate) fn get_utf8_url(&self) -> bun_core::ZigStringSlice {
         self.url.get().to_utf8()
     }
 
-    /// Internal accessor: borrowed (+0) bitwise copy of the URL string,
-    /// matching Zig's `getUrl` (Response.zig:77). Caller must NOT `deref()`
-    /// the result; call `.clone()` on it if a +1 is needed.
+    /// Internal accessor: borrowed (+0) bitwise copy of the URL string.
+    /// Caller must NOT `deref()` the result; call `.clone()` on it if a +1 is
+    /// needed.
     ///
-    /// PORT NOTE: Zig had both `getUrl()` (returns the string) and `getURL()`
-    /// (the JS getter). They collide under snake_case, so the JS getter keeps
-    /// `get_url` (codegen calls that name) and this becomes `url()`.
+    /// The JS getter keeps `get_url` (codegen calls that name); this internal
+    /// accessor is `url()`.
     #[inline]
-    pub fn url(&self) -> BunString {
+    pub(crate) fn url(&self) -> BunString {
         self.url.get().get()
     }
 
     #[inline]
-    pub fn get_init_headers(&self) -> Option<&FetchHeaders> {
+    pub(crate) fn get_init_headers(&self) -> Option<&FetchHeaders> {
         self.init.get().headers.as_deref()
     }
 
@@ -381,21 +403,35 @@ impl Response {
 
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn get_init_headers_mut(&self) -> Option<&mut FetchHeaders> {
+    pub(crate) fn get_init_headers_mut(&self) -> Option<&mut FetchHeaders> {
         self.init_mut().headers.as_deref_mut()
     }
 
+    /// Deep-copy this response's init headers (if any) into a fresh
+    /// `HeadersRef`. Centralises the `FetchHeaders::clone_this` +
+    /// `HeadersRef::adopt` pair so callers stay `unsafe`-free.
     #[inline]
-    pub fn swap_init_headers(&self) -> Option<HeadersRef> {
+    pub(crate) fn clone_init_headers(
+        &self,
+        global: &JSGlobalObject,
+    ) -> JsResult<Option<HeadersRef>> {
+        match self.init_mut().headers.as_ref() {
+            Some(headers) => headers.clone_this(global),
+            None => Ok(None),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn swap_init_headers(&self) -> Option<HeadersRef> {
         self.init.with_mut(|init| init.headers.take())
     }
 
     #[inline]
-    pub fn get_method(&self) -> Method {
+    pub(crate) fn get_method(&self) -> Method {
         self.init.get().method
     }
 
-    pub fn estimated_size(this: &Response) -> usize {
+    pub(crate) fn estimated_size(this: &Response) -> usize {
         this.reported_estimated_size.get()
     }
 
@@ -405,24 +441,20 @@ impl Response {
     /// `&mut` to the same `body`).
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn get_body_value(&self) -> &mut BodyValue {
+    pub(crate) fn get_body_value(&self) -> &mut BodyValue {
         // R-2: both `Response.body` and `Body.value` are `JsCell` —
         // single-JS-thread interior-mutability boundary. See `Body::value_mut`.
         self.body.get().value_mut()
     }
 }
 
-// TODO(b2-blocked): bun_jsc::* + bun_core::form_data — to_js, JsRef::try_get/
-// init_weak, js::gc::stream, ReadableStream::from_js, BodyValue::estimated_size,
-// JSValue methods. Everything below until `Init` is JSC integration.
-
 impl Response {
     #[inline]
-    pub fn get_body_len(&self) -> usize {
+    pub(crate) fn get_body_len(&self) -> usize {
         self.body.get().len() as usize
     }
 
-    pub fn get_form_data_encoding(
+    pub(crate) fn get_form_data_encoding(
         &self,
     ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         let Some(content_type_slice) = self.get_content_type()? else {
@@ -435,7 +467,7 @@ impl Response {
         Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
     }
 
-    pub fn calculate_estimated_byte_size(&self) {
+    pub(crate) fn calculate_estimated_byte_size(&self) {
         self.reported_estimated_size.set(
             self.body.get().value.get().estimated_size()
                 + self.url.get().byte_slice().len()
@@ -445,7 +477,7 @@ impl Response {
     }
 
     #[inline]
-    pub(crate) fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
+    fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
@@ -467,7 +499,7 @@ impl Response {
     }
 
     #[inline]
-    pub fn get_body_readable_stream(
+    pub(crate) fn get_body_readable_stream(
         &self,
         global_object: &JSGlobalObject,
     ) -> Option<ReadableStream> {
@@ -475,12 +507,37 @@ impl Response {
     }
 
     #[inline]
-    pub fn detach_readable_stream(&self, global_object: &JSGlobalObject) {
+    pub(crate) fn detach_readable_stream(&self, global_object: &JSGlobalObject) {
         <Self as BodyMixin>::detach_readable_stream(self, global_object)
     }
 
+    /// Install a [`BodyAbortListener`] so abort reaches this body after `FetchTasklet` has detached.
+    ///
+    /// SAFETY: `this` must be a live heap `Response` (stored as the listener's [`ParentRef`]).
+    pub(crate) unsafe fn attach_abort_signal(
+        this: *mut Response,
+        global: &JSGlobalObject,
+        signal: &AbortSignal,
+    ) {
+        // SAFETY: `signal` is live; `ref_()` bumps the intrusive refcount.
+        let signal_ref = unsafe { AbortSignalRef::adopt(signal.ref_()) };
+        signal.pending_activity_ref();
+        let mut listener = Box::new(BodyAbortListener {
+            signal: signal_ref,
+            // SAFETY: caller contract; `this` is live and owns the box.
+            response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
+            global: GlobalRef::new(global),
+        });
+        signal.add_listener(
+            core::ptr::from_mut(&mut *listener).cast::<c_void>(),
+            BodyAbortListener::on_abort,
+        );
+        // SAFETY: caller contract; `this` is live.
+        unsafe { (*this).abort_listener.set(Some(listener)) };
+    }
+
     #[inline]
-    pub fn set_size_hint(&self, size_hint: super::blob::SizeType) {
+    pub(crate) fn set_size_hint(&self, size_hint: super::blob::SizeType) {
         if let BodyValue::Locked(locked) = self.body.get().value_mut() {
             locked.size_hint = size_hint;
             if let Some(readable) = locked.readable.get(locked.global()) {
@@ -494,19 +551,16 @@ impl Response {
     }
 }
 
-// TODO(b2-blocked): bun_jsc::* — host_fn, callframe.arguments_old, JSValue::as_.
-
 mod _jsc_host_fns {
     use super::*;
 
     #[unsafe(export_name = "jsFunctionRequestOrResponseHasBodyValue")]
     #[bun_jsc::host_call]
-    pub fn js_function_request_or_response_has_body_value(
+    fn js_function_request_or_response_has_body_value(
         _global: *mut JSGlobalObject,
         callframe: &CallFrame,
     ) -> JSValue {
-        let arguments = callframe.arguments_old::<1>();
-        let this_value = arguments.ptr[0];
+        let [this_value] = callframe.arguments_as_array::<1>();
         if this_value.is_empty_or_undefined_or_null() {
             return JSValue::FALSE;
         }
@@ -522,7 +576,7 @@ mod _jsc_host_fns {
 
     #[unsafe(export_name = "jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer")]
     #[bun_jsc::host_call]
-    pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
+    fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
         global_object: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {
@@ -532,8 +586,7 @@ mod _jsc_host_fns {
             bun_opaque::opaque_deref(global_object),
             bun_opaque::opaque_deref(callframe),
         );
-        let arguments = callframe.arguments_old::<1>();
-        let this_value = arguments.ptr[0];
+        let [this_value] = callframe.arguments_as_array::<1>();
         if this_value.is_empty_or_undefined_or_null() {
             return JSValue::UNDEFINED;
         }
@@ -577,47 +630,33 @@ mod _jsc_host_fns {
 } // mod _jsc_host_fns
 
 impl Response {
-    pub fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
+    pub(crate) fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
         self.init.get().headers.as_deref()
     }
 
     #[inline]
-    pub fn status_code(&self) -> u16 {
+    pub(crate) fn status_code(&self) -> u16 {
         self.init.get().status_code
     }
 }
 
-pub struct Props {}
-
-// ─── un-gated getters & header helpers ──────────────────────────────────────
+// ─── getters & header helpers ───────────────────────────────────────────────
 impl Response {
-    pub fn redirect_location(&self) -> Option<ZigString> {
-        self.header(HTTPHeaderName::Location)
-    }
-
-    pub fn header(&self, name: HTTPHeaderName) -> Option<ZigString> {
-        // PORT NOTE: reshaped for borrowck — `FetchHeaders::fast_get` takes
-        // `&mut self` (FFI writes through an out-param), so we return the
-        // owned `ZigString` instead of a borrowed slice. Callers do
-        // `.slice()` themselves. R-2 escape hatch via `init_mut()`.
-        self.init_mut().headers.as_mut()?.fast_get(name)
-    }
-
-    pub fn is_ok(&self) -> bool {
+    pub(crate) fn is_ok(&self) -> bool {
         let status_code = self.init.get().status_code;
         status_code >= 200 && status_code <= 299
     }
 
-    // PORT NOTE: Zig `getURL` (JS getter). The Zig `getUrl` accessor became `url()`
-    // above; codegen calls this exact name.
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_url(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    // JS getter; codegen calls this exact name.
+    pub(crate) fn get_url(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
         this.url.get().to_js(global_this)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_response_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_response_type(
+        this: &Self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         if this.init.get().status_code < 200 {
             return Ok(global_this.common_strings().error());
         }
@@ -625,32 +664,31 @@ impl Response {
         Ok(global_this.common_strings().default())
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_status_text(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_status_text(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
         this.init.get().status_text.to_js(global_this)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_redirected(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_redirected(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
         JSValue::from(this.redirected.get())
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_ok(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_ok(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
         JSValue::from(this.is_ok())
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_status(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_status(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
         JSValue::js_number(this.init.get().status_code as f64)
     }
 
     #[allow(clippy::mut_from_ref)]
-    fn get_or_create_headers(&self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
+    pub(crate) fn get_or_create_headers(
+        &self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<&mut HeadersRef> {
         // R-2 escape hatch via `init_mut()` — the returned `&mut HeadersRef`
         // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
         // hold the borrow across calls that re-enter Response host-fns.
@@ -663,7 +701,7 @@ impl Response {
                 if !content_type.is_empty() {
                     init.headers.as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        content_type,
+                        &BunString::ascii(content_type),
                         global_this,
                     )?;
                 }
@@ -673,12 +711,11 @@ impl Response {
         Ok(init.headers.as_mut().unwrap())
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
-    pub fn get_content_type(&self) -> JsResult<Option<ZigStringSlice>> {
+    pub(crate) fn get_content_type(&self) -> JsResult<Option<ZigStringSlice>> {
         // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
         // does not re-enter JS.
         if let Some(headers) = self.init_mut().headers.as_mut() {
@@ -698,12 +735,8 @@ impl Response {
     }
 }
 
-// TODO(b2-blocked): bun_jsc::* — write_format ConsoleFormatter, do_clone/
-// constructor/from_js paths (need codegen js::gc::stream slots, JsClass downcast,
-// Body::extract).
-
 impl Response {
-    pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,
         writer: &mut W,
@@ -712,15 +745,15 @@ impl Response {
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
-        // PORT NOTE: return type narrowed to `core::fmt::Result`. The trait
-        // methods produce `fmt::Error`/`JsError`/`bun_core::Error`; none of
+        // return type narrowed to `core::fmt::Result`. The trait
+        // methods produce `fmt::Error`/`JsError`/`crate::Error`; none of
         // those convert into the others, so funnel everything through
-        // `fmt::Error` (Zig's `anyerror!void` carried no payload either).
+        // `fmt::Error`.
         let js_err = |_: JsError| core::fmt::Error;
 
-        write!(
+        writeln!(
             writer,
-            "Response ({}) {{\n",
+            "Response ({}) {{",
             bun_core::fmt::size(self.get_body_len(), Default::default())
         )?;
 
@@ -750,11 +783,7 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> \"")
             )?;
-            write!(
-                writer,
-                "{}",
-                Output::pretty_fmt_args("<r><b>{}<r>", ENABLE_ANSI_COLORS, (self.url.get(),))
-            )?;
+            bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r><b>{}<r>", self.url.get())?;
             writer.write_str("\"")?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
@@ -782,14 +811,11 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>statusText<d>:<r> ")
             )?;
-            write!(
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                Output::pretty_fmt_args(
-                    "<r>\"<b>{}<r>\"",
-                    ENABLE_ANSI_COLORS,
-                    (&self.init.get().status_text,)
-                )
+                ENABLE_ANSI_COLORS,
+                "<r>\"<b>{}<r>\"",
+                &self.init.get().status_text
             )?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
@@ -842,32 +868,39 @@ impl Response {
         Ok(())
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
-    pub fn do_clone(
+    pub(crate) fn do_clone(
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        this.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
         let cloned = this.clone(global_this)?;
 
+        // SAFETY: `cloned` is a freshly-boxed Response from `clone()`.
         let js_wrapper = Response::make_maybe_pooled(global_this, cloned);
         this.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
         Ok(js_wrapper)
     }
 
-    pub fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
-        // SAFETY: ptr is a freshly-boxed Response from clone()
+    /// # Safety
+    /// `ptr` must point to a live `Response` allocation (e.g. freshly boxed via
+    /// [`Response::clone`]); ownership of the +1 ref transfers to the returned
+    /// JS wrapper.
+    // Safety contract is documented above; callers pass freshly-boxed pointers.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
+        // SAFETY: caller contract — `ptr` is live and uniquely owned.
         unsafe { (*ptr).to_js(global_object) }
     }
 
-    pub fn clone_value(&self, global_this: &JSGlobalObject) -> JsResult<Response> {
+    pub(crate) fn clone_value(&self, global_this: &JSGlobalObject) -> JsResult<Response> {
         let body = Body::new(self.clone_body_value_via_cached_stream(global_this)?);
-        // errdefer body.deinit() — `Body` has NO `Drop`; arm a guard so the
-        // `?` below releases the cloned body payload (Response.zig:433).
+        // `Body` has NO `Drop`; arm a guard so the
+        // `?` below releases the cloned body payload.
         let body = scopeguard::guard(body, |b| b.reset());
         let init = self.init.get().clone(global_this)?;
-        // errdefer init.deinit() — Init's drop glue (HeadersRef + OwnedString)
+        // Init's drop glue (HeadersRef + OwnedString)
         // handles cleanup on `?` below
         Ok(Response {
             body: JsCell::new(scopeguard::ScopeGuard::into_inner(body)),
@@ -878,7 +911,7 @@ impl Response {
         })
     }
 
-    pub fn clone(&self, global_this: &JSGlobalObject) -> JsResult<*mut Response> {
+    pub(crate) fn clone(&self, global_this: &JSGlobalObject) -> JsResult<*mut Response> {
         Ok(bun_core::heap::into_raw(Box::new(
             self.clone_value(global_this)?,
         )))
@@ -887,9 +920,6 @@ impl Response {
     fn destroy(this: *mut Response) {
         // SAFETY: called from unref() when ref_count hits 0; this is the unique owner
         unsafe {
-            // Mirrors Zig `destroy` (Response.zig:457-460): `init.deinit()` /
-            // `body.deinit()` / `url.deref()` / `js_ref.deinit()`.
-            //
             // We assign safe-empty values rather than `drop_in_place` so the
             // struct stays in a valid (all-empty) state if `on_finalize()`
             // returns false and the allocation outlives this call until the
@@ -901,11 +931,12 @@ impl Response {
             //   (Body.rs renames `deinit` → `reset`). `drop_in_place` here
             //   would leak refcounted payloads (WTFStringImpl, Blob store).
             // - `url: OwnedString` — assignment drops the old value (WTF deref).
-            // - `JsRef` — assignment drops the `Strong` arm (HandleSlot freed).
+            // - `JsRef` — assignment drops the `Strong` arm (block slot released).
             (*this).init.set(Init::default());
             (*this).body.get_mut().reset();
             (*this).url.set(OwnedString::new(BunString::empty()));
             (*this).js_ref.set(JsRef::empty());
+            (*this).abort_listener.set(None);
 
             // Contents are gone; the allocation itself stays until any outstanding
             // WeakRef derefs (RequestContext.response_weakref). WeakRef.get() returns
@@ -914,24 +945,30 @@ impl Response {
                 // Do NOT use heap::take — that would re-run field drop glue
                 // on init/url/js_ref. They are now safe-empty so the second drop
                 // would be a no-op, but it is still wasted work and fragile under
-                // future field additions. Zig's `bun.destroy()` only frees the
-                // allocation; match that with a raw dealloc.
+                // future field additions; free the allocation with a raw dealloc.
                 let layout = std::alloc::Layout::new::<Response>();
                 std::alloc::dealloc(this.cast::<u8>(), layout);
             }
         }
     }
 
-    pub fn ref_(this: *mut Response) -> *mut Response {
-        // SAFETY: intrusive refcount; caller holds a live reference
+    /// # Safety
+    /// `this` must point to a live `Response` on which the caller already holds
+    /// at least one intrusive ref.
+    pub(crate) fn ref_(this: *mut Response) -> *mut Response {
+        // SAFETY: caller contract — `this` is live.
         unsafe {
             (*this).ref_count.set((*this).ref_count.get() + 1);
         }
         this
     }
 
-    pub fn unref(this: *mut Response) {
-        // SAFETY: intrusive refcount; caller holds a live reference
+    /// # Safety
+    /// `this` must point to a live `Response` on which the caller holds one
+    /// intrusive ref; that ref is released (and the allocation destroyed if it
+    /// was the last).
+    pub(crate) fn unref(this: *mut Response) {
+        // SAFETY: caller contract — `this` is live.
         unsafe {
             let rc = (*this).ref_count.get();
             debug_assert!(rc > 0);
@@ -948,27 +985,25 @@ impl Response {
         // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
         let this = bun_core::heap::release(self);
         this.js_ref.with_mut(JsRef::finalize);
+        // SAFETY: `heap::release` returned the live raw pointer for the +1 we
+        // just reclaimed from the JS wrapper.
         Self::unref(this);
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn]
-    pub fn construct_json(
+    pub(crate) fn construct_json(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<2>();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: `bun_vm()` returns a raw `*mut VirtualMachine` (PORTING.md
         // §raw-ptr) — borrow it for the duration of args parsing.
-        let mut args =
-            bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
-        // PORT NOTE: Zig tracked `did_succeed` and manually deinit'd body/init
-        // on failure. `Init`'s field drop glue (HeadersRef + OwnedString)
+        // `Init`'s field drop glue (HeadersRef + OwnedString)
         // releases its refs on `?`. `Body` has NO `Drop` and its
         // `WTFStringImpl` arm is a raw `*mut` (no drop glue), so wrap the
-        // stack value in a scopeguard that calls `body.reset()` (Zig's
-        // `body.deinit`) on early return; disarmed before `heap::alloc`.
+        // stack value in a scopeguard that calls `body.reset()`
+        // on early return; disarmed before `heap::alloc`.
         let response = scopeguard::guard(
             Response {
                 body: JsCell::new(Body::new(BodyValue::Empty)),
@@ -1012,31 +1047,27 @@ impl Response {
             }
 
             if !str.is_empty() {
-                // PORT NOTE: `bun_core::String.value` is private; use
+                // `bun_core::String.value` is private; use
                 // `leak_wtf_impl()` to take ownership of the +1 ref as a raw
                 // `*mut WTFStringImplStruct`. `String` is intentionally
-                // non-`Drop`, so consuming it here is the same as Zig's
-                // bitwise field read.
+                // non-`Drop`, so consuming it here is a plain bitwise read.
                 let wtf = str.leak_wtf_impl();
                 debug_assert!(!wtf.is_null());
                 // `json_stringify_fast` populated a WTF-backed string; `wtf` is a
                 // live +1 impl pointer until we deref/transfer it below.
                 let wtf_ref = super::body::wtf_impl(&wtf);
                 if let Some(bytes) = wtf_ref.to_utf8_if_needed() {
-                    // We took +1 via leak_wtf_impl; release it now (Zig: `defer str.deref()`).
+                    // We took +1 via leak_wtf_impl; release it now.
                     wtf_ref.deref();
                     response
                         .body
                         .get()
                         .value
                         .set(BodyValue::InternalBlob(InternalBlob {
-                            // TODO(port): Zig used Managed(u8).fromOwnedSlice; bytes.slice() ownership
-                            // transfers here as Vec<u8>.
                             bytes: bytes.into_vec(),
                             was_string: true,
                         }));
                 } else {
-                    // Zig moves the WTFStringImpl pointer bitwise (no ref/deref).
                     // We already hold the +1 from `leak_wtf_impl`; transfer it
                     // into the body value.
                     response.body.get().value.set(BodyValue::WTFStringImpl(wtf));
@@ -1056,7 +1087,7 @@ impl Response {
                 match Init::init(global_this, arg_init) {
                     Ok(Some(init)) => response.init.set(init),
                     Ok(None) => {}
-                    Err(e) if e == bun_jsc::JsError::Thrown => return Ok(JSValue::ZERO),
+                    Err(bun_jsc::JsError::Thrown) => return Ok(JSValue::ZERO),
                     Err(_) => {}
                 }
             }
@@ -1066,7 +1097,7 @@ impl Response {
         let json_mime = bun_http_types::MimeType::JSON;
         headers_ref.put_default(
             HTTPHeaderName::ContentType,
-            json_mime.value.as_ref(),
+            &BunString::ascii(json_mime.value.as_ref()),
             global_this,
         )?;
         // Disarm the body-reset guard: all fallible ops have succeeded.
@@ -1092,8 +1123,7 @@ impl Response {
         }
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn]
-    pub fn construct_redirect(
+    pub(crate) fn construct_redirect(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1104,18 +1134,16 @@ impl Response {
         Ok(unsafe { (*ptr).to_js(global_this) })
     }
 
-    pub fn construct_redirect_impl(
+    pub(crate) fn construct_redirect_impl(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<Response> {
-        let args_list = callframe.arguments_old::<4>();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: see `construct_json`.
-        let mut args =
-            bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
-        let mut url_string_slice = ZigStringSlice::empty();
-        // url_string_slice drops at scope exit
+        // url_string drops (derefs the WTF string) at scope exit
+        let url_string: OwnedString;
         let response: Response = 'brk: {
             let response = Response {
                 init: JsCell::new(Init {
@@ -1127,14 +1155,12 @@ impl Response {
             };
 
             let url_string_value = args.next_eat().unwrap_or(JSValue::ZERO);
-            let mut url_string = ZigString::init(b"");
-
-            if !url_string_value.is_empty() {
-                url_string = url_string_value.get_zig_string(global_this)?;
-            }
-            url_string_slice = url_string.to_slice();
-            // PORT NOTE: Zig tracked `did_succeed` and manually deinit'd body/init on
-            // failure. In Rust, `Init`'s drop glue (HeadersRef + OwnedString)
+            url_string = OwnedString::new(if url_string_value.is_empty() {
+                BunString::empty()
+            } else {
+                url_string_value.to_bun_string(global_this)?
+            });
+            // `Init`'s drop glue (HeadersRef + OwnedString)
             // handles cleanup on `?`.
 
             if let Some(arg_init) = args.next_eat() {
@@ -1145,7 +1171,7 @@ impl Response {
                         Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
                     response.init.with_mut(|i| i.status_code = status);
                 } else if let Some(init) = Init::init(global_this, arg_init)? {
-                    // errdefer response.init.deinit() — handled by Init's drop glue on `?` below
+                    // cleanup is handled by Init's drop glue on `?` below
                     response.init.set(init);
 
                     let status = response.init.get().status_code;
@@ -1163,19 +1189,19 @@ impl Response {
             break 'brk response;
         };
 
+        // `get_or_create_headers` already populated init.headers.
         let headers = response.get_or_create_headers(global_this)?;
-        // PORT NOTE: reshaped for borrowck — Zig assigned response.init.headers = ...
-        // then re-borrowed; here get_or_create_headers already populated init.headers.
-        headers.put(
-            HTTPHeaderName::Location,
-            url_string_slice.slice(),
-            global_this,
-        )?;
+        // https://fetch.spec.whatwg.org/#dom-response-redirect steps 1 & 6: `Location`
+        // gets the serialization of the parsed url, not the raw input. Non-absolute
+        // input keeps the raw string: relative redirects are documented Bun behavior.
+        let href = OwnedString::new(bun_url::href_from_string(&url_string));
+        // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
+        let location = if href.is_empty() { &url_string } else { &href };
+        headers.put(HTTPHeaderName::Location, location, global_this)?;
         Ok(response)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn]
-    pub fn construct_error(
+    pub(crate) fn construct_error(
         global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1196,10 +1222,9 @@ impl Response {
         Ok(js_value)
     }
 
-    // TODO(port): codegen — constructor signature includes js_this (the pre-allocated
-    // JS wrapper). The // TODO(b2-blocked): #[bun_jsc::host_fn] macro needs a `constructor` variant that
-    // passes the wrapper through.
-    pub fn constructor(
+    // Hand-written: the constructor signature includes js_this (the pre-allocated
+    // JS wrapper), which `#[bun_jsc::host_fn]` has no variant for.
+    pub(crate) fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
         js_this: JSValue,
@@ -1231,7 +1256,7 @@ impl Response {
                     let credentials = s3.get_credentials();
 
                     let result = match credentials.sign_request::<false>(
-                        bun_s3_signing::SignOptions {
+                        &bun_s3_signing::SignOptions {
                             path: s3.path(),
                             method: Method::GET,
                             content_hash: None,
@@ -1257,7 +1282,11 @@ impl Response {
                     // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
                     response.redirected.set(true);
                     let headers = response.get_or_create_headers(global_this)?;
-                    headers.put(HTTPHeaderName::Location, &result.url, global_this)?;
+                    headers.put(
+                        HTTPHeaderName::Location,
+                        &BunString::ascii(&result.url),
+                        global_this,
+                    )?;
                     return Ok(bun_core::heap::into_raw(Box::new(response)));
                 }
             }
@@ -1280,7 +1309,7 @@ impl Response {
             }
             return Err(bun_jsc::JsError::Thrown);
         };
-        // errdefer init.deinit() — Init's field drop glue (HeadersRef + OwnedString)
+        // Init's field drop glue (HeadersRef + OwnedString)
         // handles cleanup on `?` below
 
         if global_this.has_exception() {
@@ -1291,30 +1320,29 @@ impl Response {
             if arguments[0].is_undefined_or_null() {
                 break 'brk Body::new(BodyValue::Null);
             }
-            // PORT NOTE: `Body::extract` is a free fn in `body::_jsc_gated`,
-            // re-exported as `body::extract`.
+            // `Body::extract` is a free fn re-exported as `body::extract`.
             super::body::extract(global_this, arguments[0])?
         };
-        // errdefer body.deinit() — `Body` has NO `Drop`; arm a guard so the
-        // error returns below release the extracted body payload
-        // (Response.zig:758).
+        // `Body` has NO `Drop`; arm a guard so the
+        // error returns below release the extracted body payload.
         let body = scopeguard::guard(body, |b| b.reset());
 
         if global_this.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
 
-        // Perform the only remaining fallible op BEFORE heap-allocating: Zig
-        // keeps `errdefer _init.deinit()` / `errdefer body.deinit()` active
-        // across `bun.new` (Response.zig:744,758), so on `headers.put` failure
-        // body+init are freed (only the bare struct leaks). Doing it on stack
-        // locals lets `?` trigger the scopeguard and `init`'s drop glue and
-        // avoids leaking the heap allocation entirely.
+        // Perform the only remaining fallible op BEFORE heap-allocating:
+        // doing it on stack locals lets `?` trigger the scopeguard and
+        // `init`'s drop glue and avoids leaking the heap allocation entirely.
         if let BodyValue::Blob(blob) = body.value.get() {
             if let Some(headers) = init.headers.as_deref_mut() {
                 let content_type = blob.content_type_slice();
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
-                    headers.put(HTTPHeaderName::ContentType, content_type, global_this)?;
+                    headers.put(
+                        HTTPHeaderName::ContentType,
+                        &BunString::ascii(content_type),
+                        global_this,
+                    )?;
                 }
             }
         }
@@ -1340,8 +1368,7 @@ impl Response {
     }
 }
 
-// PORT NOTE: Zig had an explicit `Init.deinit()` (Response.zig:880-889) which
-// deref'd `headers` and `status_text`. In Rust, `headers: Option<HeadersRef>`
+// `headers: Option<HeadersRef>`
 // has `Drop` (releases the C++ ref) and `status_text: OwnedString` has `Drop`
 // (releases the WTF ref) — `BunString` itself is `Copy` and has NO `Drop`, so
 // the field MUST be `OwnedString` for auto-generated drop glue to perform the
@@ -1350,9 +1377,9 @@ impl Response {
 // (e.g. Request::construct_into reading `response_init.headers`) keep working;
 // the remaining `status_text` is still dropped at scope end via field drop glue.
 pub struct Init {
-    pub headers: Option<HeadersRef>,
-    pub status_code: u16,
-    pub status_text: OwnedString,
+    pub(crate) headers: Option<HeadersRef>,
+    pub(crate) status_code: u16,
+    pub(crate) status_text: OwnedString,
     pub method: Method,
 }
 
@@ -1368,10 +1395,10 @@ impl Default for Init {
 }
 
 impl Init {
-    pub fn clone(&self, ctx: &JSGlobalObject) -> JsResult<Init> {
+    pub(crate) fn clone(&self, ctx: &JSGlobalObject) -> JsResult<Init> {
         let headers = match &self.headers {
-            // PORT NOTE: Zig `head.cloneThis(ctx)` returns `?*FetchHeaders` (deep
-            // copy on the C++ side, may be null on OOM/throw). Flatten the
+            // `clone_this` does a deep copy on the C++ side and may return
+            // null on OOM/throw. Flatten the
             // `Option<HeadersRef>` so a null clone leaves `headers` empty.
             Some(head) => head.clone_this(ctx)?,
             None => None,
@@ -1384,12 +1411,15 @@ impl Init {
         })
     }
 
-    pub fn init(global_this: &JSGlobalObject, response_init: JSValue) -> JsResult<Option<Init>> {
+    pub(crate) fn init(
+        global_this: &JSGlobalObject,
+        response_init: JSValue,
+    ) -> JsResult<Option<Init>> {
         let mut result = Init {
             status_code: 200,
             ..Default::default()
         };
-        // errdefer result.deinit() — Init's drop glue (HeadersRef + OwnedString)
+        // Init's drop glue on `result` (HeadersRef + OwnedString)
         // handles cleanup on `?` below
 
         if !response_init.is_cell() {
@@ -1409,7 +1439,8 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Request` owned by the
                 // JS wrapper cell; the wrapper is rooted by `response_init` for
                 // the duration of this call, so no GC can finalize it here.
-                let req = unsafe { &mut *req };
+                // Everything touched is `&self`.
+                let req = unsafe { &*req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
                     result.headers = headers.clone_this(global_this)?;
                 }
@@ -1431,7 +1462,7 @@ impl Init {
         }
 
         if let Some(headers) = response_init.fast_get(global_this, BuiltinName::headers)? {
-            // PORT NOTE: `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
+            // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
             // FetchHeaders is a hand-bound opaque, so use its dedicated
             // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
             if let Some(orig) = FetchHeaders::cast(headers) {
@@ -1439,9 +1470,11 @@ impl Init {
                 // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                 let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
                 if !orig.is_empty() {
-                    result.headers = orig
-                        .clone_this(global_this)?
-                        .map(|p| unsafe { HeadersRef::adopt(p) });
+                    result.headers = orig.clone_this(global_this)?.map(|p| {
+                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
+                        // ownership of that ref is transferred into the `HeadersRef`.
+                        unsafe { HeadersRef::adopt(p) }
+                    });
                 }
             } else {
                 result.headers = HeadersRef::create_from_js(global_this, headers)?;
@@ -1472,11 +1505,15 @@ impl Init {
             return Err(JsError::Thrown);
         }
 
-        if let Some(status_text) = response_init.get_truthy(global_this, b"statusText")? {
+        if let Some(status_text) =
+            response_init.fast_get_truthy(global_this, BuiltinName::statusText)?
+        {
             result.status_text = OwnedString::new(status_text.to_bun_string(global_this)?);
         }
 
-        if let Some(method_value) = response_init.get_truthy(global_this, b"method")? {
+        if let Some(method_value) =
+            response_init.fast_get_truthy(global_this, BuiltinName::method)?
+        {
             if let Some(method) = bun_http_jsc::method_jsc::from_js(global_this, method_value)? {
                 result.method = method;
             }
@@ -1486,30 +1523,5 @@ impl Init {
     }
 }
 
-// PORT NOTE: Zig @"404"/@"200" — Rust idents cannot start with a digit
-pub fn status_404(global_this: &JSGlobalObject) -> *mut Response {
-    empty_with_status(global_this, 404)
-}
-
-pub fn status_200(global_this: &JSGlobalObject) -> *mut Response {
-    empty_with_status(global_this, 200)
-}
-
-#[inline]
-fn empty_with_status(_global: &JSGlobalObject, status: u16) -> *mut Response {
-    // TODO(port): Zig signature says `Response` but body calls bun.new(Response, ...) —
-    // it actually returns *Response. Preserving the heap-alloc behavior.
-    bun_core::heap::into_raw(Box::new(Response {
-        body: JsCell::new(Body::new(BodyValue::Null)),
-        init: JsCell::new(Init {
-            status_code: status,
-            ..Default::default()
-        }),
-        ..Default::default()
-    }))
-}
-
 // https://developer.mozilla.org/en-US/docs/Web/API/Headers
-// TODO: move to http.zig. this has nothing to do with jsc or WebCore
-
-// ported from: src/runtime/webcore/Response.zig
+// TODO: move to the http module. this has nothing to do with jsc or WebCore

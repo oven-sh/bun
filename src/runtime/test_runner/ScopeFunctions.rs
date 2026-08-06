@@ -1,9 +1,7 @@
 use core::fmt;
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
-use core::sync::atomic::{AtomicI32, Ordering};
+use crate::test_runner::expect::JSValueTestExt;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
-#[allow(unused_imports)] use bun_jsc::{MarkedArgumentBuffer, VirtualMachine};
 use bun_core::String as BunString;
 
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
@@ -14,8 +12,8 @@ use crate::test_runner::jest;
 // so call sites read `let _g = group_log::begin();` and drop calls `end()`. The underlying
 // `group` module exposes `begin_msg`/`end`/`log` taking `fmt::Arguments`.
 //
-// Zig `groupLog.begin(@src())` (debug.zig) emits the call-site `file:line:col: fn_name` so
-// each scope is traceable in BUN_DEBUG output. `begin()` is `#[track_caller]` and forwards
+// The call-site `file:line:col` prefix makes
+// each scope traceable in BUN_DEBUG output. `begin()` is `#[track_caller]` and forwards
 // `core::panic::Location::caller()` so each call site logs its own source location instead
 // of collapsing to a single static string.
 mod group_log {
@@ -23,10 +21,9 @@ mod group_log {
 
     #[inline]
     #[track_caller]
-    pub fn begin() -> group::GroupGuard {
+    pub(super) fn begin() -> group::GroupGuard {
         let loc = core::panic::Location::caller();
-        // Mirrors Zig `group.begin(@src())` → `"<file>:<line>:<col>: <fn_name>"` (ANSI-coloured
-        // in debug.zig). Rust's `Location` has no `fn_name`, so we emit `file:line:col` which
+        // `Location` has no `fn_name`, so we emit `file:line:col` which
         // still gives per-call-site identity in the group-log trace.
         group::begin_msg(core::format_args!(
             "\x1b[36m{}\x1b[37m:\x1b[93m{}\x1b[37m:\x1b[33m{}\x1b[m",
@@ -36,7 +33,7 @@ mod group_log {
         ))
     }
     #[inline]
-    pub fn log(args: core::fmt::Arguments<'_>) {
+    pub(super) fn log(args: core::fmt::Arguments<'_>) {
         group::log(args);
     }
 }
@@ -59,87 +56,86 @@ pub enum Mode {
 // aliased `&mut Self` would not be.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct ScopeFunctions {
-    pub mode: Mode,
-    pub cfg: BaseScopeCfg,
+    pub(crate) mode: Mode,
+    pub(crate) cfg: BaseScopeCfg,
     /// typically `.zero`. not Strong.Optional because codegen visits the C++ `m_each`
     /// WriteBarrier on the JS wrapper (see `values: ["each"]` in jest.classes.ts). This
     /// field is kept in sync with that slot via `js::each_set_cached` in `create_unbound`.
-    pub each: JSValue,
+    pub(crate) each: JSValue,
 }
 
-pub mod strings {
+pub(crate) mod strings {
     use bun_core::String as BunString;
-    // TODO(port): `bun.String.static("...")` — assumes a const-capable `BunString::static_str`.
-    #[allow(non_snake_case)] #[inline] pub fn DESCRIBE() -> BunString { BunString::static_str("describe") }
-    #[allow(non_snake_case)] #[inline] pub fn XDESCRIBE() -> BunString { BunString::static_str("xdescribe") }
-    #[allow(non_snake_case)] #[inline] pub fn TEST() -> BunString { BunString::static_str("test") }
-    #[allow(non_snake_case)] #[inline] pub fn XTEST() -> BunString { BunString::static_str("xtest") }
-    #[allow(non_snake_case)] #[inline] pub fn SKIP() -> BunString { BunString::static_str("skip") }
-    #[allow(non_snake_case)] #[inline] pub fn TODO() -> BunString { BunString::static_str("todo") }
-    #[allow(non_snake_case)] #[inline] pub fn FAILING() -> BunString { BunString::static_str("failing") }
-    #[allow(non_snake_case)] #[inline] pub fn CONCURRENT() -> BunString { BunString::static_str("concurrent") }
-    #[allow(non_snake_case)] #[inline] pub fn SERIAL() -> BunString { BunString::static_str("serial") }
-    #[allow(non_snake_case)] #[inline] pub fn ONLY() -> BunString { BunString::static_str("only") }
-    #[allow(non_snake_case)] #[inline] pub fn IF() -> BunString { BunString::static_str("if") }
-    #[allow(non_snake_case)] #[inline] pub fn SKIP_IF() -> BunString { BunString::static_str("skipIf") }
-    #[allow(non_snake_case)] #[inline] pub fn TODO_IF() -> BunString { BunString::static_str("todoIf") }
-    #[allow(non_snake_case)] #[inline] pub fn FAILING_IF() -> BunString { BunString::static_str("failingIf") }
-    #[allow(non_snake_case)] #[inline] pub fn CONCURRENT_IF() -> BunString { BunString::static_str("concurrentIf") }
-    #[allow(non_snake_case)] #[inline] pub fn SERIAL_IF() -> BunString { BunString::static_str("serialIf") }
-    #[allow(non_snake_case)] #[inline] pub fn EACH() -> BunString { BunString::static_str("each") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn DESCRIBE() -> BunString { BunString::static_str("describe") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn XDESCRIBE() -> BunString { BunString::static_str("xdescribe") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn TEST() -> BunString { BunString::static_str("test") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn XTEST() -> BunString { BunString::static_str("xtest") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SKIP() -> BunString { BunString::static_str("skip") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn TODO() -> BunString { BunString::static_str("todo") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn FAILING() -> BunString { BunString::static_str("failing") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn CONCURRENT() -> BunString { BunString::static_str("concurrent") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SERIAL() -> BunString { BunString::static_str("serial") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn ONLY() -> BunString { BunString::static_str("only") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn IF() -> BunString { BunString::static_str("if") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SKIP_IF() -> BunString { BunString::static_str("skipIf") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn TODO_IF() -> BunString { BunString::static_str("todoIf") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn FAILING_IF() -> BunString { BunString::static_str("failingIf") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn CONCURRENT_IF() -> BunString { BunString::static_str("concurrentIf") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SERIAL_IF() -> BunString { BunString::static_str("serialIf") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn EACH() -> BunString { BunString::static_str("each") }
 }
 
 impl ScopeFunctions {
     #[bun_jsc::host_fn(getter)]
-    pub fn get_skip(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_skip(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", strings::SKIP())
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_todo(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_todo(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", strings::TODO())
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_failing(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_failing(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", strings::FAILING())
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", strings::CONCURRENT())
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_serial(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_serial(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", strings::SERIAL())
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_only(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_only(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", strings::ONLY())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, strings::IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, strings::SKIP_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_todo_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_todo_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, strings::TODO_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_failing_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_failing_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, strings::FAILING_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_concurrent_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_concurrent_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, strings::CONCURRENT_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_serial_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_serial_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, strings::SERIAL_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
         let [array] = frame.arguments_as_array::<1>();
@@ -156,7 +152,7 @@ impl ScopeFunctions {
 }
 
 #[bun_jsc::host_fn]
-pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _g = group_log::begin();
 
     let Some(this_ptr) = ScopeFunctions::from_js(frame.this()) else {
@@ -209,49 +205,50 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
                 break;
             }
 
-            // PORT NOTE: Zig keeps a parallel `ArrayList(Strong)` to root each element across
-            // the format_label/bind allocations below. `bun_jsc::MarkedArgumentBuffer` only
-            // exposes a scoped-closure constructor (no `as_slice`/`len`), so for Phase D we
-            // use a plain `Vec<JSValue>` mirroring Zig's `args_list_raw`. The outer `iter`
-            // keeps `this.each` alive; per-element rooting is a TODO once Strong<JSValue>
-            // lands in bun_jsc.
-            // TODO(port): root args via Strong / MarkedArgumentBuffer once upstream surface exists.
-            let mut args_list: Vec<JSValue> = Vec::new();
+            // Root the gathered args for the GC across the `format_label`/`bind`
+            // allocations below. `MarkedArgumentBuffer` stack-roots every appended
+            // value for the duration of the closure; the plain `Vec<JSValue>`
+            // mirrors it because `format_label`/`bind` need a slice view (the
+            // buffer exposes no `as_slice`/`len`).
+            bun_jsc::MarkedArgumentBuffer::new(|rooted| -> JsResult<()> {
+                rooted.append(item);
+                let mut args_list: Vec<JSValue> = Vec::new();
 
-            if item.is_array() {
-                // Spread array as args_list (matching Jest & Vitest)
-                let mut item_iter = item.array_iterator(global)?;
-                let mut idx: usize = 0;
-                while let Some(array_item) = item_iter.next()? {
-                    args_list.push(array_item);
-                    idx += 1;
+                if item.is_array() {
+                    // Spread array as args_list (matching Jest & Vitest)
+                    let mut item_iter = item.array_iterator(global)?;
+                    while let Some(array_item) = item_iter.next()? {
+                        rooted.append(array_item);
+                        args_list.push(array_item);
+                    }
+                } else {
+                    args_list.push(item);
                 }
-                let _ = idx;
-            } else {
-                args_list.push(item);
-            }
 
-            let formatted_label: Option<Vec<u8>> = if let Some(desc) = args.description.as_deref() {
-                Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?.into_vec())
-            } else {
-                None
-            };
+                let formatted_label: Option<Vec<u8>> = if let Some(desc) = args.description.as_deref() {
+                    Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?.into_vec())
+                } else {
+                    None
+                };
 
-            let bound = if let Some(cb) = args.callback {
-                Some(JSValueTestExt::bind(cb, global, item, &BunString::static_str("cb"), 0.0, args_list.as_slice())?)
-            } else {
-                None
-            };
-            this.enqueue_describe_or_test_callback(
-                bun_test_ptr,
-                global,
-                frame,
-                bound,
-                formatted_label.as_deref(),
-                &args.options,
-                callback_length.saturating_sub(args_list.len()),
-                line_no,
-            )?;
+                let bound = if let Some(cb) = args.callback {
+                    Some(JSValueTestExt::bind(cb, global, item, &BunString::static_str("cb"), 0.0, args_list.as_slice())?)
+                } else {
+                    None
+                };
+                this.enqueue_describe_or_test_callback(
+                    // Explicit reborrow: the closure must not move the `&mut`
+                    // (it is reused on later loop iterations).
+                    &mut *bun_test_ptr,
+                    global,
+                    frame,
+                    bound,
+                    formatted_label.as_deref(),
+                    &args.options,
+                    callback_length.saturating_sub(args_list.len()),
+                    line_no,
+                )
+            })?;
 
             test_idx += 1;
         }
@@ -271,7 +268,6 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     Ok(JSValue::UNDEFINED)
 }
 
-// `filterNames` in Zig is generic over a duck-typed `Rem` with `writeEnd`.
 trait WriteEnd {
     fn write_end(&mut self, write: &[u8]);
 }
@@ -296,8 +292,7 @@ impl<'a> WriteEnd for Write<'a> {
         }
         let dst_start = self.buf.len() - write.len();
         self.buf[dst_start..].copy_from_slice(write);
-        // PORT NOTE: reshaped for borrowck — Zig reassigns the slice in place;
-        // here we shrink via `take` + reslice.
+        // shrink via `take` + reslice (borrowck-friendly).
         let buf = core::mem::take(&mut self.buf);
         self.buf = &mut buf[..dst_start];
     }
@@ -354,14 +349,10 @@ impl ScopeFunctions {
         // handle test reporter agent for debugger
         let vm = global.bun_vm().as_mut();
         let mut test_id_for_debugger: i32 = 0;
-        // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for any
-        // Bun-owned global; single JS thread so no aliasing across this borrow.
-        if let Some(debugger) = unsafe { (*vm).debugger.as_mut() } {
+        if let Some(debugger) = (*vm).debugger.as_mut() {
             if debugger.test_reporter_agent.is_enabled() {
-                // Zig: fn-local `struct { var max_test_id_for_debugger: i32 = 0; }` — process-global static.
-                static MAX_TEST_ID_FOR_DEBUGGER: AtomicI32 = AtomicI32::new(0);
-                // TODO(port): Zig used non-atomic `+= 1` (single JS thread). Relaxed fetch_add preserves semantics.
-                let id = MAX_TEST_ID_FOR_DEBUGGER.fetch_add(1, Ordering::Relaxed) + 1;
+                debugger.test_reporter_agent.next_test_id += 1;
+                let id = debugger.test_reporter_agent.next_test_id;
                 let mut name = BunString::init(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {
@@ -390,7 +381,7 @@ impl ScopeFunctions {
         // Use the file's default concurrent setting (determined once when entering the file)
         // or the global concurrent flag from the runner
         if bun_test.default_concurrent
-            || jest::Jest::runner().map_or(false, |r| r.concurrent)
+            || jest::Jest::runner().is_some_and(|r| r.concurrent)
         {
             // Only set to concurrent if still inheriting
             if base.self_concurrent == SelfConcurrent::Inherit {
@@ -401,7 +392,7 @@ impl ScopeFunctions {
         match self.mode {
             Mode::Describe => {
                 // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
-                let new_scope = unsafe { bun_test.collection.active_scope.as_mut() }.append_describe(description, base)?;
+                let new_scope = unsafe { bun_test.collection.active_scope.as_mut() }.append_describe(description, base);
                 bun_test.collection.enqueue_describe_callback(new_scope, callback)?;
             }
             Mode::Test => {
@@ -413,14 +404,14 @@ impl ScopeFunctions {
                     if let Some(filter_regex) = reporter.jest.filter_regex {
                         group_log::log(format_args!("matches_filter begin"));
                         debug_assert!(bun_test.collection.filter_buffer.is_empty());
-                        // PORT NOTE: reshaped for borrowck — clear at end via explicit call below.
+                        // reshaped for borrowck — clear at end via explicit call below.
 
                         // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
                         let active_scope: &DescribeScope = unsafe { bun_test.collection.active_scope.as_ref() };
 
                         let mut len = Measure { len: 0 };
                         filter_names(&mut len, description, Some(active_scope));
-                        // PORT NOTE: Zig `addManyAsSlice` — extend by `len.len` zero bytes and
+                        // Extend by `len.len` zero bytes and
                         // hand back the freshly-appended tail as `&mut [u8]`.
                         let start = bun_test.collection.filter_buffer.len();
                         bun_test.collection.filter_buffer.resize(start + len.len, 0);
@@ -527,17 +518,16 @@ fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
 }
 
 pub struct ParseArgumentsResult {
-    pub description: Option<Vec<u8>>,
+    pub(crate) description: Option<Vec<u8>>,
     pub callback: Option<JSValue>,
-    pub options: ParseArgumentsOptions,
+    pub(crate) options: ParseArgumentsOptions,
 }
-// PORT NOTE: Zig `deinit` only freed `description`; `Vec<u8>` drops automatically.
 
 #[derive(Default, Clone, Copy)]
 pub struct ParseArgumentsOptions {
-    pub timeout: u32,
-    pub retry: Option<u32>,
-    pub repeats: u32,
+    pub(crate) timeout: u32,
+    pub(crate) retry: Option<u32>,
+    pub(crate) repeats: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -555,7 +545,7 @@ pub enum FunctionKind {
 #[derive(Copy, Clone)]
 pub struct ParseArgumentsCfg {
     pub callback: CallbackMode,
-    pub kind: FunctionKind,
+    pub(crate) kind: FunctionKind,
 }
 impl Default for ParseArgumentsCfg {
     fn default() -> Self {
@@ -573,9 +563,9 @@ fn get_description(
     }
 
     if description.is_class(global) {
-        // PORT NOTE: upstream `JSValue::get_class_name` writes into an out-param
-        // ZigString instead of returning one (unlike Zig's `className` which
-        // returns by value). Adapt locally rather than touching bun_jsc.
+        // upstream `JSValue::get_class_name` writes into an out-param
+        // ZigString instead of returning one. Adapt locally rather than
+        // touching bun_jsc.
         let mut description_class_name = bun_core::ZigString::EMPTY;
         description.get_class_name(global, &mut description_class_name)?;
 
@@ -606,7 +596,7 @@ fn get_description(
     )))
 }
 
-pub fn parse_arguments(
+pub(crate) fn parse_arguments(
     global: &JSGlobalObject,
     frame: &CallFrame,
     signature: Signature,
@@ -688,7 +678,7 @@ pub fn parse_arguments(
         callback: result_callback,
         options: ParseArgumentsOptions::default(),
     };
-    // errdefer result.deinit() — handled by Drop on early return.
+    // `result` cleanup handled by Drop on early return.
 
     let mut timeout_option: Option<f64> = None;
 
@@ -710,7 +700,7 @@ pub fn parse_arguments(
             if !retries.is_number() {
                 return Err(global.throw(format_args!("{}() expects retry to be a number", signature)));
             }
-            // std.math.lossyCast(u32, f64) — Rust `as` saturates on overflow/NaN.
+            // Lossy cast: Rust `as` saturates on overflow/NaN.
             result.options.retry = Some(retries.as_number() as u32);
         }
         if let Some(repeats) = options.get(global, "repeats")? {
@@ -762,8 +752,7 @@ pub fn parse_arguments(
 // `js::each_set_cached` is the codegen'd setter for the C++ `m_each` WriteBarrier
 // (see jest.classes.ts `values: ["each"]`).
 //
-// Hand-expansion of what `src/codegen/generate-classes.ts` emits into
-// `ZigGeneratedClasses.zig` for `pub const JSScopeFunctions = struct { ... }`:
+// Hand-expansion of the cached-value accessors `src/codegen/generate-classes.ts` emits:
 // `eachSetCached` / `eachGetCached` thin-wrap the C++-side
 // `ScopeFunctionsPrototype__each{Set,Get}CachedValue` shims, which write/read the
 // `JSC::WriteBarrier<Unknown> m_each` slot on the JSCell wrapper so the GC visits
@@ -781,7 +770,7 @@ impl fmt::Display for ScopeFunctions {
             SelfConcurrent::Inherit => {}
         }
         if self.cfg.self_mode != SelfMode::Normal {
-            write!(f, ".{}", scope_mode_str(self.cfg.self_mode))?;
+            write!(f, ".{}", self.cfg.self_mode.tag_name())?;
         }
         if self.cfg.self_only {
             write!(f, ".only")?;
@@ -801,7 +790,7 @@ impl ScopeFunctions {
     }
 }
 
-pub fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
+fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
     let _g = group_log::begin();
 
     // `JsClass::to_js` boxes `self` and hands the raw pointer to the C++
@@ -817,7 +806,7 @@ pub fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: B
     value
 }
 
-pub fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResult<JSValue> {
+fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResult<JSValue> {
     // `#[bun_jsc::host_fn]` on `call_as_function` emits the C-ABI thunk
     // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
     // `JSHostFn` shape, not the safe Rust signature.
@@ -828,9 +817,8 @@ pub fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResul
 }
 
 /// Local shim for `JSValue::setPrototypeDirect` (not yet on `bun_jsc::JSValue`).
-/// Mirrors Zig `bun.cpp.Bun__JSValue__setPrototypeDirect` — `[[ZIG_EXPORT(check_slow)]]`,
+/// The C++ `Bun__JSValue__setPrototypeDirect` is `[[ZIG_EXPORT(check_slow)]]`,
 /// so we manually surface any pending exception as `JsError::Thrown`.
-// TODO(port): land as inherent `JSValue::set_prototype_direct` in bun_jsc.
 #[track_caller]
 fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObject) -> JsResult<()> {
     // `[[ZIG_EXPORT(check_slow)]]`. C++ side reads `value.getObject()` so
@@ -838,7 +826,7 @@ fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObj
     bun_jsc::cpp::Bun__JSValue__setPrototypeDirect(value, prototype, global)
 }
 
-pub fn create_bound(
+pub(crate) fn create_bound(
     global: &JSGlobalObject,
     mode: Mode,
     each: JSValue,
@@ -852,22 +840,7 @@ pub fn create_bound(
 }
 
 // These enum types live on `bun_test::BaseScopeCfg` (`self_mode`, `self_concurrent`).
-// The Zig spec named them `SelfMode`/`SelfConcurrent`; bun_test.rs ported them as
-// `ScopeMode`/`ConcurrentMode`. Alias here so the bodies read like the spec.
+// bun_test.rs names them `ScopeMode`/`ConcurrentMode`; alias here for brevity.
 use crate::test_runner::bun_test::{ScopeMode as SelfMode, ConcurrentMode as SelfConcurrent};
 // `TestReporterKind` in the spec is `bun_jsc::debugger::TestType` (Test/Describe).
 use bun_jsc::debugger::TestType as TestReporterKind;
-
-/// Local stringifier for `ScopeMode` — sibling `bun_test.rs` does not derive
-/// `IntoStaticStr` on it, so we can't use `<&'static str>::from`.
-fn scope_mode_str(m: SelfMode) -> &'static str {
-    match m {
-        SelfMode::Normal => "normal",
-        SelfMode::Skip => "skip",
-        SelfMode::Todo => "todo",
-        SelfMode::Failing => "failing",
-        SelfMode::FilteredOut => "filtered_out",
-    }
-}
-
-// ported from: src/test_runner/ScopeFunctions.zig

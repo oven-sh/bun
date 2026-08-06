@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { gcTick, tempDir } from "harness";
+import { gcTick, isASAN, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -544,32 +544,34 @@ describe("memory hygiene", () => {
   async function leakCheck(body: () => Promise<unknown>, warm = 2000, run = 1500) {
     for (let i = 0; i < warm; i++) {
       await body();
-      if ((i & 127) === 0) gcTick(true);
+      if ((i & 127) === 0) gcTick();
     }
-    gcTick(true);
-    const before = process.memoryUsage().rss;
+    gcTick();
+    const before = rss();
     for (let i = 0; i < run; i++) {
       await body();
-      if ((i & 127) === 0) gcTick(true);
+      if ((i & 127) === 0) gcTick();
     }
-    gcTick(true);
-    return process.memoryUsage().rss - before;
+    gcTick();
+    return rss() - before;
   }
 
   test("decode/encode cycles plateau (no per-call leak after warmup)", async () => {
     const delta = await leakCheck(() => new Bun.Image(tinyPng).png().bytes());
     // 32 MB budget over 1500 calls = >21 KB/call would have to leak to fail.
-    expect(delta).toBeLessThan(32 * 1024 * 1024);
+    // ASAN's quarantine retains freed allocations so the measured window still
+    // grows under bun-asan even after warmup; widen the threshold there.
+    expect(delta).toBeLessThan((isASAN ? 128 : 32) * 1024 * 1024);
   });
 
   test("error paths plateau (no per-call leak after warmup)", async () => {
     const bad = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
     const delta = await leakCheck(() => survives(new Bun.Image(bad).metadata()));
-    expect(delta).toBeLessThan(32 * 1024 * 1024);
+    expect(delta).toBeLessThan((isASAN ? 128 : 32) * 1024 * 1024);
   });
 
   test("constructor with throwing getter cleans up under repetition", () => {
-    const before = process.memoryUsage().rss;
+    const before = rss();
     for (let i = 0; i < 10_000; i++) {
       try {
         new Bun.Image(tinyPng, {
@@ -578,10 +580,10 @@ describe("memory hygiene", () => {
           },
         });
       } catch {}
-      if ((i & 1023) === 0) gcTick(true);
+      if ((i & 1023) === 0) gcTick();
     }
-    gcTick(true);
-    expect(process.memoryUsage().rss - before).toBeLessThan(64 * 1024 * 1024);
+    gcTick();
+    expect(rss() - before).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
   });
 });
 

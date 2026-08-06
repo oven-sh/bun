@@ -1,9 +1,8 @@
 //! Carries stdin/stdout/stderr for a state node.
 //!
-//! In the NodeId-arena port `IO` is a plain `Clone` value (the Zig version
-//! used intrusive refcounts on `IOReader`/`IOWriter`; here those are `Arc`).
+//! `IO` is a plain `Clone` value; `IOReader`/`IOWriter` are `Arc`-refcounted.
 
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use core::fmt;
 
 use crate::api::bun_spawn::stdio::{Capture, Stdio};
@@ -14,9 +13,9 @@ use crate::shell::shell_body::subproc::ShellIO;
 
 #[derive(Clone, Default)]
 pub struct IO {
-    pub stdin: InKind,
-    pub stdout: OutKind,
-    pub stderr: OutKind,
+    pub(crate) stdin: InKind,
+    pub(crate) stdout: OutKind,
+    pub(crate) stderr: OutKind,
 }
 
 impl fmt::Display for IO {
@@ -30,15 +29,8 @@ impl fmt::Display for IO {
 }
 
 impl IO {
-    /// Zig `copy` = `ref()` + struct copy. With `Arc` fields, `Clone`
-    /// increments refcounts and copies the struct in one step.
-    #[inline]
-    pub fn copy(&self) -> IO {
-        self.clone()
-    }
-
-    /// Spec: IO.zig `memoryCost` — sum of stdin/stdout/stderr.
-    pub fn memory_cost(&self) -> usize {
+    /// Sum of stdin/stdout/stderr.
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut size = core::mem::size_of::<IO>();
         size += self.stdin.memory_cost();
         size += self.stdout.memory_cost();
@@ -46,11 +38,11 @@ impl IO {
         size
     }
 
-    /// Spec: IO.zig `to_subproc_stdio`. Maps the state-node IO triple onto
+    /// Maps the state-node IO triple onto
     /// `subproc::Stdio` for [`ShellSubprocess::spawn_async`], and stashes the
     /// owning `IOWriter` Arcs on `shellio` so [`PipeReader`]'s captured-writer
     /// path can tee subprocess output back into the JS-side buffers.
-    pub fn to_subproc_stdio(&self, stdio: &mut [Stdio; 3], shellio: &mut ShellIO) {
+    pub(crate) fn to_subproc_stdio(&self, stdio: &mut [Stdio; 3], shellio: &mut ShellIO) {
         stdio[0] = self.stdin.to_subproc_stdio();
         stdio[1] = self.stdout.to_subproc_stdio(&mut shellio.stdout);
         stdio[2] = self.stderr.to_subproc_stdio(&mut shellio.stderr);
@@ -88,10 +80,10 @@ pub enum OutKind {
 // is `Arc` so it ref-counts on clone.
 #[derive(Clone)]
 pub struct OutFd {
-    pub writer: std::sync::Arc<IOWriter>,
+    pub(crate) writer: std::sync::Arc<IOWriter>,
     /// If set, also append every chunk to this buffer (the JS-side captured
     /// stdout/stderr). Points into `ShellExecEnv::_buffered_{stdout,stderr}`.
-    pub captured: Option<*mut Vec<u8>>,
+    pub(crate) captured: Option<*mut Vec<u8>>,
 }
 
 impl OutFd {
@@ -108,7 +100,8 @@ impl OutFd {
     /// lifetime. The `(&self) -> &mut T` shape cannot encode this, hence
     /// `unsafe fn`.
     #[inline]
-    pub unsafe fn captured_mut(&self) -> Option<&mut Vec<u8>> {
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) unsafe fn captured_mut(&self) -> Option<&mut Vec<u8>> {
         // SAFETY: caller contract — single-threaded shell, env outlives `self`.
         self.captured.map(|p| unsafe { &mut *p })
     }
@@ -125,16 +118,14 @@ impl fmt::Display for OutKind {
 }
 
 impl InKind {
-    /// Spec: IO.zig `InKind.memoryCost`.
-    pub fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         match self {
             InKind::Fd(r) => r.memory_cost(),
             InKind::Ignore => 0,
         }
     }
 
-    /// Spec: IO.zig `InKind.to_subproc_stdio`.
-    pub fn to_subproc_stdio(&self) -> Stdio {
+    fn to_subproc_stdio(&self) -> Stdio {
         match self {
             InKind::Fd(r) => Stdio::Fd(r.fd()),
             InKind::Ignore => Stdio::Ignore,
@@ -143,8 +134,7 @@ impl InKind {
 }
 
 impl OutFd {
-    /// Spec: IO.zig `OutKind.Fd.memoryCost`.
-    pub fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         let mut cost = self.writer.memory_cost();
         if let Some(captured) = self.captured {
             // SAFETY: `captured` points into a live `ShellExecEnv` buffer;
@@ -156,8 +146,7 @@ impl OutFd {
 }
 
 impl OutKind {
-    /// Spec: IO.zig `OutKind.memoryCost`.
-    pub fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         match self {
             OutKind::Fd(fd) => fd.memory_cost(),
             _ => 0,
@@ -167,30 +156,31 @@ impl OutKind {
     /// If this output requires async IO (i.e. it's an `Fd`), return the
     /// safeguard token; otherwise `None` and the caller can write
     /// synchronously to the captured buffer / drop.
-    pub fn needs_io(&self) -> Option<OutputNeedsIOSafeGuard> {
+    pub(crate) fn needs_io(&self) -> Option<OutputNeedsIOSafeGuard> {
         match self {
             OutKind::Fd(_) => Some(OutputNeedsIOSafeGuard::OutputNeedsIo),
             _ => None,
         }
     }
 
-    /// Spec: IO.zig `OutKind.to_subproc_stdio`. Retains the `IOWriter` Arc on
+    /// Retains the `IOWriter` Arc on
     /// `shellio` so the subprocess's `PipeReader::captured_writer` can drain
     /// captured bytes into it after the spawn returns.
-    pub fn to_subproc_stdio(&self, shellio: &mut Option<std::sync::Arc<IOWriter>>) -> Stdio {
+    fn to_subproc_stdio(&self, shellio: &mut Option<std::sync::Arc<IOWriter>>) -> Stdio {
         match self {
             OutKind::Fd(val) => {
-                // Spec: `shellio.* = val.writer.dupeRef()`.
-                *shellio = Some(val.writer.clone());
+                *shellio = Some(std::sync::Arc::clone(&val.writer));
                 if let Some(cap) = val.captured {
-                    Stdio::Capture(Capture { buf: cap })
+                    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                    let _ = cap;
+                    Stdio::Capture(Capture {
+                        #[cfg(any(target_os = "linux", target_os = "android"))]
+                        buf: cap,
+                    })
                 } else {
-                    // Spec (IO.zig:178) reads `val.writer.fd.get()` — an
-                    // optional that becomes empty once the fd has been handed
-                    // off to libuv. `IOWriter::fd()` (IOWriter.rs) encodes
-                    // that same state by returning `Fd::INVALID` after
-                    // hand-off, so the sentinel compare here is the port of
-                    // the optional unwrap, not a fresh invariant.
+                    // `IOWriter::fd()` (IOWriter.rs) returns `Fd::INVALID`
+                    // once the fd has been handed off to libuv, so the
+                    // sentinel compare here checks for that hand-off state.
                     let fd = val.writer.fd();
                     if fd != bun_sys::Fd::INVALID {
                         Stdio::Fd(fd)
@@ -207,5 +197,3 @@ impl OutKind {
         }
     }
 }
-
-// ported from: src/shell/IO.zig

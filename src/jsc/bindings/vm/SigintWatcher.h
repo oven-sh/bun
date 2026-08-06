@@ -100,6 +100,9 @@ private:
     Semaphore m_semaphore;
     WTF::Lock m_globalObjectsMutex;
     WTF::Lock m_receiversMutex;
+    // Guards m_refCount and the install()/uninstall() transitions it drives;
+    // ref()/deref() are called concurrently from worker threads.
+    WTF::Lock m_refCountMutex;
     WTF::Vector<JSC::JSGlobalObject*> m_globalObjects;
     WTF::Vector<SigintReceiver*> m_receivers;
     uint32_t m_refCount = 0;

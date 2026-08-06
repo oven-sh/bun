@@ -1,25 +1,19 @@
 use bun_core::strings;
 use bun_url::PercentEncoding;
 
-// TODO(port): lifetime — every `&'static [u8]` field below actually borrows from
+// TODO: lifetime — every `&'static [u8]` field below actually borrows from
 // either the `parse()` input slice or, when the input was percent-encoded, from
-// `_decoded_storage`. Zig has no lifetimes so this is implicit there. Phase B
-// should add a lifetime param to `URLPath` so the input-borrow case is checked.
+// `_decoded_storage`. Add a
+// lifetime param to `URLPath` so the input-borrow case is checked.
 #[derive(Default)]
 pub struct URLPath {
-    pub extname: &'static [u8],
     pub path: &'static [u8],
     pub pathname: &'static [u8],
-    pub first_segment: &'static [u8],
     pub query_string: &'static [u8],
-    pub needs_redirect: bool,
-    /// Treat URLs as non-sourcemap URLS
-    /// Then at the very end, we check.
-    pub is_source_map: bool,
     /// Owned backing storage for the slice fields when `parse()` had to
     /// percent-decode. Heap-stable: the slice fields above point into this
     /// allocation, which is never resized and lives exactly as long as `self`.
-    /// Replaces the Zig threadlocal scratch buffers — owning the decode buffer
+    /// Owning the decode buffer
     /// per-URLPath removes the use-after-free that a shared growable buffer
     /// would introduce on the next `parse()` call.
     ///
@@ -29,62 +23,32 @@ pub struct URLPath {
 }
 
 impl URLPath {
-    pub fn is_root(&self, asset_prefix: &[u8]) -> bool {
-        let without = self.path_without_asset_prefix(asset_prefix);
-        if without.len() == 1 && without[0] == b'.' {
-            return true;
-        }
-        without == b"index"
-    }
-
-    // TODO: use a real URL parser
-    // this treats a URL like /_next/ identically to /
-    pub fn path_without_asset_prefix(&self, asset_prefix: &[u8]) -> &[u8] {
-        if asset_prefix.is_empty() {
-            return self.path;
-        }
-        let leading_slash_offset: usize = if asset_prefix[0] == b'/' { 1 } else { 0 };
-        let base = self.path;
-        let origin = &asset_prefix[leading_slash_offset..];
-
-        let out = if base.len() >= origin.len() && &base[0..origin.len()] == origin {
-            &base[origin.len()..]
-        } else {
-            base
-        };
-        if self.is_source_map && out.ends_with(b".map") {
-            return &out[0..out.len() - 4];
-        }
-
-        out
+    /// Take ownership of the percent-decode buffer, if `parse()` had to
+    /// allocate one. The slice fields of `self` keep pointing into the
+    /// returned allocation — the caller must keep it alive for as long as any
+    /// of those slices (or sub-slices of them) are read; dropping it while
+    /// they are still in use leaves them dangling.
+    #[must_use = "dropping the returned storage dangles the slice fields of this URLPath"]
+    pub fn take_decoded_storage(&mut self) -> Option<Box<[u8]>> {
+        self._decoded_storage.take()
     }
 }
 
-// PORT NOTE: Zig uses two threadlocal fixed `[1024]u8`/`[16384]u8` buffers and
-// decodes in-place via `fixedBufferStream`, then returns slices into that
-// threadlocal storage. A growable shared buffer cannot uphold that contract in
-// Rust (the next `parse()` may reallocate it and dangle every prior URLPath),
+// Design note: a growable shared (e.g. threadlocal) decode buffer cannot work
+// here — the next `parse()` may reallocate it and dangle every prior URLPath —
 // so instead each URLPath that needs decoding owns its decode buffer in
 // `_decoded_storage`. This costs one small allocation only on the
 // percent-encoded path, which is the rare case.
-// PERF(port): was zero-alloc fixed buffers — profile in Phase B.
 
-pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Error> {
-    // TODO(port): narrow error set
+pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
     let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
     let mut decoded_storage: Option<Box<[u8]>> = None;
-    let mut needs_redirect = false;
-
     if strings::index_of_char(decoded_pathname, b'%').is_some() {
-        // Zig caps the in-place buffer at 16384; preserve that bound on input.
+        // The in-place decode buffer is capped at 16384 bytes of input.
         let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];
 
         let mut buf: Vec<u8> = Vec::with_capacity(capped.len());
-        let n = PercentEncoding::decode_fault_tolerant::<_, true>(
-            &mut buf,
-            capped,
-            Some(&mut needs_redirect),
-        )?;
+        let n = PercentEncoding::decode_fault_tolerant::<_, true>(&mut buf, capped)?;
         debug_assert!(n as usize <= buf.len());
         buf.truncate(n as usize);
         // Freeze into a heap-stable Box and park it in `decoded_storage` before
@@ -98,13 +62,20 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
         decoded_pathname = decoded_storage.as_deref().unwrap();
     }
 
-    let mut question_mark_i: i16 = -1;
-    let mut period_i: i16 = -1;
+    // The slicing below assumes a non-empty pathname with a leading byte to
+    // skip. An empty input (or an input like "%PUBLIC_URL%" that the fault-
+    // tolerant decoder consumes entirely) would otherwise index out of bounds.
+    if decoded_pathname.is_empty() {
+        decoded_pathname = b"/";
+        decoded_storage = None;
+    }
 
-    let mut first_segment_end: i16 = i16::MAX;
-    let mut last_slash: i16 = -1;
+    let mut question_mark_i: i32 = -1;
+    let mut period_i: i32 = -1;
 
-    let mut i: i16 = i16::try_from(decoded_pathname.len()).expect("int cast") - 1;
+    let mut last_slash: i32 = -1;
+
+    let mut i: i32 = i32::try_from(decoded_pathname.len()).expect("int cast") - 1;
 
     while i >= 0 {
         let c = decoded_pathname[usize::try_from(i).expect("int cast")];
@@ -125,10 +96,6 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
             }
             b'/' => {
                 last_slash = last_slash.max(i);
-
-                if i > 0 {
-                    first_segment_end = first_segment_end.min(i);
-                }
             }
             _ => {}
         }
@@ -155,29 +122,27 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
         }
     };
 
-    let mut path: &[u8] = if question_mark_i < 0 {
-        &decoded_pathname[1..]
+    // `path` is the pathname without the leading byte and without the query
+    // string. When the input begins with '?' the end index is 0, so clamp the
+    // start to avoid a 1..0 slice.
+    let path_end: usize = if question_mark_i < 0 {
+        decoded_pathname.len()
     } else {
-        &decoded_pathname[1..usize::try_from(question_mark_i).expect("int cast")]
+        usize::try_from(question_mark_i).expect("int cast")
     };
+    let mut path: &[u8] = &decoded_pathname[1.min(path_end)..path_end];
 
-    let first_segment = &decoded_pathname
-        [1..(usize::try_from(first_segment_end).expect("int cast")).min(decoded_pathname.len())];
-    let is_source_map = extname == b"map";
-    let mut backup_extname: &[u8] = extname;
-    if is_source_map && path.len() > b".map".len() {
-        if let Some(j) = path[0..path.len() - b".map".len()]
-            .iter()
-            .rposition(|&b| b == b'.')
-        {
-            backup_extname = &path[j + 1..];
-            backup_extname = &backup_extname[0..backup_extname.len() - b".map".len()];
-            path = &path[0..j + backup_extname.len() + 1];
+    // For a source map (`foo.js.map`), strip the trailing `.map` so the path
+    // names the mapped file — but only when an inner extension exists.
+    if extname == b"map" && path.len() > b".map".len() {
+        let stripped = &path[0..path.len() - b".map".len()];
+        if stripped.contains(&b'.') {
+            path = stripped;
         }
     }
 
-    // TODO(port): lifetime — see struct-level note. `extend` launders the borrow
-    // to `'static` to match the Phase-A field type; remove once URLPath gains a
+    // TODO: lifetime — see struct-level note. `extend` launders the borrow
+    // to `'static` to match the field type; remove once URLPath gains a
     // proper lifetime parameter for the input-borrow case.
     #[inline(always)]
     fn extend(s: &[u8]) -> &'static [u8] {
@@ -188,14 +153,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
     }
 
     Ok(URLPath {
-        extname: extend(if !is_source_map {
-            extname
-        } else {
-            backup_extname
-        }),
-        is_source_map,
         pathname: extend(decoded_pathname),
-        first_segment: extend(first_segment),
         path: extend(if decoded_pathname.len() == 1 {
             b"."
         } else {
@@ -207,9 +165,6 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
         } else {
             b""
         }),
-        needs_redirect,
         _decoded_storage: decoded_storage,
     })
 }
-
-// ported from: src/http_types/URLPath.zig

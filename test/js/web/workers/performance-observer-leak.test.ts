@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 
 // Performance <-> PerformanceObserver RefPtr cycle: Performance holds
 // RefPtr<PerformanceObserver> in its registered-observer list, and each
@@ -24,6 +24,7 @@ test("PerformanceObserver without disconnect() does not leak Performance when Wo
       // Intentionally never call observer.disconnect().
     `,
     "main.js": `
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
       const workerPath = new URL("./worker.js", import.meta.url).href;
 
       async function runOne() {
@@ -43,17 +44,18 @@ test("PerformanceObserver without disconnect() does not leak Performance when Wo
 
       // Warm up: establish allocator / JIT high-water mark.
       await runBatch(8);
-      const rssBefore = process.memoryUsage.rss();
+      const rssBefore = rss();
 
       // Measured batch: if each worker leaks ~4 MB via the Performance <->
       // PerformanceObserver cycle, 20 iterations leak ~80 MB over baseline.
       await runBatch(20);
-      const rssAfter = process.memoryUsage.rss();
+      const rssAfter = rss();
 
       const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
       // Without fix: ~110+ MB (baseline ~30 MB + 20 * 4 MB leaked).
       // With fix: ~30 MB (just baseline worker/VM churn).
-      if (deltaMB > 65) {
+      // ASAN's quarantine retains freed allocations so widen the threshold there.
+      if (deltaMB > ${isASAN ? 256 : 65}) {
         console.error("FAIL: RSS grew by " + deltaMB.toFixed(1) + " MB over 20 worker terminations");
         process.exit(1);
       }

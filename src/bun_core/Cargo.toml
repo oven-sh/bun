@@ -14,7 +14,6 @@ bytemuck = "1"
 itoa.workspace = true
 bun_opaque.workspace = true
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 const_format.workspace = true
 libc.workspace = true

@@ -1,44 +1,47 @@
 use super::helpers;
-use super::parser::Parser;
+use super::parser::{self, Parser};
 use super::types;
 use super::types::{Align, Container, OFF};
 
+/// `<![CDATA[` without the `<` the caller already matched. The longest
+/// OFF-typed fixed lookahead the parser performs; `parser::MAX_LOOKAHEAD`
+/// (and with it the accepted input length) is derived from its length.
+pub(crate) const CDATA_OPEN: &[u8] = b"![CDATA[";
+
 // ──────────────────────────────────────────────────────────────────────────
-// Result types for the anonymous-struct returns in the Zig source.
-// Kept as named structs (not tuples) so field names line up with the .zig
-// for side-by-side diffing.
+// Result types, kept as named structs (not tuples) for readable field access.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
 pub struct SetextResult {
-    pub is_setext: bool,
-    pub level: u32,
+    pub(crate) is_setext: bool,
+    pub(crate) level: u32,
 }
 
 #[derive(Copy, Clone)]
 pub struct AtxResult {
-    pub is_atx: bool,
-    pub level: u32,
-    pub content_beg: OFF,
+    pub(crate) is_atx: bool,
+    pub(crate) level: u32,
+    pub(crate) content_beg: OFF,
 }
 
 #[derive(Copy, Clone)]
 pub struct FenceResult {
-    pub is_fence: bool,
-    pub fence_data: u32,
+    pub(crate) is_fence: bool,
+    pub(crate) fence_data: u32,
 }
 
 #[derive(Copy, Clone)]
 pub struct TableUnderlineResult {
-    pub is_underline: bool,
-    pub col_count: u32,
+    pub(crate) is_underline: bool,
+    pub(crate) col_count: u32,
 }
 
 #[derive(Clone)]
 pub struct ContainerMarkResult {
-    pub is_container: bool,
-    pub container: Container,
-    pub off: OFF,
+    pub(crate) is_container: bool,
+    pub(crate) container: Container,
+    pub(crate) off: OFF,
 }
 
 // Small helper: index `self.text` (a `&[u8]`) by an `OFF`.
@@ -48,8 +51,8 @@ fn ch(text: &[u8], pos: OFF) -> u8 {
 }
 
 impl Parser<'_> {
-    pub fn is_setext_underline(&self, off: OFF) -> SetextResult {
-        let c = ch(&self.text, off);
+    pub(crate) fn is_setext_underline(&self, off: OFF) -> SetextResult {
+        let c = ch(self.text, off);
         if c != b'=' && c != b'-' {
             return SetextResult {
                 is_setext: false,
@@ -58,16 +61,16 @@ impl Parser<'_> {
         }
 
         let mut pos = off;
-        while pos < self.size && ch(&self.text, pos) == c {
+        while pos < self.size && ch(self.text, pos) == c {
             pos += 1;
         }
 
         // Skip trailing spaces
-        while pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+        while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
             pos += 1;
         }
 
-        if pos >= self.size || helpers::is_newline(ch(&self.text, pos)) {
+        if pos >= self.size || helpers::is_newline(ch(self.text, pos)) {
             let level: u32 = if c == b'=' { 1 } else { 2 };
             return SetextResult {
                 is_setext: true,
@@ -81,18 +84,18 @@ impl Parser<'_> {
         }
     }
 
-    pub fn is_hr_line(&self, off: OFF) -> bool {
-        let c = ch(&self.text, off);
+    pub(crate) fn is_hr_line(&self, off: OFF) -> bool {
+        let c = ch(self.text, off);
         if c != b'-' && c != b'_' && c != b'*' {
             return false;
         }
 
         let mut pos = off;
         let mut count: u32 = 0;
-        while pos < self.size && !helpers::is_newline(ch(&self.text, pos)) {
-            if ch(&self.text, pos) == c {
+        while pos < self.size && !helpers::is_newline(ch(self.text, pos)) {
+            if ch(self.text, pos) == c {
                 count += 1;
-            } else if !helpers::is_blank(ch(&self.text, pos)) {
+            } else if !helpers::is_blank(ch(self.text, pos)) {
                 return false;
             }
             pos += 1;
@@ -101,11 +104,11 @@ impl Parser<'_> {
         count >= 3
     }
 
-    pub fn is_atx_header_line(&self, off: OFF) -> AtxResult {
+    pub(crate) fn is_atx_header_line(&self, off: OFF) -> AtxResult {
         let mut pos = off;
         let mut level: u32 = 0;
 
-        while pos < self.size && ch(&self.text, pos) == b'#' {
+        while pos < self.size && ch(self.text, pos) == b'#' {
             level += 1;
             pos += 1;
         }
@@ -120,8 +123,8 @@ impl Parser<'_> {
 
         // Must be followed by space or end of line
         if pos < self.size
-            && !helpers::is_blank(ch(&self.text, pos))
-            && !helpers::is_newline(ch(&self.text, pos))
+            && !helpers::is_blank(ch(self.text, pos))
+            && !helpers::is_newline(ch(self.text, pos))
         {
             if !self.flags.permissive_atx_headers {
                 return AtxResult {
@@ -133,7 +136,7 @@ impl Parser<'_> {
         }
 
         // Skip spaces after #
-        while pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+        while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
             pos += 1;
         }
 
@@ -144,18 +147,18 @@ impl Parser<'_> {
         }
     }
 
-    pub fn is_opening_code_fence(&self, off: OFF) -> FenceResult {
+    pub(crate) fn is_opening_code_fence(&self, off: OFF) -> FenceResult {
         if off >= self.size {
             return FenceResult {
                 is_fence: false,
                 fence_data: 0,
             };
         }
-        let fence_char = ch(&self.text, off);
+        let fence_char = ch(self.text, off);
         let mut pos = off;
         let mut count: u32 = 0;
 
-        while pos < self.size && ch(&self.text, pos) == fence_char {
+        while pos < self.size && ch(self.text, pos) == fence_char {
             count += 1;
             pos += 1;
         }
@@ -170,8 +173,8 @@ impl Parser<'_> {
         // Backtick fences can't have backticks in info string
         if fence_char == b'`' {
             let mut check = pos;
-            while check < self.size && !helpers::is_newline(ch(&self.text, check)) {
-                if ch(&self.text, check) == b'`' {
+            while check < self.size && !helpers::is_newline(ch(self.text, check)) {
+                if ch(self.text, check) == b'`' {
                     return FenceResult {
                         is_fence: false,
                         fence_data: 0,
@@ -189,13 +192,13 @@ impl Parser<'_> {
         }
     }
 
-    pub fn is_closing_code_fence(&self, off: OFF, fence_data: u32) -> bool {
+    pub(crate) fn is_closing_code_fence(&self, off: OFF, fence_data: u32) -> bool {
         let fence_char: u8 = fence_data as u8; // @truncate
         let fence_count = fence_data >> 8;
 
         let mut pos = off;
         let mut count: u32 = 0;
-        while pos < self.size && ch(&self.text, pos) == fence_char {
+        while pos < self.size && ch(self.text, pos) == fence_char {
             count += 1;
             pos += 1;
         }
@@ -205,14 +208,14 @@ impl Parser<'_> {
         }
 
         // Rest of line must be blank
-        while pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+        while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
             pos += 1;
         }
 
-        pos >= self.size || helpers::is_newline(ch(&self.text, pos))
+        pos >= self.size || helpers::is_newline(ch(self.text, pos))
     }
 
-    pub fn is_html_block_start_condition(&self, off: OFF) -> u8 {
+    pub(crate) fn is_html_block_start_condition(&self, off: OFF) -> u8 {
         if off + 1 >= self.size {
             return 0;
         }
@@ -220,7 +223,7 @@ impl Parser<'_> {
         // Type 1: <script, <pre, <style, <textarea (case insensitive)
         // Only opening tags start type 1 blocks. Closing tags like </pre> are
         // only END conditions for type 1, not start conditions.
-        if ch(&self.text, off + 1) != b'/'
+        if ch(self.text, off + 1) != b'/'
             && (self.match_html_tag(off, b"script")
                 || self.match_html_tag(off, b"pre")
                 || self.match_html_tag(off, b"style")
@@ -231,29 +234,33 @@ impl Parser<'_> {
 
         // Type 2: <!-- (comment)
         if off + 3 < self.size
-            && ch(&self.text, off + 1) == b'!'
-            && ch(&self.text, off + 2) == b'-'
-            && ch(&self.text, off + 3) == b'-'
+            && ch(self.text, off + 1) == b'!'
+            && ch(self.text, off + 2) == b'-'
+            && ch(self.text, off + 3) == b'-'
         {
             return 2;
         }
 
         // Type 3: <? (processing instruction)
-        if ch(&self.text, off + 1) == b'?' {
+        if ch(self.text, off + 1) == b'?' {
             return 3;
         }
 
         // Type 4: <! followed by uppercase letter (declaration)
-        if ch(&self.text, off + 1) == b'!'
+        if ch(self.text, off + 1) == b'!'
             && off + 2 < self.size
-            && ch(&self.text, off + 2) >= b'A'
-            && ch(&self.text, off + 2) <= b'Z'
+            && ch(self.text, off + 2) >= b'A'
+            && ch(self.text, off + 2) <= b'Z'
         {
             return 4;
         }
 
-        // Type 5: <![CDATA[
-        if off + 9 <= self.size && &self.text[(off + 1) as usize..(off + 9) as usize] == b"![CDATA["
+        // Type 5: <![CDATA[. This is the longest OFF-typed fixed lookahead
+        // in the parser; `parser::MAX_LOOKAHEAD` (which bounds the accepted
+        // input length) is derived from `CDATA_OPEN`, so extending it cannot
+        // silently reintroduce `off + k` overflow.
+        if off + parser::MAX_LOOKAHEAD <= self.size
+            && &self.text[(off + 1) as usize..(off + 1) as usize + CDATA_OPEN.len()] == CDATA_OPEN
         {
             return 5;
         }
@@ -271,21 +278,21 @@ impl Parser<'_> {
         0
     }
 
-    pub fn is_html_block_end_condition(&self, off: OFF, block_type: u8) -> bool {
+    pub(crate) fn is_html_block_end_condition(&self, off: OFF, block_type: u8) -> bool {
         // Types 6 and 7: end condition is a blank line
         if block_type >= 6 {
-            return off >= self.size || helpers::is_newline(ch(&self.text, off));
+            return off >= self.size || helpers::is_newline(ch(self.text, off));
         }
 
         // Types 1-5: search from off to end of line for specific end patterns
         let mut pos = off;
-        while pos < self.size && !helpers::is_newline(ch(&self.text, pos)) {
+        while pos < self.size && !helpers::is_newline(ch(self.text, pos)) {
             match block_type {
                 1 => {
                     // Type 1: </script>, </pre>, </style>, </textarea> (case insensitive)
-                    if ch(&self.text, pos) == b'<'
+                    if ch(self.text, pos) == b'<'
                         && pos + 1 < self.size
-                        && ch(&self.text, pos + 1) == b'/'
+                        && ch(self.text, pos + 1) == b'/'
                     {
                         if self.match_html_tag(pos, b"script")
                             || self.match_html_tag(pos, b"pre")
@@ -298,35 +305,35 @@ impl Parser<'_> {
                 }
                 2 => {
                     // Type 2: -->
-                    if ch(&self.text, pos) == b'-'
+                    if ch(self.text, pos) == b'-'
                         && pos + 2 < self.size
-                        && ch(&self.text, pos + 1) == b'-'
-                        && ch(&self.text, pos + 2) == b'>'
+                        && ch(self.text, pos + 1) == b'-'
+                        && ch(self.text, pos + 2) == b'>'
                     {
                         return true;
                     }
                 }
                 3 => {
                     // Type 3: ?>
-                    if ch(&self.text, pos) == b'?'
+                    if ch(self.text, pos) == b'?'
                         && pos + 1 < self.size
-                        && ch(&self.text, pos + 1) == b'>'
+                        && ch(self.text, pos + 1) == b'>'
                     {
                         return true;
                     }
                 }
                 4 => {
                     // Type 4: >
-                    if ch(&self.text, pos) == b'>' {
+                    if ch(self.text, pos) == b'>' {
                         return true;
                     }
                 }
                 5 => {
                     // Type 5: ]]>
-                    if ch(&self.text, pos) == b']'
+                    if ch(self.text, pos) == b']'
                         && pos + 2 < self.size
-                        && ch(&self.text, pos + 1) == b']'
-                        && ch(&self.text, pos + 2) == b'>'
+                        && ch(self.text, pos + 1) == b']'
+                        && ch(self.text, pos + 2) == b'>'
                     {
                         return true;
                     }
@@ -338,14 +345,14 @@ impl Parser<'_> {
         false
     }
 
-    pub fn match_html_tag(&self, off: OFF, tag: &[u8]) -> bool {
+    pub(crate) fn match_html_tag(&self, off: OFF, tag: &[u8]) -> bool {
         if (off as usize) + 1 + tag.len() >= self.size as usize {
             return false;
         }
         let start = off + 1;
         // Allow optional / for closing tags
         let mut pos = start;
-        if pos < self.size && ch(&self.text, pos) == b'/' {
+        if pos < self.size && ch(self.text, pos) == b'/' {
             pos += 1;
         }
         if (pos as usize) + tag.len() > self.size as usize {
@@ -355,15 +362,14 @@ impl Parser<'_> {
             return false;
         }
         pos += u32::try_from(tag.len()).expect("int cast");
-        // TODO(port): if OFF != u32, adjust the cast above.
         if pos >= self.size {
             return true;
         }
-        let after = ch(&self.text, pos);
+        let after = ch(self.text, pos);
         after == b'>' || after == b'/' || helpers::is_blank(after) || helpers::is_newline(after)
     }
 
-    pub fn is_block_level_html_tag(&self, off: OFF) -> bool {
+    pub(crate) fn is_block_level_html_tag(&self, off: OFF) -> bool {
         const BLOCK_TAGS: &[&[u8]] = &[
             b"address",
             b"article",
@@ -437,43 +443,43 @@ impl Parser<'_> {
         false
     }
 
-    pub fn is_complete_html_tag(&self, off: OFF) -> bool {
+    pub(crate) fn is_complete_html_tag(&self, off: OFF) -> bool {
         if off + 1 >= self.size {
             return false;
         }
         let mut pos = off + 1;
 
         // Closing tag
-        if pos < self.size && ch(&self.text, pos) == b'/' {
+        if pos < self.size && ch(self.text, pos) == b'/' {
             pos += 1;
-            if pos >= self.size || !helpers::is_alpha(ch(&self.text, pos)) {
+            if pos >= self.size || !helpers::is_alpha(ch(self.text, pos)) {
                 return false;
             }
             while pos < self.size
-                && (helpers::is_alpha_num(ch(&self.text, pos)) || ch(&self.text, pos) == b'-')
+                && (helpers::is_alpha_num(ch(self.text, pos)) || ch(self.text, pos) == b'-')
             {
                 pos += 1;
             }
-            while pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+            while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
                 pos += 1;
             }
-            if pos >= self.size || ch(&self.text, pos) != b'>' {
+            if pos >= self.size || ch(self.text, pos) != b'>' {
                 return false;
             }
             pos += 1;
             // Rest of line must be whitespace only
-            while pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+            while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
                 pos += 1;
             }
-            return pos >= self.size || helpers::is_newline(ch(&self.text, pos));
+            return pos >= self.size || helpers::is_newline(ch(self.text, pos));
         }
 
         // Opening tag: <tagname (attributes)* optional-/ >
-        if !helpers::is_alpha(ch(&self.text, pos)) {
+        if !helpers::is_alpha(ch(self.text, pos)) {
             return false;
         }
         while pos < self.size
-            && (helpers::is_alpha_num(ch(&self.text, pos)) || ch(&self.text, pos) == b'-')
+            && (helpers::is_alpha_num(ch(self.text, pos)) || ch(self.text, pos) == b'-')
         {
             pos += 1;
         }
@@ -481,20 +487,19 @@ impl Parser<'_> {
         // Parse attributes
         loop {
             let ws_start = pos;
-            while pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+            while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
                 pos += 1;
             }
-            if pos >= self.size || helpers::is_newline(ch(&self.text, pos)) {
+            if pos >= self.size || helpers::is_newline(ch(self.text, pos)) {
                 return false;
             }
 
             // Check for end of tag
-            if ch(&self.text, pos) == b'>' {
+            if ch(self.text, pos) == b'>' {
                 pos += 1;
                 break;
             }
-            if ch(&self.text, pos) == b'/' && pos + 1 < self.size && ch(&self.text, pos + 1) == b'>'
-            {
+            if ch(self.text, pos) == b'/' && pos + 1 < self.size && ch(self.text, pos + 1) == b'>' {
                 pos += 2;
                 break;
             }
@@ -505,72 +510,72 @@ impl Parser<'_> {
             }
 
             // Attribute name: [a-zA-Z_:][a-zA-Z0-9_.:-]*
-            if !helpers::is_alpha(ch(&self.text, pos))
-                && ch(&self.text, pos) != b'_'
-                && ch(&self.text, pos) != b':'
+            if !helpers::is_alpha(ch(self.text, pos))
+                && ch(self.text, pos) != b'_'
+                && ch(self.text, pos) != b':'
             {
                 return false;
             }
             pos += 1;
             while pos < self.size
-                && (helpers::is_alpha_num(ch(&self.text, pos))
-                    || ch(&self.text, pos) == b'_'
-                    || ch(&self.text, pos) == b'.'
-                    || ch(&self.text, pos) == b':'
-                    || ch(&self.text, pos) == b'-')
+                && (helpers::is_alpha_num(ch(self.text, pos))
+                    || ch(self.text, pos) == b'_'
+                    || ch(self.text, pos) == b'.'
+                    || ch(self.text, pos) == b':'
+                    || ch(self.text, pos) == b'-')
             {
                 pos += 1;
             }
 
             // Optional attribute value
             let mut ws_pos = pos;
-            while ws_pos < self.size && helpers::is_blank(ch(&self.text, ws_pos)) {
+            while ws_pos < self.size && helpers::is_blank(ch(self.text, ws_pos)) {
                 ws_pos += 1;
             }
-            if ws_pos < self.size && ch(&self.text, ws_pos) == b'=' {
+            if ws_pos < self.size && ch(self.text, ws_pos) == b'=' {
                 pos = ws_pos + 1;
-                while pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+                while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
                     pos += 1;
                 }
-                if pos >= self.size || helpers::is_newline(ch(&self.text, pos)) {
+                if pos >= self.size || helpers::is_newline(ch(self.text, pos)) {
                     return false;
                 }
 
-                if ch(&self.text, pos) == b'"' {
+                if ch(self.text, pos) == b'"' {
                     pos += 1;
                     while pos < self.size
-                        && ch(&self.text, pos) != b'"'
-                        && !helpers::is_newline(ch(&self.text, pos))
+                        && ch(self.text, pos) != b'"'
+                        && !helpers::is_newline(ch(self.text, pos))
                     {
                         pos += 1;
                     }
-                    if pos >= self.size || ch(&self.text, pos) != b'"' {
+                    if pos >= self.size || ch(self.text, pos) != b'"' {
                         return false;
                     }
                     pos += 1;
-                } else if ch(&self.text, pos) == b'\'' {
+                } else if ch(self.text, pos) == b'\'' {
                     pos += 1;
                     while pos < self.size
-                        && ch(&self.text, pos) != b'\''
-                        && !helpers::is_newline(ch(&self.text, pos))
+                        && ch(self.text, pos) != b'\''
+                        && !helpers::is_newline(ch(self.text, pos))
                     {
                         pos += 1;
                     }
-                    if pos >= self.size || ch(&self.text, pos) != b'\'' {
+                    if pos >= self.size || ch(self.text, pos) != b'\'' {
                         return false;
                     }
                     pos += 1;
                 } else {
                     // Unquoted value
                     while pos < self.size
-                        && !helpers::is_blank(ch(&self.text, pos))
-                        && !helpers::is_newline(ch(&self.text, pos))
-                        && ch(&self.text, pos) != b'"'
-                        && ch(&self.text, pos) != b'\''
-                        && ch(&self.text, pos) != b'='
-                        && ch(&self.text, pos) != b'<'
-                        && ch(&self.text, pos) != b'>'
-                        && ch(&self.text, pos) != b'`'
+                        && !helpers::is_blank(ch(self.text, pos))
+                        && !helpers::is_newline(ch(self.text, pos))
+                        && ch(self.text, pos) != b'"'
+                        && ch(self.text, pos) != b'\''
+                        && ch(self.text, pos) != b'='
+                        && ch(self.text, pos) != b'<'
+                        && ch(self.text, pos) != b'>'
+                        && ch(self.text, pos) != b'`'
                     {
                         pos += 1;
                     }
@@ -579,35 +584,35 @@ impl Parser<'_> {
         }
 
         // Rest of line must be whitespace only
-        while pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+        while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
             pos += 1;
         }
-        pos >= self.size || helpers::is_newline(ch(&self.text, pos))
+        pos >= self.size || helpers::is_newline(ch(self.text, pos))
     }
 
-    pub fn is_table_underline(&mut self, off: OFF) -> TableUnderlineResult {
+    pub(crate) fn is_table_underline(&mut self, off: OFF) -> TableUnderlineResult {
         let mut pos = off;
         let mut col_count: u32 = 0;
         let mut had_pipe = false;
 
         // Skip leading pipe
-        if pos < self.size && ch(&self.text, pos) == b'|' {
+        if pos < self.size && ch(self.text, pos) == b'|' {
             had_pipe = true;
             pos += 1;
-            while pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+            while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
                 pos += 1;
             }
         }
 
-        while pos < self.size && !helpers::is_newline(ch(&self.text, pos)) {
+        while pos < self.size && !helpers::is_newline(ch(self.text, pos)) {
             // Expect optional ':' then dashes then optional ':'
-            let has_left_colon = pos < self.size && ch(&self.text, pos) == b':';
+            let has_left_colon = pos < self.size && ch(self.text, pos) == b':';
             if has_left_colon {
                 pos += 1;
             }
 
             let mut dash_count: u32 = 0;
-            while pos < self.size && ch(&self.text, pos) == b'-' {
+            while pos < self.size && ch(self.text, pos) == b'-' {
                 dash_count += 1;
                 pos += 1;
             }
@@ -619,7 +624,7 @@ impl Parser<'_> {
                 };
             }
 
-            let has_right_colon = pos < self.size && ch(&self.text, pos) == b':';
+            let has_right_colon = pos < self.size && ch(self.text, pos) == b':';
             if has_right_colon {
                 pos += 1;
             }
@@ -638,23 +643,29 @@ impl Parser<'_> {
             }
 
             col_count += 1;
+            if col_count > types::TABLE_MAXCOLCOUNT {
+                return TableUnderlineResult {
+                    is_underline: false,
+                    col_count: 0,
+                };
+            }
 
             // Skip whitespace
-            while pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+            while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
                 pos += 1;
             }
 
             // Pipe separator or end
-            if pos < self.size && ch(&self.text, pos) == b'|' {
+            if pos < self.size && ch(self.text, pos) == b'|' {
                 had_pipe = true;
                 pos += 1;
-                while pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+                while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
                     pos += 1;
                 }
-                if pos >= self.size || helpers::is_newline(ch(&self.text, pos)) {
+                if pos >= self.size || helpers::is_newline(ch(self.text, pos)) {
                     break;
                 }
-            } else if pos >= self.size || helpers::is_newline(ch(&self.text, pos)) {
+            } else if pos >= self.size || helpers::is_newline(ch(self.text, pos)) {
                 break;
             } else {
                 return TableUnderlineResult {
@@ -671,7 +682,6 @@ impl Parser<'_> {
             };
         }
 
-        self.table_col_count = col_count;
         TableUnderlineResult {
             is_underline: true,
             col_count,
@@ -680,7 +690,7 @@ impl Parser<'_> {
 
     /// Count the number of pipe-delimited columns in a table row.
     /// Used to validate that header and delimiter row column counts match (GFM requirement).
-    pub fn count_table_row_columns(&self, beg: OFF, end: OFF) -> u32 {
+    pub(crate) fn count_table_row_columns(&self, beg: OFF, end: OFF) -> u32 {
         let row = &self.text[beg as usize..end as usize];
         let mut col_count: u32 = 0;
         let mut pos: usize = 0;
@@ -719,7 +729,7 @@ impl Parser<'_> {
         col_count
     }
 
-    pub fn is_container_mark(&self, indent: u32, off: OFF) -> ContainerMarkResult {
+    pub(crate) fn is_container_mark(&self, indent: u32, off: OFF) -> ContainerMarkResult {
         if off >= self.size {
             return ContainerMarkResult {
                 is_container: false,
@@ -737,7 +747,7 @@ impl Parser<'_> {
             };
         }
 
-        let c = ch(&self.text, off);
+        let c = ch(self.text, off);
 
         // Blockquote
         // Note: off points just past '>' — the optional space and remaining
@@ -761,7 +771,7 @@ impl Parser<'_> {
         // The space is included in the lineIndentation computation by the caller.
         if (c == b'-' || c == b'+' || c == b'*')
             && off + 1 < self.size
-            && helpers::is_blank(ch(&self.text, off + 1))
+            && helpers::is_blank(ch(self.text, off + 1))
         {
             return ContainerMarkResult {
                 is_container: true,
@@ -776,7 +786,7 @@ impl Parser<'_> {
         }
         // Empty unordered list item: marker followed by newline or EOF
         if (c == b'-' || c == b'+' || c == b'*')
-            && (off + 1 >= self.size || helpers::is_newline(ch(&self.text, off + 1)))
+            && (off + 1 >= self.size || helpers::is_newline(ch(self.text, off + 1)))
         {
             return ContainerMarkResult {
                 is_container: true,
@@ -794,14 +804,14 @@ impl Parser<'_> {
         if helpers::is_digit(c) {
             let mut pos = off;
             let mut num: u32 = 0;
-            while pos < self.size && helpers::is_digit(ch(&self.text, pos)) && pos - off < 9 {
-                num = num * 10 + (ch(&self.text, pos) - b'0') as u32;
+            while pos < self.size && helpers::is_digit(ch(self.text, pos)) && pos - off < 9 {
+                num = num * 10 + (ch(self.text, pos) - b'0') as u32;
                 pos += 1;
             }
-            if pos < self.size && (ch(&self.text, pos) == b'.' || ch(&self.text, pos) == b')') {
-                let delim = ch(&self.text, pos);
+            if pos < self.size && (ch(self.text, pos) == b'.' || ch(self.text, pos) == b')') {
+                let delim = ch(self.text, pos);
                 pos += 1; // Past delimiter
-                if pos < self.size && helpers::is_blank(ch(&self.text, pos)) {
+                if pos < self.size && helpers::is_blank(ch(self.text, pos)) {
                     // contents_indent = indent + marker_width (digits + delimiter)
                     let mark_width = pos - off;
                     return ContainerMarkResult {
@@ -810,14 +820,14 @@ impl Parser<'_> {
                             ch: delim,
                             start: num,
                             mark_indent: indent,
-                            contents_indent: indent + u32::try_from(mark_width).expect("int cast"),
+                            contents_indent: indent + mark_width,
                             ..Container::default()
                         },
                         off: pos,
                     };
                 }
                 // Empty list item
-                if pos >= self.size || helpers::is_newline(ch(&self.text, pos)) {
+                if pos >= self.size || helpers::is_newline(ch(self.text, pos)) {
                     let mark_width = pos - off;
                     return ContainerMarkResult {
                         is_container: true,
@@ -825,7 +835,7 @@ impl Parser<'_> {
                             ch: delim,
                             start: num,
                             mark_indent: indent,
-                            contents_indent: indent + u32::try_from(mark_width).expect("int cast"),
+                            contents_indent: indent + mark_width,
                             ..Container::default()
                         },
                         off: pos,
@@ -841,5 +851,3 @@ impl Parser<'_> {
         }
     }
 }
-
-// ported from: src/md/line_analysis.zig

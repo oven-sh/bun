@@ -6,12 +6,10 @@ pub struct EnvMap {
     map: EnvMapInner,
 }
 
-// PORT NOTE: Zig used `std.ArrayHashMap(K, V, Context, store_hash=true)`.
-// `bun_collections::ArrayHashMap` already takes a `C: ArrayHashContext<K>` param.
-pub type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
+pub(crate) type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
 
-// PORT NOTE: Zig calls this `MapType`. Renamed to avoid rustc confusing it with the
-// unrelated mmap `sys::c::MapType` / `sys::posix::MapType` in diagnostic suggestions.
+// Named `EnvMapInner` to avoid rustc confusing it with the unrelated mmap
+// `sys::c::MapType` / `sys::posix::MapType` in diagnostic suggestions.
 type EnvMapInner = ArrayHashMap<EnvStr, EnvStr, EnvMapContext>;
 
 #[derive(Default)]
@@ -21,7 +19,6 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
     fn hash(&self, s: &EnvStr) -> u32 {
         #[cfg(windows)]
         {
-            // Zig: `bun.CaseInsensitiveASCIIStringContext.hash(undefined, s.slice())`.
             return <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
                 &array_hash_map::CaseInsensitiveAsciiStringContext::default(),
                 s.slice(),
@@ -36,7 +33,6 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
     fn eql(&self, a: &EnvStr, b: &EnvStr, _b_index: usize) -> bool {
         #[cfg(windows)]
         {
-            // Zig: `bun.CaseInsensitiveASCIIStringContext.eql` → `eqlCaseInsensitiveASCIIICheckLength`.
             // Must be length-checked: "PATH" must NOT match "PATHEXT".
             return bun_core::strings::eql_case_insensitive_asciii_check_length(
                 a.slice(),
@@ -51,16 +47,16 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
 }
 
 impl EnvMap {
-    pub fn init() -> EnvMap {
+    pub(crate) fn init() -> EnvMap {
         EnvMap {
             map: EnvMapInner::new(),
         }
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut size: usize = core::mem::size_of::<EnvMap>();
-        size += self.map.keys().len() * core::mem::size_of::<EnvStr>();
-        size += self.map.values().len() * core::mem::size_of::<EnvStr>();
+        size += core::mem::size_of_val(self.map.keys());
+        size += core::mem::size_of_val(self.map.values());
         debug_assert_eq!(self.map.keys().len(), self.map.values().len());
         for (key, value) in self.map.keys().iter().zip(self.map.values()) {
             size += key.memory_cost();
@@ -69,7 +65,7 @@ impl EnvMap {
         size
     }
 
-    pub fn init_with_capacity(cap: usize) -> EnvMap {
+    pub(crate) fn init_with_capacity(cap: usize) -> EnvMap {
         EnvMap {
             map: EnvMapInner::with_capacity(cap),
         }
@@ -77,8 +73,7 @@ impl EnvMap {
 
     /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
     /// before handing it to this function!!!
-    pub fn insert(&mut self, key: EnvStr, val: EnvStr) {
-        // PORT NOTE: `bun.handleOom` → `.expect("OOM")` (abort-on-OOM is the Rust default).
+    pub(crate) fn insert(&mut self, key: EnvStr, val: EnvStr) {
         let result = self.map.get_or_put(key).expect("OOM");
         if !result.found_existing {
             key.ref_();
@@ -89,20 +84,15 @@ impl EnvMap {
         *result.value_ptr = val;
     }
 
-    pub fn iterator(&mut self) -> Iterator<'_> {
+    pub(crate) fn iterator(&mut self) -> Iterator<'_> {
         self.map.iterator()
     }
 
-    pub fn iter(&self) -> impl core::iter::Iterator<Item = (&EnvStr, &EnvStr)> {
+    pub(crate) fn iter(&self) -> impl core::iter::Iterator<Item = (&EnvStr, &EnvStr)> {
         self.map.keys().iter().zip(self.map.values())
     }
 
-    pub fn clear_retaining_capacity(&mut self) {
-        self.deref_strings();
-        self.map.clear_retaining_capacity();
-    }
-
-    pub fn ensure_total_capacity(&mut self, new_capacity: usize) {
+    pub(crate) fn ensure_total_capacity(&mut self, new_capacity: usize) {
         self.map.ensure_total_capacity(new_capacity).expect("OOM");
     }
 
@@ -113,17 +103,12 @@ impl EnvMap {
         Some(val)
     }
 
-    pub fn clone(&self) -> EnvMap {
+    pub(crate) fn clone(&self) -> EnvMap {
         let new = EnvMap {
             map: self.map.clone().expect("OOM"),
         };
         new.ref_strings();
         new
-    }
-
-    // PORT NOTE: allocator param dropped (global mimalloc); identical to `clone` now.
-    pub fn clone_with_allocator(&self) -> EnvMap {
-        self.clone()
     }
 
     fn ref_strings(&self) {
@@ -147,5 +132,3 @@ impl Drop for EnvMap {
         // map storage freed by its own Drop
     }
 }
-
-// ported from: src/shell/EnvMap.zig

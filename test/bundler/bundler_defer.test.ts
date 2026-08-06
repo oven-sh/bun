@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import * as path from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -137,7 +137,7 @@ describe("defer", () => {
   {
     let action: string[] = [];
     test("onstart throwing an error works", async () => {
-      const folder = tempDirWithFiles("plugin", {
+      await using folder = tempDir("plugin", {
         "index.ts": "export const foo = {}",
       });
       try {
@@ -467,7 +467,7 @@ console.log("FOOOO", foo);
   });
 
   test("integration", async () => {
-    const folder = tempDirWithFiles("integration", {
+    await using folder = tempDir("integration", {
       "module_data.json": "{}",
       "package.json": `{
     "name": "integration-test",
@@ -642,6 +642,16 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
     for (let i = 0; i < 100 && onFinalizeCallCount < 3; i++) {
       Bun.gc(true);
       await Bun.sleep(10);
+    }
+    if (onFinalizeCallCount < 3) {
+      const { heapStats } = require("bun:jsc");
+      const stats = heapStats();
+      console.error(
+        `onFinalizeCallCount=${onFinalizeCallCount} ` +
+          `BundlerPlugin alive=${stats.objectTypeCounts.BundlerPlugin ?? 0} ` +
+          `protected=${JSON.stringify(stats.protectedObjectTypeCounts)} ` +
+          `protectedCount=${stats.protectedObjectCount}`,
+      );
     }
     expect(onFinalizeCallCount).toBe(3);
   });

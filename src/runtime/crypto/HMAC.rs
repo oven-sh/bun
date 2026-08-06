@@ -3,17 +3,16 @@ use core::mem::MaybeUninit;
 use core::ptr;
 
 use bun_boringssl_sys as boringssl;
-use bun_core::{self, err};
 
 use super::evp;
 
 pub struct HMAC {
     ctx: boringssl::HMAC_CTX,
-    pub algorithm: evp::Algorithm,
+    pub(crate) algorithm: evp::Algorithm,
 }
 
 impl HMAC {
-    pub fn init(algorithm: evp::Algorithm, key: &[u8]) -> Option<Box<HMAC>> {
+    pub(crate) fn init(algorithm: evp::Algorithm, key: &[u8]) -> Option<Box<HMAC>> {
         let md = algorithm.md()?;
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
         // SAFETY: HMAC_CTX_init writes the entire struct; ctx is valid uninit memory.
@@ -40,18 +39,17 @@ impl HMAC {
         Some(Box::new(HMAC { ctx, algorithm }))
     }
 
-    pub fn update(&mut self, data: &[u8]) {
+    pub(crate) fn update(&mut self, data: &[u8]) {
         // SAFETY: self.ctx is initialized; data is a valid readable slice.
         let _ = unsafe { boringssl::HMAC_Update(&raw mut self.ctx, data.as_ptr(), data.len()) };
     }
 
-    pub fn size(&self) -> usize {
+    pub(crate) fn size(&self) -> usize {
         // SAFETY: self.ctx is initialized.
         unsafe { boringssl::HMAC_size(&raw const self.ctx) }
     }
 
-    pub fn copy(&mut self) -> Result<Box<HMAC>, bun_core::Error> {
-        // TODO(port): narrow error set
+    pub(crate) fn copy(&mut self) -> crate::Result<Box<HMAC>> {
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
         // SAFETY: HMAC_CTX_init writes the entire struct; ctx is valid uninit memory.
         unsafe { boringssl::HMAC_CTX_init(ctx.as_mut_ptr()) };
@@ -61,7 +59,7 @@ impl HMAC {
         if unsafe { boringssl::HMAC_CTX_copy(&raw mut ctx, &raw const self.ctx) } != 1 {
             // SAFETY: ctx was initialized by HMAC_CTX_init.
             unsafe { boringssl::HMAC_CTX_cleanup(&raw mut ctx) };
-            return Err(err!("BoringSSLError"));
+            return Err(crate::Error::BoringSSLError);
         }
         Ok(Box::new(HMAC {
             ctx,
@@ -69,10 +67,10 @@ impl HMAC {
         }))
     }
 
-    pub fn r#final<'a>(&mut self, out: &'a mut [u8]) -> &'a mut [u8] {
+    pub(crate) fn r#final<'a>(&mut self, out: &'a mut [u8]) -> &'a mut [u8] {
         let mut outlen: c_uint = 0;
         // SAFETY: self.ctx is initialized; out is a valid writable buffer of at least
-        // HMAC_size(&self.ctx) bytes (caller invariant, same as Zig).
+        // HMAC_size(&self.ctx) bytes (caller invariant).
         let _ =
             unsafe { boringssl::HMAC_Final(&raw mut self.ctx, out.as_mut_ptr(), &raw mut outlen) };
         &mut out[..outlen as usize]
@@ -86,5 +84,3 @@ impl Drop for HMAC {
         // bun.destroy(this) is handled by Box<HMAC>'s own Drop.
     }
 }
-
-// ported from: src/runtime/crypto/HMAC.zig

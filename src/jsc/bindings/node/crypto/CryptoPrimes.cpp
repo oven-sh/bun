@@ -33,13 +33,13 @@ void CheckPrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = res != 0;
 }
 
-extern "C" void Bun__CheckPrimeJobCtx__runFromJS(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue callback)
+extern "C" void Bun__CheckPrimeJobCtx__runFromJS(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(lexicalGlobalObject, JSValue::decode(callback));
+    *out = ctx->runFromJS(lexicalGlobalObject);
 }
-void CheckPrimeJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
+JSCallbackArgs CheckPrimeJobCtx::runFromJS(JSGlobalObject*)
 {
-    Bun__EventLoop__runCallback2(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()), JSValue::encode(jsBoolean(m_result)));
+    return { jsUndefined(), jsBoolean(m_result) };
 }
 
 extern "C" void Bun__CheckPrimeJobCtx__deinit(CheckPrimeJobCtx* ctx)
@@ -86,6 +86,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
     auto candidateView = getArrayBufferOrView2(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
+    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
+    if (!candidate) {
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
+        return {};
+    }
+
     JSValue optionsValue = callFrame->argument(1);
     if (!optionsValue.isUndefined()) {
         V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
@@ -102,12 +108,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
             V::validateInt32(scope, lexicalGlobalObject, checksValue, "options.checks"_s, jsNumber(0), jsUndefined(), &checks);
             RETURN_IF_EXCEPTION(scope, {});
         }
-    }
-
-    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
-    if (!candidate) {
-        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
-        return {};
     }
 
     auto res = candidate.isPrime(checks, [](int32_t a, int32_t b) -> bool {
@@ -131,6 +131,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObjec
 
     auto candidateView = getArrayBufferOrView2(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
+
+    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
+    if (!candidate) {
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
+        return {};
+    }
 
     JSValue optionsValue = callFrame->argument(1);
     JSValue callback = callFrame->argument(2);
@@ -157,12 +163,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObjec
             V::validateInt32(scope, lexicalGlobalObject, checksValue, "options.checks"_s, jsNumber(0), jsUndefined(), &checks);
             RETURN_IF_EXCEPTION(scope, {});
         }
-    }
-
-    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
-    if (!candidate) {
-        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
-        return {};
     }
 
     CheckPrimeJob::createAndSchedule(lexicalGlobalObject, WTF::move(candidate), checks, callback);
@@ -196,11 +196,11 @@ void GeneratePrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     });
 }
 
-extern "C" void Bun__GeneratePrimeJobCtx__runFromJS(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue callback)
+extern "C" void Bun__GeneratePrimeJobCtx__runFromJS(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(lexicalGlobalObject, JSValue::decode(callback));
+    *out = ctx->runFromJS(lexicalGlobalObject);
 }
-void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject, JSValue callback)
+JSCallbackArgs GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -208,23 +208,13 @@ void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject, JSValue callba
     JSValue result = GeneratePrimeJob::result(globalObject, scope, m_prime, m_bigint);
     EXCEPTION_ASSERT(result.isEmpty() == !!scope.exception());
     if (scope.exception()) [[unlikely]] {
-        auto* err = scope.exception();
+        // The thrown Error, not the Exception cell (node parity).
+        JSValue err = scope.exception()->value();
         (void)scope.tryClearException();
-        Bun__EventLoop__runCallback1(
-            globalObject,
-            JSValue::encode(callback),
-            JSValue::encode(jsUndefined()),
-            JSValue::encode(err));
-        return;
+        return { err };
     }
 
-    Bun__EventLoop__runCallback2(
-        globalObject,
-        JSValue::encode(callback),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(result));
-    return;
+    return { jsUndefined(), result };
 }
 
 extern "C" void Bun__GeneratePrimeJobCtx__deinit(GeneratePrimeJobCtx* ctx)

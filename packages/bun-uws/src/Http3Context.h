@@ -26,6 +26,12 @@ struct Http3Context {
             Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context(s));
             Http3Response *res = (Http3Response *) s;
             Http3ResponseData *rd = res->getHttpResponseData();
+            /* lsquic re-fires on_stream_headers for every HEADERS block on
+             * the stream; only the first one is the request. Re-running
+             * reset()/route() for trailers would wipe the live response's
+             * onAborted/userData and dispatch the handler a second time.
+             * state is 0 only before the first reset() on this stream. */
+            if (rd->state != 0) return;
             rd->reset();
 
             Http3Request req(s);

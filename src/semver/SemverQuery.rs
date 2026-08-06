@@ -8,7 +8,7 @@ use bun_core::strings;
 use crate::range::{Comparator, Op as RangeOp};
 use crate::{Range, SlicedString, Version, version};
 
-// Re-export sub-namespace mirroring Zig's `Query.Token.Wildcard` path so
+// Re-export sub-namespace so
 // `crate::query::token::Wildcard` resolves for sibling modules.
 pub mod token {
     pub use super::{Token, TokenTag, Wildcard};
@@ -18,19 +18,43 @@ pub mod token {
 /// "^1 ^2"
 /// ----|-----
 /// That is two Query
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Op {
-    None,
-    And,
-    Or,
-}
-
 #[derive(Default)]
 pub struct Query {
     pub range: Range,
 
     // AND
     pub next: Option<Box<Query>>,
+}
+
+impl Clone for Query {
+    fn clone(&self) -> Self {
+        let mut out = Query {
+            range: self.range,
+            next: None,
+        };
+        let mut src = &self.next;
+        let mut dst = &mut out.next;
+        while let Some(node) = src {
+            let slot = dst.insert(Box::new(Query {
+                range: node.range,
+                next: None,
+            }));
+            src = &node.next;
+            dst = &mut slot.next;
+        }
+        out
+    }
+}
+
+impl Drop for Query {
+    fn drop(&mut self) {
+        // Unlink the chain iteratively so the derived recursive drop glue
+        // can't overflow the stack on very long AND chains.
+        let mut next = self.next.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+        }
+    }
 }
 
 pub struct QueryFormatter<'a> {
@@ -58,54 +82,69 @@ impl<'a> fmt::Display for QueryFormatter<'a> {
 }
 
 impl Query {
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
+    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
         QueryFormatter {
             query: self,
             buffer: buf,
         }
     }
 
-    pub fn eql(&self, rhs: &Query) -> bool {
-        if !self.range.eql(rhs.range) {
-            return false;
+    pub(crate) fn eql(&self, rhs: &Query) -> bool {
+        let mut lhs = self;
+        let mut rhs = rhs;
+        loop {
+            if !lhs.range.eql(&rhs.range) {
+                return false;
+            }
+
+            let lhs_next = match &lhs.next {
+                Some(n) => n,
+                None => return rhs.next.is_none(),
+            };
+            let rhs_next = match &rhs.next {
+                Some(n) => n,
+                None => return false,
+            };
+
+            lhs = lhs_next;
+            rhs = rhs_next;
         }
-
-        let lhs_next = match &self.next {
-            Some(n) => n,
-            None => return rhs.next.is_none(),
-        };
-        let rhs_next = match &rhs.next {
-            Some(n) => n,
-            None => return false,
-        };
-
-        lhs_next.eql(rhs_next)
     }
 
-    pub fn satisfies(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
-        self.range.satisfies(version, query_buf, version_buf)
-            && match &self.next {
-                Some(next) => next.satisfies(version, query_buf, version_buf),
+    pub(crate) fn satisfies(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
+        let mut node = self;
+        loop {
+            if !node.range.satisfies(version, query_buf, version_buf) {
+                return false;
+            }
+            match &node.next {
+                Some(next) => node = next,
                 None => return true,
             }
+        }
     }
 
-    pub fn satisfies_pre(
+    pub(crate) fn satisfies_pre(
         &self,
         version: Version,
         query_buf: &[u8],
         version_buf: &[u8],
         pre_matched: &mut bool,
     ) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
-        self.range
-            .satisfies_pre(version, query_buf, version_buf, pre_matched)
-            && match &self.next {
-                Some(next) => next.satisfies_pre(version, query_buf, version_buf, pre_matched),
+        debug_assert!(version.tag.has_pre());
+        let mut node = self;
+        loop {
+            if !node
+                .range
+                .satisfies_pre(version, query_buf, version_buf, pre_matched)
+            {
+                return false;
+            }
+            match &node.next {
+                Some(next) => node = next,
                 None => return true,
             }
+        }
     }
 }
 
@@ -117,7 +156,7 @@ impl Query {
 pub struct List {
     pub head: Query,
     // BACKREF: alias into self.head.next chain
-    pub tail: Option<NonNull<Query>>,
+    pub(crate) tail: Option<NonNull<Query>>,
 
     // OR
     pub next: Option<Box<List>>,
@@ -125,11 +164,63 @@ pub struct List {
 
 // SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
 // by this `List` (see `and_range`); it never aliases data owned by another
-// thread. Zig models this as a plain `*Query` and freely sends `Group`/`List`
-// across the lockfile thread pool. Auto-`!Send` from `NonNull` is overly
+// thread, so the whole structure moves between threads as a unit (the lockfile
+// thread pool relies on this). Auto-`!Send` from `NonNull` is overly
 // conservative here.
 unsafe impl Send for List {}
+// SAFETY: `tail` is only dereferenced through `&mut self` (see `and_range`);
+// `&List` exposes no unsynchronized interior mutability.
 unsafe impl Sync for List {}
+
+impl Drop for List {
+    fn drop(&mut self) {
+        // Unlink the chain iteratively so the derived recursive drop glue
+        // can't overflow the stack on very long OR chains.
+        let mut next = self.next.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+        }
+    }
+}
+
+impl Clone for List {
+    fn clone(&self) -> Self {
+        let mut out = List {
+            head: self.head.clone(),
+            tail: None,
+            next: None,
+        };
+        if out.head.next.is_some() {
+            let mut tail = NonNull::from(&mut out.head);
+            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
+            while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
+                tail = NonNull::from(next);
+            }
+            out.tail = Some(tail);
+        }
+
+        let mut src = &self.next;
+        let mut dst = &mut out.next;
+        while let Some(node) = src {
+            let slot = dst.insert(Box::new(List {
+                head: node.head.clone(),
+                tail: None,
+                next: None,
+            }));
+            if slot.head.next.is_some() {
+                let mut tail = NonNull::from(&mut slot.head);
+                // SAFETY: `tail` walks `slot.head`'s exclusively-owned Box chain.
+                while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
+                    tail = NonNull::from(next);
+                }
+                slot.tail = Some(tail);
+            }
+            src = &node.next;
+            dst = &mut slot.next;
+        }
+        out
+    }
+}
 
 pub struct ListFormatter<'a> {
     list: &'a List,
@@ -138,88 +229,105 @@ pub struct ListFormatter<'a> {
 
 impl<'a> fmt::Display for ListFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let this = self.list;
+        let mut this = self.list;
 
-        if let Some(ptr) = &this.next {
-            write!(
-                f,
-                "{} || {}",
-                this.head.fmt(self.buffer),
-                ptr.fmt(self.buffer)
-            )
-        } else {
-            write!(f, "{}", this.head.fmt(self.buffer))
+        while let Some(ptr) = &this.next {
+            write!(f, "{} || ", this.head.fmt(self.buffer))?;
+            this = ptr;
         }
+
+        write!(f, "{}", this.head.fmt(self.buffer))
     }
 }
 
 impl List {
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
+    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
         ListFormatter {
             list: self,
             buffer: buf,
         }
     }
 
-    pub fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
-        self.head.satisfies(version, list_buf, version_buf)
-            || match &self.next {
-                Some(next) => next.satisfies(version, list_buf, version_buf),
+    pub(crate) fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
+        let mut node = self;
+        loop {
+            if node.head.satisfies(version, list_buf, version_buf) {
+                return true;
+            }
+            match &node.next {
+                Some(next) => node = next,
                 None => return false,
             }
+        }
     }
 
-    pub fn satisfies_pre(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
+    pub(crate) fn satisfies_pre(
+        &self,
+        version: Version,
+        list_buf: &[u8],
+        version_buf: &[u8],
+    ) -> bool {
+        debug_assert!(version.tag.has_pre());
 
         // `version` has a prerelease tag:
         // - needs to satisfy each comparator in the query (<comparator> AND <comparator> AND ...) like normal comparison
         // - if it does, also needs to match major, minor, patch with at least one of the other versions
         //   with a prerelease
         // https://github.com/npm/node-semver/blob/ac9b35769ab0ddfefd5a3af4a3ecaf3da2012352/classes/range.js#L505
-        let mut pre_matched = false;
-        (self
-            .head
-            .satisfies_pre(version, list_buf, version_buf, &mut pre_matched)
-            && pre_matched)
-            || match &self.next {
-                Some(next) => next.satisfies_pre(version, list_buf, version_buf),
+        let mut node = self;
+        loop {
+            let mut pre_matched = false;
+            if node
+                .head
+                .satisfies_pre(version, list_buf, version_buf, &mut pre_matched)
+                && pre_matched
+            {
+                return true;
+            }
+            match &node.next {
+                Some(next) => node = next,
                 None => return false,
             }
-    }
-
-    pub fn eql(&self, rhs: &List) -> bool {
-        if !self.head.eql(&rhs.head) {
-            return false;
         }
-
-        let lhs_next = match &self.next {
-            Some(n) => n,
-            None => return rhs.next.is_none(),
-        };
-        let rhs_next = match &rhs.next {
-            Some(n) => n,
-            None => return false,
-        };
-
-        lhs_next.eql(rhs_next)
     }
 
-    pub fn and_range(&mut self, range: Range) -> Result<(), AllocError> {
+    pub(crate) fn eql(&self, rhs: &List) -> bool {
+        let mut lhs = self;
+        let mut rhs = rhs;
+        loop {
+            if !lhs.head.eql(&rhs.head) {
+                return false;
+            }
+
+            let lhs_next = match &lhs.next {
+                Some(n) => n,
+                None => return rhs.next.is_none(),
+            };
+            let rhs_next = match &rhs.next {
+                Some(n) => n,
+                None => return false,
+            };
+
+            lhs = lhs_next;
+            rhs = rhs_next;
+        }
+    }
+
+    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         if !self.head.range.has_left() && !self.head.range.has_right() {
-            self.head.range = range;
+            self.head.range = *range;
             return Ok(());
         }
 
-        let mut tail = Box::new(Query { range, next: None });
-        tail.range = range;
+        let mut tail = Box::new(Query {
+            range: *range,
+            next: None,
+        });
 
         let tail_ptr = NonNull::from(&mut *tail);
 
-        // SAFETY: self.tail aliases a Query owned by self.head.next chain; we hold &mut self.
         let last_tail: &mut Query = match self.tail {
+            // SAFETY: self.tail aliases a Query owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
@@ -229,20 +337,20 @@ impl List {
     }
 }
 
-pub type FlagsBitSet = IntegerBitSet<3>;
+pub(crate) type FlagsBitSet = IntegerBitSet<3>;
 
 pub struct Flags;
 impl Flags {
     pub const PRE: usize = 1;
-    pub const BUILD: usize = 0;
+    pub(crate) const BUILD: usize = 0;
 }
 
 pub struct Group {
     pub head: List,
     // BACKREF: alias into self.head.next chain
-    pub tail: Option<NonNull<List>>,
-    /// Borrowed view into the caller's source buffer (Zig: `input: string = ""`).
-    /// Stored as a raw fat pointer per PORTING.md §`[]const u8` struct-field
+    pub(crate) tail: Option<NonNull<List>>,
+    /// Borrowed view into the caller's source buffer.
+    /// Stored as a raw fat pointer
     /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
     /// can be embedded in lockfile types (`NpmInfo`). Only dereferenced in
     /// `json_stringify`; caller must keep the source buffer alive for that call.
@@ -253,13 +361,35 @@ pub struct Group {
 
 // SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
 // by this `Group` (see `or_version`); `input` is a lifetime-erased borrow into
-// the caller's source buffer (PORTING.md §`[]const u8` struct-field) and is
+// the caller's source buffer and is
 // only dereferenced under the same single-thread parse/stringify call. Neither
-// pointer aliases data owned by another thread. Zig models both as plain
-// pointers and freely sends `Group` across the lockfile/resolver thread pool;
+// pointer aliases data owned by another thread, so the whole structure moves
+// between threads as a unit (the lockfile/resolver thread pool relies on this);
 // auto-`!Send` from `NonNull`/`*const` is overly conservative here.
 unsafe impl Send for Group {}
+// SAFETY: `tail` is only dereferenced through `&mut self` and `input` points
+// to immutable bytes; `&Group` exposes no unsynchronized interior mutability.
 unsafe impl Sync for Group {}
+
+impl Clone for Group {
+    fn clone(&self) -> Self {
+        let mut out = Group {
+            head: self.head.clone(),
+            tail: None,
+            input: self.input,
+            flags: self.flags,
+        };
+        if out.head.next.is_some() {
+            let mut tail = NonNull::from(&mut out.head);
+            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
+            while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
+                tail = NonNull::from(next);
+            }
+            out.tail = Some(tail);
+        }
+        out
+    }
+}
 
 impl Default for Group {
     fn default() -> Self {
@@ -304,27 +434,8 @@ impl Group {
         GroupFormatter { group: self, buf }
     }
 
-    pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> fmt::Result {
-        // TODO(port): Zig called `this.fmt()` with no buf arg (looks like a latent bug upstream).
-        // TODO(port): std.json.encodeJsonString — needs a JSON string encoder in bun_core/serde.
-        let temp = {
-            use std::io::Write as _;
-            let mut v: Vec<u8> = Vec::new();
-            // SAFETY: `input` points into the parse source buffer which the
-            // caller must keep alive for the lifetime of this Group (Zig
-            // stored a bare `[]const u8` with the same contract).
-            let input = unsafe { &*self.input };
-            let _ = write!(&mut v, "{}", self.fmt(input));
-            v
-        };
-        // Placeholder: write raw; Phase B must JSON-escape.
-        writer.write_str("\"")?;
-        write!(writer, "{}", bstr::BStr::new(&temp))?;
-        writer.write_str("\"")
-    }
-
-    // PORT NOTE: `deinit` deleted — `next: Option<Box<..>>` chains are freed by Drop.
-    // PERF(port): recursive Box drop could overflow stack on very long chains — profile in Phase B.
+    // `deinit` deleted — `next: Option<Box<..>>` chains are freed by the
+    // iterative `Drop` impls on `Query` and `List`.
 
     pub fn get_exact_version(&self) -> Option<Version> {
         let range = &self.head.head.range;
@@ -334,9 +445,7 @@ impl Group {
             && range.left.op == RangeOp::Eql
             && !range.has_right()
         {
-            if cfg!(debug_assertions) {
-                debug_assert!(self.tail.is_none());
-            }
+            debug_assert!(self.tail.is_none());
             return Some(range.left.version);
         }
 
@@ -356,7 +465,8 @@ impl Group {
                     },
                     next: None,
                 },
-                ..Default::default()
+                tail: None,
+                next: None,
             },
             ..Default::default()
         }
@@ -369,7 +479,6 @@ impl Group {
             && self.head.head.range.left.op == RangeOp::Eql
     }
 
-    /// Zig name: `@"is *"`
     pub fn is_star(&self) -> bool {
         let left = &self.head.head.range.left;
         self.head.head.range.right.op == RangeOp::Unset
@@ -390,7 +499,7 @@ impl Group {
         self.head.head.range.left.version
     }
 
-    pub fn or_version(&mut self, version: Version) -> Result<(), AllocError> {
+    pub(crate) fn or_version(&mut self, version: Version) -> Result<(), AllocError> {
         if self.tail.is_none() && !self.head.head.range.has_left() {
             self.head.head.range.left.version = version;
             self.head.head.range.left.op = RangeOp::Eql;
@@ -403,8 +512,8 @@ impl Group {
 
         let new_tail_ptr = NonNull::from(&mut *new_tail);
 
-        // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
         let prev_tail: &mut List = match self.tail {
+            // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
@@ -413,28 +522,28 @@ impl Group {
         Ok(())
     }
 
-    pub fn and_range(&mut self, range: Range) -> Result<(), AllocError> {
-        // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
+    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         let tail: &mut List = match self.tail {
+            // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
         tail.and_range(range)
     }
 
-    pub fn or_range(&mut self, range: Range) -> Result<(), AllocError> {
+    pub(crate) fn or_range(&mut self, range: &Range) -> Result<(), AllocError> {
         if self.tail.is_none() && self.head.tail.is_none() && !self.head.head.range.has_left() {
-            self.head.head.range = range;
+            self.head.head.range = *range;
             return Ok(());
         }
 
         let mut new_tail = Box::new(List::default());
-        new_tail.head.range = range;
+        new_tail.head.range = *range;
 
         let new_tail_ptr = NonNull::from(&mut *new_tail);
 
-        // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
         let prev_tail: &mut List = match self.tail {
+            // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
@@ -455,8 +564,8 @@ impl Group {
 
 #[derive(Clone, Copy, Default)]
 pub struct Token {
-    pub tag: TokenTag,
-    pub wildcard: Wildcard,
+    pub(crate) tag: TokenTag,
+    pub(crate) wildcard: Wildcard,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -482,7 +591,7 @@ pub enum Wildcard {
 }
 
 impl Token {
-    pub fn to_range(self, version: version::Partial<u64>) -> Range {
+    pub(crate) fn to_range(self, version: &version::Partial<u64>) -> Range {
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -499,29 +608,25 @@ impl Token {
                             ..Default::default()
                         },
                     };
-                    range.right = Comparator {
-                        op: RangeOp::Lt,
-                        ..Default::default()
-                    };
                     if let Some(minor) = version.minor {
                         range.left.version.minor = minor;
                         if let Some(patch) = version.patch {
                             range.left.version.patch = patch;
                             range.left.version.tag = version.tag;
                             if major == 0 {
-                                if minor == 0 {
-                                    range.right.version.patch = patch.saturating_add(1);
+                                range.right = if minor == 0 {
+                                    Comparator::lt_next_patch(0, 0, patch)
                                 } else {
-                                    range.right.version.minor = minor.saturating_add(1);
-                                }
+                                    Comparator::lt_next_minor(0, minor)
+                                };
                                 break 'done;
                             }
                         } else if major == 0 {
-                            range.right.version.minor = minor.saturating_add(1);
+                            range.right = Comparator::lt_next_minor(0, minor);
                             break 'done;
                         }
                     }
-                    range.right.version.major = major.saturating_add(1);
+                    range.right = Comparator::lt_next_major(major);
                 }
                 return range;
             }
@@ -539,21 +644,16 @@ impl Token {
                             ..Default::default()
                         },
                     };
-                    range.right = Comparator {
-                        op: RangeOp::Lt,
-                        ..Default::default()
-                    };
                     if let Some(minor) = version.minor {
                         range.left.version.minor = minor;
                         if let Some(patch) = version.patch {
                             range.left.version.patch = patch;
                             range.left.version.tag = version.tag;
                         }
-                        range.right.version.major = major;
-                        range.right.version.minor = minor.saturating_add(1);
+                        range.right = Comparator::lt_next_minor(major, minor);
                         break 'done;
                     }
-                    range.right.version.major = major.saturating_add(1);
+                    range.right = Comparator::lt_next_major(major);
                 }
                 return range;
             }
@@ -709,7 +809,6 @@ impl Token {
     }
 }
 
-#[allow(unused_variables, unused_assignments)] // prev_token is dead in upstream Zig too
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
@@ -720,9 +819,8 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     };
 
     let mut token = Token::default();
-    let mut prev_token = Token::default();
 
-    let mut count: u8 = 0;
+    let mut count: u32 = 0;
     let mut skip_round;
     let mut is_or = false;
 
@@ -831,10 +929,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             let parse_result = Version::parse(sliced.sub(&input[i..]));
             let version = parse_result.version.min();
             if version.tag.has_build() {
-                list.flags.set_value(Flags::BUILD, true);
+                list.flags.set(Flags::BUILD);
             }
             if version.tag.has_pre() {
-                list.flags.set_value(Flags::PRE, true);
+                list.flags.set(Flags::PRE);
             }
 
             token.wildcard = parse_result.wildcard;
@@ -867,7 +965,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         break 'possibly_hyphenate false;
                     }
 
-                    if !(i < input.len() && matches!(input[i], b'0'..=b'9' | b'X' | b'x' | b'*')) {
+                    if !matches!(input[i], b'0'..=b'9' | b'X' | b'x' | b'*') {
                         break 'possibly_hyphenate false;
                     }
 
@@ -883,10 +981,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
                 let mut second_version = second_parsed.version.min();
                 if second_version.tag.has_build() {
-                    list.flags.set_value(Flags::BUILD, true);
+                    list.flags.set(Flags::BUILD);
                 }
                 if second_version.tag.has_pre() {
-                    list.flags.set_value(Flags::PRE, true);
+                    list.flags.set(Flags::PRE);
                 }
                 let range: Range = match second_parsed.wildcard {
                     Wildcard::Major => {
@@ -901,35 +999,50 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     }
                     Wildcard::Minor => {
                         // "1.0.0 - 1.x" --> ">=1.0.0 < 2.0.0"
-                        second_version.major = second_version.major.saturating_add(1);
-                        second_version.minor = 0;
-                        second_version.patch = 0;
+                        let right = match second_version.major.checked_add(1) {
+                            Some(m) => {
+                                second_version.major = m;
+                                second_version.minor = 0;
+                                second_version.patch = 0;
+                                Comparator {
+                                    op: RangeOp::Lt,
+                                    version: second_version,
+                                }
+                            }
+                            None => Comparator::lt_next_major(second_version.major),
+                        };
 
                         Range {
                             left: Comparator {
                                 op: RangeOp::Gte,
                                 version,
                             },
-                            right: Comparator {
-                                op: RangeOp::Lt,
-                                version: second_version,
-                            },
+                            right,
                         }
                     }
                     Wildcard::Patch => {
                         // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0"
-                        second_version.minor = second_version.minor.saturating_add(1);
-                        second_version.patch = 0;
+                        let right = match second_version.minor.checked_add(1) {
+                            Some(m) => {
+                                second_version.minor = m;
+                                second_version.patch = 0;
+                                Comparator {
+                                    op: RangeOp::Lt,
+                                    version: second_version,
+                                }
+                            }
+                            None => Comparator::lt_next_minor(
+                                second_version.major,
+                                second_version.minor,
+                            ),
+                        };
 
                         Range {
                             left: Comparator {
                                 op: RangeOp::Gte,
                                 version,
                             },
-                            right: Comparator {
-                                op: RangeOp::Lt,
-                                version: second_version,
-                            },
+                            right,
                         }
                     }
                     Wildcard::None => Range {
@@ -945,46 +1058,43 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 };
 
                 if is_or {
-                    list.or_range(range)?;
+                    list.or_range(&range)?;
                 } else {
-                    list.and_range(range)?;
+                    list.and_range(&range)?;
                 }
 
                 i += second_parsed.len as usize + 1;
+            } else if token.tag == TokenTag::None {
+                // No pending comparator token for this chunk, so skip it instead of
+                // emitting a comparator, the same way skipped tags like "boop" in
+                // "1.0.0 || boop" are ignored (any pending "||" is preserved). This
+                // covers a leading "--foo" (treat "--foo" the same as "-foo", example:
+                // foo/bar@1.2.3@--canary.24) as well as a dangling "-" after a skipped
+                // tag, like "1 || - foo".
+                token.wildcard = Wildcard::None;
+                continue;
             } else if count == 0 && token.tag == TokenTag::Version {
                 match parse_result.wildcard {
                     Wildcard::None => {
                         list.or_version(version)?;
                     }
                     _ => {
-                        list.or_range(token.to_range(parse_result.version))?;
+                        list.or_range(&token.to_range(&parse_result.version))?;
                     }
                 }
             } else if count == 0 {
-                // From a semver perspective, treat "--foo" the same as "-foo"
-                // example: foo/bar@1.2.3@--canary.24
-                //                         ^
-                if token.tag == TokenTag::None {
-                    is_or = false;
-                    token.wildcard = Wildcard::None;
-                    prev_token.tag = TokenTag::None;
-                    continue;
-                }
-                list.and_range(token.to_range(parse_result.version))?;
+                list.and_range(&token.to_range(&parse_result.version))?;
             } else if is_or {
-                list.or_range(token.to_range(parse_result.version))?;
+                list.or_range(&token.to_range(&parse_result.version))?;
             } else {
-                list.and_range(token.to_range(parse_result.version))?;
+                list.and_range(&token.to_range(&parse_result.version))?;
             }
 
             is_or = false;
             count += 1;
             token.wildcard = Wildcard::None;
-            prev_token.tag = token.tag;
         }
     }
 
     Ok(list)
 }
-
-// ported from: src/semver/SemverQuery.zig

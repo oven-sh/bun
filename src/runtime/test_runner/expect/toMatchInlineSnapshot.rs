@@ -1,34 +1,32 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_core::ZigString;
 
+use super::throw;
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_match_inline_snapshot(
+pub(crate) fn to_match_inline_snapshot(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: `defer this.postMatch(globalThis)` — wrap `this` in a scopeguard that owns the
+    // `defer this.postMatch(globalThis)` — wrap `this` in a scopeguard that owns the
     // &mut Expect and runs post_match on drop, so the body can borrow through DerefMut without
     // overlapping with the deferred call (matches toThrowErrorMatchingInlineSnapshot.rs).
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
-    let arguments_ = frame.arguments_old::<2>(); let arguments: &[JSValue] = arguments_.slice();
+    let arguments: &[JSValue] = frame.arguments();
 
     this.increment_expect_call_counter();
 
     let not = this.flags.get().not();
     if not {
         let signature = Expect::get_signature("toMatchInlineSnapshot", "", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"
-            ),
+            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n",
         );
     }
 
@@ -44,12 +42,11 @@ pub fn to_match_inline_snapshot(
             } else if arguments[0].is_object() {
                 property_matchers = Some(arguments[0]);
             } else {
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     "",
-                    format_args!(
-                        "\n\nMatcher error: Expected first argument to be a string or object\n"
-                    ),
+                    "\n\nMatcher error: Expected first argument to be a string or object\n",
                 );
             }
         }
@@ -60,12 +57,11 @@ pub fn to_match_inline_snapshot(
                     "<green>properties<r><d>, <r>hint",
                     false,
                 );
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     signature,
-                    format_args!(
-                        "\n\nMatcher error: Expected <green>properties<r> must be an object\n"
-                    ),
+                    "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
                 );
             }
 
@@ -99,5 +95,3 @@ pub fn to_match_inline_snapshot(
         "toMatchInlineSnapshot",
     )
 }
-
-// ported from: src/test_runner/expect/toMatchInlineSnapshot.zig

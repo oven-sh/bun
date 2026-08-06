@@ -1,4 +1,4 @@
-//! Port of src/bun_core/fmt.zig — formatter newtypes and Display impls.
+//! Formatter newtypes and Display impls.
 
 use core::cell::Cell;
 use core::fmt::{self, Display, Formatter, Write as _};
@@ -20,17 +20,17 @@ const SHA512_DIGEST: usize = 64;
 // ════════════════════════════════════════════════════════════════════════════
 
 pub mod js_lexer {
-    /// Zig: js_lexer.isIdentifierStart — ASCII fast path; bun_js_parser extends
-    /// with the full Unicode ID_Start table.
+    /// ASCII fast path; bun_js_parser extends with the full Unicode ID_Start
+    /// table.
     #[inline]
-    pub fn is_identifier_start(c: i32) -> bool {
+    pub(crate) fn is_identifier_start(c: i32) -> bool {
         matches!(c, 0x24 /* $ */ | 0x5F /* _ */)
             || (c >= b'a' as i32 && c <= b'z' as i32)
             || (c >= b'A' as i32 && c <= b'Z' as i32)
-            || c > 0x7F // PERF(port): defer Unicode table to bun_js_parser
+            || c > 0x7F // non-ASCII: the full Unicode table lives in bun_js_parser
     }
     #[inline]
-    pub fn is_identifier_continue(c: i32) -> bool {
+    pub(crate) fn is_identifier_continue(c: i32) -> bool {
         is_identifier_start(c) || (c >= b'0' as i32 && c <= b'9' as i32)
     }
 }
@@ -38,8 +38,7 @@ pub mod js_lexer {
 pub mod js_printer {
     use super::strings::Encoding;
     use core::fmt;
-    use core::fmt::Write as _;
-    /// Zig: js_printer.writeJSONString — minimal escape set for fmt.rs quoting.
+    /// Minimal escape set for fmt.rs quoting.
     /// bun_js_printer overrides with the full (ctrl-char, \u escape, encoding-aware) impl.
     pub fn write_json_string(input: &[u8], f: &mut impl fmt::Write, enc: Encoding) -> fmt::Result {
         f.write_char('"')?;
@@ -49,22 +48,24 @@ pub mod js_printer {
         }
         f.write_char('"')
     }
-    pub fn write_pre_quoted_string(
+    pub(crate) fn write_pre_quoted_string(
         input: &[u8],
         f: &mut impl fmt::Write,
         quote: u8,
-        _allow_backtick: bool,
+        ascii_only: bool,
         enc: Encoding,
     ) -> fmt::Result {
-        // TODO(port): full impl in bun_js_printer; this tier only needs the
-        // "already quoted" passthrough for fmt.rs JS-string display.
-        // Zig writePreQuotedString writes the escaped body WITHOUT surrounding
-        // quotes — delegate to the canonical chars-only escaper.
-        let _ = quote;
-        match enc {
-            Encoding::Latin1 => super::encode_json_string_chars_latin1(f, input),
-            _ => super::encode_json_string_chars(f, input),
-        }
+        // Writes the escaped body WITHOUT surrounding quotes. Delegate to the
+        // canonical impl in `string::printer` (a byte-sink writer) and bridge
+        // the result into the `fmt::Write`. In JSON mode (`json = true`) every
+        // non-printable scalar (including lone surrogates) is emitted as an
+        // ASCII escape.
+        let mut buf: Vec<u8> = Vec::with_capacity(input.len() + 8);
+        crate::string::printer::write_pre_quoted_string(
+            input, &mut buf, quote, ascii_only, true, enc,
+        )
+        .map_err(|_| fmt::Error)?;
+        f.write_str(&String::from_utf8_lossy(&buf))
     }
 }
 use strum::IntoStaticStr;
@@ -82,37 +83,34 @@ impl TableSymbols {
     pub const UNICODE: TableSymbols = TableSymbols {
         enable_ansi_colors: true,
     };
-    pub const ASCII: TableSymbols = TableSymbols {
-        enable_ansi_colors: false,
-    };
 
-    pub const fn top_left_sep(self) -> &'static str {
+    pub(crate) const fn top_left_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┌" } else { "|" }
     }
-    pub const fn top_right_sep(self) -> &'static str {
+    pub(crate) const fn top_right_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┐" } else { "|" }
     }
     pub const fn top_column_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┬" } else { "-" }
     }
 
-    pub const fn bottom_left_sep(self) -> &'static str {
+    pub(crate) const fn bottom_left_sep(self) -> &'static str {
         if self.enable_ansi_colors { "└" } else { "|" }
     }
-    pub const fn bottom_right_sep(self) -> &'static str {
+    pub(crate) const fn bottom_right_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┘" } else { "|" }
     }
-    pub const fn bottom_column_sep(self) -> &'static str {
+    pub(crate) const fn bottom_column_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┴" } else { "-" }
     }
 
-    pub const fn middle_left_sep(self) -> &'static str {
+    pub(crate) const fn middle_left_sep(self) -> &'static str {
         if self.enable_ansi_colors { "├" } else { "|" }
     }
-    pub const fn middle_right_sep(self) -> &'static str {
+    pub(crate) const fn middle_right_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┤" } else { "|" }
     }
-    pub const fn middle_column_sep(self) -> &'static str {
+    pub(crate) const fn middle_column_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┼" } else { "|" }
     }
 
@@ -128,18 +126,15 @@ impl TableSymbols {
 // Table
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig `column_color` was a comptime `[]const u8` param spliced into the
-// format string at compile time. Rust const generics don't accept `&'static str`, so
-// it is stored as a runtime field and the format string is built at print time.
 pub struct Table<
     'a,
     const COLUMN_LEFT_PAD: usize,
     const COLUMN_RIGHT_PAD: usize,
     const ENABLE_ANSI_COLORS: bool,
 > {
-    pub column_names: &'a [&'a [u8]],
-    pub column_inside_lengths: &'a [usize],
-    pub column_color: &'static str,
+    pub(crate) column_names: &'a [&'a [u8]],
+    pub(crate) column_inside_lengths: &'a [usize],
+    pub(crate) column_color: &'static str,
 }
 
 impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
@@ -183,7 +178,7 @@ impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
         );
     }
 
-    pub fn print_line(
+    pub(crate) fn print_line(
         &self,
         left_edge_separator: &str,
         right_edge_separator: &str,
@@ -191,40 +186,37 @@ impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
     ) {
         for (i, &column_inside_length) in self.column_inside_lengths.iter().enumerate() {
             if i == 0 {
-                Output::pretty(format_args!("{}", left_edge_separator));
+                crate::pretty!("{}", left_edge_separator);
             } else {
-                Output::pretty(format_args!("{}", column_separator));
+                crate::pretty!("{}", column_separator);
             }
 
             for _ in 0..(L + column_inside_length + R) {
-                Output::pretty(format_args!("{}", Self::SYMBOLS.horizontal_edge()));
+                crate::pretty!("{}", Self::SYMBOLS.horizontal_edge());
             }
 
             if i == self.column_inside_lengths.len() - 1 {
-                Output::pretty(format_args!("{}\n", right_edge_separator));
+                crate::pretty!("{}\n", right_edge_separator);
             }
         }
     }
 
     pub fn print_column_names(&self) {
         for (i, &column_inside_length) in self.column_inside_lengths.iter().enumerate() {
-            Output::pretty(format_args!("{}", Self::SYMBOLS.vertical_edge()));
+            crate::pretty!("{}", Self::SYMBOLS.vertical_edge());
             for _ in 0..L {
-                Output::pretty(format_args!(" "));
+                crate::pretty!(" ");
             }
-            // TODO(port): Zig spliced `column_color` into the comptime format string
-            // ("<b><" ++ column_color ++ ">{s}<r>"). Replicate via Output::pretty's
-            // runtime tag handling.
             Output::pretty(format_args!(
                 "<b><{}>{}<r>",
                 self.column_color,
                 bstr::BStr::new(self.column_names[i]),
             ));
             for _ in self.column_names[i].len()..(column_inside_length + R) {
-                Output::pretty(format_args!(" "));
+                crate::pretty!(" ");
             }
             if i == self.column_inside_lengths.len() - 1 {
-                Output::pretty(format_args!("{}\n", Self::SYMBOLS.vertical_edge()));
+                crate::pretty!("{}\n", Self::SYMBOLS.vertical_edge());
             }
         }
     }
@@ -235,13 +227,22 @@ impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct RedactedNpmUrlFormatter<'a> {
-    pub url: &'a [u8],
+    pub(crate) url: &'a [u8],
 }
 
 impl Display for RedactedNpmUrlFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut i: usize = 0;
+        let password = strings::find_url_password(self.url);
         while i < self.url.len() {
+            if let Some((offset, len)) = password
+                && i == offset
+            {
+                splat_byte_all(f, b'*', len)?;
+                i += len;
+                continue;
+            }
+
             if strings::starts_with_uuid(&self.url[i..]) {
                 f.write_str("***")?;
                 i += 36;
@@ -255,15 +256,17 @@ impl Display for RedactedNpmUrlFormatter<'_> {
                 continue;
             }
 
-            // TODO: redact password from `https://username:password@registry.com/`
-
             // Emit the run of bytes up to the next position where a uuid/npm
             // secret could possibly start, so multi-byte UTF-8 sequences are
-            // written intact (Zig writes raw bytes, not Latin-1→UTF-8 chars).
+            // written intact (raw bytes, not Latin-1→UTF-8 chars).
             let mut next = i + 1;
             while next < self.url.len() {
                 let b = self.url[next];
-                if b.is_ascii_hexdigit() || b == b'n' || b == b'N' {
+                if b.is_ascii_hexdigit()
+                    || b == b'n'
+                    || b == b'N'
+                    || password.is_some_and(|(offset, _)| next == offset)
+                {
                     break;
                 }
                 next += 1;
@@ -284,7 +287,7 @@ pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct RedactedSourceFormatter<'a> {
-    pub text: &'a [u8],
+    pub(crate) text: &'a [u8],
 }
 
 impl Display for RedactedSourceFormatter<'_> {
@@ -299,8 +302,8 @@ impl Display for RedactedSourceFormatter<'_> {
             }
 
             // Batch the non-secret span so multi-byte UTF-8 sequences pass
-            // through intact (Zig writes raw bytes; per-byte `as char` would
-            // re-encode each >=0x80 byte as a 2-byte sequence).
+            // through intact (per-byte `as char` would re-encode each >=0x80
+            // byte as a 2-byte sequence).
             let mut next = i + 1;
             while next < self.text.len()
                 && strings::starts_with_secret(&self.text[next..]).is_none()
@@ -314,7 +317,7 @@ impl Display for RedactedSourceFormatter<'_> {
     }
 }
 
-pub fn redacted_source(str: &[u8]) -> RedactedSourceFormatter<'_> {
+pub(crate) fn redacted_source(str: &[u8]) -> RedactedSourceFormatter<'_> {
     RedactedSourceFormatter { text: str }
 }
 
@@ -324,13 +327,13 @@ pub fn redacted_source(str: &[u8]) -> RedactedSourceFormatter<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct DependencyUrlFormatter<'a> {
-    pub url: &'a [u8],
+    pub(crate) url: &'a [u8],
 }
 
 impl Display for DependencyUrlFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut remain = self.url;
-        while let Some(slash) = crate::strings_impl::index_of_char(remain, b'/') {
+        while let Some(slash) = crate::strings::index_of_char_usize(remain, b'/') {
             write_bytes(f, &remain[..slash])?;
             f.write_str("%2f")?;
             remain = &remain[slash + 1..];
@@ -347,23 +350,13 @@ pub fn dependency_url(url: &[u8]) -> DependencyUrlFormatter<'_> {
 // IntegrityFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-// adt_const_params (enum const-generic) is nightly. Stable rewrite: const bool.
-pub const INTEGRITY_SHORT: bool = true;
-pub const INTEGRITY_FULL: bool = false;
-#[doc(hidden)]
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub enum IntegrityFormatStyle {
-    Short,
-    Full,
-} // kept for callers that name the enum
-
 pub struct IntegrityFormatter<const SHORT: bool> {
-    pub bytes: [u8; SHA512_DIGEST],
+    pub(crate) bytes: [u8; SHA512_DIGEST],
 }
 
 impl<const SHORT: bool> Display for IntegrityFormatter<SHORT> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        const BUF_LEN: usize = (SHA512_DIGEST + 2) / 3 * 4;
+        const BUF_LEN: usize = SHA512_DIGEST.div_ceil(3) * 4;
         let mut buf = [0u8; BUF_LEN];
         let count =
             bun_simdutf_sys::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
@@ -443,9 +436,27 @@ pub fn format_json_string_utf8(
 
 type SharedTempBuffer = [u8; 32 * 1024];
 
+struct SharedTempBufferSlot(Cell<Option<NonNull<SharedTempBuffer>>>);
+impl Drop for SharedTempBufferSlot {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.take() {
+            // SAFETY: produced by `heap::alloc_nn` in `SharedTempBufferBorrow::
+            // new` and parked here on borrow drop; the thread is exiting so no
+            // outstanding borrow holds it.
+            unsafe { crate::heap::destroy(p.as_ptr()) };
+        }
+    }
+}
+impl core::ops::Deref for SharedTempBufferSlot {
+    type Target = Cell<Option<NonNull<SharedTempBuffer>>>;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 thread_local! {
-    static SHARED_TEMP_BUFFER_PTR: Cell<Option<NonNull<SharedTempBuffer>>> =
-        const { Cell::new(None) };
+    static SHARED_TEMP_BUFFER_PTR: SharedTempBufferSlot =
+        const { SharedTempBufferSlot(Cell::new(None)) };
 }
 
 /// RAII borrow of the thread-local shared temp buffer.
@@ -453,7 +464,7 @@ thread_local! {
 /// On construction: takes (or allocates) the buffer and nulls the thread-local
 /// cell so any recursive borrow allocates a fresh one instead of aliasing this
 /// one. On drop: restores the buffer to the cell, or frees it if recursion has
-/// already restored a different buffer (mirrors fmt.zig's `defer` block).
+/// already restored a different buffer.
 struct SharedTempBufferBorrow {
     ptr: NonNull<SharedTempBuffer>,
 }
@@ -512,7 +523,7 @@ pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::R
     Ok(())
 }
 
-pub fn format_utf16_type_with_path_options(
+pub(crate) fn format_utf16_type_with_path_options(
     slice_: &[u16],
     writer: &mut impl fmt::Write,
     opts: PathFormatOptions,
@@ -533,7 +544,7 @@ pub fn format_utf16_type_with_path_options(
             write_bytes(writer, to_write)?;
         } else {
             let mut ptr = to_write;
-            while let Some(i) = crate::strings_impl::index_of_any(ptr, b"\\/") {
+            while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
                 let sep = match opts.path_sep {
                     PathSep::Windows => b'\\',
                     PathSep::Posix => b'/',
@@ -563,37 +574,6 @@ pub fn utf16(slice_: &[u16]) -> FormatUTF16<'_> {
     }
 }
 
-/// Debug, this does not handle invalid utf32
-#[inline]
-pub fn debug_utf32_path_formatter(path: &[u32]) -> DebugUTF32PathFormatter<'_> {
-    DebugUTF32PathFormatter { path }
-}
-
-pub struct DebugUTF32PathFormatter<'a> {
-    pub path: &'a [u32],
-}
-
-impl Display for DebugUTF32PathFormatter<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut path_buf = crate::PathBuffer::uninit();
-        let buf = path_buf.as_mut_slice();
-        // SAFETY: FFI reads exactly path.len() u32s and writes ≤ MAX_PATH_BYTES bytes.
-        let result = unsafe {
-            bun_simdutf_sys::simdutf::simdutf__convert_utf32_to_utf8_with_errors(
-                self.path.as_ptr(),
-                self.path.len(),
-                buf.as_mut_ptr(),
-            )
-        };
-        let converted: &[u8] = if result.is_successful() {
-            &buf[..result.count]
-        } else {
-            b"Invalid UTF32!"
-        };
-        write_bytes(f, converted)
-    }
-}
-
 pub struct FormatUTF16<'a> {
     pub buf: &'a [u16],
     pub path_fmt_opts: Option<PathFormatOptions>,
@@ -610,8 +590,8 @@ impl Display for FormatUTF16<'_> {
 }
 
 pub struct FormatUTF8<'a> {
-    pub buf: &'a [u8],
-    pub path_fmt_opts: Option<PathFormatOptions>,
+    pub(crate) buf: &'a [u8],
+    pub(crate) path_fmt_opts: Option<PathFormatOptions>,
 }
 
 impl Display for FormatUTF8<'_> {
@@ -622,7 +602,7 @@ impl Display for FormatUTF8<'_> {
             }
 
             let mut ptr = self.buf;
-            while let Some(i) = crate::strings_impl::index_of_any(ptr, b"\\/") {
+            while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
                 let sep = match opts.path_sep {
                     PathSep::Windows => b'\\',
                     PathSep::Posix => b'/',
@@ -686,9 +666,6 @@ pub fn fmt_os_path(buf: crate::OSPathSlice<'_>, options: PathFormatOptions) -> F
     }
 }
 
-// TODO(port): Zig `fmtPath` dispatches on `comptime T: type` returning either FormatUTF8
-// or FormatUTF16. In Rust, callers should call `fmt_path_u8` / `fmt_path_u16` directly,
-// or use a small trait. Providing both monomorphizations here.
 pub fn fmt_path_u8(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
     FormatUTF8 {
         buf: path,
@@ -711,14 +688,13 @@ pub fn fmt_path(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
 
 /// Non-validating `Display` adapter for a `&[u8]` known to be valid UTF-8.
 ///
-/// Port of Zig's `{s}` format specifier on a `[]const u8`: Zig writes the bytes
-/// straight through with no codepoint check. `bstr::BStr`'s `Display` impl walks
+/// Writes the bytes straight through with no codepoint check. `bstr::BStr`'s `Display` impl walks
 /// the input via `Utf8Chunks` to substitute U+FFFD on invalid sequences, which
 /// shows up in install-hot-path profiles (registry hosts, package names, semver
 /// pre/build tags — all pre-validated ASCII). Use this where the bytes are
 /// already known-good and you just want `f.write_str` semantics.
 ///
-/// Prefer the [`s`] alias at call sites — it reads like Zig's `{s}`.
+/// Prefer the [`s`] alias at call sites.
 #[derive(Copy, Clone)]
 #[repr(transparent)]
 pub struct Raw<'a>(pub &'a [u8]);
@@ -726,11 +702,11 @@ impl fmt::Display for Raw<'_> {
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // SAFETY: caller contract — `self.0` is valid UTF-8 (in practice ASCII:
-        // npm package names, registry URLs, semver tags). Matches Zig `{s}`.
+        // npm package names, registry URLs, semver tags).
         f.write_str(unsafe { core::str::from_utf8_unchecked(self.0) })
     }
 }
-/// Shorthand constructor for [`Raw`]. Prefer [`s`] (same thing, Zig-style name).
+/// Shorthand constructor for [`Raw`]. Prefer [`s`] (same thing, shorter name).
 #[inline(always)]
 pub const fn raw(bytes: &[u8]) -> Raw<'_> {
     Raw(bytes)
@@ -739,15 +715,15 @@ pub const fn raw(bytes: &[u8]) -> Raw<'_> {
 // Canonical `SliceCursor` / `buf_print` / `buf_print_len` live in T0
 // `bun_alloc` so that crate can use them too; re-exported here for the
 // `bun_core::fmt::` callers and extended with an `io::Write` face so the same
-// struct also serves as Zig's `std.io.fixedBufferStream` for write-only sites.
+// struct also serves as a fixed-buffer write sink for write-only sites.
 pub use bun_alloc::{SliceCursor, buf_print, buf_print_len};
 
 impl crate::io::Write for SliceCursor<'_> {
     #[inline]
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
+    fn write_all(&mut self, bytes: &[u8]) -> crate::CrateResult<()> {
         let end = self.at + bytes.len();
         if end > self.buf.len() {
-            return Err(crate::err!("NoSpaceLeft"));
+            return Err(crate::CrateError::NoSpaceLeft);
         }
         self.buf[self.at..end].copy_from_slice(bytes);
         self.at = end;
@@ -759,7 +735,7 @@ impl crate::io::Write for SliceCursor<'_> {
     }
 }
 
-/// Port of `std.fmt.bufPrintZ` — [`buf_print`] then append a NUL terminator and
+/// [`buf_print`] then append a NUL terminator and
 /// return a [`ZStr`](crate::ZStr) borrowing `buf`. Fails if the formatted output
 /// *plus* the trailing NUL doesn't fit.
 pub fn buf_print_z<'a>(
@@ -776,8 +752,7 @@ pub fn buf_print_z<'a>(
     Ok(crate::ZStr::from_buf(c.buf, n))
 }
 
-/// [`buf_print`] that panics on overflow — mirrors Zig's
-/// `std.fmt.bufPrint(buf, fmt, args) catch unreachable`. Use when the
+/// [`buf_print`] that panics on overflow. Use when the
 /// caller-supplied stack buffer is sized so overflow is a programmer error.
 #[inline]
 #[track_caller]
@@ -785,8 +760,7 @@ pub fn buf_print_infallible<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_
     buf_print(buf, args).expect("buf_print: buffer too small")
 }
 
-/// [`buf_print_z`] that panics on overflow — mirrors Zig's
-/// `std.fmt.bufPrintZ(buf, fmt, args) catch unreachable`.
+/// [`buf_print_z`] that panics on overflow.
 #[inline]
 #[track_caller]
 pub fn buf_print_z_infallible<'a>(
@@ -803,8 +777,8 @@ pub fn buf_print_z_infallible<'a>(
 /// `core::fmt::Write` adapter for `Vec<u8>`.
 ///
 /// Rust's `Vec<u8>` only implements `std::io::Write` (banned in lower crates
-/// per PORTING.md), not `core::fmt::Write`. This is the port of Zig's
-/// `std.ArrayList(u8).writer()` — infallible (Vec growth aborts on OOM).
+/// per PORTING.md), not `core::fmt::Write`. Infallible (Vec growth aborts on
+/// OOM).
 ///
 /// Both the tuple constructor and `::new()` are public so call sites can pick
 /// whichever reads better: `write!(VecWriter(&mut buf), ...)` or
@@ -826,17 +800,14 @@ impl core::fmt::Write for VecWriter<'_> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// std.fmt.parseInt / parseUnsigned — canonical &[u8] integer parsers.
+// parse_int / parse_unsigned — canonical &[u8] integer parsers.
 //
-// Zig has exactly one impl (`std.fmt.parseIntWithSign`, vendor/zig/lib/std/
-// fmt.zig:409) plus thin no-sign wrapper `std.fmt.parseUnsigned` (:488). Every
-// Zig caller invoked those directly on `[]const u8`; the Rust port spawned ~15
-// local digit loops solely to dodge `core::str::from_utf8`. These restore 1:1
-// parity. bun_string re-exports `parse_int` so existing `strings::parse_int`
-// callers keep working. Re-exported via bun_core::lib.rs.
+// Replaces ~15 local digit loops that existed solely to dodge
+// `core::str::from_utf8`. bun_string re-exports `parse_int` so existing
+// `strings::parse_int` callers keep working. Re-exported via bun_core::lib.rs.
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Error from [`parse_int`] / [`parse_unsigned`] (`std.fmt.ParseIntError` port).
+/// Error from [`parse_int`] / [`parse_unsigned`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseIntError {
     InvalidCharacter,
@@ -844,7 +815,7 @@ pub enum ParseIntError {
 }
 
 impl ParseIntError {
-    /// Zig `@errorName(e)` — for callers that bubble the tag verbatim
+    /// For callers that bubble the tag verbatim
     /// (e.g. Postgres `CommandTag` Debug fmt).
     #[inline]
     pub const fn name(self) -> &'static str {
@@ -856,9 +827,9 @@ impl ParseIntError {
 }
 
 /// Shared digit loop behind [`parse_int`] / [`parse_unsigned`]. `digits` has
-/// any sign already stripped; `radix` is post-auto-detect (2..=36). Mirrors
-/// `std.fmt.parseIntWithSign` body: skips embedded `_` separators, rejects
-/// leading/trailing `_`, accumulates in `u128` with checked overflow.
+/// any sign already stripped; `radix` is post-auto-detect (2..=36). Skips
+/// embedded `_` separators, rejects leading/trailing `_`, accumulates in
+/// `u128` with checked overflow.
 #[inline]
 fn parse_with_sign(digits: &[u8], radix: u8) -> Result<u128, ParseIntError> {
     debug_assert!((2..=36).contains(&radix));
@@ -889,7 +860,7 @@ fn parse_with_sign(digits: &[u8], radix: u8) -> Result<u128, ParseIntError> {
 }
 
 /// Strip an optional `0x`/`0o`/`0b` prefix when `radix == 0`; otherwise pass
-/// through unchanged. Mirrors `std.fmt.parseIntWithSign` radix-0 branch.
+/// through unchanged.
 #[inline]
 fn auto_radix(digits: &[u8], radix: u8) -> (&[u8], u8) {
     if radix != 0 {
@@ -906,12 +877,12 @@ fn auto_radix(digits: &[u8], radix: u8) -> (&[u8], u8) {
     (digits, 10)
 }
 
-/// `std.fmt.parseInt(T, buf, radix)` — parse an integer of type `T` from `buf`.
+/// Parse an integer of type `T` from `buf`.
 ///
 /// `radix` ∈ 2..=36, or `0` to auto-detect from a `0x`/`0o`/`0b` prefix
 /// (defaulting to 10). Accepts an optional leading `+`/`-`. Embedded `_`
-/// separators are skipped; leading/trailing `_` are rejected. Port keeps Zig's
-/// error set: `Overflow` on range error, `InvalidCharacter` otherwise.
+/// separators are skipped; leading/trailing `_` are rejected. Errors:
+/// `Overflow` on range error, `InvalidCharacter` otherwise.
 ///
 /// Works directly on `&[u8]` so callers never need an intermediate
 /// `core::str::from_utf8` round-trip.
@@ -943,7 +914,7 @@ where
     }
 }
 
-/// `std.fmt.parseUnsigned(T, buf, radix)` — [`parse_int`] without sign
+/// [`parse_int`] without sign
 /// handling: a leading `+`/`-` is `InvalidCharacter`. Use when the grammar
 /// being parsed forbids signs (semver components, HTTP status codes,
 /// content-length, etc.).
@@ -957,10 +928,9 @@ where
     T::try_from(acc).map_err(|_| ParseIntError::Overflow)
 }
 
-/// `std.fmt.parseInt(T, s, 10) catch null` — decimal convenience wrapper over
+/// Decimal convenience wrapper over
 /// [`parse_int`]. Replaces the ~12 file-local
-/// `fn parse_T(s:&[u8])->Option<T>{ parse_int(s,10).ok() }` thin wrappers the
-/// port spawned (Zig calls `std.fmt.parseInt` inline at every site).
+/// `fn parse_T(s:&[u8])->Option<T>{ parse_int(s,10).ok() }` thin wrappers.
 #[inline]
 pub fn parse_decimal<T>(s: &[u8]) -> Option<T>
 where
@@ -970,7 +940,7 @@ where
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// parse_double — `WTF.parseDouble` (src/jsc/WTF.zig:20 / bun.zig:1150)
+// parse_double — `WTF::parseDouble`
 //
 // Partial-match JS-semantics double parse over Latin-1 bytes. Unlike
 // [`parse_f64`] this accepts a numeric *prefix* (`b"1.5x"` → `Ok(1.5)`) and
@@ -978,15 +948,10 @@ where
 //
 // Lives in tier-0 `bun_core` (not `bun_jsc`) so `bun_interchange` (yaml/toml),
 // `bun_js_parser::lexer`, and `bun_install` can call it without taking a
-// `bun_jsc` edge. `bun_core::wtf`, `bun_jsc::wtf`, and `bun::` re-export it
-// to preserve the Zig namespace shape.
-//
-// TODO(port): Zig `bun.parseDouble` falls back to `std.fmt.parseFloat` under
-// `comptime Environment.isWasm` (no WebKit link). Restore when wasm target is
-// brought up.
+// `bun_jsc` edge. `bun_core::wtf`, `bun_jsc::wtf`, and `bun::` re-export it.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Error from [`parse_double`] — Zig `error{InvalidCharacter}`.
+/// Error from [`parse_double`].
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct InvalidCharacter;
 
@@ -997,10 +962,10 @@ impl core::fmt::Display for InvalidCharacter {
     }
 }
 impl core::error::Error for InvalidCharacter {}
-impl From<InvalidCharacter> for crate::Error {
+impl From<InvalidCharacter> for crate::CrateError {
     #[inline]
     fn from(_: InvalidCharacter) -> Self {
-        crate::Error::from_name("InvalidCharacter")
+        crate::CrateError::InvalidCharacter
     }
 }
 
@@ -1028,14 +993,13 @@ unsafe extern "C" {
     fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
 }
 
-/// `std.fmt.parseFloat(f64, buf)` — full-match parse of `s` as an `f64`.
+/// Full-match parse of `s` as an `f64`.
 /// Returns `None` on empty input, trailing garbage (`b"1.5x"`), or non-numeric
 /// input. Backed by `WTF__parseDouble` (no `&str` round-trip — digits are
 /// ASCII, validation is wasted work).
 ///
 /// `WTF::parseDouble` rejects `inf`/`nan` (JS-number semantics); those are
-/// special-cased here so callers ported from `std.fmt.parseFloat` keep the
-/// same surface.
+/// special-cased here.
 pub fn parse_f64(s: &[u8]) -> Option<f64> {
     if s.is_empty() {
         return None;
@@ -1047,7 +1011,7 @@ pub fn parse_f64(s: &[u8]) -> Option<f64> {
         return Some(res);
     }
     if count == 0 {
-        // WTF__parseDouble doesn't recognise inf/nan; std.fmt.parseFloat does.
+        // WTF__parseDouble doesn't recognise inf/nan; handle them here.
         let (neg, rest) = match s[0] {
             b'-' => (true, &s[1..]),
             b'+' => (false, &s[1..]),
@@ -1068,7 +1032,7 @@ pub fn parse_f64(s: &[u8]) -> Option<f64> {
     None // partial match → trailing garbage
 }
 
-/// `parse_f64` truncated to `f32`. (Zig `std.fmt.parseFloat(f32, ..)`.)
+/// `parse_f64` truncated to `f32`.
 #[inline]
 pub fn parse_f32(s: &[u8]) -> Option<f32> {
     parse_f64(s).map(|v| v as f32)
@@ -1089,12 +1053,6 @@ pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
         .ok()
 }
 
-#[deprecated = "use parse_int / parse_f64 / parse_ascii (no from_utf8)"]
-#[inline]
-pub fn parse_num<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
-    parse_ascii(s)
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Latin-1 formatting
 // ───────────────────────────────────────────────────────────────────────────
@@ -1104,7 +1062,7 @@ pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result
     let chunk = borrow.chunk();
     let mut slice = slice_;
 
-    while let Some(i) = crate::strings_impl::first_non_ascii(slice) {
+    while let Some(i) = crate::strings::first_non_ascii_usize(slice) {
         if i > 0 {
             write_bytes(writer, &slice[..i])?;
             slice = &slice[i..];
@@ -1166,7 +1124,8 @@ impl Display for URLFormatter<'_> {
         )?;
 
         if let Some(hostname) = self.hostname {
-            let needs_brackets = hostname[0] != b'[' && strings::is_ipv6_address(hostname);
+            let needs_brackets =
+                hostname[0] != b'[' && crate::ip_address::is_ipv6_address(hostname);
             if needs_brackets {
                 write!(f, "[{}]", bstr::BStr::new(hostname))?;
             } else {
@@ -1203,7 +1162,7 @@ pub struct HostFormatter<'a> {
 
 impl Display for HostFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if crate::strings_impl::index_of_char(self.host, b':').is_some() {
+        if crate::strings::index_of_char_usize(self.host, b':').is_some() {
             return write_bytes(f, self.host);
         }
 
@@ -1223,8 +1182,7 @@ impl Display for HostFormatter<'_> {
 // FormatValidIdentifier
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Format a string to an ECMAScript identifier.
-/// Unlike the string_mutable.zig version, this always allocate/copy
+/// Format a string to an ECMAScript identifier. Always allocates/copies.
 pub fn fmt_identifier(name: &[u8]) -> FormatValidIdentifier<'_> {
     FormatValidIdentifier { name }
 }
@@ -1238,10 +1196,10 @@ pub struct FormatValidIdentifier<'a> {
 
 impl Display for FormatValidIdentifier<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        use crate::js_lexer;
+        use crate::string::lexer as js_lexer;
 
-        let mut iterator = crate::CodepointIterator::init(self.name);
-        let mut cursor = crate::CodepointIteratorCursor::default();
+        let mut iterator = strings::CodepointIterator::init(self.name);
+        let mut cursor = strings::Cursor::default();
 
         let mut has_needed_gap = false;
         let mut needs_gap;
@@ -1252,11 +1210,11 @@ impl Display for FormatValidIdentifier<'_> {
         }
 
         // Common case: no gap necessary. No allocation necessary.
-        needs_gap = !js_lexer::is_identifier_start(cursor.c);
+        needs_gap = !js_lexer::is_identifier_start(cursor.c as u32);
         if !needs_gap {
             // Are there any non-alphanumeric chars at all?
             while iterator.next(&mut cursor) {
-                if !js_lexer::is_identifier_continue(cursor.c) || cursor.width > 1 {
+                if !js_lexer::is_identifier_continue(cursor.c as u32) {
                     needs_gap = true;
                     start_i = cursor.i as usize;
                     break;
@@ -1268,13 +1226,17 @@ impl Display for FormatValidIdentifier<'_> {
             needs_gap = false;
             if start_i > 0 {
                 write_bytes(f, &self.name[..start_i])?;
+            } else {
+                // the first letter can be a non-identifier start
+                // https://github.com/oven-sh/bun/issues/2946
+                f.write_str("_")?;
             }
             let slice = &self.name[start_i..];
-            iterator = crate::CodepointIterator::init(slice);
-            cursor = crate::CodepointIteratorCursor::default();
+            iterator = strings::CodepointIterator::init(slice);
+            cursor = strings::Cursor::default();
 
             while iterator.next(&mut cursor) {
-                if js_lexer::is_identifier_continue(cursor.c) && cursor.width == 1 {
+                if js_lexer::is_identifier_continue(cursor.c as u32) {
                     if needs_gap {
                         f.write_str("_")?;
                         needs_gap = false;
@@ -1291,11 +1253,7 @@ impl Display for FormatValidIdentifier<'_> {
             // If it ends with an emoji
             if needs_gap {
                 f.write_str("_")?;
-                #[allow(unused_assignments)]
-                {
-                    needs_gap = false;
-                    has_needed_gap = true;
-                }
+                has_needed_gap = true;
             }
 
             let _ = has_needed_gap;
@@ -1314,7 +1272,7 @@ impl Display for FormatValidIdentifier<'_> {
 /// - Encodes "\n" as "%0A" to support multi-line strings.
 ///   https://github.com/actions/toolkit/issues/193#issuecomment-605394935
 /// - Strips ANSI output as it will appear malformed.
-pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
+pub(crate) fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
     let mut offset: usize = 0;
     let end = self_.len() as u32;
     while (offset as u32) < end {
@@ -1323,7 +1281,15 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
             let i = i as usize;
             let byte = self_[i];
             if byte > 0x7F {
-                offset += (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
+                let seq_len = strings::wtf8_byte_sequence_length(byte) as usize;
+                if i + seq_len > end as usize {
+                    // Truncated trailing sequence; emit the pending ASCII and stop
+                    // rather than hand an invalid slice to from_utf8_unchecked.
+                    write_bytes(writer, &self_[offset..i])?;
+                    break;
+                }
+                write_bytes(writer, &self_[offset..i + seq_len])?;
+                offset = i + seq_len;
                 continue;
             }
             if i > 0 {
@@ -1342,7 +1308,7 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
                     if (i + 2) < end as usize {
                         let upper = (i + 5).min(end as usize);
                         let remain = &self_[(i + 2)..upper];
-                        if let Some(j) = crate::strings_impl::index_of_char(remain, b'm') {
+                        if let Some(j) = crate::strings::index_of_char_usize(remain, b'm') {
                             n += j + 1;
                         }
                     }
@@ -1357,41 +1323,49 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
     Ok(())
 }
 
-pub struct GithubActionFormatter<'a> {
-    pub text: &'a [u8],
-}
-
-impl Display for GithubActionFormatter<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        github_action_writer(f, self.text)
-    }
-}
-
-pub fn github_action(self_: &[u8]) -> GithubActionFormatter<'_> {
-    GithubActionFormatter { text: self_ }
-}
-
 /// Formats a string to be safe to use as a Github Actions workflow-command
 /// *property* value (e.g. the `title=` in `::error title=...::`). Unlike
 /// [`github_action`] (which only escapes the message-class metacharacters), this
 /// escapes the property-class metacharacters per the actions/toolkit spec:
 /// `%`->`%25`, `\r`->`%0D`, `\n`->`%0A`, `:`->`%3A`, `,`->`%2C`.
-pub fn github_action_property_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
+/// ANSI colour sequences are dropped, matching [`github_action`].
+pub(crate) fn github_action_property_writer(
+    writer: &mut impl fmt::Write,
+    self_: &[u8],
+) -> fmt::Result {
     let mut start: usize = 0;
-    for (i, &byte) in self_.iter().enumerate() {
+    let mut i: usize = 0;
+    while i < self_.len() {
+        let byte = self_[i];
+        let mut skip: usize = 1;
         let replacement: &str = match byte {
             b'%' => "%25",
             b'\r' => "%0D",
             b'\n' => "%0A",
             b':' => "%3A",
             b',' => "%2C",
-            _ => continue,
+            0x1b if self_.get(i + 1) == Some(&b'[') => {
+                skip = 2;
+                if i + 2 < self_.len() {
+                    let upper = (i + 5).min(self_.len());
+                    let remain = &self_[(i + 2)..upper];
+                    if let Some(j) = crate::strings::index_of_char_usize(remain, b'm') {
+                        skip += j + 1;
+                    }
+                }
+                ""
+            }
+            _ => {
+                i += 1;
+                continue;
+            }
         };
         if i > start {
             write_bytes(writer, &self_[start..i])?;
         }
         writer.write_str(replacement)?;
-        start = i + 1;
+        i += skip;
+        start = i;
     }
     if start < self_.len() {
         write_bytes(writer, &self_[start..])?;
@@ -1400,7 +1374,7 @@ pub fn github_action_property_writer(writer: &mut impl fmt::Write, self_: &[u8])
 }
 
 pub struct GithubActionPropertyFormatter<'a> {
-    pub text: &'a [u8],
+    pub(crate) text: &'a [u8],
 }
 
 impl Display for GithubActionPropertyFormatter<'_> {
@@ -1417,7 +1391,7 @@ pub fn github_action_property(self_: &[u8]) -> GithubActionPropertyFormatter<'_>
 // QuotedFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn quoted_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
+pub(crate) fn quoted_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
     let remain = self_;
     if strings::contains_newline_or_non_ascii_or_quote(remain) {
         js_printer::write_json_string(self_, writer, strings::Encoding::Utf8)
@@ -1442,14 +1416,7 @@ impl Display for QuotedFormatter<'_> {
 // QuickAndDirtyJavaScriptSyntaxHighlighter
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn fmt_java_script(
-    text: &[u8],
-    opts: HighlighterOptions,
-) -> QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
-    QuickAndDirtyJavaScriptSyntaxHighlighter { text, opts }
-}
-
-/// snake_case alias of `fmt_java_script` (Zig: `fmtJavaScript`). Several
+/// snake_case alias of `fmt_java_script`. Several
 /// downstream crates spell it `fmt_javascript`.
 #[inline]
 pub fn fmt_javascript(
@@ -1491,7 +1458,7 @@ pub enum ColorCode {
 }
 
 impl ColorCode {
-    pub fn color(self) -> &'static str {
+    pub(crate) fn color(self) -> &'static str {
         match self {
             ColorCode::Magenta => "\x1b[35m",
             ColorCode::Blue => "\x1b[34m",
@@ -1505,8 +1472,7 @@ impl ColorCode {
 
 #[derive(Clone, Copy, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-// bun.ComptimeEnumMap(Keyword) — Zig builds a comptime perfect-hash map keyed by @tagName.
-// Mapped to `phf::Map<&'static [u8], Keyword>` in `Keywords::get` below.
+// Length-dispatched map keyed by tag name: `KEYWORDS` in `Keywords::get` below.
 pub enum Keyword {
     Abstract,
     As,
@@ -1573,7 +1539,7 @@ pub enum Keyword {
 }
 
 impl Keyword {
-    pub fn color_code(self) -> ColorCode {
+    pub(crate) fn color_code(self) -> ColorCode {
         use ColorCode::*;
         use Keyword as K;
         match self {
@@ -1646,87 +1612,81 @@ impl Keyword {
 pub struct Keywords;
 impl Keywords {
     pub fn get(s: &[u8]) -> Option<Keyword> {
-        static KEYWORDS: phf::Map<&'static [u8], Keyword> = phf::phf_map! {
-            b"abstract" => Keyword::Abstract,
-            b"as" => Keyword::As,
-            b"async" => Keyword::Async,
-            b"await" => Keyword::Await,
-            b"case" => Keyword::Case,
-            b"catch" => Keyword::Catch,
-            b"class" => Keyword::Class,
-            b"const" => Keyword::Const,
-            b"continue" => Keyword::Continue,
-            b"debugger" => Keyword::Debugger,
-            b"default" => Keyword::Default,
-            b"delete" => Keyword::Delete,
-            b"do" => Keyword::Do,
-            b"else" => Keyword::Else,
-            b"enum" => Keyword::Enum,
-            b"export" => Keyword::Export,
-            b"extends" => Keyword::Extends,
-            b"false" => Keyword::False,
-            b"finally" => Keyword::Finally,
-            b"for" => Keyword::For,
-            b"function" => Keyword::Function,
-            b"if" => Keyword::If,
-            b"implements" => Keyword::Implements,
-            b"import" => Keyword::Import,
-            b"in" => Keyword::In,
-            b"instanceof" => Keyword::Instanceof,
-            b"interface" => Keyword::Interface,
-            b"let" => Keyword::Let,
-            b"new" => Keyword::New,
-            b"null" => Keyword::Null,
-            b"package" => Keyword::Package,
-            b"private" => Keyword::Private,
-            b"protected" => Keyword::Protected,
-            b"public" => Keyword::Public,
-            b"return" => Keyword::Return,
-            b"static" => Keyword::Static,
-            b"super" => Keyword::Super,
-            b"switch" => Keyword::Switch,
-            b"this" => Keyword::This,
-            b"throw" => Keyword::Throw,
-            b"break" => Keyword::Break,
-            b"true" => Keyword::True,
-            b"try" => Keyword::Try,
-            b"type" => Keyword::Type,
-            b"typeof" => Keyword::Typeof,
-            b"var" => Keyword::Var,
-            b"void" => Keyword::Void,
-            b"while" => Keyword::While,
-            b"with" => Keyword::With,
-            b"yield" => Keyword::Yield,
-            b"string" => Keyword::String,
-            b"number" => Keyword::Number,
-            b"boolean" => Keyword::Boolean,
-            b"symbol" => Keyword::Symbol,
-            b"any" => Keyword::Any,
-            b"object" => Keyword::Object,
-            b"unknown" => Keyword::Unknown,
-            b"never" => Keyword::Never,
-            b"namespace" => Keyword::Namespace,
-            b"declare" => Keyword::Declare,
-            b"readonly" => Keyword::Readonly,
-            b"undefined" => Keyword::Undefined,
-        };
+        crate::comptime_string_map! {
+            static KEYWORDS: Keyword = {
+                b"abstract" => Keyword::Abstract,
+                b"as" => Keyword::As,
+                b"async" => Keyword::Async,
+                b"await" => Keyword::Await,
+                b"case" => Keyword::Case,
+                b"catch" => Keyword::Catch,
+                b"class" => Keyword::Class,
+                b"const" => Keyword::Const,
+                b"continue" => Keyword::Continue,
+                b"debugger" => Keyword::Debugger,
+                b"default" => Keyword::Default,
+                b"delete" => Keyword::Delete,
+                b"do" => Keyword::Do,
+                b"else" => Keyword::Else,
+                b"enum" => Keyword::Enum,
+                b"export" => Keyword::Export,
+                b"extends" => Keyword::Extends,
+                b"false" => Keyword::False,
+                b"finally" => Keyword::Finally,
+                b"for" => Keyword::For,
+                b"function" => Keyword::Function,
+                b"if" => Keyword::If,
+                b"implements" => Keyword::Implements,
+                b"import" => Keyword::Import,
+                b"in" => Keyword::In,
+                b"instanceof" => Keyword::Instanceof,
+                b"interface" => Keyword::Interface,
+                b"let" => Keyword::Let,
+                b"new" => Keyword::New,
+                b"null" => Keyword::Null,
+                b"package" => Keyword::Package,
+                b"private" => Keyword::Private,
+                b"protected" => Keyword::Protected,
+                b"public" => Keyword::Public,
+                b"return" => Keyword::Return,
+                b"static" => Keyword::Static,
+                b"super" => Keyword::Super,
+                b"switch" => Keyword::Switch,
+                b"this" => Keyword::This,
+                b"throw" => Keyword::Throw,
+                b"break" => Keyword::Break,
+                b"true" => Keyword::True,
+                b"try" => Keyword::Try,
+                b"type" => Keyword::Type,
+                b"typeof" => Keyword::Typeof,
+                b"var" => Keyword::Var,
+                b"void" => Keyword::Void,
+                b"while" => Keyword::While,
+                b"with" => Keyword::With,
+                b"yield" => Keyword::Yield,
+                b"string" => Keyword::String,
+                b"number" => Keyword::Number,
+                b"boolean" => Keyword::Boolean,
+                b"symbol" => Keyword::Symbol,
+                b"any" => Keyword::Any,
+                b"object" => Keyword::Object,
+                b"unknown" => Keyword::Unknown,
+                b"never" => Keyword::Never,
+                b"namespace" => Keyword::Namespace,
+                b"declare" => Keyword::Declare,
+                b"readonly" => Keyword::Readonly,
+                b"undefined" => Keyword::Undefined,
+            };
+        }
         KEYWORDS.get(s).copied()
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RedactedKeyword {
-    Auth,      // _auth
-    AuthToken, // _authToken
-    Token,     // token
-    Password,  // _password
-    Email,     // email
-}
-
-pub struct RedactedKeywords;
+pub(crate) struct RedactedKeywords;
 impl RedactedKeywords {
-    // TODO(port): replace with phf::Map.
-    pub fn has(s: &[u8]) -> bool {
+    // 5 entries — a `matches!` chain is plenty at this size (the big keyword
+    // table in `Keywords::get` is where the length-dispatched map pays off).
+    pub(crate) fn has(s: &[u8]) -> bool {
         matches!(
             s,
             b"_auth" | b"_authToken" | b"token" | b"_password" | b"email"
@@ -1772,12 +1732,9 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     let code = keyword.color_code();
                     write!(
                         writer,
-                        // TODO(port): Output.prettyFmt("<r>{s}{s}<r>", true)
-                        "{}{}{}{}",
-                        Output::RESET,
+                        crate::pretty_fmt!("<r>{s}{s}<r>", true),
                         code.color(),
                         bstr::BStr::new(&text[..i]),
-                        Output::RESET,
                     )?;
                 } else {
                     should_redact_value =
@@ -1789,14 +1746,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     prev_keyword = None;
 
                                     if i < text.len() && text[i] == b'(' {
-                                        // TODO(port): Output.prettyFmt("<r><b>{s}<r>", true)
                                         write!(
                                             writer,
-                                            "{}{}{}{}",
-                                            Output::RESET,
-                                            Output::BOLD,
+                                            crate::pretty_fmt!("<r><b>{s}<r>", true),
                                             bstr::BStr::new(&text[..i]),
-                                            Output::RESET,
                                         )?;
                                         break 'write;
                                     }
@@ -1806,15 +1759,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                 | Keyword::Declare
                                 | Keyword::Type
                                 | Keyword::Interface => {
-                                    // TODO(port): Output.prettyFmt("<r><b><blue>{s}<r>", true)
                                     write!(
                                         writer,
-                                        "{}{}{}{}{}",
-                                        Output::RESET,
-                                        Output::BOLD,
-                                        ColorCode::Blue.color(),
+                                        crate::pretty_fmt!("<r><b><blue>{s}<r>", true),
                                         bstr::BStr::new(&text[..i]),
-                                        Output::RESET,
                                     )?;
                                     prev_keyword = None;
                                     break 'write;
@@ -1849,7 +1797,15 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         text = &text[1..];
                     }
 
-                    if !text.is_empty() && (text[0] == b'=' || text[0] == b':') {
+                    // A redacted keyword followed by nothing but whitespace:
+                    // the loop above consumed the rest of the input, so there
+                    // is no value left to redact (`text[0]` below would be out
+                    // of bounds).
+                    if text.is_empty() {
+                        return Ok(());
+                    }
+
+                    if text[0] == b'=' || text[0] == b':' {
                         writer.write_char(text[0] as char)?;
                         text = &text[1..];
                         while !text.is_empty() && text[0].is_ascii_whitespace() {
@@ -1868,11 +1824,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         if self.opts.redact_sensitive_information {
                             if should_redact_value {
                                 should_redact_value = false;
-                                let end = crate::strings_impl::index_of_char(text, b'\n')
+                                let end = crate::strings::index_of_char_usize(text, b'\n')
                                     .unwrap_or(text.len());
                                 text = &text[end..];
-                                // TODO(port): Output.prettyFmt("<r><yellow>***<r>", true)
-                                write!(writer, "{}\x1b[33m***{}", Output::RESET, Output::RESET)?;
+                                write!(writer, crate::pretty_fmt!("<r><yellow>***<r>", true))?;
                                 continue;
                             }
 
@@ -1887,9 +1842,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         let mut i: usize = 1;
                         if text.len() > 1 && num == b'0' && text[1] == b'x' {
                             i += 1;
-                            while i < text.len()
-                                && matches!(text[i], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')
-                            {
+                            while i < text.len() && text[i].is_ascii_hexdigit() {
                                 i += 1;
                             }
                         } else {
@@ -1912,13 +1865,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             }
                         }
 
-                        // TODO(port): Output.prettyFmt("<r><yellow>{s}<r>", true)
                         write!(
                             writer,
-                            "{}\x1b[33m{}{}",
-                            Output::RESET,
+                            crate::pretty_fmt!("<r><yellow>{s}<r>", true),
                             bstr::BStr::new(&text[..i]),
-                            Output::RESET,
                         )?;
                         text = &text[i..];
                     }
@@ -1934,19 +1884,16 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     i += 2;
 
                                     while i < text.len() && text[i] != b'}' {
-                                        if text[i] == b'\\' {
+                                        if i + 1 < text.len() && text[i] == b'\\' {
                                             i += 1;
                                         }
                                         i += 1;
                                     }
 
-                                    // TODO(port): Output.prettyFmt("<r><green>{s}<r>", true)
                                     write!(
                                         writer,
-                                        "{}\x1b[32m{}{}",
-                                        Output::RESET,
+                                        crate::pretty_fmt!("<r><green>{s}<r>", true),
                                         bstr::BStr::new(&text[..curly_start]),
-                                        Output::RESET,
                                     )?;
                                     writer.write_str("${")?;
                                     let mut opts = self.opts;
@@ -1967,13 +1914,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     text = &text[i..];
                                     i = 0;
                                     if !text.is_empty() && text[0] == char_ {
-                                        // TODO(port): Output.prettyFmt("<r><green>`<r>", true)
-                                        write!(
-                                            writer,
-                                            "{}\x1b[32m`{}",
-                                            Output::RESET,
-                                            Output::RESET
-                                        )?;
+                                        write!(writer, crate::pretty_fmt!("<r><green>`<r>", true))?;
                                         text = &text[1..];
                                         continue 'outer;
                                     }
@@ -1995,8 +1936,11 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             should_redact_value = false;
                             if i > 2 && text[i - 1] == char_ {
                                 let len = i - 2;
-                                // TODO(port): Output.prettyFmt("<r><green>{c}", true)
-                                write!(writer, "{}\x1b[32m{}", Output::RESET, char_ as char)?;
+                                write!(
+                                    writer,
+                                    crate::pretty_fmt!("<r><green>{s}", true),
+                                    char_ as char
+                                )?;
                                 splat_byte_all(writer, b'*', len)?;
                                 write!(writer, "{}{}", char_ as char, Output::RESET)?;
                             } else {
@@ -2006,6 +1950,14 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             continue;
                         } else if self.opts.redact_sensitive_information {
                             'try_redact: {
+                                // `i == 0` happens when a `${...}` interpolation ended
+                                // exactly at the end of the input: the scan loop above
+                                // resets `i` to 0 and exits with `text` empty, so there
+                                // is no quoted content to inspect (`text[1..0]` would
+                                // be out of range).
+                                if i == 0 {
+                                    break 'try_redact;
+                                }
                                 let mut inner = &text[1..i];
                                 if !inner.is_empty() && inner[inner.len() - 1] == char_ {
                                     inner = &inner[..inner.len() - 1];
@@ -2078,7 +2030,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2103,13 +2055,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             }
 
                             if self.opts.redact_sensitive_information {
-                                // TODO(port): Output.prettyFmt("<r><d>{f}<r>", true)
                                 write!(
                                     writer,
-                                    "{}\x1b[2m{}{}",
-                                    Output::RESET,
+                                    crate::pretty_fmt!("<r><d>{f}<r>", true),
                                     redacted_source(remain_to_print),
-                                    Output::RESET,
                                 )?;
                             } else {
                                 write!(
@@ -2172,7 +2121,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2186,7 +2135,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         prev_keyword = None;
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2199,14 +2148,13 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         prev_keyword = None;
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
                         }
-                        // TODO(port): Output.prettyFmt("<r><d>;<r>", true)
-                        write!(writer, "{}\x1b[2m;{}", Output::RESET, Output::RESET)?;
+                        write!(writer, crate::pretty_fmt!("<r><d>;<r>", true))?;
                         text = &text[1..];
                     }
                     b'.' => {
@@ -2214,7 +2162,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2233,14 +2181,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             }
 
                             if i < text.len() && text[i] == b'(' {
-                                // TODO(port): Output.prettyFmt("<r><i><b>{s}<r>", true)
                                 write!(
                                     writer,
-                                    "{}\x1b[3m{}{}{}",
-                                    Output::RESET,
-                                    Output::BOLD,
+                                    crate::pretty_fmt!("<r><i><b>{s}<r>", true),
                                     bstr::BStr::new(&text[..i]),
-                                    Output::RESET,
                                 )?;
                                 text = &text[i..];
                                 continue;
@@ -2255,7 +2199,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     b'<' => {
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2270,43 +2214,15 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             }
                             prev_keyword = None;
 
-                            // Zig `while (cond) { i += 1 } else { i = 1; break :jsx; }` — Zig's
-                            // while-else runs the else branch whenever the condition becomes false
-                            // (i.e. on normal loop exit, since the body has no `break`). So the
-                            // else ALWAYS fires here and the code below is dead in Zig too.
-                            // TODO(port): Zig while-else always fires here — likely upstream bug, verify in Phase B.
+                            // The identifier scan's result is intentionally
+                            // discarded: `i` resets to 1 below, so only the
+                            // leading `<` (or `</`) is emitted by this arm.
                             while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32)
                             {
                                 i += 1;
                             }
                             i = 1;
                             break 'jsx;
-
-                            #[allow(unreachable_code)]
-                            while i < text.len() && text[i] != b'>' {
-                                i += 1;
-
-                                if i < text.len() && text[i] == b'<' {
-                                    i = 1;
-                                    break 'jsx;
-                                }
-                            }
-
-                            if i < text.len() && text[i] == b'>' {
-                                i += 1;
-                                // TODO(port): Output.prettyFmt("<r><cyan>{s}<r>", true)
-                                write!(
-                                    writer,
-                                    "{}\x1b[36m{}{}",
-                                    Output::RESET,
-                                    bstr::BStr::new(&text[..i]),
-                                    Output::RESET,
-                                )?;
-                                text = &text[i..];
-                                continue 'outer;
-                            }
-
-                            i = 1;
                         }
 
                         write!(
@@ -2321,7 +2237,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     c => {
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2345,24 +2261,16 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 // EnumTagListFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-// B-1: ConstParamTy is nightly. Use as runtime value instead.
-// adt_const_params rewrite: SEPARATOR enum → const bool (only 2 variants).
-pub const SEP_LIST: bool = true;
+// ConstParamTy is nightly, so use a runtime value instead.
 pub const SEP_DASH: bool = false;
-#[doc(hidden)]
-pub enum EnumTagListSeparator {
-    List,
-    Dash,
-} // kept for callers naming the enum
 
 pub struct EnumTagListFormatter<E: strum::VariantNames, const LIST: bool> {
-    pub pretty: bool,
     _marker: core::marker::PhantomData<E>,
 }
 
 impl<E: strum::VariantNames, const LIST: bool> Display for EnumTagListFormatter<E, LIST> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // PERF(port): Zig computed this at comptime as a single &'static str.
+        // PERF: could be precomputed as a single &'static str.
         let names = E::VARIANTS;
         for (i, name) in names.iter().enumerate() {
             if LIST {
@@ -2384,7 +2292,6 @@ impl<E: strum::VariantNames, const LIST: bool> Display for EnumTagListFormatter<
 
 pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListFormatter<E, LIST> {
     EnumTagListFormatter {
-        pretty: true,
         _marker: core::marker::PhantomData,
     }
 }
@@ -2393,24 +2300,24 @@ pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListF
 // formatIp
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): `std.net.Address` — bun_core stays I/O-free; Phase B should accept a
-// bun_sys/bun_net Address type here. Logic preserved against a placeholder Display.
+// bun_core stays I/O-free, so this accepts any `Display` (callers pass their
+// own address type).
 pub fn format_ip<'a>(
     address: &impl Display,
     into: &'a mut [u8],
-) -> Result<&'a mut [u8], crate::Error> {
-    // std.net.Address.format includes `:<port>` and square brackets (IPv6)
+) -> crate::CrateResult<&'a mut [u8]> {
+    // The `Display` form includes `:<port>` and square brackets (IPv6)
     //  while Node does neither.  This uses format then strips these to bring
     //  the result into conformance with Node.
     use std::io::Write;
     let mut cursor = std::io::Cursor::new(&mut into[..]);
-    write!(cursor, "{}", address).map_err(|_| crate::err!("NoSpaceLeft"))?;
+    write!(cursor, "{}", address).map_err(|_| crate::CrateError::NoSpaceLeft)?;
     let written = cursor.position() as usize;
 
-    // PORT NOTE: reshaped for borrowck — compute (start, end) offsets against
-    // `into` instead of iteratively reborrowing a `result` slice, so the final
+    // Reshaped for borrowck — compute (start, end) offsets against `into`
+    // instead of iteratively reborrowing a `result` slice, so the final
     // returned `&mut into[start..end]` carries the caller's `'a` lifetime
-    // cleanly. Semantics match Zig's `result = result[a..b]` chain exactly.
+    // cleanly.
     let mut start = 0usize;
     let mut end = written;
 
@@ -2423,82 +2330,23 @@ pub fn format_ip<'a>(
         start += 1;
         end -= 1;
     }
+    // Strip `%<zone>` — Node formats addresses via uv_inet_ntop on the bare
+    // in6_addr and never includes the zone identifier; the scope is exposed
+    // separately (e.g. `scopeid` in os.networkInterfaces()).
+    if let Some(percent) = into[start..end].iter().position(|&b| b == b'%') {
+        end = start + percent;
+    }
     Ok(&mut into[start..end])
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// count (std.fmt.count)
+// count
 // ───────────────────────────────────────────────────────────────────────────
 
-// ───────────────────────── CountingWriter / Null ─────────────────────────
-// One type subsumes Zig's `std.Io.Writer.Discarding` (null sink) and the
-// removed `std.io.countingWriter(inner)` (forwarding wrapper). Implements
-// `core::fmt::Write` so it can replace the per-crate private `CountingWriter`
-// reinventions (clap). The byte-level `bun_io::Write` counting sink stays in
-// `bun_io::DiscardingWriter` (different trait, sits above bun_core).
-
-/// Zero-sized `fmt::Write` no-op — default type param for [`CountingWriter`].
-pub struct Null;
-impl fmt::Write for Null {
-    #[inline]
-    fn write_str(&mut self, _: &str) -> fmt::Result {
-        Ok(())
-    }
-}
-
-/// Counts every byte written; optionally forwards to a wrapped `fmt::Write`.
-/// `inner: None` ⇒ pure discarding sink (Zig `Writer.Discarding`).
-pub struct CountingWriter<'a, W: fmt::Write = Null> {
-    inner: Option<&'a mut W>,
-    /// Total bytes written so far (counted before forwarding).
-    pub count: usize,
-}
-
-impl<'a, W: fmt::Write> CountingWriter<'a, W> {
-    /// Wrap an existing `fmt::Write` sink, forwarding writes through it.
-    #[inline]
-    pub fn wrap(w: &'a mut W) -> Self {
-        Self {
-            inner: Some(w),
-            count: 0,
-        }
-    }
-    /// Direct access to the inner sink (bypasses counting). Panics on the
-    /// `null()` variant — callers know which mode they constructed.
-    #[inline]
-    pub fn inner(&mut self) -> &mut W {
-        self.inner.as_mut().unwrap()
-    }
-}
-
-impl CountingWriter<'static, Null> {
-    /// Pure discarding sink — `inner: None`, never forwarded.
-    #[inline]
-    pub fn null() -> Self {
-        Self {
-            inner: None,
-            count: 0,
-        }
-    }
-}
-
-impl<W: fmt::Write> fmt::Write for CountingWriter<'_, W> {
-    #[inline]
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.count += s.len();
-        if let Some(w) = self.inner.as_mut() {
-            w.write_str(s)?;
-        }
-        Ok(())
-    }
-}
-
-/// Port of `std.fmt.count`: number of bytes the formatted args would produce.
+/// Number of bytes the formatted args would produce.
 ///
-/// Zig drives a `Writer.Discarding` (64-byte scratch buffer that drops writes
-/// and tallies length); Rust's `fmt::Arguments` plugs into the same shape via
-/// a `fmt::Write` impl that only sums `s.len()`. No allocation, no UTF-8
-/// validation beyond what the formatter already did.
+/// `fmt::Arguments` drives a `fmt::Write` impl that only sums `s.len()`.
+/// No allocation, no UTF-8 validation beyond what the formatter already did.
 #[inline]
 pub fn count(args: fmt::Arguments<'_>) -> usize {
     // Implementation sunk to T0 so `bun_alloc` (which sits below `bun_core`)
@@ -2514,8 +2362,6 @@ pub fn count(args: fmt::Arguments<'_>) -> usize {
 //   • fast_digit_count(u64)->u64  — Lemire 32-entry table; PANICKED on x ≥ 2³²
 //                                    (table OOB) despite its u64 signature.
 //   • count_int(i64)->usize       — /=10 loop, full i64 incl. MIN, +1 for '-'.
-// Zig has the same split (bun.fmt.fastDigitCount vs std.fmt.count("{d}",..));
-// unifying here improves on the original.
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Decimal digit count of an unsigned 64-bit integer — i.e. the byte length
@@ -2526,7 +2372,7 @@ pub fn count(args: fmt::Arguments<'_>) -> usize {
 /// the rare ≥ 2³² tail falls back to a `/= 10` loop so the full `u64` range is
 /// covered (the old `fast_digit_count` panicked on table OOB there).
 #[inline]
-pub fn digit_count_u64(x: u64) -> usize {
+fn digit_count_u64(x: u64) -> usize {
     if x == 0 {
         return 1;
     }
@@ -2580,7 +2426,7 @@ pub fn digit_count_u64(x: u64) -> usize {
 /// Decimal digit count of a signed 64-bit integer, including the leading `-`
 /// for negatives. Handles `i64::MIN` via `unsigned_abs`.
 #[inline]
-pub fn digit_count_i64(n: i64) -> usize {
+fn digit_count_i64(n: i64) -> usize {
     (n < 0) as usize + digit_count_u64(n.unsigned_abs())
 }
 
@@ -2616,20 +2462,6 @@ macro_rules! impl_digit_count_signed {
 }
 impl_digit_count_unsigned!(u8, u16, u32, u64, usize);
 impl_digit_count_signed!(i8, i16, i32, i64, isize);
-
-#[deprecated(note = "use digit_count / digit_count_u64")]
-#[doc(hidden)]
-#[inline]
-pub fn fast_digit_count(x: u64) -> u64 {
-    digit_count_u64(x) as u64
-}
-
-#[deprecated(note = "use digit_count / digit_count_i64")]
-#[doc(hidden)]
-#[inline]
-pub fn count_int(n: i64) -> usize {
-    digit_count_i64(n)
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // SizeFormatter
@@ -2675,7 +2507,7 @@ impl Display for SizeFormatter {
 
         const MAGS_SI: &[u8] = b" KMGTPEZY";
         let log2 = (usize::BITS - 1 - value.leading_zeros()) as usize;
-        // comptime math.log2(1000) == 9 (integer log2)
+        // integer log2(1000) == 9
         let magnitude = (log2 / 9).min(MAGS_SI.len() - 1);
         let new_value = value as f64 / 1000f64.powf(magnitude as f64);
         let suffix = MAGS_SI[magnitude];
@@ -2702,13 +2534,11 @@ impl Display for SizeFormatter {
     }
 }
 
-// TODO(port): Zig `size(bytes: anytype, ...)` switched on @TypeOf(bytes) for
-// f64/f32/f128 (intFromFloat) and i64/isize (intCast). Expose typed helpers.
 pub fn size(bytes: usize, opts: SizeFormatterOptions) -> SizeFormatter {
     SizeFormatter { value: bytes, opts }
 }
-/// Short-name alias of `size(.., default)` for `{B}`-style formatting
-/// (Zig: `bun.fmt.bytes`). Downstream: `bun_fmt::bytes(rss)`.
+/// Short-name alias of `size(.., default)` for `{B}`-style formatting.
+/// Downstream: `bun_fmt::bytes(rss)`.
 #[inline]
 pub fn bytes(n: usize) -> SizeFormatter {
     SizeFormatter {
@@ -2717,8 +2547,8 @@ pub fn bytes(n: usize) -> SizeFormatter {
     }
 }
 
-/// Lowercase hex encode into `out` (must be `2 * input.len()`). Port of
-/// `std.fmt.bytesToHex(.., .lower)` as used by Bun's hash printers.
+/// Lowercase hex encode into `out` (must be `2 * input.len()`). Used by
+/// Bun's hash printers.
 pub fn bytes_to_hex_lower(input: &[u8], out: &mut [u8]) -> usize {
     debug_assert!(out.len() >= input.len() * 2);
     for (i, &b) in input.iter().enumerate() {
@@ -2735,28 +2565,12 @@ pub fn bytes_to_hex_lower_string(input: &[u8]) -> String {
     // SAFETY: hex alphabet is ASCII.
     unsafe { String::from_utf8_unchecked(out) }
 }
-pub fn size_f64(bytes: f64, opts: SizeFormatterOptions) -> SizeFormatter {
-    SizeFormatter {
-        value: bytes as usize,
-        opts,
-    }
-}
-pub fn size_i64(bytes: i64, opts: SizeFormatterOptions) -> SizeFormatter {
-    // PORT NOTE: Zig's `@intCast(bytes)` is unchecked in release (UB-wraps negative);
-    // clamp to 0 instead of panicking so release builds never crash on a transiently
-    // negative size, while keeping the safe-build trap via debug_assert.
-    debug_assert!(bytes >= 0);
-    SizeFormatter {
-        value: bytes.max(0) as usize,
-        opts,
-    }
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Hex formatters
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Port of Zig `std.fmt`'s `{x}` / `{X}` on a `[]const u8` — prints each byte
+/// Prints each byte
 /// as two hex digits with no separator. `LOWER == true` → lowercase, else
 /// uppercase. Used by `Lockfile::MetaHashFormatter` and tmp-lockfile naming.
 pub struct HexBytes<'a, const LOWER: bool>(pub &'a [u8]);
@@ -2779,28 +2593,22 @@ impl<'a, const LOWER: bool> Display for HexBytes<'a, LOWER> {
     }
 }
 
-/// Ergonomic constructor for the lowercase `HexBytes` Display adapter — port of
-/// Zig `std.fmt.bytesToHex(.., .lower)` at format-arg call sites (`{x}` on
-/// `[]const u8`). Avoids turbofish at every caller.
+/// Ergonomic constructor for the lowercase `HexBytes` Display adapter.
+/// Avoids turbofish at every caller.
 #[inline]
 pub fn hex_lower(bytes: &[u8]) -> HexBytes<'_, true> {
     HexBytes(bytes)
 }
 
-/// Ergonomic constructor for the uppercase `HexBytes` Display adapter — port of
-/// Zig `std.fmt.bytesToHex(.., .upper)` / the `{X}` format spec on `[]const u8`.
+/// Ergonomic constructor for the uppercase `HexBytes` Display adapter.
 /// Pairs with [`hex_lower`]; avoids turbofish at every caller.
 #[inline]
 pub fn hex_upper(bytes: &[u8]) -> HexBytes<'_, false> {
     HexBytes(bytes)
 }
 
-pub const LOWER_HEX_TABLE: [u8; 16] = [
-    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
-];
-pub const UPPER_HEX_TABLE: [u8; 16] = [
-    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F',
-];
+const LOWER_HEX_TABLE: [u8; 16] = *b"0123456789abcdef";
+const UPPER_HEX_TABLE: [u8; 16] = *b"0123456789ABCDEF";
 
 /// Sentinel returned by [`HEX_DECODE_TABLE`] for non-hex-digit bytes.
 pub const HEX_INVALID: u8 = 0xff;
@@ -2829,8 +2637,6 @@ pub const HEX_DECODE_TABLE: [u8; 256] = {
 /// Returns `None` for any other byte. Callers needing a wider int cast with `as u16/u32`
 /// or `.map(u32::from)`; callers needing `Result` use `.ok_or(..)`; callers with a
 /// pre-validated byte use `.unwrap()`.
-///
-/// Zig precedent: `std.fmt.charToDigit(c, 16)` / `bun.strings.toASCIIHexValue`.
 #[inline]
 pub const fn hex_digit_value(b: u8) -> Option<u8> {
     match b {
@@ -2860,8 +2666,6 @@ pub const fn hex_digit_value_u32(c: u32) -> Option<u8> {
 /// Returns `None` if either byte is not `[0-9a-fA-F]`. Callers adapt the
 /// error channel exactly as for [`hex_digit_value`]: `.ok_or(..)?` for
 /// `Result`, `.unwrap()` when pre-validated, `?` in `Option` context.
-///
-/// Zig precedent: inner loop of `std.fmt.hexToBytes`.
 #[inline]
 pub const fn hex_pair_value(hi: u8, lo: u8) -> Option<u8> {
     match (hex_digit_value(hi), hex_digit_value(lo)) {
@@ -2906,9 +2710,6 @@ pub const fn parse_hex4(input: &[u8]) -> Option<u16> {
 /// This is the *prefix* primitive — it never fails. Callers needing exact-N
 /// semantics (e.g. `\uHHHH`) check `digits_consumed == N` afterward; callers
 /// needing a narrower result cast (`value as u8`, `value as i32`).
-///
-/// Zig precedent: none (each module hand-rolls); analogous to a bounded
-/// `std.fmt.parseInt(u32, prefix, 16)` that also reports how much it ate.
 #[inline]
 pub fn parse_hex_prefix(input: &[u8], max_digits: usize) -> (u32, usize) {
     let mut value: u32 = 0;
@@ -2926,9 +2727,8 @@ pub fn parse_hex_prefix(input: &[u8], max_digits: usize) -> (u32, usize) {
 }
 
 /// Decode a `2 * size_of::<T>()`-char ASCII hex slice into `T` via native-endian
-/// byte reinterpretation. Mirrors Zig's `parseHexToInt` (DevServer.zig:961):
-/// `std.fmt.hexToBytes` into `[@sizeOf(T)]u8` then `@bitCast` — i.e. pairwise
-/// hex-decode then `from_ne_bytes`, **not** a big-endian numeric accumulator.
+/// byte reinterpretation — i.e. pairwise hex-decode then `from_ne_bytes`,
+/// **not** a big-endian numeric accumulator.
 /// `"0100000000000000"` → `1u64` on little-endian.
 ///
 /// Returns `None` if `slice.len() != 2 * size_of::<T>()` or any byte is not
@@ -2963,9 +2763,7 @@ pub const fn hex_char_upper(n: u8) -> u8 {
 }
 
 /// Encode a single byte as two lowercase ASCII hex digits `[hi, lo]`.
-/// Port of the open-coded `CHARSET[(b>>4)] / CHARSET[(b&0xF)]` pair found
-/// throughout the Zig sources. For contiguous full-slice output prefer
-/// [`bytes_to_hex_lower`].
+/// For contiguous full-slice output prefer [`bytes_to_hex_lower`].
 #[inline]
 pub const fn hex_byte_lower(b: u8) -> [u8; 2] {
     [
@@ -2984,16 +2782,6 @@ pub const fn hex_byte_upper(b: u8) -> [u8; 2] {
     ]
 }
 
-/// Two hex nibbles for a `u8` (`\\xXX`). `LOWER == false` → uppercase.
-#[inline]
-pub const fn hex_u8<const LOWER: bool>(b: u8) -> [u8; 2] {
-    if LOWER {
-        hex_byte_lower(b)
-    } else {
-        hex_byte_upper(b)
-    }
-}
-
 // ── compat aliases (pre-dedup names) ──────────────────────────────────────
 #[doc(hidden)]
 #[inline]
@@ -3010,15 +2798,9 @@ pub const fn hex2_lower(b: u8) -> [u8; 2] {
 pub const fn hex4_upper(v: u16) -> [u8; 4] {
     hex_u16::<false>(v)
 }
-#[doc(hidden)]
-#[inline]
-pub const fn hex4_lower(v: u16) -> [u8; 4] {
-    hex_u16::<true>(v)
-}
-
 /// Four hex nibbles for a `u16` (`\\uXXXX`). `LOWER == false` → uppercase.
 #[inline]
-pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
+const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
     let t = if LOWER {
         &LOWER_HEX_TABLE
     } else {
@@ -3032,23 +2814,20 @@ pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
     ]
 }
 
-// TODO(port): Zig parameterizes on `comptime Int: type` and computes
-// `BufType = [@bitSizeOf(Int) / 4]u8`. Rust const generics can't derive an array
-// length from a type's bit-width. Represent as a generic over u64 with explicit
-// nibble count; Phase B can add per-width helpers if hot.
+// Const generics can't derive an array length from a type's bit-width, so
+// this is generic over u64 with an explicit nibble count.
 pub struct HexIntFormatter<const LOWER: bool, const NIBBLES: usize> {
     pub value: u64,
 }
 
 impl<const LOWER: bool, const NIBBLES: usize> HexIntFormatter<LOWER, NIBBLES> {
-    pub fn get_out_buf(value: u64) -> [u8; NIBBLES] {
+    pub(crate) fn get_out_buf(value: u64) -> [u8; NIBBLES] {
         let table = if LOWER {
             &LOWER_HEX_TABLE
         } else {
             &UPPER_HEX_TABLE
         };
         let mut buf = [0u8; NIBBLES];
-        // PERF(port): Zig used `inline for`; plain loop here.
         for (i, c) in buf.iter_mut().enumerate() {
             // value relative to the current nibble
             let shift = ((NIBBLES - i - 1) * 4) as u32;
@@ -3065,24 +2844,13 @@ impl<const LOWER: bool, const NIBBLES: usize> Display for HexIntFormatter<LOWER,
     }
 }
 
-pub fn hex_int<const LOWER: bool, const NIBBLES: usize>(
-    value: u64,
-) -> HexIntFormatter<LOWER, NIBBLES> {
-    HexIntFormatter { value }
-}
-
 pub fn hex_int_lower<const NIBBLES: usize>(value: u64) -> HexIntFormatter<true, NIBBLES> {
-    HexIntFormatter { value }
-}
-
-pub fn hex_int_upper<const NIBBLES: usize>(value: u64) -> HexIntFormatter<false, NIBBLES> {
     HexIntFormatter { value }
 }
 
 /// `{:0N x}` / `{:0N X}` — zero-padded fixed-width hex of a u64 into a stack
 /// buffer. Thin alias over [`HexIntFormatter::get_out_buf`] for callers that
-/// want bytes, not a `Display` adapter. Port of Zig `bun.fmt.hexIntLower` /
-/// `hexIntUpper` when used with `bufPrint`.
+/// want bytes, not a `Display` adapter.
 #[inline]
 pub fn u64_hex_fixed<const LOWER: bool, const N: usize>(v: u64) -> [u8; N] {
     HexIntFormatter::<LOWER, N>::get_out_buf(v)
@@ -3090,13 +2858,12 @@ pub fn u64_hex_fixed<const LOWER: bool, const N: usize>(v: u64) -> [u8; N] {
 
 /// Format a 6-byte MAC address as `xx:xx:xx:xx:xx:xx` (lowercase hex,
 /// colon-separated). Returns a fixed 17-byte ASCII buffer; borrow as `&[u8]`
-/// for `ZigString::init`. Port of the inline `std.fmt.bufPrint(.., "{x:0>2}:..")`
-/// pattern duplicated at `node_os.zig:686` and `:800`.
+/// for `ZigString::init`.
 #[inline]
-pub fn mac_address_lower(mac: &[u8; 6]) -> [u8; 17] {
+pub fn mac_address_lower(mac: [u8; 6]) -> [u8; 17] {
     let mut out = [b':'; 17];
     let mut i = 0;
-    for &b in mac {
+    for b in mac {
         out[i] = LOWER_HEX_TABLE[(b >> 4) as usize];
         out[i + 1] = LOWER_HEX_TABLE[(b & 0x0f) as usize];
         i += 3;
@@ -3105,8 +2872,7 @@ pub fn mac_address_lower(mac: &[u8; 6]) -> [u8; 17] {
 }
 
 /// `{:0N}` — zero-padded fixed-width decimal of a `u64` into `[u8; N]`.
-/// Decimal sibling of [`u64_hex_fixed`] / [`hex_byte_upper`]. Port of Zig
-/// `std.fmt.printInt(.., .{.width=N, .fill='0'})`. Caller guarantees
+/// Decimal sibling of [`u64_hex_fixed`] / [`hex_byte_upper`]. Caller guarantees
 /// `val < 10^N`; excess high digits are silently dropped (debug-asserted).
 #[inline(always)]
 pub fn itoa_padded<const N: usize>(mut val: u64) -> [u8; N] {
@@ -3145,8 +2911,7 @@ pub fn u64_hex_var_lower(buf: &mut [u8; 16], mut n: u64) -> &[u8] {
 /// Equivalent to `{d:.<precision>}` but trims trailing zeros
 /// if decimal part is less than `precision` digits.
 pub struct TrimmedPrecisionFormatter<const PRECISION: usize> {
-    pub num: f64,
-    pub precision: usize,
+    pub(crate) num: f64,
 }
 
 impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
@@ -3156,9 +2921,8 @@ impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
         let rem = self.num - whole;
         if rem != 0.0 {
             // buf size = "0." + PRECISION digits
-            // PORT NOTE: Zig used `[2 + precision]u8` stack array; Rust const-generic array
-            // length arithmetic is unstable, so use a small fixed upper bound and
-            // const-assert it suffices (matches Zig's compile-time sizing guarantee).
+            // Const-generic array length arithmetic is unstable, so use a small
+            // fixed upper bound and const-assert it suffices.
             const {
                 assert!(
                     PRECISION + 3 <= 32,
@@ -3181,36 +2945,24 @@ impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
 pub fn trimmed_precision<const PRECISION: usize>(
     value: f64,
 ) -> TrimmedPrecisionFormatter<PRECISION> {
-    TrimmedPrecisionFormatter {
-        num: value,
-        precision: PRECISION,
-    }
+    TrimmedPrecisionFormatter { num: value }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // Duration formatting
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct FormatDurationData {
     ns: u64,
     negative: bool,
-}
-
-impl Default for FormatDurationData {
-    fn default() -> Self {
-        Self {
-            ns: 0,
-            negative: false,
-        }
-    }
 }
 
 use crate::time::{
     NS_PER_DAY, NS_PER_HOUR, NS_PER_MIN, NS_PER_MS, NS_PER_S, NS_PER_US, NS_PER_WEEK,
 };
 
-/// This is copied from std.fmt.formatDuration, except it will only print one decimal instead of three
+/// Format a duration, printing one decimal place instead of three.
 fn format_duration_one_decimal(
     data: FormatDurationData,
     writer: &mut impl fmt::Write,
@@ -3239,7 +2991,6 @@ fn format_duration_one_decimal(
     }
 
     let mut ns_remaining = data.ns;
-    // PERF(port): Zig used `inline for` over a tuple of structs.
     const COARSE: [(u64, u8); 5] = [
         (365 * NS_PER_DAY, b'y'),
         (NS_PER_WEEK, b'w'),
@@ -3313,8 +3064,7 @@ pub enum ConnTimeoutKind {
 /// Render the canonical SQL connection-timeout error message.
 ///
 /// `ms` is converted to nanoseconds with a saturating multiply and rendered
-/// through [`fmt_duration_one_decimal`] (matching the Zig backends' inline
-/// `bun.fmt.fmtDurationOneDecimal(ms * std.time.ns_per_ms)`). `suffix` is
+/// through [`fmt_duration_one_decimal`]. `suffix` is
 /// appended verbatim — used for the per-status `(sent startup message…)` /
 /// `(during authentication)` tails.
 pub fn fmt_conn_timeout(kind: ConnTimeoutKind, ms: u32, suffix: &str) -> impl Display + '_ {
@@ -3343,9 +3093,8 @@ pub fn fmt_slice<'a, T: AsRef<[u8]>>(data: &'a [T], delim: &'static str) -> Form
 }
 
 pub struct FormatSlice<'a, T: AsRef<[u8]>> {
-    pub slice: &'a [T],
-    // PERF(port): Zig `delim` was a comptime []const u8 — runtime here.
-    pub delim: &'static str,
+    pub(crate) slice: &'a [T],
+    pub(crate) delim: &'static str,
 }
 
 impl<T: AsRef<[u8]>> Display for FormatSlice<'_, T> {
@@ -3374,10 +3123,9 @@ pub fn double(number: f64) -> FormatDouble {
 }
 
 pub struct FormatDouble {
-    pub number: f64,
+    pub(crate) number: f64,
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // `&mut [u8; 124]` is ABI-identical to the C `char *` argument (thin
     // non-null pointer to 124 writable bytes); the type encodes WTF__dtoa's
@@ -3410,17 +3158,16 @@ impl Display for FormatDouble {
 }
 
 /// Downstream alias — several callers (ConsoleObject) refer to this as
-/// `bun_core::fmt::DoubleFormatter` (matching the Zig "formatter" naming
-/// convention rather than the `Format*` struct convention used here).
+/// `bun_core::fmt::DoubleFormatter` (the "formatter" naming convention
+/// rather than the `Format*` struct convention used here).
 pub type DoubleFormatter = FormatDouble;
 
 // ─── Integer → ASCII ───────────────────────────────────────────────────────
 // One path for every base-10 integer write. Backed by the `itoa` crate (LUT
 // 2-digits-at-a-time — same code serde_json/cssparser ship), already in the
-// workspace link graph. Replaces the three competing impls the port grew:
+// workspace link graph. Replaces three competing impls:
 // `core::fmt`-via-SliceCursor (slow + silent-truncate footgun), the hand-
 // rolled `itoa_u64` reverse-fill, and tcc_sys's private `itoa::Buffer` use.
-// Zig has exactly one path (`std.fmt.printInt`); this restores that parity.
 
 /// Stack scratch for [`itoa`]. 40 bytes — fits `i128::MIN`. `::new()` is a
 /// const no-op (uninit array), so declare it inline at the call site.
@@ -3452,7 +3199,7 @@ pub const fn pow10_exp_1e4_to_1e9(val: u64) -> Option<u8> {
     }
 }
 
-/// Port of `std.fmt.printInt(buf, value, 10, .lower, .{})`: format `value`
+/// Format `value`
 /// into `buf` as base-10 ASCII and return the number of bytes written.
 /// Panics if `buf` is too small — callers size the buffer by the type's max
 /// digit count. Use [`itoa`] directly when you can own a fresh [`ItoaBuf`];
@@ -3465,8 +3212,7 @@ pub fn print_int<T: ::itoa::Integer>(buf: &mut [u8], value: T) -> usize {
     s.len()
 }
 
-/// [`print_int`] returning the written sub-slice of `buf` — the moral
-/// equivalent of Zig's `std.fmt.bufPrint(&buf, "{d}", .{v}) catch unreachable`.
+/// [`print_int`] returning the written sub-slice of `buf`.
 /// Use this when the caller wants the bytes; use [`print_int`] directly when
 /// writing at an offset and only the byte-count is needed.
 #[inline]
@@ -3478,8 +3224,7 @@ pub fn int_as_bytes<T: ::itoa::Integer>(buf: &mut [u8], value: T) -> &[u8] {
 /// NUL-terminated decimal `u64` → ASCII into a caller-owned scratch buffer,
 /// returning a [`CStr`] borrowing the head of `buf`.
 ///
-/// This is the Rust analogue of Zig's `std.fmt.bufPrintZ(&buf, "{d}", .{n})`
-/// — used when handing an integer to a C API that wants a `*const c_char`
+/// Used when handing an integer to a C API that wants a `*const c_char`
 /// service/port string (e.g. `getaddrinfo`, `ares_getaddrinfo`). 21 bytes
 /// covers `u64::MAX` (20 digits) + NUL; `u16`/`u32` callers widen via `as u64`.
 #[inline]
@@ -3493,8 +3238,8 @@ pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &core::ffi::CStr {
     unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&buf[..=s.len()]) }
 }
 
-/// Byte length of `n` formatted with the default `{}` Display — moral
-/// equivalent of Zig's `std.fmt.count("{d}", .{n})`. Used by ConsoleObject
+/// Byte length of `n` formatted with the default `{}` Display. Used by
+/// ConsoleObject
 /// width tracking for `%f` substitutions.
 #[inline]
 pub fn count_float(n: f64) -> usize {
@@ -3517,7 +3262,7 @@ pub fn nullable_fallback<T: Display>(
 
 pub struct NullableFallback<'a, T: Display> {
     pub value: Option<T>,
-    pub null_fallback: &'a [u8],
+    pub(crate) null_fallback: &'a [u8],
 }
 
 impl<T: Display> Display for NullableFallback<'_, T> {
@@ -3534,7 +3279,7 @@ impl<T: Display> Display for NullableFallback<'_, T> {
 // escapePowershell
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct EscapePowershell<'a>(pub &'a [u8]);
+pub struct EscapePowershell<'a>(pub(crate) &'a [u8]);
 
 pub fn escape_powershell(str: &[u8]) -> EscapePowershell<'_> {
     EscapePowershell(str)
@@ -3548,7 +3293,7 @@ impl Display for EscapePowershell<'_> {
 
 fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
     let mut remain = str;
-    while let Some(i) = crate::strings_impl::index_of_any(remain, b"\"`") {
+    while let Some(i) = crate::strings::index_of_any(remain, b"\"`$") {
         write_bytes(writer, &remain[..i])?;
         writer.write_str("`")?;
         writer.write_char(remain[i] as char)?;
@@ -3557,17 +3302,13 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
-// js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.zig
+// js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.rs
 // alongside fmt_jsc.bind.ts; bun_core/ stays JSC-free.
 
 // ───────────────────────────────────────────────────────────────────────────
 // OutOfRangeFormatter — Equivalent to ERR_OUT_OF_RANGE
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig `NewOutOfRangeFormatter(comptime T: type)` branches on `@typeName(T)`
-// and `std.meta.hasFn(T, "format")` for the "Received" tail. The `@typeName(T)` fallback
-// path is debug-only (Zig panics if field_name unset in debug). Represent as a trait so
-// each `T` controls how it prints "Received <value>".
 pub trait OutOfRangeValue {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result;
     fn type_name() -> &'static str;
@@ -3617,10 +3358,10 @@ impl OutOfRangeValue for bun_alloc::String {
 
 pub struct NewOutOfRangeFormatter<'a, T: OutOfRangeValue> {
     pub value: T,
-    pub min: i64,
-    pub max: i64,
-    pub field_name: &'a [u8],
-    pub msg: &'a [u8],
+    pub(crate) min: i64,
+    pub(crate) max: i64,
+    pub(crate) field_name: &'a [u8],
+    pub(crate) msg: &'a [u8],
 }
 
 impl<T: OutOfRangeValue> Display for NewOutOfRangeFormatter<'_, T> {
@@ -3659,11 +3400,7 @@ impl<T: OutOfRangeValue> Display for NewOutOfRangeFormatter<'_, T> {
     }
 }
 
-pub type DoubleOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, f64>;
-pub type IntOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, i64>;
-pub type StringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, &'a [u8]>;
-pub type BunStringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, bun_alloc::String>;
-
+#[derive(Copy, Clone)]
 pub struct OutOfRangeOptions<'a> {
     pub min: i64,
     pub max: i64,
@@ -3723,10 +3460,8 @@ fn truncated_hash32_impl(int: u64, writer: &mut impl fmt::Write) -> fmt::Result 
 }
 
 /// Const-fn core of [`truncated_hash32`] / [`TruncatedHash32`]: the 8-byte
-/// base32-ish encoding (native-endian, matches Zig `@bitCast([8]u8, int)`).
-/// Exposed so const contexts (e.g. `js_parser::generated_symbol_name!`) can
-/// share the single alphabet table instead of copy-pasting it.
-pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
+/// base32-ish encoding (native-endian byte reinterpretation).
+const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
     let b = int.to_ne_bytes();
     [
@@ -3741,8 +3476,8 @@ pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     ]
 }
 
-/// Zero-validation `&[u8] -> impl Display` adapter — alias of [`raw`] named to
-/// read like Zig's `{s}` specifier at call sites (`bun_fmt::s(name)`).
+/// Zero-validation `&[u8] -> impl Display` adapter — short alias of [`raw`]
+/// for terse call sites (`bun_fmt::s(name)`).
 #[inline(always)]
 pub const fn s(bytes: &[u8]) -> Raw<'_> {
     Raw(bytes)
@@ -3754,7 +3489,7 @@ pub const fn s(bytes: &[u8]) -> Raw<'_> {
 
 #[inline]
 fn write_bytes(w: &mut impl fmt::Write, bytes: &[u8]) -> fmt::Result {
-    // SAFETY: see `s()` above — Zig's `{s}` path, callers feed ASCII/utf8.
+    // SAFETY: see `s()` above — callers feed valid ASCII/UTF-8.
     w.write_str(unsafe { core::str::from_utf8_unchecked(bytes) })
 }
 
@@ -3768,22 +3503,20 @@ fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Resul
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// std.json.encodeJsonString — single canonical port.
-// Zig: vendor/zig/lib/std/json/Stringify.zig:670 (encodeJsonString →
-// encodeJsonStringChars → outputSpecialEscape). Every Rust copy that was
-// hand-ported from a Zig `std.json.fmt(...)` call funnels through here.
+// encode_json_string — single canonical impl.
+// Every duplicated copy of this JSON-string escaping logic funnels through
+// here.
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Port of Zig stdlib `std.json.encodeJsonStringChars` with default options
-/// (`escape_unicode = false`): writes the escaped body of a JSON string
-/// **without** surrounding quotes.
+/// Writes the escaped body of a JSON string **without** surrounding quotes
+/// (`escape_unicode = false` semantics).
 ///
-/// Escape set (matches `outputSpecialEscape` exactly):
+/// Escape set:
 ///   - `\"` `\\` `\b` `\f` `\n` `\r` `\t`
 ///   - other `0x00..=0x1F` → `\u00XX` (lowercase hex)
 ///   - `0x20..=0xFF` → emitted verbatim in run-batched `write_str` calls
 ///     (input is treated as UTF-8/Latin-1 bytes; no transcoding).
-pub fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
+pub(crate) fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
     let mut run = 0;
     for (i, &b) in s.iter().enumerate() {
         let esc: &str = match b {
@@ -3822,7 +3555,7 @@ pub fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Resul
 /// non-escaped bytes are widened (`b as char`) so 0x80..=0xFF are emitted as
 /// their U+0080..U+00FF UTF-8 encodings rather than passed through as raw
 /// (invalid) single bytes. ASCII runs are still batched via `write_bytes`.
-pub fn encode_json_string_chars_latin1(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
+pub(crate) fn encode_json_string_chars_latin1(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
     let mut run = 0;
     for (i, &b) in s.iter().enumerate() {
         let esc: &str = match b {
@@ -3866,13 +3599,10 @@ pub fn encode_json_string_chars_latin1(w: &mut impl fmt::Write, s: &[u8]) -> fmt
     Ok(())
 }
 
-/// Port of Zig stdlib `std.json.encodeJsonString`: surrounding `"` quotes
-/// around [`encode_json_string_chars`].
+/// Surrounding `"` quotes around [`encode_json_string_chars`].
 #[inline]
 pub fn encode_json_string(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
     w.write_char('"')?;
     encode_json_string_chars(w, s)?;
     w.write_char('"')
 }
-
-// ported from: src/bun_core/fmt.zig

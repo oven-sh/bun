@@ -2,7 +2,7 @@
 
 exports[`should write plaintext lockfiles 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -21,7 +21,7 @@ exports[`should write plaintext lockfiles 1`] = `
 
 exports[`should escape names 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -48,7 +48,7 @@ exports[`should escape names 1`] = `
 
 exports[`should be the default save format 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -67,7 +67,7 @@ exports[`should be the default save format 1`] = `
 
 exports[`should be the default save format 2`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -89,7 +89,7 @@ exports[`should be the default save format 2`] = `
 
 exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile are used 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -108,7 +108,7 @@ exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile 
 
 exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile are used 2`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -130,7 +130,7 @@ exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile 
 
 exports[`should convert a binary lockfile with invalid optional peers 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 0,
   "workspaces": {
     "": {
@@ -300,7 +300,7 @@ exports[`should not deduplicate bundled packages with un-bundled packages 2`] = 
 
 exports[`should not change formatting unexpectedly 2`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -400,7 +400,7 @@ exports[`should not change formatting unexpectedly 2`] = `
 
 exports[`should sort overrides before comparing 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -438,7 +438,7 @@ exports[`should sort overrides before comparing 1`] = `
 
 exports[`should include unused resolutions in the lockfile 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {

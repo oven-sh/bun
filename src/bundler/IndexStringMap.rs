@@ -1,24 +1,19 @@
 use bun_collections::ArrayHashMap;
-use bun_collections::VecExt;
 
-/// `Index.Int` in Zig — the underlying integer repr.
+/// The underlying integer repr of `Index`.
 pub(crate) use crate::IndexInt;
-use bun_ast::Index;
 
 #[derive(Default)]
 pub struct IndexStringMap {
     map: ArrayHashMap<IndexInt, Box<[u8]>>,
 }
 
-// PORT NOTE: `deinit` only freed owned values + the map; with `Box<[u8]>` values and
-// `ArrayHashMap`'s own Drop, no explicit `impl Drop` is needed.
-
 impl IndexStringMap {
-    pub fn get(&self, index: IndexInt) -> Option<&[u8]> {
+    pub(crate) fn get(&self, index: IndexInt) -> Option<&[u8]> {
         self.map.get(&index).map(|v| v.as_ref())
     }
 
-    pub fn put(
+    pub(crate) fn put(
         &mut self,
         index: IndexInt,
         value: impl AsRef<[u8]>,
@@ -29,5 +24,3 @@ impl IndexStringMap {
         Ok(())
     }
 }
-
-// ported from: src/bundler/IndexStringMap.zig

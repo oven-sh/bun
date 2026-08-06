@@ -1,26 +1,23 @@
 use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::{PostgresInt32, PostgresShort};
 use crate::shared::Data;
-use bun_core::String as BunString;
 
-/// Trait capturing the methods `NewReaderWrap` expected as comptime fn params.
-/// Zig passed these as `comptime fn(ctx: Context) ...` arguments and `NewReader`
-/// filled them in from `Context.markMessageStart`, `Context.peek`, etc. — i.e.
-/// structural duck-typing. In Rust the trait bound IS that check.
-// TODO(port): narrow error set
+/// Trait capturing the methods `NewReaderWrap` requires of its wrapped context.
 pub trait ReaderContext {
     fn mark_message_start(&mut self);
     fn peek(&self) -> &[u8];
     fn skip(&mut self, count: usize);
     fn ensure_length(&mut self, count: usize) -> bool;
+    /// On `Ok`, the returned slice is exactly `count` bytes; otherwise
+    /// `Err(ShortRead)`. Callers rely on this: `int<Int>()` passes the
+    /// result straight to `from_be_slice` without re-checking length.
     fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError>;
     fn read_z(&mut self) -> Result<Data, AnyPostgresError>;
 }
 
-/// Helper trait for `int<Int>()` / `peek_int<Int>()` — Zig used `@sizeOf(Int)`,
-/// `@bitCast`, and `@byteSwap` to read a big-endian integer of arbitrary width.
-/// Rust has no std trait for `from_be_bytes`, so we mint a tiny one.
-// TODO(port): consider moving to a shared int-read helper if other protocol files need it
+/// Helper trait for `int<Int>()` / `peek_int<Int>()` — reads a big-endian
+/// integer of arbitrary width. Rust has no std trait for `from_be_bytes`,
+/// so we mint a tiny one.
 pub trait ProtocolInt: Sized + Copy + Eq {
     const SIZE: usize;
     fn from_be_slice(bytes: &[u8]) -> Self;
@@ -41,9 +38,7 @@ macro_rules! impl_protocol_int {
 }
 impl_protocol_int!(u8, i8, u16, i16, u32, i32, u64, i64);
 
-// Blanket impl so `NewReaderWrap<&mut C>` works — Zig passed the wrapped struct
-// by-value (implicit copy) through the dispatch loop; in Rust the inner
-// `Context` is non-`Copy` (holds `&mut usize`), so callers reborrow instead.
+// Blanket impl so `NewReaderWrap<&mut C>` works for callers that reborrow.
 impl<C: ReaderContext + ?Sized> ReaderContext for &mut C {
     #[inline]
     fn mark_message_start(&mut self) {
@@ -71,18 +66,13 @@ impl<C: ReaderContext + ?Sized> ReaderContext for &mut C {
     }
 }
 
-// Zig: `fn NewReaderWrap(comptime Context: type, comptime markMessageStartFn_, ...) type { return struct { wrapped: Context, ... } }`
-// The fn-pointer params collapse into the `ReaderContext` trait bound.
 pub struct NewReaderWrap<Context: ReaderContext> {
     pub wrapped: Context,
 }
 
-pub type Ctx<Context> = Context;
-
 impl<Context: ReaderContext> NewReaderWrap<Context> {
     /// Reborrow as `NewReaderWrap<&mut Context>` so the same reader can be
-    /// passed by-value into per-message handlers across loop iterations
-    /// (Zig relied on implicit struct copy of the pointer-carrying wrapper).
+    /// passed by-value into per-message handlers across loop iterations.
     #[inline]
     pub fn reborrow(&mut self) -> NewReaderWrap<&mut Context> {
         NewReaderWrap {
@@ -96,7 +86,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     }
 
     #[inline]
-    pub fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
+    pub(crate) fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         self.wrapped.read(count)
     }
 
@@ -112,7 +102,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         Err(AnyPostgresError::InvalidMessage)
     }
 
-    pub fn skip(&mut self, count: usize) -> Result<(), AnyPostgresError> {
+    pub(crate) fn skip(&mut self, count: usize) -> Result<(), AnyPostgresError> {
         self.wrapped.skip(count);
         Ok(())
     }
@@ -122,12 +112,32 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     }
 
     #[inline]
-    pub fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
+    pub(crate) fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
         self.wrapped.read_z()
     }
 
+    /// Read a NUL-terminated string whose terminator must appear within the
+    /// next `limit` bytes. Returns `InvalidMessage` (not `ShortRead`) when it
+    /// does not: the caller has already established via `length()` that those
+    /// bytes are the message body, so a missing terminator is a framing
+    /// violation, not a partial read. Returns the string without its NUL and
+    /// the total bytes consumed (string + NUL).
+    pub(crate) fn string_within(
+        &mut self,
+        limit: usize,
+    ) -> Result<(Data, usize), AnyPostgresError> {
+        let view = self.wrapped.peek();
+        let bound = view.len().min(limit);
+        let Some(zero) = view[..bound].iter().position(|&b| b == 0) else {
+            return Err(AnyPostgresError::InvalidMessage);
+        };
+        let data = self.wrapped.read(zero)?;
+        self.wrapped.skip(1);
+        Ok((data, zero + 1))
+    }
+
     #[inline]
-    pub fn ensure_capacity(&mut self, count: usize) -> Result<(), AnyPostgresError> {
+    pub(crate) fn ensure_capacity(&mut self, count: usize) -> Result<(), AnyPostgresError> {
         if !self.wrapped.ensure_length(count) {
             return Err(AnyPostgresError::ShortRead);
         }
@@ -136,68 +146,81 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
 
     pub fn int<Int: ProtocolInt>(&mut self) -> Result<Int, AnyPostgresError> {
         let data = self.read(Int::SIZE)?;
-        let slice = data.slice();
-        if slice.len() < Int::SIZE {
-            return Err(AnyPostgresError::ShortRead);
-        }
-        // Zig special-cased `Int == u8` to skip the byte-swap; `from_be_slice`
-        // for a 1-byte int is already a no-op swap, so no branch needed here.
-        Ok(Int::from_be_slice(&slice[0..Int::SIZE]))
+        Ok(Int::from_be_slice(data.slice()))
     }
 
-    pub fn peek_int<Int: ProtocolInt>(&self) -> Option<Int> {
-        let remain = self.peek();
-        if remain.len() < Int::SIZE {
-            return None;
-        }
-        Some(Int::from_be_slice(&remain[0..Int::SIZE]))
-    }
-
-    pub fn expect_int<Int: ProtocolInt>(&mut self, value: Int) -> Result<bool, AnyPostgresError> {
-        // PERF(port): `value` was `comptime comptime_int` — profile in Phase B
+    pub(crate) fn expect_int<Int: ProtocolInt>(
+        &mut self,
+        value: Int,
+    ) -> Result<bool, AnyPostgresError> {
         let actual = self.int::<Int>()?;
         Ok(actual == value)
     }
 
-    pub fn int4(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
+    pub(crate) fn int4(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
         self.int::<PostgresInt32>()
     }
 
-    pub fn short(&mut self) -> Result<PostgresShort, AnyPostgresError> {
+    pub(crate) fn short(&mut self) -> Result<PostgresShort, AnyPostgresError> {
         self.int::<PostgresShort>()
     }
 
-    pub fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
-        let expected = self.int::<PostgresInt32>()?;
-        // PORT NOTE: Zig `expected > -1` — `int4` is u32 so always nonnegative; preserved
-        // as the saturating sub guarding underflow when len < 4.
-        self.ensure_capacity(expected.saturating_sub(4) as usize)?;
+    /// The length of every Postgres v3 message is a signed Int32 that includes
+    /// its own 4 bytes, so a value below 4 (or negative, i.e. the sign bit set
+    /// on the wire) is malformed. `raw` is server-controlled.
+    #[inline]
+    fn validate_length(raw: PostgresInt32) -> Result<PostgresInt32, AnyPostgresError> {
+        if raw < 4 || raw > i32::MAX as u32 {
+            return Err(AnyPostgresError::InvalidMessageLength);
+        }
+        Ok(raw)
+    }
 
+    pub(crate) fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
+        let expected = Self::validate_length(self.int::<PostgresInt32>()?)?;
+        self.ensure_capacity((expected - 4) as usize)?;
         Ok(expected)
     }
 
-    // Zig: `pub const bytes = read;`
-    #[inline]
-    pub fn bytes(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
-        self.read(count)
+    /// `length()` without consuming: validates the Int32 at the cursor and
+    /// confirms the whole message body is present, but leaves both for the
+    /// handler to read. Returns `(remaining, length)` where `remaining` is the
+    /// buffer's byte count before the length field, so after the handler runs
+    /// the frame boundary is `remaining - length`.
+    pub fn peek_length(&mut self) -> Result<(usize, usize), AnyPostgresError> {
+        let view = self.wrapped.peek();
+        if view.len() < 4 {
+            return Err(AnyPostgresError::ShortRead);
+        }
+        let raw = PostgresInt32::from_be_slice(&view[..4]);
+        let length = Self::validate_length(raw)? as usize;
+        if view.len() < length {
+            return Err(AnyPostgresError::ShortRead);
+        }
+        Ok((view.len(), length))
     }
 
-    pub fn string(&mut self) -> Result<BunString, AnyPostgresError> {
-        let result = self.read_z()?;
-        // PORT NOTE: Zig `borrowUTF8` borrows `result.slice()` then drops `result`
-        // via `defer result.deinit()`. `Data` here is `Temporary` (points into the
-        // connection buffer), so the bytes outlive the `Data` wrapper itself;
-        // `borrow_utf8` stores a raw pointer (no lifetime) so this matches Zig
-        // semantics 1:1. Phase B: audit that no caller holds the returned
-        // `BunString` past the next buffer fill.
-        Ok(BunString::borrow_utf8(result.slice()))
+    /// `length()` minus the 4 bytes the length field itself occupies, i.e. the
+    /// number of body bytes remaining in this message. Cannot underflow:
+    /// `length()` has already returned `InvalidMessageLength` for any value
+    /// below 4, and `ensure_capacity` has confirmed those bytes are present.
+    #[inline]
+    pub(crate) fn body_length(&mut self) -> Result<usize, AnyPostgresError> {
+        Ok((self.length()? - 4) as usize)
+    }
+
+    pub fn skip_message(&mut self) -> Result<(), AnyPostgresError> {
+        let body = self.body_length()?;
+        self.skip(body)
+    }
+
+    #[inline]
+    pub(crate) fn bytes(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
+        self.read(count)
     }
 }
 
 // (duplicate blanket impl + reborrow removed — defined above at L47/L69)
 
-// Zig: `pub fn NewReader(comptime Context: type) type { return NewReaderWrap(Context, Context.markMessageStart, ...); }`
 // The trait bound on `NewReaderWrap` already enforces the method set, so this is a plain alias.
 pub type NewReader<Context> = NewReaderWrap<Context>;
-
-// ported from: src/sql/postgres/protocol/NewReader.zig

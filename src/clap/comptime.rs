@@ -7,21 +7,20 @@ use crate::streaming::{self, StreamingClap};
 use crate::{Names, Param, ParseOptions, Values};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Compile-time conversion (Zig parity)
+// Compile-time conversion
 //
-// Zig's `ComptimeClap(Id, params)` is a comptime type-generator: it iterates
-// `params` *at comptime* to (a) re-index every param's `id` to its slot within
-// its category (flag / single / multi) and (b) emit a struct with fixed-size
-// array fields. `findParam` is `inline for`, so every `args.flag("--foo")`
-// compiles to a constant index — zero runtime cost.
+// The param-table conversion can run entirely at compile time: (a) re-index
+// every param's `id` to its slot within
+// its category (flag / single / multi) and (b) emit fixed-size
+// array fields, so every `args.flag("--foo")`
+// lookup folds to a constant index — zero runtime cost.
 //
-// The Phase-A port did all of this at runtime: `convert_params` heap-allocated
+// An earlier draft did all of this at runtime: `convert_params` heap-allocated
 // a `Vec<Param<usize>>` on every CLI start, and `find_param` linear-scanned it
 // for every `flag()`/`option()` lookup (~190 lookups × ~100 params on the
-// `bun run` path). perf put this at ~0.25 % of `bun --version` cycles vs ~0 %
-// in Zig.
+// `bun run` path). perf put this at ~0.25 % of `bun --version` cycles.
 //
-// This module restores the comptime semantics on stable Rust:
+// This module does the conversion at compile time on stable Rust:
 //
 //   * `count_flags` / `count_single` / `count_multi` / `convert_params_array`
 //     / `find_param_index` are all `const fn`, so a param table declared with
@@ -29,8 +28,7 @@ use crate::{Names, Param, ParseOptions, Values};
 //     name lookup can be folded to a constant via `const { find_param_index(..) }`.
 //
 //   * `comptime_table!` (in `lib.rs`) packages the const-fn output as a
-//     `&'static ConvertedTable` — the Rust analogue of the Zig comptime
-//     `converted_params` const baked into the generated type.
+//     `&'static ConvertedTable` baked into rodata.
 //
 //   * Every per-subcommand table in `runtime/cli/Arguments.rs` is now a
 //     `pub static *_TABLE: &ConvertedTable = comptime_table!(*_PARAMS)`, and
@@ -48,7 +46,7 @@ const fn is_named<Id>(p: &Param<Id>) -> bool {
     p.names.long.is_some() || p.names.short.is_some()
 }
 
-/// Count flag params (named, `takes_value == None`). Zig: comptime loop arm.
+/// Count flag params (named, `takes_value == None`).
 pub const fn count_flags<Id>(params: &[Param<Id>]) -> usize {
     let mut n = 0;
     let mut i = 0;
@@ -89,8 +87,8 @@ pub const fn count_multi<Id>(params: &[Param<Id>]) -> usize {
     n
 }
 
-/// Compile-time equivalent of the Zig comptime conversion loop (comptime.zig
-/// lines 6–32): re-indexes each param's `id` to its slot within its category.
+/// Compile-time conversion loop:
+/// re-indexes each param's `id` to its slot within its category.
 /// `N` must equal `params.len()` (asserted at const-eval).
 pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [Param<usize>; N] {
     const DUMMY: Param<usize> = Param {
@@ -137,17 +135,15 @@ pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [
     out
 }
 
-/// Compile-time name → converted-param index. This is the Rust analogue of
-/// Zig's `inline for` `findParam` and is intended to be called inside a
+/// Compile-time name → converted-param index. Intended to be called inside a
 /// `const { }` block so the loop folds to a literal:
 ///
 /// ```ignore
 /// const IDX: usize = find_param_index(TABLE.converted, b"--help");
 /// ```
 ///
-/// Panics (at const-eval, i.e. a build error) if `name` is not in `converted`
-/// — matching Zig's `@compileError("no param '…'")`.
-pub const fn find_param_index(converted: &[Param<usize>], name: &[u8]) -> usize {
+/// Panics (at const-eval, i.e. a build error) if `name` is not in `converted`.
+pub(crate) const fn find_param_index(converted: &[Param<usize>], name: &[u8]) -> usize {
     if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
         let (_, key) = name.split_at(2);
         let mut i = 0;
@@ -243,7 +239,7 @@ pub const fn build_long_index<Id, const M: usize>(params: &[Param<Id>]) -> [Long
 }
 
 /// `[i16; 128]` ASCII → index into `converted`. `-1` = no such short.
-pub const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] {
+const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] {
     let mut idx = [-1i16; 128];
     let mut i = 0;
     while i < converted.len() {
@@ -262,7 +258,7 @@ pub const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] {
 /// FNV-1a 64. `const fn` so `comptime_table!` can pre-hash; also used at
 /// runtime for the long-name index.
 #[inline]
-pub const fn fnv1a64(bytes: &[u8]) -> u64 {
+const fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut i = 0;
     while i < bytes.len() {
@@ -285,10 +281,10 @@ pub struct LongEntry {
 /// lazily built once per unique input slice via [`ConvertedTable::for_params`]
 /// and interned for the process lifetime.
 pub struct ConvertedTable {
-    pub converted: &'static [Param<usize>],
-    pub n_flags: usize,
-    pub n_single: usize,
-    pub n_multi: usize,
+    pub(crate) converted: &'static [Param<usize>],
+    pub(crate) n_flags: usize,
+    pub(crate) n_single: usize,
+    pub(crate) n_multi: usize,
     /// Sorted by `hash`; binary-searched in `find`. Populated by both the
     /// const-eval path ([`build_long_index`] via `comptime_table!`) and the
     /// runtime fallback path (`build`).
@@ -300,8 +296,8 @@ impl ConvertedTable {
     /// Build a table entirely at compile time. All four arguments come from
     /// the `const fn`s above via [`comptime_table!`](crate::comptime_table),
     /// so the converted param array, category counts, sorted long-name hash
-    /// index, and short-name direct index all land in rodata — full Zig
-    /// `ComptimeClap` parity with zero runtime work.
+    /// index, and short-name direct index all land in rodata —
+    /// zero runtime work.
     pub const fn from_const(
         converted: &'static [Param<usize>],
         n_flags: usize,
@@ -326,7 +322,7 @@ impl ConvertedTable {
     /// handful of non-startup callers (`bun create`, `bun install`) that still
     /// hand a raw `&'static [Param<Id>]` to `clap::parse`.
     #[cold]
-    pub fn for_params<Id>(params: &'static [Param<Id>]) -> &'static ConvertedTable {
+    pub(crate) fn for_params<Id>(params: &'static [Param<Id>]) -> &'static ConvertedTable {
         let key = (params.as_ptr() as usize, params.len());
         {
             let reg = registry().lock();
@@ -451,9 +447,7 @@ impl ConvertedTable {
                 let mut j = idx;
                 while j < self.long_index.len() && self.long_index[j].hash == h {
                     let p = &self.converted[self.long_index[j].idx as usize];
-                    if p.names.long.map_or(false, |l| l == key)
-                        || p.names.long_aliases.iter().any(|a| *a == key)
-                    {
+                    if (p.names.long == Some(key)) || p.names.long_aliases.contains(&key) {
                         return p;
                     }
                     j += 1;
@@ -477,51 +471,21 @@ fn registry() -> &'static Registry {
     &REG
 }
 
-/// Legacy runtime conversion. Kept for back-compat with out-of-tree callers;
-/// in-tree code goes through [`ConvertedTable::for_params`] /
-/// [`convert_params_array`].
-pub fn convert_params<Id>(params: &[Param<Id>]) -> (Vec<Param<usize>>, usize, usize, usize) {
-    let mut flags = 0usize;
-    let mut single = 0usize;
-    let mut multi = 0usize;
-    let mut converted: Vec<Param<usize>> = Vec::with_capacity(params.len());
-    for param in params {
-        let mut index = 0usize;
-        if param.names.long.is_some() || param.names.short.is_some() {
-            let ptr = match param.takes_value {
-                Values::None => &mut flags,
-                Values::OneOptional | Values::One => &mut single,
-                Values::Many => &mut multi,
-            };
-            index = *ptr;
-            *ptr += 1;
-        }
-        converted.push(Param {
-            id: index,
-            names: param.names,
-            takes_value: param.takes_value,
-        });
-    }
-    (converted, flags, single, multi)
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // ComptimeClap
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Deprecated: Use `parse_ex` instead
 pub struct ComptimeClap<Id> {
-    // Field order matches comptime.zig.
-    // Inner `&'static [u8]` slices borrow argv (process-lifetime); never freed in Zig `deinit`.
-    pub single_options: Box<[Option<&'static [u8]>]>,
-    pub multi_options: Box<[Box<[&'static [u8]]>]>,
-    pub flags: Box<[bool]>,
-    pub pos: Box<[&'static [u8]]>,
-    pub passthrough_positionals: Box<[&'static [u8]]>,
-    // `mem.Allocator param` field deleted — global mimalloc (see PORTING.md §Allocators).
+    // Inner `&'static [u8]` slices borrow argv (process-lifetime).
+    pub(crate) single_options: Box<[Option<&'static [u8]>]>,
+    pub(crate) multi_options: Box<[Box<[&'static [u8]]>]>,
+    pub(crate) flags: Box<[bool]>,
+    pub(crate) pos: Box<[&'static [u8]]>,
+    pub(crate) passthrough_positionals: Box<[&'static [u8]]>,
 
-    // Zig captures `converted_params` as a comptime const on the returned type. Rust
-    // carries it as a `&'static` table — either rodata (`comptime_table!`) or
+    // The converted params are
+    // carried as a `&'static` table — either rodata (`comptime_table!`) or
     // interned-once via the ptr-keyed registry — so `flag`/`option` resolve via
     // hashed lookup instead of an O(n) scan, and no per-parse `Vec` is allocated.
     table: &'static ConvertedTable,
@@ -542,11 +506,11 @@ impl<Id> ComptimeClap<Id> {
     /// it's marked `#[cold]` to keep the runtime-conversion machinery
     /// (`for_params` registry, `build`) out of the startup hot cluster.
     #[cold]
-    pub fn parse<I>(
+    pub(crate) fn parse<I>(
         params: &'static [Param<Id>],
         iter: &mut I,
         opt: ParseOptions<'_>,
-    ) -> Result<Self, bun_core::Error>
+    ) -> crate::Result<Self>
     where
         I: ArgIter<'static>,
     {
@@ -555,14 +519,13 @@ impl<Id> ComptimeClap<Id> {
 
     /// Parse against a pre-converted table (see [`comptime_table!`](crate::comptime_table)).
     /// This is the zero-conversion-cost entry point — `table` is rodata.
-    pub fn parse_with_table<I>(
+    pub(crate) fn parse_with_table<I>(
         table: &'static ConvertedTable,
         iter: &mut I,
         opt: ParseOptions<'_>,
-    ) -> Result<Self, bun_core::Error>
+    ) -> crate::Result<Self>
     where
         I: ArgIter<'static>,
-        // TODO(port): narrow error set
     {
         // `opt.allocator` dropped — global mimalloc.
         let mut multis: Vec<Vec<&'static [u8]>> = (0..table.n_multi).map(|_| Vec::new()).collect();
@@ -574,8 +537,6 @@ impl<Id> ComptimeClap<Id> {
             vec![None; table.n_single].into_boxed_slice();
         let mut flags: Box<[bool]> = vec![false; table.n_flags].into_boxed_slice();
 
-        // Zig: `StreamingClap(usize, @typeInfo(@TypeOf(iter)).pointer.child)` — the second
-        // type arg is the pointee of `iter`; in Rust that is just `I`.
         let mut stream = StreamingClap::<usize, I> {
             params: table.converted,
             iter,
@@ -590,9 +551,6 @@ impl<Id> ComptimeClap<Id> {
                 pos.push(arg.value.unwrap());
                 if opt.stop_after_positional_at > 0 && pos.len() >= opt.stop_after_positional_at {
                     let mut remaining_ = stream.iter.remain();
-                    // PORT NOTE: Zig called `bun.span` (NUL-scan) on `[:0]const u8` argv
-                    // entries. Our `ArgIter` already yields sized `&[u8]`, so `span` is a
-                    // no-op and is dropped.
                     let first: &[u8] = if !remaining_.is_empty() {
                         remaining_[0]
                     } else {
@@ -628,7 +586,6 @@ impl<Id> ComptimeClap<Id> {
 
         Ok(Self {
             single_options,
-            // PORT NOTE: Zig left these `undefined` and filled them post-loop.
             multi_options: multis.into_iter().map(Vec::into_boxed_slice).collect(),
             flags,
             pos: pos.into_boxed_slice(),
@@ -638,13 +595,10 @@ impl<Id> ComptimeClap<Id> {
         })
     }
 
-    // Zig `deinit` only freed `multi_options[*]` and `pos` (not `passthrough_positionals` —
-    // likely a leak in the deprecated Zig). All are owned here, so `Drop` handles it;
-    // body deleted per PORTING.md §Idiom map (`pub fn deinit` → `impl Drop`, empty body
-    // when it only frees owned fields).
+    // All fields are owned, so `Drop` handles cleanup; no explicit deinit needed.
 
     #[inline]
-    pub fn flag(&self, name: &[u8]) -> bool {
+    pub(crate) fn flag(&self, name: &[u8]) -> bool {
         let param = self.table.find(name);
         debug_assert!(
             param.takes_value == Values::None || param.takes_value == Values::OneOptional,
@@ -655,7 +609,7 @@ impl<Id> ComptimeClap<Id> {
     }
 
     #[inline]
-    pub fn option(&self, name: &[u8]) -> Option<&'static [u8]> {
+    pub(crate) fn option(&self, name: &[u8]) -> Option<&'static [u8]> {
         let param = self.table.find(name);
         debug_assert!(
             param.takes_value != Values::None,
@@ -671,7 +625,7 @@ impl<Id> ComptimeClap<Id> {
     }
 
     #[inline]
-    pub fn options(&self, name: &[u8]) -> &[&'static [u8]] {
+    pub(crate) fn options(&self, name: &[u8]) -> &[&'static [u8]] {
         let param = self.table.find(name);
         debug_assert!(
             param.takes_value != Values::None,
@@ -686,66 +640,11 @@ impl<Id> ComptimeClap<Id> {
         &self.multi_options[param.id]
     }
 
-    /// Direct slot accessors — pair with [`find_param_index`] inside
-    /// `const { }` for true Zig-parity zero-cost lookup at the call site.
-    #[inline]
-    pub fn flag_at(&self, converted_idx: usize) -> bool {
-        self.flags[self.table.converted[converted_idx].id]
-    }
-    #[inline]
-    pub fn option_at(&self, converted_idx: usize) -> Option<&'static [u8]> {
-        self.single_options[self.table.converted[converted_idx].id]
-    }
-    #[inline]
-    pub fn options_at(&self, converted_idx: usize) -> &[&'static [u8]] {
-        &self.multi_options[self.table.converted[converted_idx].id]
-    }
-
-    pub fn positionals(&self) -> &[&'static [u8]] {
+    pub(crate) fn positionals(&self) -> &[&'static [u8]] {
         &self.pos
     }
 
-    pub fn remaining(&self) -> &[&'static [u8]] {
+    pub(crate) fn remaining(&self) -> &[&'static [u8]] {
         &self.passthrough_positionals
     }
-
-    /// Zig `hasFlag` is a comptime-only predicate over the captured table.
-    /// `const fn` here so `const { has_flag(PARAMS, b"--foo") }` folds.
-    pub const fn has_flag(params: &[Param<Id>], name: &[u8]) -> bool {
-        let mut i = 0;
-        while i < params.len() {
-            let n = &params[i].names;
-            if name.len() == 2 && name[0] == b'-' {
-                if let Some(s) = n.short {
-                    if s == name[1] {
-                        return true;
-                    }
-                }
-            } else if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
-                let (_, key) = name.split_at(2);
-                if let Some(l) = n.long {
-                    if bytes_eq(l, key) {
-                        return true;
-                    }
-                }
-                let mut a = 0;
-                while a < n.long_aliases.len() {
-                    if bytes_eq(n.long_aliases[a], key) {
-                        return true;
-                    }
-                    a += 1;
-                }
-            }
-            i += 1;
-        }
-        false
-    }
-
-    /// Exposed for `Args::find_param` callers; resolves via the hashed index.
-    #[inline]
-    pub fn find_param(&self, name: &[u8]) -> &'static Param<usize> {
-        self.table.find(name)
-    }
 }
-
-// ported from: src/clap/comptime.zig

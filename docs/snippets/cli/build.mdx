@@ -138,10 +138,15 @@ bun build <entry points>
   Enable React Fast Refresh transform (for development testing)
 </ParamField>
 
+<ParamField path="--react-compiler" type="boolean">
+  Run the React Compiler over `.jsx`/`.tsx` files, automatically memoizing components and hooks. Output mode is derived
+  from `--target` (`browser` → client, `bun`/`node` → ssr). Experimental.
+</ParamField>
+
 ### Standalone Executables
 
 <ParamField path="--compile" type="boolean">
-  Generate a standalone Bun executable containing the bundle. Implies <code>--production</code>
+  Generate a standalone Bun executable containing the bundle
 </ParamField>
 
 <ParamField path="--compile-exec-argv" type="string">

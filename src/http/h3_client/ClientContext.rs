@@ -19,7 +19,7 @@ use crate::h3_client as H3;
 
 use crate::h3_client::h3_client;
 
-pub struct ClientContext {
+pub(crate) struct ClientContext {
     // FFI handle owned for process lifetime (never freed).
     qctx: NonNull<quic::Context>,
     sessions: Vec<*mut ClientSession>,
@@ -53,7 +53,7 @@ impl ClientContext {
 
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
     /// Callers reborrow per-access — PORTING.md §Global mutable state.
-    pub fn get() -> Option<NonNull<ClientContext>> {
+    pub(crate) fn get() -> Option<NonNull<ClientContext>> {
         INSTANCE.load()
     }
 
@@ -64,21 +64,21 @@ impl ClientContext {
     /// is the sole live borrow for its (caller-chosen) lifetime. Mirrors the
     /// `client_mut`/`stream_mut` backref-upgrade helpers in `client_session`.
     #[inline]
-    pub fn as_mut<'a>(this: NonNull<Self>) -> &'a mut Self {
+    pub(crate) fn as_mut<'a>(this: NonNull<Self>) -> &'a mut Self {
         // SAFETY: see INVARIANT above — leaked Box, process-lifetime,
         // HTTP-thread-confined singleton.
         unsafe { &mut *this.as_ptr() }
     }
 
-    pub fn get_or_create(loop_: *mut UwsLoop) -> Option<NonNull<ClientContext>> {
+    pub(crate) fn get_or_create(loop_: NonNull<UwsLoop>) -> Option<NonNull<ClientContext>> {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        LSQUIC_INIT_ONCE.call_once(|| quic::global_init());
-        // SAFETY: caller passes the live HTTP-thread uws loop.
+        LSQUIC_INIT_ONCE.call_once(quic::global_init);
+        // SAFETY: `loop_` is the live HTTP-thread uws loop (NonNull invariant).
         let qctx = unsafe {
             quic::Context::create_client(
-                loop_,
+                loop_.as_ptr(),
                 0,
                 core::mem::size_of::<*mut ClientSession>() as c_uint,
                 core::mem::size_of::<*mut Stream>() as c_uint,
@@ -87,8 +87,8 @@ impl ClientContext {
         let qctx = NonNull::new(qctx).expect("us_create_quic_socket_context returned null");
 
         // Process-lifetime singleton — published into `INSTANCE` below and
-        // never torn down (the lsquic engine outlives every request, same as
-        // `h3_client.zig`'s process-global `var instance`). `alloc_nn` is the
+        // never torn down (the lsquic engine outlives every request).
+        // `alloc_nn` is the
         // `Box::into_raw`-as-`NonNull` spelling of that one-time hand-off.
         let self_ = bun_core::heap::alloc_nn(ClientContext {
             qctx,
@@ -104,7 +104,7 @@ impl ClientContext {
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.
-    pub fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
+    pub(crate) fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
         let reject = client.flags.reject_unauthorized;
         for &s in self.sessions.iter() {
             // sessions vec holds live ClientSession pointers; removed via
@@ -123,11 +123,11 @@ impl ClientContext {
             }
         }
 
-        // Zig: `dupeZ` — owned NUL-terminated buffer. `dupeZ` copies bytes
-        // verbatim (interior NUL allowed) then appends a sentinel; lsquic reads
-        // it as a C string so an interior NUL truncates on the C side. Mirror
-        // that here instead of `CString::new`, which would reject interior NUL
-        // and diverge by returning `false` where Zig proceeds.
+        // Owned NUL-terminated buffer: copy the bytes
+        // verbatim (interior NUL allowed) then append a sentinel; lsquic reads
+        // it as a C string so an interior NUL truncates on the C side. This is
+        // deliberately not `CString::new`, which would reject interior NUL
+        // and diverge by returning `false`.
         let mut host_buf = hostname.to_vec();
         host_buf.push(0);
         let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
@@ -175,14 +175,14 @@ impl ClientContext {
                     port,
                 );
                 self.unregister(session_mut(session));
-                PendingConnect::fail_session(session, bun_core::err!(ConnectionRefused));
+                PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
                 return false;
             }
         }
         true
     }
 
-    pub fn unregister(&mut self, session: &mut ClientSession) {
+    pub(crate) fn unregister(&mut self, session: &mut ClientSession) {
         let i = session.registry_index as usize;
         if i >= self.sessions.len() || !core::ptr::eq(self.sessions[i], session) {
             return;
@@ -195,7 +195,7 @@ impl ClientContext {
         session.registry_index = u32::MAX;
     }
 
-    pub fn abort_by_http_id(async_http_id: u32) -> bool {
+    pub(crate) fn abort_by_http_id(async_http_id: u32) -> bool {
         let Some(this) = Self::get() else {
             return false;
         };
@@ -213,7 +213,7 @@ impl ClientContext {
         false
     }
 
-    pub fn stream_body_by_http_id(async_http_id: u32, ended: bool) {
+    pub(crate) fn stream_body_by_http_id(async_http_id: u32, ended: bool) {
         let Some(this) = Self::get() else {
             return;
         };
@@ -221,9 +221,21 @@ impl ClientContext {
         let ctx = bun_ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             // Registry only holds live sessions — `session_mut` upgrade.
-            session_mut(s).stream_body_by_http_id(async_http_id, ended);
+            if session_mut(s).stream_body_by_http_id(async_http_id, ended) {
+                return;
+            }
+        }
+    }
+
+    pub(crate) fn resume_receive_by_http_id(async_http_id: u32) {
+        let Some(this) = Self::get() else {
+            return;
+        };
+        let ctx = bun_ptr::BackRef::from(this);
+        for &s in ctx.sessions.iter() {
+            if session_mut(s).resume_receive_by_http_id(async_http_id) {
+                return;
+            }
         }
     }
 }
-
-// ported from: src/http/h3_client/ClientContext.zig

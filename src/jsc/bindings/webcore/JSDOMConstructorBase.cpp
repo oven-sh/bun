@@ -43,6 +43,22 @@ JSC_DEFINE_HOST_FUNCTION(callThrowTypeErrorForJSDOMConstructor, (JSGlobalObject 
     return {};
 }
 
+JSC_DEFINE_HOST_FUNCTION(throwTypeErrorForJSDOMConstructorNotConstructable, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* callee = callframe->jsCallee();
+    auto* constructor = dynamicDowncast<JSDOMConstructorBase>(callee);
+    // The message belongs to the error code: interfaces opting into a non-default
+    // code (MessagePort -> ERR_CONSTRUCT_CALL_INVALID) carry Node's wording for it.
+    auto errorCode = constructor->errorCode();
+    auto message = errorCode == Bun::ErrorCode::ERR_CONSTRUCT_CALL_INVALID
+        ? "Constructor cannot be called"_s
+        : "Illegal constructor"_s;
+    Bun::throwError(globalObject, scope, errorCode, message);
+    return {};
+}
+
 JSC::GCClient::IsoSubspace* JSDOMConstructorBase::subspaceForImpl(JSC::VM& vm)
 {
     return &static_cast<JSVMClientData*>(vm.clientData)->domConstructorSpace();

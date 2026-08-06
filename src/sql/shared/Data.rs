@@ -1,32 +1,28 @@
 use bun_collections::{BoundedArray, VecExt};
-use bun_core::ZStr;
 use bun_ptr::RawSlice;
 
-pub type InlineStorage = BoundedArray<u8, 15>;
+pub(crate) type InlineStorage = BoundedArray<u8, 15>;
 
 /// Represents data that can be either owned or temporary
+#[derive(Default)]
 pub enum Data {
     Owned(Vec<u8>),
-    // TODO(port): lifetime — `Temporary` borrows external bytes (see `substring`, which
-    // returns a `Data` aliasing `self`). Stored as a `RawSlice` (encapsulated fat
-    // pointer; safe `.slice()` projection under the borrowed-backing-outlives-holder
-    // invariant). Revisit whether a `<'a>` on `Data` is acceptable in Phase B.
+    // `Temporary` borrows external bytes (see `substring`, which returns a
+    // `Data` aliasing `self`). Stored as a `RawSlice` (encapsulated fat
+    // pointer; safe `.slice()` projection). Invariant: the borrowed backing
+    // bytes must outlive the holder — `Data` carries no lifetime, so this is
+    // enforced by callers, not the compiler.
     Temporary(RawSlice<u8>),
     InlineStorage(InlineStorage),
+    #[default]
     Empty,
 }
 
-impl Default for Data {
-    fn default() -> Self {
-        Data::Empty
-    }
-}
-
 impl Data {
-    pub const EMPTY: Data = Data::Empty;
+    pub(crate) const EMPTY: Data = Data::Empty;
 
     #[inline]
-    pub const fn empty() -> Data {
+    pub(crate) const fn empty() -> Data {
         Data::Empty
     }
 
@@ -55,10 +51,10 @@ impl Data {
 
     /// Zero bytes before deinit
     /// Generally, for security reasons.
-    pub fn zdeinit(&mut self) {
+    pub(crate) fn zdeinit(&mut self) {
         match self {
             Data::Owned(owned) => {
-                // Zero bytes before deinit — Zig `bun.freeSensitive`.
+                // Zero bytes before freeing.
                 let s = owned.slice_mut();
                 // SAFETY: `s` is an exclusive `&mut [u8]`; `len` bytes valid for writes.
                 unsafe { bun_alloc::secure_zero(s.as_mut_ptr(), s.len()) };
@@ -96,19 +92,8 @@ impl Data {
             )),
         }
     }
-
-    pub fn slice_z(&self) -> &ZStr {
-        let s = self.slice();
-        if s.is_empty() {
-            return ZStr::EMPTY;
-        }
-        // SAFETY: caller invariant — bytes are NUL-terminated at `len`.
-        unsafe { ZStr::from_raw(s.as_ptr(), s.len()) }
-    }
 }
 
-// PORT NOTE: Zig `deinit` freed `Owned`'s buffer. In Rust, `Vec<T>: Drop`
-// already frees on drop, so an explicit `impl Drop for Data` is redundant (and
-// would prevent moving fields out in `to_owned`). The other variants own no heap.
-
-// ported from: src/sql/shared/Data.zig
+// `Vec<T>: Drop` already frees on drop, so an explicit `impl Drop for Data` is
+// redundant (and would prevent moving fields out in `to_owned`). The other
+// variants own no heap.

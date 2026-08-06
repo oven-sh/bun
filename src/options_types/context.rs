@@ -1,11 +1,9 @@
-//! `Command.ContextData` and its option-carrying nested structs, lifted out of
-//! `cli/cli.zig` so subsystems (install, bundler, bake, shell) can reference
+//! `Command.ContextData` and its option-carrying nested structs, kept out of
+//! the CLI crate so subsystems (install, bundler, bake, shell) can reference
 //! the parsed-options shape without importing the CLI itself.
 //!
 //! `create()` (which calls `Arguments.parse`) and the `global_cli_ctx`/
-//! `context_data` storage stay in `cli.rs`; they are forward-aliased onto
-//! `ContextData` below so call sites that write `Command::ContextData::create()`
-//! keep working.
+//! `context_data` storage stay in `cli.rs`.
 
 use crate::schema::api;
 use bun_collections::ArrayHashMap;
@@ -16,21 +14,18 @@ use crate::compile_target::CompileTarget;
 use crate::global_cache::GlobalCache;
 use crate::offline_mode::OfflineMode;
 
-// TODO(port): every `[]const u8` / `[]const []const u8` struct field below is a
-// proc-lifetime CLI string (no `deinit`, populated once from argv/bunfig and
-// never freed). Ported as `Box<[u8]>` / `Vec<Box<[u8]>>` for now; Phase B may
-// retype to `&'static [u8]` once the CLI parser leaks into a bump arena.
+// Every `Box<[u8]>` / `Vec<Box<[u8]>>` struct field below is a proc-lifetime
+// CLI string: populated once from argv/bunfig during startup and never freed.
 
 pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
-    /// Zig: `log: *Log`. Raw pointer (not `&mut`) so `Default` works and so the
+    /// Raw pointer (not `&mut`) so `Default` works and so the
     /// process-global `CONTEXT_DATA` static can be zero-initialized before
     /// `create_context_data()` writes the real `&mut Log` into it.
     // SAFETY: written exactly once in single-threaded CLI startup; thereafter
     // always non-null for the process lifetime. Callers deref via `ctx.log()`.
     pub log: *mut bun_ast::Log,
-    // PORT NOTE: `std.mem.Allocator param` deleted (global mimalloc).
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
     pub install: Option<Box<api::BunInstall>>,
@@ -59,10 +54,10 @@ impl Default for ContextData {
     // `CompileTarget` / `CpuProf` …) sampling 31× across ≈10 distinct 4 KB
     // r-xp pages — each nested `Default` impl landed in its own CGU, so the
     // single call from `write_context_no_parse` faulted in ~40 KB of scattered
-    // `.text`. The Zig spec is `std.mem.zeroes(Context)` (one comptime blob).
+    // `.text`.
     //
-    // A literal `unsafe { core::mem::zeroed() }` would match Zig but is
-    // **unsound** in Rust: `Vec<T>` / `Box<[u8]>` carry a `NonNull` pointer
+    // A literal `unsafe { core::mem::zeroed() }` is
+    // **unsound**: `Vec<T>` / `Box<[u8]>` carry a `NonNull` pointer
     // (validity invariant — null is immediate UB regardless of len). Instead,
     // every `Default` impl in this module is `#[inline(always)]` so the entire
     // recursive chain folds into the one `write_context_no_parse` call site
@@ -97,14 +92,14 @@ impl ContextData {
     /// Deref the process-lifetime `*mut Log` set in `create_context_data()`.
     ///
     /// Takes `&mut self` (not `&self`) so the borrow checker ties the returned
-    /// `&mut Log` to an exclusive borrow of the `ContextData` — Zig's `*Log`
-    /// freely aliases, but in Rust a `&self -> &mut Log` accessor would let two
+    /// `&mut Log` to an exclusive borrow of the `ContextData` — a
+    /// `&self -> &mut Log` accessor would let two
     /// live `&mut Log` overlap (UB). Note this is *necessary but not
     /// sufficient*: the same `*Log` is borrowed (not owned) from the CLI
     /// caller and is also fanned out to and stored by the transpiler/bundler
-    /// (`bundler/options.zig`), the install pipeline (`install/migration.zig`,
-    /// `install/PackageManagerOptions.zig`), JSON parsing
-    /// (`interchange/json.zig`), etc. Exclusive `self` does NOT exclude those
+    /// options, the install pipeline (migration,
+    /// `PackageManagerOptions`), JSON parsing,
+    /// etc. Exclusive `self` does NOT exclude those
     /// aliases — see `# Safety` for the full precondition.
     ///
     /// # Safety
@@ -155,6 +150,7 @@ impl ContextData {
     /// If `self.log` is null (i.e. `create_context_data()` has not run).
     #[track_caller]
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn log_mut(&self) -> &mut bun_ast::Log {
         assert!(
             !self.log.is_null(),
@@ -181,23 +177,16 @@ impl ContextData {
         // live `&mut Log` overlapping this.
         unsafe { &*self.log }
     }
-
-    /// `Arguments.parse` lives in `cli/`; forward-aliased so
-    /// `Command::ContextData::create(...)` keeps working.
-    // TODO(port): Zig was `pub const create = bun.cli.Command.createContextData;`
-    // — Rust cannot re-export an associated fn; TODO(port): add a thin
-    // delegating `pub fn create(...)` here once `bun_cli` exists, or invert the
-    // alias direction (cli re-exports this type).
-    #[allow(unused)]
-    pub const CREATE_SEE_CLI: () = ();
 }
+
+// `create()` lives in the CLI crate
+// (`bun_runtime::cli::command::create_context_data`), which depends on this
+// crate — a delegating fn here would invert the dependency.
 
 pub struct BundlerOptions {
     pub outdir: Box<[u8]>,
     pub outfile: Box<[u8]>,
-    // TODO(port): was `[:0]const u8` (NUL-terminated); decide owned ZStr repr.
     pub metafile: Box<[u8]>,
-    // TODO(port): was `[:0]const u8` (NUL-terminated); decide owned ZStr repr.
     pub metafile_md: Box<[u8]>,
     pub root_dir: Box<[u8]>,
     pub public_path: Box<[u8]>,
@@ -206,6 +195,7 @@ pub struct BundlerOptions {
     pub asset_naming: Box<[u8]>,
     pub server_components: bool,
     pub react_fast_refresh: bool,
+    pub react_compiler: bool,
     pub code_splitting: bool,
     pub transform_only: bool,
     pub inline_entrypoint_import_meta_main: bool,
@@ -238,6 +228,7 @@ pub struct BundlerOptions {
     pub compile_autoload_tsconfig: bool,
     pub compile_autoload_package_json: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
+    pub compile_assets: Vec<Box<[u8]>>,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }
@@ -258,6 +249,7 @@ impl Default for BundlerOptions {
             asset_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
             server_components: false,
             react_fast_refresh: false,
+            react_compiler: false,
             code_splitting: false,
             transform_only: false,
             inline_entrypoint_import_meta_main: false,
@@ -287,6 +279,7 @@ impl Default for BundlerOptions {
             compile_autoload_tsconfig: false,
             compile_autoload_package_json: false,
             compile_executable_path: None,
+            compile_assets: Vec::new(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
         }
@@ -294,9 +287,6 @@ impl Default for BundlerOptions {
 }
 
 pub type Context<'a> = &'a mut ContextData;
-// TODO(port): Zig `*ContextData` is passed everywhere as a long-lived handle;
-// the borrow lifetime above may need to become `*mut ContextData` at call sites
-// that re-enter the global ctx (Phase B).
 
 // ──────────────────────────────────────────────────────────────────────────
 // Process-global CLI context handle.
@@ -342,8 +332,6 @@ pub fn try_get<'a>() -> Option<&'a ContextData> {
 
 pub struct DebugOptions {
     pub dump_environment_variables: bool,
-    pub dump_limits: bool,
-    pub fallback_only: bool,
     pub silent: bool,
     pub hot_reload: HotReload,
     pub global_cache: GlobalCache,
@@ -368,8 +356,6 @@ impl Default for DebugOptions {
     fn default() -> Self {
         Self {
             dump_environment_variables: false,
-            dump_limits: false,
-            fallback_only: false,
             silent: false,
             hot_reload: HotReload::None,
             global_cache: GlobalCache::auto,
@@ -392,7 +378,7 @@ pub enum MacroOptions {
     Map(MacroMap),
 }
 
-/// Re-declared from `resolver/package_json.zig` (plain hashmap aliases) so this
+/// Plain hashmap aliases re-declared here so this
 /// file does not depend on `resolver/`.
 pub type MacroImportReplacementMap = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
 pub type MacroMap = ArrayHashMap<Box<[u8]>, MacroImportReplacementMap>;
@@ -452,6 +438,10 @@ pub struct TestOptions {
     /// and only every Nth file (starting from M-1) is run. index is
     /// 1-based; both are validated at parse time so `1 <= index <= count`.
     pub shard: Option<Shard>,
+    /// `bun test --timings=<path>...`: per-file durations (ms), merged across files; the first is where `--update-timings` writes.
+    pub timings_files: Vec<Box<[u8]>>,
+    /// `bun test --update-timings`: merge this run's measured per-file durations into `timings_file`.
+    pub update_timings: bool,
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
@@ -485,7 +475,7 @@ impl Default for TestOptions {
     #[inline(always)]
     fn default() -> Self {
         Self {
-            // 5 * std.time.ms_per_s
+            // 5 seconds
             default_timeout_ms: 5 * 1000,
             update_snapshots: false,
             repeat_count: 0,
@@ -516,6 +506,8 @@ impl Default for TestOptions {
             test_worker: false,
             changed: None,
             shard: None,
+            timings_files: Vec::new(),
+            update_timings: false,
             reporters: Reporters::default(),
             reporter_outfile: None,
         }
@@ -555,6 +547,9 @@ pub struct RuntimeOptions {
     /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
     /// compatibility.
     pub expose_gc: bool,
+    /// `--interactive` starts the Node.js-compatible REPL (node:repl), like
+    /// `node --interactive`. (`-i` is taken by `--install=fallback`.)
+    pub interactive: bool,
     pub preserve_symlinks_main: bool,
     pub console_depth: Option<u16>,
     pub cron_title: Box<[u8]>,
@@ -567,6 +562,10 @@ pub struct RuntimeOptions {
 pub struct Eval {
     pub script: Box<[u8]>,
     pub eval_and_print: bool,
+    /// Under `--interactive`, `script` holds the node:repl bootstrap; this
+    /// holds the user's actual `-e` bytes so `process._eval` reports them
+    /// (or `undefined` when empty). `None` = not `--interactive`.
+    pub interactive_script: Option<Box<[u8]>>,
 }
 
 pub struct CpuProf {
@@ -617,6 +616,7 @@ impl Default for RuntimeOptions {
             experimental_http3_fetch: false,
             dns_result_order: Box::from(&b"verbatim"[..]),
             expose_gc: false,
+            interactive: false,
             preserve_symlinks_main: false,
             console_depth: None,
             cron_title: Box::default(),
@@ -626,5 +626,3 @@ impl Default for RuntimeOptions {
         }
     }
 }
-
-// ported from: src/options_types/Context.zig

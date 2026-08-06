@@ -1,14 +1,12 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, FormatterTestExt, make_formatter};
+use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
-// TODO(port): verify path for JSMockFunction__getReturns FFI binding
-use super::mock::JSMockFunction__getReturns;
 
 use super::DiffFormatter;
 use super::Expect;
+use super::throw;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_last_returned_with(
+pub(crate) fn to_have_last_returned_with(
     this: &Expect,
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
@@ -35,7 +33,7 @@ pub fn to_have_last_returned_with(
         if last_result.is_object() {
             let result_type = last_result.get(global_this, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
-                let type_str = result_type.to_bun_string(global_this)?;
+                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global_this)?);
 
                 if type_str.eql_comptime("return") {
                     last_return_value =
@@ -63,36 +61,35 @@ pub fn to_have_last_returned_with(
     let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
 
     if this.flags.get().not() {
-        return this.throw(
+        return throw!(
+            this,
             global_this,
             Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", true),
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected mock function not to have last returned: <green>{}<r>\n",
-                    "But it did.\n",
-                ),
-                expected.to_fmt(&mut formatter),
+            concat!(
+                "\n\n",
+                "Expected mock function not to have last returned: <green>{}<r>\n",
+                "But it did.\n",
             ),
+            expected.to_fmt(&mut formatter),
         );
     }
 
     if calls_count == 0 {
-        return this.throw(
+        return throw!(
+            this,
             global_this,
             signature,
-            format_args!(concat!("\n\n", "The mock function was not called.")),
+            concat!("\n\n", "The mock function was not called."),
         );
     }
 
     if last_call_threw {
-        return this.throw(
+        return throw!(
+            this,
             global_this,
             signature,
-            format_args!(
-                concat!("\n\n", "The last call threw an error: <red>{}<r>\n"),
-                last_error_value.to_fmt(&mut formatter),
-            ),
+            concat!("\n\n", "The last call threw an error: <red>{}<r>\n"),
+            last_error_value.to_fmt(&mut formatter),
         );
     }
 
@@ -106,23 +103,19 @@ pub fn to_have_last_returned_with(
             global_this: Some(global_this),
             not: false,
         };
-        return this.throw(global_this, signature, format_args!("\n\n{}\n", diff_format));
+        return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
     }
 
-    // PORT NOTE: Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
-    // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
+    // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
     // the same backing formatter. Use a second formatter for the received value —
     // `make_formatter` is a trivial struct init with no shared state between values.
     let mut formatter2 = super::make_formatter(global_this);
-    this.throw(
+    throw!(
+        this,
         global_this,
         signature,
-        format_args!(
-            "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
-            expected.to_fmt(&mut formatter),
-            last_return_value.to_fmt(&mut formatter2),
-        ),
+        "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
+        expected.to_fmt(&mut formatter),
+        last_return_value.to_fmt(&mut formatter2),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveLastReturnedWith.zig

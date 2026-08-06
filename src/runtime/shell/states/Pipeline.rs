@@ -1,5 +1,3 @@
-use bun_ptr::AsCtxPtr;
-
 use crate::shell::ast;
 use crate::shell::interpreter::{
     Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, StateKind, closefd, log,
@@ -16,13 +14,13 @@ use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
 
 pub struct Pipeline {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Pipeline>,
-    pub io: IO,
-    pub exited_count: u32,
-    pub cmds: Option<Box<[CmdOrResult]>>,
-    pub pipes: Option<Box<[Pipe]>>,
-    pub state: PipelineState,
+    pub(crate) io: IO,
+    pub(crate) exited_count: u32,
+    pub(crate) cmds: Option<Box<[CmdOrResult]>>,
+    pub(crate) pipes: Option<Box<[Pipe]>>,
+    pub(crate) state: PipelineState,
 }
 
 pub enum CmdOrResult {
@@ -44,7 +42,7 @@ impl Default for PipelineState {
 }
 
 impl Pipeline {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Pipeline,
@@ -52,7 +50,7 @@ impl Pipeline {
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Pipeline(Pipeline {
-            base: Base::new(StateKind::Pipeline, parent, shell),
+            base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
             io,
             exited_count: 0,
@@ -62,25 +60,25 @@ impl Pipeline {
         }))
     }
 
-    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
     /// Queried by the trampoline (`Yield::run`) to manage the pipeline stack.
     #[inline]
-    pub fn is_done(interp: &Interpreter, this: NodeId) -> bool {
+    pub(crate) fn is_done(interp: &Interpreter, this: NodeId) -> bool {
         matches!(interp.as_pipeline(this).state, PipelineState::Done { .. })
     }
 
     #[inline]
-    pub fn is_starting_cmds(interp: &Interpreter, this: NodeId) -> bool {
+    pub(crate) fn is_starting_cmds(interp: &Interpreter, this: NodeId) -> bool {
         matches!(
             interp.as_pipeline(this).state,
             PipelineState::StartingCmds { .. }
         )
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         match interp.as_pipeline(this).state {
             PipelineState::StartingCmds { idx } => Self::next_starting(interp, this, idx),
             PipelineState::Pending | PipelineState::WaitingWriteErr => Yield::suspended(),
@@ -95,7 +93,7 @@ impl Pipeline {
     /// Cmd/Assigns/Subshell/If/CondExpr with stdin/stdout wired to the right
     /// pipe ends.
     ///
-    /// Spec (Pipeline.zig `next()` `.starting_cmds`): spawns exactly ONE child
+    /// Spawns exactly ONE child
     /// per call and returns that child's `start()` Yield. The trampoline's
     /// `drain_pipelines` (Yield.rs) re-enters `Pipeline::next` to spawn the
     /// next child once the current one suspends — so every child's start-yield
@@ -106,7 +104,7 @@ impl Pipeline {
             (me.node, me.base.shell, interp.event_loop)
         };
         let items: &[ast::PipelineItem] = node.items;
-        // Spec (Pipeline.zig setupCommands): assigns inside a pipeline are
+        // Assigns inside a pipeline are
         // no-ops — they're not counted, not duped, not started. `cmd_count`
         // here is the number of *runnable* children.
         let cmd_count = items
@@ -115,7 +113,7 @@ impl Pipeline {
             .count();
 
         if cmd_count == 0 {
-            // Spec (Pipeline.zig start()): empty pipeline finishes with 0.
+            // An empty pipeline finishes with 0.
             // Return `Next(this)` so the trampoline sees `is_done`, removes us
             // from the pipeline stack, and `next()` bubbles to the parent.
             // Calling `child_done(parent, ..)` directly here would free this
@@ -128,7 +126,7 @@ impl Pipeline {
         if idx == 0 && interp.as_pipeline(this).cmds.is_none() {
             let mut pipes: Vec<Pipe> = Vec::with_capacity(cmd_count.saturating_sub(1));
             for _ in 0..cmd_count.saturating_sub(1) {
-                // Spec (Pipeline.zig initializePipes 291-313): on POSIX use a
+                // On POSIX use a
                 // UNIX stream socketpair via `socketpairForShell` — on macOS
                 // that variant intentionally skips SO_NOSIGPIPE so the
                 // subprocess writing to a closed read end is killed by SIGPIPE
@@ -147,10 +145,10 @@ impl Pipeline {
                         }
                         // Leave `StartingCmds` so `drain_pipelines` doesn't
                         // re-enter `next_starting` and retry the failing
-                        // syscall in a loop (spec: setupCommands → start →
-                        // .waiting_write_err → suspended).
+                        // syscall in a loop; stay suspended until the error
+                        // write completes.
                         interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
-                        interp.throw(ShellErr::new_sys(e));
+                        interp.throw(ShellErr::new_sys(&e));
                         return Yield::failed();
                     }
                 }
@@ -180,7 +178,7 @@ impl Pipeline {
 
         // Build per-child IO: stdin from prev pipe read end (or parent
         // stdin for first), stdout to this pipe write end (or parent stdout
-        // for last), stderr inherited. Spec: Pipeline.zig readPipe/writePipe.
+        // for last), stderr inherited.
         let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let child_io = {
             let me = interp.as_pipeline(this);
@@ -195,8 +193,7 @@ impl Pipeline {
             let stdout = if cmd_count == 1 || cmd_idx == cmd_count - 1 {
                 me.io.stdout.clone()
             } else {
-                // Spec (Pipeline.zig writePipe 320-324):
-                // `.is_socket = bun.Environment.isPosix` — the POSIX
+                // `is_socket` is set on POSIX — the POSIX
                 // pipe is actually a socketpair end (see above).
                 let w = IOWriter::init(
                     pipes[cmd_idx][1],
@@ -229,7 +226,7 @@ impl Pipeline {
         } {
             Ok(d) => d,
             Err(e) => {
-                // Spec (Pipeline.zig setupCommands 132-140): on dupe failure,
+                // On dupe failure,
                 // close the pipe ends not yet wrapped in an IOReader/IOWriter,
                 // deref `cmd_io`, transition to `.waiting_write_err`, and
                 // suspend. Without the state transition `drain_pipelines`
@@ -249,7 +246,7 @@ impl Pipeline {
                     }
                     me.state = PipelineState::WaitingWriteErr;
                 }
-                interp.throw(ShellErr::new_sys(e));
+                interp.throw(ShellErr::new_sys(&e));
                 return Yield::failed();
             }
         };
@@ -271,8 +268,10 @@ impl Pipeline {
         interp.start_node(child)
     }
 
-    /// Spec: Pipeline.zig `onIOWriterChunk` (lines 206-217).
-    pub fn on_io_writer_chunk(
+    /// IOWriter completion callback for the error message written in
+    /// `WaitingWriteErr`: throw on write failure, otherwise finish the
+    /// pipeline with exit code 1.
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
@@ -290,7 +289,7 @@ impl Pipeline {
         interp.child_done(parent, this, 1)
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -318,17 +317,13 @@ impl Pipeline {
             (me.exited_count >= n && n > 0, n)
         };
         // We duped a ShellExecEnv per child in `next_starting`. Cmd/If/CondExpr
-        // do NOT free `base.shell` in their own `deinit`, so free it here
-        // (spec: Pipeline.zig childDone() lines 236-250). Subshell frees its
-        // own; Assigns is skipped per spec.
+        // do NOT free `base.shell` in their own `deinit`, so free it here.
+        // Subshell frees its own; Assigns is skipped.
         Self::deinit_child_duped_env(interp, child);
         interp.deinit_node(child);
         if all_done {
             // Exit code = last command's exit code (bash semantics).
-            // Spec (Pipeline.zig childDone 258-266): the back-scan loop is
-            // `var i = len-1; while (i > 0) : (i -= 1)` — note `> 0`, not
-            // `>= 0` — so for a single-runnable pipeline the loop body never
-            // runs and `last_exit_code` stays 0. Mirror that exactly: only
+            // For a single-runnable pipeline `last_exit_code` stays 0: only
             // inspect `cmds[len-1]` when `len >= 2`.
             let exit = {
                 let me = interp.as_pipeline(this);
@@ -348,7 +343,7 @@ impl Pipeline {
     }
 
     /// Free the per-child env duped in `next_starting` for child kinds that
-    /// don't free `base.shell` themselves (spec: Pipeline.zig childDone()).
+    /// don't free `base.shell` themselves.
     fn deinit_child_duped_env(interp: &Interpreter, child: NodeId) {
         let kind = interp.node(child).kind();
         if matches!(
@@ -358,13 +353,15 @@ impl Pipeline {
             if let Some(base) = interp.node_mut(child).base_mut() {
                 let shell = core::mem::replace(&mut base.shell, core::ptr::null_mut());
                 if !shell.is_null() {
+                    // SAFETY: `shell` is the duped env this pipeline child owned;
+                    // null-checked above and exclusively held here.
                     ShellExecEnv::deinit_impl(shell);
                 }
             }
         }
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Pipeline {} deinit", this);
         // Deinit any still-live children (and their duped envs).
         let cmds = interp.as_pipeline_mut(this).cmds.take();
@@ -384,5 +381,3 @@ impl Pipeline {
         me.base.end_scope();
     }
 }
-
-// ported from: src/shell/states/Pipeline.zig

@@ -263,6 +263,28 @@ sql(users, "notAKey");
 // @ts-expect-error - array of numbers, extra key argument
 sql([1, 2, 3], "notAKey");
 
+// Degenerate helper inputs that throw at runtime are rejected at the type
+// level too. See https://github.com/oven-sh/bun/issues/32155.
+
+// @ts-expect-error - bare null is not a valid helper value
+sql(null);
+
+// @ts-expect-error - bare undefined is not a valid helper value
+sql(undefined);
+
+// @ts-expect-error - null item in a keyed WHERE IN helper
+sql([null], "id");
+
+// @ts-expect-error - null single object in an UPDATE helper with a column
+sql(null, "name");
+
+// @ts-expect-error - undefined item in an UPDATE/keyed helper
+sql([undefined], "name");
+
+// Still allowed: a null/primitive array binds NULL for WHERE IN.
+sql([null]);
+sql([1, null, 2]);
+
 // check the deprecated stuff still exists
 expectType<Bun.SQLQuery<"hey">>();
 expectType<Bun.SQLTransactionContextCallback<"hey">>();

@@ -3,7 +3,7 @@
 
 use core::mem::size_of;
 
-// Zig: enum(u4). Rust has no u4 repr; values are 0x0..=0xF so u8 is layout-safe.
+// Logically a u4; values are 0x0..=0xF so u8 is layout-safe.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Opcode {
@@ -30,7 +30,7 @@ impl Opcode {
         (self as u8) & 0x8 != 0
     }
 
-    /// Zig `@enumFromInt(@as(u4, n))`. Caller must guarantee `n <= 0xF`;
+    /// Caller must guarantee `n <= 0xF`;
     /// debug-asserted. Public so call sites that already range-check the raw
     /// nibble (e.g. the WS client's extern-C `op: u8` entry points) don't have
     /// to repeat the `unsafe` block.
@@ -62,8 +62,8 @@ impl Opcode {
     }
 }
 
-// Zig: packed struct(u16) with non-bool fields → #[repr(transparent)] u16 + manual shift accessors.
-// Zig packed-struct field order is LSB-first:
+// A packed u16 bitfield: #[repr(transparent)] u16 + manual shift accessors.
+// Field order is LSB-first:
 //   bits 0..=6   len: u7
 //   bit  7       mask: bool
 //   bits 8..=11  opcode: Opcode (u4)
@@ -85,7 +85,7 @@ impl WebsocketHeader {
     const COMPRESSED_SHIFT: u32 = 14;
     const FINAL_SHIFT: u32 = 15;
 
-    /// Construct with the same defaults as the Zig packed struct
+    /// Construct with the standard defaults
     /// (`rsv = 0`, `compressed = false`, `final = true`).
     pub const fn new(len: u8, mask: bool, opcode: Opcode) -> WebsocketHeader {
         let mut bits: u16 = 0;
@@ -99,47 +99,23 @@ impl WebsocketHeader {
     }
 
     #[inline]
-    pub const fn bits(self) -> u16 {
-        self.0
-    }
-
-    #[inline]
     pub const fn len(self) -> u8 {
         ((self.0 >> Self::LEN_SHIFT) & Self::LEN_MASK) as u8
-    }
-    #[inline]
-    pub fn set_len(&mut self, v: u8) {
-        self.0 = (self.0 & !(Self::LEN_MASK << Self::LEN_SHIFT))
-            | ((v as u16 & Self::LEN_MASK) << Self::LEN_SHIFT);
     }
 
     #[inline]
     pub const fn mask(self) -> bool {
         (self.0 >> Self::MASK_SHIFT) & 1 != 0
     }
-    #[inline]
-    pub fn set_mask(&mut self, v: bool) {
-        self.0 = (self.0 & !(1u16 << Self::MASK_SHIFT)) | ((v as u16) << Self::MASK_SHIFT);
-    }
 
     #[inline]
     pub fn opcode(self) -> Opcode {
         Opcode::from_raw(((self.0 >> Self::OPCODE_SHIFT) & Self::OPCODE_MASK) as u8)
     }
-    #[inline]
-    pub fn set_opcode(&mut self, v: Opcode) {
-        self.0 = (self.0 & !(Self::OPCODE_MASK << Self::OPCODE_SHIFT))
-            | ((v as u16 & Self::OPCODE_MASK) << Self::OPCODE_SHIFT);
-    }
 
     #[inline]
     pub const fn rsv(self) -> u8 {
         ((self.0 >> Self::RSV_SHIFT) & Self::RSV_MASK) as u8
-    }
-    #[inline]
-    pub fn set_rsv(&mut self, v: u8) {
-        self.0 = (self.0 & !(Self::RSV_MASK << Self::RSV_SHIFT))
-            | ((v as u16 & Self::RSV_MASK) << Self::RSV_SHIFT);
     }
 
     #[inline]
@@ -156,14 +132,7 @@ impl WebsocketHeader {
     pub const fn final_(self) -> bool {
         (self.0 >> Self::FINAL_SHIFT) & 1 != 0
     }
-    #[inline]
-    pub fn set_final(&mut self, v: bool) {
-        self.0 = (self.0 & !(1u16 << Self::FINAL_SHIFT)) | ((v as u16) << Self::FINAL_SHIFT);
-    }
 
-    // PORT NOTE: Zig `writer: anytype` called `writeInt(u16, ..)`. The byte-level
-    // `bun_io::Write` trait is not yet defined (T0/T1 lacks it); use `std::io::Write`
-    // for Phase B-2 — `write_all` over a 2-byte big-endian buffer is identical.
     pub fn write_header(self, writer: &mut impl std::io::Write, n: usize) -> std::io::Result<()> {
         // packed structs are sometimes buggy
         // lets check it worked right
@@ -198,7 +167,7 @@ impl WebsocketHeader {
         }
     }
 
-    pub const fn frame_size(byte_length: usize) -> usize {
+    pub(crate) const fn frame_size(byte_length: usize) -> usize {
         Self::HEADER_LENGTH + byte_length + Self::length_byte_count(byte_length)
     }
 
@@ -216,5 +185,3 @@ impl WebsocketHeader {
         WebsocketHeader(u16::from_be_bytes(bytes))
     }
 }
-
-// ported from: src/http/websocket.zig

@@ -1,12 +1,9 @@
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 // Entry point for Valkey client
 //
 // This file contains the core Valkey client implementation with protocol handling
 
-use core::mem::offset_of;
-
 use bun_collections::OffsetByteList;
-use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
@@ -18,8 +15,6 @@ use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
 use super::valkey_command_body as command;
 use super::valkey_command_body::{Args, Command};
 
-pub use super::valkey_context as ValkeyContext;
-
 /// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
 /// `generate-classes.ts` resolves the native backing struct to
 /// `crate::valkey_jsc::valkey::RedisClient` and emits ~200
@@ -28,27 +23,24 @@ pub use super::valkey_context as ValkeyContext;
 /// spelling here so the generated `pub use` and prototype thunks resolve.
 pub use super::js_valkey_body::JSValkeyClient as RedisClient;
 
-// TODO(port): narrow error set — Zig `bun.JSTerminated!T` is `error{ Terminated }!T`.
-// Using JsResult<T> (Thrown | OutOfMemory | Terminated) in Phase A.
 type JsTerminated<T> = bun_jsc::JsResult<T>;
 
 bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
 pub struct ConnectionFlags {
-    // TODO(markovejnovic): I am not a huge fan of these flags. I would
-    // consider refactoring them into an enumerated state machine, as that
-    // feels significantly more natural compared to a bag of booleans.
-    pub is_authenticated: bool,
-    pub is_manually_closed: bool,
-    pub is_selecting_db_internal: bool,
-    pub enable_offline_queue: bool,
-    pub needs_to_open_socket: bool,
-    pub enable_auto_reconnect: bool,
-    pub is_reconnecting: bool,
-    pub failed: bool,
-    pub enable_auto_pipelining: bool,
-    pub finalized: bool,
+    // These flags could be refactored into an enumerated state machine, which
+    // would read more naturally than a bag of booleans.
+    pub(crate) is_authenticated: bool,
+    pub(crate) is_manually_closed: bool,
+    pub(crate) is_selecting_db_internal: bool,
+    pub(crate) enable_offline_queue: bool,
+    pub(crate) needs_to_open_socket: bool,
+    pub(crate) enable_auto_reconnect: bool,
+    pub(crate) is_reconnecting: bool,
+    pub(crate) failed: bool,
+    pub(crate) enable_auto_pipelining: bool,
+    pub(crate) finalized: bool,
     // This flag is a slight hack to allow returning the client instance in the
     // promise which resolves when the connection is established. There are two
     // modes through which a client may connect:
@@ -58,7 +50,7 @@ pub struct ConnectionFlags {
     //      `onConnect()` which resolves with the client instance itself.
     // This flag is set to true in the latter case to indicate to the promise
     // resolution delegation to resolve the promise with the client.
-    pub connection_promise_returns_client: bool,
+    pub(crate) connection_promise_returns_client: bool,
 }
 
 impl Default for ConnectionFlags {
@@ -87,23 +79,6 @@ pub enum Status {
     Connected,
 }
 
-impl Status {
-    #[inline]
-    pub fn is_active(self) -> bool {
-        matches!(self, Status::Connected | Status::Connecting)
-    }
-}
-// Free-fn spelling kept for parity with Zig's `valkey.isActive(&status)`.
-#[inline]
-pub fn is_active(this: &Status) -> bool {
-    this.is_active()
-}
-
-pub use super::valkey_command_body as Command_;
-// PORT NOTE: Zig `pub const Command = @import("./ValkeyCommand.zig");` re-exports the module
-// AND uses `Command` as the struct type (file-as-struct). In Rust the type lives at
-// `super::valkey_command_body::Command`.
-
 /// Valkey protocol types (standalone, TLS, Unix socket)
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Protocol {
@@ -113,10 +88,8 @@ pub enum Protocol {
     StandaloneTlsUnix,
 }
 
-impl Protocol {
-    // PORT NOTE: `static` items are not allowed in `impl` blocks; phf maps are
-    // const-constructible, so this is an associated const (still `Protocol::MAP`).
-    pub const MAP: phf::Map<&'static [u8], Protocol> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub static PROTOCOL_MAP: Protocol = {
         b"valkey" => Protocol::Standalone,
         b"valkeys" => Protocol::StandaloneTls,
         b"valkey+tls" => Protocol::StandaloneTls,
@@ -128,42 +101,28 @@ impl Protocol {
         b"redis+unix" => Protocol::StandaloneUnix,
         b"redis+tls+unix" => Protocol::StandaloneTlsUnix,
     };
+}
 
-    pub fn is_tls(self) -> bool {
-        match self {
-            Protocol::StandaloneTls | Protocol::StandaloneTlsUnix => true,
-            _ => false,
-        }
-    }
+impl Protocol {
+    // `static` items are not allowed in `impl` blocks, so the map lives at
+    // module level; this keeps the `Protocol::MAP` path for call sites.
+    pub(crate) const MAP: &'static __ComptimeStringMap_PROTOCOL_MAP = &PROTOCOL_MAP;
 
-    pub fn is_unix(self) -> bool {
-        match self {
-            Protocol::StandaloneUnix | Protocol::StandaloneTlsUnix => true,
-            _ => false,
-        }
+    pub(crate) fn is_tls(self) -> bool {
+        matches!(self, Protocol::StandaloneTls | Protocol::StandaloneTlsUnix)
     }
 }
 
+#[derive(Default)]
 pub enum TLS {
+    #[default]
     None,
     Enabled,
-    Custom(crate::server::server_config::SSLConfig),
+    Custom(Box<crate::server::server_config::SSLConfig>),
 }
 
 impl TLS {
-    pub fn clone(&self) -> TLS {
-        match self {
-            TLS::Custom(ssl_config) => TLS::Custom(ssl_config.clone()),
-            TLS::None => TLS::None,
-            TLS::Enabled => TLS::Enabled,
-        }
-    }
-
-    // PORT NOTE: Zig `deinit` only called `ssl_config.deinit()`. SSLConfig should impl Drop,
-    // making this enum's Drop automatic. Kept for explicitness; Phase B may delete.
-    // (No explicit Drop impl needed if SSLConfig: Drop.)
-
-    pub fn reject_unauthorized(&self, vm: &VirtualMachine) -> bool {
+    pub(crate) fn reject_unauthorized(&self, vm: &VirtualMachine) -> bool {
         match self {
             TLS::Custom(ssl_config) => ssl_config.reject_unauthorized != 0,
             TLS::Enabled => vm.get_tls_reject_unauthorized(),
@@ -172,15 +131,8 @@ impl TLS {
     }
 }
 
-impl Default for TLS {
-    fn default() -> Self {
-        TLS::None
-    }
-}
-
 // Call sites only ever compare against `TLS::None` / `TLS::Enabled`; `SSLConfig`
-// doesn't (and shouldn't) implement `PartialEq`, so compare by discriminant —
-// matches Zig's tagged-union `==` semantics for tag checks.
+// doesn't (and shouldn't) implement `PartialEq`, so compare by discriminant.
 impl PartialEq for TLS {
     fn eq(&self, other: &Self) -> bool {
         core::mem::discriminant(self) == core::mem::discriminant(other)
@@ -189,15 +141,14 @@ impl PartialEq for TLS {
 
 /// Connection options for Valkey client
 pub struct Options {
-    pub idle_timeout_ms: u32,
-    pub connection_timeout_ms: u32,
-    pub enable_auto_reconnect: bool,
-    pub max_retries: u32,
-    pub enable_offline_queue: bool,
-    pub enable_auto_pipelining: bool,
-    pub enable_debug_logging: bool,
+    pub(crate) idle_timeout_ms: u32,
+    pub(crate) connection_timeout_ms: u32,
+    pub(crate) enable_auto_reconnect: bool,
+    pub(crate) max_retries: u32,
+    pub(crate) enable_offline_queue: bool,
+    pub(crate) enable_auto_pipelining: bool,
 
-    pub tls: TLS,
+    pub(crate) tls: TLS,
 }
 
 impl Default for Options {
@@ -209,45 +160,38 @@ impl Default for Options {
             max_retries: 20,
             enable_offline_queue: true,
             enable_auto_pipelining: true,
-            enable_debug_logging: false,
             tls: TLS::None,
         }
     }
 }
 
 pub enum Address {
-    // TODO(port): in Zig these slices borrow from `ValkeyClient.connection_strings`
-    // (self-referential). Using owned Box<[u8]> in Phase A; Phase B may revisit.
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
 }
 
 impl Address {
-    pub fn hostname(&self) -> &[u8] {
+    pub(crate) fn hostname(&self) -> &[u8] {
         match self {
             Address::Unix(unix_addr) => unix_addr,
             Address::Host { host, .. } => host,
         }
     }
 
-    /// Spec valkey.zig `Address.connect` — open a TCP/TLS/Unix socket via
+    /// Open a TCP/TLS/Unix socket via
     /// `uws::Socket{TLS,TCP}::connect_*_group`.
     ///
     /// `Owner` is the userdata pointer stashed in the socket ext (the
     /// `JSValkeyClient` parent in practice — that's what `SocketHandler<SSL>`
     /// pulls back out on event dispatch). Generic so the caller controls the
     /// stored type; this fn only forwards it opaquely to `connect_*_group`.
-    pub fn connect<Owner>(
+    pub(crate) fn connect<Owner>(
         &self,
         owner: *mut Owner,
         group: &mut SocketGroup,
         ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
-    ) -> Result<AnySocket, bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: Zig used `switch (is_tls) { inline else => |tls| ... }` to comptime-dispatch
-        // SocketTLS vs SocketTCP. Expanded to runtime if/else.
-        // PERF(port): was comptime bool dispatch — profile in Phase B
+    ) -> Result<AnySocket, crate::Error> {
         if is_tls {
             let kind = SocketKind::ValkeyTls;
             let sock = match self {
@@ -288,49 +232,47 @@ impl Address {
 
 /// Core Valkey client implementation
 pub struct ValkeyClient {
-    pub socket: AnySocket,
-    pub status: Status,
+    pub(crate) socket: AnySocket,
+    pub(crate) status: Status,
 
     // Buffer management
-    pub write_buffer: OffsetByteList,
-    pub read_buffer: OffsetByteList,
+    pub(crate) write_buffer: OffsetByteList,
+    pub(crate) read_buffer: OffsetByteList,
+    /// Resumable end-of-reply scanner over `read_buffer.remaining()`.
+    pub(crate) reply_scanner: protocol::ReplyScanner,
 
     /// In-flight commands, after the data has been written to the network socket
-    // TODO(port): `Queue` is `std.fifo.LinearFifo(PromisePair, .Dynamic)` in Zig — assume
-    // valkey_command.rs exposes a matching type (readable_slice/read_item/write_item/etc.).
-    pub in_flight: command::promise_pair::Queue,
+    pub(crate) in_flight: command::promise_pair::Queue,
 
     /// Commands that are waiting to be sent to the server. When pipelining is implemented, this usually will be empty.
-    pub queue: command::entry::Queue,
+    pub(crate) queue: command::entry::Queue,
 
     // Connection parameters
-    // TODO(port): in Zig, password/username/address.hostname are views into `connection_strings`
-    // (self-referential). Using owned Box<[u8]> in Phase A; `connection_strings` retained for
-    // structural parity but may be redundant.
-    pub password: Box<[u8]>,
-    pub username: Box<[u8]>,
-    pub database: u32,
-    pub address: Address,
-    pub protocol: Protocol,
+    // `connection_strings` is retained because `js_valkey.rs` still slices it
+    // when constructing/duplicating clients.
+    pub(crate) password: Box<[u8]>,
+    pub(crate) username: Box<[u8]>,
+    pub(crate) database: u32,
+    pub(crate) address: Address,
+    pub(crate) protocol: Protocol,
 
-    pub connection_strings: Box<[u8]>,
+    pub(crate) connection_strings: Box<[u8]>,
 
     // TLS support
-    pub tls: TLS,
+    pub(crate) tls: TLS,
 
     // Timeout and reconnection management
-    pub idle_timeout_interval_ms: u32,
-    pub connection_timeout_ms: u32,
-    pub retry_attempts: u32,
-    pub max_retries: u32, // Maximum retry attempts
+    pub(crate) idle_timeout_interval_ms: u32,
+    pub(crate) connection_timeout_ms: u32,
+    pub(crate) retry_attempts: u32,
+    pub(crate) max_retries: u32, // Maximum retry attempts
 
-    pub flags: ConnectionFlags,
-    // PORT NOTE: `std.mem.Allocator param` deleted (non-AST crate; global mimalloc).
+    pub(crate) flags: ConnectionFlags,
 
     // Auto-pipelining
-    pub auto_flusher: AutoFlusher,
+    pub(crate) auto_flusher: AutoFlusher,
 
-    pub vm: &'static VirtualMachine,
+    pub(crate) vm: &'static VirtualMachine,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -339,7 +281,7 @@ enum SubscribeHandled {
     Fallthrough,
 }
 
-pub struct DeferredFailure {
+struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
     global_this: GlobalRef,
@@ -348,10 +290,9 @@ pub struct DeferredFailure {
 }
 
 impl DeferredFailure {
-    pub fn run(self: Box<Self>) -> JsTerminated<()> {
-        // PORT NOTE: Zig `defer { free(message); destroy(this) }` — both handled by Box<Self> drop.
+    fn run(self) -> JsTerminated<()> {
         debug!("running deferred failure");
-        let mut this = *self;
+        let mut this = self;
         let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
         ValkeyClient::reject_all_pending_commands(
             &mut this.in_flight,
@@ -361,16 +302,13 @@ impl DeferredFailure {
         )
     }
 
-    pub fn enqueue(self: Box<Self>) {
+    fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
-        // PORT NOTE: Zig `jsc.ManagedTask.New(DeferredFailure, run).init(this)` collapses to
-        // `ManagedTask::new(ptr, cb)` per src/event_loop/ManagedTask.rs. The Box is leaked into
-        // a raw pointer here and reconstituted inside the trampoline (mirrors Zig's
-        // `default_allocator.create`/`destroy` pair).
+        // The Box is leaked into a raw pointer here and reconstituted inside the trampoline.
         fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
             // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
             let this = unsafe { bun_core::heap::take(ptr) };
-            DeferredFailure::run(this).map_err(Into::into)
+            DeferredFailure::run(*this).map_err(Into::into)
         }
         let managed_task =
             bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
@@ -380,8 +318,7 @@ impl DeferredFailure {
     }
 }
 
-/// Read the parser's current byte offset. Mirrors direct `reader.pos` field
-/// access in the Zig implementation (Zig struct fields are public).
+/// Read the parser's current byte offset.
 #[inline]
 fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
     reader.pos()
@@ -395,10 +332,8 @@ bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent;
 
 impl ValkeyClient {
     /// Clean up resources used by the Valkey client
-    // TODO(port): cannot be `Drop` — takes a JSGlobalObject param and has JS side effects.
-    // Renamed from Zig `deinit` per PORTING.md (never expose `pub fn deinit(&mut self)`).
-    // Phase B: decide whether this becomes `finalize()` for the .classes.ts payload.
-    pub fn shutdown(&mut self, global_object_or_finalizing: Option<&JSGlobalObject>) {
+    // Cannot be `Drop` — takes a JSGlobalObject param and has JS side effects.
+    pub(crate) fn shutdown(&mut self, global_object_or_finalizing: Option<&JSGlobalObject>) {
         let mut pending =
             core::mem::replace(&mut self.in_flight, command::promise_pair::Queue::init());
         let mut commands = core::mem::replace(&mut self.queue, command::entry::Queue::init());
@@ -410,32 +345,33 @@ impl ValkeyClient {
                 RedisError::ConnectionClosed,
             );
             while let Some(mut pair) = pending.read_item() {
-                let _ = pair.reject_command(global_this, object); // TODO: properly propagate exception upwards
+                // Any exception from the reject is swallowed so
+                // every remaining pending command still gets rejected at shutdown.
+                let _ = pair.reject_command(global_this, object);
             }
 
             while let Some(mut offline_cmd) = commands.read_item() {
-                let _ = offline_cmd.promise.reject(global_this, Ok(object)); // TODO: properly propagate exception upwards
-                // PORT NOTE: `offline_cmd.deinit()` — Entry/Box<[u8]> drops automatically.
+                // Same as above: swallow reject exceptions so the whole queue drains.
+                let _ = offline_cmd.promise.reject(global_this, Ok(object));
+                // Note: `offline_cmd.deinit()` — Entry/Box<[u8]> drops automatically.
             }
         } else {
             // finalizing. we can't call into JS.
             while let Some(pair) = pending.read_item() {
-                // PORT NOTE: `pair.promise.deinit()` — JSPromiseStrong drops automatically.
+                // Note: `pair.promise.deinit()` — JSPromiseStrong drops automatically.
                 drop(pair);
             }
 
             while let Some(offline_cmd) = commands.read_item() {
-                // PORT NOTE: `offline_cmd.promise.deinit()` / `offline_cmd.deinit()` —
+                // Note: `offline_cmd.promise.deinit()` / `offline_cmd.deinit()` —
                 // JSPromiseStrong / Box<[u8]> drop automatically.
                 drop(offline_cmd);
             }
         }
 
-        // PORT NOTE: `allocator.free(connection_strings)` and `write_buffer/read_buffer.deinit()`
+        // Note: `allocator.free(connection_strings)` and `write_buffer/read_buffer.deinit()`
         // and `tls.deinit()` are handled by Drop on the owning fields. Only the side-effecting
         // unregister remains explicit.
-        // Note there is no need to deallocate username, password and hostname since they are
-        // within the connection_strings buffer (in Zig; see TODO on field decls).
         drop(pending);
         drop(commands);
         self.unregister_auto_flusher();
@@ -457,7 +393,7 @@ impl ValkeyClient {
     }
 
     // Drain auto-pipelined commands
-    pub fn on_auto_flush(&mut self) -> bool {
+    pub(crate) fn on_auto_flush(&mut self) -> bool {
         // Don't process if not connected or already processing
         if self.status != Status::Connected {
             self.auto_flusher.registered.set(false);
@@ -465,15 +401,11 @@ impl ValkeyClient {
         }
 
         self.ref_();
-        // TODO(port): errdefer/defer pattern — `ref/deref` reshaped without scopeguard to
-        // satisfy borrowck (closure would alias `&mut self`). Phase B may revisit with raw-ptr.
 
         // Start draining the command queue
-        let mut have_more = false;
         let mut total_bytelength: usize = 0;
 
-        // PORT NOTE: reshaped for borrowck — Zig held `to_process` slice while mutating
-        // `in_flight`. We compute the count first, then drain by `read_item`.
+        // We compute the count first, then drain by `read_item`.
         let pipelineable_count: usize = {
             let to_process = self.queue.readable_slice(0);
             let mut total: usize = 0;
@@ -505,12 +437,12 @@ impl ValkeyClient {
                 .write(&cmd.serialized_data)
                 .unwrap_or_oom();
             // Free the serialized data since we've copied it to the write buffer
-            // PORT NOTE: `allocator.free(command.serialized_data)` — Box<[u8]> drops here.
+            // Note: `allocator.free(command.serialized_data)` — Box<[u8]> drops here.
         }
 
         let _ = self.flush_data();
 
-        have_more = self.queue.readable_length() > 0;
+        let have_more = self.queue.readable_length() > 0;
         self.auto_flusher.registered.set(have_more);
 
         self.deref();
@@ -521,7 +453,7 @@ impl ValkeyClient {
     // ** End of auto-pipelining **
 
     /// Get the appropriate timeout interval based on connection state
-    pub fn get_timeout_interval(&self) -> u32 {
+    pub(crate) fn get_timeout_interval(&self) -> u32 {
         if self.flags.failed {
             return 0;
         }
@@ -531,7 +463,7 @@ impl ValkeyClient {
         }
     }
 
-    pub fn has_any_pending_commands(&self) -> bool {
+    pub(crate) fn has_any_pending_commands(&self) -> bool {
         self.in_flight.readable_length() > 0
             || self.queue.readable_length() > 0
             || self.write_buffer.len() > 0
@@ -539,7 +471,7 @@ impl ValkeyClient {
     }
 
     /// Calculate reconnect delay with exponential backoff
-    pub fn get_reconnect_delay(&self) -> u32 {
+    pub(crate) fn get_reconnect_delay(&self) -> u32 {
         let base_delay: u32 = 50; // Base delay in ms
         let max_delay: u32 = 2000; // Max delay in ms
 
@@ -572,7 +504,7 @@ impl ValkeyClient {
     ) -> JsTerminated<()> {
         let mut pending = core::mem::replace(pending_ptr, command::promise_pair::Queue::init());
         let mut entries = core::mem::replace(entries_ptr, command::entry::Queue::init());
-        // PORT NOTE: `defer pending.deinit()` / `defer entries.deinit()` — handled by Drop.
+        // Note: `defer pending.deinit()` / `defer entries.deinit()` — handled by Drop.
 
         // Reject commands in the command queue
         while let Some(mut command_pair) = pending.read_item() {
@@ -581,14 +513,41 @@ impl ValkeyClient {
 
         // Reject commands in the offline queue
         while let Some(mut cmd) = entries.read_item() {
-            // PORT NOTE: `defer cmd.deinit(allocator)` — Entry should impl Drop.
+            // Note: `defer cmd.deinit(allocator)` — Entry should impl Drop.
             cmd.promise.reject(global_this, Ok(jsvalue))?;
         }
         Ok(())
     }
 
+    fn reject_in_flight_commands(&mut self, message: &[u8], err: RedisError) -> JsTerminated<()> {
+        if self.in_flight.readable_length() == 0 {
+            return Ok(());
+        }
+
+        if self.flags.finalized {
+            let vm = self.vm;
+            let deferred_failure = Box::new(DeferredFailure {
+                message: Box::<[u8]>::from(message),
+                err,
+                global_this: GlobalRef::from(vm.global()),
+                in_flight: core::mem::replace(
+                    &mut self.in_flight,
+                    command::promise_pair::Queue::init(),
+                ),
+                queue: command::entry::Queue::init(),
+            });
+            deferred_failure.enqueue();
+            return Ok(());
+        }
+
+        let global_this = self.global_object();
+        let jsvalue = valkey_error_to_js(&global_this, message, err);
+        let mut entries = command::entry::Queue::init();
+        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+    }
+
     /// Flush pending data to the socket
-    pub fn flush_data(&mut self) -> bool {
+    pub(crate) fn flush_data(&mut self) -> bool {
         let chunk = self.write_buffer.remaining();
         if chunk.is_empty() {
             return false;
@@ -598,12 +557,11 @@ impl ValkeyClient {
             self.write_buffer
                 .consume(u32::try_from(wrote).expect("int cast"));
         }
-        let has_remaining = self.write_buffer.len() > 0;
-        has_remaining
+        self.write_buffer.len() > 0
     }
 
     /// Mark the connection as failed with error message
-    pub fn fail(&mut self, message: &[u8], err: RedisError) -> JsTerminated<()> {
+    pub(crate) fn fail(&mut self, message: &[u8], err: RedisError) -> JsTerminated<()> {
         debug!("failed: {}: {:?}", bstr::BStr::new(message), err);
         if self.flags.failed {
             return Ok(());
@@ -636,7 +594,7 @@ impl ValkeyClient {
         self.fail_with_js_value(&global_this, valkey_error_to_js(&global_this, message, err))
     }
 
-    pub fn fail_with_js_value(
+    pub(crate) fn fail_with_js_value(
         &mut self,
         global_this: &JSGlobalObject,
         jsvalue: JSValue,
@@ -664,7 +622,26 @@ impl ValkeyClient {
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
+        if socket.is_closed() {
+            return;
+        }
+        // usockets does not dispatch `on_close`/`on_connect_error` when an
+        // application explicitly closes a `us_socket_t` whose TCP connect
+        // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
+        // synchronously so `connect()` got a real `us_socket_t*` rather than
+        // a `us_connecting_socket_t*`). See `us_internal_socket_close_raw`.
+        // The valkey client relies on one of those callbacks (via
+        // `on_valkey_close`/`on_valkey_reconnect`) to release the `+1`
+        // keep-alive ref `connect()` took, so without one the
+        // `JSValkeyClient` box leaks. Detect a SEMI_SOCKET before closing
+        // and run the close path ourselves afterwards.
+        let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
+            && !socket.is_established();
         socket.close(uws::CloseCode::Normal);
+        if is_semi_socket {
+            self.status = Status::Disconnected;
+            let _ = self.on_close();
+        }
     }
 
     /// Handle connection closed event
@@ -711,12 +688,14 @@ impl ValkeyClient {
         self.flags.is_authenticated = false;
         self.flags.is_selecting_db_internal = false;
 
+        self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
+
         // Signal reconnect timer should be started
         self.on_valkey_reconnect();
         Ok(())
     }
 
-    pub fn send_next_command(&mut self) {
+    pub(crate) fn send_next_command(&mut self) {
         if self.write_buffer.remaining().is_empty() && self.connection_ready() {
             if self.queue.readable_length() > 0 {
                 // Check the command at the head of the queue
@@ -755,7 +734,7 @@ impl ValkeyClient {
     /// Process data received from socket
     ///
     /// Caller refs / derefs.
-    pub fn on_data(&mut self, data: &[u8]) -> JsTerminated<()> {
+    pub(crate) fn on_data(&mut self, data: &[u8]) -> JsTerminated<()> {
         debug!(
             "Low-level onData called with {} bytes: {}",
             data.len(),
@@ -774,28 +753,43 @@ impl ValkeyClient {
                     break; // Buffer processed completely
                 }
 
+                // Incrementally check whether a complete reply is buffered
+                // before running the allocating tree parser. The scanner
+                // resumes from its saved position, so the elements of a
+                // partially-received aggregate are not re-parsed on every
+                // socket callback (which is quadratic in the element count).
+                match self.reply_scanner.scan(remaining_buffer) {
+                    Ok(protocol::ScanResult::Complete) => {}
+                    Ok(protocol::ScanResult::NeedMoreData) => {
+                        // Need more data in the buffer, wait for next onData call
+                        if cfg!(debug_assertions) {
+                            debug!(
+                                "read_buffer: needs more data ({} bytes available)",
+                                remaining_buffer.len()
+                            );
+                        }
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        self.fail(b"Failed to read data (buffer path)", err)?;
+                        return Ok(());
+                    }
+                }
+
                 let mut reader = protocol::ValkeyReader::init(remaining_buffer);
                 let before_read_pos = reader_pos(&reader);
 
-                let mut value = match reader.read_value() {
+                let value = match reader.read_value() {
                     Ok(v) => v,
                     Err(err) => {
-                        if err == RedisError::InvalidResponse {
-                            // Need more data in the buffer, wait for next onData call
-                            if cfg!(debug_assertions) {
-                                debug!(
-                                    "read_buffer: needs more data ({} bytes available)",
-                                    remaining_buffer.len()
-                                );
-                            }
-                            return Ok(());
-                        } else {
-                            self.fail(b"Failed to read data (buffer path)", err)?;
-                            return Ok(());
-                        }
+                        // The scanner verified a complete reply is buffered, so
+                        // a parse failure here (including `InvalidResponse`) is
+                        // a protocol error, not a short read.
+                        self.fail(b"Failed to read data (buffer path)", err)?;
+                        return Ok(());
                     }
                 };
-                // PORT NOTE: `defer value.deinit(allocator)` — RESPValue should impl Drop.
+                // Note: `defer value.deinit(allocator)` — RESPValue should impl Drop.
 
                 let bytes_consumed = reader_pos(&reader) - before_read_pos;
                 if bytes_consumed == 0 && !remaining_buffer.is_empty() {
@@ -806,11 +800,11 @@ impl ValkeyClient {
                     return Ok(());
                 }
 
-                self.read_buffer.consume(bytes_consumed as u32);
+                self.read_buffer
+                    .consume(u32::try_from(bytes_consumed).expect("int cast"));
+                self.reply_scanner.reset();
 
                 let mut value_to_handle = value; // Use temp var for defer
-                // TODO(port): narrow error set — Zig caller passes err to fail() which takes RedisError;
-                // `handle_response` now returns JsResult<()> so propagate directly.
                 self.handle_response(&mut value_to_handle)?;
 
                 if self.status == Status::Disconnected || self.flags.failed {
@@ -827,7 +821,7 @@ impl ValkeyClient {
             let mut reader = protocol::ValkeyReader::init(current_data_slice);
             let before_read_pos = reader_pos(&reader);
 
-            let mut value = match reader.read_value() {
+            let value = match reader.read_value() {
                 Ok(v) => v,
                 Err(err) => {
                     if err == RedisError::InvalidResponse {
@@ -840,6 +834,7 @@ impl ValkeyClient {
                                 current_data_slice.len() - before_read_pos
                             );
                         }
+                        self.reply_scanner.reset();
                         self.read_buffer
                             .write(&current_data_slice[before_read_pos..])
                             .expect("failed to write remaining stack data to buffer");
@@ -852,7 +847,7 @@ impl ValkeyClient {
                 }
             };
             // Successfully read a full message from the stack data
-            // PORT NOTE: `defer value.deinit(allocator)` — RESPValue should impl Drop.
+            // Note: `defer value.deinit(allocator)` — RESPValue should impl Drop.
 
             let bytes_consumed = reader_pos(&reader) - before_read_pos;
             if bytes_consumed == 0 {
@@ -869,7 +864,6 @@ impl ValkeyClient {
 
             // Handle the successfully parsed response
             let mut value_to_handle = value; // Use temp var for defer
-            // TODO(port): narrow error set — see buffer-path note above.
             self.handle_response(&mut value_to_handle)?;
 
             // Check connection status after handling
@@ -917,10 +911,15 @@ impl ValkeyClient {
                     .get()
                     .channels_subscribed_to_count(&global_this)?;
 
+                let is_pattern_or_sharded =
+                    protocol::SubscriptionPushMessage::is_reply_kind(&push.kind);
                 if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                     match msg_type {
                         protocol::SubscriptionPushMessage::Message => {
                             self.on_valkey_message(&mut push.data);
+                            Ok(SubscribeHandled::Handled)
+                        }
+                        protocol::SubscriptionPushMessage::PatternMessage => {
                             Ok(SubscribeHandled::Handled)
                         }
                         protocol::SubscriptionPushMessage::Subscribe => {
@@ -930,10 +929,15 @@ impl ValkeyClient {
                             // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
                             // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
                             if let Some(req_pair) = pair {
-                                req_pair.promise.promise.resolve(
-                                    &global_this,
-                                    JSValue::js_number(f64::from(sub_count)),
-                                )?;
+                                let resolve_value = if is_pattern_or_sharded {
+                                    resp_value_to_js(value, &global_this)?
+                                } else {
+                                    JSValue::js_number(f64::from(sub_count))
+                                };
+                                req_pair
+                                    .promise
+                                    .promise
+                                    .resolve(&global_this, resolve_value)?;
                             }
                             Ok(SubscribeHandled::Handled)
                         }
@@ -944,10 +948,15 @@ impl ValkeyClient {
                             // For UNSUBSCRIBE responses, only resolve the promise if we have one
                             // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
                             if let Some(req_pair) = pair {
+                                let resolve_value = if is_pattern_or_sharded {
+                                    resp_value_to_js(value, &global_this)?
+                                } else {
+                                    JSValue::UNDEFINED
+                                };
                                 req_pair
                                     .promise
                                     .promise
-                                    .resolve(&global_this, JSValue::UNDEFINED)?;
+                                    .resolve(&global_this, resolve_value)?;
                             }
                             Ok(SubscribeHandled::Handled)
                         }
@@ -1040,9 +1049,6 @@ impl ValkeyClient {
 
     /// Handle Valkey protocol response
     fn handle_response(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
-        // TODO(port): narrow error set — Zig return type was `!void` (inferred); body mixes
-        // JsError/JSTerminated (from `fail`/`handle_subscribe_response`). Unified to JsResult<()>
-        // in Phase A; callers no longer wrap in `fail()` (see on_data).
         // Special handling for the initial HELLO response
         if !self.flags.is_authenticated {
             self.handle_hello_response(value)?;
@@ -1092,21 +1098,33 @@ impl ValkeyClient {
         let mut pair_maybe: Option<command::PromisePair> = None;
 
         // For subscription clients, check if this is a push message that doesn't need a promise pair
-        if self.parent().is_subscriber() {
-            if let RESPValue::Push(push) = value {
-                if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
-                    match msg_type {
-                        protocol::SubscriptionPushMessage::Message => {
-                            // Message pushes never need promise pairs
-                            should_consume_promise_pair = false;
-                        }
-                        protocol::SubscriptionPushMessage::Subscribe
-                        | protocol::SubscriptionPushMessage::Unsubscribe => {
-                            // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
-                            if self.in_flight.readable_length() == 0 {
-                                should_consume_promise_pair = false;
-                            }
-                        }
+        if let RESPValue::Push(push) = value {
+            match protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
+                Some(
+                    protocol::SubscriptionPushMessage::Message
+                    | protocol::SubscriptionPushMessage::PatternMessage,
+                ) => {
+                    // Message pushes never need promise pairs
+                    should_consume_promise_pair = false;
+                }
+                Some(
+                    protocol::SubscriptionPushMessage::Subscribe
+                    | protocol::SubscriptionPushMessage::Unsubscribe,
+                ) => {
+                    // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
+                    if self.in_flight.readable_length() == 0
+                        || !self
+                            .in_flight
+                            .peek_item_mut(0)
+                            .meta
+                            .contains(command::Meta::SUBSCRIPTION_REQUEST)
+                    {
+                        should_consume_promise_pair = false;
+                    }
+                }
+                None => {
+                    if !protocol::SubscriptionPushMessage::is_reply_kind(&push.kind) {
+                        should_consume_promise_pair = false;
                     }
                 }
             }
@@ -1116,7 +1134,6 @@ impl ValkeyClient {
         // The reaosn we consume pairs is that a SUBSCRIBE message may actually be followed by a number of SUBSCRIBE
         // responses which indicate all the channels we have connected to. As a stop-gap, we currently ignore the
         // actual of content of the SUBSCRIBE responses and just resolve the first one with the count of channels.
-        // TODO(markovejnovic): Do better.
         if should_consume_promise_pair {
             pair_maybe = self.in_flight.read_item();
         }
@@ -1132,8 +1149,13 @@ impl ValkeyClient {
 
             match value {
                 RESPValue::Error(err) => {
-                    self.fail(err, RedisError::InvalidResponse)?;
-                    return Ok(());
+                    if self.parent().is_subscriber() {
+                        self.fail(err, RedisError::InvalidResponse)?;
+                        return Ok(());
+                    }
+                    // A raw subscription request from a client that is not (yet) a
+                    // subscriber failed on the server; fall through so only this
+                    // promise is rejected.
                 }
                 RESPValue::Push(push) => {
                     if protocol::SubscriptionPushMessage::from_bytes(&push.kind).is_some() {
@@ -1204,9 +1226,8 @@ impl ValkeyClient {
         // `self.write_buffer` directly (disjoint field) via `WriteBufWriter`.
         let hello_write_result = {
             let mut hello_args_buf: [&[u8]; 4] = [b"3", b"AUTH", b"", b""];
-            let hello_args: &[&[u8]];
 
-            if !self.username.is_empty() || !self.password.is_empty() {
+            let hello_args: &[&[u8]] = if !self.username.is_empty() || !self.password.is_empty() {
                 hello_args_buf[0] = b"3";
                 hello_args_buf[1] = b"AUTH";
 
@@ -1218,10 +1239,10 @@ impl ValkeyClient {
                     hello_args_buf[3] = &self.password;
                 }
 
-                hello_args = &hello_args_buf[0..4];
+                &hello_args_buf[0..4]
             } else {
-                hello_args = &hello_args_buf[0..1];
-            }
+                &hello_args_buf[0..1]
+            };
 
             // Format and send the HELLO command without adding to command queue
             // We'll handle this response specially in handleResponse
@@ -1258,10 +1279,11 @@ impl ValkeyClient {
     }
 
     /// Handle socket open event
-    pub fn on_open(&mut self, socket: AnySocket) -> JsTerminated<()> {
+    pub(crate) fn on_open(&mut self, socket: AnySocket) -> JsTerminated<()> {
         self.socket = socket;
         self.write_buffer.clear_and_free();
         self.read_buffer.clear_and_free();
+        self.reply_scanner.reset();
         // A fresh socket has opened, so reset per-connection state. Without
         // this, `send()` would permanently reject with "Connection has failed"
         // after a previous connection exhausted retries (#29925), and the
@@ -1280,7 +1302,7 @@ impl ValkeyClient {
     }
 
     /// Start the connection process
-    pub fn start(&mut self) -> JsTerminated<()> {
+    pub(crate) fn start(&mut self) -> JsTerminated<()> {
         self.authenticate()?;
         let _ = self.flush_data();
         Ok(())
@@ -1293,7 +1315,7 @@ impl ValkeyClient {
     }
 
     /// Process queued commands in the offline queue
-    pub fn drain(&mut self) -> bool {
+    pub(crate) fn drain(&mut self) -> bool {
         // If there's something in the in-flight queue and the next command
         // doesn't support pipelining, we should wait for in-flight commands to complete
         if self.in_flight.readable_length() > 0 {
@@ -1322,7 +1344,7 @@ impl ValkeyClient {
 
         if self.connection_ready() && self.write_buffer.remaining().is_empty() {
             // Optimization: avoid cloning the data an extra time.
-            // PORT NOTE: `defer allocator.free(data)` — `data: Box<[u8]>` drops at scope end.
+            // Note: `defer allocator.free(data)` — `data: Box<[u8]>` drops at scope end.
 
             let wrote = self.socket.write(&data);
             let unwritten = &data[usize::try_from(wrote.max(0)).expect("int cast")..];
@@ -1337,15 +1359,13 @@ impl ValkeyClient {
 
         // Write the pre-serialized data directly to the output buffer
         let _ = self.write(&data).unwrap_or_oom();
-        // PORT NOTE: `bun.default_allocator.free(data)` — Box<[u8]> drops here.
+        // Note: `bun.default_allocator.free(data)` — Box<[u8]> drops here.
 
         true
     }
 
-    pub fn on_writable(&mut self) {
+    pub(crate) fn on_writable(&mut self) {
         self.ref_();
-        // TODO(port): borrowck — scopeguard capturing `&mut self` aliases `send_next_command`.
-        // Reshaped to plain ref/deref bracketing; Phase B may use raw-ptr guard.
         self.send_next_command();
         self.deref();
     }
@@ -1354,8 +1374,7 @@ impl ValkeyClient {
         &mut self,
         command: &Command,
         mut promise: command::Promise,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), crate::Error> {
         let can_pipeline = command
             .meta
             .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
@@ -1415,12 +1434,11 @@ impl ValkeyClient {
         Ok(())
     }
 
-    pub fn send(
+    pub(crate) fn send(
         &mut self,
         global_this: &JSGlobalObject,
         command: &Command,
-    ) -> Result<*mut JSPromise, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<*mut JSPromise, crate::Error> {
         // FIX: Check meta before using it for routing decisions
         let mut checked_command = *command;
         checked_command.meta = command.meta.check(command);
@@ -1480,7 +1498,7 @@ impl ValkeyClient {
     }
 
     /// Close the Valkey connection
-    pub fn disconnect(&mut self) {
+    pub(crate) fn disconnect(&mut self) {
         self.flags.is_manually_closed = true;
         self.unregister_auto_flusher();
         if self.status == Status::Connected || self.status == Status::Connecting {
@@ -1489,10 +1507,8 @@ impl ValkeyClient {
     }
 
     /// Get a writer for the connected socket
-    // TODO(port): Zig returned `std.Io.GenericWriter(*ValkeyClient, RedisError, write)`.
-    // In Rust, ValkeyClient itself can serve as the writer (see `write` below). Phase B:
-    // decide whether to impl `bun_io::Write` directly or return a thin wrapper.
-    pub fn writer(&mut self) -> &mut Self {
+    // ValkeyClient itself serves as the writer (see `write` below).
+    pub(crate) fn writer(&mut self) -> &mut Self {
         self
     }
 
@@ -1510,10 +1526,10 @@ impl ValkeyClient {
     }
 
     pub fn deref(&mut self) {
+        let parent = std::ptr::from_ref(self.parent()).cast_mut();
         // SAFETY: only called in balanced `ref_()`/`deref()` pairs
         // (`on_auto_flush`, `on_writable`), so the count stays > 0 and the
         // outer `&mut self` protector is never invalidated by deallocation.
-        let parent = std::ptr::from_ref(self.parent()).cast_mut();
         unsafe { JSValkeyClient::deref(parent) };
     }
 
@@ -1522,32 +1538,28 @@ impl ValkeyClient {
         self.parent().global_object
     }
 
-    pub fn on_valkey_connect(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
-        Ok(self.parent().on_valkey_connect(value)?)
+    pub(crate) fn on_valkey_connect(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
+        self.parent().on_valkey_connect(value)
     }
 
-    pub fn on_valkey_subscribe(&mut self, value: &mut RESPValue) {
+    pub(crate) fn on_valkey_subscribe(&mut self, value: &mut RESPValue) {
         self.parent().on_valkey_subscribe(value);
     }
 
-    pub fn on_valkey_unsubscribe(&mut self) -> JsResult<()> {
+    pub(crate) fn on_valkey_unsubscribe(&mut self) -> JsResult<()> {
         self.parent().on_valkey_unsubscribe()
     }
 
-    pub fn on_valkey_message(&mut self, value: &mut [RESPValue]) {
+    pub(crate) fn on_valkey_message(&mut self, value: &mut [RESPValue]) {
         self.parent().on_valkey_message(value);
     }
 
-    pub fn on_valkey_reconnect(&mut self) {
+    pub(crate) fn on_valkey_reconnect(&mut self) {
         self.parent().on_valkey_reconnect();
     }
 
-    pub fn on_valkey_close(&mut self) -> JsTerminated<()> {
-        Ok(self.parent().on_valkey_close()?)
-    }
-
-    pub fn on_valkey_timeout(&mut self) {
-        self.parent().on_valkey_timeout();
+    pub(crate) fn on_valkey_close(&mut self) -> JsTerminated<()> {
+        self.parent().on_valkey_close()
     }
 }
 
@@ -1559,7 +1571,7 @@ impl HasAutoFlusher for ValkeyClient {
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
     }
-    fn on_auto_flush(this: *mut Self) -> bool {
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: `this` was registered as `&ValkeyClient` cast to `*mut c_void`;
         // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread after
         // microtasks), so no aliasing across the call.
@@ -1573,7 +1585,7 @@ impl bun_io::Write for ValkeyClient {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         self.write_buffer
             .write(buf)
-            .map_err(|_| bun_core::Error::OUT_OF_MEMORY)
+            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
     }
 }
 
@@ -1588,14 +1600,13 @@ impl bun_io::Write for WriteBufWriter<'_> {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         self.0
             .write(buf)
-            .map_err(|_| bun_core::Error::OUT_OF_MEMORY)
+            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
     }
 }
 
 // Local extension trait providing `.unwrap_or_oom()` on `Result<T, E>`.
-// Zig: `catch bun.outOfMemory()` / `bun.handleOom(expr)`. No shared `UnwrapOrOom`
-// trait exists yet (bun_alloc has none); delegate to `bun_core::handle_oom` so
-// every call site keeps its method-chain shape.
+// No shared `UnwrapOrOom` trait exists yet (bun_alloc has none); delegate to
+// `bun_core::handle_oom` so every call site keeps its method-chain shape.
 trait UnwrapOrOom {
     type Output;
     fn unwrap_or_oom(self) -> Self::Output;
@@ -1608,5 +1619,3 @@ impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
         bun_core::handle_oom(self)
     }
 }
-
-// ported from: src/runtime/valkey_jsc/valkey.zig

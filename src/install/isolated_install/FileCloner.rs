@@ -4,14 +4,15 @@ use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
 
 // macOS clonefileat only
 
-// PORT NOTE: reshaped — Zig owns `cache_dir_subpath: bun.AutoRelPath` by struct
-// copy; Rust borrows mutably so the caller's path survives a clonefile→hardlink
-// fallback (`continue 'backend` in `Installer::Task::run`). The borrow must be
-// `&mut` because `Path::slice_z` writes the NUL terminator into the pooled buf.
-pub struct FileCloner<'a> {
+// `cache_dir_subpath` is borrowed mutably (rather than owned) so the caller's
+// path survives a clonefile→hardlink fallback (`continue 'backend` in
+// `Installer::Task::run`). The borrow must be `&mut` because `Path::slice_z`
+// writes the NUL terminator into the pooled buf.
+#[allow(dead_code)]
+pub(crate) struct FileCloner<'a> {
     pub cache_dir: Fd,
     pub cache_dir_subpath: &'a mut AutoRelPath,
-    /// `bun.Path(.{ .sep = .auto, .unit = .os })` — `.unit = .os` is `u8` on
+    /// The OS path unit is `u8` on
     /// macOS (the only platform `clonefileat` exists on), so the unit param is
     /// spelled `u8` to keep this module compiling on Windows where `OSPathChar`
     /// would be `u16` and `slice_z()` would yield a `WStr`.
@@ -19,6 +20,7 @@ pub struct FileCloner<'a> {
 }
 
 impl FileCloner<'_> {
+    #[allow(dead_code)]
     fn clonefileat(&mut self) -> sys::Result<()> {
         sys::clonefileat(
             self.cache_dir,
@@ -28,7 +30,8 @@ impl FileCloner<'_> {
         )
     }
 
-    pub fn clone(&mut self) -> sys::Result<()> {
+    #[allow(dead_code)]
+    pub(crate) fn clone(&mut self) -> sys::Result<()> {
         match self.clonefileat() {
             Ok(()) => Ok(()),
             Err(err) => match err.get_errno() {
@@ -56,5 +59,3 @@ impl FileCloner<'_> {
         }
     }
 }
-
-// ported from: src/install/isolated_install/FileCloner.zig

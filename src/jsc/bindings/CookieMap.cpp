@@ -54,11 +54,6 @@ CookieMap::CookieMap()
 {
 }
 
-CookieMap::CookieMap(Vector<Ref<Cookie>>&& cookies)
-    : m_modifiedCookies(WTF::move(cookies))
-{
-}
-
 CookieMap::CookieMap(Vector<KeyValuePair<String, String>>&& cookies)
     : m_originalCookies(WTF::move(cookies))
 {
@@ -112,12 +107,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                     continue;
                 }
 
-                if (hasAnyPercentEncoded) {
-                    Bun::UTF8View utf8View(nameView);
-                    name = Bun::decodeURIComponentSIMD(utf8View.bytes());
-                } else {
-                    name = nameView.toString();
-                }
+                name = nameView.toString();
 
                 if (hasAnyPercentEncoded) {
                     Bun::UTF8View utf8View(valueView);
@@ -156,19 +146,6 @@ std::optional<String> CookieMap::get(const String& name) const
     return std::nullopt;
 }
 
-Vector<KeyValuePair<String, String>> CookieMap::getAll() const
-{
-    Vector<KeyValuePair<String, String>> all;
-    for (const auto& cookie : m_modifiedCookies) {
-        if (cookie->value().isEmpty()) continue;
-        all.append(KeyValuePair<String, String>(cookie->name(), cookie->value()));
-    }
-    for (const auto& cookie : m_originalCookies) {
-        all.append(KeyValuePair<String, String>(cookie.key, cookie.value));
-    }
-    return all;
-}
-
 bool CookieMap::has(const String& name) const
 {
     return get(name).has_value();
@@ -199,9 +176,10 @@ ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
     String name = options.name;
     String domain = options.domain;
     String path = options.path;
+    bool secure = name.startsWithIgnoringASCIICase("__Secure-"_s) || name.startsWithIgnoringASCIICase("__Host-"_s);
 
     // Add the new cookie
-    auto cookie_exception = Cookie::create(name, ""_s, domain, path, 1, false, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
+    auto cookie_exception = Cookie::create(name, ""_s, domain, path, 1, secure, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
     if (cookie_exception.hasException()) {
         return cookie_exception.releaseException();
     }

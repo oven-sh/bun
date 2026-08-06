@@ -1,11 +1,10 @@
 use core::mem::size_of;
 
 use bun_event_loop::EventLoopHandle;
-use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedWriter, WriteStatus};
-use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
+use bun_ptr::{IntrusiveRc, RawSlice, RefCount};
 use bun_sys;
 
 use crate::process::StdioKind;
@@ -15,9 +14,8 @@ bun_output::declare_scope!(StaticPipeWriter, hidden);
 
 /// Trait bound for the owning process type `P` of [`StaticPipeWriter`].
 ///
-/// Zig's `NewStaticPipeWriter(comptime ProcessType)` duck-types
-/// `process.onCloseIO(.stdin)`; in Rust we require this trait so the
-/// generic `BufferedWriter<StaticPipeWriter<P>>` field can satisfy its
+/// This trait lets the
+/// generic `BufferedWriter<StaticPipeWriter<P>>` field satisfy its
 /// `PosixBufferedWriterParent`/`WindowsBufferedWriterParent` bound for all `P`.
 ///
 /// Method takes `*mut Self` (not `&mut self`) because the writer is a field of
@@ -29,43 +27,36 @@ pub trait StaticPipeWriterProcess {
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
 }
 
-/// Zig: `pub fn NewStaticPipeWriter(comptime ProcessType: type) type { return struct { ... } }`
-///
 /// Generic over the owning process type (e.g. `Subprocess`, `ShellSubprocess`).
 /// `P` must expose `fn on_close_io(&mut self, kind: StdioKind)`.
-// Zig: `const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});`
-// `_deinit` maps to `impl Drop` below; the final `bun.destroy` (Box free) is
+// Cleanup lives in `impl Drop` below; the final Box free is
 // the derive's default destructor (`drop(heap::take(this))`).
 #[derive(bun_ptr::RefCounted)]
 pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// Intrusive refcount; `ref`/`deref` provided via `bun_ptr::RefCount`.
-    pub ref_count: RefCount<Self>,
-    pub writer: IOWriter<P>,
-    pub stdio_result: StdioResult,
+    pub(crate) ref_count: RefCount<Self>,
+    pub(crate) writer: IOWriter<P>,
+    pub(crate) stdio_result: StdioResult,
     pub source: Source,
     /// BACKREF: parent process is notified on close; never owned/destroyed here.
-    pub process: *mut P,
-    pub event_loop: EventLoopHandle,
+    pub(crate) process: *mut P,
+    pub(crate) event_loop: EventLoopHandle,
+    /// True while `start()`'s `+1` ref is outstanding.
+    pub started: bool,
     /// Slice into `self.source`'s storage, advanced as bytes are written.
-    // TODO(port): lifetime — self-borrow into `self.source`; Phase B may store an
-    // offset+len pair and re-slice from `self.source` instead of a raw self-pointer.
-    // `RawSlice` (typed `*const [u8]` with safe `.slice()`) replaces the raw fat
-    // pointer so the per-access unsafe derefs are gone; the backing storage
-    // (`self.source`) outlives `self` by construction.
-    pub buffer: RawSlice<u8>,
+    ///
+    /// Self-borrow invariant: this aliases `self.source`'s storage, which
+    /// outlives `self` by construction; every path that detaches/frees the
+    /// source (`on_error`, `on_close`, `Drop`) must reset this to
+    /// `RawSlice::EMPTY` first. `RawSlice` (typed `*const [u8]` with safe
+    /// `.slice()`) keeps the per-access unsafe derefs out of the call sites.
+    pub(crate) buffer: RawSlice<u8>,
 }
 
-// Zig: `const print = bun.Output.scoped(.StaticPipeWriter, .visible);`
-// NOTE: `print` is declared but never used in the Zig source; the file-level
-// `log` (hidden) is what's actually called. We declare a single hidden scope above.
-
-/// Zig: `pub const IOWriter = bun.io.BufferedWriter(@This(), struct { ... })`
-///
-/// The Zig callback-struct (`onWritable = null`, `getBuffer`, `onClose`, `onError`,
-/// `onWrite`) maps to a handler trait that `StaticPipeWriter<P>` implements; the
+/// The writer's callbacks (`getBuffer`, `onClose`, `onError`, `onWrite`) map
+/// to a handler trait that `StaticPipeWriter<P>` implements; the
 /// inherent methods below are the callback bodies.
 pub type IOWriter<P> = BufferedWriter<StaticPipeWriter<P>>;
-/// Zig: `pub const Poll = IOWriter;`
 pub type Poll<P> = IOWriter<P>;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -86,7 +77,6 @@ bun_io::impl_buffered_writer_parent! {
     uv_loop    = |this| (*this).event_loop.uv_loop(),
     ref_       = |this| RefCount::<Self>::ref_(this),
     deref      = |this| RefCount::<Self>::deref(this),
-    win_on_write_guard = |_this| (),
 }
 
 impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
@@ -99,12 +89,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         self.writer.update_ref(self.io_evtloop(), add);
     }
 
-    pub fn get_buffer(&self) -> &[u8] {
-        // `RawSlice` invariant: backing storage (`self.source` or the empty
-        // literal) outlives `self`.
-        self.buffer.slice()
-    }
-
     pub fn close(&mut self) {
         bun_output::scoped_log!(
             StaticPipeWriter,
@@ -114,57 +98,49 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         self.writer.close();
     }
 
-    pub fn flush(&mut self) {
-        if self.buffer.len() > 0 {
-            self.writer.write();
-        }
-    }
-
-    /// Zig: `pub fn create(event_loop: anytype, subprocess: *ProcessType, result: StdioResult, source: Source) *This`
-    ///
-    /// PORT NOTE: Zig's `anytype` dispatched on type (`EventLoopHandle`,
-    /// `*VirtualMachine`, `*MiniEventLoop`) inside `EventLoopHandle.init`. The
-    /// Rust port splits that into separate overloads, so callers resolve to an
-    /// `EventLoopHandle` before calling and we accept it directly.
+    /// Callers resolve to an `EventLoopHandle` before calling and we accept
+    /// it directly.
     pub fn create(
         event_loop: EventLoopHandle,
         subprocess: *mut P,
         result: StdioResult,
         source: Source,
     ) -> IntrusiveRc<Self> {
-        let this = bun_core::heap::into_raw(Box::new(Self {
+        #[allow(unused_mut)]
+        let mut boxed = Box::new(Self {
             ref_count: RefCount::init(),
             writer: IOWriter::<P>::default(),
             stdio_result: result,
             source,
             process: subprocess,
             event_loop,
+            started: false,
             buffer: RawSlice::EMPTY,
-        }));
-        // SAFETY: `this` was just allocated above and is non-null.
-        let this_ref = unsafe { &mut *this };
+        });
         #[cfg(windows)]
         {
-            // Zig: `this.writer.setPipe(this.stdio_result.buffer)` — on Windows
-            // `StdioResult` is the `WindowsStdioResult` union and Zig reads the
-            // `.buffer` field unchecked (caller invariant). Enforce that
-            // invariant here: any other arm is a logic bug, not a silent no-op.
+            // On Windows `StdioResult` is the `WindowsStdioResult` union and
+            // the caller invariant is that the `Buffer` arm is set. Enforce
+            // that here: any other arm is a logic bug, not a silent no-op.
             // Ownership of the boxed `uv::Pipe` transfers into the writer's
             // `Source::Pipe`, so we move it out (replacing with `Unavailable`)
             // and `heap::alloc` it (set_pipe re-wraps via `heap::take`).
             use crate::process::WindowsStdioResult;
-            match core::mem::replace(&mut this_ref.stdio_result, WindowsStdioResult::Unavailable) {
+            match core::mem::replace(&mut boxed.stdio_result, WindowsStdioResult::Unavailable) {
                 WindowsStdioResult::Buffer(pipe) => {
                     // SAFETY: `pipe` is a Box-allocated `uv::Pipe`; `set_pipe`
                     // takes ownership via `heap::take`.
-                    unsafe { this_ref.writer.set_pipe(bun_core::heap::into_raw(pipe)) };
+                    unsafe { boxed.writer.set_pipe(bun_core::heap::into_raw(pipe)) };
                 }
                 WindowsStdioResult::BufferFd(_) | WindowsStdioResult::Unavailable => {
                     unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");
                 }
             }
         }
-        this_ref.writer.set_parent(this);
+        let this = bun_core::heap::into_raw(boxed);
+        // SAFETY: `this` was just leaked above; borrow scoped to registering
+        // the parent backref.
+        unsafe { (*this).writer.set_parent(this) };
         // SAFETY: ownership of the initial ref is transferred to the returned IntrusiveRc.
         unsafe { IntrusiveRc::from_raw(this) }
     }
@@ -175,25 +151,43 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             "StaticPipeWriter(0x{:x}) start()",
             std::ptr::from_ref(self) as usize
         );
-        // Zig `this.ref()` — intrusive-refcount increment.
+        // Intrusive-refcount increment.
         // SAFETY: `self` is a live `Self` (created via `create()`/`heap::alloc`).
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
-        // TODO(port): self-borrow — see `buffer` field note.
+        // Self-borrow into `self.source` — see `buffer` field invariant.
         self.buffer = RawSlice::new(self.source.slice());
         #[cfg(windows)]
         {
-            return self.writer.start_with_current_pipe();
+            let r = self.writer.start_with_current_pipe();
+            self.started = r.is_ok();
+            if r.is_err() {
+                // start() failed: `started` stays false so no release site
+                // fires — release start()'s `+1` here.
+                // SAFETY: `self` is the live `Self` we ref'd at the top of
+                // `start()`; the caller's `IntrusiveRc` keeps it alive and
+                // `started` is false so no other site re-derefs.
+                unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+            }
+            return r;
         }
         #[cfg(not(windows))]
         {
-            // Zig: `this.stdio_result.?` — on POSIX `StdioResult` is `?bun.FD`.
+            // On POSIX `StdioResult` is an `Option<Fd>`.
             match self.writer.start(self.stdio_result.unwrap(), true) {
-                bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
+                bun_sys::Result::Err(err) => {
+                    // start() failed: `started` stays false so no release
+                    // site fires — release start()'s `+1` here.
+                    // SAFETY: `self` is the live `Self` we ref'd at the top
+                    // of `start()`; the caller's `IntrusiveRc` keeps it alive
+                    // and `started` is false so no other site re-derefs.
+                    unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+                    bun_sys::Result::Err(err)
+                }
                 bun_sys::Result::Ok(()) => {
+                    self.started = true;
                     #[cfg(unix)]
                     {
-                        // Zig: `const poll = this.writer.handle.poll; poll.flags.insert(.socket);`
-                        // `handle` is `PollOrFd` (enum) in Rust; flag mutation goes
+                        // `handle` is `PollOrFd` (enum); flag mutation goes
                         // through the FilePoll vtable shim.
                         if let Some(poll) = self.writer.handle.get_poll() {
                             poll.set_flag(bun_io::FilePollFlag::Socket);
@@ -205,7 +199,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
     }
 
-    pub fn on_write(&mut self, amount: usize, status: WriteStatus) {
+    pub(crate) fn on_write(&mut self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onWrite(amount={} {})",
@@ -221,38 +215,74 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         let len = self.buffer.len();
         self.buffer = RawSlice::new(&self.buffer.slice()[amount.min(len)..]);
         if status == WriteStatus::EndOfFile || self.buffer.is_empty() {
+            // `started` is the token for start()'s outstanding +1. Clearing it
+            // before the deref makes this release mutually exclusive with the
+            // owner's close-time release (`Subprocess::take_pending_start_writer`,
+            // which also clears `started`). On POSIX, `writer.close()` →
+            // `Parent::on_close` may drop `create()`'s +1, so keep start()'s +1
+            // across it. `EndOfFile` is skipped because `PosixBufferedWriter::
+            // _on_write` still touches `self` after this returns on that status.
+            let release_start_ref = self.started && status != WriteStatus::EndOfFile;
+            if release_start_ref {
+                self.started = false;
+            }
             self.writer.close();
+            if release_start_ref {
+                // SAFETY: start()'s +1 was still outstanding; `started` cleared above so no other site re-derefs.
+                unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+            }
         }
     }
 
-    pub fn on_error(&mut self, err: bun_sys::Error) {
+    pub(crate) fn on_error(&mut self, err: &bun_sys::Error) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onError(err={})",
             std::ptr::from_ref(self) as usize,
             err
         );
+        // Clear the buffer before detaching: `buffer` aliases `self.source`'s
+        // storage, and `detach()` frees it. `drain_buffered_data` calls
+        // on_error() then Parent::on_write(), which would otherwise re-slice
+        // the freed allocation.
+        self.buffer = RawSlice::EMPTY;
         self.source.detach();
+        // Can't release start()'s +1 here: `drain_buffered_data` calls on_error() then
+        // Parent::on_write(); freeing here would UAF.
     }
 
-    pub fn on_close(&mut self) {
+    pub(crate) fn on_close(&mut self) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onClose()",
             std::ptr::from_ref(self) as usize
         );
+        // On Windows the error arm of `WindowsBufferedWriter::on_write_complete`
+        // reaches here via `close()` without ever calling `Parent::on_write`, so
+        // this is the last point `started` can be claimed for that path.
+        // `write()`'s +1 (held by that callback's scopeguard) keeps `self` live
+        // past the deref. POSIX must not release here: `drain_buffered_data`
+        // may call `on_error()` -> `close()` -> here and then `on_write()` on
+        // the same object, with no extra ref held.
+        #[cfg(windows)]
+        let release_start_ref = core::mem::replace(&mut self.started, false);
+        // `buffer` aliases `self.source`'s storage; clear it before detach()
+        // frees that storage so no dangling slice survives the close.
+        self.buffer = RawSlice::EMPTY;
         self.source.detach();
         // SAFETY: `process` is a backref to the owning process, guaranteed alive
         // for the lifetime of this writer (the process owns/outlives its stdio writers).
         unsafe { P::on_close_io(self.process, StdioKind::Stdin) };
+        #[cfg(windows)]
+        if release_start_ref {
+            // SAFETY: `started` was the token for start()'s outstanding +1;
+            // cleared above so no other site re-derefs. Last use of `self`.
+            unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+        }
     }
 
     pub fn memory_cost(&self) -> usize {
         size_of::<Self>() + self.source.memory_cost() + self.writer.memory_cost()
-    }
-
-    pub fn loop_(&self) -> *mut AsyncLoop {
-        self.event_loop.native_loop()
     }
 
     pub fn watch(&mut self) {
@@ -260,19 +290,16 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             self.writer.watch();
         }
     }
-
-    pub fn event_loop(&self) -> EventLoopHandle {
-        self.event_loop
-    }
 }
 
-/// Zig: `fn _deinit(this: *This) void` — the `RefCount` destructor callback.
-/// `bun.destroy(this)` (the heap free) is handled by `IntrusiveRc` after `drop` returns.
+/// The `RefCount` destructor callback.
+/// The heap free is handled by `IntrusiveRc` after `drop` returns.
 impl<P: StaticPipeWriterProcess> Drop for StaticPipeWriter<P> {
     fn drop(&mut self) {
         self.writer.end();
+        // `buffer` aliases `self.source`'s storage; clear it before detach()
+        // frees that storage (upholds the field's documented invariant).
+        self.buffer = RawSlice::EMPTY;
         self.source.detach();
     }
 }
-
-// ported from: src/runtime/api/bun/subprocess/StaticPipeWriter.zig

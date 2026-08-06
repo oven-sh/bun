@@ -5,6 +5,7 @@ use bun_core::fmt as bun_fmt;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;
 use bun_sql::postgres::PostgresTypes::{AnyPostgresError, Int4, Short};
+use bun_sql::postgres::Status;
 use bun_sql::postgres::protocol::{ReaderContext, WriterContext};
 
 use crate::jsc::js_error_to_postgres;
@@ -16,10 +17,9 @@ use crate::shared::QueryBindingIterator;
 
 bun_core::declare_scope!(Postgres, visible);
 
-/// Zig: `comptime MessageType: @Type(.enum_literal)` — the set of backend
-/// message tags `PostgresSQLConnection.on()` dispatches over. Defined here
+/// The set of backend message tags `PostgresSQLConnection.on()` dispatches over. Defined here
 /// (the dispatch site) rather than in `bun_sql::postgres::protocol` because
-/// it is purely a compile-time switch tag in Zig with no wire encoding.
+/// it is purely a dispatch tag with no wire encoding.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 pub enum MessageType {
     DataRow,
@@ -43,12 +43,13 @@ pub enum MessageType {
     CopyOutResponse,
     CopyDone,
     CopyBothResponse,
+    NotificationResponse,
 }
 
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
-pub fn write_bind<Context: WriterContext>(
+pub(crate) fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: BunString,
     global: &JSGlobalObject,
@@ -61,8 +62,7 @@ pub fn write_bind<Context: WriterContext>(
     writer.write(b"B")?;
     let length = writer.length()?;
 
-    // Zig `.String` (bun.String) vs `.string` ([]const u8) both snake_case to
-    // `string`; the bun.String overload is `bun_string` on NewWriter.
+    // The bun.String overload is `bun_string` on NewWriter.
     writer.bun_string(&cursor_name)?;
     writer.string(name)?;
 
@@ -218,7 +218,9 @@ pub fn write_bind<Context: WriterContext>(
             }
 
             _ => {
-                let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
+                let str = bun_core::OwnedString::new(
+                    BunString::from_js(value, global).map_err(js_error_to_postgres)?,
+                );
                 if str.tag() == bun_core::Tag::Dead {
                     return Err(AnyPostgresError::OutOfMemory);
                 }
@@ -226,7 +228,6 @@ pub fn write_bind<Context: WriterContext>(
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
-                // `str.deref()` and `slice.deinit()` handled by Drop
             }
         }
 
@@ -257,7 +258,7 @@ pub fn write_bind<Context: WriterContext>(
     Ok(())
 }
 
-pub fn write_query<Context: WriterContext>(
+pub(crate) fn write_query<Context: WriterContext>(
     query: &[u8],
     name: &[u8],
     params: &[Int4],
@@ -284,7 +285,7 @@ pub fn write_query<Context: WriterContext>(
     Ok(())
 }
 
-pub fn prepare_and_query_with_signature<Context: WriterContext>(
+pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],
     array_value: JSValue,
@@ -320,7 +321,7 @@ pub fn prepare_and_query_with_signature<Context: WriterContext>(
     Ok(())
 }
 
-pub fn bind_and_execute<Context: WriterContext>(
+pub(crate) fn bind_and_execute<Context: WriterContext>(
     global: &JSGlobalObject,
     statement: &PostgresSQLStatement,
     array_value: JSValue,
@@ -355,7 +356,7 @@ pub fn bind_and_execute<Context: WriterContext>(
 /// like PgBouncer in transaction mode, which may reassign server connections between protocol
 /// round-trips. Without this, Parse and Bind+Execute could be routed to different backend
 /// connections, causing queries to execute against the wrong prepared statement.
-pub fn parse_and_bind_and_execute<Context: WriterContext>(
+pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],
     statement: &PostgresSQLStatement,
@@ -419,38 +420,78 @@ pub fn parse_and_bind_and_execute<Context: WriterContext>(
     Ok(())
 }
 
-pub fn execute_query<Context: WriterContext>(
+pub(crate) fn execute_query<Context: WriterContext>(
     query: &[u8],
     mut writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
+    // A simple Query ('Q') is its own sync point: the backend always answers it
+    // with exactly one ReadyForQuery. Do not append a Sync here: it would elicit
+    // a second, unaccounted ReadyForQuery that re-arms advance() mid-prepare.
     protocol::write_query(query, &mut writer)?;
     writer.write(&protocol::FLUSH)?;
-    writer.write(&protocol::SYNC)?;
     Ok(())
 }
 
-pub fn on_data<Context: ReaderContext>(
+pub(crate) fn on_data<Context: ReaderContext>(
     connection: &PostgresSQLConnection,
     mut reader: protocol::NewReader<Context>,
 ) -> Result<(), AnyPostgresError> {
     use MessageType as M;
     loop {
+        // `fail()` inside a handler tears the connection down (status = Failed,
+        // socket closed, queue rejected). Stop dispatching: later messages in
+        // the same read must not act on the dead connection.
+        if connection.status.get() == Status::Failed {
+            return Ok(());
+        }
         reader.mark_message_start();
         let c = reader.int::<u8>()?;
         bun_core::scoped_log!(Postgres, "read: {}", c as char);
-        match c {
-            b'D' => connection.on(M::DataRow, reader.reborrow())?,
-            b'd' => connection.on(M::CopyData, reader.reborrow())?,
-            b'S' => {
-                if let TlsStatus::MessageSent(n) = connection.tls_status.get() {
+
+        // The SSLRequest reply is a bare Byte1('S'|'N') with no Int32 length;
+        // it is the only unframed backend byte and must be handled before the
+        // frame peek below.
+        if let TlsStatus::MessageSent(n) = connection.tls_status.get() {
+            match c {
+                b'S' => {
                     debug_assert!(n == 8);
                     connection.tls_status.set(TlsStatus::SslOk);
                     connection.setup_tls();
                     return Ok(());
                 }
-
-                connection.on(M::ParameterStatus, reader.reborrow())?;
+                b'N' => {
+                    connection.tls_status.set(TlsStatus::SslNotAvailable);
+                    bun_core::scoped_log!(Postgres, "Server does not support SSL");
+                    if matches!(
+                        connection.ssl_mode,
+                        SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull
+                    ) {
+                        connection.fail(
+                            b"Server does not support SSL",
+                            AnyPostgresError::TLSNotAvailable,
+                        );
+                        return Ok(());
+                    }
+                    continue;
+                }
+                _ => return Err(AnyPostgresError::UnexpectedMessage),
             }
+        }
+
+        // Every other backend message is Byte1(type) Int32(length) body[length-4].
+        // Peek the length here (each handler reads it again) so the handler's
+        // net consumption can be checked against it: a handler that leaves the
+        // cursor anywhere but the next message's type byte has either scanned a
+        // string past the frame or returned with tail bytes still in it, and
+        // the stream is unrecoverable (libpq: "message contents do not agree
+        // with length in message").
+        let (before, length) = reader.peek_length()?;
+        let after = before - length;
+
+        match c {
+            b'D' => connection.on(M::DataRow, reader.reborrow())?,
+            b'd' => connection.on(M::CopyData, reader.reborrow())?,
+            b'S' => connection.on(M::ParameterStatus, reader.reborrow())?,
             b'Z' => connection.on(M::ReadyForQuery, reader.reborrow())?,
             b'C' => connection.on(M::CommandComplete, reader.reborrow())?,
             b'2' => connection.on(M::BindComplete, reader.reborrow())?,
@@ -464,44 +505,41 @@ pub fn on_data<Context: ReaderContext>(
             b's' => connection.on(M::PortalSuspended, reader.reborrow())?,
             b'3' => connection.on(M::CloseComplete, reader.reborrow())?,
             b'G' => connection.on(M::CopyInResponse, reader.reborrow())?,
-            b'N' => {
-                if matches!(connection.tls_status.get(), TlsStatus::MessageSent(_)) {
-                    connection.tls_status.set(TlsStatus::SslNotAvailable);
-                    bun_core::scoped_log!(Postgres, "Server does not support SSL");
-                    if connection.ssl_mode == SslMode::Require {
-                        connection.fail(
-                            b"Server does not support SSL",
-                            AnyPostgresError::TLSNotAvailable,
-                        );
-                        return Ok(());
-                    }
-                    continue;
-                }
-
-                connection.on(M::NoticeResponse, reader.reborrow())?;
-            }
+            b'N' => connection.on(M::NoticeResponse, reader.reborrow())?,
             b'I' => connection.on(M::EmptyQueryResponse, reader.reborrow())?,
             b'H' => connection.on(M::CopyOutResponse, reader.reborrow())?,
             b'c' => connection.on(M::CopyDone, reader.reborrow())?,
             b'W' => connection.on(M::CopyBothResponse, reader.reborrow())?,
+            b'A' => connection.on(M::NotificationResponse, reader.reborrow())?,
 
             _ => {
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
-                let to_skip = reader.length()?.saturating_sub(1);
-                bun_core::scoped_log!(Postgres, "to_skip: {}", to_skip);
-                reader.skip(usize::try_from(to_skip).expect("int cast"))?;
+                reader.skip_message()?;
             }
+        }
+
+        if connection.status.get() == Status::Failed {
+            return Ok(());
+        }
+        if reader.peek().len() != after {
+            bun_core::scoped_log!(
+                Postgres,
+                "message contents do not agree with length ({}): '{}' left {} of {}",
+                length,
+                c as char,
+                reader.peek().len(),
+                after,
+            );
+            return Err(AnyPostgresError::InvalidMessage);
         }
     }
 }
 
 // `bun.LinearFifo(*PostgresSQLQuery, .Dynamic)` — element is a raw pointer
 // (queries are JS-wrapper-owned, not Box-owned by the queue).
-pub type Queue = bun_collections::linear_fifo::LinearFifo<
+pub(crate) type Queue = bun_collections::linear_fifo::LinearFifo<
     *mut PostgresSQLQuery,
     bun_collections::linear_fifo::DynamicBuffer<*mut PostgresSQLQuery>,
 >;
 
 use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};
-
-// ported from: src/sql_jsc/postgres/PostgresRequest.zig

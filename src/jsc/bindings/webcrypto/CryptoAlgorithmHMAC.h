@@ -41,9 +41,7 @@ public:
 
     // Operations can be performed directly.
     static ExceptionOr<Vector<uint8_t>> platformSign(const CryptoKeyHMAC&, const Vector<uint8_t>&);
-    static ExceptionOr<Vector<uint8_t>> platformSignWithAlgorithm(const CryptoKeyHMAC&, CryptoAlgorithmIdentifier, const Vector<uint8_t>&);
     static ExceptionOr<bool> platformVerify(const CryptoKeyHMAC&, const Vector<uint8_t>&, const Vector<uint8_t>&);
-    static ExceptionOr<bool> platformVerifyWithAlgorithm(const CryptoKeyHMAC&, CryptoAlgorithmIdentifier, const Vector<uint8_t>&, const Vector<uint8_t>&);
 
 private:
     CryptoAlgorithmHMAC() = default;
@@ -54,7 +52,7 @@ private:
     void generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyOrKeyPairCallback&&, ExceptionCallback&&, ScriptExecutionContext&) final;
     void importKey(CryptoKeyFormat, KeyData&&, const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyCallback&&, ExceptionCallback&&) final;
     void exportKey(CryptoKeyFormat, Ref<CryptoKey>&&, KeyDataCallback&&, ExceptionCallback&&) final;
-    ExceptionOr<size_t> getKeyLength(const CryptoAlgorithmParameters&) final;
+    ExceptionOr<std::optional<size_t>> getKeyLength(const CryptoAlgorithmParameters&) final;
 };
 
 } // namespace WebCore

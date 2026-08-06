@@ -1,26 +1,20 @@
 use crate::css_parser as css;
-use bun_alloc::ArenaVecExt as _;
-
-// blocked_on: rules/media + media_query::{MediaCondition,MediaFeature,...} +
-// properties/custom — only the gated `get_*_rules` / `add_unparsed_fallbacks`
-// bodies below reference these.
 
 use css::css_rules::media::MediaRule;
 
 use css::css_properties::custom::UnparsedProperty;
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
-use bun_alloc::Arena as Bump;
+use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_collections::ArrayHashMap;
 
 pub struct SupportsEntry {
-    pub condition: css::SupportsCondition,
-    pub declarations: Vec<css::Property>,
-    pub important_declarations: Vec<css::Property>,
+    pub(crate) condition: css::SupportsCondition,
+    pub(crate) declarations: Vec<css::Property>,
+    pub(crate) important_declarations: Vec<css::Property>,
 }
 
-// PORT NOTE: `deinit(this, arena)` deleted — all fields own their storage and drop
-// automatically. `css.deepDeinit` over the Vecs is handled by `Vec<Property>`'s Drop.
+// No explicit deinit — all fields own their storage and drop automatically.
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum DeclarationContext {
@@ -31,28 +25,28 @@ pub enum DeclarationContext {
 }
 
 pub struct PropertyHandlerContext<'a> {
-    // PORT NOTE: `arena` is the parser arena that owns the AST being
+    // `arena` is the parser arena that owns the AST being
     // minified; bound to `'a` alongside the other borrowed inputs.
-    pub arena: &'a Bump,
-    pub targets: css::targets::Targets,
-    pub is_important: bool,
-    pub supports: Vec<SupportsEntry>,
-    pub ltr: Vec<css::Property>,
-    pub rtl: Vec<css::Property>,
-    pub dark: Vec<css::Property>,
-    pub context: DeclarationContext,
-    pub unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
+    pub(crate) arena: &'a Bump,
+    pub(crate) targets: css::targets::Targets,
+    pub(crate) is_important: bool,
+    pub(crate) supports: Vec<SupportsEntry>,
+    pub(crate) ltr: Vec<css::Property>,
+    pub(crate) rtl: Vec<css::Property>,
+    pub(crate) dark: Vec<css::Property>,
+    pub(crate) context: DeclarationContext,
+    pub(crate) unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
 }
 
 impl<'a> PropertyHandlerContext<'a> {
-    pub fn new(
+    pub(crate) fn new(
         arena: &'a Bump,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
         unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
     ) -> PropertyHandlerContext<'a> {
         PropertyHandlerContext {
             arena,
-            targets,
+            targets: *targets,
             is_important: false,
             supports: Vec::new(),
             ltr: Vec::new(),
@@ -63,7 +57,7 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 
-    pub fn child(&self, context: DeclarationContext) -> PropertyHandlerContext<'a> {
+    pub(crate) fn child(&self, context: DeclarationContext) -> PropertyHandlerContext<'a> {
         PropertyHandlerContext {
             arena: self.arena,
             targets: self.targets,
@@ -77,16 +71,16 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 
-    pub fn add_dark_rule(&mut self, property: css::Property) {
+    pub(crate) fn add_dark_rule(&mut self, property: css::Property) {
         self.dark.push(property);
     }
 
-    pub fn add_logical_rule(&mut self, ltr: css::Property, rtl: css::Property) {
+    pub(crate) fn add_logical_rule(&mut self, ltr: css::Property, rtl: css::Property) {
         self.ltr.push(ltr);
         self.rtl.push(rtl);
     }
 
-    pub fn should_compile_logical(&self, feature: css::compat::Feature) -> bool {
+    pub(crate) fn should_compile_logical(&self, feature: css::compat::Feature) -> bool {
         // Don't convert logical properties in style attributes because
         // our fallbacks rely on extra rules to define --ltr and --rtl.
         if self.context == DeclarationContext::StyleAttribute {
@@ -97,12 +91,7 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 }
 
-// ─── heavy rule-building helpers (gated) ──────────────────────────────────
-// blocked_on: css_rules::{CssRule,CssRuleList,StyleRule,SupportsRule,media},
-// selectors::parser::{Direction,Component,PseudoClass}, DeclarationBlock
-// construction with bump-allocated lists, properties/custom::UnparsedProperty.
-// These build whole rule subtrees and are only called from the (still-gated)
-// minify path; un-gate alongside `rules/style.rs`.
+// ─── heavy rule-building helpers ──────────────────────────────────────────
 
 impl<'a> PropertyHandlerContext<'a> {
     /// `'static`-erased arena handle for building `DeclarationBlock<'static>` /
@@ -115,18 +104,23 @@ impl<'a> PropertyHandlerContext<'a> {
     /// lifetime erasure.
     #[inline]
     fn bump_static(&self) -> &'static Bump {
+        // SAFETY: the arena outlives every rule built from it; `'static` is the
+        // crate-wide `'bump`-erasure placeholder documented on this fn.
         unsafe { bun_collections::detach_ref(self.arena) }
     }
 
     /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.
     /// (`'static` per crate-wide `'bump`-erasure; see rules/mod.rs decl_block_static.)
     #[inline]
-    fn clone_decls(&self, list: &Vec<css::Property>) -> css::DeclarationList<'static> {
+    fn clone_decls(&self, list: &[css::Property]) -> css::DeclarationList<'static> {
         let bump: &'static Bump = self.bump_static();
         bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
     }
 
-    pub fn get_supports_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
+    pub(crate) fn get_supports_rules<T>(
+        &self,
+        style_rule: &css::StyleRule<T>,
+    ) -> Vec<css::CssRule<T>> {
         if self.supports.is_empty() {
             return Vec::new();
         }
@@ -134,28 +128,19 @@ impl<'a> PropertyHandlerContext<'a> {
         let mut dest: Vec<css::CssRule<T>> = Vec::with_capacity(self.supports.len());
 
         for entry in &self.supports {
-            // PERF(port): was appendAssumeCapacity
             dest.push(css::CssRule::Supports(css::SupportsRule {
                 condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
-                    v: {
-                        let mut v: Vec<css::CssRule<T>> = Vec::with_capacity(1);
-
-                        // PERF(port): was appendAssumeCapacity
-                        v.push(css::CssRule::Style(css::StyleRule {
-                            selectors: style_rule.selectors.deep_clone(),
-                            vendor_prefix: css::VendorPrefix::NONE,
-                            declarations: css::DeclarationBlock {
-                                declarations: self.clone_decls(&entry.declarations),
-                                important_declarations: self
-                                    .clone_decls(&entry.important_declarations),
-                            },
-                            rules: css::CssRuleList::default(),
-                            loc: style_rule.loc,
-                        }));
-
-                        v
-                    },
+                    v: vec![css::CssRule::Style(css::StyleRule {
+                        selectors: style_rule.selectors.deep_clone(),
+                        vendor_prefix: css::VendorPrefix::NONE,
+                        declarations: css::DeclarationBlock {
+                            declarations: self.clone_decls(&entry.declarations),
+                            important_declarations: self.clone_decls(&entry.important_declarations),
+                        },
+                        rules: css::CssRuleList::default(),
+                        loc: style_rule.loc,
+                    })],
                 },
                 loc: style_rule.loc,
             }));
@@ -164,7 +149,10 @@ impl<'a> PropertyHandlerContext<'a> {
         dest
     }
 
-    pub fn get_additional_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
+    pub(crate) fn get_additional_rules<T>(
+        &self,
+        style_rule: &css::StyleRule<T>,
+    ) -> Vec<css::CssRule<T>> {
         // TODO: :dir/:lang raises the specificity of the selector. Use :where to lower it?
         let mut dest: Vec<css::CssRule<T>> = Vec::new();
 
@@ -190,22 +178,24 @@ impl<'a> PropertyHandlerContext<'a> {
             dest.push(css::CssRule::Media(MediaRule {
                 query: MediaList {
                     media_queries: {
-                        let mut list: Vec<MediaQuery> = Vec::with_capacity(1);
+                        // Arena-backed to match `MediaList.media_queries: Vec<_, ArenaPtr>`.
+                        let mut list: Vec<MediaQuery, ArenaPtr> =
+                            Vec::with_capacity_in(1, ArenaPtr::new(self.bump_static()));
 
-                        // PERF(port): was appendAssumeCapacity
                         list.push(MediaQuery {
                             qualifier: None,
                             media_type: css::media_query::MediaType::All,
-                            condition: Some(MediaCondition::Feature(MediaFeature::Plain {
-                                // TODO(port): verify exact MediaFeatureName / MediaFeatureValue
-                                // variant shapes from css::media_query once ported.
-                                name: css::media_query::MediaFeatureName::Standard(
-                                    MediaFeatureId::PrefersColorScheme,
-                                ),
-                                value: css::media_query::MediaFeatureValue::Ident(css::Ident {
-                                    v: b"dark",
-                                }),
-                            })),
+                            condition: Some(MediaCondition::Feature(Box::new_in(
+                                MediaFeature::Plain {
+                                    name: css::media_query::MediaFeatureName::Standard(
+                                        MediaFeatureId::PrefersColorScheme,
+                                    ),
+                                    value: css::media_query::MediaFeatureValue::Ident(css::Ident {
+                                        v: b"dark",
+                                    }),
+                                },
+                                ArenaPtr::new(self.bump_static()),
+                            ))),
                         });
 
                         list
@@ -236,13 +226,11 @@ impl<'a> PropertyHandlerContext<'a> {
         dest
     }
 
-    // PORT NOTE: reshaped — Zig passed `comptime dir: []const u8` and `comptime decls: []const u8`
-    // and used `@field` to select the Direction variant and the self.ltr/self.rtl Vec by name.
-    // Rust has no @field; pass the Direction value and a borrow of the decls Vec directly.
-    pub fn get_additional_rules_helper<T>(
+    // Takes the Direction value and a borrow of the decls Vec directly.
+    pub(crate) fn get_additional_rules_helper<T>(
         &self,
         dir: css::selector::parser::Direction,
-        decls: &Vec<css::Property>,
+        decls: &[css::Property],
         sty: &css::StyleRule<T>,
         dest: &mut Vec<css::CssRule<T>>,
     ) {
@@ -269,8 +257,8 @@ impl<'a> PropertyHandlerContext<'a> {
 }
 
 impl<'a> PropertyHandlerContext<'a> {
-    pub fn reset(&mut self) {
-        // PORT NOTE: per-element `deinit()` calls dropped — Vec::clear drops each element,
+    pub(crate) fn reset(&mut self) {
+        // Per-element `deinit()` calls dropped — Vec::clear drops each element,
         // and SupportsEntry / Property own their resources via Drop.
         self.supports.clear();
         self.ltr.clear();
@@ -280,7 +268,7 @@ impl<'a> PropertyHandlerContext<'a> {
 }
 
 impl<'a> PropertyHandlerContext<'a> {
-    pub fn add_conditional_property(
+    pub(crate) fn add_conditional_property(
         &mut self,
         condition: css::SupportsCondition,
         property: css::Property,
@@ -320,7 +308,7 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 
-    pub fn add_unparsed_fallbacks(
+    pub(crate) fn add_unparsed_fallbacks(
         &mut self,
         bump: &bun_alloc::Arena,
         unparsed: &mut UnparsedProperty,
@@ -331,14 +319,14 @@ impl<'a> PropertyHandlerContext<'a> {
             return;
         }
 
-        let fallbacks = unparsed.value.get_fallbacks(bump, self.targets);
-        // PORT NOTE: Zig `for (fallbacks.slice()) |c|` copies by value; `SmallList`
+        let fallbacks = unparsed.value.get_fallbacks(bump, &self.targets);
+        // `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
         for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {
             self.add_conditional_property(
                 condition_and_fallback.0,
                 css::Property::Unparsed(UnparsedProperty {
-                    // `PropertyId` is `Copy`; Zig `deepClone` was identity.
+                    // `PropertyId` is `Copy`.
                     property_id: unparsed.property_id,
                     value: condition_and_fallback.1,
                 }),
@@ -346,5 +334,3 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 }
-
-// ported from: src/css/context.zig

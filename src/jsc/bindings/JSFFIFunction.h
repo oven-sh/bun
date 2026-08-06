@@ -91,7 +91,6 @@ public:
 
 private:
     JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, CFFIFunction&&);
-    void finishCreation(VM&, NativeExecutable*, unsigned length, const String& name);
     DECLARE_VISIT_CHILDREN;
 
     CFFIFunction m_function;

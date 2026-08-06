@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use crate::VirtualMachineRef as VirtualMachine;
@@ -7,7 +6,6 @@ use bun_core::String as BunString;
 
 pub struct HTTPServerAgent {
     /// Underlying C++ agent. Set to null when not enabled.
-    // TODO(port): lifetime — FFI-owned C++ opaque; raw ptr is correct here
     pub agent: Option<NonNull<InspectorHTTPServerAgent>>,
 
     /// This becomes the "server ID" field.
@@ -24,32 +22,12 @@ impl Default for HTTPServerAgent {
 }
 
 impl HTTPServerAgent {
-    pub fn is_enabled(&self) -> bool {
-        self.agent.is_some()
-    }
-
-    /// Safe accessor for the set-once C++ agent handle. `agent` is populated
-    /// exactly once via [`Bun__HTTPServerAgent__setEnabled`] and lives for the
-    /// debugger's lifetime; `InspectorHTTPServerAgent` is an `opaque_ffi!` ZST
-    /// so the `&mut` covers zero bytes (see [`bun_opaque::opaque_deref_mut`]).
-    /// Consolidates the per-call-site raw deref into the single audited
-    /// `opaque_mut` proof so callers stay safe.
-    #[inline]
-    pub fn agent_mut(&mut self) -> Option<&mut InspectorHTTPServerAgent> {
-        self.agent
-            .map(|p| InspectorHTTPServerAgent::opaque_mut(p.as_ptr()))
-    }
-
     // #region Events
     //
-    // PORT NOTE (phase-d): `notify_server_started` / `notify_server_stopped` /
-    // `notify_server_routes_updated` reach into `bun_jsc::api::AnyServer` and
+    // `notify_server_started` / `notify_server_stopped` /
+    // `notify_server_routes_updated` reach into `AnyServer` and
     // `ServerConfig::RouteDeclaration`, which live in `bun_runtime` (forward
-    // dep). The C++ side only needs `Bun__HTTPServerAgent__setEnabled` for
-    // linkage; the per-event notifiers are called from Rust → C++ (FFI decls
-    // below) and are wired from `bun_runtime` once that tier un-gates. The
-    // event-body Zig ports are preserved in HTTPServerAgent.zig and will land
-    // when `AnyServer` is reachable.
+    // dep), so they are defined there (`runtime/server/mod.rs`).
 
     // #endregion
 }
@@ -94,21 +72,13 @@ impl Default for Route {
     }
 }
 
-impl Route {
-    pub fn params(&self) -> &[BunString] {
-        // SAFETY: param_names points to param_names_len contiguous BunString
-        // values (or is `(null, 0)`, which `ffi::slice` tolerates).
-        unsafe { bun_core::ffi::slice(self.param_names, self.param_names_len) }
-    }
-}
-
 impl Drop for Route {
     fn drop(&mut self) {
         if !self.param_names.is_null() {
+            let slice = core::ptr::slice_from_raw_parts_mut(self.param_names, self.param_names_len);
             // SAFETY: param_names was allocated via the global (mimalloc) allocator as a
             // contiguous [BunString; param_names_len]. Reconstructing the Box drops each
             // element (deref) and frees the backing storage.
-            let slice = core::ptr::slice_from_raw_parts_mut(self.param_names, self.param_names_len);
             drop(unsafe { bun_core::heap::take(slice) });
             self.param_names = core::ptr::null_mut();
             self.param_names_len = 0;
@@ -120,75 +90,21 @@ impl Drop for Route {
 
 // #endregion
 
-// #region C++ agent reference type for Zig
+// #region C++ agent reference type
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to the C++ `InspectorHTTPServerAgent`.
     pub struct InspectorHTTPServerAgent;
 }
 
-// TODO(port): move to jsc_sys
-//
-// `safe fn`: `InspectorHTTPServerAgent` is an `opaque_ffi!` ZST handle
-// (`!Freeze` via `UnsafeCell`); `BunString` is `#[repr(C)]` and read-only
-// across the call. `&mut`/`&` are ABI-identical to non-null `*mut`/`*const`.
-// Remaining args are by-value scalars / `#[repr(u8)]` enums.
-unsafe extern "C" {
-    pub safe fn Bun__HTTPServerAgent__notifyRequestWillBeSent(
-        agent: &mut InspectorHTTPServerAgent,
-        request_id: RequestId,
-        server_id: ServerId,
-        route_id: RouteId,
-        url: &BunString,
-        full_url: &BunString,
-        method: HTTPMethod,
-        headers_json: &BunString,
-        params_json: &BunString,
-        has_body: bool,
-        timestamp: f64,
-    );
-    pub safe fn Bun__HTTPServerAgent__notifyResponseReceived(
-        agent: &mut InspectorHTTPServerAgent,
-        request_id: RequestId,
-        server_id: ServerId,
-        status_code: i32,
-        status_text: &BunString,
-        headers_json: &BunString,
-        has_body: bool,
-        timestamp: f64,
-    );
-    pub safe fn Bun__HTTPServerAgent__notifyBodyChunkReceived(
-        agent: &mut InspectorHTTPServerAgent,
-        request_id: RequestId,
-        server_id: ServerId,
-        flags: i32,
-        chunk: &BunString,
-        timestamp: f64,
-    );
-    pub safe fn Bun__HTTPServerAgent__notifyRequestFinished(
-        agent: &mut InspectorHTTPServerAgent,
-        request_id: RequestId,
-        server_id: ServerId,
-        timestamp: f64,
-        duration: f64,
-    );
-    pub safe fn Bun__HTTPServerAgent__notifyRequestHandlerException(
-        agent: &mut InspectorHTTPServerAgent,
-        request_id: RequestId,
-        server_id: ServerId,
-        message: &BunString,
-        url: &BunString,
-        line: i32,
-        timestamp: f64,
-    );
-
-    // `Bun__HTTPServerAgent__notifyServer{Started,Stopped,RoutesUpdated}` are
-    // `[[ZIG_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
-    // called below with explicit casts to the codegen's opaque param types.
-}
-
+// `Bun__HTTPServerAgent__notifyServer{Started,Stopped,RoutesUpdated}` are
+// `[[ZIG_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
+// called below with explicit casts to the codegen's opaque param types.
 impl InspectorHTTPServerAgent {
-    pub fn notify_server_started(
+    /// # Safety
+    /// `server_instance` is forwarded to C++ as an opaque token; caller must
+    /// ensure it remains valid for the duration of the FFI call.
+    pub unsafe fn notify_server_started(
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
         hot_reload_id: HotReloadId,
@@ -254,10 +170,10 @@ impl InspectorHTTPServerAgent {
 
 // #endregion
 
-// #region Zig -> C++
+// #region C++ entry points
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
+pub(crate) extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
     // SAFETY: VM singleton is process-lifetime.
     let vm = VirtualMachine::get().as_mut();
     if let Some(debugger) = &mut vm.debugger {
@@ -269,9 +185,5 @@ pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServ
 
 // Typedefs from HTTPServer.json
 pub type ServerId = crate::debugger::DebuggerId;
-pub type RequestId = i32;
 pub type RouteId = i32;
 pub type HotReloadId = i32;
-pub type HTTPMethod = bun_http::Method;
-
-// ported from: src/jsc/HTTPServerAgent.zig

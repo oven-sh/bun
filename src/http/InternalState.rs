@@ -1,12 +1,8 @@
-use core::ptr::NonNull;
-
+use crate::Error;
 use bun_core::MutableString;
-use bun_core::{Error, Output};
+use bun_core::Output;
 
-use crate::{
-    CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata,
-    extremely_verbose,
-};
+use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 
@@ -14,59 +10,85 @@ bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 // Many of these fields can be moved to a packed struct and use less space
 
 pub struct InternalState<'a> {
-    pub response_message_buffer: MutableString,
-    /// pending response is the temporary storage for the response headers, url and status code
-    /// this uses shared_response_headers_buf to store the headers
-    /// this will be turned None once the metadata is cloned
-    pub pending_response: Option<bun_picohttp::Response<'static>>,
-
+    pub(crate) response_message_buffer: MutableString,
     /// This is the cloned metadata containing the response headers, url and status code after the .headers phase are received
     /// will be turned None once returned to the user (the ownership is transferred to the user)
     /// this can happen after await fetch(...) and the body can continue streaming when this is already None
-    /// the user will receive only chunks of the body stored in body_out_str
-    pub cloned_metadata: Option<HTTPResponseMetadata>,
-    pub flags: InternalStateFlags,
+    /// the user will receive only chunks of the body stored in decoded_body
+    pub(crate) cloned_metadata: Option<HTTPResponseMetadata>,
+    pub(crate) flags: InternalStateFlags,
 
-    pub transfer_encoding: Encoding,
-    pub encoding: Encoding,
-    pub content_encoding_i: u8,
-    pub chunked_decoder: bun_picohttp::phr_chunked_decoder,
-    pub decompressor: Decompressor,
-    pub stage: Stage,
-    /// This is owned by the user and should not be freed here
-    // TODO(port): lifetime — user-owned back-reference; no LIFETIMES.tsv row, kept as raw NonNull
-    pub body_out_str: Option<NonNull<MutableString>>,
-    pub compressed_body: MutableString,
-    pub content_length: Option<usize>,
-    pub total_body_received: usize,
+    pub(crate) transfer_encoding: Encoding,
+    pub(crate) encoding: Encoding,
+    pub(crate) content_encoding_i: u8,
+    pub(crate) chunked_decoder: bun_picohttp::phr_chunked_decoder,
+    pub(crate) decompressor: Decompressor,
+    pub(crate) stage: Stage,
+    /// Decoded (post-decompression / post-chunked-decode) body bytes accumulate
+    /// here. Delivered to the progress callback as a borrowed slice and cleared
+    /// (cap-bounded) after the callback returns.
+    pub(crate) decoded_body: MutableString,
+    pub(crate) compressed_body: MutableString,
+    pub(crate) content_length: Option<usize>,
+    pub(crate) total_body_received: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
     // outlives-holder invariant (the backing `original_request_body` is a
     // sibling field, so it lives exactly as long as this struct).
-    pub request_body: bun_ptr::RawSlice<u8>,
-    pub original_request_body: HTTPRequestBody<'a>,
-    pub request_sent_len: usize,
-    pub fail: Option<Error>,
-    pub request_stage: HTTPStage,
-    pub response_stage: HTTPStage,
-    pub certificate_info: Option<CertificateInfo>,
+    pub(crate) request_body: bun_ptr::RawSlice<u8>,
+    pub(crate) original_request_body: HTTPRequestBody<'a>,
+    pub(crate) request_sent_len: usize,
+    pub(crate) fail: Option<Error>,
+    /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
+    /// 0 otherwise. The JS side turns it into the resolver error
+    /// (`ENOTFOUND`, ...) with `syscall`/`hostname`, matching `node:dns`.
+    pub(crate) dns_error: i32,
+    /// Owned copy of the hostname the failed lookup was for
+    /// (`connected_url.hostname`: the proxy's when one is configured, else
+    /// the post-redirect target). Captured on the HTTP thread at the failure
+    /// so the JS side never dereferences the client's borrowed URL buffers.
+    pub(crate) dns_hostname: Option<Box<[u8]>>,
+    pub(crate) request_stage: HTTPStage,
+    pub(crate) response_stage: HTTPStage,
+    pub(crate) certificate_info: Option<CertificateInfo>,
 }
 
-// PORT NOTE: was a `packed struct(u8)` in Zig. Kept as a struct-of-bools so the
+// Struct-of-bools so the
 // HTTPClient state machine in lib.rs can use field syntax (`flags.allow_keepalive
-// = true`) directly; restore packing in Phase B if size matters.
+// = true`) directly; pack into a bitfield if size ever matters.
 #[derive(Clone, Copy)]
 pub struct InternalStateFlags {
-    pub allow_keepalive: bool,
-    pub received_last_chunk: bool,
-    pub did_set_content_encoding: bool,
-    pub is_redirect_pending: bool,
-    pub is_libdeflate_fast_path_disabled: bool,
-    pub resend_request_body_on_redirect: bool,
+    pub(crate) allow_keepalive: bool,
+    pub(crate) received_last_chunk: bool,
+    pub(crate) did_set_content_encoding: bool,
+    pub(crate) is_redirect_pending: bool,
+    pub(crate) is_libdeflate_fast_path_disabled: bool,
+    pub(crate) resend_request_body_on_redirect: bool,
+    /// Cross-origin redirect: the per-request Host override must be dropped so
+    /// the follow-up connection re-derives SNI/Host from the redirect target.
+    /// The actual clear is deferred to `do_redirect`, after the old socket's
+    /// pool/close decision — that decision needs `hostname` still set to know
+    /// the handshake was verified against an override.
+    pub(crate) clear_hostname_on_redirect: bool,
+    /// Set when the TLS handshake completed but the user-supplied JS
+    /// `checkServerIdentity` callback has not yet approved the peer
+    /// certificate. While set, `on_writable` must not write any HTTP
+    /// application data to the socket and `on_data` must treat incoming
+    /// application data as unexpected. Cleared by
+    /// `HTTPClient::resume_after_cert_check` once the JS thread reports the
+    /// check passed (and implicitly by `InternalState::reset()` on every
+    /// redirect hop / failure, so each hop re-parks independently).
+    pub(crate) is_waiting_for_cert_check: bool,
+    pub(crate) receive_paused: bool,
+    /// Set once `HTTPClient::compress_body_for_send` has run for this attempt.
+    /// Guards header-retry re-entries from compressing again. Cleared by
+    /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
+    /// original uncompressed `original_request_body`.
+    pub(crate) body_compressed: bool,
 }
 
 impl InternalStateFlags {
-    /// Zig's field defaults: `allow_keepalive = true`, rest false.
-    pub const fn new() -> Self {
+    /// Field defaults: `allow_keepalive = true`, rest false.
+    const fn new() -> Self {
         Self {
             allow_keepalive: true,
             received_last_chunk: false,
@@ -74,12 +96,16 @@ impl InternalStateFlags {
             is_redirect_pending: false,
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
+            clear_hostname_on_redirect: false,
+            is_waiting_for_cert_check: false,
+            receive_paused: false,
+            body_compressed: false,
         }
     }
 }
 
 impl Default for InternalStateFlags {
-    /// Matches Zig `InternalStateFlags{}` (allow_keepalive defaults to true).
+    /// `allow_keepalive` defaults to true.
     fn default() -> Self {
         Self::new()
     }
@@ -89,7 +115,6 @@ impl Default for InternalState<'_> {
     fn default() -> Self {
         Self {
             response_message_buffer: MutableString::init_empty(),
-            pending_response: None,
             cloned_metadata: None,
             flags: InternalStateFlags::new(),
             transfer_encoding: Encoding::Identity,
@@ -98,7 +123,7 @@ impl Default for InternalState<'_> {
             chunked_decoder: bun_picohttp::phr_chunked_decoder::default(),
             decompressor: Decompressor::None,
             stage: Stage::Pending,
-            body_out_str: None,
+            decoded_body: MutableString::init_empty(),
             compressed_body: MutableString::init_empty(),
             content_length: None,
             total_body_received: 0,
@@ -106,6 +131,8 @@ impl Default for InternalState<'_> {
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
             fail: None,
+            dns_error: 0,
+            dns_hostname: None,
             request_stage: HTTPStage::Pending,
             response_stage: HTTPStage::Pending,
             certificate_info: None,
@@ -114,49 +141,34 @@ impl Default for InternalState<'_> {
 }
 
 impl<'a> InternalState<'a> {
-    pub fn init(body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) -> InternalState<'a> {
+    pub(crate) fn init(body: HTTPRequestBody<'a>) -> InternalState<'a> {
         let request_body = bun_ptr::RawSlice::new(body.slice());
         InternalState {
             original_request_body: body,
             request_body,
             compressed_body: MutableString::init_empty(),
             response_message_buffer: MutableString::init_empty(),
-            body_out_str: Some(NonNull::from(body_out_str)),
+            decoded_body: MutableString::init_empty(),
             stage: Stage::Pending,
-            pending_response: None,
             ..Default::default()
         }
     }
 
-    pub fn is_chunked_encoding(&self) -> bool {
+    pub(crate) fn is_chunked_encoding(&self) -> bool {
         self.transfer_encoding == Encoding::Chunked
     }
 
-    pub fn reset(&mut self) {
-        // PORT NOTE: allocator param dropped (global mimalloc).
-        self.compressed_body = MutableString::init_empty();
-        self.response_message_buffer = MutableString::init_empty();
-
-        let body_msg = self.body_out_str;
-        if let Some(body) = body_msg {
-            crate::body_out::as_mut(body).reset();
-        }
-        // PORT NOTE: Zig calls `this.decompressor.deinit()` here. The boxed
-        // Zlib/Brotli/Zstd readers all impl Drop calling end()/destroy_instance
-        // (see Decompressor.rs PORT NOTE), so the `*self = ...` assignment below
-        // frees the FFI handle via drop glue — no explicit reset needed.
-
-        // just in case we check and free to avoid leaks
-        // (Option<HTTPResponseMetadata> drops on assignment; allocator param removed)
-        self.cloned_metadata = None;
-
-        // if exists we own this info
-        // (Option<CertificateInfo> drops on assignment; allocator param removed)
-        self.certificate_info = None;
-
+    pub(crate) fn reset(&mut self) {
+        // Preserve `decoded_body` across the reset so the progress-update path
+        // can deliver its bytes after calling `reset()`; clearing happens in
+        // the caller after `callback.run()`.
+        let decoded_body = core::mem::take(&mut self.decoded_body);
+        // `*self = ...` below drops every field via drop glue. Only
+        // `original_request_body` needs an explicit `deinit()` because
+        // `HTTPRequestBody` deliberately has no `Drop` (see HTTPRequestBody.rs).
         self.original_request_body.deinit();
         *self = InternalState {
-            body_out_str: body_msg,
+            decoded_body,
             compressed_body: MutableString::init_empty(),
             response_message_buffer: MutableString::init_empty(),
             original_request_body: HTTPRequestBody::Bytes(b""),
@@ -168,45 +180,33 @@ impl<'a> InternalState<'a> {
         };
     }
 
-    /// The caller-owned response body buffer (set in [`Self::init`]).
-    ///
-    /// INVARIANT: `body_out_str` points at a `MutableString` owned by the
-    /// `AsyncHTTP`/`FetchTasklet` that initiated this request and outlives
-    /// this `InternalState`; it is a separate heap allocation, never aliasing
-    /// any field of `self`.
-    #[inline]
-    fn body_out_mut(&mut self) -> &mut MutableString {
-        crate::body_out::as_mut(self.body_out_str.unwrap())
-    }
-
-    pub fn get_body_buffer(&mut self) -> &mut MutableString {
+    /// The buffer response body bytes accumulate into. For compressed
+    /// responses this is the intermediate `compressed_body`; otherwise it is
+    /// the owned `decoded_body`.
+    pub(crate) fn get_body_buffer(&mut self) -> &mut MutableString {
         if self.encoding.is_compressed() {
             return &mut self.compressed_body;
         }
-        self.body_out_mut()
+        &mut self.decoded_body
     }
 
     /// Split-borrow `chunked_decoder` and the body buffer (which is either
-    /// `compressed_body` or the caller-owned `body_out_str`). Both targets are
-    /// disjoint from each other and from every other field touched by
-    /// `phr_decode_chunked` callers, so this lets the chunked-decode hot path
-    /// in `lib.rs` operate on safe references instead of repeated raw-ptr
-    /// place expressions.
+    /// `compressed_body` or `decoded_body`). Both targets are disjoint from
+    /// each other and from every other field touched by `phr_decode_chunked`
+    /// callers, so this lets the chunked-decode hot path in `lib.rs` operate
+    /// on safe references instead of repeated raw-ptr place expressions.
     #[inline]
-    pub fn chunked_decoder_and_body_buffer(
+    pub(crate) fn chunked_decoder_and_body_buffer(
         &mut self,
     ) -> (&mut bun_picohttp::phr_chunked_decoder, &mut MutableString) {
         if self.encoding.is_compressed() {
             (&mut self.chunked_decoder, &mut self.compressed_body)
         } else {
-            // body_out_str is a separate heap allocation, never aliasing
-            // `chunked_decoder` (a value field of `self`).
-            let body = crate::body_out::as_mut(self.body_out_str.unwrap());
-            (&mut self.chunked_decoder, body)
+            (&mut self.chunked_decoder, &mut self.decoded_body)
         }
     }
 
-    pub fn is_done(&self) -> bool {
+    pub(crate) fn is_done(&self) -> bool {
         if self.is_chunked_encoding() {
             return self.flags.received_last_chunk;
         }
@@ -219,30 +219,50 @@ impl<'a> InternalState<'a> {
         self.flags.received_last_chunk
     }
 
-    // TODO(port): narrow error set
-    pub fn decompress_bytes(
+    /// True when a socket close during `in_progress` completes the body rather
+    /// than failing it: chunked decoder already in the trailers state, or a
+    /// close-delimited response (no Content-Length, no Transfer-Encoding).
+    pub(crate) fn is_body_complete_on_close(&self) -> bool {
+        if self.is_chunked_encoding() {
+            // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
+            return matches!(self.chunked_decoder._state, 4 | 5);
+        }
+        self.content_length.is_none() && self.response_stage == HTTPStage::Body
+    }
+
+    /// Mark the body complete and drive `process_body_buffer` one last time
+    /// with `is_final_chunk = true` so a compressed stream that never reached
+    /// stream-end is rejected. Call from every site that flips
+    /// `received_last_chunk` on an end-of-body signal that arrives with no
+    /// accompanying body bytes (h1 FIN, proxy-tunnel close, h2/h3 END_STREAM).
+    /// No-op for complete, empty, or uncompressed bodies.
+    pub(crate) fn finalize_body_on_eof(&mut self) -> Result<(), Error> {
+        self.flags.received_last_chunk = true;
+        let buffer_snap = core::mem::take(&mut self.get_body_buffer().list);
+        self.process_body_buffer(buffer_snap, true).map(drop)
+    }
+
+    pub(crate) fn decompress_bytes(
         &mut self,
         buffer: &[u8],
-        body_out_str: &mut MutableString,
         is_final_chunk: bool,
     ) -> Result<(), Error> {
-        // PORT NOTE: Zig `defer this.compressed_body.reset()` runs on every exit. scopeguard would
-        // hold &mut self.compressed_body across the body and conflict with &mut self.decompressor,
-        // so each early-return below calls `self.compressed_body.reset()` explicitly.
-        let mut gzip_timer: Option<std::time::Instant> = None;
-
-        if extremely_verbose {
-            gzip_timer = Some(std::time::Instant::now());
+        // A response that declared a Content-Encoding but sent zero body bytes
+        // (e.g. an empty chunked gzip response) has nothing to decompress.
+        // Running the decompressor anyway makes it report a truncated stream
+        // (ZlibError); Node treats this as an empty body.
+        if buffer.is_empty() && self.total_body_received == 0 {
+            self.compressed_body.reset();
+            return Ok(());
         }
 
+        // `self.compressed_body.reset()` must run on every exit. scopeguard would
+        // hold &mut self.compressed_body across the body and conflict with &mut self.decompressor,
+        // so each early-return below calls it explicitly.
         let mut still_needs_to_decompress = true;
 
         if bun_core::feature_flags::is_libdeflate_enabled() {
             // Fast-path: use libdeflate
-            // TODO(b2-blocked): bun_http::HTTPThread::deflater — `http_thread()` accessor and the
-            // `LibdeflateState { decompressor, shared_buffer }` it returns live in the gated
-            // HTTPThread cluster. Re-gated until HTTPThread un-gates (which itself blocks on
-            // bun_uws::SocketHandler method bodies).
 
             'libdeflate: {
                 use bun_libdeflate_sys::libdeflate as bun_libdeflate;
@@ -267,7 +287,7 @@ impl<'a> InternalState<'a> {
                     && buffer.len() > 16
                     && buffer.len() < 1024 * 1024 * 1024
                 {
-                    let estimated_size: u32 = u32::from_ne_bytes(
+                    let estimated_size: u32 = u32::from_le_bytes(
                         buffer[buffer.len() - 4..][..4]
                             .try_into()
                             .expect("infallible: size matches"),
@@ -276,24 +296,35 @@ impl<'a> InternalState<'a> {
                     if (estimated_size as usize) > deflater.shared_buffer.len()
                         && estimated_size < 32 * 1024 * 1024
                     {
-                        body_out_str.list.reserve_exact(
-                            (estimated_size as usize).saturating_sub(body_out_str.list.len()),
+                        self.decoded_body.list.reserve_exact(
+                            (estimated_size as usize).saturating_sub(self.decoded_body.list.len()),
                         );
-                        body_out_str.list.clear();
+                        self.decoded_body.list.clear();
                         let result = deflater.decompressor_mut().decompress_to_vec(
                             buffer,
-                            &mut body_out_str.list,
+                            &mut self.decoded_body.list,
                             bun_libdeflate::Encoding::Gzip,
                         );
-                        if result.status == bun_libdeflate::Status::Success {
+                        // libdeflate decodes a single gzip member; unconsumed
+                        // input means this is a multi-member stream (RFC 1952
+                        // §2.2). Let the zlib path handle it.
+                        if result.status == bun_libdeflate::Status::Success
+                            && result.read == buffer.len()
+                        {
                             still_needs_to_decompress = false;
+                        } else {
+                            self.decoded_body.list.clear();
                         }
 
                         break 'libdeflate;
                     }
                 }
 
-                let result = deflater.decompressor_mut().decompress(
+                let decompressor = deflater
+                    .decompressor
+                    .as_deref_mut()
+                    .expect("set in HttpThread::deflater()");
+                let result = decompressor.decompress(
                     buffer,
                     &mut deflater.shared_buffer,
                     match self.encoding {
@@ -303,12 +334,13 @@ impl<'a> InternalState<'a> {
                     },
                 );
 
-                if result.status == bun_libdeflate::Status::Success {
-                    body_out_str
+                // libdeflate decodes a single member; unconsumed input means
+                // a multi-member gzip stream. Let the zlib path handle it.
+                if result.status == bun_libdeflate::Status::Success && result.read == buffer.len() {
+                    self.decoded_body
                         .list
-                        .reserve_exact(result.written.saturating_sub(body_out_str.list.len()));
-                    // PERF(port): was appendSliceAssumeCapacity
-                    body_out_str
+                        .reserve_exact(result.written.saturating_sub(self.decoded_body.list.len()));
+                    self.decoded_body
                         .list
                         .extend_from_slice(&deflater.shared_buffer[0..result.written]);
                     still_needs_to_decompress = false;
@@ -320,41 +352,28 @@ impl<'a> InternalState<'a> {
         // Slow path, or brotli: use the .decompressor
         if still_needs_to_decompress {
             log!("Decompressing {} bytes\n", buffer.len());
-            if body_out_str.list.capacity() == 0 {
+            if self.decoded_body.list.capacity() == 0 {
                 let min = ((buffer.len() as f64) * 1.5)
                     .ceil()
                     .min(1024.0 * 1024.0 * 2.0);
-                if let Err(err) = body_out_str.grow_by((min as usize).max(32)) {
+                if let Err(err) = self.decoded_body.grow_by((min as usize).max(32)) {
                     self.compressed_body.reset();
                     return Err(err.into());
                 }
             }
 
-            // TODO(b2-blocked): bun_zlib::ZlibReaderArrayList / bun_brotli::BrotliReaderArrayList /
-            // bun_zstd::ZstdReaderArrayList — `Decompressor::update_buffers` is re-gated until
-            // those reader types are reshaped to not carry an `'a` borrow of the output Vec.
-
-            if let Err(err) = self
-                .decompressor
-                .update_buffers(self.encoding, buffer, body_out_str)
-            {
-                self.compressed_body.reset();
-                return Err(err.into());
-            }
-            // While `update_buffers` is gated, `read_all` on Decompressor::None is a silent
-            // no-op (Decompressor.rs:148). Surface an error instead of pretending the body
-            // was decompressed and discarding the bytes — §Forbidden silent-no-op.
-            if matches!(self.decompressor, Decompressor::None) && self.encoding.is_compressed() {
-                self.compressed_body.reset();
-                return Err(bun_core::err!("DecompressionNotImplemented"));
-            }
-
-            if let Err(err) = self.decompressor.read_all(self.is_done()) {
-                if self.is_done() || err != bun_core::err!("ShortRead") {
-                    Output::pretty_errorln(&format_args!(
+            let is_done = self.is_done();
+            if let Err(err) = self.decompressor.decompress_chunk(
+                self.encoding,
+                buffer,
+                &mut self.decoded_body,
+                is_done,
+            ) {
+                if is_done || err != crate::Error::ShortRead {
+                    bun_core::pretty_errorln!(
                         "<r><red>Decompression error: {}<r>",
                         bstr::BStr::new(err.name()),
-                    ));
+                    );
                     Output::flush();
                     self.compressed_body.reset();
                     return Err(err);
@@ -362,82 +381,55 @@ impl<'a> InternalState<'a> {
             }
         }
 
-        if extremely_verbose {
-            // TODO(port): `gzip_elapsed` is not a field on InternalState in the Zig source either —
-            // this looks like dead code referencing a removed field. Preserved as a no-op read.
-            let _ = gzip_timer.map(|t| t.elapsed());
-        }
-
         self.compressed_body.reset();
         Ok(())
     }
 
-    // TODO(port): narrow error set
-    pub fn decompress(
-        &mut self,
-        buffer: &MutableString,
-        body_out_str: &mut MutableString,
-        is_final_chunk: bool,
-    ) -> Result<(), Error> {
-        // PORT NOTE: reshaped for borrowck — Zig passed MutableString by value; we borrow the inner slice.
-        self.decompress_bytes(buffer.list.as_slice(), body_out_str, is_final_chunk)
-    }
-
-    // TODO(port): narrow error set
-    // PORT NOTE: Zig takes `buffer: MutableString` BY VALUE (a shallow struct copy whose
-    // `.list.items` aliases the same allocation). Every caller passes `getBodyBuffer().*`,
-    // so `buffer` is always the current body buffer's bytes. To avoid aliased &mut/& under
+    // `buffer` is always the current body buffer's bytes. To avoid aliased &mut/& under
     // Stacked Borrows (decompress_bytes mutates `self.compressed_body`; the uncompressed
-    // path materialises `&mut *body_out_str`), callers `mem::take` the body buffer's `list`
+    // path materialises `&mut self.decoded_body`), callers `mem::take` the body buffer's `list`
     // and pass it here as an owned Vec — no `&` into `self` survives across `&mut self`.
-    pub fn process_body_buffer(
+    pub(crate) fn process_body_buffer(
         &mut self,
         mut buffer: Vec<u8>,
         is_final_chunk: bool,
     ) -> Result<bool, Error> {
         if self.flags.is_redirect_pending {
             // Caller moved the bytes out of the body buffer; put them back so the
-            // take is a no-op (Zig's by-value copy left the original untouched).
+            // take is a no-op.
             self.get_body_buffer().list = buffer;
             return Ok(false);
         }
 
-        // PORT NOTE: not `self.body_out_mut()` — `decompress_bytes` below takes
-        // `&mut self` alongside `body_out_str`; the accessor would tie the
-        // borrow to `self`. The free `body_out::as_mut` yields an unbounded
-        // `&mut` to the disjoint caller-owned allocation.
-        let body_out_str = crate::body_out::as_mut(self.body_out_str.unwrap());
-
         match self.encoding {
             Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => {
-                self.decompress_bytes(&buffer, body_out_str, is_final_chunk)?;
-                // Zig's `defer compressed_body.reset()` retained capacity; mirror that by
+                self.decompress_bytes(&buffer, is_final_chunk)?;
+                // Retain capacity by
                 // returning the (cleared) allocation to compressed_body instead of dropping it.
                 buffer.clear();
                 self.compressed_body.list = buffer;
             }
             _ => {
-                // Uncompressed: caller took `buffer` from `body_out_str.list`, leaving it
-                // empty — move the bytes back (Zig's `owns()` check skipped the append
-                // because the by-value copy aliased body_out_str). If body_out_str is
+                // Uncompressed: caller took `buffer` from `decoded_body.list`, leaving it
+                // empty — move the bytes back. If decoded_body is
                 // somehow non-empty, fall back to append.
-                if body_out_str.list.is_empty() {
-                    body_out_str.list = buffer;
-                } else if !body_out_str.owns(&buffer) {
-                    if let Err(err) = body_out_str.append(&buffer) {
+                if self.decoded_body.list.is_empty() {
+                    self.decoded_body.list = buffer;
+                } else if !self.decoded_body.owns(&buffer) {
+                    if let Err(err) = self.decoded_body.append(&buffer) {
                         let err: Error = err.into();
-                        Output::pretty_errorln(&format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>Failed to append to body buffer: {}<r>",
                             bstr::BStr::new(err.name()),
-                        ));
+                        );
                         Output::flush();
-                        return Err(err.into());
+                        return Err(err);
                     }
                 }
             }
         }
 
-        Ok(!self.body_out_mut().list.is_empty())
+        Ok(!self.decoded_body.list.is_empty())
     }
 }
 
@@ -462,14 +454,11 @@ pub enum HTTPStage {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
     Pending,
-    Connect,
     Done,
     Fail,
 }
 
-// Aliases used by the HTTPClient state machine: the Zig side has separate
-// `request_stage` / `response_stage` fields but they share one HTTPStage enum.
-pub type RequestStage = HTTPStage;
-pub type ResponseStage = HTTPStage;
-
-// ported from: src/http/InternalState.zig
+// Aliases used by the HTTPClient state machine: `request_stage` /
+// `response_stage` are separate fields but share one HTTPStage enum.
+pub(crate) type RequestStage = HTTPStage;
+pub(crate) type ResponseStage = HTTPStage;

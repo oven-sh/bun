@@ -1,12 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
+use super::throw;
 use super::{Expect, get_signature};
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_been_last_called_with(
+pub(crate) fn to_have_been_last_called_with(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -62,25 +60,23 @@ pub fn to_have_been_last_called_with(
 
     if this.flags.get().not() {
         let signature = get_signature("toHaveBeenLastCalledWith", "<green>...expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected last call not to be with: <green>{}<r>\nBut it was.",
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
+            "\n\nExpected last call not to be with: <green>{}<r>\nBut it was.",
+            expected_args_js_array.to_fmt(&mut formatter),
         );
     }
     let signature = get_signature("toHaveBeenLastCalledWith", "<green>...expected<r>", false);
 
     if total_calls == 0 {
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected: <green>{}<r>\nBut it was not called.",
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
+            "\n\nExpected: <green>{}<r>\nBut it was not called.",
+            expected_args_js_array.to_fmt(&mut formatter),
         );
     }
 
@@ -92,7 +88,5 @@ pub fn to_have_been_last_called_with(
         global_this: Some(global),
         not: false,
     };
-    this.throw(global, signature, format_args!("\n\n{}\n", diff_format))
+    throw!(this, global, signature, "\n\n{}\n", diff_format)
 }
-
-// ported from: src/test_runner/expect/toHaveBeenLastCalledWith.zig

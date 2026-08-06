@@ -22,6 +22,15 @@ bun_opaque::opaque_ffi! {
     pub struct CppWebSocket;
 }
 
+/// Matches `WebCore::WebSocket::HandshakeRawHeader` (WebSocket.h).
+#[repr(C)]
+pub struct RawHeader {
+    pub name_ptr: *const u8,
+    pub name_len: usize,
+    pub value_ptr: *const u8,
+    pub value_len: usize,
+}
+
 // FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).
 // Kept private to this module — the safe wrappers below are the only callers.
 //
@@ -45,6 +54,16 @@ unsafe extern "C" {
         deflate_params: *const websocket_deflate::Params,
     );
     safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
+    fn WebSocket__didReceiveHandshakeResponse(
+        websocket_context: &CppWebSocket,
+        status_code: u16,
+        status_message: *const u8,
+        status_message_len: usize,
+        headers: *const RawHeader,
+        headers_len: usize,
+        body: *const u8,
+        body_len: usize,
+    );
     fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: *const BunString);
     fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
@@ -63,13 +82,13 @@ unsafe extern "C" {
     fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: *mut BunString);
 }
 
-// PORT NOTE: receivers are `&self` (not `&mut self`) because `CppWebSocket` is
+// Receivers are `&self` (not `&mut self`) because `CppWebSocket` is
 // an opaque C++ handle with no Rust-visible state; mutation happens entirely on
 // the C++ side. Callers hold `NonNull<CppWebSocket>` and dispatch via shared
 // borrows (often while `&mut WebSocket<SSL>` is also live), so `&mut self`
 // would force needless `unsafe { &mut *ptr }` at every site.
 impl CppWebSocket {
-    pub fn did_abrupt_close(&self, reason: ErrorCode) {
+    pub(crate) fn did_abrupt_close(&self, reason: ErrorCode) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
@@ -78,7 +97,35 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub fn did_close(&self, code: u16, reason: &mut BunString) {
+    /// Dispatch the native `'handshake'` event; C++ copies all slices synchronously.
+    pub(crate) fn did_receive_handshake_response(
+        &self,
+        status_code: u16,
+        status_message: &[u8],
+        headers: &[RawHeader],
+        body: &[u8],
+    ) {
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = VirtualMachine::get().event_loop_mut();
+        event_loop.enter();
+        // SAFETY: self is a valid C++ WebCore::WebSocket; the slices outlive the call.
+        unsafe {
+            WebSocket__didReceiveHandshakeResponse(
+                self,
+                status_code,
+                status_message.as_ptr(),
+                status_message.len(),
+                headers.as_ptr(),
+                headers.len(),
+                body.as_ptr(),
+                body.len(),
+            )
+        };
+        event_loop.exit();
+    }
+
+    pub(crate) fn did_close(&self, code: u16, reason: &mut BunString) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
@@ -88,7 +135,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub fn did_receive_text(&self, clone: bool, text: &ZigString) {
+    pub(crate) fn did_receive_text(&self, clone: bool, text: &ZigString) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
@@ -98,7 +145,9 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub fn did_receive_bytes(&self, bytes: *const u8, byte_len: usize, opcode: u8) {
+    // Forwards `bytes` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn did_receive_bytes(&self, bytes: *const u8, byte_len: usize, opcode: u8) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
@@ -108,7 +157,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub fn reject_unauthorized(&self) -> bool {
+    pub(crate) fn reject_unauthorized(&self) -> bool {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
@@ -118,7 +167,9 @@ impl CppWebSocket {
         result
     }
 
-    pub fn did_connect(
+    // Forwards `buffered_data` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn did_connect(
         &self,
         socket: &mut Socket,
         buffered_data: *mut u8,
@@ -137,14 +188,16 @@ impl CppWebSocket {
                 socket,
                 buffered_data,
                 buffered_len,
-                deflate_params.map_or(core::ptr::null(), |p| std::ptr::from_ref(p)),
-                secure.map_or(core::ptr::null_mut(), |p| std::ptr::from_mut(p)),
+                deflate_params.map_or(core::ptr::null(), std::ptr::from_ref),
+                secure.map_or(core::ptr::null_mut(), std::ptr::from_mut),
             )
         };
         event_loop.exit();
     }
 
-    pub fn did_connect_with_tunnel(
+    // Forwards `tunnel` and `buffered_data` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn did_connect_with_tunnel(
         &self,
         tunnel: *mut c_void,
         buffered_data: *mut u8,
@@ -162,7 +215,7 @@ impl CppWebSocket {
                 tunnel,
                 buffered_data,
                 buffered_len,
-                deflate_params.map_or(core::ptr::null(), |p| std::ptr::from_ref(p)),
+                deflate_params.map_or(core::ptr::null(), std::ptr::from_ref),
             )
         };
         event_loop.exit();
@@ -170,18 +223,17 @@ impl CppWebSocket {
 }
 
 impl CppWebSocket {
-    // PORT NOTE: `ref` is a Rust keyword; using raw identifier to match Zig fn name.
-    pub fn r#ref(&self) {
+    fn r#ref(&self) {
         bun_jsc::mark_binding!();
         WebSocket__incrementPendingActivity(self);
     }
 
-    pub fn unref(&self) {
+    fn unref(&self) {
         bun_jsc::mark_binding!();
         WebSocket__decrementPendingActivity(self);
     }
 
-    pub fn set_protocol(&self, protocol: &mut BunString) {
+    pub(crate) fn set_protocol(&self, protocol: &mut BunString) {
         bun_jsc::mark_binding!();
         // SAFETY: self is a valid C++ WebCore::WebSocket; protocol outlives the call.
         unsafe { WebSocket__setProtocol(self, protocol) };
@@ -191,9 +243,8 @@ impl CppWebSocket {
 /// RAII owner of one pending-activity ref on a C++ `WebCore::WebSocket`.
 ///
 /// Construction calls [`CppWebSocket::r#ref`]; `Drop` calls
-/// [`CppWebSocket::unref`]. Replaces the Zig `ws.ref(); defer ws.unref();`
-/// pattern when the ref must outlive the constructing scope (e.g. stored on a
-/// queued task).
+/// [`CppWebSocket::unref`]. For when the ref must outlive the constructing
+/// scope (e.g. stored on a queued task).
 pub struct CppWebSocketRef(core::ptr::NonNull<CppWebSocket>);
 
 impl CppWebSocketRef {
@@ -202,7 +253,7 @@ impl CppWebSocketRef {
     /// # Safety
     /// `ws` must point to a live C++ `WebCore::WebSocket` that outlives the
     /// returned guard.
-    pub unsafe fn new(ws: core::ptr::NonNull<CppWebSocket>) -> Self {
+    pub(crate) unsafe fn new(ws: core::ptr::NonNull<CppWebSocket>) -> Self {
         CppWebSocket::opaque_ref(ws.as_ptr()).r#ref();
         Self(ws)
     }
@@ -213,5 +264,3 @@ impl Drop for CppWebSocketRef {
         CppWebSocket::opaque_ref(self.0.as_ptr()).unref();
     }
 }
-
-// ported from: src/http_jsc/websocket_client/CppWebSocket.zig

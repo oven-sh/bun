@@ -12,7 +12,7 @@
 
 // To add a new native module
 //   1. Add a new line to `BUN_FOREACH_NATIVE_MODULE`
-//   2. Add a case to `module_loader.zig` that resolves the import.
+//   2. Add a case to `HardcodedModule` (src/resolve_builtins/HardcodedModule.rs) that resolves the import.
 //   3. Add a new file in this folder named after the module, camelcase and suffixed with Module,
 //      like "NodeBufferModule.h" or "BunJSCModule.h". It should call DEFINE_NATIVE_MODULE(name).
 //
@@ -30,6 +30,7 @@
     macro("bun:app"_s, BunApp) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \
+    macro("node:sqlite"_s, NodeSqlite) \
     macro("node:string_decoder"_s, NodeStringDecoder) \
     macro("node:util/types"_s, NodeUtilTypes)  \
     macro("utf-8-validate"_s, UTF8Validate) \

@@ -1,6 +1,8 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { symlinkSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
 const cwd_root = tempDirWithFiles("testworkspace", {
@@ -248,7 +250,7 @@ describe("bun", () => {
   });
 
   test("run pre and post scripts, in order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "write.js": "await Bun.write('out.txt', 'success')",
         "readwrite.js": "console.log(await Bun.file('out.txt').text()); await Bun.write('post.txt', 'great success')",
@@ -273,7 +275,7 @@ describe("bun", () => {
   });
 
   test("respect dependency order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "index.js": [
           "await new Promise((resolve) => setTimeout(resolve, 100))",
@@ -323,7 +325,7 @@ describe("bun", () => {
         },
       }),
     };
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       main: {
         "index.js": `console.log(await Bun.file("../${largeNamePkgName}/out.txt").text())`,
         "package.json": JSON.stringify({
@@ -347,7 +349,7 @@ describe("bun", () => {
   });
 
   test("ignore dependency order on cycle, preserving pre and post script order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "write.js": "await Bun.write('out.txt', 'success')",
         "readwrite.js":
@@ -388,7 +390,7 @@ describe("bun", () => {
   });
 
   test("detect cycle of length > 2", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "package.json": JSON.stringify({
           name: "dep0",
@@ -436,10 +438,10 @@ describe("bun", () => {
     runInCwdFailure(cwd_root, "*", "notpresent", /No packages matched/);
   });
   test("should warn about malformed package.json", () => {
-    runInCwdFailure(cwd_root, "*", "x", /Failed to read package.json/);
+    runInCwdFailure(cwd_root, "*", "x", /Failed to read .*malformed2.*package\.json/);
   });
   test("nonzero exit code on failure", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "package.json": JSON.stringify({
           name: "dep0",
@@ -561,7 +563,7 @@ describe("bun", () => {
   });
 
   test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       packages: {
         dep0: {
           "index.js": Array(20).fill("console.log('log_line');").join("\n"),
@@ -590,4 +592,183 @@ describe("bun", () => {
     expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(exitCode).toBe(0);
   });
+
+  test("self-referential directory symlink in a workspace does not loop", () => {
+    using dir = tempDir("filter-symlink-loop", {
+      packages: {
+        pkga: {
+          "package.json": JSON.stringify({ name: "pkga", scripts: { present: "echo scripta" } }),
+        },
+        cyc: {
+          "package.json": JSON.stringify({ name: "cyc", scripts: { present: "echo scriptcyc" } }),
+        },
+      },
+      // `packages/**` makes workspace discovery recurse into every package.
+      "package.json": JSON.stringify({
+        name: "ws",
+        scripts: { present: "echo rootscript" },
+        workspaces: ["packages/**"],
+      }),
+    });
+    // "junction" so the link is creatable on unprivileged Windows; the type is
+    // ignored on POSIX.
+    symlinkSync(join(dir, "packages", "cyc"), join(dir, "packages", "cyc", "loop"), "junction");
+
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "*", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdoutval = stdout.toString();
+    const count = (needle: string) => stdoutval.split(needle).length - 1;
+    // `pkga` is matched once. `cyc` is matched at `packages/cyc` and once more
+    // through its own `loop` alias, where the cycle is detected and descent
+    // stops instead of recursing until the path length limit.
+    expect({ scripta: count("scripta"), scriptcyc: count("scriptcyc"), exitCode }).toEqual({
+      scripta: 1,
+      scriptcyc: 2,
+      exitCode: 0,
+    });
+  });
+
+  test("warning names which package.json failed to parse", async () => {
+    await using dir = tempDir("filter-bad-pkgjson", {
+      packages: {
+        good: {
+          "package.json": JSON.stringify({ name: "good", scripts: { go: "echo ok" } }),
+        },
+        broken: {
+          "package.json": "this is { not valid json",
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "go"],
+      cwd: dir,
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The good package still runs; the broken one is skipped with a warning
+    // that names its path.
+    expect(stdout).toContain("ok");
+    const sep = process.platform === "win32" ? "\\" : "/";
+    expect(stderr).toContain(`broken${sep}package.json`);
+    expect(stderr).toContain("skipping this workspace package");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script
+// as `bun exec "<script>"` with CREATE_NO_WINDOW, so the user's Ctrl+C never
+// reaches the scripts and cleanup is entirely on the parent. libuv's global
+// spawn Job is KILL_ON_CLOSE | SILENT_BREAKAWAY_OK, so membership only
+// propagates one hop: as soon as the tree contains a non-libuv spawner
+// (cmd.exe, a `.cmd` bin shim, node.exe), everything below it escapes and keeps
+// its port bound after the parent exits.
+//
+// Tree under test:
+//   test → bun parent → `bun exec` → cmd.exe → leaf bun (long-running).
+// The leaf writes its pid to a file; the test kills the parent and polls the
+// leaf. Without a recursive kill-on-close Job on the parent, the leaf survives.
+describe.skipIf(!isWindows).each([
+  { via: "--filter", argv: ["--filter", "*", "dev"] },
+  { via: "run --parallel", argv: ["run", "--parallel", "dev"] },
+])("windows: $via reaps the whole descendant tree when the parent exits (#20319)", ({ argv }) => {
+  test.concurrent(
+    "leaf dies",
+    async () => {
+      function isAlive(pid: number): boolean {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (!isAlive(pid)) return true;
+          await sleep(25);
+        }
+        return !isAlive(pid);
+      }
+
+      using dir = tempDir("filter-win-cleanup", {
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+        // .bat avoids cmd /c's quote-stripping around a quoted exe path + arg.
+        "packages/app/run.bat": `@"${bunExe()}" "%~dp0server.js"\r\n`,
+        "packages/app/server.js": `
+          require("fs").writeFileSync(process.env.PIDFILE, String(process.pid));
+          setInterval(() => {}, 1000);
+        `,
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          scripts: { dev: "cmd /d /c run.bat" },
+        }),
+      });
+
+      const pidfile = join(String(dir), "leaf.pid");
+      // Unset NO_ORPHANS so the test exercises the unconditional Job rather
+      // than the opt-in env-var path CI may set globally.
+      const env: Record<string, string | undefined> = {
+        ...bunEnv,
+        PIDFILE: pidfile,
+        BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+        NO_COLOR: "1",
+      };
+
+      const parent = Bun.spawn({
+        cmd: [bunExe(), ...argv],
+        env,
+        cwd: join(String(dir), "packages", "app"),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+
+      let leafPid = 0;
+      try {
+        const deadline = Date.now() + 15000;
+        while (leafPid === 0 && Date.now() < deadline) {
+          try {
+            const t = await Bun.file(pidfile).text();
+            if (t.length > 0) leafPid = Number(t.trim());
+          } catch {}
+          if (leafPid === 0) await sleep(25);
+        }
+        if (leafPid === 0) {
+          parent.kill("SIGKILL");
+          await parent.exited;
+          const stderr = await parent.stderr.text();
+          throw new Error(`leaf never wrote pidfile; stderr:\n${stderr}`);
+        }
+        expect(isAlive(leafPid)).toBe(true);
+
+        // TerminateProcess on the parent — same effect as the second Ctrl+C
+        // (default handler) or the first Ctrl+C's abort() path once the direct
+        // children have exited and the parent calls Global::exit().
+        parent.kill("SIGKILL");
+        await parent.exited;
+
+        const died = await waitUntilDead(leafPid, 10000);
+        expect(died).toBe(true);
+      } finally {
+        parent.kill("SIGKILL");
+        await parent.exited;
+        if (leafPid > 0 && isAlive(leafPid)) {
+          try {
+            process.kill(leafPid, "SIGKILL");
+          } catch {}
+          await waitUntilDead(leafPid, 2000);
+        }
+      }
+    },
+    30000,
+  );
 });

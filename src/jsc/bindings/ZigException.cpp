@@ -1,7 +1,7 @@
 /**
  * ZigException handling and error processing utilities.
  *
- * This file contains functions for converting JavaScript exceptions to Zig exceptions,
+ * This file contains functions for converting JavaScript exceptions to ZigException,
  * processing stack traces, and collecting source lines.
  */
 #include "root.h"
@@ -447,10 +447,8 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
         for (uint8_t i = 0; i < trace.frames_len; i++) {
             ZigStackFrame& frame = trace.frames_ptr[i];
-            // A call with flags set to OnlySourceLines always follows a call with flags set to OnlyPosition,
-            // so jsc_stack_frame_index is always a valid value here.
-            ASSERT(frame.jsc_stack_frame_index >= 0);
-            ASSERT(static_cast<size_t>(frame.jsc_stack_frame_index) < frames.size());
+            if (frame.jsc_stack_frame_index < 0 || static_cast<size_t>(frame.jsc_stack_frame_index) >= frames.size())
+                continue;
             populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
         }
     }
@@ -804,10 +802,11 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
         switch (type) {
         case JSC::SymbolType: {
             auto* symbol = asSymbol(cell);
-            if (symbol->description().isEmpty()) {
+            auto& uid = symbol->uid();
+            if (uid.isNullSymbol() || uid.isEmpty()) {
                 except.message = BunStringEmpty;
             } else {
-                except.message = Bun::toStringRef(symbol->description());
+                except.message = Bun::toStringRef(static_cast<WTF::StringImpl*>(&uid));
             }
             return;
         }

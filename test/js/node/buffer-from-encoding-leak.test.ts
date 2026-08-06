@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isASAN, rss } from "harness";
 
 // JSBuffer__bufferFromPointerAndLengthAndDeinit used to skip the deallocator entirely
 // when the resulting length was 0. Buffer.from(<string with no valid hex>, "hex") would
@@ -21,15 +22,17 @@ describe("Buffer.from(string, encoding) does not leak when decoded length is 0",
     // warm up so any one-time allocations (JIT tiers, caches) don't count
     for (let i = 0; i < 1000; i++) Buffer.from(str, "hex");
     Bun.gc(true);
-    const before = process.memoryUsage.rss();
+    const before = rss();
 
     for (let i = 0; i < iterations; i++) Buffer.from(str, "hex");
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
 
     const growthMB = (after - before) / 1024 / 1024;
     // Without the fix this grows by ~200 MB (50k * 4096 bytes). With the fix,
-    // growth is noise.
-    expect(growthMB).toBeLessThan(40);
+    // growth is noise. Under ASAN the system allocator's quarantine (default
+    // 256 MB) plus glibc never returning freed pages means RSS climbs even
+    // when nothing leaks; LSan still catches real leaks separately.
+    expect(growthMB).toBeLessThan(isASAN ? 400 : 40);
   });
 });

@@ -230,11 +230,16 @@ struct SecretsJobOptions {
             RELEASE_AND_RETURN(scope, nullptr);
         }
 
+        if (service.contains(static_cast<char16_t>(0)) || name.contains(static_cast<char16_t>(0)) || password.contains(static_cast<char16_t>(0))) {
+            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, "Expected service, name, and value to be strings without null bytes"_s);
+            RELEASE_AND_RETURN(scope, nullptr);
+        }
+
         RELEASE_AND_RETURN(scope, new SecretsJobOptions(operation, service.utf8(), name.utf8(), password.utf8(), allowUnrestrictedAccess));
     }
 };
 
-// C interface implementation for Zig binding
+// C interface implementation for the native binding
 extern "C" {
 
 // Runs on the threadpool - does the actual platform API work
@@ -281,7 +286,7 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
         }
         JSValue error = opts->error.toJS(vm, global);
         RETURN_IF_EXCEPTION(scope, );
-        RELEASE_AND_RETURN(scope, promise->reject(vm, global, error));
+        RELEASE_AND_RETURN(scope, promise->reject(vm, error));
     } else {
         // Success cases
         JSValue result;
@@ -315,7 +320,7 @@ void Bun__SecretsJobOptions__deinit(SecretsJobOptions* opts)
     delete opts;
 }
 
-// Zig binding exports
+// Native binding exports
 void Bun__Secrets__scheduleJob(JSGlobalObject* global, SecretsJobOptions* opts, EncodedJSValue promise);
 
 } // extern "C"

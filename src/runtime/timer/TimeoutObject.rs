@@ -13,7 +13,7 @@ use super::Kind;
 pub mod js {
     // One `${snake}_get_cached` / `${snake}_set_cached` pair per cached prop,
     // each wrapping `TimeoutPrototype__${prop}{Get,Set}CachedValue` and mapping
-    // `.zero` → `None` on the get side (matches Zig `${name}GetCached`).
+    // `.zero` → `None` on the get side.
     bun_jsc::codegen_cached_accessors!(
         "Timeout";
         arguments,
@@ -31,11 +31,11 @@ pub mod js {
 super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout");
 
 impl TimeoutObject {
-    pub fn init(
+    pub(crate) fn init(
         global: &JSGlobalObject,
         id: i32,
         kind: Kind,
-        interval: u32, // Zig: u31
+        interval: u32,
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
@@ -43,7 +43,7 @@ impl TimeoutObject {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_refresh(
+    pub(crate) fn do_refresh(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -62,11 +62,15 @@ impl TimeoutObject {
     // Signature does not match the standard `host_fn(getter/setter)` shape; the
     // `#[JsClass]` derive emits the C-ABI shims directly.
 
-    pub fn get_on_timeout(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_on_timeout(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
         js::callback_get_cached(this_value).unwrap()
     }
 
-    pub fn set_on_timeout(
+    pub(crate) fn set_on_timeout(
         _this: &Self,
         this_value: JSValue,
         global: &JSGlobalObject,
@@ -75,7 +79,7 @@ impl TimeoutObject {
         js::callback_set_cached(this_value, global, value);
     }
 
-    pub fn get_idle_timeout(
+    pub(crate) fn get_idle_timeout(
         _this: &Self,
         this_value: JSValue,
         _global: &JSGlobalObject,
@@ -83,7 +87,7 @@ impl TimeoutObject {
         js::idle_timeout_get_cached(this_value).unwrap()
     }
 
-    pub fn set_idle_timeout(
+    pub(crate) fn set_idle_timeout(
         _this: &Self,
         this_value: JSValue,
         global: &JSGlobalObject,
@@ -92,26 +96,40 @@ impl TimeoutObject {
         js::idle_timeout_set_cached(this_value, global, value);
     }
 
-    pub fn get_repeat(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_repeat(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
         js::repeat_get_cached(this_value).unwrap()
     }
 
-    pub fn set_repeat(_this: &Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-        js::repeat_set_cached(this_value, global, value);
-    }
-
-    pub fn get_idle_start(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        js::idle_start_get_cached(this_value).unwrap()
-    }
-
-    pub fn set_idle_start(
+    pub(crate) fn set_repeat(
         _this: &Self,
         this_value: JSValue,
         global: &JSGlobalObject,
         value: JSValue,
     ) {
+        js::repeat_set_cached(this_value, global, value);
+    }
+
+    pub(crate) fn get_idle_start(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
+        js::idle_start_get_cached(this_value).unwrap()
+    }
+
+    pub(crate) fn set_idle_start(
+        this: &Self,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
+        if let Some(ms) = value.get_number() {
+            this.internals.set_idle_start(ms);
+        }
         js::idle_start_set_cached(this_value, global, value);
     }
 }
-
-// ported from: src/runtime/timer/TimeoutObject.zig

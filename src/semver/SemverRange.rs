@@ -2,7 +2,6 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use crate::Version;
-// TODO(port): verify exact module path for Query::Token::Wildcard in bun_semver
 use crate::query::token::Wildcard;
 
 #[repr(u8)]
@@ -23,48 +22,8 @@ pub struct Range {
     pub right: Comparator,
 }
 
-impl fmt::Display for Range {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.left.op == Op::Unset && self.right.op == Op::Unset {
-            return Ok(());
-        }
-
-        if self.right.op == Op::Unset {
-            // TODO(port): Zig used `{}` on Comparator directly but Comparator has no
-            // top-level `format` in the source — likely dead/broken upstream. Mirroring shape.
-            write!(f, "{}", ComparatorDisplay(&self.left))
-        } else {
-            write!(
-                f,
-                "{} {}",
-                ComparatorDisplay(&self.left),
-                ComparatorDisplay(&self.right),
-            )
-        }
-    }
-}
-
-// PORT NOTE: helper for Range's Display impl above (Zig relied on default struct formatting).
-struct ComparatorDisplay<'a>(#[allow(dead_code)] &'a Comparator);
-impl fmt::Display for ComparatorDisplay<'_> {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): no buffer available here; upstream Zig path appears unused.
-        Ok(())
-    }
-}
-
 impl Range {
-    /// *
-    /// >= 0.0.0
-    /// >= 0
-    /// >= 0.0
-    /// >= x
-    /// >= 0
-    pub fn any_range_satisfies(&self) -> bool {
-        self.left.op == Op::Gte && self.left.version.eql(Version::default())
-    }
-
-    pub fn init_wildcard(version: Version, wildcard: Wildcard) -> Range {
+    pub(crate) fn init_wildcard(version: Version, wildcard: Wildcard) -> Range {
         match wildcard {
             Wildcard::None => Range {
                 left: Comparator {
@@ -85,81 +44,56 @@ impl Range {
                 ..Default::default()
             },
 
-            Wildcard::Minor => {
-                let lhs = Version {
-                    major: version.major.saturating_add(1),
-                    // .raw = version.raw
-                    ..Default::default()
-                };
-                let rhs = Version {
-                    major: version.major,
-                    // .raw = version.raw
-                    ..Default::default()
-                };
-                Range {
-                    left: Comparator {
-                        op: Op::Lt,
-                        version: lhs,
+            Wildcard::Minor => Range {
+                left: Comparator::lt_next_major(version.major),
+                right: Comparator {
+                    op: Op::Gte,
+                    version: Version {
+                        major: version.major,
+                        ..Default::default()
                     },
-                    right: Comparator {
-                        op: Op::Gte,
-                        version: rhs,
-                    },
-                }
-            }
+                },
+            },
 
-            Wildcard::Patch => {
-                let lhs = Version {
-                    major: version.major,
-                    minor: version.minor.saturating_add(1),
-                    // .raw = version.raw;
-                    ..Default::default()
-                };
-                let rhs = Version {
-                    major: version.major,
-                    minor: version.minor,
-                    // .raw = version.raw;
-                    ..Default::default()
-                };
-                Range {
-                    left: Comparator {
-                        op: Op::Lt,
-                        version: lhs,
+            Wildcard::Patch => Range {
+                left: Comparator::lt_next_minor(version.major, version.minor),
+                right: Comparator {
+                    op: Op::Gte,
+                    version: Version {
+                        major: version.major,
+                        minor: version.minor,
+                        ..Default::default()
                     },
-                    right: Comparator {
-                        op: Op::Gte,
-                        version: rhs,
-                    },
-                }
-            }
+                },
+            },
         }
     }
 
     #[inline]
-    pub fn has_left(self) -> bool {
+    pub(crate) fn has_left(self) -> bool {
         self.left.op != Op::Unset
     }
 
     #[inline]
-    pub fn has_right(self) -> bool {
+    pub(crate) fn has_right(self) -> bool {
         self.right.op != Op::Unset
     }
 
     /// Is the Range equal to another Range
     /// This does not evaluate the range.
     #[inline]
-    pub fn eql(self, rhs: Range) -> bool {
+    pub(crate) fn eql(self, rhs: &Range) -> bool {
         self.left.eql(rhs.left) && self.right.eql(rhs.right)
     }
 
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> Formatter<'a> {
+    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> Formatter<'a> {
         Formatter {
             buffer: buf,
             range: self,
         }
     }
 
-    pub fn satisfies(self, version: Version, range_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies(self, version: Version, range_buf: &[u8], version_buf: &[u8]) -> bool {
         let has_left = self.has_left();
         let has_right = self.has_right();
 
@@ -178,16 +112,14 @@ impl Range {
         true
     }
 
-    pub fn satisfies_pre(
+    pub(crate) fn satisfies_pre(
         self,
         version: Version,
         range_buf: &[u8],
         version_buf: &[u8],
         pre_matched: &mut bool,
     ) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
+        debug_assert!(version.tag.has_pre());
         let has_left = self.has_left();
         let has_right = self.has_right();
 
@@ -221,8 +153,8 @@ impl Range {
 }
 
 pub struct Formatter<'a> {
-    pub buffer: &'a [u8],
-    pub range: &'a Range,
+    pub(crate) buffer: &'a [u8],
+    pub(crate) range: &'a Range,
 }
 
 impl fmt::Display for Formatter<'_> {
@@ -251,19 +183,94 @@ pub struct Comparator {
 }
 
 impl Comparator {
+    /// `< {major+1}.0.0`, or `<= u64::MAX.u64::MAX.u64::MAX` when `major+1`
+    /// would overflow so the desugared range stays non-empty at the ceiling.
+    pub(crate) fn lt_next_major(major: u64) -> Comparator {
+        match major.checked_add(1) {
+            Some(m) => Comparator {
+                op: Op::Lt,
+                version: Version {
+                    major: m,
+                    ..Default::default()
+                },
+            },
+            None => Comparator {
+                op: Op::Lte,
+                version: Version {
+                    major: u64::MAX,
+                    minor: u64::MAX,
+                    patch: u64::MAX,
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
+    /// `< {major}.{minor+1}.0`, or `<= {major}.u64::MAX.u64::MAX` on overflow.
+    pub(crate) fn lt_next_minor(major: u64, minor: u64) -> Comparator {
+        match minor.checked_add(1) {
+            Some(m) => Comparator {
+                op: Op::Lt,
+                version: Version {
+                    major,
+                    minor: m,
+                    ..Default::default()
+                },
+            },
+            None => Comparator {
+                op: Op::Lte,
+                version: Version {
+                    major,
+                    minor: u64::MAX,
+                    patch: u64::MAX,
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
+    /// `< {major}.{minor}.{patch+1}`, or `<= {major}.{minor}.u64::MAX` on overflow.
+    pub(crate) fn lt_next_patch(major: u64, minor: u64, patch: u64) -> Comparator {
+        match patch.checked_add(1) {
+            Some(p) => Comparator {
+                op: Op::Lt,
+                version: Version {
+                    major,
+                    minor,
+                    patch: p,
+                    ..Default::default()
+                },
+            },
+            None => Comparator {
+                op: Op::Lte,
+                version: Version {
+                    major,
+                    minor,
+                    patch: u64::MAX,
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
     #[inline]
-    pub fn eql(self, rhs: Comparator) -> bool {
+    pub(crate) fn eql(self, rhs: Comparator) -> bool {
         self.op == rhs.op && self.version.eql(rhs.version)
     }
 
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> ComparatorFormatter<'a> {
+    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> ComparatorFormatter<'a> {
         ComparatorFormatter {
             buffer: buf,
             comparator: self,
         }
     }
 
-    pub fn satisfies(self, version: Version, comparator_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies(
+        self,
+        version: Version,
+        comparator_buf: &[u8],
+        version_buf: &[u8],
+    ) -> bool {
         let order = version.order_without_build(self.version, version_buf, comparator_buf);
 
         match order {
@@ -275,8 +282,8 @@ impl Comparator {
 }
 
 pub struct ComparatorFormatter<'a> {
-    pub buffer: &'a [u8],
-    pub comparator: &'a Comparator,
+    pub(crate) buffer: &'a [u8],
+    pub(crate) comparator: &'a Comparator,
 }
 
 impl fmt::Display for ComparatorFormatter<'_> {
@@ -297,5 +304,3 @@ impl fmt::Display for ComparatorFormatter<'_> {
         write!(f, "{}", self.comparator.version.fmt(self.buffer))
     }
 }
-
-// ported from: src/semver/SemverRange.zig

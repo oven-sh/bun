@@ -7,38 +7,37 @@ use crate::parser::{BlockHeader, Parser};
 use crate::types::{self, VerbatimLine};
 use crate::unicode;
 
-pub struct RefDef {
-    pub label: Box<[u8]>, // normalized label
-    pub dest: Box<[u8]>,  // raw destination (slice of source)
-    pub title: Box<[u8]>, // raw title (slice of source)
+/// Maximum raw length of a link label (CommonMark: "a link label can have at
+/// most 999 characters inside the square brackets").
+pub(crate) const MAX_LINK_LABEL_LEN: usize = 999;
+
+pub(crate) struct RefDef {
+    pub(crate) dest: Box<[u8]>,  // raw destination (slice of source)
+    pub(crate) title: Box<[u8]>, // raw title (slice of source)
 }
 
-// PORT NOTE: Zig anonymous return structs `?struct { ... }` are mapped to small
-// named structs borrowing from the `text` parameter (BORROW_PARAM class).
-pub struct ParsedRefDef<'a> {
-    pub end_pos: usize,
-    pub label: &'a [u8],
-    pub dest: &'a [u8],
-    pub title: &'a [u8],
+pub(crate) struct ParsedRefDef<'a> {
+    pub(crate) end_pos: usize,
+    pub(crate) label: &'a [u8],
+    pub(crate) dest: &'a [u8],
+    pub(crate) title: &'a [u8],
 }
 
-pub struct ParsedDest<'a> {
-    pub dest: &'a [u8],
-    pub end_pos: usize,
+pub(crate) struct ParsedDest<'a> {
+    pub(crate) dest: &'a [u8],
+    pub(crate) end_pos: usize,
 }
 
-pub struct ParsedTitle<'a> {
-    pub title: &'a [u8],
-    pub end_pos: usize,
+pub(crate) struct ParsedTitle<'a> {
+    pub(crate) title: &'a [u8],
+    pub(crate) end_pos: usize,
 }
 
 impl Parser<'_> {
     /// Normalize a link label for comparison: collapse whitespace runs to single space,
     /// strip leading/trailing whitespace, case-fold.
-    pub fn normalize_label(&mut self, raw: &[u8]) -> Vec<u8> {
+    pub(crate) fn normalize_label(&mut self, raw: &[u8]) -> Vec<u8> {
         // Collapse whitespace and apply Unicode case folding (per CommonMark §6.7)
-        // PORT NOTE: Zig returned `raw` on alloc failure; Rust Vec aborts on OOM, so
-        // the `catch return raw` paths are dropped.
         let mut result: Vec<u8> = Vec::new();
         let mut in_ws = true; // skip leading whitespace
         let mut i: usize = 0;
@@ -84,27 +83,27 @@ impl Parser<'_> {
     }
 
     /// Look up a reference definition by label (case-insensitive, whitespace-normalized).
-    // PORT NOTE: returns `Option<&RefDef>` instead of by-value copy; Zig RefDef was
-    // three borrowed slices (Copy), Rust RefDef owns its buffers.
-    pub fn lookup_ref_def(&mut self, raw_label: &[u8]) -> Option<&RefDef> {
-        if raw_label.is_empty() {
+    // Returns `Option<&RefDef>` instead of a by-value copy: RefDef owns its buffers.
+    pub(crate) fn lookup_ref_def(&mut self, raw_label: &[u8]) -> Option<&RefDef> {
+        if raw_label.is_empty() || self.ref_defs.is_empty() {
+            return None;
+        }
+        // Labels longer than the spec cap can never match a stored definition
+        // (parse_ref_def enforces the same limit), so skip normalizing them.
+        if raw_label.len() > MAX_LINK_LABEL_LEN {
             return None;
         }
         let normalized = self.normalize_label(raw_label);
         if normalized.is_empty() {
             return None; // whitespace-only labels are invalid
         }
-        for rd in self.ref_defs.iter() {
-            if rd.label[..] == normalized[..] {
-                return Some(rd);
-            }
-        }
-        None
+        let idx = self.ref_def_labels.map.get_index(&normalized)?;
+        self.ref_defs.get(idx)
     }
 
     /// Try to parse a link reference definition from merged paragraph text at position `pos`.
     /// Returns the end position and the parsed ref def, or None if not a valid ref def.
-    pub fn parse_ref_def<'a>(&self, text: &'a [u8], pos: usize) -> Option<ParsedRefDef<'a>> {
+    pub(crate) fn parse_ref_def<'a>(&self, text: &'a [u8], pos: usize) -> Option<ParsedRefDef<'a>> {
         let mut p = pos;
 
         // Must start with [
@@ -127,7 +126,7 @@ impl Parser<'_> {
                 p += 1;
                 label_len += 1;
             }
-            if label_len > 999 {
+            if label_len > MAX_LINK_LABEL_LEN {
                 return None; // label too long
             }
         }
@@ -173,11 +172,9 @@ impl Parser<'_> {
 
         // Parse optional title
         let mut title: &[u8] = b"";
-        #[allow(unused_assignments)]
-        let mut had_whitespace_before_title = false;
         if p < text.len() && (text[p] == b'"' || text[p] == b'\'' || text[p] == b'(') {
             // Check that there was actual whitespace between dest and title
-            had_whitespace_before_title = p > pos_after_dest;
+            let had_whitespace_before_title = p > pos_after_dest;
             if had_whitespace_before_title {
                 if let Some(title_result) = self.parse_ref_def_title(text, p) {
                     // Title must be followed by optional whitespace then end of line or end of text
@@ -234,7 +231,7 @@ impl Parser<'_> {
         })
     }
 
-    pub fn skip_ref_def_whitespace(&self, text: &[u8], start: usize) -> usize {
+    pub(crate) fn skip_ref_def_whitespace(&self, text: &[u8], start: usize) -> usize {
         let mut p = start;
         while p < text.len() && (text[p] == b' ' || text[p] == b'\t') {
             p += 1;
@@ -248,7 +245,11 @@ impl Parser<'_> {
         p
     }
 
-    pub fn parse_ref_def_dest<'a>(&self, text: &'a [u8], start: usize) -> Option<ParsedDest<'a>> {
+    pub(crate) fn parse_ref_def_dest<'a>(
+        &self,
+        text: &'a [u8],
+        start: usize,
+    ) -> Option<ParsedDest<'a>> {
         let mut p = start;
         if p >= text.len() {
             return None;
@@ -300,7 +301,11 @@ impl Parser<'_> {
         }
     }
 
-    pub fn parse_ref_def_title<'a>(&self, text: &'a [u8], start: usize) -> Option<ParsedTitle<'a>> {
+    pub(crate) fn parse_ref_def_title<'a>(
+        &self,
+        text: &'a [u8],
+        start: usize,
+    ) -> Option<ParsedTitle<'a>> {
         let mut p = start;
         if p >= text.len() {
             return None;
@@ -334,12 +339,11 @@ impl Parser<'_> {
         Some(ParsedTitle { title, end_pos: p })
     }
 
-    pub fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
+    pub(crate) fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
         let mut off: usize = 0;
-        // PORT NOTE: reshaped for borrowck — take a raw pointer to block_bytes so we
-        // can call &mut self methods (normalize_label, parse_ref_def via self.buffer)
-        // while iterating the byte buffer. The Zig code mutates headers in-place via
-        // pointer casts; we preserve that with raw pointer arithmetic.
+        // Take a raw pointer to block_bytes so we can call &mut self methods
+        // (normalize_label, parse_ref_def via self.buffer) while iterating the
+        // byte buffer. Headers are mutated in-place via raw pointer arithmetic.
         let bytes_ptr = self.block_bytes.as_mut_ptr();
         let bytes_len = self.block_bytes.len();
 
@@ -351,9 +355,10 @@ impl Parser<'_> {
                 break;
             }
 
-            // SAFETY: off is aligned to BlockHeader and within bounds; block_bytes
-            // stores BlockHeader-prefixed records written by the block parser.
-            let hdr: &mut BlockHeader = unsafe { &mut *bytes_ptr.add(off).cast::<BlockHeader>() };
+            // SAFETY: off + size_of::<BlockHeader>() <= bytes_len (checked above) and the
+            // block parser wrote a valid BlockHeader at this offset.
+            let mut hdr: BlockHeader =
+                unsafe { bytes_ptr.add(off).cast::<BlockHeader>().read_unaligned() };
             let hdr_off = off;
             off += size_of::<BlockHeader>();
 
@@ -363,10 +368,7 @@ impl Parser<'_> {
                 break;
             }
 
-            // SAFETY: VerbatimLine array immediately follows the header in block_bytes.
-            let line_ptr: *mut VerbatimLine = unsafe { bytes_ptr.add(off).cast::<VerbatimLine>() };
-            let block_lines: &[VerbatimLine] =
-                unsafe { core::slice::from_raw_parts(line_ptr, n_lines) };
+            let lines_off = off;
             off += lines_size;
 
             // Only process paragraph blocks (not container openers/closers)
@@ -383,7 +385,16 @@ impl Parser<'_> {
 
             // Merge lines into buffer to parse ref defs
             self.buffer.clear();
-            for vline in block_lines {
+            for li in 0..n_lines {
+                // SAFETY: li < n_lines so lines_off + li*size_of::<VerbatimLine>() is within
+                // the [lines_off, lines_off + lines_size) range bounds-checked above;
+                // end_current_block wrote n_lines contiguous VerbatimLine entries there.
+                let vline: VerbatimLine = unsafe {
+                    bytes_ptr
+                        .add(lines_off + li * size_of::<VerbatimLine>())
+                        .cast::<VerbatimLine>()
+                        .read_unaligned()
+                };
                 if vline.beg > vline.end || vline.end > self.size {
                     continue;
                 }
@@ -394,8 +405,8 @@ impl Parser<'_> {
                     .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
             }
 
-            // PORT NOTE: reshaped for borrowck — move merged buffer out of self so
-            // parse_ref_def/normalize_label can borrow &self/&mut self.
+            // Move the merged buffer out of self so parse_ref_def/normalize_label
+            // can borrow &self/&mut self.
             let merged = core::mem::take(&mut self.buffer);
             let mut pos: usize = 0;
             let mut lines_consumed: u32 = 0;
@@ -412,16 +423,15 @@ impl Parser<'_> {
                     break; // whitespace-only labels are invalid
                 }
                 let label = norm_label.into_boxed_slice();
-                if self.ref_def_labels.insert(label.clone()) {
+                if !self.ref_def_labels.contains(&label) {
+                    let _ = self.ref_def_labels.insert(&label);
                     // Dupe dest and title since they point into self.buffer which gets reused
                     let dest_dupe: Box<[u8]> = Box::from(result.dest);
                     let title_dupe: Box<[u8]> = Box::from(result.title);
                     self.ref_defs.push(RefDef {
-                        label,
                         dest: dest_dupe,
                         title: title_dupe,
                     });
-                    // PERF(port): was assume_capacity / arena alloc — profile in Phase B
                 }
 
                 // Count how many newlines were consumed to track lines
@@ -449,20 +459,32 @@ impl Parser<'_> {
                 if lines_consumed as usize >= n_lines {
                     // Entire paragraph is ref defs — flag to skip during rendering
                     hdr.flags |= types::BLOCK_REF_DEF_ONLY;
+                    // SAFETY: hdr_off + size_of::<BlockHeader>() <= bytes_len (checked above);
+                    // writes back the header read at the top of this iteration.
+                    unsafe {
+                        bytes_ptr
+                            .add(hdr_off)
+                            .cast::<BlockHeader>()
+                            .write_unaligned(hdr);
+                    }
                 } else {
                     // Mark consumed lines as invalid (beg > end triggers skip in processLeafBlock)
-                    // SAFETY: same VerbatimLine array as above; hdr_off + sizeof(header) is its start.
-                    let line_base: *mut VerbatimLine = unsafe {
-                        bytes_ptr
-                            .add(hdr_off + size_of::<BlockHeader>())
-                            .cast::<VerbatimLine>()
-                    };
                     let mut i: u32 = 0;
                     while i < lines_consumed {
-                        // SAFETY: i < lines_consumed < n_lines, in-bounds of the line array.
+                        let line_off = lines_off + (i as usize) * size_of::<VerbatimLine>();
+                        // SAFETY: i < lines_consumed < n_lines so line_off is in-bounds of the
+                        // VerbatimLine array written by end_current_block after this header.
                         unsafe {
-                            (*line_base.add(i as usize)).beg = 1;
-                            (*line_base.add(i as usize)).end = 0;
+                            let mut vl = bytes_ptr
+                                .add(line_off)
+                                .cast::<VerbatimLine>()
+                                .read_unaligned();
+                            vl.beg = 1;
+                            vl.end = 0;
+                            bytes_ptr
+                                .add(line_off)
+                                .cast::<VerbatimLine>()
+                                .write_unaligned(vl);
                         }
                         i += 1;
                     }
@@ -473,5 +495,3 @@ impl Parser<'_> {
         Ok(())
     }
 }
-
-// ported from: src/md/ref_defs.zig

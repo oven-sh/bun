@@ -98,7 +98,8 @@ inline void JSValueInWrappedObject::setWeakly(JSC::JSValue value)
 inline void JSValueInWrappedObject::set(JSC::VM& vm, const JSC::JSCell* owner, JSC::JSValue value)
 {
     setWeakly(value);
-    vm.writeBarrier(owner, value);
+    if (owner)
+        vm.writeBarrier(owner, value);
 }
 
 inline void JSValueInWrappedObject::clear()

@@ -31,7 +31,7 @@ pub enum Raw {
 }
 
 impl Raw {
-    pub fn resolve(self, total: u64) -> Result {
+    pub(crate) fn resolve(self, total: u64) -> Result {
         match self {
             Raw::None => Result::None,
             Raw::Suffix(n) => {
@@ -65,9 +65,9 @@ impl Raw {
     }
 }
 
-/// Match WebKit's parseRange (HTTPParsers.cpp): case-insensitive "bytes",
-/// optional whitespace before "=". https://fetch.spec.whatwg.org/#simple-range-header-value
-pub fn parse_raw(header: &[u8]) -> Raw {
+/// https://fetch.spec.whatwg.org/#simple-range-header-value: case-insensitive
+/// "bytes", optional whitespace before "=".
+pub(crate) fn parse_raw(header: &[u8]) -> Raw {
     let mut rest = header;
     if !strings::starts_with_case_insensitive_ascii(rest, b"bytes") {
         return Raw::None;
@@ -111,20 +111,20 @@ pub fn parse_raw(header: &[u8]) -> Raw {
     Raw::Bounded { start, end }
 }
 
-pub fn parse(header: &[u8], total: u64) -> Result {
+pub(crate) fn parse(header: &[u8], total: u64) -> Result {
     parse_raw(header).resolve(total)
 }
 
-// PORT NOTE: Zig passed `req` by value; `bun_uws::AnyRequest::header` borrows
-// `&self` and returns `&[u8]` tied to it, so take `&AnyRequest` here.
-pub fn from_request(req: &AnyRequest, total: u64) -> Result {
+// `bun_uws::AnyRequest::header` borrows `&self` and returns `&[u8]` tied to
+// it, so take `&AnyRequest` here.
+pub(crate) fn from_request(req: &AnyRequest, total: u64) -> Result {
     let Some(h) = req.header(b"range") else {
         return Result::None;
     };
     parse(h, total)
 }
 
-pub fn raw_from_request(req: &AnyRequest) -> Raw {
+pub(crate) fn raw_from_request(req: &AnyRequest) -> Raw {
     let Some(h) = req.header(b"range") else {
         return Raw::None;
     };
@@ -133,7 +133,7 @@ pub fn raw_from_request(req: &AnyRequest) -> Raw {
 
 /// Max bytes a `Content-Range: bytes ...` value can occupy: `"bytes "` (6) +
 /// three `u64::MAX` (20 each) + `'-'` + `'/'` = 68. 96 leaves slack.
-pub const CONTENT_RANGE_BUF: usize = 96;
+pub(crate) const CONTENT_RANGE_BUF: usize = 96;
 
 /// Render a `Content-Range` header value into `buf` per RFC 9110 §14.4.
 ///
@@ -147,7 +147,7 @@ pub const CONTENT_RANGE_BUF: usize = 96;
 ///
 /// `buf_print` into a [`CONTENT_RANGE_BUF`]-sized buffer cannot overflow with
 /// `u64` operands, so this is infallible for correctly-sized `buf`.
-pub fn format_content_range(buf: &mut [u8], range: Result, total: Option<u64>) -> &[u8] {
+pub(crate) fn format_content_range(buf: &mut [u8], range: Result, total: Option<u64>) -> &[u8] {
     use bun_core::fmt::buf_print_infallible as bp;
     match range {
         Result::None => &buf[..0],
@@ -161,5 +161,3 @@ pub fn format_content_range(buf: &mut [u8], range: Result, total: Option<u64>) -
         },
     }
 }
-
-// ported from: src/runtime/server/RangeRequest.zig

@@ -1,10 +1,9 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt};
 use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_contain_values(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_contain_values(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.contain_matcher(global, frame, "toContainValues", ExpectedArray::BeforeValue, ContainMsgs::CONTAIN,
             |g, value, expected| {
                 if value.is_undefined_or_null() { return Ok(ContainOutcome::pass(true)); }
@@ -23,4 +22,3 @@ impl Expect {
             })
     }
 }
-// ported from: src/test_runner/expect/toContainValues.zig

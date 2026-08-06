@@ -53,7 +53,7 @@ Structure* createLinkMetaStructure(VM& vm, JSGlobalObject* globalObject)
 } // namespace Bun
 
 // ──────────────────────────────────────────────────────────────────────────
-// extern "C" constructors — callable from MarkdownObject.zig
+// extern "C" constructors — callable from src/runtime/api/MarkdownObject.rs
 // ──────────────────────────────────────────────────────────────────────────
 
 extern "C" JSC::EncodedJSValue BunMarkdownMeta__createListItem(

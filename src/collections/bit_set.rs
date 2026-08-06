@@ -1,8 +1,3 @@
-//! This is a fork of Zig standard library bit_set.zig
-//! - https://github.com/ziglang/zig/pull/14129
-//! - AutoBitset which optimally chooses between a dynamic or static bitset.
-//! Prefer our fork over std.bit_set.
-//!
 //! This file defines several variants of bit sets.  A bit set
 //! is a densely stored set of integers with a known maximum,
 //! in which each integer gets a single bit.  Bit sets have very
@@ -11,7 +6,7 @@
 //! large and the number of actual items in a given set is usually
 //! small, they may be less memory efficient than an array set.
 //!
-//! There are five variants defined here:
+//! There are four variants defined here:
 //!
 //! IntegerBitSet:
 //!   A bit set with static size, which is backed by a single integer.
@@ -22,10 +17,6 @@
 //!   A bit set with static size, which is backed by an array of usize.
 //!   This set is good for sets with a larger size, but may use
 //!   more bytes than necessary if your set is small.
-//!
-//! StaticBitSet:
-//!   Picks either IntegerBitSet or ArrayBitSet depending on the requested
-//!   size.  The interfaces of these two types match exactly, except for fields.
 //!
 //! DynamicBitSet:
 //!   A bit set with runtime-known size, backed by an allocated slice
@@ -43,22 +34,21 @@ use bun_alloc::AllocError;
 
 // ───────────────────────────── helpers ─────────────────────────────
 
-/// Equivalent to `std.math.boolMask(MaskInt, value)`: returns `~0` if `value`
-/// else `0`, in the requested integer width.
+/// Returns `usize::MAX` if `value`, else `0`.
 #[inline(always)]
 const fn bool_mask_usize(value: bool) -> usize {
     if value { usize::MAX } else { 0 }
 }
 
 /// `1 << (index % usize::BITS)` — selects the bit within a `usize` word.
-/// Shared by `ArrayBitSet` and `DynamicBitSetUnmanaged` (Zig: `maskBit`).
+/// Shared by `ArrayBitSet` and `DynamicBitSetUnmanaged`.
 #[inline(always)]
 const fn word_mask_bit(index: usize) -> usize {
     1usize << ((index as u32) & (usize::BITS - 1)) // @truncate
 }
 
 /// `index / usize::BITS` — selects which `usize` word holds the bit.
-/// Shared by `ArrayBitSet` and `DynamicBitSetUnmanaged` (Zig: `maskIndex`).
+/// Shared by `ArrayBitSet` and `DynamicBitSetUnmanaged`.
 #[inline(always)]
 const fn word_mask_index(index: usize) -> usize {
     index >> usize::BITS.trailing_zeros()
@@ -66,7 +56,7 @@ const fn word_mask_index(index: usize) -> usize {
 
 /// Shared multi-mask implementation of `set_range_value` over `&mut [usize]`
 /// storage. Used by both `ArrayBitSet` and `DynamicBitSetUnmanaged` so the
-/// per-word range masking logic lives in one place (Zig: `setRangeValue`).
+/// per-word range masking logic lives in one place.
 #[inline]
 fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
     const MASK_LEN: u32 = usize::BITS;
@@ -89,15 +79,14 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
         mask2 = bool_mask_usize(value) >> ((MASK_LEN - 1) - (end_bit - 1));
         masks[start_mask_index] |= mask1 & mask2;
     } else {
-        let bulk_mask_index: usize;
-        if start_bit > 0 {
+        let bulk_mask_index: usize = if start_bit > 0 {
             masks[start_mask_index] = (masks[start_mask_index]
                 & !(bool_mask_usize(true) << start_bit))
                 | (bool_mask_usize(value) << start_bit);
-            bulk_mask_index = start_mask_index + 1;
+            start_mask_index + 1
         } else {
-            bulk_mask_index = start_mask_index;
-        }
+            start_mask_index
+        };
 
         for mask in &mut masks[bulk_mask_index..end_mask_index] {
             *mask = bool_mask_usize(value);
@@ -110,31 +99,14 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
     }
 }
 
-// ───────────────────────────── StaticBitSet ─────────────────────────────
-
-/// Returns the optimal static bit set type for the specified number
-/// of elements.  The returned type will perform no allocations,
-/// can be copied by value, and does not require deinitialization.
-/// Both possible implementations fulfill the same interface.
-///
-// TODO(port): Zig's `StaticBitSet(size)` returns `IntegerBitSet(size)` when
-// `size <= @bitSizeOf(usize)` and `ArrayBitSet(usize, size)` otherwise. Stable
-// Rust cannot select a struct definition from a const generic. Callers should
-// pick `IntegerBitSet<N>` or `ArrayBitSet<N>` directly; this alias resolves to
-// the array form (always correct, possibly one word larger than needed for
-// N <= 64).
-pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>; // TODO(b2): callers needing >64 bits use ArrayBitSet<SIZE, {num_masks_for(SIZE)}> directly
-
 // ───────────────────────────── IntegerBitSet ─────────────────────────────
 
 /// A bit set with static size, which is backed by a single integer.
 /// This set is good for sets with a small size, but may generate
 /// inefficient code for larger sets, especially in debug mode.
 ///
-// TODO(port): Zig uses `std.meta.Int(.unsigned, size)` for an exact-width
-// backing integer (u0..u65535). Rust has no arbitrary-width ints; we back with
-// `usize` and rely on `SIZE <= usize::BITS`. Phase B may swap to a trait that
-// picks u8/u16/u32/u64/u128.
+// Backed by `usize`; requires `SIZE <= usize::BITS` (misuse surfaces via
+// `FULL_MASK` saturation + debug asserts).
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IntegerBitSet<const SIZE: usize> {
@@ -144,15 +116,7 @@ pub struct IntegerBitSet<const SIZE: usize> {
 
 impl<const SIZE: usize> IntegerBitSet<SIZE> {
     /// The number of items in this bit set
-    pub const BIT_LENGTH: usize = SIZE as usize;
-
-    /// The integer type used to represent a mask in this bit set
-    // TODO(port): Zig: `pub const MaskInt = std.meta.Int(.unsigned, size);`
-    // type MaskInt = usize (inherent assoc → inline usize)
-
-    /// The integer type used to shift a mask in this bit set
-    // TODO(port): Zig: `pub const ShiftInt = std.math.Log2Int(MaskInt);`
-    // type ShiftInt = u32 (inherent assoc → inline u32)
+    pub(crate) const BIT_LENGTH: usize = SIZE;
 
     const FULL_MASK: usize = if SIZE as u32 >= usize::BITS {
         // SIZE > usize::BITS is a caller error (use ArrayBitSet); saturating
@@ -175,12 +139,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         }
     }
 
-    /// Returns the number of bits in this bit set
-    #[inline(always)]
-    pub const fn capacity(self) -> usize {
-        Self::BIT_LENGTH
-    }
-
     /// Returns true if the bit at the specified index
     /// is present in the set, false otherwise.
     pub fn is_set(self, index: usize) -> bool {
@@ -191,18 +149,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
     /// Returns the total number of set bits in this bit set.
     pub const fn count(self) -> usize {
         self.mask.count_ones() as usize
-    }
-
-    /// Changes the value of the specified bit of the bit
-    /// set to match the passed boolean.
-    pub fn set_value(&mut self, index: usize, value: bool) {
-        debug_assert!(index < Self::BIT_LENGTH);
-        if SIZE == 0 {
-            return;
-        }
-        let bit = Self::mask_bit(index);
-        let new_bit = bit & bool_mask_usize(value);
-        self.mask = (self.mask & !bit) | new_bit;
     }
 
     /// Adds a specific bit to the bit set
@@ -228,12 +174,10 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         let mut mask = bool_mask_usize(true) << start_bit;
         if range.end != Self::BIT_LENGTH {
             let end_bit = u32::try_from(range.end).expect("int cast");
-            // Zig shifts a SIZE-bit MaskInt so `~0 >> (SIZE - end_bit)` yields the
-            // low `end_bit` bits. With a usize backing the shift must be relative
-            // to usize::BITS to get the same low-`end_bit`-bits mask.
+            // `~0 >> (usize::BITS - end_bit)` yields the low `end_bit` bits.
             mask &= bool_mask_usize(true) >> (usize::BITS - end_bit);
         }
-        // also clear bits above SIZE since our backing int is wider than Zig's
+        // also clear bits above SIZE since the backing `usize` may be wider than SIZE bits
         mask &= Self::FULL_MASK;
         self.mask &= !mask;
 
@@ -256,37 +200,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         self.mask &= !Self::mask_bit(index);
     }
 
-    /// Flips a specific bit in the bit set
-    pub fn toggle(&mut self, index: usize) {
-        debug_assert!(index < Self::BIT_LENGTH);
-        self.mask ^= Self::mask_bit(index);
-    }
-
-    /// Flips all bits in this bit set which are present
-    /// in the toggles bit set.
-    pub fn toggle_set(&mut self, toggles: Self) {
-        self.mask ^= toggles.mask;
-    }
-
-    /// Flips every bit in the bit set.
-    pub fn toggle_all(&mut self) {
-        self.mask = !self.mask & Self::FULL_MASK;
-    }
-
-    /// Performs a union of two bit sets, and stores the
-    /// result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in either input.
-    pub fn set_union(&mut self, other: Self) {
-        self.mask |= other.mask;
-    }
-
-    /// Performs an intersection of two bit sets, and stores
-    /// the result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in both inputs.
-    pub fn set_intersection(&mut self, other: Self) {
-        self.mask &= other.mask;
-    }
-
     /// Finds the index of the first set bit.
     /// If no bits are set, returns null.
     pub fn find_first_set(self) -> Option<usize> {
@@ -297,96 +210,12 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         Some(mask.trailing_zeros() as usize)
     }
 
-    /// Finds the index of the first unset bit.
-    /// If all bits are set, returns null.
-    pub fn find_first_unset(self) -> Option<usize> {
-        let mask = !self.mask & Self::FULL_MASK;
-        if mask == 0 {
-            return None;
-        }
-        Some(mask.trailing_zeros() as usize)
-    }
-
-    /// Finds the index of the first set bit, and unsets it.
-    /// If no bits are set, returns null.
-    pub fn toggle_first_set(&mut self) -> Option<usize> {
-        let mask = self.mask;
-        if mask == 0 {
-            return None;
-        }
-        let index = mask.trailing_zeros() as usize;
-        self.mask = mask & (mask - 1);
-        Some(index)
-    }
-
-    /// Returns true iff every corresponding bit in both
-    /// bit sets are the same.
-    pub fn eql(self, other: Self) -> bool {
-        Self::BIT_LENGTH == 0 || self.mask == other.mask
-    }
-
-    /// Returns true iff the first bit set is the subset
-    /// of the second one.
-    pub fn subset_of(self, other: Self) -> bool {
-        self.intersect_with(other).eql(self)
-    }
-
-    /// Returns true iff the first bit set is the superset
-    /// of the second one.
-    pub fn superset_of(self, other: Self) -> bool {
-        other.subset_of(self)
-    }
-
-    /// Returns the complement bit sets. Bits in the result
-    /// are set if the corresponding bits were not set.
-    pub fn complement(self) -> Self {
-        let mut result = self;
-        result.toggle_all();
-        result
-    }
-
-    /// Returns the union of two bit sets. Bits in the
-    /// result are set if the corresponding bits were set
-    /// in either input.
-    pub fn union_with(self, other: Self) -> Self {
-        let mut result = self;
-        result.set_union(other);
-        result
-    }
-
-    /// Returns the intersection of two bit sets. Bits in
-    /// the result are set if the corresponding bits were
-    /// set in both inputs.
-    pub fn intersect_with(self, other: Self) -> Self {
-        let mut result = self;
-        result.set_intersection(other);
-        result
-    }
-
-    /// Returns the xor of two bit sets. Bits in the
-    /// result are set if the corresponding bits were
-    /// not the same in both inputs.
-    pub fn xor_with(self, other: Self) -> Self {
-        let mut result = self;
-        result.toggle_set(other);
-        result
-    }
-
-    /// Returns the difference of two bit sets. Bits in
-    /// the result are set if set in the first but not
-    /// set in the second set.
-    pub fn difference_with(self, other: Self) -> Self {
-        let mut result = self;
-        result.set_intersection(other.complement());
-        result
-    }
-
     /// Iterates through the items in the set, according to the options.
     /// The default options (.{}) will iterate indices of set bits in
     /// ascending order.  Modifications to the underlying bit set may
     /// or may not be observed by the iterator.
     pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
-        &self,
+        self,
     ) -> SingleWordIterator<SIZE, DIR_FWD> {
         SingleWordIterator {
             bits_remain: if KIND_SET {
@@ -398,9 +227,9 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
     }
 
     /// Iterate indices of set bits in ascending order.
-    /// Convenience wrapper for `iterator::<true, true>()` (Zig's `.iterator(.{ .kind = .set })`).
+    /// Convenience wrapper for `iterator::<true, true>()`.
     #[inline]
-    pub fn iter_set(&self) -> SingleWordIterator<SIZE, true> {
+    pub fn iter_set(self) -> SingleWordIterator<SIZE, true> {
         self.iterator::<true, true>()
     }
 
@@ -445,29 +274,23 @@ impl<const SIZE: usize, const DIR_FWD: bool> SingleWordIterator<SIZE, DIR_FWD> {
 /// Number of `usize` masks needed to hold `bit_length` bits.
 #[inline(always)]
 pub const fn num_masks_for(bit_length: usize) -> usize {
-    (bit_length + (usize::BITS as usize - 1)) / (usize::BITS as usize)
+    bit_length.div_ceil(usize::BITS as usize)
 }
 
 /// A bit set with static size, which is backed by an array of usize.
 /// This set is good for sets with a larger size, but may use
 /// more bytes than necessary if your set is small.
-///
-// TODO(port): Zig is generic over `MaskIntType`; every in-tree caller uses
-// `usize`. Dropped the type parameter. Phase B can re-generify if needed.
-// TODO(port): `[usize; NUM_MASKS]` requires
-// `#![feature(generic_const_exprs)]`. Phase B may instead take NUM_MASKS as a
-// second const generic and assert `NUM_MASKS == num_masks_for(SIZE)`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ArrayBitSet<const SIZE: usize, const NUM_MASKS: usize> {
     /// The bit masks, ordered with lower indices first.
     /// Padding bits at the end are undefined.
-    pub masks: [usize; NUM_MASKS],
+    pub(crate) masks: [usize; NUM_MASKS],
 }
 
 impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
     /// The number of items in this bit set
-    pub const BIT_LENGTH: usize = SIZE;
+    pub(crate) const BIT_LENGTH: usize = SIZE;
 
     /// The integer type used to represent a mask in this bit set
     // type MaskInt = usize (inherent assoc → inline usize)
@@ -487,32 +310,13 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
     /// Mask of valid bits in the last mask.
     /// All functions will ensure that the invalid
     /// bits in the last mask are zero.
-    pub const LAST_ITEM_MASK: usize = usize::MAX >> Self::LAST_PAD_BITS;
+    pub(crate) const LAST_ITEM_MASK: usize = usize::MAX >> Self::LAST_PAD_BITS;
 
     /// Creates a bit set with no elements present.
     pub const fn init_empty() -> Self {
         Self {
             masks: [0usize; NUM_MASKS],
         }
-    }
-
-    /// Creates a bit set with all elements present.
-    pub const fn init_full() -> Self {
-        if NUM_MASKS == 0 {
-            Self {
-                masks: [0usize; NUM_MASKS],
-            }
-        } else {
-            let mut masks = [usize::MAX; NUM_MASKS];
-            masks[NUM_MASKS - 1] = Self::LAST_ITEM_MASK;
-            Self { masks }
-        }
-    }
-
-    /// Returns the number of bits in this bit set
-    #[inline(always)]
-    pub const fn capacity(&self) -> usize {
-        Self::BIT_LENGTH
     }
 
     /// Returns true if the bit at the specified index
@@ -526,25 +330,12 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
     }
 
     /// Returns the total number of set bits in this bit set.
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         let mut total: usize = 0;
         for mask in self.masks {
             total += mask.count_ones() as usize;
         }
         total
-    }
-
-    /// Changes the value of the specified bit of the bit
-    /// set to match the passed boolean.
-    pub fn set_value(&mut self, index: usize, value: bool) {
-        debug_assert!(index < Self::BIT_LENGTH);
-        if NUM_MASKS == 0 {
-            return; // doesn't compile in this case
-        }
-        let bit = word_mask_bit(index);
-        let mask_index = word_mask_index(index);
-        let new_bit = bit & bool_mask_usize(value);
-        self.masks[mask_index] = (self.masks[mask_index] & !bit) | new_bit;
     }
 
     /// Adds a specific bit to the bit set
@@ -556,58 +347,8 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         self.masks[word_mask_index(index)] |= word_mask_bit(index);
     }
 
-    /// Changes the value of all bits in the specified range to
-    /// match the passed boolean.
-    pub fn set_range_value(&mut self, range: Range, value: bool) {
-        debug_assert!(range.end <= Self::BIT_LENGTH);
-        debug_assert!(range.start <= range.end);
-        if NUM_MASKS == 0 {
-            return;
-        }
-        set_range_value_masks(&mut self.masks, range, value);
-    }
-
-    /// Removes a specific bit from the bit set
-    pub fn unset(&mut self, index: usize) {
-        debug_assert!(index < Self::BIT_LENGTH);
-        if NUM_MASKS == 0 {
-            return; // doesn't compile in this case
-        }
-        self.masks[word_mask_index(index)] &= !word_mask_bit(index);
-    }
-
-    /// Flips a specific bit in the bit set
-    pub fn toggle(&mut self, index: usize) {
-        debug_assert!(index < Self::BIT_LENGTH);
-        if NUM_MASKS == 0 {
-            return; // doesn't compile in this case
-        }
-        self.masks[word_mask_index(index)] ^= word_mask_bit(index);
-    }
-
-    /// Flips all bits in this bit set which are present
-    /// in the toggles bit set.
-    pub fn toggle_set(&mut self, toggles: &Self) {
-        debug_assert_eq!(self.masks.len(), toggles.masks.len());
-        for (mask, b) in self.masks.iter_mut().zip(toggles.masks.iter()) {
-            *mask ^= *b;
-        }
-    }
-
-    /// Flips every bit in the bit set.
-    pub fn toggle_all(&mut self) {
-        for mask in self.masks.iter_mut() {
-            *mask = !*mask;
-        }
-
-        // Zero the padding bits
-        if NUM_MASKS > 0 {
-            self.masks[NUM_MASKS - 1] &= Self::LAST_ITEM_MASK;
-        }
-    }
-
     /// Sets all bits
-    pub fn set_all(&mut self, value: bool) {
+    pub(crate) fn set_all(&mut self, value: bool) {
         self.masks.fill(if value { usize::MAX } else { 0 });
 
         // Zero the padding bits
@@ -626,19 +367,9 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         }
     }
 
-    /// Performs an intersection of two bit sets, and stores
-    /// the result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in both inputs.
-    pub fn set_intersection(&mut self, other: &Self) {
-        debug_assert_eq!(self.masks.len(), other.masks.len());
-        for (mask, alt) in self.masks.iter_mut().zip(other.masks.iter()) {
-            *mask &= *alt;
-        }
-    }
-
     /// Finds the index of the first set bit.
     /// If no bits are set, returns null.
-    pub fn find_first_set(&self) -> Option<usize> {
+    pub(crate) fn find_first_set(&self) -> Option<usize> {
         let mut offset: usize = 0;
         let mask = 'brk: {
             for mask in self.masks {
@@ -652,76 +383,7 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         Some(offset + mask.trailing_zeros() as usize)
     }
 
-    /// Finds the index of the first set bit, and unsets it.
-    /// If no bits are set, returns null.
-    pub fn toggle_first_set(&mut self) -> Option<usize> {
-        let mut offset: usize = 0;
-        let mask = 'brk: {
-            for mask in self.masks.iter_mut() {
-                if *mask != 0 {
-                    break 'brk mask;
-                }
-                offset += Self::MASK_LEN as usize;
-            }
-            return None;
-        };
-        let index = mask.trailing_zeros() as usize;
-        *mask &= *mask - 1;
-        Some(offset + index)
-    }
-
-    /// Returns true iff every corresponding bit in both
-    /// bit sets are the same.
-    pub fn eql(&self, other: &Self) -> bool {
-        let mut i: usize = 0;
-        while i < NUM_MASKS {
-            if self.masks[i] != other.masks[i] {
-                return false;
-            }
-            i += 1;
-        }
-        true
-    }
-
-    /// Returns true iff the first bit set is the subset
-    /// of the second one.
-    pub fn subset_of(&self, other: &Self) -> bool {
-        self.intersect_with(other).eql(self)
-    }
-
-    /// Returns true iff the first bit set is the superset
-    /// of the second one.
-    pub fn superset_of(&self, other: &Self) -> bool {
-        other.subset_of(self)
-    }
-
-    /// Returns the complement bit sets. Bits in the result
-    /// are set if the corresponding bits were not set.
-    pub fn complement(&self) -> Self {
-        let mut result = *self;
-        result.toggle_all();
-        result
-    }
-
-    /// Returns the union of two bit sets. Bits in the
-    /// result are set if the corresponding bits were set
-    /// in either input.
-    pub fn union_with(&self, other: &Self) -> Self {
-        let mut result = *self;
-        result.set_union(other);
-        result
-    }
-
-    /// Returns the intersection of two bit sets. Bits in
-    /// the result are set if the corresponding bits were
-    /// set in both inputs.
-    pub fn intersect_with(&self, other: &Self) -> Self {
-        let mut result = *self;
-        result.set_intersection(other);
-        result
-    }
-
-    pub fn has_intersection(&self, other: &Self) -> bool {
+    pub(crate) fn has_intersection(&self, other: &Self) -> bool {
         debug_assert_eq!(self.masks.len(), other.masks.len());
         for (a, b) in self.masks.iter().zip(other.masks.iter()) {
             if a & b != 0 {
@@ -731,29 +393,11 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         false
     }
 
-    /// Returns the xor of two bit sets. Bits in the
-    /// result are set if the corresponding bits were
-    /// not the same in both inputs.
-    pub fn xor_with(&self, other: &Self) -> Self {
-        let mut result = *self;
-        result.toggle_set(other);
-        result
-    }
-
-    /// Returns the difference of two bit sets. Bits in
-    /// the result are set if set in the first but not
-    /// set in the second set.
-    pub fn difference_with(&self, other: &Self) -> Self {
-        let mut result = *self;
-        result.set_intersection(&other.complement());
-        result
-    }
-
     /// Iterates through the items in the set, according to the options.
     /// The default options (.{}) will iterate indices of set bits in
     /// ascending order.  Modifications to the underlying bit set may
     /// or may not be observed by the iterator.
-    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
+    pub(crate) fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         &self,
     ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
         BitSetIterator::init(&self.masks, Self::LAST_ITEM_MASK)
@@ -771,34 +415,26 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
 /// A bit set with runtime-known size, backed by an allocated slice
 /// of usize.  The allocator must be tracked externally by the user.
 ///
-// TODO(port): the Zig type stores `masks: [*]MaskInt` where `masks[-1]` holds
-// the true allocation length (needed because Zig's allocator API requires the
-// original length on free). The Rust port keeps the same layout because
-// `List` constructs borrowed views into a shared buffer that must look like
-// freestanding `DynamicBitSetUnmanaged`s. Phase B may refactor to `Vec<usize>`
-// once `List` is reworked.
+// Layout invariant: `masks` is a raw pointer where `masks[-1]` holds the true
+// allocation length (needed on free). This layout is load-bearing because
+// `DynamicBitSetList` constructs borrowed views into a shared buffer that must
+// look like freestanding `DynamicBitSetUnmanaged`s — do not swap the storage
+// for `Vec<usize>` without reworking `DynamicBitSetList`.
 pub struct DynamicBitSetUnmanaged {
     /// The number of valid items in this bit set
     pub bit_length: usize,
 
     /// The bit masks, ordered with lower indices first.
     /// Padding bits at the end must be zeroed.
-    pub masks: *mut usize,
+    pub(crate) masks: *mut usize,
     // This pointer is one usize after the actual allocation.
     // That slot holds the size of the true allocation, which
-    // is needed by Zig's allocator interface in case a shrink
-    // fails.
+    // is needed when freeing.
 }
-
-/// The integer type used to represent a mask in this bit set
-pub type DynMaskInt = usize;
-/// The integer type used to shift a mask in this bit set
-pub type DynShiftInt = u32;
 
 const DYN_MASK_BITS: u32 = usize::BITS;
 
-// Never modified — the Zig comment about needing `static mut` was a Zig
-// limitation (no const-ptr → mut-ptr cast at comptime). All writes through
+// Never modified. All writes through
 // `self.masks` are guarded by `num_masks() > 0`, which is false for the empty
 // sentinel (bit_length == 0). Kept in a `RacyCell` (not `.rodata`) so that
 // forming a `*mut usize` to it remains a legally-mutable pointer target —
@@ -823,15 +459,19 @@ impl Default for DynamicBitSetUnmanaged {
     }
 }
 
+impl Drop for DynamicBitSetUnmanaged {
+    fn drop(&mut self) {
+        self.deinit();
+    }
+}
+
 impl DynamicBitSetUnmanaged {
-    pub const EMPTY: fn() -> Self = Self::default;
-    // TODO(port): Zig has `pub const empty: Self = .{ ... }` as a const value.
-    // Rust can't const-init a static-mut-derived pointer; callers should use
-    // `DynamicBitSetUnmanaged::default()`.
+    // There is no `const` empty value (the empty sentinel pointer is computed at
+    // runtime); use `Self::default()`.
 
     /// Borrow the mask words as a shared slice of length `num_masks(bit_length)`.
     #[inline(always)]
-    pub fn masks_slice(&self) -> &[usize] {
+    pub(crate) fn masks_slice(&self) -> &[usize] {
         let n = Self::num_masks(self.bit_length);
         // SAFETY: `masks` is never null (defaults to `empty_masks_ptr()`) and
         // points to at least `n` valid, initialized usize words, maintained by
@@ -845,21 +485,12 @@ impl DynamicBitSetUnmanaged {
     /// `DynamicBitSetList::at`). Callers must not hold a `masks_slice_mut()`
     /// borrow on one view while another aliasing view is read or written.
     #[inline(always)]
-    pub fn masks_slice_mut(&mut self) -> &mut [usize] {
+    pub(crate) fn masks_slice_mut(&mut self) -> &mut [usize] {
         let n = Self::num_masks(self.bit_length);
         // SAFETY: see `masks_slice`. `&mut self` gives us exclusive access to
         // *this* struct; the caller is responsible for not aliasing the
         // underlying storage via another view.
         unsafe { slice::from_raw_parts_mut(self.masks, n) }
-    }
-
-    /// Raw pointer to the mask words. Use this (not `masks_slice{,_mut}`) when
-    /// `self` and another `DynamicBitSetUnmanaged` may point at the same
-    /// storage and both are accessed in the same operation — forming
-    /// overlapping `&mut [usize]` / `&[usize]` would be UB.
-    #[inline(always)]
-    pub fn masks_ptr(&self) -> *mut usize {
-        self.masks
     }
 
     /// `self.masks[i] = f(self.masks[i], other.masks[i])` for every mask word.
@@ -891,14 +522,6 @@ impl DynamicBitSetUnmanaged {
         Ok(this)
     }
 
-    /// Creates a bit set with all elements present.
-    /// If bit_length is not zero, deinit must eventually be called.
-    pub fn init_full(bit_length: usize) -> Result<Self, AllocError> {
-        let mut this = Self::default();
-        this.resize(bit_length, true)?;
-        Ok(this)
-    }
-
     /// Resizes to a new bit_length.  If the new length is larger
     /// than the old length, fills any added bits with `fill`.
     /// If new_len is not zero, deinit must eventually be called.
@@ -912,6 +535,8 @@ impl DynamicBitSetUnmanaged {
         // start of EMPTY_MASKS_DATA), and `(self.masks - 1)[0]` holds its
         // length. Maintained by this function.
         let alloc_base = unsafe { self.masks.sub(1) };
+        // SAFETY: `alloc_base` points at the allocation-length header word (or
+        // `EMPTY_MASKS_DATA[0]`), which is always initialized.
         let old_alloc_len = unsafe { *alloc_base };
 
         if new_masks == 0 {
@@ -991,9 +616,7 @@ impl DynamicBitSetUnmanaged {
 
     /// deinitializes the array and releases its memory.
     /// The passed allocator must be the same one used for
-    /// init* or resize in the past.
-    // TODO(port): kept as an explicit method (not `Drop`) because `List` hands
-    // out non-owning `DynamicBitSetUnmanaged` views that must NOT free on drop.
+    /// init* or resize in the past. Idempotent.
     pub fn deinit(&mut self) {
         self.resize(0, false).expect("unreachable");
     }
@@ -1008,7 +631,7 @@ impl DynamicBitSetUnmanaged {
 
     /// Returns the number of bits in this bit set
     #[inline(always)]
-    pub fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         self.bit_length
     }
 
@@ -1042,7 +665,7 @@ impl DynamicBitSetUnmanaged {
         total
     }
 
-    pub fn has_intersection(&self, other: &Self) -> bool {
+    pub(crate) fn has_intersection(&self, other: &Self) -> bool {
         debug_assert_eq!(
             Self::num_masks(self.bit_length),
             Self::num_masks(other.bit_length)
@@ -1055,17 +678,6 @@ impl DynamicBitSetUnmanaged {
         false
     }
 
-    /// Changes the value of the specified bit of the bit
-    /// set to match the passed boolean.
-    pub fn set_value(&mut self, index: usize, value: bool) {
-        debug_assert!(index < self.bit_length);
-        let bit = word_mask_bit(index);
-        let mask_index = word_mask_index(index);
-        let new_bit = bit & bool_mask_usize(value);
-        let mask = &mut self.masks_slice_mut()[mask_index];
-        *mask = (*mask & !bit) | new_bit;
-    }
-
     /// Adds a specific bit to the bit set
     pub fn set(&mut self, index: usize) {
         debug_assert!(index < self.bit_length);
@@ -1074,7 +686,7 @@ impl DynamicBitSetUnmanaged {
 
     /// Changes the value of all bits in the specified range to
     /// match the passed boolean.
-    pub fn set_range_value(&mut self, range: Range, value: bool) {
+    pub(crate) fn set_range_value(&mut self, range: Range, value: bool) {
         debug_assert!(range.end <= self.bit_length);
         debug_assert!(range.start <= range.end);
         set_range_value_masks(self.masks_slice_mut(), range, value);
@@ -1084,30 +696,6 @@ impl DynamicBitSetUnmanaged {
     pub fn unset(&mut self, index: usize) {
         debug_assert!(index < self.bit_length);
         self.masks_slice_mut()[word_mask_index(index)] &= !word_mask_bit(index);
-    }
-
-    /// Flips a specific bit in the bit set
-    pub fn toggle(&mut self, index: usize) {
-        debug_assert!(index < self.bit_length);
-        self.masks_slice_mut()[word_mask_index(index)] ^= word_mask_bit(index);
-    }
-
-    /// Flips all bits in this bit set which are present
-    /// in the toggles bit set.  Both sets must have the
-    /// same bit_length.
-    pub fn toggle_set(&mut self, toggles: &Self) {
-        debug_assert!(toggles.bit_length == self.bit_length);
-        let bit_length = self.bit_length;
-        if bit_length == 0 {
-            return;
-        }
-        let num_masks = Self::num_masks(self.bit_length);
-        self.zip_masks_raw(toggles, |a, b| a ^ b);
-
-        let padding_bits =
-            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
-        let last_item_mask = usize::MAX >> padding_bits;
-        self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
     }
 
     pub fn set_all(&mut self, value: bool) {
@@ -1127,7 +715,7 @@ impl DynamicBitSetUnmanaged {
     }
 
     /// Flips every bit in the bit set.
-    pub fn toggle_all(&mut self) {
+    pub(crate) fn toggle_all(&mut self) {
         let bit_length = self.bit_length;
         // avoid underflow if bit_length is zero
         if bit_length == 0 {
@@ -1174,17 +762,9 @@ impl DynamicBitSetUnmanaged {
     /// the result in the first one.  Bits in the result are
     /// set if the corresponding bits were set in both inputs.
     /// The two sets must both be the same bit_length.
-    pub fn set_intersection(&mut self, other: &Self) {
+    pub(crate) fn set_intersection(&mut self, other: &Self) {
         debug_assert!(other.bit_length == self.bit_length);
         self.zip_masks_raw(other, |a, b| a & b);
-    }
-
-    pub fn set_exclude_two(&mut self, other: &Self, third: &Self) {
-        debug_assert!(other.bit_length == self.bit_length);
-        // Two passes is equivalent to the original fused loop: each word is
-        // independent, so `(a & !b) & !c` per index is associative across passes.
-        self.zip_masks_raw(other, |a, b| a & !b);
-        self.zip_masks_raw(third, |a, c| a & !c);
     }
 
     pub fn set_exclude(&mut self, other: &Self) {
@@ -1194,27 +774,11 @@ impl DynamicBitSetUnmanaged {
 
     /// Finds the index of the first set bit.
     /// If no bits are set, returns null.
-    pub fn find_first_set(&self) -> Option<usize> {
+    pub(crate) fn find_first_set(&self) -> Option<usize> {
         let mut offset: usize = 0;
         for &mask in self.masks_slice() {
             if mask != 0 {
                 return Some(offset + mask.trailing_zeros() as usize);
-            }
-            offset += DYN_MASK_BITS as usize;
-        }
-        None
-    }
-
-    /// Finds the index of the first set bit, and unsets it.
-    /// If no bits are set, returns null.
-    pub fn toggle_first_set(&mut self) -> Option<usize> {
-        let mut offset: usize = 0;
-        for mask in self.masks_slice_mut() {
-            let m = *mask;
-            if m != 0 {
-                let index = m.trailing_zeros() as usize;
-                *mask = m & (m - 1);
-                return Some(offset + index);
             }
             offset += DYN_MASK_BITS as usize;
         }
@@ -1244,20 +808,6 @@ impl DynamicBitSetUnmanaged {
         true
     }
 
-    /// Returns true iff the first bit set is the superset
-    /// of the second one.
-    pub fn superset_of(&self, other: &Self) -> bool {
-        if self.bit_length != other.bit_length {
-            return false;
-        }
-        for (&a, &b) in self.masks_slice().iter().zip(other.masks_slice()) {
-            if a & b != b {
-                return false;
-            }
-        }
-        true
-    }
-
     /// Iterates through the items in the set, according to the options.
     /// The default options (.{}) will iterate indices of set bits in
     /// ascending order.  Modifications to the underlying bit set may
@@ -1274,7 +824,7 @@ impl DynamicBitSetUnmanaged {
     }
 
     #[inline(always)]
-    pub const fn num_masks(bit_length: usize) -> usize {
+    pub(crate) const fn num_masks(bit_length: usize) -> usize {
         num_masks_for(bit_length)
     }
 }
@@ -1297,8 +847,8 @@ impl DynamicBitSetUnmanaged {
 pub struct DynamicBitSetList {
     buf: ptr::NonNull<usize>,
     buf_len: usize,
-    pub n: usize,
-    pub bit_length: usize,
+    pub(crate) n: usize,
+    pub(crate) bit_length: usize,
 }
 
 impl DynamicBitSetList {
@@ -1318,8 +868,8 @@ impl DynamicBitSetList {
 
         let layout = core::alloc::Layout::array::<usize>(buf_len).map_err(|_| AllocError)?;
         // SAFETY: `buf_len > 0` so layout has nonzero size.
-        let raw = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<usize>();
-        let buf = ptr::NonNull::new(raw).ok_or(AllocError)?;
+        let raw = unsafe { std::alloc::alloc_zeroed(layout) };
+        let buf = ptr::NonNull::new(raw).ok_or(AllocError)?.cast::<usize>();
 
         for i in 0..n {
             // SAFETY: `i * single_bitset_buf_size < buf_len`; allocation is
@@ -1344,14 +894,14 @@ impl DynamicBitSetList {
     /// live. All current callers (`hoisted_install`, `isolated_install`,
     /// `PackageInstaller::can_run_scripts`) satisfy this by keeping the list
     /// alive for the view's entire use. The view must not be `deinit`ed.
-    pub fn at(&self, i: usize) -> DynamicBitSetUnmanaged {
+    pub fn at(&self, i: usize) -> core::mem::ManuallyDrop<DynamicBitSetUnmanaged> {
         debug_assert!(i < self.n, "DynamicBitSetList::at index out of bounds");
         let num_masks = DynamicBitSetUnmanaged::num_masks(self.bit_length);
         let single_bitset_buf_size = num_masks + 1;
 
         let offset = single_bitset_buf_size * i;
 
-        DynamicBitSetUnmanaged {
+        core::mem::ManuallyDrop::new(DynamicBitSetUnmanaged {
             bit_length: self.bit_length,
             // SAFETY: `i < n` (asserted), so `offset + 1 + num_masks <= buf_len`
             // and the pointer is in-bounds. `buf` is a raw allocation never
@@ -1361,7 +911,7 @@ impl DynamicBitSetList {
             // hold `&self` here — `&self` freezes the pointer *value*, not the
             // pointee.
             masks: unsafe { self.buf.as_ptr().add(offset).add(1) },
-        }
+        })
     }
 
     pub fn set(&self, i: usize, j: usize) {
@@ -1387,13 +937,12 @@ impl Drop for DynamicBitSetList {
     }
 }
 
-// `buf` is a uniquely-owned heap allocation of plain `usize`s; moving the
-// owning struct between threads is as safe as moving a `Box<[usize]>`.
+// SAFETY: `buf` is a uniquely-owned heap allocation of plain `usize`s; moving
+// the owning struct between threads is as safe as moving a `Box<[usize]>`.
 unsafe impl Send for DynamicBitSetList {}
 
-// Raw allocation helpers for DynamicBitSetUnmanaged. These mirror Zig's
-// allocator.alloc/realloc/free with the size-at-[-1] header convention.
-// TODO(port): move to bun_alloc if useful elsewhere.
+// Raw allocation helpers for DynamicBitSetUnmanaged, using the size-at-[-1]
+// header convention.
 
 unsafe fn dyn_free(base: *mut usize, len: usize) {
     if len == 0 {
@@ -1431,10 +980,11 @@ unsafe fn dyn_realloc(
 
 // ───────────────────────────── AutoBitSet ─────────────────────────────
 
-/// Static arm size: `@bitSizeOf(DynamicBitSetUnmanaged) - 1`.
-pub const AUTO_STATIC_BITS: usize = mem::size_of::<DynamicBitSetUnmanaged>() * 8 - 1;
+/// Static arm size: one less than the bit-size of `DynamicBitSetUnmanaged`.
+const AUTO_STATIC_BITS: usize = mem::size_of::<DynamicBitSetUnmanaged>() * 8 - 1;
 
-pub type AutoBitSetStatic = ArrayBitSet<AUTO_STATIC_BITS, { num_masks_for(AUTO_STATIC_BITS) }>;
+pub(crate) type AutoBitSetStatic =
+    ArrayBitSet<AUTO_STATIC_BITS, { num_masks_for(AUTO_STATIC_BITS) }>;
 
 pub enum AutoBitSet {
     Static(AutoBitSetStatic),
@@ -1442,11 +992,9 @@ pub enum AutoBitSet {
 }
 
 // ─── two-arm forward helper ────────────────────────────────────────────
-// Zig had `switch (this.*) { inline else => |*b| b.method() }` for the
-// symmetric arms (setAll/count/findFirstSet/Iterator.next). The Rust port
-// regressed those to open-coded matches; this macro restores the collapse
-// and is applied to every method whose Static/Dynamic arms are textually
-// identical. Asymmetric arms (clone, raw_bytes, has_intersection, Drop)
+// This macro forwards a call to whichever arm is active and is applied to
+// every method whose Static/Dynamic arms are textually identical.
+// Asymmetric arms (clone, raw_bytes, has_intersection, Drop)
 // stay open-coded — they genuinely differ.
 macro_rules! auto_forward {
     ($self:expr, |$b:ident| $body:expr) => {
@@ -1497,11 +1045,7 @@ impl AutoBitSet {
         auto_forward!(self, |b| b.set(index))
     }
 
-    pub fn unset(&mut self, index: usize) {
-        auto_forward!(self, |b| b.unset(index))
-    }
-
-    pub fn raw_bytes(&self) -> &[u8] {
+    pub(crate) fn raw_bytes(&self) -> &[u8] {
         match self {
             AutoBitSet::Static(s) => bun_core::cast_slice::<usize, u8>(&s.masks),
             AutoBitSet::Dynamic(d) => d.bytes(),
@@ -1513,12 +1057,7 @@ impl AutoBitSet {
     }
 
     pub fn eql(&self, b: &AutoBitSet) -> bool {
-        // TODO(b0): `strings` arrives in bun_core via move-in (was bun_core::strings).
         self.raw_bytes() == b.raw_bytes()
-    }
-
-    pub fn hash(&self) -> u64 {
-        bun_wyhash::hash(self.raw_bytes())
     }
 
     pub fn for_each<Ctx>(&self, ctx: &mut Ctx, function: fn(&mut Ctx, usize)) {
@@ -1551,7 +1090,7 @@ impl AutoBitSet {
 // (see ArrayBitSet::iterator / DynamicBitSetUnmanaged::iterator), so the
 // wrapper enum was a no-op layer of indirection. Keep the public name as a
 // type alias for any external callers.
-pub type AutoBitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> =
+pub(crate) type AutoBitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> =
     BitSetIterator<'a, KIND_SET, DIR_FWD>;
 
 impl Drop for AutoBitSet {
@@ -1568,21 +1107,10 @@ impl Drop for AutoBitSet {
 /// A bit set with runtime-known size, backed by an allocated slice
 /// of usize.  Thin wrapper around DynamicBitSetUnmanaged which keeps
 /// track of the allocator instance.
-///
-// TODO(port): in Rust the managed/unmanaged split disappears (global
-// allocator). This wrapper is kept for diff parity; Phase B may collapse it
-// into `DynamicBitSetUnmanaged` and re-export under both names.
+#[derive(Default)]
 pub struct DynamicBitSet {
     /// The number of valid items in this bit set
     pub unmanaged: DynamicBitSetUnmanaged,
-}
-
-impl Default for DynamicBitSet {
-    fn default() -> Self {
-        Self {
-            unmanaged: DynamicBitSetUnmanaged::default(),
-        }
-    }
 }
 
 impl DynamicBitSet {
@@ -1596,13 +1124,6 @@ impl DynamicBitSet {
     pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
         Ok(Self {
             unmanaged: DynamicBitSetUnmanaged::init_empty(bit_length)?,
-        })
-    }
-
-    /// Creates a bit set with all elements present.
-    pub fn init_full(bit_length: usize) -> Result<Self, AllocError> {
-        Ok(Self {
-            unmanaged: DynamicBitSetUnmanaged::init_full(bit_length)?,
         })
     }
 
@@ -1625,7 +1146,7 @@ impl DynamicBitSet {
         self.unmanaged.capacity()
     }
 
-    /// Zig spelling of `capacity()` (`.bit_length`).
+    /// Alias for `capacity()`.
     #[inline(always)]
     pub fn bit_length(&self) -> usize {
         self.unmanaged.capacity()
@@ -1644,25 +1165,20 @@ impl DynamicBitSet {
         self.unmanaged.is_set(index)
     }
 
+    /// Like `is_set`, but returns `out_of_bounds` for indices past the end.
+    pub fn is_set_allow_out_of_bound(&self, index: usize, out_of_bounds: bool) -> bool {
+        self.unmanaged
+            .is_set_allow_out_of_bound(index, out_of_bounds)
+    }
+
     /// Returns the total number of set bits in this bit set.
     pub fn count(&self) -> usize {
         self.unmanaged.count()
     }
 
-    /// Changes the value of the specified bit of the bit
-    /// set to match the passed boolean.
-    pub fn set_value(&mut self, index: usize, value: bool) {
-        self.unmanaged.set_value(index, value);
-    }
-
     /// Adds a specific bit to the bit set
     pub fn set(&mut self, index: usize) {
         self.unmanaged.set(index);
-    }
-
-    /// Set all bits to the specified value.
-    pub fn set_all(&mut self, value: bool) {
-        self.unmanaged.set_all(value);
     }
 
     /// Changes the value of all bits in the specified range to
@@ -1675,30 +1191,9 @@ impl DynamicBitSet {
     pub fn unset(&mut self, index: usize) {
         self.unmanaged.unset(index);
     }
-
-    /// Flips a specific bit in the bit set
-    pub fn toggle(&mut self, index: usize) {
-        self.unmanaged.toggle(index);
-    }
-
-    /// Flips all bits in this bit set which are present
-    /// in the toggles bit set.  Both sets must have the
-    /// same bit_length.
-    pub fn toggle_set(&mut self, toggles: &Self) {
-        self.unmanaged.toggle_set(&toggles.unmanaged);
-    }
-
     /// Flips every bit in the bit set.
     pub fn toggle_all(&mut self) {
         self.unmanaged.toggle_all();
-    }
-
-    /// Performs a union of two bit sets, and stores the
-    /// result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in either input.
-    /// The two sets must both be the same bit_length.
-    pub fn set_union(&mut self, other: &Self) {
-        self.unmanaged.set_union(&other.unmanaged);
     }
 
     /// Performs an intersection of two bit sets, and stores
@@ -1707,24 +1202,6 @@ impl DynamicBitSet {
     /// The two sets must both be the same bit_length.
     pub fn set_intersection(&mut self, other: &Self) {
         self.unmanaged.set_intersection(&other.unmanaged);
-    }
-
-    /// Finds the index of the first set bit.
-    /// If no bits are set, returns null.
-    pub fn find_first_set(&self) -> Option<usize> {
-        self.unmanaged.find_first_set()
-    }
-
-    /// Finds the index of the first set bit, and unsets it.
-    /// If no bits are set, returns null.
-    pub fn toggle_first_set(&mut self) -> Option<usize> {
-        self.unmanaged.toggle_first_set()
-    }
-
-    /// Returns true iff every corresponding bit in both
-    /// bit sets are the same.
-    pub fn eql(&self, other: &Self) -> bool {
-        self.unmanaged.eql(&other.unmanaged)
     }
 
     /// Iterates through the items in the set, according to the options.
@@ -1739,50 +1216,9 @@ impl DynamicBitSet {
     }
 }
 
-impl Drop for DynamicBitSet {
-    fn drop(&mut self) {
-        self.unmanaged.deinit();
-    }
-}
-
-// ───────────────────────────── IteratorOptions ─────────────────────────────
-
-/// Options for configuring an iterator over a bit set
-// TODO(port): Zig passes a `comptime options: IteratorOptions` struct. Stable
-// Rust adt_const_params is unstable; split into two const-generic enum params
-// (`KIND`, `DIRECTION`) at every callsite.
-#[derive(Clone, Copy, Default)]
-pub struct IteratorOptions {
-    /// determines which bits should be visited
-    pub kind: IteratorKind,
-    /// determines the order in which bit indices should be visited
-    pub direction: IteratorDirection,
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Default)]
-pub enum IteratorKind {
-    /// visit indexes of set bits
-    #[default]
-    Set,
-    /// visit indexes of unset bits
-    Unset,
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Default)]
-pub enum IteratorDirection {
-    /// visit indices in ascending order
-    #[default]
-    Forward,
-    /// visit indices in descending order.
-    /// Note that this may be slightly more expensive than forward iteration.
-    Reverse,
-}
-
 // ───────────────────────────── BitSetIterator ─────────────────────────────
 
-// The iterator is reusable between several bit set types
-// TODO(port): Zig is generic over `MaskInt`; fixed to `usize` here since every
-// in-tree caller uses `usize`.
+// The iterator is reusable between several bit set types.
 pub struct BitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> {
     // all bits which have not yet been iterated over
     bits_remain: usize,
@@ -1882,45 +1318,3 @@ pub struct Range {
     /// The index immediately after the last bit of interest.
     pub end: usize,
 }
-
-// ───────────────────────────── Tests ─────────────────────────────
-
-// TODO(port): the Zig source defines test helper fns (`testEql`, `testBitSet`,
-// `testPureBitSet`, `testStaticBitSet`, ...) but no `test "..." {}` blocks
-// actually invoke them — dead code carried from the std fork. Ported as
-// `#[cfg(test)]` helpers; Phase B should add `#[test]` entry points or delete.
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // TODO(port): these helpers used `anytype` to accept Integer/Array/Dynamic
-    // bit sets uniformly. Rust would need a common trait. Stubbed pending
-    // Phase B trait extraction.
-
-    #[allow(dead_code)]
-    fn fill_even<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
-    where
-        [(); num_masks_for(SIZE)]:,
-    {
-        for i in 0..len {
-            set.set_value(i, i & 1 == 0);
-        }
-    }
-
-    #[allow(dead_code)]
-    fn fill_odd<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
-    where
-        [(); num_masks_for(SIZE)]:,
-    {
-        for i in 0..len {
-            set.set_value(i, i & 1 == 1);
-        }
-    }
-
-    // TODO(port): `testEql`, `testSubsetOf`, `testSupersetOf`, `testBitSet`,
-    // `testPureBitSet`, `testStaticBitSet` omitted — they rely on Zig
-    // `anytype` duck-typing across all bitset variants and `@hasField`
-    // reflection (`needs_ptr`). Re-author in Phase B against a `BitSet` trait.
-}
-
-// ported from: src/collections/bit_set.zig

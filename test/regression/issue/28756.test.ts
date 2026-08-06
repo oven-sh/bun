@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 // https://github.com/oven-sh/bun/issues/28756
 // AbortSignal.timeout() + util.aborted() causes unbounded memory growth
@@ -12,6 +12,7 @@ test("AbortSignal.timeout + util.aborted does not leak memory", async () => {
       "-e",
       `
       const { aborted } = require("util");
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
       // 10 batches * 8000 = 80k signals.
       // Without fix: leaks ~0.8 KB/signal => ~60 MB growth.
@@ -30,7 +31,7 @@ test("AbortSignal.timeout + util.aborted does not leak memory", async () => {
       Bun.gc(true);
       await new Promise(r => setTimeout(r, 50));
       Bun.gc(true);
-      const baselineRSS = process.memoryUsage().rss;
+      const baselineRSS = rss();
 
       for (let iter = 0; iter < iterations; iter++) {
         for (let i = 0; i < batchSize; i++) {
@@ -49,12 +50,13 @@ test("AbortSignal.timeout + util.aborted does not leak memory", async () => {
       await new Promise(r => setTimeout(r, 100));
       Bun.gc(true);
 
-      const finalRSS = process.memoryUsage().rss;
+      const finalRSS = rss();
       const growth = finalRSS - baselineRSS;
       const growthMB = (growth / 1024 / 1024).toFixed(1);
       console.log(JSON.stringify({ baselineMB: (baselineRSS/1024/1024).toFixed(1), finalMB: (finalRSS/1024/1024).toFixed(1), growthMB }));
       // Without the fix, 80k signals leak ~60 MB.  With the fix, <50 MB.
-      process.exit(growth < 50 * 1024 * 1024 ? 0 : 1);
+      // ASAN's quarantine retains freed allocations so widen the threshold there.
+      process.exit(growth < ${isASAN ? 256 : 50} * 1024 * 1024 ? 0 : 1);
       `,
     ],
     env: bunEnv,

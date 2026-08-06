@@ -10,11 +10,7 @@
     non_snake_case,
     non_camel_case_types,
     non_upper_case_globals,
-    unused_variables,
-    unused_imports,
-    dead_code,
-    clippy::not_unsafe_ptr_arg_deref,
-    clippy::all
+    clippy::not_unsafe_ptr_arg_deref
 )]
 
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_jssink.rs"));

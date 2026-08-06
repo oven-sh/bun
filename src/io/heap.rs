@@ -4,8 +4,8 @@ use core::ptr;
 ///
 /// Why? Intrusive data structures require the element type to hold the metadata
 /// required for the structure, rather than an additional container structure.
-/// There are numerous pros/cons that are documented well by Boost[2]. For Zig,
-/// I think the primary benefits are making data structures allocation free
+/// There are numerous pros/cons that are documented well by Boost[2]. Here
+/// the primary benefits are making data structures allocation free
 /// (rather, shifting allocation up to the consumer which can choose how they
 /// want the memory to be available). There are various costs to this such as
 /// the costs of pointer chasing, larger memory overhead, requiring the element
@@ -21,12 +21,10 @@ use core::ptr;
 /// [1]: https://en.wikipedia.org/wiki/Pairing_heap
 /// [2]: https://www.boost.org/doc/libs/1_64_0/doc/html/intrusive/intrusive_vs_nontrusive.html
 //
-// PORT NOTE: Zig's `Intrusive(T, Context, less)` takes `less` as a comptime fn-pointer
-// parameter. Rust cannot use fn pointers as const generics on stable, so the comparator
-// is folded into a trait on `Context` (`HeapContext<T>::less`). This preserves
-// monomorphization (no indirect call) at the cost of requiring the caller to impl the
-// trait instead of passing a free fn.
-// PERF(port): was comptime fn-pointer monomorphization — profile in Phase B.
+// The comparator is a trait on `Context` (`HeapContext<T>::less`) rather than
+// a fn-pointer parameter (fn pointers can't be const generics on stable).
+// This preserves monomorphization (no indirect call) at the cost of requiring
+// the caller to impl the trait instead of passing a free fn.
 pub struct Intrusive<T: HeapNode, Context: HeapContext<T>> {
     pub root: *mut T,
     pub context: Context,
@@ -35,11 +33,13 @@ pub struct Intrusive<T: HeapNode, Context: HeapContext<T>> {
 /// Trait providing the ordering relation for `Intrusive`.
 /// Implement this on your `Context` type (or a ZST if no context is needed).
 pub trait HeapContext<T> {
-    fn less(&self, a: *mut T, b: *mut T) -> bool;
+    /// # Safety
+    /// `a` and `b` must be non-null, aligned, and point to live nodes currently
+    /// owned by the intrusive heap. Only called from `Intrusive` internals.
+    unsafe fn less(&self, a: *mut T, b: *mut T) -> bool;
 }
 
 /// Trait giving generic access to the embedded `IntrusiveField` on `T`.
-/// In Zig this is duck-typed via `v.heap`; Rust needs an explicit bound.
 pub trait HeapNode: Sized {
     fn heap(&mut self) -> &mut IntrusiveField<Self>;
 }
@@ -301,5 +301,3 @@ impl<T> Default for IntrusiveField<T> {
         }
     }
 }
-
-// ported from: src/io/heap.zig

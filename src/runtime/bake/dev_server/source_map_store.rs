@@ -5,10 +5,6 @@
 //! maps that aren't reachable from IncrementalGraph can still be reached by
 //! a browser tab if it has a callback to a previously loaded chunk; so DevServer
 //! should be aware of it.
-//!
-//! Spec: src/runtime/bake/DevServer/SourceMapStore.zig
-
-use core::mem::offset_of;
 
 use bun_collections::{ArrayHashMap, LinearFifo, linear_fifo::StaticBuffer};
 use bun_core::string_joiner::StringJoiner;
@@ -24,14 +20,14 @@ use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
-pub struct Key(pub u64);
+pub struct Key(pub(crate) u64);
 impl Key {
     #[inline]
-    pub const fn init(v: u64) -> Self {
+    pub(crate) const fn init(v: u64) -> Self {
         Self(v)
     }
     #[inline]
-    pub const fn get(self) -> u64 {
+    pub(crate) const fn get(self) -> u64 {
         self.0
     }
 }
@@ -47,77 +43,48 @@ impl Key {
 // shifts and u64 to use this struct.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct SourceId(pub u64);
+pub(crate) struct SourceId(pub u64);
 impl SourceId {
     #[inline]
-    pub const fn kind(self) -> ChunkKind {
+    pub(crate) const fn kind(self) -> ChunkKind {
         if self.0 & 1 == 0 {
             ChunkKind::InitialResponse
         } else {
             ChunkKind::HmrChunk
         }
     }
-    /// `bits.initial_response.generation_id` (top 32 bits)
-    #[inline]
-    pub const fn initial_response_generation_id(self) -> u32 {
-        (self.0 >> 32) as u32
-    }
-    /// `bits.hmr_chunk.content_hash` (upper 63 bits)
-    #[inline]
-    pub const fn hmr_chunk_content_hash(self) -> u64 {
-        self.0 >> 1
-    }
 }
 
-pub const WEAK_REF_EXPIRY_SECONDS: i64 = 10;
-pub const WEAK_REF_ENTRY_MAX: usize = 16;
+const WEAK_REF_EXPIRY_SECONDS: i64 = 10;
+const WEAK_REF_ENTRY_MAX: usize = 16;
 
 /// IncrementalGraph stores partial source maps for each file. A
 /// `SourceMapStore.Entry` is the information + refcount holder to
 /// construct the actual JSON file associated with a bundle/hot update.
-// PORT NOTE: Zig's `dev_arena` allocator-handle field is dropped — its sole
-// reader was `Entry.arena()` which fed `paths`/`files` frees in `deinit`.
-// In Rust those are `Box`/`Vec` backed by the global mimalloc.
+#[derive(Default)]
 pub struct Entry {
     /// Sum of:
     /// - How many active sockets have code that could reference this source map?
     /// - For route bundle client scripts, +1 until invalidation.
-    pub ref_count: u32,
+    pub(crate) ref_count: u32,
     /// Indexes are off by one because this excludes the HMR Runtime.
-    // PORT NOTE: Zig borrowed inner slices from `IncrementalGraph.bundled_files
-    // .keys()`; that is self-referential w.r.t. `DevServer`, so the port stores
-    // owned copies instead. See PERF(port) in `IncrementalGraph::take_source_map`.
-    pub paths: Box<[Box<[u8]>]>,
+    // Borrowing inner slices from `IncrementalGraph.bundled_files.keys()`
+    // would be self-referential w.r.t. `DevServer`, so owned copies are
+    // stored instead. See `IncrementalGraph::take_source_map`.
+    pub(crate) paths: Box<[Box<[u8]>]>,
     /// Indexes are off by one because this excludes the HMR Runtime.
-    // PORT NOTE: Zig used `bun.MultiArrayList(PackedMap.Shared)` (SoA over a
-    // tagged union). `MultiArrayElement` cannot be derived for an enum and the
-    // column split buys nothing for a 2-word payload, so this is a plain `Vec`.
-    pub files: Vec<packed_map::Shared>,
+    // An SoA column split buys nothing for a 2-word payload (and
+    // `MultiArrayElement` cannot be derived for an enum), so this is a plain `Vec`.
+    pub(crate) files: Vec<packed_map::Shared>,
     /// The memory cost can be shared between many entries and IncrementalGraph
     /// so this is only used for eviction logic, to pretend this was the only
     /// entry. To compute the memory cost of DevServer, this cannot be used.
-    pub overlapping_memory_cost: u32,
-}
-
-impl Default for Entry {
-    fn default() -> Self {
-        Self {
-            ref_count: 0,
-            paths: Box::default(),
-            files: Vec::new(),
-            overlapping_memory_cost: 0,
-        }
-    }
+    pub(crate) overlapping_memory_cost: u32,
 }
 
 impl Entry {
-    // PORT NOTE: Zig `sourceContents()` was dead code — it indexed
-    // `entry.source_contents` and `entry.file_paths`, fields removed in
-    // 67f0c3e016a (replaced by `paths` + `files`). Zig's lazy compilation
-    // never instantiated it; no callers exist. Dropped rather than stubbed.
-
     /// `SourceMapStore.Entry.renderMappings`.
-    pub fn render_mappings(&self, kind: ChunkKind) -> Result<Vec<u8>, bun_core::Error> {
+    pub(crate) fn render_mappings(&self, kind: ChunkKind) -> crate::Result<Vec<u8>> {
         let mut j = StringJoiner::default();
         j.push_static(b"AAAA");
         self.join_vlq(kind, &mut j, Side::Client)?;
@@ -125,12 +92,12 @@ impl Entry {
     }
 
     /// `SourceMapStore.Entry.renderJSON`.
-    pub fn render_json(
+    pub(crate) fn render_json(
         &self,
         dev: &mut DevServer,
         kind: ChunkKind,
         side: Side,
-    ) -> Result<Vec<u8>, bun_core::Error> {
+    ) -> crate::Result<Vec<u8>> {
         let map_files = self.files.as_slice();
         let paths = &self.paths;
 
@@ -139,7 +106,6 @@ impl Entry {
         j.push_static(br#"{"version":3,"sources":["bun://Bun/Bun HMR Runtime""#);
 
         // This buffer is temporary, holding the quoted source paths, joined with commas.
-        // PERF(port): was arena-backed ArrayList; using global Vec since
         // `percent_encode_write` takes `&mut Vec<u8>`.
         let mut source_map_strings: Vec<u8> = Vec::new();
 
@@ -183,7 +149,7 @@ impl Entry {
                             panic!("Unexpected: asset with incomplete UTF-8 as file path")
                         }
                         Err(EncodeSourceMapPathError::OutOfMemory) => {
-                            return Err(bun_core::err!("OutOfMemory"));
+                            return Err(crate::Error::Alloc(bun_alloc::AllocError));
                         }
                     }
                 } else {
@@ -197,7 +163,7 @@ impl Entry {
                             panic!("Unexpected: asset with incomplete UTF-8 as file path")
                         }
                         Err(EncodeSourceMapPathError::OutOfMemory) => {
-                            return Err(bun_core::err!("OutOfMemory"));
+                            return Err(crate::Error::Alloc(bun_alloc::AllocError));
                         }
                     }
                 }
@@ -210,15 +176,15 @@ impl Entry {
                         panic!("Unexpected: asset with incomplete UTF-8 as file path")
                     }
                     Err(bun_core::PercentEncodeError::OutOfMemory) => {
-                        return Err(bun_core::err!("OutOfMemory"));
+                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
                     }
                 }
                 source_map_strings.extend_from_slice(b"\"");
             }
         }
-        // PORT NOTE: Zig `j.pushStatic(source_map_strings.items)` borrows the
-        // arena-backed buffer for the lifetime of `j`; `source_map_strings`
-        // outlives `j.done_with_end()` below so the borrow is sound.
+        // `push_static` borrows the buffer for the lifetime of `j`;
+        // `source_map_strings` outlives `j.done_with_end()` below so the
+        // borrow is sound.
         j.push_static(source_map_strings.as_slice());
         j.push_static(br#"],"sourcesContent":["// (Bun's internal HMR runtime is minified)""#);
         for chunk in map_files {
@@ -252,29 +218,6 @@ impl Entry {
         let json_bytes = j.done_with_end(b"\"}")?.into_vec();
         // errdefer @compileError("last try should be the final alloc") — no further fallible ops below.
 
-        #[cfg(feature = "bake_debugging_features")]
-        if let Some(dump_dir) = dev.dump_dir.as_mut() {
-            let rel_path_escaped: &[u8] = if side == Side::Client {
-                b"latest_chunk.js.map"
-            } else {
-                b"latest_hmr.js.map"
-            };
-            if let Err(err) = crate::bake::dev_server_body::dump_bundle(
-                dump_dir,
-                if side == Side::Client {
-                    bake::Graph::Client
-                } else {
-                    bake::Graph::Server
-                },
-                rel_path_escaped,
-                &json_bytes,
-                false,
-            ) {
-                // PORT NOTE: Zig `bun.handleErrorReturnTrace` is a no-op in Rust.
-                bun_core::output::warn(format_args!("Could not dump bundle: {}", err));
-            }
-        }
-        #[cfg(not(feature = "bake_debugging_features"))]
         let _ = dev;
 
         Ok(json_bytes)
@@ -290,8 +233,6 @@ impl Entry {
             return bun_core::percent_encode_write(utf8_input, out)
                 .map_err(EncodeSourceMapPathError::from);
         }
-        // PORT NOTE: Zig `array_list.writer()` + `writePreQuotedString(..., @TypeOf(writer), writer, ...)`
-        // → `&mut impl bun_io::Write` per PORTING.md §Type map "(comptime X: type, arg: X)".
         bun_js_printer::write_pre_quoted_string::<
             _,
             b'"',
@@ -302,17 +243,17 @@ impl Entry {
         .map_err(|_| EncodeSourceMapPathError::OutOfMemory)
     }
 
-    fn join_vlq(
-        &self,
+    fn join_vlq<'a>(
+        &'a self,
         kind: ChunkKind,
-        j: &mut StringJoiner,
+        j: &mut StringJoiner<'a>,
         side: Side,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let _ = side;
         let map_files = self.files.as_slice();
 
-        // PORT NOTE: Zig `comptime .init("self[Symbol.for(\"bun:hmr\")]({\n")`
-        // — only `line_count` is read here; the literal has exactly one '\n'.
+        // Only the line count of the prefix matters here; the literal has
+        // exactly one '\n'.
         const HMR_CHUNK_PREFIX: &[u8] = b"self[Symbol.for(\"bun:hmr\")]({\n";
         let runtime_line_count: u32 = match kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client).line_count,
@@ -383,15 +324,15 @@ impl Entry {
         Ok(())
     }
 
-    /// `SourceMapStore.Entry.deinit` — Rust drop handles `files` (each
-    /// `Shared` decrements its `Rc<PackedMap>`) and `paths` (outer box only;
-    /// inner slices are borrowed from IncrementalGraph and not freed).
+    /// Drop handles `files` (each `Shared` decrements its `Rc<PackedMap>`)
+    /// and `paths` (both the outer box and the owned inner `Box<[u8]>` path
+    /// copies).
     ///
-    /// PORT NOTE: not `impl Drop` — Zig only asserted `ref_count == 0` on the
-    /// explicit `unrefAtIndex` release path. Whole-store teardown and
+    /// Deliberately not `impl Drop` — the `ref_count == 0` assertion belongs
+    /// only on the explicit `unrefAtIndex` release path. Whole-store teardown and
     /// `*out = Entry { .. }` overwrites legitimately drop entries with nonzero
     /// counts, where a `Drop` assertion would diverge from spec and panic.
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         debug_assert_eq!(self.ref_count, 0);
         self.files.clear();
         self.paths = Box::default();
@@ -419,23 +360,23 @@ pub struct WeakRef {
     /// 32 bits are used for the index of the route bundle. While those bits
     /// are present in the JS file's key, it is not present in the source
     /// map key. This allows this struct to be cleanly packed to 128 bits.
-    pub key_top_bits: u32,
+    pub(crate) key_top_bits: u32,
     /// When this ref expires, it must subtract this many from `refs`
-    pub count: u32,
+    pub(crate) count: u32,
     /// Seconds since epoch. Every time `weak_refs` is incremented, this is
     /// updated to the current time + 1 minute. When the timer expires, all
     /// references are removed.
-    pub expire: i64,
+    pub(crate) expire: i64,
 }
 
 impl WeakRef {
     #[inline]
-    pub fn key(self) -> Key {
+    pub(crate) fn key(self) -> Key {
         Key::init((self.key_top_bits as u64) << 32)
     }
 
     #[inline]
-    pub fn init(k: Key, count: u32, expire: i64) -> WeakRef {
+    pub(crate) fn init(k: Key, count: u32, expire: i64) -> WeakRef {
         WeakRef {
             key_top_bits: u32::try_from(k.get() >> 32).expect("int cast"),
             count,
@@ -445,7 +386,7 @@ impl WeakRef {
 }
 
 /// Result of `SourceMapStore::put_or_increment_ref_count`.
-pub enum PutOrIncrementRefCount<'a> {
+pub(crate) enum PutOrIncrementRefCount<'a> {
     /// If an *Entry is returned, caller must initialize some
     /// fields with the source map data.
     Uninitialized(&'a mut Entry),
@@ -463,34 +404,25 @@ pub enum RemoveOrUpgradeMode {
     Upgrade = 1,
 }
 
-pub struct LocateWeakRefResult {
-    pub index: usize,
-    pub r#ref: WeakRef,
+pub(crate) struct LocateWeakRefResult {
+    pub(crate) r#ref: WeakRef,
 }
 
-/// `bun.GenericIndex(u32, Entry)`.
-pub enum SmEntryMarker {}
-pub type EntryIndex = bun_core::GenericIndex<u32, SmEntryMarker>;
-
-pub struct GetResult<'a> {
-    pub index: EntryIndex,
-    pub mappings: source_map::mapping::List,
-    pub file_paths: &'a [Box<[u8]>],
-    pub entry_files: &'a [packed_map::Shared],
+pub(crate) struct GetResult<'a> {
+    pub(crate) mappings: source_map::mapping::List,
+    pub(crate) file_paths: &'a [Box<[u8]>],
+    pub(crate) entry_files: &'a [packed_map::Shared],
 }
-// PORT NOTE: Zig `GetResult.deinit` only freed `mappings`; Rust drops it
-// automatically — no `impl Drop` needed.
-
 pub struct SourceMapStore {
-    pub entries: ArrayHashMap<Key, Entry>,
+    pub(crate) entries: ArrayHashMap<Key, Entry>,
     /// When a HTML bundle is loaded, it places a "weak reference" to the
     /// script's source map. This reference is held until either:
     /// - The script loads and moves the ref into "strongly held" by the HmrSocket
     /// - The expiry time passes
     /// - Too many different weak references exist
-    pub weak_refs: LinearFifo<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>,
+    pub(crate) weak_refs: LinearFifo<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>,
     /// Shared
-    pub weak_ref_sweep_timer: EventLoopTimer,
+    pub(crate) weak_ref_sweep_timer: EventLoopTimer,
 }
 
 bun_event_loop::impl_timer_owner!(SourceMapStore; from_timer_ptr => weak_ref_sweep_timer);
@@ -512,11 +444,10 @@ impl Default for SourceMapStore {
 bun_core::impl_field_parent! { SourceMapStore => DevServer.source_maps; pub fn mut owner; }
 
 impl SourceMapStore {
-    /// `SourceMapStore.empty` (Zig: `pub const empty: Self = .{ ... }`).
-    /// PORT NOTE: ArrayHashMap/LinearFifo have no `const fn` ctors; callers use
+    /// ArrayHashMap/LinearFifo have no `const fn` ctors; callers use
     /// this in lieu of a `const`.
     #[inline]
-    pub fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self::default()
     }
 
@@ -525,7 +456,7 @@ impl SourceMapStore {
         crate::jsc_hooks::timer_all_mut()
     }
 
-    pub fn put_or_increment_ref_count(
+    pub(crate) fn put_or_increment_ref_count(
         &mut self,
         script_id: Key,
         ref_count: u32,
@@ -535,24 +466,23 @@ impl SourceMapStore {
             debug_assert!(ref_count > 0); // invalid state
             *gop.value_ptr = Entry {
                 ref_count,
-                // Zig left these `undefined`; caller fills them.
+                // Caller fills these.
                 overlapping_memory_cost: 0,
                 paths: Box::default(),
                 files: Vec::new(),
             };
             Ok(PutOrIncrementRefCount::Uninitialized(gop.value_ptr))
         } else {
-            // Zig: `bun.debugAssert(ref_count >= 0)` — always true for u32.
             gop.value_ptr.ref_count += ref_count;
             Ok(PutOrIncrementRefCount::Shared(gop.value_ptr))
         }
     }
 
-    pub fn unref(&mut self, key: Key) {
+    pub(crate) fn unref(&mut self, key: Key) {
         self.unref_count(key, 1);
     }
 
-    pub fn unref_count(&mut self, key: Key, count: u32) {
+    pub(crate) fn unref_count(&mut self, key: Key, count: u32) {
         let Some(index) = self.entries.get_index(&key) else {
             debug_assert!(false);
             return;
@@ -564,13 +494,11 @@ impl SourceMapStore {
         let e = &mut self.entries.values_mut()[index];
         e.ref_count -= count;
         if cfg!(debug_assertions) {
-            // PORT NOTE: reshaped for borrowck — read key after mutable borrow ends.
             let rc = e.ref_count;
             let key = self.entries.keys()[index].get();
             map_log!("dec {:x}, {} | {} -> {}", key, count, rc + count, rc);
         }
         if self.entries.values()[index].ref_count == 0 {
-            // Zig: e.deinit(); store.entries.swapRemoveAt(index);
             // `swap_remove_at` drops the Entry, freeing `files`/`paths`;
             // the `ref_count == 0` invariant is the branch condition itself.
             self.entries.swap_remove_at(index);
@@ -578,7 +506,7 @@ impl SourceMapStore {
     }
 
     /// `SourceMapStore.addWeakRef`.
-    pub fn add_weak_ref(&mut self, key: Key) {
+    pub(crate) fn add_weak_ref(&mut self, key: Key) {
         // This function expects that `weak_ref_entry_max` is low.
         let Some(entry) = self.entries.get_mut(&key) else {
             debug_assert!(false);
@@ -586,7 +514,6 @@ impl SourceMapStore {
         };
         entry.ref_count += 1;
         let entry_ref_count = entry.ref_count;
-        // PORT NOTE: reshaped for borrowck — drop `entry` borrow before touching weak_refs/owner.
 
         let mut new_weak_ref_count: u32 = 1;
 
@@ -630,7 +557,11 @@ impl SourceMapStore {
 
     /// Returns true if the ref count was incremented (meaning there was a
     /// source map to transfer).
-    pub fn remove_or_upgrade_weak_ref(&mut self, key: Key, mode: RemoveOrUpgradeMode) -> bool {
+    pub(crate) fn remove_or_upgrade_weak_ref(
+        &mut self,
+        key: Key,
+        mode: RemoveOrUpgradeMode,
+    ) -> bool {
         if self.entries.get(&key).is_none() {
             return false;
         }
@@ -651,7 +582,6 @@ impl SourceMapStore {
             }
         }
         if !found {
-            // Zig `for { ... } else { entry.ref_count += @intFromEnum(mode); }`
             let entry = self.entries.get_mut(&key).unwrap();
             entry.ref_count += mode as u32;
         }
@@ -665,11 +595,11 @@ impl SourceMapStore {
         true
     }
 
-    pub fn locate_weak_ref(&self, key: Key) -> Option<LocateWeakRefResult> {
+    pub(crate) fn locate_weak_ref(&self, key: Key) -> Option<LocateWeakRefResult> {
         for i in 0..self.weak_refs.readable_length() {
             let r = self.weak_refs.peek_item(i);
             if r.key() == key {
-                return Some(LocateWeakRefResult { index: i, r#ref: r });
+                return Some(LocateWeakRefResult { r#ref: r });
             }
         }
         None
@@ -677,9 +607,18 @@ impl SourceMapStore {
 
     /// `SourceMapStore.sweepWeakRefs` — pop expired weak-refs, decrement,
     /// reschedule. Called from the high-tier `EventLoopTimer` dispatch with
-    /// the raw `*EventLoopTimer` (Zig recovers the store via
-    /// `@fieldParentPtr("weak_ref_sweep_timer", t)`).
-    pub fn sweep_weak_refs(
+    /// the raw `*EventLoopTimer`.
+    ///
+    /// # Safety
+    /// `timer` must point to the `weak_ref_sweep_timer` field of a live
+    /// `SourceMapStore` that is itself the `source_maps` field of a live
+    /// heap-allocated `DevServer`.
+    // `timer` is never dereferenced in Rust — `from_timer_ptr` only does
+    // `container_of` pointer arithmetic to recover the parent `SourceMapStore`;
+    // the deref is of that recovered parent pointer, not the parameter.
+    // not_unsafe_ptr_arg_deref is a false positive on this fieldParentPtr pattern.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
         now_ts: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
@@ -689,14 +628,14 @@ impl SourceMapStore {
         // SAFETY: invariant of `owner()` — store is the `source_maps` field of a live DevServer.
         debug_assert!(unsafe { (*store.owner()).magic } == Magic::Valid);
 
-        // PORT NOTE: Zig compared `i64 expire <= u64 now` with mathematically-correct
-        // mixed-sign semantics (negative expire ⇒ expired). Keep `now` as i64 (already
-        // clamped ≥0) so the comparison stays sign-correct without u64 wrap.
+        // Mixed-sign comparison: a negative `expire` must count as expired.
+        // Keep `now` as i64 (already clamped ≥0) so the comparison stays
+        // sign-correct without u64 wrap.
         let now: i64 = now_ts.sec.max(0);
 
-        // PORT NOTE: Zig `defer store.owner().emitMemoryVisualizerMessageIfNeeded()`
-        // inlined at both returns (a scopeguard cannot capture &mut store across
-        // the loop body without aliasing).
+        // `emitMemoryVisualizerMessageIfNeeded` is inlined at both returns
+        // (a scopeguard cannot capture &mut store across the loop body
+        // without aliasing).
 
         while let Some(item) = store.weak_refs.read_item() {
             if item.expire <= now {
@@ -724,7 +663,7 @@ impl SourceMapStore {
 
     /// This is used in exactly one place: remapping errors.
     /// In that function, an arena allows reusing memory between different source maps.
-    pub fn get_parsed_source_map(&self, script_id: Key) -> Option<GetResult<'_>> {
+    pub(crate) fn get_parsed_source_map(&self, script_id: Key) -> Option<GetResult<'_>> {
         let index = self.entries.get_index(&script_id)?; // source map was collected.
         let entry = &self.entries.values()[index];
 
@@ -733,8 +672,8 @@ impl SourceMapStore {
         let vlq_bytes = entry
             .render_mappings(script_id_decoded.kind())
             .expect("OOM");
-        // PERF(port): Zig used arena for both `arena` and `gpa` here;
-        // render_mappings now returns Vec<u8> (global alloc).
+        // PERF: `render_mappings` returns `Vec<u8>` (global alloc); could
+        // use an arena.
 
         match source_map::mapping::parse(
             &vlq_bytes,
@@ -744,15 +683,14 @@ impl SourceMapStore {
             Default::default(),
         ) {
             source_map::ParseResult::Fail(fail) => {
-                bun_core::output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "Failed to re-parse source map: {}",
                     bstr::BStr::new(fail.msg)
-                ));
+                );
                 None
             }
-            source_map::ParseResult::Success(psm) => Some(GetResult {
-                index: EntryIndex::init(u32::try_from(index).expect("int cast")),
-                mappings: psm.mappings,
+            source_map::ParseResult::Success(mut psm) => Some(GetResult {
+                mappings: core::mem::take(&mut psm.mappings),
                 file_paths: &entry.paths,
                 entry_files: &entry.files,
             }),

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 
 // MessagePort::jsRef() takes a self-ref() on the C++ MessagePort (plus an
 // event-loop ref) when .onmessage is assigned or .ref() is called. The only
@@ -20,6 +20,7 @@ test.skipIf(isWindows)(
         bunExe(),
         "-e",
         `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const workerBody = ${JSON.stringify(`
           const keep = [];
           for (let i = 0; i < 8000; i++) {
@@ -47,17 +48,18 @@ test.skipIf(isWindows)(
         Bun.gc(true);
         Bun.gc(true);
 
-        const rssBefore = process.memoryUsage().rss;
+        const rssBefore = rss();
         for (let i = 0; i < 8; i++) await runWorker();
         Bun.gc(true);
         Bun.gc(true);
-        const rssAfter = process.memoryUsage().rss;
+        const rssAfter = rss();
 
         const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
         // 8 workers × 8000 ports: when leaking, each MessagePort plus its
         // pipe bookkeeping is ~1 KB, so growth is ~50 MB. When fixed,
         // growth is allocator noise (typically under 15 MB).
-        if (deltaMB > 30) {
+        // ASAN's quarantine retains freed allocations so widen the threshold there.
+        if (deltaMB > ${isASAN ? 200 : 30}) {
           console.error("LEAK: RSS grew " + deltaMB.toFixed(2) + " MB across 8 worker cycles");
           process.exit(1);
         }

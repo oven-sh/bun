@@ -1,31 +1,26 @@
 //! The `is_fully_static(source_index)` function returns whether or not
 //! `source_index` imports a file with `"use client"`.
 //!
-//! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.zig`?
+//! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.rs`?
 
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, AutoBitSet};
 use bun_core::env_var;
 
 use crate::import_record;
 use crate::{Index, LinkerContext, UseDirective};
 
-pub struct StaticRouteVisitor<'a> {
-    pub c: &'a LinkerContext<'a>,
-    pub cache: ArrayHashMap</* Index::Int */ u32, bool>,
-    pub visited: AutoBitSet,
+pub(crate) struct StaticRouteVisitor<'a> {
+    pub(crate) c: &'a LinkerContext<'a>,
+    pub(crate) cache: ArrayHashMap</* Index::Int */ u32, bool>,
+    pub(crate) visited: AutoBitSet,
 }
-
-// PORT NOTE: Zig `deinit` only freed `cache` and `visited` with the default
-// arena. Both are now owned types with `Drop`, so no explicit `impl Drop`
-// is needed.
 
 impl<'a> StaticRouteVisitor<'a> {
     /// This the quickest, simplest, dumbest way I can think of doing this.
     /// Investigate performance. It can have false negatives (it doesn't properly
     /// handle cycles), but that's okay as it's just used an optimization
-    pub fn has_transitive_use_client(&mut self, entry_point_source_index: u32) -> bool {
+    pub(crate) fn has_transitive_use_client(&mut self, entry_point_source_index: u32) -> bool {
         if cfg!(debug_assertions)
             && env_var::BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR
                 .get()
@@ -34,12 +29,12 @@ impl<'a> StaticRouteVisitor<'a> {
             return false;
         }
 
-        // PORT NOTE: `self.c` is `&'a LinkerContext` (Copy), so these slice
+        // `self.c` is `&'a LinkerContext` (Copy), so these slice
         // borrows are tied to `'a`, not to `&self`, and do not conflict with
         // the `&mut self` call below. `parse_graph()` is the safe backref
         // accessor (one centralized `unsafe`, see `LinkerContext::parse_graph`).
         let parse_graph = self.c.parse_graph();
-        let all_import_records: &[import_record::List] = parse_graph.ast.items_import_records();
+        let all_import_records: &[import_record::List<'_>] = parse_graph.ast.items_import_records();
         let referenced_source_indices: &[u32] = parse_graph
             .server_component_boundaries
             .list
@@ -65,7 +60,7 @@ impl<'a> StaticRouteVisitor<'a> {
     ///    static.
     fn has_transitive_use_client_impl(
         &mut self,
-        all_import_records: &[import_record::List],
+        all_import_records: &[import_record::List<'_>],
         referenced_source_indices: &[u32],
         use_directives: &[UseDirective],
         source_index: Index,
@@ -81,7 +76,7 @@ impl<'a> StaticRouteVisitor<'a> {
         let import_records = &all_import_records[source_index.get() as usize];
 
         let result = 'result: {
-            for import_record in import_records.slice() {
+            for import_record in import_records.as_slice() {
                 if !import_record.source_index.is_valid() {
                     continue;
                 }
@@ -118,5 +113,3 @@ impl<'a> StaticRouteVisitor<'a> {
         result
     }
 }
-
-// ported from: src/bundler/linker_context/StaticRouteVisitor.zig

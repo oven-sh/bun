@@ -1,11 +1,10 @@
 // GENERATED: re-run peechy (src/api/schema.peechy) with .rs output
-// source: src/options_types/schema.zig (3224 lines)
 // PORT STATUS: skipped — generated file (see PORTING.md §Don't translate)
 //
-// B-2: minimal hand-stubbed `api` namespace so Context.rs / BundleEnums.rs
+// Minimal hand-stubbed `api` namespace so Context.rs / BundleEnums.rs
 // struct fields type-check. Full body arrives when peechy emits .rs.
 
-/// Port of `schema.Writer(WritableStream)` (schema.zig:169) specialised to a
+/// Schema writer specialised to a
 /// `Vec<u8>` sink — the only instantiation reachable from Rust today
 /// (`js_parser::runtime::Base64FallbackMessage::fmt`). The full generic shape
 /// arrives with the peechy-generated body.
@@ -19,48 +18,51 @@ impl<'a> Writer<'a> {
         Self { writable }
     }
     #[inline]
-    pub fn write(&mut self, bytes: &[u8]) {
+    pub(crate) fn write(&mut self, bytes: &[u8]) {
         self.writable.extend_from_slice(bytes);
     }
     #[inline]
-    pub fn write_byte(&mut self, byte: u8) {
+    pub(crate) fn write_byte(&mut self, byte: u8) {
         self.writable.push(byte);
     }
-    /// Zig: `writeInt` — `std.mem.asBytes(&int)` is native-endian raw bytes.
+    /// Writes the int's native-endian raw bytes.
     #[inline]
-    pub fn write_int<I: Copy>(&mut self, int: I) {
+    pub(crate) fn write_int<I: Copy>(&mut self, int: I) {
+        // SAFETY: `int` is a live stack local, so `&raw const int` is valid for reads of
+        // `size_of::<I>()` initialized bytes; `u8` has align 1 so the cast pointer is always
+        // aligned; the slice is consumed by `extend_from_slice` before `int` leaves scope.
         let bytes = unsafe {
             core::slice::from_raw_parts((&raw const int).cast::<u8>(), core::mem::size_of::<I>())
         };
         self.writable.extend_from_slice(bytes);
     }
     #[inline]
-    pub fn write_field_id(&mut self, id: u8) {
+    pub(crate) fn write_field_id(&mut self, id: u8) {
         self.write_byte(id);
     }
     #[inline]
-    pub fn write_enum<E: Copy>(&mut self, val: E) {
+    pub(crate) fn write_enum<E: Copy>(&mut self, val: E) {
         self.write_int(val);
     }
-    /// Zig: `writeArray(u8, slice)` — length-prefixed byte slice.
+    /// Length-prefixed byte slice.
     #[inline]
-    pub fn write_array_u8(&mut self, slice: &[u8]) {
+    pub(crate) fn write_array_u8(&mut self, slice: &[u8]) {
         self.write_int(u32::try_from(slice.len()).unwrap());
         self.write(slice);
     }
     #[inline]
-    pub fn end_message(&mut self) {
+    pub(crate) fn end_message(&mut self) {
         self.write_byte(0);
     }
 }
 
 pub mod api {
-    /// schema.zig:1172 — canonical definition lives in bun_dotenv (lower tier).
+    /// Canonical definition lives in bun_dotenv (lower tier).
     pub use bun_dotenv::DotEnvBehavior;
 
-    /// schema.zig:711 — `enum(u8)` (open). Kept closed.
-    /// Variants PascalCased to match the only downstream writers
-    /// (`jsc/config.rs`, `runtime/cli/Arguments.rs` → `api::ResolveMode::Lazy`).
+    /// Open `enum(u8)` in the wire schema. Kept closed.
+    /// Variants PascalCased to match the only downstream writer
+    /// (`runtime/cli/Arguments.rs` → `api::ResolveMode::Lazy`).
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum ResolveMode {
@@ -72,8 +74,7 @@ pub mod api {
         Bundle = 4,
     }
 
-    /// schema.zig:2295 — `enum(u32)` (open). Kept closed.
-    /// PascalCased: `bun_ast::Kind::to_api` matches on `Err`/`Warn`/`Note`/`Debug`.
+    /// Open `enum(u32)` in the wire schema. Kept closed. PascalCased.
     #[repr(u32)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum MessageLevel {
@@ -86,7 +87,7 @@ pub mod api {
         Debug = 5,
     }
 
-    /// schema.zig:1622 — `enum(u8)` (closed; not a peechy `smol`).
+    /// `enum(u8)` (closed; not a peechy `smol`).
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum UnhandledRejections {
@@ -99,10 +100,9 @@ pub mod api {
         Bun = 5,
     }
 
-    impl UnhandledRejections {
-        /// `UnhandledRejections.map` — `bun.ComptimeStringMap` → `phf::Map`.
-        /// Note: Zig deliberately omits `"bun"` (it's the implicit default).
-        pub const MAP: phf::Map<&'static [u8], UnhandledRejections> = phf::phf_map! {
+    bun_core::comptime_string_map! {
+        #[doc(hidden)]
+        pub static UNHANDLED_REJECTIONS_MAP: UnhandledRejections = {
             b"strict" => UnhandledRejections::Strict,
             b"throw" => UnhandledRejections::Throw,
             b"warn" => UnhandledRejections::Warn,
@@ -111,10 +111,14 @@ pub mod api {
         };
     }
 
-    /// schema.zig:1639 — peechy `message TransformOptions`. Full field set,
-    /// hand-expanded so `bundler::options::BundleOptions::from_api` and the
-    /// bunfig/CLI parsers can un-gate. Field order mirrors the Zig struct
-    /// exactly so side-by-side diff stays readable.
+    impl UnhandledRejections {
+        /// `UnhandledRejections.map` — `bun.ComptimeStringMap`.
+        /// Note: deliberately omits `"bun"` (it's the implicit default).
+        pub const MAP: __ComptimeStringMap_UNHANDLED_REJECTIONS_MAP =
+            __ComptimeStringMap_UNHANDLED_REJECTIONS_MAP(());
+    }
+
+    /// peechy `message TransformOptions`. Full field set.
     ///
     /// Type map (matches the convention block below):
     ///   `?T`                  → `Option<T>`
@@ -122,11 +126,13 @@ pub mod api {
     ///   `?[]const u8`         → `Option<Box<[u8]>>`
     ///   `[]const []const u8`  → `Vec<Box<[u8]>>`
     ///   `?[:0]const u8`       → `Option<Box<[u8]>>`   (sentinel re-derived
-    ///                            at use-site; see Context.rs `// TODO(port):
-    ///                            owned ZStr repr` precedent)
+    ///                            at use-site)
     ///
-    /// `Default` ⇔ `std.mem.zeroes(TransformOptions)` — every Option `None`,
-    /// every slice empty, every scalar `0`/`false`.
+    /// `Default` is all-zero: every Option `None`, every slice empty, every
+    /// scalar `0`/`false`.
+    ///
+    /// LIFECYCLE: `BundleOptions::from_api` parks this in an `Arc` whose final ref
+    /// lives on the process-lifetime `Transpiler` (LSan-rooted in build_command.rs).
     #[derive(Clone, Debug, Default)]
     pub struct TransformOptions {
         /// jsx
@@ -137,8 +143,7 @@ pub mod api {
         pub resolve: Option<ResolveMode>,
         /// origin
         pub origin: Option<Box<[u8]>>,
-        /// absolute_working_dir — Zig `?[:0]const u8`; sentinel dropped (see
-        /// type-map note above).
+        /// absolute_working_dir — sentinel dropped (see type-map note above).
         pub absolute_working_dir: Option<Box<[u8]>>,
         /// define
         pub define: Option<StringMap>,
@@ -211,8 +216,7 @@ pub mod api {
 
     // ─── BunInstall + supporting types ───────────────────────────────────────
 
-    /// schema.zig:2807 — `api.NpmRegistry`.
-    /// `Default` ⇔ `std.mem.zeroes(NpmRegistry)` (empty slices).
+    /// `Default` is empty slices.
     #[derive(Clone, Debug, Default)]
     pub struct NpmRegistry {
         /// url
@@ -228,24 +232,23 @@ pub mod api {
     }
 
     impl NpmRegistry {
-        /// `NpmRegistry.dupe(allocator)` — Zig packs all five strings into one
-        /// contiguous allocation and reslices. Rust can't hand back five
-        /// `Box<[u8]>` views into one buffer without leaking, so this is a
-        /// plain field-wise clone. PERF(port): single-buffer pack — Phase B.
+        /// Plain field-wise clone. PERF: could pack all five strings into one
+        /// contiguous allocation and reslice, but Rust can't hand back five
+        /// `Box<[u8]>` views into one buffer without leaking.
         #[inline]
         pub fn dupe(&self) -> NpmRegistry {
             self.clone()
         }
     }
 
-    /// schema.zig:2956 — `scopes: bun.StringArrayHashMapUnmanaged(NpmRegistry)`.
+    /// Per-scope npm registry overrides, keyed by scope name.
     #[derive(Default)]
     pub struct NpmRegistryMap {
         pub scopes: bun_collections::StringArrayHashMap<NpmRegistry>,
     }
 
-    /// schema.zig:3041 — anonymous `?union(enum) { str, list }` field on
-    /// `BunInstall.ca`; hoisted to a named type so callers can construct it.
+    /// Value of `BunInstall.ca`; hoisted to a named type so callers can
+    /// construct it.
     #[derive(Clone, Debug)]
     pub enum Ca {
         Str(Box<[u8]>),
@@ -258,8 +261,8 @@ pub mod api {
     /// same type.
     pub use bun_install_types::NodeLinker::{NodeLinker, PnpmMatcher};
 
-    /// schema.zig:2973 — `api.BunInstall`. Full field set, order-faithful.
-    /// `Default` ⇔ `std.mem.zeroes(Api.BunInstall)` (every field `None`/empty).
+    /// Full field set.
+    /// `Default` is every field `None`/empty.
     ///
     /// No `Debug`/`Clone` derive: `NpmRegistryMap` wraps `StringArrayHashMap`
     /// which currently provides neither.
@@ -291,8 +294,6 @@ pub mod api {
         pub production: Option<bool>,
         /// save_yarn_lockfile
         pub save_yarn_lockfile: Option<bool>,
-        /// native_bin_links
-        pub native_bin_links: Vec<Box<[u8]>>,
         /// disable_cache
         pub disable_cache: Option<bool>,
         /// disable_manifest_cache
@@ -320,9 +321,10 @@ pub mod api {
         pub minimum_release_age_excludes: Option<Vec<Box<[u8]>>>,
         pub public_hoist_pattern: Option<PnpmMatcher>,
         pub hoist_pattern: Option<PnpmMatcher>,
+        pub hoist: Option<bool>,
     }
 
-    /// schema.zig:1967 — `enum(u8)` (open). Generated body emits `_` open
+    /// Open `enum(u8)` in the wire schema. Generated body emits `_` open
     /// variant; Rust side keeps it closed since callers exhaustively match
     /// only the four named tags (see bundler/options.rs `SourceMapOption`).
     #[repr(u8)]
@@ -335,7 +337,7 @@ pub mod api {
         Linked,
     }
 
-    /// schema.zig:732 — `enum(u8)` (open). Kept closed; `BundleEnums::Target::from`
+    /// Open `enum(u8)` in the wire schema. Kept closed; `BundleEnums::Target::from`
     /// guards the open tail with a `_ => Browser` arm.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -363,7 +365,7 @@ pub mod api {
     /// Alias: `runtime/cli/Arguments.rs` spells the schema type both ways.
     pub type Packages = PackagesMode;
 
-    /// schema.zig:325 — `enum(u8)` (open), `_none = 254`. Kept closed;
+    /// Open `enum(u8)` in the wire schema, `_none = 254`. Kept closed;
     /// `BundleEnums::Loader::from_api` guards the open tail with `_ => File`.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -394,7 +396,7 @@ pub mod api {
     }
 
     impl Loader {
-        /// Zig `@enumFromInt` for the schema `Loader` (open `enum(u8)` in Zig).
+        /// Converts a raw discriminant to the schema `Loader`.
         /// Unknown discriminants fall back to `_none`, matching how
         /// `BundleEnums::Loader::from_api` already guards the open tail.
         #[inline]
@@ -426,22 +428,6 @@ pub mod api {
         }
     }
 
-    /// schema.zig:2200 — `enum(u8)` (open). Kept closed.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum ImportKind {
-        #[default]
-        _none = 0,
-        entry_point = 1,
-        stmt = 2,
-        require = 3,
-        dynamic = 4,
-        require_resolve = 5,
-        at = 6,
-        url = 7,
-        internal = 8,
-    }
-
     // ─── peechy batch 2: hand-expanded for downstream wfs ────────────────
     // Jsx / JsxRuntime / StringMap / EnvConfig / LoadedEnvConfig /
     // LoadedRouteConfig / RouteConfig / FrameworkEntryPoint{,Type,Map,Message} /
@@ -455,10 +441,10 @@ pub mod api {
     //
     // Enum variant names are PascalCase (idiomatic Rust, matches downstream
     // callers in bundler/options.rs + router/lib.rs); `_none` retained as the
-    // zero-tag default where the Zig schema has it. Full peechy `.rs` emit
+    // zero-tag default where the wire schema has it. Full peechy `.rs` emit
     // will replace this block wholesale.
 
-    /// schema.zig:771 — `enum(u8)` (open). Kept closed.
+    /// Open `enum(u8)` in the wire schema. Kept closed.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum JsxRuntime {
@@ -469,7 +455,7 @@ pub mod api {
         Solid = 3,
     }
 
-    /// schema.zig:789
+    /// JSX transform configuration (factory, fragment, runtime, …).
     #[derive(Clone, Debug, Default)]
     pub struct Jsx {
         pub factory: Box<[u8]>,
@@ -480,7 +466,7 @@ pub mod api {
         pub side_effects: bool,
     }
 
-    /// schema.zig:1130
+    /// Parallel-array string→string map as transmitted on the wire.
     #[derive(Clone, Debug, Default)]
     pub struct StringMap {
         pub keys: Vec<Box<[u8]>>,
@@ -494,21 +480,14 @@ pub mod api {
         };
     }
 
-    /// schema.zig:1151
+    /// Parallel-array map from file extension to [`Loader`].
     #[derive(Clone, Debug, Default)]
     pub struct LoaderMap {
         pub extensions: Vec<Box<[u8]>>,
         pub loaders: Vec<Loader>,
     }
 
-    /// schema.zig:1193 — peechy `message` (all fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct EnvConfig {
-        pub prefix: Option<Box<[u8]>>,
-        pub defaults: Option<StringMap>,
-    }
-
-    /// schema.zig:1247
+    /// Fully-resolved env configuration (env prefix + defaults).
     #[derive(Clone, Debug, Default)]
     pub struct LoadedEnvConfig {
         pub dotenv: DotEnvBehavior,
@@ -516,71 +495,7 @@ pub mod api {
         pub prefix: Box<[u8]>,
     }
 
-    /// schema.zig:355 — `enum(u8)` (open). Kept closed.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum FrameworkEntryPointType {
-        #[default]
-        _none = 0,
-        Client = 1,
-        Server = 2,
-        Fallback = 3,
-    }
-
-    /// schema.zig:1365
-    #[derive(Clone, Debug, Default)]
-    pub struct FrameworkEntryPoint {
-        pub kind: FrameworkEntryPointType,
-        pub path: Box<[u8]>,
-        pub env: LoadedEnvConfig,
-    }
-
-    /// schema.zig:1391 — peechy `message` (all fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct FrameworkEntryPointMap {
-        pub client: Option<FrameworkEntryPoint>,
-        pub server: Option<FrameworkEntryPoint>,
-        pub fallback: Option<FrameworkEntryPoint>,
-    }
-
-    /// schema.zig:1444 — peechy `message` (all fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct FrameworkEntryPointMessage {
-        pub path: Option<Box<[u8]>>,
-        pub env: Option<EnvConfig>,
-    }
-
-    /// schema.zig:1489
-    #[derive(Clone, Debug, Default)]
-    pub struct LoadedFramework {
-        pub package: Box<[u8]>,
-        pub display_name: Box<[u8]>,
-        pub development: bool,
-        pub entry_points: FrameworkEntryPointMap,
-        pub client_css_in_js: CssInJsBehavior,
-        pub override_modules: StringMap,
-    }
-
-    /// schema.zig:1528
-    #[derive(Clone, Debug, Default)]
-    pub struct LoadedRouteConfig {
-        pub dir: Box<[u8]>,
-        pub extensions: Box<[Box<[u8]>]>,
-        pub static_dir: Box<[u8]>,
-        pub asset_prefix: Box<[u8]>,
-    }
-
-    /// schema.zig:1559 — peechy `message` (array fields default empty,
-    /// scalar fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct RouteConfig {
-        pub dir: Box<[Box<[u8]>]>,
-        pub extensions: Box<[Box<[u8]>]>,
-        pub static_dir: Option<Box<[u8]>>,
-        pub asset_prefix: Option<Box<[u8]>>,
-    }
-
-    /// schema.zig:753 — `enum(u8)` (open). Kept closed.
+    /// Open `enum(u8)` in the wire schema. Kept closed.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum CssInJsBehavior {
@@ -591,7 +506,7 @@ pub mod api {
         AutoOnimportcss = 3,
     }
 
-    /// schema.zig:1987 — `enum(u8)` (open, no `_none`). Kept closed.
+    /// Open `enum(u8)` in the wire schema (no `_none`). Kept closed.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum PackagesMode {
@@ -600,11 +515,9 @@ pub mod api {
         External = 1,
     }
 
-    // ── Fallback error-page wire types (schema.zig:548-708) ────────────────
-    // Hand-stubbed subset so `js_parser::runtime::Fallback` un-gates. Full
-    // bodies (with `decode`) arrive from the peechy generator.
+    // ── Fallback error-page wire types ──────────────────────────────────────
 
-    /// schema.zig:548 — `enum(u8)` (open).
+    /// Open `enum(u8)` in the wire schema.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum FallbackStep {
@@ -620,22 +533,22 @@ pub mod api {
         fetch_event_handler = 8,
     }
 
-    /// schema.zig:612 — peechy `struct Router`.
+    /// peechy `struct Router`.
     #[derive(Clone, Debug, Default)]
     pub struct Router {
-        pub routes: StringMap,
-        pub route: i32,
-        pub params: StringMap,
+        pub(crate) routes: StringMap,
+        pub(crate) route: i32,
+        pub(crate) params: StringMap,
     }
     impl Router {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             self.routes.encode(w);
             w.write_int(self.route);
             self.params.encode(w);
         }
     }
 
-    /// schema.zig:581 — peechy `struct Problems`.
+    /// peechy `struct Problems`.
     #[derive(Clone, Debug, Default)]
     pub struct Problems {
         pub code: u16,
@@ -644,7 +557,7 @@ pub mod api {
         pub build: Log,
     }
     impl Problems {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             w.write_int(self.code);
             w.write_array_u8(&self.name);
             w.write_int(u32::try_from(self.exceptions.len()).unwrap());
@@ -655,7 +568,7 @@ pub mod api {
         }
     }
 
-    /// schema.zig:475 — peechy `message JsException` (all fields optional).
+    /// peechy `message JsException` (all fields optional).
     #[derive(Clone, Debug, Default)]
     pub struct JsException {
         pub name: Option<Box<[u8]>>,
@@ -665,7 +578,7 @@ pub mod api {
         // `stack: ?StackTrace` — omitted until StackTrace is ported.
     }
     impl JsException {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             if let Some(ref v) = self.name {
                 w.write_field_id(1);
                 w.write_array_u8(v);
@@ -687,7 +600,7 @@ pub mod api {
     }
 
     impl StringMap {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             w.write_int(u32::try_from(self.keys.len()).unwrap());
             for k in &self.keys {
                 w.write_array_u8(k);
@@ -699,22 +612,22 @@ pub mod api {
         }
     }
 
-    /// schema.zig — peechy `struct Log` (minimal: `warnings`, `errors`, `msgs`).
-    #[derive(Clone, Debug, Default)]
+    /// peechy `struct Log` (minimal: `warnings`, `errors`, `msgs`).
+    #[derive(Copy, Clone, Debug, Default)]
     pub struct Log {
         pub warnings: u32,
         pub errors: u32,
         // `msgs: []Message` — omitted until `Message` is ported.
     }
     impl Log {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(self, w: &mut super::Writer<'_>) {
             w.write_int(self.warnings);
             w.write_int(self.errors);
             w.write_int(0u32); // msgs.len
         }
     }
 
-    /// schema.zig:638 — peechy `message FallbackMessageContainer`.
+    /// peechy `message FallbackMessageContainer`.
     #[derive(Clone, Debug, Default)]
     pub struct FallbackMessageContainer {
         pub message: Option<Box<[u8]>>,

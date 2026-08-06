@@ -11,24 +11,23 @@
 //! - bun audit
 
 use crate::package_install;
+use crate::package_manager_real::PackageManagerCommand;
 use crate::package_manager_real::Subcommand;
 use bun_clap as clap;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::npm as Npm;
 use bun_paths::{self as Path, PathBuffer};
-// TODO(b0): PackageManagerCommand arrives from move-in
-// (bun_runtime::cli::package_manager_command::PackageManagerCommand → install::PackageManager::CommandLineArguments).
-use crate::package_manager_real::PackageManagerCommand;
 
 use std::sync::OnceLock;
 
 use super::package_manager_options as Options;
 
 /// `Output.pretty(text, .{})` — runtime `<tag>` → ANSI rewrite of a help-text
-/// literal then write to stdout. The Zig version did this at comptime; here the
-/// help strings are runtime `&str`s so we use the runtime expander.
+/// literal then write to stdout. The help strings are runtime `&str`s so we
+/// use the runtime expander.
 #[inline]
+#[allow(clippy::disallowed_methods)] // template is a runtime &str parameter
 fn pretty_help(text: &str) {
     Output::pretty(format_args!(
         "{}",
@@ -38,16 +37,13 @@ fn pretty_help(text: &str) {
 
 type ParamType = clap::Param<clap::Help>;
 
-// Zig `++` does comptime array concatenation. `bun_clap::concat_params!` is a
-// const-fn slice concat over `Param<Help>`, so combined tables
+// `bun_clap::concat_params!` is a const-fn slice concat over `Param<Help>`, so combined tables
 // (`INSTALL_PARAMS`, …) are baked into rodata with zero runtime init.
 use bun_clap::concat_params;
 
-// PORT NOTE: Zig builds the `--backend` param spec via comptime string `++` against
-// `platform_specific_backend_label`. `clap::param!` is a proc-macro that requires a
+// `clap::param!` is a proc-macro that requires a
 // *literal* token (it parses the spec at compile time), so `const_format::concatcp!`
-// can't feed it. Instead we cfg-select the fully-expanded literal per platform —
-// semantically identical to the Zig comptime concat.
+// can't feed it. Instead we cfg-select the fully-expanded literal per platform.
 #[cfg(target_os = "macos")]
 const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\""
@@ -129,7 +125,7 @@ const SHARED_PARAMS: &[ParamType] = &[
     clap::param!("-h, --help                            Print this help menu"),
 ];
 
-pub static INSTALL_PARAMS: &[ParamType] = concat_params![
+pub(crate) static INSTALL_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
@@ -152,7 +148,7 @@ pub static INSTALL_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
-pub static UPDATE_PARAMS: &[ParamType] = concat_params![
+pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!(
@@ -169,10 +165,11 @@ pub static UPDATE_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
-pub static PM_PARAMS: &[ParamType] = concat_params![
+pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!("-a, --all"),
+        clap::param!("--trusted"),
         clap::param!("--json                              Output in JSON format"),
         // clap::param!("--filter <STR>...                      Pack each matching workspace"),
         clap::param!(
@@ -199,7 +196,7 @@ pub static PM_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
-pub static ADD_PARAMS: &[ParamType] = concat_params![
+pub(crate) static ADD_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
@@ -221,21 +218,21 @@ pub static ADD_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
-pub static REMOVE_PARAMS: &[ParamType] = concat_params![
+pub(crate) static REMOVE_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" of package(s) to remove from package.json"
     ),]
 ];
 
-pub static LINK_PARAMS: &[ParamType] = concat_params![
+pub(crate) static LINK_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" install package as a link"
     ),]
 ];
 
-pub static UNLINK_PARAMS: &[ParamType] = concat_params![
+pub(crate) static UNLINK_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" uninstall package as a link"
@@ -353,96 +350,92 @@ static WHY_PARAMS: &[ParamType] = concat_params![
 
 // NOTE: `string` (= `[]const u8`) fields here are slices into process argv (owned by `clap::Args`
 // which itself lives for the program duration). They are never freed. Mapped to `&'static [u8]`
-// per PORTING.md (no `deinit`, never `allocator.free`d). Phase B may want to thread an explicit
-// lifetime if `clap::Args` ever becomes scoped.
+// per PORTING.md (no `deinit`, never `allocator.free`d). An explicit lifetime would only
+// become necessary if `clap::Args` ever becomes scoped.
 //
-// `Clone` mirrors Zig value-copy semantics — `updatePackageJSONAndInstall`
+// `Clone` is needed because `updatePackageJSONAndInstall`
 // passes `cli` by value into `PackageManager.init` while retaining its own
 // copy.
 #[derive(Clone)]
 pub struct CommandLineArguments {
-    pub cache_dir: Option<&'static [u8]>,
+    pub(crate) cache_dir: Option<&'static [u8]>,
     pub lockfile: &'static [u8],
-    pub token: &'static [u8],
-    pub global: bool,
-    pub config: Option<&'static [u8]>,
-    pub network_concurrency: Option<u16>,
-    pub backend: Option<package_install::Method>,
+    pub(crate) token: &'static [u8],
+    pub(crate) global: bool,
+    pub(crate) config: Option<&'static [u8]>,
+    pub(crate) network_concurrency: Option<u16>,
+    pub(crate) backend: Option<package_install::Method>,
     pub analyze: bool,
-    pub only_missing: bool,
+    pub(crate) only_missing: bool,
     pub positionals: &'static [&'static [u8]],
 
-    pub yarn: bool,
+    pub(crate) yarn: bool,
     pub production: bool,
-    pub frozen_lockfile: bool,
-    pub no_save: bool,
-    pub dry_run: bool,
-    pub force: bool,
-    pub no_cache: bool,
-    pub silent: bool,
-    pub quiet: bool,
-    pub verbose: bool,
-    pub no_progress: bool,
-    pub no_verify: bool,
-    pub ignore_scripts: bool,
-    pub trusted: bool,
-    pub no_summary: bool,
-    pub latest: bool,
+    pub(crate) frozen_lockfile: bool,
+    pub(crate) no_save: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) force: bool,
+    pub(crate) no_cache: bool,
+    pub log_level: Options::LogLevel,
+    pub(crate) no_progress: bool,
+    pub(crate) no_verify: bool,
+    pub(crate) ignore_scripts: bool,
+    pub(crate) trusted: bool,
+    pub(crate) no_summary: bool,
+    pub(crate) latest: bool,
     pub interactive: bool,
     pub json_output: bool,
-    pub recursive: bool,
-    pub filters: &'static [&'static [u8]],
+    pub(crate) recursive: bool,
+    pub(crate) filters: &'static [&'static [u8]],
 
-    pub pack_destination: &'static [u8],
-    pub pack_filename: &'static [u8],
-    pub pack_gzip_level: Option<&'static [u8]>,
+    pub(crate) pack_destination: &'static [u8],
+    pub(crate) pack_filename: &'static [u8],
+    pub(crate) pack_gzip_level: Option<&'static [u8]>,
 
-    pub development: bool,
-    pub optional: bool,
-    pub peer: bool,
+    pub(crate) dependency_group: Options::DependencyGroup,
 
-    pub omit: Option<Omit>,
+    pub(crate) omit: Option<Omit>,
 
-    pub exact: bool,
+    pub(crate) exact: bool,
 
-    pub concurrent_scripts: Option<usize>,
+    pub(crate) concurrent_scripts: Option<usize>,
 
-    pub patch: PatchOpts,
+    pub(crate) patch: PatchOpts,
 
-    pub registry: &'static [u8],
+    pub(crate) registry: &'static [u8],
 
-    pub publish_config: Options::PublishConfig,
+    pub(crate) publish_config: Options::PublishConfig,
 
-    pub tolerate_republish: bool,
+    pub(crate) tolerate_republish: bool,
 
-    pub ca: &'static [&'static [u8]],
-    pub ca_file_name: &'static [u8],
+    pub(crate) ca: &'static [&'static [u8]],
+    pub(crate) ca_file_name: &'static [u8],
 
-    pub save_text_lockfile: Option<bool>,
+    pub(crate) save_text_lockfile: Option<bool>,
 
-    pub lockfile_only: bool,
+    pub(crate) lockfile_only: bool,
 
-    pub node_linker: Option<Options::NodeLinker>,
+    pub(crate) node_linker: Option<Options::NodeLinker>,
 
-    pub minimum_release_age_ms: Option<f64>,
+    pub(crate) minimum_release_age_ms: Option<f64>,
 
     // `bun pm version` options
-    pub git_tag_version: bool,
-    pub allow_same_version: bool,
-    pub preid: &'static [u8],
-    pub message: Option<&'static [u8]>,
+    pub(crate) git_tag_version: bool,
+    pub(crate) allow_same_version: bool,
+    pub(crate) preid: &'static [u8],
+    pub(crate) message: Option<&'static [u8]>,
 
     // `bun pm why` options
     pub top_only: bool,
-    pub depth: Option<usize>,
+    pub(crate) depth: Option<usize>,
 
     // `bun audit` options
     pub audit_level: Option<AuditLevel>,
     pub audit_ignore_list: &'static [&'static [u8]],
 
     // CPU and OS overrides for optional dependencies
-    pub cpu: Npm::Architecture,
-    pub os: Npm::OperatingSystem,
+    pub(crate) cpu: Npm::Architecture,
+    pub(crate) os: Npm::OperatingSystem,
 }
 
 impl Default for CommandLineArguments {
@@ -466,9 +459,7 @@ impl Default for CommandLineArguments {
             dry_run: false,
             force: false,
             no_cache: false,
-            silent: false,
-            quiet: false,
-            verbose: false,
+            log_level: Options::LogLevel::default(),
             no_progress: false,
             no_verify: false,
             ignore_scripts: false,
@@ -484,9 +475,7 @@ impl Default for CommandLineArguments {
             pack_filename: b"",
             pack_gzip_level: None,
 
-            development: false,
-            optional: false,
-            peer: false,
+            dependency_group: Options::DependencyGroup::default(),
 
             omit: None,
 
@@ -539,15 +528,17 @@ pub enum AuditLevel {
     Critical,
 }
 
-static AUDIT_LEVEL_MAP: phf::Map<&'static [u8], AuditLevel> = phf::phf_map! {
-    b"low" => AuditLevel::Low,
-    b"moderate" => AuditLevel::Moderate,
-    b"high" => AuditLevel::High,
-    b"critical" => AuditLevel::Critical,
-};
+bun_core::comptime_string_map! {
+    static AUDIT_LEVEL_MAP: AuditLevel = {
+        b"low" => AuditLevel::Low,
+        b"moderate" => AuditLevel::Moderate,
+        b"high" => AuditLevel::High,
+        b"critical" => AuditLevel::Critical,
+    };
+}
 
 impl AuditLevel {
-    pub fn from_string(str: &[u8]) -> Option<AuditLevel> {
+    pub(crate) fn from_string(str: &[u8]) -> Option<AuditLevel> {
         AUDIT_LEVEL_MAP.get(str).copied()
     }
 
@@ -569,9 +560,9 @@ pub enum PatchOpts {
 
 #[derive(Default, Copy, Clone)]
 pub struct Omit {
-    pub dev: bool,
-    pub optional: bool,
-    pub peer: bool,
+    pub(crate) dev: bool,
+    pub(crate) optional: bool,
+    pub(crate) peer: bool,
 }
 
 impl CommandLineArguments {
@@ -603,7 +594,7 @@ impl CommandLineArguments {
 Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(&INSTALL_PARAMS);
+                clap::simple_help(INSTALL_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -632,7 +623,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(&UPDATE_PARAMS);
+                clap::simple_help(UPDATE_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -660,7 +651,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&PATCH_PARAMS);
+                clap::simple_help(PATCH_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -683,7 +674,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
 "#;
                 pretty_help(intro_text);
-                clap::simple_help(&PATCH_PARAMS);
+                clap::simple_help(PATCH_COMMIT_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -714,7 +705,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(&ADD_PARAMS);
+                clap::simple_help(ADD_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -735,7 +726,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(&REMOVE_PARAMS);
+                clap::simple_help(REMOVE_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -759,7 +750,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(&LINK_PARAMS);
+                clap::simple_help(LINK_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -781,7 +772,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&UNLINK_PARAMS);
+                clap::simple_help(UNLINK_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -813,7 +804,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>
 "#;
 
                 pretty_help(intro_text);
-                clap::simple_help(&OUTDATED_PARAMS);
+                clap::simple_help(OUTDATED_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -834,7 +825,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&PACK_PARAMS);
+                clap::simple_help(PACK_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -865,7 +856,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&PUBLISH_PARAMS);
+                clap::simple_help(PUBLISH_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -918,7 +909,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&INFO_PARAMS);
+                clap::simple_help(INFO_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -941,7 +932,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
 "#;
 
                 pretty_help(intro_text);
-                clap::simple_help(&WHY_PARAMS);
+                clap::simple_help(WHY_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -966,16 +957,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&PM_PARAMS);
+                clap::simple_help(PM_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
         }
     }
 
-    // TODO(port): narrow error set
-    pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, bun_core::Error> {
-        // PERF(port): was comptime monomorphization on `subcommand` — profile in Phase B
+    pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, crate::Error> {
         Output::set_is_verbose(Output::is_verbose());
 
         let params: &'static [ParamType] = match subcommand {
@@ -1002,12 +991,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         let mut diag = clap::Diagnostic::default();
 
-        // PORT NOTE: Zig kept `args` (and its arena) alive for the program duration —
+        // `args` must stay alive for the program duration —
         // `cli` stores slices into it. Park the parsed `Args` in a process-global
         // `OnceLock` so outer slice borrows (`positionals()`, `options()`) are
         // `'static`; inner `&[u8]` are argv-backed and already `'static`. CLI args
-        // are parsed exactly once per process, so this is the semantic equivalent
-        // of the Zig arena that was never `deinit`'d.
+        // are parsed exactly once per process.
         static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
         let args: &'static clap::Args<clap::Help> = match clap::parse::<clap::Help>(
             params,
@@ -1045,9 +1033,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         cli.force = args.flag(b"--force");
         cli.no_verify = args.flag(b"--no-verify");
         cli.no_cache = args.flag(b"--no-cache");
-        cli.silent = args.flag(b"--silent");
-        cli.quiet = args.flag(b"--quiet");
-        cli.verbose = args.flag(b"--verbose") || Output::is_verbose();
+        // --silent checked first so `is_silent()` matches `--silent` exactly:
+        // callers read it to suppress summaries/errors independently of verbose.
+        cli.log_level = if args.flag(b"--silent") {
+            Options::LogLevel::Silent
+        } else if args.flag(b"--verbose") || Output::is_verbose() {
+            Options::LogLevel::Verbose
+        } else if args.flag(b"--quiet") {
+            Options::LogLevel::Quiet
+        } else {
+            Options::LogLevel::Default
+        };
         cli.ignore_scripts = args.flag(b"--ignore-scripts");
         cli.trusted = args.flag(b"--trust");
         cli.no_summary = args.flag(b"--no-summary");
@@ -1059,8 +1055,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 Some(l) => l,
                 None => {
                     Output::err_generic(
-                        "Expected --linker to be one of 'isolated' or 'hoisted'",
-                        (),
+                        "Invalid value for --linker: {}. Must be 'isolated' or 'hoisted'.",
+                        (bun_core::fmt::quote(linker),),
                     );
                     Global::exit(1);
                 }
@@ -1076,7 +1072,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if let Some(network_concurrency) = args.option(b"--network-concurrency") {
-            // TODO(port): parse u16 from &[u8] — bun_str helper or core::str::from_utf8 + parse
             cli.network_concurrency =
                 Some(match strings::parse_int::<u16>(network_concurrency, 10) {
                     Ok(n) => n,
@@ -1095,7 +1090,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if let Some(min_age_secs) = args.option(b"--minimum-release-age") {
-            // TODO(port): parse f64 from &[u8]
             let secs: f64 = match bun_core::parse_double(min_age_secs) {
                 Ok(s) => s,
                 Err(_) => {
@@ -1311,9 +1305,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if matches!(subcommand, Subcommand::Add | Subcommand::Install) {
-            cli.development = args.flag(b"--development") || args.flag(b"--dev");
-            cli.optional = args.flag(b"--optional");
-            cli.peer = args.flag(b"--peer");
+            cli.dependency_group = if args.flag(b"--development") || args.flag(b"--dev") {
+                Options::DependencyGroup::DEV
+            } else if args.flag(b"--optional") {
+                Options::DependencyGroup::OPTIONAL
+            } else if args.flag(b"--peer") {
+                Options::DependencyGroup::PEER
+            } else {
+                Options::DependencyGroup::DEPENDENCIES
+            };
             cli.exact = args.flag(b"--exact");
             cli.analyze = args.flag(b"--analyze");
             cli.only_missing = args.flag(b"--only-missing");
@@ -1326,8 +1326,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         if let Some(cwd_) = args.option(b"--cwd") {
             let mut buf = PathBuffer::uninit();
             let mut buf2 = PathBuffer::uninit();
-            let final_path: &mut bun_core::ZStr;
-            if !cwd_.is_empty() && cwd_[0] == b'.' {
+
+            let final_path: &mut bun_core::ZStr = if !cwd_.is_empty() && cwd_[0] == b'.' {
                 let cwd_len = bun_sys::getcwd(&mut buf[..])?;
                 let cwd = &buf[..cwd_len];
                 let parts: [&[u8]; 1] = [cwd_];
@@ -1338,12 +1338,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 )
                 .len();
                 buf2[len] = 0;
-                final_path = bun_core::ZStr::from_buf_mut(&mut buf2[..], len);
+                bun_core::ZStr::from_buf_mut(&mut buf2[..], len)
             } else {
                 buf[..cwd_.len()].copy_from_slice(cwd_);
                 buf[cwd_.len()] = 0;
-                final_path = bun_core::ZStr::from_buf_mut(&mut buf[..], cwd_.len());
-            }
+                bun_core::ZStr::from_buf_mut(&mut buf[..], cwd_.len())
+            };
             if let Err(err) = bun_sys::chdir(final_path) {
                 Output::err_generic(
                     "failed to change directory to \"{}\": {}\n",
@@ -1389,12 +1389,27 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if subcommand == Subcommand::Patch && cli.positionals.len() < 2 {
-            Output::err_generic("Missing pkg to patch\n", ());
+            if let PatchOpts::Commit { .. } = cli.patch {
+                Output::err_generic(
+                    "Missing path to the package directory containing your changes.\n  <d>Usage:<r> bun patch --commit <cyan>node_modules/\\<package\\><r>",
+                    (),
+                );
+            } else {
+                Output::err_generic(
+                    "Missing package name to patch.\n  <d>Usage:<r> bun patch <cyan>\\<package\\><r><d>[@\\<version\\>]<r>",
+                    (),
+                );
+            }
+            bun_core::note!("Run 'bun patch --help' for more information");
             Global::crash();
         }
 
         if subcommand == Subcommand::PatchCommit && cli.positionals.len() < 2 {
-            Output::err_generic("Missing pkg folder to patch\n", ());
+            Output::err_generic(
+                "Missing path to the package directory containing your changes.\n  <d>Usage:<r> bun patch-commit <cyan>node_modules/\\<package\\><r>",
+                (),
+            );
+            bun_core::note!("Run 'bun patch-commit --help' for more information");
             Global::crash();
         }
 
@@ -1430,10 +1445,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 } else if git_tag_version == b"false" {
                     cli.git_tag_version = false;
                 }
-            } else if args.flag(b"--no-git-tag-version") {
-                cli.git_tag_version = false;
             } else {
-                cli.git_tag_version = true;
+                cli.git_tag_version = !args.flag(b"--no-git-tag-version");
             }
             cli.allow_same_version = args.flag(b"--allow-same-version");
             if let Some(preid) = args.option(b"--preid") {
@@ -1464,5 +1477,3 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         Ok(cli)
     }
 }
-
-// ported from: src/install/PackageManager/CommandLineArguments.zig

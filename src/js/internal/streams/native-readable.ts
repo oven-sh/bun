@@ -6,7 +6,11 @@
 // Bun, `fromWeb` is able to check if the stream is backed by a native handle,
 // to which it will take this path.
 const Readable = require("internal/streams/readable");
-const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
+const transferToNativeReadable = $newCppFunction(
+  "streams/BunStreamConsumers.cpp",
+  "jsFunctionTransferToNativeReadableStream",
+  1,
+);
 const { errorOrDestroy } = require("internal/streams/destroy");
 
 const kRefCount = Symbol("refCount");
@@ -25,7 +29,7 @@ let dynamicallyAdjustChunkSize = (_?) => (
 
 type NativeReadable = typeof import("node:stream").Readable &
   typeof import("node:stream").Stream & {
-    push: (chunk: any) => void;
+    push: (chunk: any) => boolean;
     $bunNativePtr?: NativePtr;
     [kRefCount]: number;
     [kCloseState]: [boolean];
@@ -44,6 +48,7 @@ interface NativePtr {
   pull: (view: any, closer: any) => any;
   updateRef: (ref: boolean) => void;
   cancel: (error: any) => void;
+  setFlowing?: (flowing: boolean) => void;
 }
 
 let debugId = 0;
@@ -68,11 +73,8 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
 
-  if (typeof options.highWaterMark === "number") {
-    stream[kHighWaterMark] = options.highWaterMark;
-  } else {
-    stream[kHighWaterMark] = 256 * 1024;
-  }
+  const highWaterMark = options.highWaterMark;
+  stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
 
   stream.ref = ref;
   stream.unref = unref;
@@ -121,10 +123,14 @@ function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
 
 function read(this: NativeReadable, maxToRead: number) {
   $debug(`[${this.debugId}] read${this[kPendingRead] ? ", is already pending" : ""}`);
+  var ptr = this.$bunNativePtr;
+  // Readable called `_read`, so it wants data: make sure the native reader is
+  // not paused from a previous `push()===false` (readStart, like net.Socket).
+  // Runs even when a pull promise is outstanding so that promise can resolve.
+  if (ptr) ptr.setFlowing?.(true);
   if (this[kPendingRead]) {
     return;
   }
-  var ptr = this.$bunNativePtr;
   if (!ptr) {
     $debug(`[${this.debugId}] read, no ptr`);
     this.push(null);
@@ -138,26 +144,28 @@ function read(this: NativeReadable, maxToRead: number) {
       this[kHighWaterMark] = Math.min(this[kHighWaterMark], result);
     }
     if ($isTypedArrayView(result) && result.byteLength > 0) {
-      this.push(result);
+      pushAndCheck(this, result);
     }
     const drainResult = ptr.drain();
     this[kConstructed] = true;
     $debug(`[${this.debugId}] drain result: ${drainResult?.byteLength ?? "null"}`);
     if ((drainResult?.byteLength ?? 0) > 0) {
-      this.push(drainResult);
+      pushAndCheck(this, drainResult);
     }
   }
   const chunk = getRemainingChunk(this, maxToRead);
   var result = ptr.pull(chunk, this[kCloseState]);
   $assert(result !== undefined);
   $debug(
-    `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${result instanceof Promise ? "<pending>" : result}, closeState: ${this[kCloseState][0]}`,
+    `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
   );
   if ($isPromise(result)) {
     this[kPendingRead] = true;
     return result.then(
       result => {
-        $debug(`[${this.debugId}] pull, resolved: ${result}, closeState: ${this[kCloseState][0]}`);
+        $debug(
+          `[${this.debugId}] pull, resolved: ${$isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
+        );
         this[kPendingRead] = false;
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
       },
@@ -193,12 +201,22 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer, isClos
   }
 }
 
+// `push()` returning false means the Readable's buffer is at/above hwm (or
+// the consumer paused); stop the native reader so kernel backpressure reaches
+// the writer (readStop, like net.Socket). The next `_read()` re-enables it.
+function pushAndCheck(stream: NativeReadable, chunk: any) {
+  if (!stream.push(chunk)) {
+    const ptr = stream.$bunNativePtr;
+    if (ptr) ptr.setFlowing?.(false);
+  }
+}
+
 function handleNumberResult(stream: NativeReadable, result: number, chunk: any, isClosed: boolean) {
   if (result > 0) {
     const slice = chunk.subarray(0, result);
     chunk = slice.byteLength < chunk.byteLength ? chunk.subarray(result) : undefined;
     if (slice.byteLength > 0) {
-      stream.push(slice);
+      pushAndCheck(stream, slice);
     }
   }
 
@@ -213,7 +231,7 @@ function handleNumberResult(stream: NativeReadable, result: number, chunk: any, 
 
 function handleArrayBufferViewResult(stream: NativeReadable, result: any, chunk: any, isClosed: boolean) {
   if (result.byteLength > 0) {
-    stream.push(result);
+    pushAndCheck(stream, result);
   }
 
   if (isClosed) {

@@ -1,15 +1,8 @@
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 //! Raw libuv FFI (Windows only). Re-exports the `libuv` module's contents at
 //! crate root so callers can write `bun_libuv_sys::fs_t` /
-//! `bun_sys::windows::libuv::uv_fs_open` (matching the Zig
-//! `bun.windows.libuv.*` namespace).
+//! `bun_sys::windows::libuv::uv_fs_open`.
 pub mod libuv;
 #[cfg(windows)]
 pub use libuv::*;
@@ -21,7 +14,6 @@ pub use libuv::*;
 // `node::types::Dirent::to_js` (which surfaces them to JS as
 // `process.binding('constants').fs.UV_DIRENT_*`).
 // ──────────────────────────────────────────────────────────────────────────
-pub type uv_dirent_type_t = core::ffi::c_uint;
 pub const UV_DIRENT_UNKNOWN: core::ffi::c_int = 0;
 pub const UV_DIRENT_FILE: core::ffi::c_int = 1;
 pub const UV_DIRENT_DIR: core::ffi::c_int = 2;

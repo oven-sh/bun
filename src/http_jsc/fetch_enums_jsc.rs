@@ -36,5 +36,3 @@ pub fn fetch_cache_mode_to_js(this: FetchCacheMode, global: &JSGlobalObject) -> 
     // `as_mut_ptr` routes through `UnsafeCell::get` for sound interior mutability.
     unsafe { Bun__FetchCacheMode__toJS(this as u8, global.as_mut_ptr()) }
 }
-
-// ported from: src/http_jsc/fetch_enums_jsc.zig

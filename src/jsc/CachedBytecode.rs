@@ -34,11 +34,10 @@ unsafe extern "C" {
 }
 
 impl CachedBytecode {
-    // PORT NOTE: the returned `&'static [u8]` actually borrows from the
-    // `CachedBytecode` handle and is invalidated when `deref()` is called —
-    // identical to the Zig `[]const u8` + `*CachedBytecode` pair. Callers own
+    // SAFETY CONTRACT: the returned `&'static [u8]` actually borrows from the
+    // `CachedBytecode` handle and is invalidated when `deref()` is called. Callers own
     // the handle and must call `deref()` (or drop via `allocator()`) to free.
-    pub fn generate_for_esm(
+    pub(crate) fn generate_for_esm(
         source_provider_url: &mut BunString,
         input: &[u8],
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
@@ -68,7 +67,7 @@ impl CachedBytecode {
         None
     }
 
-    pub fn generate_for_cjs(
+    pub(crate) fn generate_for_cjs(
         source_provider_url: &mut BunString,
         input: &[u8],
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
@@ -97,11 +96,7 @@ impl CachedBytecode {
         None
     }
 
-    pub fn deref(&mut self) {
-        CachedBytecode__deref(self)
-    }
-
-    pub fn generate(
+    pub(crate) fn generate(
         format: Format,
         input: &[u8],
         source_provider_url: &mut BunString,
@@ -115,29 +110,14 @@ impl CachedBytecode {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Zig exposed a `std.mem.Allocator` VTable here so callers could store the
-// bytecode slice alongside an "allocator" whose `.free()` decrements the
-// CachedBytecode refcount. This is a Zig-specific ownership-tracking idiom.
-//
-// PORT NOTE: the Zig `VTable.free` slot called `CachedBytecode__deref(ctx)` and
-// `VTable.alloc` panicked. The Rust `bun_alloc::Allocator` marker trait has no
-// `alloc`/`free` methods to dispatch through — so the "free → deref" semantics
+// The `bun_alloc::Allocator` marker trait has no
+// `alloc`/`free` methods to dispatch through — so "free → deref" semantics
 // cannot ride the trait object. Call sites that would have freed through this
 // allocator must instead call `deref()` on the `NonNull<CachedBytecode>` handle
-// directly. `is_instance` is preserved for the vtable-identity check in
-// `bun_safety::alloc::has_ptr`.
+// directly.
 // ──────────────────────────────────────────────────────────────────────────
 
 impl bun_alloc::Allocator for CachedBytecode {}
-
-impl CachedBytecode {
-    /// Zig: `allocator_.vtable == VTable`. Expressed as concrete-type identity
-    /// via the `Allocator::type_id()` hook (the documented Rust mapping for
-    /// Zig vtable-pointer equality checks).
-    pub fn is_instance(alloc: &dyn bun_alloc::Allocator) -> bool {
-        alloc.is::<Self>()
-    }
-}
 
 /// Link-time entry point for lower-tier crates (declared `extern "Rust"` in
 /// `bun_bundler`). Generic "generate JSC bytecode off the main JS thread"
@@ -149,7 +129,7 @@ impl CachedBytecode {
 /// Symbol is definer-prefixed (`__bun_jsc_*`) per LAYERING_AUDIT — the body is
 /// jsc-internal setup, not bundler logic.
 #[unsafe(no_mangle)]
-pub fn __bun_jsc_generate_cached_bytecode(
+fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
     source_provider_url: &mut BunString,
@@ -164,5 +144,3 @@ pub fn __bun_jsc_generate_cached_bytecode(
     CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
     Some(owned)
 }
-
-// ported from: src/jsc/CachedBytecode.zig

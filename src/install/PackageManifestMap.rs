@@ -8,7 +8,7 @@ use crate::npm;
 
 #[derive(Default)]
 pub struct PackageManifestMap {
-    pub hash_map: ManifestHashMap,
+    pub(crate) hash_map: ManifestHashMap,
 }
 
 pub enum Value {
@@ -20,11 +20,9 @@ pub enum Value {
 }
 
 impl Value {
-    /// Zig: `entry.value_ptr.manifest` field projection on the `.manifest` arm.
     bun_core::enum_unwrap!(pub Value, Manifest => fn manifest / manifest_mut -> npm::PackageManifest);
 }
 
-// Zig: `std.HashMap(PackageNameHash, Value, IdentityContext(PackageNameHash), 80)`.
 type ManifestHashMap =
     HashMap<PackageNameHash, Value, bun_collections::IdentityContext<PackageNameHash>>;
 
@@ -37,7 +35,7 @@ pub enum CacheBehavior {
 /// By-value snapshot of the `PackageManager` fields the disk-fallback path of
 /// [`PackageManifestMap::by_name_hash_allow_expired`] reads.
 ///
-/// Zig threads `pm: *PackageManager` and reads these directly. In Rust every
+/// Every
 /// caller is `pm.manifests.by_name…(pm, …)`, so accepting `&mut PackageManager`
 /// (or `&mut *raw`) would alias the `&mut self` receiver — Stacked-Borrows UB
 /// regardless of which fields the body touches. Capturing the four scalars by
@@ -48,28 +46,17 @@ pub enum CacheBehavior {
 /// Construct via `PackageManager::manifest_disk_cache_ctx`.
 #[derive(Clone, Copy)]
 pub struct DiskCacheCtx {
-    pub enable_manifest_cache: bool,
-    pub enable_manifest_cache_control: bool,
+    pub(crate) enable_manifest_cache: bool,
+    pub(crate) enable_manifest_cache_control: bool,
     /// `pm.getCacheDirectory()` — pre-opened so the lookup never needs `&mut
     /// PackageManager`. `None` iff `enable_manifest_cache` is false (the only
     /// branch that reads it is gated on that flag).
-    pub cache_directory: Option<Fd>,
-    pub timestamp_for_manifest_cache_control: u32,
-}
-
-impl DiskCacheCtx {
-    /// Context for the [`CacheBehavior::LoadFromMemory`] path, which never
-    /// reads any of these fields.
-    pub const MEMORY_ONLY: Self = Self {
-        enable_manifest_cache: false,
-        enable_manifest_cache_control: false,
-        cache_directory: None,
-        timestamp_for_manifest_cache_control: 0,
-    };
+    pub(crate) cache_directory: Option<Fd>,
+    pub(crate) timestamp_for_manifest_cache_control: u32,
 }
 
 impl PackageManifestMap {
-    pub fn by_name(
+    pub(crate) fn by_name(
         &mut self,
         ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
@@ -86,18 +73,16 @@ impl PackageManifestMap {
         )
     }
 
-    pub fn insert(
+    pub(crate) fn insert(
         &mut self,
         name_hash: PackageNameHash,
-        manifest: &npm::PackageManifest,
+        manifest: npm::PackageManifest,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Zig: `.{ .manifest = manifest.* }` — struct copy; `PackageManifest: Clone`.
-        self.hash_map
-            .insert(name_hash, Value::Manifest(manifest.clone()));
+        self.hash_map.insert(name_hash, Value::Manifest(manifest));
         Ok(())
     }
 
-    pub fn by_name_hash(
+    pub(crate) fn by_name_hash(
         &mut self,
         ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
@@ -115,13 +100,12 @@ impl PackageManifestMap {
         )
     }
 
-    /// Memory-only lookup — equivalent to Zig
-    /// `byNameHash(this, pm, scope, hash, .load_from_memory, _)` with
-    /// `is_expired = null`, but without the `ctx`/`scope` parameters: the
-    /// `.load_from_memory` arm never reads them. Exposed separately so callers
+    /// Memory-only lookup — equivalent to `by_name_hash` with
+    /// `CacheBehavior::LoadFromMemory`, but without the `ctx`/`scope`
+    /// parameters: the memory-only arm never reads them. Exposed separately so callers
     /// holding `&mut PackageManager` can borrow only the disjoint
     /// `pm.manifests` field.
-    pub fn by_name_hash_in_memory(
+    pub(crate) fn by_name_hash_in_memory(
         &mut self,
         name_hash: PackageNameHash,
     ) -> Option<&mut npm::PackageManifest> {
@@ -150,14 +134,12 @@ impl PackageManifestMap {
         )
     }
 
-    /// Zig: `byNameHashAllowExpired(this, pm: *PackageManager, ...)`.
-    ///
-    /// PORT NOTE: reshaped for borrowck — Zig passes `pm` and reads
-    /// `pm.options.enable.*`, `pm.getCacheDirectory()`, and
-    /// `pm.timestamp_for_manifest_cache_control` on the disk-fallback arm.
-    /// Those scalars are hoisted into [`DiskCacheCtx`] so callers never hold
-    /// `&mut pm.manifests` and a `PackageManager` borrow simultaneously.
-    pub fn by_name_hash_allow_expired(
+    /// The `PackageManager` scalars read on the disk-fallback arm
+    /// (`options.enable.*`, the cache directory, and
+    /// `timestamp_for_manifest_cache_control`) are hoisted into
+    /// [`DiskCacheCtx`] so callers never hold `&mut pm.manifests` and a
+    /// `PackageManager` borrow simultaneously.
+    pub(crate) fn by_name_hash_allow_expired(
         &mut self,
         ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
@@ -167,9 +149,7 @@ impl PackageManifestMap {
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
         if cache_behavior == CacheBehavior::LoadFromMemory {
-            let Some(entry) = self.hash_map.get_mut(&name_hash) else {
-                return None;
-            };
+            let entry = self.hash_map.get_mut(&name_hash)?;
             return match entry {
                 Value::Manifest(m) => Some(m),
                 Value::Expired(m) => {
@@ -184,14 +164,11 @@ impl PackageManifestMap {
             };
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig's `getOrPut` returns `{ found_existing, value_ptr }`;
-        // Rust splits into Occupied/Vacant arms.
         match self.hash_map.entry(name_hash) {
             Entry::Occupied(occ) => {
                 let value_ptr = occ.into_mut();
-                // PORT NOTE: reshaped for borrowck — Zig mutated `value_ptr.*` in
-                // place from `.manifest` to `.expired`. Compute the demote decision
-                // first without holding a borrow that escapes the fn.
+                // Compute the demote decision first without holding a borrow
+                // that escapes the fn.
                 let demote = matches!(
                     value_ptr,
                     Value::Manifest(m)
@@ -269,5 +246,3 @@ impl PackageManifestMap {
         }
     }
 }
-
-// ported from: src/install/PackageManifestMap.zig

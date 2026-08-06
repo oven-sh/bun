@@ -2,10 +2,10 @@ use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 
 use bun_sql::mysql::protocol::error_packet::{ErrorPacket, MySQLErrorOptions};
 
-pub fn create_mysql_error(
+pub(crate) fn create_mysql_error(
     global: &JSGlobalObject,
     message: &[u8],
-    options: MySQLErrorOptions,
+    options: &MySQLErrorOptions,
 ) -> JsResult<JSValue> {
     let opts_obj = JSValue::create_empty_object(global, 0);
     opts_obj.ensure_still_alive();
@@ -29,7 +29,7 @@ pub fn create_mysql_error(
     Ok(opts_obj)
 }
 
-pub trait ErrorPacketJsc {
+pub(crate) trait ErrorPacketJsc {
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
 }
 
@@ -43,7 +43,7 @@ impl ErrorPacketJsc for ErrorPacket {
         create_mysql_error(
             global,
             msg,
-            MySQLErrorOptions {
+            &MySQLErrorOptions {
                 code: if self.error_code == 1064 {
                     b"ERR_MYSQL_SYNTAX_ERROR"
                 } else {
@@ -56,5 +56,3 @@ impl ErrorPacketJsc for ErrorPacket {
         .unwrap_or_else(|err| global.take_exception(err))
     }
 }
-
-// ported from: src/sql_jsc/mysql/protocol/error_packet_jsc.zig

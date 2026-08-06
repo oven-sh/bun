@@ -1,28 +1,42 @@
 use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
 use crate::helpers;
+use crate::links::{BracketMatches, LabelLeave};
 use crate::parser::{self, Parser};
-use crate::types::{OFF, SpanType, TextType, VerbatimLine};
+use crate::types::{SpanType, TextType, VerbatimLine};
 
 /// Emphasis delimiter entry for CommonMark emphasis algorithm.
-pub const MAX_EMPH_MATCHES: usize = 6;
+pub(crate) const MAX_EMPH_MATCHES: usize = 6;
+
+/// Snapshot of an enclosing slice's walk state while one of its link/image/
+/// wikilink labels is rendered. `base..end` locate the enclosing slice
+/// within the block's inline content; `i`/`text_start`/`delim_cursor` are
+/// local to that slice. See `process_inline_content`.
+pub(crate) struct LabelFrame {
+    base: usize,
+    end: usize,
+    i: usize,
+    text_start: usize,
+    resolved: Vec<EmphDelim>,
+    delim_cursor: usize,
+    leave: LabelLeave,
+}
 
 #[derive(Clone, Copy)]
 pub struct EmphDelim {
-    pub pos: usize,    // start position in content
-    pub count: usize,  // original run length
-    pub emph_char: u8, // * or _
-    pub can_open: bool,
-    pub can_close: bool,
-    pub remaining: usize,   // chars not yet consumed
-    pub open_count: usize,  // total chars consumed as opener
-    pub close_count: usize, // total chars consumed as closer
+    pub(crate) pos: usize,    // start position in content
+    pub(crate) count: usize,  // original run length
+    pub(crate) emph_char: u8, // * or _
+    pub(crate) can_open: bool,
+    pub(crate) can_close: bool,
+    pub(crate) remaining: usize,   // chars not yet consumed
+    pub(crate) open_count: usize,  // total chars consumed as opener
+    pub(crate) close_count: usize, // total chars consumed as closer
     // Individual match sizes in order (each is 1 for em, 2 for strong)
-    // TODO(port): Zig used u2 element type; Rust uses u8 — values are always 0..=2.
-    pub open_sizes: [u8; MAX_EMPH_MATCHES],
-    pub open_num: u8, // number of open matches (Zig: u4)
-    pub close_sizes: [u8; MAX_EMPH_MATCHES],
-    pub close_num: u8, // number of close matches (Zig: u4)
-    pub active: bool,  // false if deactivated between matched pairs
+    pub(crate) open_sizes: [u8; MAX_EMPH_MATCHES],
+    pub(crate) open_num: u8, // number of open matches
+    pub(crate) close_sizes: [u8; MAX_EMPH_MATCHES],
+    pub(crate) close_num: u8, // number of close matches
+    pub(crate) active: bool,  // false if deactivated between matched pairs
 }
 
 impl Default for EmphDelim {
@@ -45,11 +59,75 @@ impl Default for EmphDelim {
     }
 }
 
+/// Closing-delimiter kinds tracked by `HtmlScanMemo`.
+#[derive(Clone, Copy)]
+enum HtmlScanKind {
+    /// `<!--` … `-->`
+    Comment = 0,
+    /// `<?` … `?>`
+    ProcessingInstruction = 1,
+    /// `<!` + uppercase letter … `>`
+    Declaration = 2,
+    /// `<![CDATA[` … `]]>`
+    Cdata = 3,
+}
+
+pub(crate) const HTML_SCAN_KIND_COUNT: usize = 4;
+
+/// Memo of failed closing-delimiter searches in `find_html_tag`.
+///
+/// A `<!--` / `<?` / `<!DECL` / `<![CDATA[` candidate scans forward for a
+/// terminator that may not exist, reaching the end of the inline slice. Once
+/// one such scan has failed from some position, any later scan of the same
+/// kind starting at or beyond that position must fail too, so it can return
+/// immediately instead of rescanning to the end — that rescan is quadratic on
+/// inputs with many unterminated openers in one paragraph (found by fuzzing).
+///
+/// The memo describes one slice at a time, keyed by address + length. Because
+/// `find_html_tag` is also called on link-label sub-slices of that slice (with
+/// their own coordinates), a recorded fact serves any sub-slice query by
+/// translating positions with the sub-slice's offset: "no terminator at or
+/// after position P of the paragraph" covers every later position of every
+/// label inside it. Sub-slice scans never overwrite the enclosing slice's
+/// entry (they prove nothing beyond their own extent), and
+/// `process_inline_content` starts each block's slice from an empty memo, so
+/// recycled merged-line buffers and transient table-cell buffers can never
+/// alias a previous slice's entry.
+#[derive(Clone, Copy)]
+pub struct HtmlScanMemo {
+    slice_addr: usize,
+    slice_len: usize,
+    no_terminator_from: [usize; HTML_SCAN_KIND_COUNT],
+}
+
+impl HtmlScanMemo {
+    pub(crate) const EMPTY: HtmlScanMemo = HtmlScanMemo {
+        slice_addr: 0,
+        slice_len: 0,
+        no_terminator_from: [usize::MAX; HTML_SCAN_KIND_COUNT],
+    };
+
+    fn applies_to(&self, content: &[u8]) -> bool {
+        self.slice_addr == content.as_ptr() as usize && self.slice_len == content.len()
+    }
+
+    /// If `content` lies within the memoized slice, returns its offset from
+    /// that slice's start (0 for the memoized slice itself).
+    fn offset_within(&self, content: &[u8]) -> Option<usize> {
+        let addr = content.as_ptr() as usize;
+        if self.slice_addr <= addr && addr + content.len() <= self.slice_addr + self.slice_len {
+            Some(addr - self.slice_addr)
+        } else {
+            None
+        }
+    }
+}
+
 impl Parser<'_> {
     /// Merge all lines into buffer with \n between them (unmodified),
     /// then process inlines on the merged text. Hard/soft breaks are detected
     /// during inline processing when \n is encountered.
-    pub fn process_leaf_block(
+    pub(crate) fn process_leaf_block(
         &mut self,
         block_lines: &[VerbatimLine],
         trim_trailing: bool,
@@ -81,356 +159,460 @@ impl Parser<'_> {
                 merged_len -= 1;
             }
         }
-        // PORT NOTE: reshaped for borrowck — Zig passes self.buffer.items directly into a
-        // &self method; Rust take()s the Vec out so process_inline_content (and any recursive
-        // call via process_link) gets a fresh self.buffer to scribble on without aliasing.
-        // TODO(port): verify recursive calls (via process_link) do not need the parent buffer.
+        // take() the Vec out so process_inline_content gets a fresh
+        // self.buffer to scribble on without aliasing. Verified: nothing
+        // reachable from process_inline_content (label frames operate solely
+        // on `content` subslices) touches `self.buffer`; its other users
+        // (ref-def merging in blocks.rs/ref_defs.rs) run during the block
+        // phase, never re-entrantly from here.
         let merged = core::mem::take(&mut self.buffer);
-        let ret = self.process_inline_content(&merged[..merged_len], block_lines[0].beg);
+        let ret = self.process_inline_content(&merged[..merged_len]);
         self.buffer = merged;
         ret
     }
 
-    pub fn process_inline_content(
-        &mut self,
-        content: &[u8],
-        base_off: OFF,
-    ) -> Result<(), parser::Error> {
+    pub(crate) fn process_inline_content(&mut self, content: &[u8]) -> Result<(), parser::Error> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(parser::Error::StackOverflow);
         }
 
+        // Failed HTML terminator searches recorded for another slice must not
+        // leak into this one (the merged-line buffer is recycled across blocks,
+        // so a stale entry could alias a new slice of the same length).
+        // Label frames below are subslices of `content`, so the memo stays
+        // valid for them via `offset_within`.
+        self.html_scan_memo.set(HtmlScanMemo::EMPTY);
+
+        // Bracket-pair map for the whole slice: link processing looks up the
+        // ']' matching a '[' here instead of rescanning the rest of the slice
+        // for every opener. Label frames share this map (with their offset as
+        // `base`) instead of rebuilding it per nesting level; a per-level
+        // rebuild costs O(label) each and is quadratic on inputs like
+        // `"![".repeat(n) + "](u)".repeat(n)`. The backing storage is
+        // recycled via self.bracket_pairs.
+        let bracket_storage = core::mem::take(&mut self.bracket_pairs);
+        let brackets = self.compute_bracket_matches(content, bracket_storage);
+
+        // A link/image/wikilink label is rendered as inline content of its
+        // own: emphasis pairs within the label, and nested constructs inside
+        // it are rendered recursively. That recursion is driven iteratively
+        // with this frame stack so nesting depth is bounded by the heap, not
+        // the native stack. Each frame snapshots the enclosing slice's walk
+        // state plus the close action for the label being entered. The
+        // backing vec is recycled through `Parser.label_frames` so blocks
+        // with links do not allocate a stack per block in steady state.
+        let mut frames: Vec<LabelFrame> = core::mem::take(&mut self.label_frames);
+        debug_assert!(frames.is_empty());
+
+        // Walk state for the current (innermost) slice. `base` is the
+        // slice's offset within `content`, which `brackets` was built for
+        // (`cur` is always `content[base..base + cur.len()]`).
+        let mut cur: &[u8] = content;
+        let mut base: usize = 0;
+
         // Phase 1: Collect and resolve emphasis delimiters
-        self.collect_emphasis_delimiters(content);
+        self.collect_emphasis_delimiters(cur, &brackets, base);
         self.resolve_emphasis_delimiters();
 
-        // Copy resolved delimiters locally (recursive calls may modify emph_delims)
-        // PORT NOTE: Zig dupe() catch OOM → emit plain text fallback; Rust Vec::clone aborts on OOM.
-        let resolved: Vec<EmphDelim> = self.emph_delims.clone();
+        // Copy resolved delimiters locally (label frames reuse emph_delims)
+        let mut resolved: Vec<EmphDelim> = self.emph_delims.clone();
 
         // Phase 2: Emit content using resolved emphasis info
         let mut i: usize = 0;
         let mut text_start: usize = 0;
         let mut delim_cursor: usize = 0;
 
-        while i < content.len() {
-            let c = content[i];
+        // Enter the label of a just-parsed link/image/wikilink: snapshot the
+        // current walk state and restart the walk on the label slice.
+        macro_rules! enter_label {
+            ($parse:expr) => {{
+                let parse = $parse;
+                frames.push(LabelFrame {
+                    base,
+                    end: base + cur.len(),
+                    i: parse.link_end,
+                    text_start: parse.link_end,
+                    resolved: core::mem::take(&mut resolved),
+                    delim_cursor,
+                    leave: parse.leave,
+                });
+                base += parse.label_start;
+                cur = &cur[parse.label_start..parse.label_end];
+                self.collect_emphasis_delimiters(cur, &brackets, base);
+                self.resolve_emphasis_delimiters();
+                resolved = self.emph_delims.clone();
+                i = 0;
+                text_start = 0;
+                delim_cursor = 0;
+            }};
+        }
 
-            // Fast path: character has no special meaning, skip it
-            if !self.mark_char_map.is_set(c as usize) {
-                i += 1;
-                continue;
-            }
+        'frames: loop {
+            while i < cur.len() {
+                let content = cur;
+                let c = content[i];
 
-            // Newline from merged lines — check for hard break
-            if c == b'\n' {
-                let mut emit_end = i;
-                let mut is_hard = false;
-                if emit_end > text_start && content[emit_end - 1] == b'\\' {
-                    emit_end -= 1;
-                    is_hard = true;
-                } else {
-                    let mut sp = emit_end;
-                    while sp > text_start && content[sp - 1] == b' ' {
-                        sp -= 1;
-                    }
-                    if emit_end - sp >= 2 {
-                        // Also strip any trailing tabs/spaces before the space run
-                        while sp > text_start
-                            && (content[sp - 1] == b' ' || content[sp - 1] == b'\t')
-                        {
+                // Fast path: character has no special meaning, skip it
+                if !self.mark_char_map.is_set(c as usize) {
+                    i += 1;
+                    continue;
+                }
+
+                // Newline from merged lines — check for hard break
+                if c == b'\n' {
+                    let mut emit_end = i;
+                    let mut is_hard = false;
+                    if emit_end > text_start && content[emit_end - 1] == b'\\' {
+                        emit_end -= 1;
+                        is_hard = true;
+                    } else {
+                        let mut sp = emit_end;
+                        while sp > text_start && content[sp - 1] == b' ' {
                             sp -= 1;
                         }
-                        emit_end = sp;
-                        is_hard = true;
-                    }
-                }
-                if emit_end > text_start {
-                    self.emit_text(TextType::Normal, &content[text_start..emit_end])?;
-                }
-                if is_hard {
-                    self.emit_text(TextType::Br, b"")?;
-                } else {
-                    self.emit_text(TextType::Softbr, b"")?;
-                }
-                i += 1;
-                text_start = i;
-                continue;
-            }
-
-            // Check for backslash escape
-            if c == b'\\' && i + 1 < content.len() && helpers::is_ascii_punctuation(content[i + 1])
-            {
-                if i > text_start {
-                    self.emit_text(TextType::Normal, &content[text_start..i])?;
-                }
-                i += 1;
-                self.emit_text(TextType::Normal, &content[i..i + 1])?;
-                i += 1;
-                text_start = i;
-                continue;
-            }
-
-            // Code span
-            if c == b'`' {
-                if i > text_start {
-                    self.emit_text(TextType::Normal, &content[text_start..i])?;
-                }
-                let count = count_backticks(content, i);
-                if let Some(end_pos) = self.find_code_span_end(content, i + count, count) {
-                    self.enter_span(SpanType::Code)?;
-                    let code_content =
-                        self.normalize_code_span_content(&content[i + count..end_pos]);
-                    self.emit_text(TextType::Code, code_content)?;
-                    self.leave_span(SpanType::Code)?;
-                    i = end_pos + count;
-                } else {
-                    // No matching closer found — emit the entire backtick run as literal text
-                    self.emit_text(TextType::Normal, &content[i..i + count])?;
-                    i += count;
-                }
-                text_start = i;
-                continue;
-            }
-
-            // Emphasis/strikethrough with * or _ or ~ — use resolved delimiters
-            if c == b'*' || c == b'_' || (c == b'~' && self.flags.strikethrough) {
-                // Find the corresponding resolved delimiter
-                while delim_cursor < resolved.len() && resolved[delim_cursor].pos < i {
-                    delim_cursor += 1;
-                }
-
-                if delim_cursor < resolved.len() && resolved[delim_cursor].pos == i {
-                    if i > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..i])?;
-                    }
-
-                    let d = &resolved[delim_cursor];
-                    let run_end = d.pos + d.count;
-
-                    // Emit closing tags first (innermost to outermost)
-                    if d.emph_char == b'~' {
-                        if d.close_count > 0 {
-                            self.leave_span(SpanType::Del)?;
+                        if emit_end - sp >= 2 {
+                            // Also strip any trailing tabs/spaces before the space run
+                            while sp > text_start
+                                && (content[sp - 1] == b' ' || content[sp - 1] == b'\t')
+                            {
+                                sp -= 1;
+                            }
+                            emit_end = sp;
+                            is_hard = true;
                         }
+                    }
+                    if emit_end > text_start {
+                        self.emit_text(TextType::Normal, &content[text_start..emit_end])?;
+                    }
+                    if is_hard {
+                        self.emit_text(TextType::Br, b"")?;
                     } else {
-                        self.emit_emph_close_tags(&d.close_sizes[0..d.close_num as usize])?;
+                        self.emit_text(TextType::Softbr, b"")?;
+                    }
+                    i += 1;
+                    text_start = i;
+                    continue;
+                }
+
+                // Check for backslash escape
+                if c == b'\\'
+                    && i + 1 < content.len()
+                    && helpers::is_ascii_punctuation(content[i + 1])
+                {
+                    if i > text_start {
+                        self.emit_text(TextType::Normal, &content[text_start..i])?;
+                    }
+                    i += 1;
+                    self.emit_text(TextType::Normal, &content[i..i + 1])?;
+                    i += 1;
+                    text_start = i;
+                    continue;
+                }
+
+                // Code span
+                if c == b'`' {
+                    if i > text_start {
+                        self.emit_text(TextType::Normal, &content[text_start..i])?;
+                    }
+                    let count = count_backticks(content, i);
+                    if let Some(end_pos) = self.find_code_span_end(content, i + count, count) {
+                        self.enter_span(SpanType::Code)?;
+                        let code_content =
+                            self.normalize_code_span_content(&content[i + count..end_pos]);
+                        self.emit_text(TextType::Code, code_content)?;
+                        self.leave_span(SpanType::Code)?;
+                        i = end_pos + count;
+                    } else {
+                        // No matching closer found — emit the entire backtick run as literal text
+                        self.emit_text(TextType::Normal, &content[i..i + count])?;
+                        i += count;
+                    }
+                    text_start = i;
+                    continue;
+                }
+
+                // Emphasis/strikethrough with * or _ or ~ — use resolved delimiters
+                if c == b'*' || c == b'_' || (c == b'~' && self.flags.strikethrough) {
+                    // Find the corresponding resolved delimiter
+                    while delim_cursor < resolved.len() && resolved[delim_cursor].pos < i {
+                        delim_cursor += 1;
                     }
 
-                    // Emit remaining delimiter chars as text
-                    let text_chars = d.count.saturating_sub(d.open_count + d.close_count);
-                    if text_chars > 0 {
-                        self.emit_text(TextType::Normal, &content[i..i + text_chars])?;
-                    }
-
-                    // Emit opening tags (outermost to innermost)
-                    if d.emph_char == b'~' {
-                        if d.open_count > 0 {
-                            self.enter_span(SpanType::Del)?;
+                    if delim_cursor < resolved.len() && resolved[delim_cursor].pos == i {
+                        if i > text_start {
+                            self.emit_text(TextType::Normal, &content[text_start..i])?;
                         }
+
+                        let d = &resolved[delim_cursor];
+                        let run_end = d.pos + d.count;
+
+                        // Emit closing tags first (innermost to outermost)
+                        if d.emph_char == b'~' {
+                            if d.close_count > 0 {
+                                self.leave_span(SpanType::Del)?;
+                            }
+                        } else {
+                            self.emit_emph_close_tags(&d.close_sizes[0..d.close_num as usize])?;
+                        }
+
+                        // Emit remaining delimiter chars as text
+                        let text_chars = d.count.saturating_sub(d.open_count + d.close_count);
+                        if text_chars > 0 {
+                            self.emit_text(TextType::Normal, &content[i..i + text_chars])?;
+                        }
+
+                        // Emit opening tags (outermost to innermost)
+                        if d.emph_char == b'~' {
+                            if d.open_count > 0 {
+                                self.enter_span(SpanType::Del)?;
+                            }
+                        } else {
+                            self.emit_emph_open_tags(&d.open_sizes[0..d.open_num as usize])?;
+                        }
+
+                        delim_cursor += 1;
+                        i = run_end;
+                        text_start = i;
+                        continue;
+                    }
+                    // No resolved delimiter found, just advance
+                    i += 1;
+                    continue;
+                }
+
+                // HTML entity
+                if c == b'&' {
+                    if let Some(end_pos) = self.find_entity(content, i) {
+                        if i > text_start {
+                            self.emit_text(TextType::Normal, &content[text_start..i])?;
+                        }
+                        self.emit_text(TextType::Entity, &content[i..end_pos])?;
+                        i = end_pos;
+                        text_start = i;
+                        continue;
+                    }
+                }
+
+                // HTML tag
+                if c == b'<' && !self.flags.no_html_spans {
+                    if let Some(tag_end) = self.find_html_tag(content, i) {
+                        if i > text_start {
+                            self.emit_text(TextType::Normal, &content[text_start..i])?;
+                        }
+                        self.emit_text(TextType::Html, &content[i..tag_end])?;
+                        i = tag_end;
+                        text_start = i;
+                        continue;
+                    }
+                    if let Some(autolink) = self.find_autolink(content, i) {
+                        if i > text_start {
+                            self.emit_text(TextType::Normal, &content[text_start..i])?;
+                        }
+                        self.render_autolink(
+                            &content[i + 1..autolink.end_pos - 1],
+                            autolink.is_email,
+                        )?;
+                        i = autolink.end_pos;
+                        text_start = i;
+                        continue;
+                    }
+                }
+
+                // Wiki links: [[destination]] or [[destination|label]]
+                if c == b'['
+                    && self.flags.wiki_links
+                    && i + 1 < content.len()
+                    && content[i + 1] == b'['
+                {
+                    if i > text_start {
+                        self.emit_text(TextType::Normal, &content[text_start..i])?;
+                    }
+                    if let Some(parse) = self.process_wiki_link(content, i)? {
+                        enter_label!(parse);
+                        continue;
+                    }
+                    // No wikilink matched: restore text_start so preceding text
+                    // isn't double-emitted by the next span branch.
+                    text_start = i;
+                }
+
+                // Links: [text](url) or [text][ref]
+                if c == b'[' {
+                    if i > text_start {
+                        self.emit_text(TextType::Normal, &content[text_start..i])?;
+                    }
+                    if let Some(parse) = self.process_link(content, i, false, &brackets, base)? {
+                        enter_label!(parse);
                     } else {
-                        self.emit_emph_open_tags(&d.open_sizes[0..d.open_num as usize])?;
+                        self.emit_text(TextType::Normal, b"[")?;
+                        i += 1;
+                        text_start = i;
                     }
-
-                    delim_cursor += 1;
-                    i = run_end;
-                    text_start = i;
                     continue;
                 }
-                // No resolved delimiter found, just advance
-                i += 1;
-                continue;
-            }
 
-            // HTML entity
-            if c == b'&' {
-                if let Some(end_pos) = self.find_entity(content, i) {
+                // Images: ![text](url)
+                if c == b'!' && i + 1 < content.len() && content[i + 1] == b'[' {
                     if i > text_start {
                         self.emit_text(TextType::Normal, &content[text_start..i])?;
                     }
-                    self.emit_text(TextType::Entity, &content[i..end_pos])?;
-                    i = end_pos;
-                    text_start = i;
-                    continue;
-                }
-            }
-
-            // HTML tag
-            if c == b'<' && !self.flags.no_html_spans {
-                if let Some(tag_end) = self.find_html_tag(content, i) {
-                    if i > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..i])?;
+                    if let Some(parse) = self.process_link(content, i + 1, true, &brackets, base)? {
+                        enter_label!(parse);
+                    } else {
+                        self.emit_text(TextType::Normal, b"!")?;
+                        i += 1;
+                        text_start = i;
                     }
-                    self.emit_text(TextType::Html, &content[i..tag_end])?;
-                    i = tag_end;
-                    text_start = i;
                     continue;
                 }
-                if let Some(autolink) = self.find_autolink(content, i) {
-                    if i > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..i])?;
+
+                // Note: Strikethrough (~) is handled above via the resolved delimiter system
+
+                // Permissive autolinks: detect URL, email, and WWW autolinks
+                // Suppress inside explicit links to avoid double-wrapping (md4c issue #152)
+                if self.link_nesting_level == 0
+                    && ((c == b':' && self.flags.permissive_url_autolinks)
+                        || (c == b'@' && self.flags.permissive_email_autolinks)
+                        || (c == b'.' && self.flags.permissive_www_autolinks))
+                {
+                    // First try with strict boundaries, then with relaxed (emphasis-aware)
+                    let mut al = find_permissive_autolink(content, i, false);
+                    if al.is_none() {
+                        al = find_permissive_autolink(content, i, true);
+                        if let Some(a) = al {
+                            if !is_emph_boundary_resolved(content, a, &resolved) {
+                                al = None;
+                            }
+                        }
                     }
-                    self.render_autolink(&content[i + 1..autolink.end_pos - 1], autolink.is_email)?;
-                    i = autolink.end_pos;
-                    text_start = i;
-                    continue;
-                }
-            }
-
-            // Wiki links: [[destination]] or [[destination|label]]
-            if c == b'[' && self.flags.wiki_links && i + 1 < content.len() && content[i + 1] == b'['
-            {
-                if i > text_start {
-                    self.emit_text(TextType::Normal, &content[text_start..i])?;
-                }
-                if let Some(end_pos) = self.process_wiki_link(content, i)? {
-                    i = end_pos;
-                    text_start = i;
-                    continue;
-                }
-                // No wikilink matched: restore text_start so preceding text
-                // isn't double-emitted by the next span branch.
-                text_start = i;
-            }
-
-            // Links: [text](url) or [text][ref]
-            if c == b'[' {
-                if i > text_start {
-                    self.emit_text(TextType::Normal, &content[text_start..i])?;
-                }
-                if let Some(end_pos) = self.process_link(content, i, base_off, false)? {
-                    i = end_pos;
-                } else {
-                    self.emit_text(TextType::Normal, b"[")?;
-                    i += 1;
-                }
-                text_start = i;
-                continue;
-            }
-
-            // Images: ![text](url)
-            if c == b'!' && i + 1 < content.len() && content[i + 1] == b'[' {
-                if i > text_start {
-                    self.emit_text(TextType::Normal, &content[text_start..i])?;
-                }
-                if let Some(end_pos) = self.process_link(content, i + 1, base_off, true)? {
-                    i = end_pos;
-                } else {
-                    self.emit_text(TextType::Normal, b"!")?;
-                    i += 1;
-                }
-                text_start = i;
-                continue;
-            }
-
-            // Note: Strikethrough (~) is handled above via the resolved delimiter system
-
-            // Permissive autolinks: detect URL, email, and WWW autolinks
-            // Suppress inside explicit links to avoid double-wrapping (md4c issue #152)
-            if self.link_nesting_level == 0
-                && ((c == b':' && self.flags.permissive_url_autolinks)
-                    || (c == b'@' && self.flags.permissive_email_autolinks)
-                    || (c == b'.' && self.flags.permissive_www_autolinks))
-            {
-                // First try with strict boundaries, then with relaxed (emphasis-aware)
-                let mut al = find_permissive_autolink(content, i, false);
-                if al.is_none() {
-                    al = find_permissive_autolink(content, i, true);
                     if let Some(a) = al {
-                        if !is_emph_boundary_resolved(content, a, &resolved) {
-                            al = None;
+                        if a.beg > text_start {
+                            self.emit_text(TextType::Normal, &content[text_start..a.beg])?;
                         }
+
+                        // Determine URL prefix and render through the renderer
+                        let link_text = &content[a.beg..a.end];
+                        if c == b'@' {
+                            self.renderer.enter_span(
+                                SpanType::A,
+                                crate::types::SpanDetail {
+                                    href: link_text,
+                                    permissive_autolink: true,
+                                    autolink_email: true,
+                                    ..Default::default()
+                                },
+                            )?;
+                            self.emit_text(TextType::Normal, link_text)?;
+                            self.renderer.leave_span(SpanType::A)?;
+                        } else if c == b'.' {
+                            self.renderer.enter_span(
+                                SpanType::A,
+                                crate::types::SpanDetail {
+                                    href: link_text,
+                                    permissive_autolink: true,
+                                    autolink_www: true,
+                                    ..Default::default()
+                                },
+                            )?;
+                            self.emit_text(TextType::Normal, link_text)?;
+                            self.renderer.leave_span(SpanType::A)?;
+                        } else {
+                            self.renderer.enter_span(
+                                SpanType::A,
+                                crate::types::SpanDetail {
+                                    href: link_text,
+                                    permissive_autolink: true,
+                                    ..Default::default()
+                                },
+                            )?;
+                            self.emit_text(TextType::Normal, link_text)?;
+                            self.renderer.leave_span(SpanType::A)?;
+                        }
+                        i = a.end;
+                        text_start = i;
+                        continue;
                     }
                 }
-                if let Some(a) = al {
-                    if a.beg > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..a.beg])?;
-                    }
 
-                    // Determine URL prefix and render through the renderer
-                    let link_text = &content[a.beg..a.end];
-                    if c == b'@' {
-                        self.renderer.enter_span(
-                            SpanType::A,
-                            crate::types::SpanDetail {
-                                href: link_text,
-                                permissive_autolink: true,
-                                autolink_email: true,
-                                ..Default::default()
-                            },
-                        )?;
-                        self.emit_text(TextType::Normal, link_text)?;
-                        self.renderer.leave_span(SpanType::A)?;
-                    } else if c == b'.' {
-                        self.renderer.enter_span(
-                            SpanType::A,
-                            crate::types::SpanDetail {
-                                href: link_text,
-                                permissive_autolink: true,
-                                autolink_www: true,
-                                ..Default::default()
-                            },
-                        )?;
-                        self.emit_text(TextType::Normal, link_text)?;
-                        self.renderer.leave_span(SpanType::A)?;
-                    } else {
-                        self.renderer.enter_span(
-                            SpanType::A,
-                            crate::types::SpanDetail {
-                                href: link_text,
-                                permissive_autolink: true,
-                                ..Default::default()
-                            },
-                        )?;
-                        self.emit_text(TextType::Normal, link_text)?;
-                        self.renderer.leave_span(SpanType::A)?;
+                // Null character
+                if c == 0 {
+                    if i > text_start {
+                        self.emit_text(TextType::Normal, &content[text_start..i])?;
                     }
-                    i = a.end;
+                    self.emit_text(TextType::NullChar, b"")?;
+                    i += 1;
                     text_start = i;
                     continue;
                 }
-            }
 
-            // Null character
-            if c == 0 {
-                if i > text_start {
-                    self.emit_text(TextType::Normal, &content[text_start..i])?;
-                }
-                self.emit_text(TextType::NullChar, b"")?;
                 i += 1;
-                text_start = i;
-                continue;
             }
 
-            i += 1;
+            // Current slice fully walked: flush its trailing text, then
+            // either close the finished label and resume its enclosing
+            // slice, or, for the outermost slice, finish.
+            if text_start < cur.len() {
+                self.emit_text(TextType::Normal, &cur[text_start..])?;
+            }
+            match frames.pop() {
+                Some(frame) => {
+                    match frame.leave {
+                        LabelLeave::AltText => {}
+                        LabelLeave::Image => {
+                            self.image_nesting_level -= 1;
+                            self.renderer.leave_span(SpanType::Img)?;
+                        }
+                        LabelLeave::Link => {
+                            self.link_nesting_level -= 1;
+                            self.renderer.leave_span(SpanType::A)?;
+                        }
+                        LabelLeave::Wikilink => {
+                            self.renderer.leave_span(SpanType::Wikilink)?;
+                        }
+                    }
+                    cur = &content[frame.base..frame.end];
+                    base = frame.base;
+                    i = frame.i;
+                    text_start = frame.text_start;
+                    resolved = frame.resolved;
+                    delim_cursor = frame.delim_cursor;
+                }
+                None => break 'frames,
+            }
         }
 
-        if text_start < content.len() {
-            self.emit_text(TextType::Normal, &content[text_start..])?;
-        }
+        // Hand the frame storage back for reuse by the next block.
+        self.label_frames = frames;
+
+        // Hand the bracket-map storage back for reuse by the next block.
+        self.bracket_pairs = brackets.into_storage();
         Ok(())
     }
 
-    pub fn enter_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
+    pub(crate) fn enter_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
         self.renderer.enter_span(span_type, Default::default())
     }
 
-    pub fn leave_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
+    pub(crate) fn leave_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
         self.renderer.leave_span(span_type)
     }
 
-    pub fn emit_text(&mut self, text_type: TextType, content: &[u8]) -> crate::types::JsResult<()> {
+    pub(crate) fn emit_text(
+        &mut self,
+        text_type: TextType,
+        content: &[u8],
+    ) -> crate::types::JsResult<()> {
         self.renderer.text(text_type, content)
     }
 
     /// Emit emphasis opening tags (outermost to innermost).
-    pub fn emit_emph_open_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
+    pub(crate) fn emit_emph_open_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
         // First match = innermost, so emit in reverse (outermost first in HTML)
         for idx in 0..sizes.len() {
             let j = sizes.len() - 1 - idx;
@@ -445,7 +627,7 @@ impl Parser<'_> {
 
     /// Emit emphasis closing tags (innermost to outermost).
     /// First entry in sizes was matched first (innermost), emit in forward order.
-    pub fn emit_emph_close_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
+    pub(crate) fn emit_emph_close_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
         for &size in sizes {
             if size == 2 {
                 self.leave_span(SpanType::Strong)?;
@@ -458,7 +640,12 @@ impl Parser<'_> {
 
     /// Find the matching closing backtick run. Returns end position of content (before closing ticks),
     /// or null if no matching closer found.
-    pub fn find_code_span_end(&self, content: &[u8], start: usize, count: usize) -> Option<usize> {
+    pub(crate) fn find_code_span_end(
+        &self,
+        content: &[u8],
+        start: usize,
+        count: usize,
+    ) -> Option<usize> {
         let mut pos = start;
         while let Some(backtick_pos) = bun_core::strings::index_of_char_pos(content, b'`', pos) {
             pos = backtick_pos + 1;
@@ -472,7 +659,7 @@ impl Parser<'_> {
         None
     }
 
-    pub fn normalize_code_span_content<'a>(&self, content: &'a [u8]) -> &'a [u8] {
+    pub(crate) fn normalize_code_span_content<'a>(&self, content: &'a [u8]) -> &'a [u8] {
         // Strip one leading and trailing space if both exist and content isn't all spaces.
         // Newlines (from merged lines) are treated as spaces here.
         if content.len() >= 2 {
@@ -488,8 +675,15 @@ impl Parser<'_> {
         content
     }
 
-    /// Collect emphasis delimiter runs from content, skipping code spans and HTML tags.
-    pub fn collect_emphasis_delimiters(&mut self, content: &[u8]) {
+    /// Collect emphasis delimiter runs from content, skipping code spans and
+    /// HTML tags. `base` is the offset of `content` within the slice
+    /// `brackets` was built for.
+    pub(crate) fn collect_emphasis_delimiters(
+        &mut self,
+        content: &[u8],
+        brackets: &BracketMatches,
+        base: usize,
+    ) {
         self.emph_delims.clear();
         let mut i: usize = 0;
         while i < content.len() {
@@ -527,13 +721,14 @@ impl Parser<'_> {
             if c == b'[' || (c == b'!' && i + 1 < content.len() && content[i + 1] == b'[') {
                 let is_img = c == b'!';
                 let bracket_start = if is_img { i + 1 } else { i };
-                let link_result = self.try_match_bracket_link(content, bracket_start);
+                let link_result =
+                    self.try_match_bracket_link(content, bracket_start, brackets, base);
                 if link_result.is_link {
                     // Link nesting prohibition: links cannot contain other links (CommonMark §6.7)
                     // Images CAN contain links in alt text, so only check for non-images
                     if !is_img {
                         let label = &content[bracket_start + 1..link_result.label_end];
-                        if self.label_contains_link(label) {
+                        if self.label_contains_link(label, brackets, base + bracket_start + 1) {
                             // Label contains inner links — this can't form a link
                             i += 1;
                             continue;
@@ -586,8 +781,8 @@ impl Parser<'_> {
     }
 
     /// Resolve emphasis delimiters using the CommonMark algorithm.
-    pub fn resolve_emphasis_delimiters(&mut self) {
-        // PORT NOTE: reshaped for borrowck — index directly into self.emph_delims
+    pub(crate) fn resolve_emphasis_delimiters(&mut self) {
+        // reshaped for borrowck — index directly into self.emph_delims
         // instead of binding `delims` + `opener` aliases.
         let len = self.emph_delims.len();
         if len == 0 {
@@ -604,6 +799,7 @@ impl Parser<'_> {
             ((char_idx * 3) + (d.count % 3)) * 2 + (d.can_open as usize)
         };
         let mut openers_bottom: [usize; 18] = [0; 18];
+        let mut prev_candidate: Vec<usize> = (0..len).map(|i| i.wrapping_sub(1)).collect();
 
         // Process potential closers from left to right
         let mut closer_idx: usize = 0;
@@ -619,35 +815,44 @@ impl Parser<'_> {
             let opener_bottom = openers_bottom[opener_bottom_key(&self.emph_delims[closer_idx])];
             let mut found_match = false;
             if closer_idx > opener_bottom {
-                let mut oi: usize = closer_idx;
-                while oi > opener_bottom {
-                    oi -= 1;
-                    if self.emph_delims[oi].emph_char != self.emph_delims[closer_idx].emph_char {
-                        continue;
-                    }
+                let mut from = closer_idx;
+                let mut oi = prev_candidate[closer_idx];
+                while oi != usize::MAX && oi >= opener_bottom {
                     if !self.emph_delims[oi].can_open
                         || self.emph_delims[oi].remaining == 0
                         || !self.emph_delims[oi].active
                     {
+                        let next = prev_candidate[oi];
+                        prev_candidate[from] = next;
+                        oi = next;
+                        continue;
+                    }
+                    if self.emph_delims[oi].emph_char != self.emph_delims[closer_idx].emph_char {
+                        from = oi;
+                        oi = prev_candidate[oi];
                         continue;
                     }
 
                     // Strikethrough: exact count match required
-                    if self.emph_delims[oi].emph_char == b'~' {
-                        if self.emph_delims[oi].count != self.emph_delims[closer_idx].count {
-                            continue;
-                        }
+                    if self.emph_delims[oi].emph_char == b'~'
+                        && self.emph_delims[oi].count != self.emph_delims[closer_idx].count
+                    {
+                        from = oi;
+                        oi = prev_candidate[oi];
+                        continue;
                     }
 
                     // Rule of three: if closer can also open OR opener can also close,
                     // and the sum is a multiple of 3, and neither is individually a multiple of 3, skip
                     if self.emph_delims[oi].emph_char != b'~'
                         && (self.emph_delims[oi].can_close || self.emph_delims[closer_idx].can_open)
-                        && (self.emph_delims[oi].count + self.emph_delims[closer_idx].count) % 3
-                            == 0
-                        && self.emph_delims[oi].count % 3 != 0
-                        && self.emph_delims[closer_idx].count % 3 != 0
+                        && (self.emph_delims[oi].count + self.emph_delims[closer_idx].count)
+                            .is_multiple_of(3)
+                        && !self.emph_delims[oi].count.is_multiple_of(3)
+                        && !self.emph_delims[closer_idx].count.is_multiple_of(3)
                     {
+                        from = oi;
+                        oi = prev_candidate[oi];
                         continue;
                     }
 
@@ -680,11 +885,12 @@ impl Parser<'_> {
                     }
 
                     // Remove all delimiters between opener and closer (CommonMark §6.4)
-                    let mut k = oi + 1;
-                    while k < closer_idx {
+                    let mut k = prev_candidate[closer_idx];
+                    while k != usize::MAX && k > oi {
                         self.emph_delims[k].active = false;
-                        k += 1;
+                        k = prev_candidate[k];
                     }
+                    prev_candidate[closer_idx] = oi;
 
                     found_match = true;
 
@@ -713,11 +919,48 @@ impl Parser<'_> {
         }
     }
 
-    pub fn find_entity(&self, content: &[u8], start: usize) -> Option<usize> {
+    pub(crate) fn find_entity(&self, content: &[u8], start: usize) -> Option<usize> {
         helpers::find_entity(content, start)
     }
 
-    pub fn find_html_tag(&self, content: &[u8], start: usize) -> Option<usize> {
+    /// True if a previous scan already proved there is no `kind` terminator at
+    /// or after `scan_start` of `content` — either recorded for `content`
+    /// itself or for an enclosing slice that contains it.
+    fn html_scan_known_unterminated(
+        &self,
+        content: &[u8],
+        kind: HtmlScanKind,
+        scan_start: usize,
+    ) -> bool {
+        let memo = self.html_scan_memo.get();
+        let Some(offset) = memo.offset_within(content) else {
+            return false;
+        };
+        offset + scan_start >= memo.no_terminator_from[kind as usize]
+    }
+
+    /// Record that the search for `kind`'s terminator starting at `scan_start`
+    /// reached the end of `content` without a match.
+    fn note_unterminated_html_scan(&self, content: &[u8], kind: HtmlScanKind, scan_start: usize) {
+        let mut memo = self.html_scan_memo.get();
+        if !memo.applies_to(content) {
+            if memo.offset_within(content).is_some() {
+                // A sub-slice scan stops at the sub-slice's end, so it proves
+                // nothing about the rest of the enclosing slice; keep the
+                // enclosing entry (it already answers the sub-slice's later
+                // queries via offset_within).
+                return;
+            }
+            memo = HtmlScanMemo::EMPTY;
+            memo.slice_addr = content.as_ptr() as usize;
+            memo.slice_len = content.len();
+        }
+        let slot = &mut memo.no_terminator_from[kind as usize];
+        *slot = (*slot).min(scan_start);
+        self.html_scan_memo.set(memo);
+    }
+
+    pub(crate) fn find_html_tag(&self, content: &[u8], start: usize) -> Option<usize> {
         if start + 1 >= content.len() {
             return None;
         }
@@ -762,12 +1005,17 @@ impl Parser<'_> {
             if pos + 1 < content.len() && content[pos] == b'-' && content[pos + 1] == b'>' {
                 return Some(pos + 2);
             }
+            if self.html_scan_known_unterminated(content, HtmlScanKind::Comment, pos) {
+                return None;
+            }
+            let scan_start = pos;
             while pos + 2 < content.len() {
                 if content[pos] == b'-' && content[pos + 1] == b'-' && content[pos + 2] == b'>' {
                     return Some(pos + 3);
                 }
                 pos += 1;
             }
+            self.note_unterminated_html_scan(content, HtmlScanKind::Comment, scan_start);
             return None;
         }
 
@@ -778,12 +1026,17 @@ impl Parser<'_> {
             && content[pos + 1] <= b'Z'
         {
             pos += 2;
+            if self.html_scan_known_unterminated(content, HtmlScanKind::Declaration, pos) {
+                return None;
+            }
+            let scan_start = pos;
             while pos < content.len() && content[pos] != b'>' {
                 pos += 1;
             }
             if pos < content.len() {
                 return Some(pos + 1);
             }
+            self.note_unterminated_html_scan(content, HtmlScanKind::Declaration, scan_start);
             return None;
         }
 
@@ -799,24 +1052,39 @@ impl Parser<'_> {
             && content[pos + 7] == b'['
         {
             pos += 8;
+            if self.html_scan_known_unterminated(content, HtmlScanKind::Cdata, pos) {
+                return None;
+            }
+            let scan_start = pos;
             while pos + 2 < content.len() {
                 if content[pos] == b']' && content[pos + 1] == b']' && content[pos + 2] == b'>' {
                     return Some(pos + 3);
                 }
                 pos += 1;
             }
+            self.note_unterminated_html_scan(content, HtmlScanKind::Cdata, scan_start);
             return None;
         }
 
         // Processing instruction: <? ... ?>
         if c == b'?' {
             pos += 1;
+            if self.html_scan_known_unterminated(content, HtmlScanKind::ProcessingInstruction, pos)
+            {
+                return None;
+            }
+            let scan_start = pos;
             while pos + 1 < content.len() {
                 if content[pos] == b'?' && content[pos + 1] == b'>' {
                     return Some(pos + 2);
                 }
                 pos += 1;
             }
+            self.note_unterminated_html_scan(
+                content,
+                HtmlScanKind::ProcessingInstruction,
+                scan_start,
+            );
             return None;
         }
 
@@ -926,7 +1194,7 @@ impl Parser<'_> {
 }
 
 /// Count consecutive backticks starting at `start`.
-pub fn count_backticks(content: &[u8], start: usize) -> usize {
+pub(crate) fn count_backticks(content: &[u8], start: usize) -> usize {
     let mut pos = start;
     while pos < content.len() && content[pos] == b'`' {
         pos += 1;
@@ -935,7 +1203,7 @@ pub fn count_backticks(content: &[u8], start: usize) -> usize {
 }
 
 /// Check if a delimiter run is left-flanking per CommonMark spec.
-pub fn is_left_flanking(content: &[u8], run_start: usize, run_end: usize) -> bool {
+pub(crate) fn is_left_flanking(content: &[u8], run_start: usize, run_end: usize) -> bool {
     // Not followed by Unicode whitespace
     if run_end >= content.len() {
         return false;
@@ -957,7 +1225,7 @@ pub fn is_left_flanking(content: &[u8], run_start: usize, run_end: usize) -> boo
 }
 
 /// Check if a delimiter run is right-flanking per CommonMark spec.
-pub fn is_right_flanking(content: &[u8], run_start: usize, run_end: usize) -> bool {
+pub(crate) fn is_right_flanking(content: &[u8], run_start: usize, run_end: usize) -> bool {
     // Not preceded by Unicode whitespace
     if run_start == 0 {
         return false;
@@ -978,7 +1246,12 @@ pub fn is_right_flanking(content: &[u8], run_start: usize, run_end: usize) -> bo
     true
 }
 
-pub fn can_open_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_end: usize) -> bool {
+pub(crate) fn can_open_emphasis(
+    emph_char: u8,
+    content: &[u8],
+    run_start: usize,
+    run_end: usize,
+) -> bool {
     let lf = is_left_flanking(content, run_start, run_end);
     if !lf {
         return false;
@@ -994,7 +1267,12 @@ pub fn can_open_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_en
         ))
 }
 
-pub fn can_close_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_end: usize) -> bool {
+pub(crate) fn can_close_emphasis(
+    emph_char: u8,
+    content: &[u8],
+    run_start: usize,
+    run_end: usize,
+) -> bool {
     let rf = is_right_flanking(content, run_start, run_end);
     if !rf {
         return false;
@@ -1007,5 +1285,3 @@ pub fn can_close_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_e
     !lf || (run_end < content.len()
         && helpers::is_unicode_punctuation(helpers::decode_utf8(content, run_end).codepoint))
 }
-
-// ported from: src/md/inlines.zig

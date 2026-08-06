@@ -1,5 +1,5 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
+use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 use crate::{JSGlobalObject, JSValue};
@@ -14,11 +14,11 @@ pub enum WeakRefType {
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle (C++ `Bun::WeakRef`).
-    pub struct WeakImpl;
+    pub(crate) struct WeakImpl;
 }
 
 impl WeakImpl {
-    pub fn init(
+    fn init(
         global_this: &JSGlobalObject,
         value: JSValue,
         ref_type: WeakRefType,
@@ -40,7 +40,7 @@ impl WeakImpl {
     /// [`WeakImpl::destroy`] before releasing the slot — so any
     /// `NonNull<WeakImpl>` reachable here is a live C++ `JSC::Weak` handle.
     /// Same contract as [`crate::strong::Impl::get`].
-    pub fn get(this: NonNull<WeakImpl>) -> JSValue {
+    fn get(this: NonNull<WeakImpl>) -> JSValue {
         Bun__WeakRef__get(WeakImpl::opaque_ref(this.as_ptr()))
     }
 
@@ -48,18 +48,16 @@ impl WeakImpl {
     ///
     /// Safe for the same reason as [`WeakImpl::get`] — the handle is live by
     /// construction; `clear` is idempotent and does not invalidate `this`.
-    pub fn clear(this: NonNull<WeakImpl>) {
+    fn clear(this: NonNull<WeakImpl>) {
         Bun__WeakRef__clear(WeakImpl::opaque_ref(this.as_ptr()))
     }
 
-    pub unsafe fn destroy(this: NonNull<WeakImpl>) {
+    unsafe fn destroy(this: NonNull<WeakImpl>) {
         // SAFETY: `this` is a live WeakImpl handle; consumed here.
         unsafe { Bun__WeakRef__delete(this.as_ptr()) }
     }
 }
 
-// TODO(port): move to jsc_sys
-//
 // `WeakImpl` is an opaque `UnsafeCell`-backed ZST handle (`&WeakImpl` is
 // ABI-identical to non-null `*const WeakImpl`; C++ slot mutation is interior).
 // `new` is `safe fn`: `&JSGlobalObject` is the non-null handle proof, and `ctx`
@@ -80,7 +78,6 @@ unsafe extern "C" {
 
 pub struct Weak<T> {
     r#ref: Option<NonNull<WeakImpl>>,
-    global_this: Option<crate::GlobalRef>,
     _ctx: PhantomData<*mut T>,
 }
 
@@ -88,26 +85,22 @@ impl<T> Default for Weak<T> {
     fn default() -> Self {
         Self {
             r#ref: None,
-            global_this: None,
             _ctx: PhantomData,
         }
     }
 }
 
 impl<T> Weak<T> {
-    pub fn init() -> Self {
-        Self::default()
-    }
-
-    pub fn call(&mut self, args: &[JSValue]) -> JSValue {
-        let Some(function) = self.try_swap() else {
-            return JSValue::ZERO;
-        };
-        // PORT NOTE: Zig source (Weak.zig:50) calls `function.call(global, args)`
-        // which predates the `thisValue` param on JSValue.call; pass `.undefined`.
-        function
-            .call(&self.global_this.unwrap(), JSValue::UNDEFINED, args)
-            .unwrap_or(JSValue::ZERO)
+    /// A weak handle with no finalize callback. `get()` reads `None` from the
+    /// moment GC reaps the referent, before any sweep runs cell destructors.
+    pub fn create_passive(value: JSValue, global_this: &JSGlobalObject) -> Self {
+        if value.is_empty() {
+            return Self::default();
+        }
+        Self {
+            r#ref: Some(WeakImpl::init(global_this, value, WeakRefType::None, None)),
+            _ctx: PhantomData,
+        }
     }
 
     pub fn create(
@@ -124,14 +117,12 @@ impl<T> Weak<T> {
                     ref_type,
                     Some(NonNull::from(ctx).cast::<c_void>()),
                 )),
-                global_this: Some(global_this.into()),
                 _ctx: PhantomData,
             };
         }
 
         Self {
             r#ref: None,
-            global_this: Some(global_this.into()),
             _ctx: PhantomData,
         }
     }
@@ -139,35 +130,6 @@ impl<T> Weak<T> {
     pub fn get(&self) -> Option<JSValue> {
         let r#ref = self.r#ref?;
         let result = WeakImpl::get(r#ref);
-        if result.is_empty() {
-            return None;
-        }
-
-        Some(result)
-    }
-
-    pub fn swap(&mut self) -> JSValue {
-        let Some(r#ref) = self.r#ref else {
-            return JSValue::ZERO;
-        };
-        let result = WeakImpl::get(r#ref);
-        if result.is_empty() {
-            return JSValue::ZERO;
-        }
-
-        WeakImpl::clear(r#ref);
-        result
-    }
-
-    pub fn has(&self) -> bool {
-        let Some(r#ref) = self.r#ref else {
-            return false;
-        };
-        !WeakImpl::get(r#ref).is_empty()
-    }
-
-    pub fn try_swap(&mut self) -> Option<JSValue> {
-        let result = self.swap();
         if result.is_empty() {
             return None;
         }
@@ -193,5 +155,3 @@ impl<T> Drop for Weak<T> {
         unsafe { WeakImpl::destroy(r#ref) };
     }
 }
-
-// ported from: src/jsc/Weak.zig

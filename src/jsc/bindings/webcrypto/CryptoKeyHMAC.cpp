@@ -60,13 +60,6 @@ static size_t getKeyLengthFromHash(CryptoAlgorithmIdentifier hash)
     }
 }
 
-CryptoKeyHMAC::CryptoKeyHMAC(const Vector<uint8_t>& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usage)
-    : CryptoKey(CryptoAlgorithmIdentifier::HMAC, CryptoKeyType::Secret, extractable, usage)
-    , m_hash(hash)
-    , m_key(key)
-{
-}
-
 CryptoKeyHMAC::CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usage)
     : CryptoKey(CryptoAlgorithmIdentifier::HMAC, CryptoKeyType::Secret, extractable, usage)
     , m_hash(hash)
@@ -75,13 +68,6 @@ CryptoKeyHMAC::CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier ha
 }
 
 CryptoKeyHMAC::~CryptoKeyHMAC() = default;
-
-RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::generateFromBytes(void* data, size_t byteLength, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usages)
-{
-
-    Vector<uint8_t> vec_data(std::span { (uint8_t*)data, byteLength });
-    return adoptRef(new CryptoKeyHMAC(vec_data, hash, extractable, usages));
-}
 
 RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::generate(size_t lengthBits, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usages)
 {
@@ -111,27 +97,6 @@ RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importRaw(size_t lengthBits, CryptoAlgorith
     return adoptRef(new CryptoKeyHMAC(WTF::move(keyData), hash, extractable, usages));
 }
 
-RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importJwk(size_t lengthBits, CryptoAlgorithmIdentifier hash, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages, CheckAlgCallback&& callback)
-{
-    if (keyData.kty != "oct"_s)
-        return nullptr;
-    if (keyData.k.isNull())
-        return nullptr;
-    auto octetSequence = base64URLDecode(keyData.k);
-    if (!octetSequence)
-        return nullptr;
-    if (!callback(hash, keyData.alg))
-        return nullptr;
-    if (usages && !keyData.use.isNull() && keyData.use != "sig"_s)
-        return nullptr;
-    if (keyData.key_ops && ((keyData.usages & usages) != usages))
-        return nullptr;
-    if (keyData.ext && !keyData.ext.value() && extractable)
-        return nullptr;
-
-    return CryptoKeyHMAC::importRaw(lengthBits, hash, WTF::move(*octetSequence), extractable, usages);
-}
-
 JsonWebKey CryptoKeyHMAC::exportJwk() const
 {
 
@@ -143,7 +108,7 @@ JsonWebKey CryptoKeyHMAC::exportJwk() const
     return result;
 }
 
-ExceptionOr<size_t> CryptoKeyHMAC::getKeyLength(const CryptoAlgorithmParameters& parameters)
+ExceptionOr<std::optional<size_t>> CryptoKeyHMAC::getKeyLength(const CryptoAlgorithmParameters& parameters)
 {
     auto& aesParameters = downcast<CryptoAlgorithmHmacKeyParams>(parameters);
 

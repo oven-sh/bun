@@ -157,11 +157,10 @@ test.concurrent("max-concurrency default", async () => {
   // Default is 20, but ASAN-instrumented builds cap at 5 (each spawned bun
   // child is several-× heavier in RSS and ~2× slower to start, so
   // subprocess-spawning describe.concurrent suites would otherwise OOM the CI
-  // box). Don't gate on harness `isASAN` — that only matches CI's `bun-asan`
-  // binary name, while a default `bun bd` debug build is also
-  // ASAN-instrumented but named `bun-debug`. Derive the cap from the observed
-  // ceiling and assert it's exactly one of the two design defaults, then
-  // verify the climb-and-hold pattern against it.
+  // box). Derive the cap from the observed ceiling and assert it's exactly one
+  // of the two design defaults rather than gating on `isASAN` — that keeps the
+  // test independent of how ASAN is detected — then verify the climb-and-hold
+  // pattern against it.
   const cap = Math.max(...executionPattern);
   expect([5, 20]).toContain(cap);
   // Should be 1,2,3,...,cap-1,cap,cap,cap,...

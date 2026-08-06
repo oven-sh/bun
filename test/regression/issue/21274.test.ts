@@ -26,5 +26,5 @@ test("#21274", () => {
     "21:63:68:1D:1D:C8:1D:94:9A:B4:F7:E6:B6:CD:D1:1B:C5:46:2B:12:C9:DC:C3:BD:DF:F2:74:16:E8:DB:D7:82:16:9F:DF:D8:36:B7:AB:91:AF:EF:D4:D2:08:BD:09:88:FF:3A:52:D7:99:A9:D6:17:CD:FB:B9:F2:B8:0E:FD:CC",
   );
   expect(cert.keyUsage).toEqual(["1.3.6.1.5.5.7.3.1", "1.3.6.1.5.5.7.3.2"]);
-  expect(cert.serialNumber).toEqual("522e670fd3b3fbac0e19337e2137b493");
+  expect(cert.serialNumber).toEqual("522E670FD3B3FBAC0E19337E2137B493");
 });

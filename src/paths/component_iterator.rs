@@ -1,5 +1,5 @@
-//! Port of `std.fs.path.ComponentIterator(format, T)` + the `std.fs.Dir.makePath`
-//! back-then-forward walk. Pure path logic — no I/O; the mkdir walk takes a
+//! Path component iteration plus the recursive-mkdir back-then-forward
+//! walk. Pure path logic — no I/O; the mkdir walk takes a
 //! closure so callers supply `mkdirat` / `NtCreateFile(FILE_OPEN_IF)` /
 //! `CreateDirectoryW` themselves.
 //!
@@ -11,7 +11,7 @@
 
 use crate::PathChar;
 
-/// Runtime equivalent of Zig's `comptime path_type: PathType`. The hot
+/// Path format selector. The hot
 /// `is_sep` branch inlines to a single compare on POSIX and two compares on
 /// Windows; we keep it a runtime enum (vs. a const-generic) so one
 /// monomorphisation per `T` covers both — call sites that hard-code the
@@ -23,14 +23,8 @@ pub enum PathFormat {
 }
 
 impl PathFormat {
-    /// `std.fs.path.native_os` → `.windows` / `.posix`.
-    #[cfg(windows)]
-    pub const NATIVE: Self = Self::Windows;
-    #[cfg(not(windows))]
-    pub const NATIVE: Self = Self::Posix;
-
     #[inline(always)]
-    pub fn is_sep<T: PathChar>(self, c: T) -> bool {
+    pub(crate) fn is_sep<T: PathChar>(self, c: T) -> bool {
         match self {
             Self::Posix => c == T::from_u8(b'/'),
             Self::Windows => c == T::from_u8(b'/') || c == T::from_u8(b'\\'),
@@ -44,13 +38,13 @@ impl PathFormat {
 #[derive(Clone, Copy, Debug)]
 pub struct Component<'a, T> {
     /// The current component's name, e.g. `b`. Never contains separators.
-    pub name: &'a [T],
+    pub(crate) name: &'a [T],
     /// The full path up to and including the current component, e.g. `/a/b`.
     /// Never has a trailing separator.
-    pub path: &'a [T],
+    pub(crate) path: &'a [T],
 }
 
-/// Port of `std.fs.path.ComponentIterator(path_type, T)` — bidirectional
+/// A bidirectional
 /// iterator over `Component`s with a parsed root prefix that is never yielded.
 #[derive(Clone, Copy, Debug)]
 pub struct ComponentIterator<'a, T> {
@@ -68,7 +62,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     /// For Windows paths, returns `BadPathName` if `path` has an explicit
     /// namespace prefix (`\\.\`, `\\?\`, `\??\`) or is a UNC path with more
     /// than two leading separators. POSIX `init` is infallible.
-    pub fn init(path: &'a [T], fmt: PathFormat) -> Result<Self, bun_core::Error> {
+    pub fn init(path: &'a [T], fmt: PathFormat) -> crate::Result<Self> {
         let root_end = match fmt {
             PathFormat::Posix => {
                 let mut i = 0;
@@ -93,34 +87,8 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
         self.fmt.is_sep(c)
     }
 
-    /// The root prefix (`/`, `C:\`, `\\server\share\`, …) or `None` if relative.
-    #[inline]
-    pub fn root(&self) -> Option<&'a [T]> {
-        if self.root_end == 0 {
-            None
-        } else {
-            Some(&self.path[..self.root_end])
-        }
-    }
-
-    /// Returns the first component and seeks to it.
-    pub fn first(&mut self) -> Option<Component<'a, T>> {
-        self.start = self.root_end;
-        self.end = self.start;
-        while self.end < self.path.len() && !self.is_sep(self.path[self.end]) {
-            self.end += 1;
-        }
-        if self.end == self.start {
-            return None;
-        }
-        Some(Component {
-            name: &self.path[self.start..self.end],
-            path: &self.path[..self.end],
-        })
-    }
-
     /// Returns the last component and seeks to it.
-    pub fn last(&mut self) -> Option<Component<'a, T>> {
+    pub(crate) fn last(&mut self) -> Option<Component<'a, T>> {
         self.end = self.path.len();
         loop {
             if self.end == self.root_end {
@@ -146,7 +114,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Advances forward; returns the component to the right of the current one.
-    pub fn next(&mut self) -> Option<Component<'a, T>> {
+    pub(crate) fn next(&mut self) -> Option<Component<'a, T>> {
         let p = self.peek_next()?;
         self.start = p.path.len() - p.name.len();
         self.end = p.path.len();
@@ -154,7 +122,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Like `next` but does not advance.
-    pub fn peek_next(&self) -> Option<Component<'a, T>> {
+    pub(crate) fn peek_next(&self) -> Option<Component<'a, T>> {
         let mut start = self.end;
         while start < self.path.len() && self.is_sep(self.path[start]) {
             start += 1;
@@ -173,7 +141,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Advances backward; returns the component to the left of the current one.
-    pub fn previous(&mut self) -> Option<Component<'a, T>> {
+    pub(crate) fn previous(&mut self) -> Option<Component<'a, T>> {
         let p = self.peek_previous()?;
         self.start = p.path.len() - p.name.len();
         self.end = p.path.len();
@@ -181,7 +149,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Like `previous` but does not advance.
-    pub fn peek_previous(&self) -> Option<Component<'a, T>> {
+    pub(crate) fn peek_previous(&self) -> Option<Component<'a, T>> {
         let mut end = self.start;
         loop {
             if end == self.root_end {
@@ -206,13 +174,6 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 }
 
-/// `std.fs.path.componentIterator` — native-format convenience wrapper over
-/// `ComponentIterator::init` for `u8` paths.
-#[inline]
-pub fn component_iterator(path: &[u8]) -> Result<ComponentIterator<'_, u8>, bun_core::Error> {
-    ComponentIterator::init(path, PathFormat::NATIVE)
-}
-
 /// Outcome of one `mkdir`-like step in [`make_path_with`]. The closure maps
 /// its I/O result onto these three variants; the walk handles the
 /// `previous()` / `next()` bookkeeping.
@@ -227,7 +188,7 @@ pub enum MakePathStep<E> {
     NotFound(E),
 }
 
-/// Port of the `std.fs.Dir.makePath` back-then-forward walk, parameterised
+/// The recursive-mkdir back-then-forward walk, parameterised
 /// over the per-prefix `mkdir` step so callers supply `mkdirat` /
 /// `NtCreateFile(FILE_OPEN_IF)` / `CreateDirectoryW` themselves.
 ///
@@ -265,12 +226,12 @@ pub fn make_path_with<'a, T: PathChar, E>(
 }
 
 // ─── Windows root parsing ───────────────────────────────────────────────────
-// Direct port of `std.os.windows.{getNamespacePrefix, getUnprefixedPathType}`
-// + the `.windows` arm of `ComponentIterator.init`. Kept private — callers
+// Windows namespace-prefix and unprefixed-path-type parsing backing the
+// Windows arm of `ComponentIterator::init`. Kept private — callers
 // only see `ComponentIterator::init`; for ad-hoc root-length probing
 // `resolve_path::windows_filesystem_root_t` already exists.
 
-fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
+fn windows_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
     #[inline(always)]
     fn sep<T: PathChar>(c: T) -> bool {
         c == T::from_u8(b'/') || c == T::from_u8(b'\\')
@@ -290,12 +251,12 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
             if c1 == T::from_u8(b'?') {
                 // `\??\` (NT) — only when both outer seps are real backslashes.
                 if c2 == T::from_u8(b'?') && bs0 && bs3 {
-                    return Err(bun_core::err!("BadPathName"));
+                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
                 }
             } else if sep(c1) {
                 // `\\?\` (verbatim/fake-verbatim) or `\\.\` (local-device).
                 if c2 == T::from_u8(b'?') || c2 == T::from_u8(b'.') {
-                    return Err(bun_core::err!("BadPathName"));
+                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
                 }
             }
         }
@@ -317,7 +278,7 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
         // .unc_absolute → consume `\\server\share\`; reject `\\\x`.
         let mut i = 2usize;
         if i < path.len() && sep(path[i]) {
-            return Err(bun_core::err!("BadPathName"));
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
         }
         while i < path.len() && !sep(path[i]) {
             i += 1;
@@ -353,20 +314,18 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
 mod tests {
     use super::*;
 
-    fn collect(path: &[u8], fmt: PathFormat) -> (Option<&[u8]>, Vec<(&[u8], &[u8])>) {
+    fn collect(path: &[u8], fmt: PathFormat) -> Vec<(&[u8], &[u8])> {
         let mut it = ComponentIterator::init(path, fmt).unwrap();
-        let root = it.root();
         let mut out = vec![];
         while let Some(c) = it.next() {
             out.push((c.name, c.path));
         }
-        (root, out)
+        out
     }
 
     #[test]
     fn posix_basic() {
-        let (root, parts) = collect(b"/a/b/c", PathFormat::Posix);
-        assert_eq!(root, Some(&b"/"[..]));
+        let parts = collect(b"/a/b/c", PathFormat::Posix);
         assert_eq!(
             parts,
             vec![
@@ -376,8 +335,7 @@ mod tests {
             ]
         );
 
-        let (root, parts) = collect(b"a//b/", PathFormat::Posix);
-        assert_eq!(root, None);
+        let parts = collect(b"a//b/", PathFormat::Posix);
         assert_eq!(
             parts,
             vec![(&b"a"[..], &b"a"[..]), (&b"b"[..], &b"a//b"[..])]
@@ -389,17 +347,17 @@ mod tests {
 
     #[test]
     fn windows_roots() {
-        let (root, parts) = collect(b"C:\\Users\\foo", PathFormat::Windows);
-        assert_eq!(root, Some(&b"C:\\"[..]));
+        let parts = collect(b"C:\\Users\\foo", PathFormat::Windows);
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].1, &b"C:\\Users"[..]);
 
-        let (root, _) = collect(b"C:foo", PathFormat::Windows);
-        assert_eq!(root, Some(&b"C:"[..]));
-
-        let (root, parts) = collect(b"\\\\server\\share\\dir", PathFormat::Windows);
-        assert_eq!(root, Some(&b"\\\\server\\share\\"[..]));
+        let parts = collect(b"\\\\server\\share\\dir", PathFormat::Windows);
         assert_eq!(parts, vec![(&b"dir"[..], &b"\\\\server\\share\\dir"[..])]);
+
+        // Drive-relative root: the first component's `.path` starts at byte 2,
+        // i.e. `windows_root_end` returned 2 for the bare `C:` prefix.
+        let parts = collect(b"C:foo", PathFormat::Windows);
+        assert_eq!(parts, vec![(&b"foo"[..], &b"C:foo"[..])]);
 
         assert!(ComponentIterator::<u8>::init(b"\\\\?\\C:\\", PathFormat::Windows).is_err());
         assert!(ComponentIterator::<u8>::init(b"\\??\\C:\\", PathFormat::Windows).is_err());
@@ -412,8 +370,10 @@ mod tests {
         assert_eq!(it.last().unwrap().name, b"c");
         assert_eq!(it.previous().unwrap().name, b"b");
         assert_eq!(it.previous().unwrap().name, b"a");
+        // `previous()` returning `None` doesn't rewind the cursor — still on `a`.
         assert!(it.previous().is_none());
-        assert_eq!(it.next().unwrap().name, b"a");
         assert_eq!(it.next().unwrap().name, b"b");
+        assert_eq!(it.next().unwrap().name, b"c");
+        assert!(it.next().is_none());
     }
 }

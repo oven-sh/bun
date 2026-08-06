@@ -12,12 +12,14 @@ export function peek(list) {
 
 // Remove an item from its list.
 export function remove(item) {
-  if (item._idleNext) {
-    item._idleNext._idlePrev = item._idlePrev;
+  const next = item._idleNext;
+  const prev = item._idlePrev;
+  if (next) {
+    next._idlePrev = prev;
   }
 
-  if (item._idlePrev) {
-    item._idlePrev._idleNext = item._idleNext;
+  if (prev) {
+    prev._idleNext = next;
   }
 
   item._idleNext = null;

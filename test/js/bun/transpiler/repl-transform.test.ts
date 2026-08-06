@@ -55,6 +55,23 @@ describe("Bun.Transpiler replMode", () => {
       expect(result).toContain("var Bar");
       expect(result).toContain("async");
     });
+
+    // https://github.com/oven-sh/bun/issues/31225
+    test("top-level `this` is preserved (not rewritten to `exports`)", () => {
+      const result = transpiler.transformSync("this");
+      // In REPL mode, top-level `this` must survive the visit pass so the
+      // surrounding arrow IIFE inherits `this` from the global scope.
+      // Before the fix, it was rewritten to `exports`, which isn't bound in
+      // the IIFE and blew up with `ReferenceError: exports is not defined`.
+      expect(result).toContain("this");
+      expect(result).not.toContain("exports");
+    });
+
+    test("`this` inside a nested call is preserved", () => {
+      const result = transpiler.transformSync("console.log(this)");
+      expect(result).toContain("console.log(this)");
+      expect(result).not.toContain("console.log(exports)");
+    });
   });
 
   describe("REPL session with node:vm", () => {

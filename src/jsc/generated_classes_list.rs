@@ -1,25 +1,15 @@
-//! Port of `src/jsc/generated_classes_list.zig`.
-//!
-//! LAYERING: the Zig `Classes` struct is a flat namespace of
-//! `pub const X = path.to.Y;` aliases mapping each `.classes.ts` class name to
+//! LAYERING: `Classes` is a flat namespace of
+//! `pub use` aliases mapping each `.classes.ts` class name to
 //! its native backing type. Every target lives under `bun.api`, `bun.webcore`,
 //! `bun.bake`, or `bun.SourceMap` — i.e. in the Rust crate graph, in
 //! `bun_runtime` / `bun_sql_jsc` / `bun_sourcemap_jsc`, all of which **depend
 //! on** `bun_jsc`. Re-exporting them from `bun_jsc` would create a hard cycle.
 //!
-//! Zig gets away with this because the whole tree is one lazy compilation unit
-//! and `generated_classes_list.zig` is only consumed by the **Zig** codegen
-//! output (`ZigGeneratedClasses.zig`, via `const Classes = jsc.GeneratedClassesList;`
-//! at `generate-classes.ts:3296`). The **Rust** codegen output
+//! The codegen output
 //! (`generated_classes.rs`) does **not** consume this list — it resolves each
 //! class to its Rust struct via `rustModuleResolver.resolveStruct`
 //! (`generate-classes.ts:2602`/`:3450`) and is `include!`d into `bun_runtime`
 //! where every backing type is already in scope.
-//!
-//! The single in-tree Zig consumer outside codegen
-//! (`src/runtime/node/net/BlockList.zig:255` →
-//! `bun.jsc.GeneratedClassesList.SocketAddress`) is ported as a direct
-//! `crate::socket::SocketAddress` import in `BlockList.rs`.
 //!
 //! Resolution: this file is `#[path]`-mounted from **`bun_runtime/lib.rs`**
 //! (not `bun_jsc/lib.rs`) so every alias resolves via `crate::`. The public
@@ -59,9 +49,9 @@ pub mod Classes {
     pub use crate::test_runner::expect::ExpectTypeOf;
     pub use crate::test_runner::scope_functions::ScopeFunctions;
     pub use crate::webcore::Blob;
-    // `crate::shell::ParsedShellScript` is a `(())` placeholder left over from
-    // the Phase-A scaffold; the real struct lives in the `parsed_shell_script`
-    // submodule. Re-export the real one so codegen sees the correct payload.
+    // `crate::shell::ParsedShellScript` is a `(())` placeholder; the real struct
+    // lives in the `parsed_shell_script` submodule. Re-export the real one so
+    // codegen sees the correct payload.
     pub use crate::api::bun::h2_frame_parser::H2FrameParser;
     pub use crate::api::bun::subprocess as Subprocess;
     pub use crate::api::bun::subprocess::ResourceUsage;
@@ -72,14 +62,14 @@ pub mod Classes {
     pub use crate::api::js_bundler::JSBundler as Bundler;
     pub use crate::api::js_transpiler as Transpiler;
     pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemRouter;
-    pub use crate::crypto::MD4;
-    pub use crate::crypto::MD5;
-    pub use crate::crypto::SHA1;
-    pub use crate::crypto::SHA224;
-    pub use crate::crypto::SHA256;
-    pub use crate::crypto::SHA384;
-    pub use crate::crypto::SHA512;
-    pub use crate::crypto::SHA512_256;
+    pub(crate) use crate::crypto::MD4;
+    pub(crate) use crate::crypto::MD5;
+    pub(crate) use crate::crypto::SHA1;
+    pub(crate) use crate::crypto::SHA224;
+    pub(crate) use crate::crypto::SHA256;
+    pub(crate) use crate::crypto::SHA384;
+    pub(crate) use crate::crypto::SHA512;
+    pub(crate) use crate::crypto::SHA512_256;
     pub use crate::dns_jsc::Resolver as DNSResolver;
     pub use crate::ffi::FFI;
     pub use crate::node::net::block_list as BlockList;
@@ -107,16 +97,13 @@ pub mod Classes {
     pub use crate::valkey_jsc::js_valkey::JSValkeyClient as RedisClient;
     pub use crate::webcore::Request;
     pub use crate::webcore::Response;
-    pub use crate::webcore::ResumableFetchSink;
-    pub use crate::webcore::ResumableS3UploadSink;
     pub use crate::webcore::S3Client;
     pub use crate::webcore::S3Stat;
     pub use crate::webcore::TextDecoder;
-    pub use crate::webcore::byte_blob_loader::Source as BlobInternalReadableStreamSource;
-    pub use crate::webcore::byte_stream::Source as BytesInternalReadableStreamSource;
+    pub(crate) use crate::webcore::byte_blob_loader::Source as BlobInternalReadableStreamSource;
+    pub(crate) use crate::webcore::byte_stream::Source as BytesInternalReadableStreamSource;
     pub use crate::webcore::crypto::Crypto;
-    pub use crate::webcore::file_reader::Source as FileInternalReadableStreamSource;
-    pub use crate::webcore::text_encoder_stream_encoder::TextEncoderStreamEncoder;
+    pub(crate) use crate::webcore::file_reader::Source as FileInternalReadableStreamSource;
     pub use Bundler as JSBundler;
     pub use Transpiler as JSTranspiler;
     pub use bun_jsc::BuildMessage;
@@ -127,5 +114,3 @@ pub mod Classes {
     pub use bun_sql_jsc::postgres::PostgresSQLConnection;
     pub use bun_sql_jsc::postgres::PostgresSQLQuery;
 }
-
-// ported from: src/jsc/generated_classes_list.zig

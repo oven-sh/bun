@@ -5,25 +5,18 @@ use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
 use crate::parser::{
-    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind,
-    LexicalDecl, ParseStatementOptions, TypeParameterFlag,
+    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind, LexicalDecl,
+    ParseStatementOptions, TypeParameterFlag,
 };
 use bun_ast as js_ast;
 use bun_ast::op::Level;
-use bun_ast::{E, Expr, ExprNodeList, Flags, G, S, Stmt};
+use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
-// TODO(port): narrow error set
-type Error = bun_core::Error;
+type Error = crate::Error;
 
-// Zig: `pub fn ParseFn(comptime typescript, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    // Zig: `const is_typescript_enabled = P.is_typescript_enabled;`
-    // (PORT NOTE: P.rs already defines `IS_TYPESCRIPT_ENABLED`; reuse it.)
-
     /// This assumes the "function" token has already been parsed
-    pub fn parse_fn_stmt(
+    pub(crate) fn parse_fn_stmt(
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
@@ -42,13 +35,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         match opts.lexical_decl {
             LexicalDecl::Forbid => {
-                p.forbid_lexical_decl(loc)?;
+                p.forbid_lexical_decl(loc);
             }
 
             // Allow certain function statements in certain single-statement contexts
             LexicalDecl::AllowFnInsideIf | LexicalDecl::AllowFnInsideLabel => {
                 if opts.is_typescript_declare || is_generator || is_async {
-                    p.forbid_lexical_decl(loc)?;
+                    p.forbid_lexical_decl(loc);
                 }
             }
             _ => {}
@@ -63,10 +56,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name_text = p.lexer.identifier;
             p.lexer.expect(T::TIdentifier)?;
             // Difference
-            let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text)?;
+            let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text);
             name = Some(js_ast::LocRef {
                 loc: name_loc,
-                ref_: Some(ref_),
+                ref_,
             });
         }
 
@@ -81,7 +74,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if has_if_scope {
             if_stmt_scope_index = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
         }
-        let _ = if_stmt_scope_index;
 
         let scope_index: usize =
             p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionArgs, p.lexer.loc())?;
@@ -90,8 +82,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name,
             FnOrArrowDataParse {
                 needs_async_loc: loc,
-                async_range: async_range.unwrap_or(bun_ast::Range::NONE),
-                has_async_range: async_range.is_some(),
                 allow_await: if is_async {
                     AwaitOrYield::AllowExpr
                 } else {
@@ -118,12 +108,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.pop_and_discard_scope(scope_index);
 
-                // Balance the fake block scope introduced above
+                // Discard the fake block scope introduced above. A forward declaration
+                // emits nothing (`S::TypeScript`), so the block must be removed from
+                // `scopes_in_order` too — a plain `pop_scope()` only updates
+                // `current_scope` and would leave the block orphaned in the scope order,
+                // desyncing the visit pass (scope mismatch / pop past the topmost scope).
                 if has_if_scope {
-                    p.pop_scope();
+                    p.pop_and_discard_scope(if_stmt_scope_index);
                 }
 
-                if opts.is_typescript_declare && opts.is_namespace_scope && opts.is_export {
+                if opts.is_typescript_declare && opts.scope.is_namespace() && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
@@ -146,11 +140,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::symbol::Kind::HoistedFunction
             };
 
-            n.ref_ = Some(p.declare_symbol(kind, n.loc, name_text)?);
+            n.ref_ = p.declare_symbol(kind, n.loc, name_text)?;
         }
         func.name = name;
 
-        // Zig: func.flags.setPresent(.has_if_scope, hasIfScope) — flags is freshly built so unset → only insert when true
+        // flags is freshly built so unset → only insert when true
         if has_if_scope {
             func.flags.insert(Flags::Function::HasIfScope);
         }
@@ -166,7 +160,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(S::Function { func }, loc))
     }
 
-    pub fn parse_fn(
+    pub(crate) fn parse_fn(
         &mut self,
         name: Option<js_ast::LocRef>,
         opts: FnOrArrowDataParse,
@@ -176,7 +170,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //     p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
         // }
 
-        // Zig: Flags.Function.init(.{ .has_rest_arg = false, .is_async = ..., .is_generator = ... })
         let mut initial_flags = Flags::FunctionSet::empty();
         if opts.allow_await == AwaitOrYield::AllowExpr {
             initial_flags.insert(Flags::Function::IsAsync);
@@ -188,15 +181,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut func = G::Fn {
             name,
             flags: initial_flags,
-            arguments_ref: None,
+            arguments_ref: js_ast::Ref::NONE,
             open_parens_loc: p.lexer.loc(),
             ..Default::default()
         };
         p.lexer.expect(T::TOpenParen)?;
 
         // Await and yield are not allowed in function arguments
-        // PORT NOTE: Zig used `std.mem.toBytes` / `bytesToValue` to save/restore by value;
-        // in Rust `FnOrArrowDataParse` is `Clone`, so a clone is equivalent.
+        // `FnOrArrowDataParse` is `Clone`, so save/restore is a clone.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse.allow_await = if opts.allow_await == AwaitOrYield::AllowExpr {
@@ -220,7 +212,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut rest_arg: bool = false;
         let mut arg_has_decorators: bool = false;
-        // PERF(port): Zig used ArrayListUnmanaged backed by p.arena (arena).
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
@@ -326,7 +317,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 default_value = Some(p.parse_expr(Level::Comma)?);
             }
 
-            // PERF(port): was appendAssumeCapacity-style (catch unreachable on alloc)
             args.push(G::Arg {
                 ts_decorators,
                 binding: arg,
@@ -365,20 +355,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // this if it wasn't already declared above because arguments are allowed to
         // be called "arguments", in which case the real "arguments" is inaccessible.
         if !p.current_scope().members.contains_key(arguments_str) {
-            func.arguments_ref = Some(
-                p.declare_symbol_maybe_generated::<false>(
+            func.arguments_ref = p
+                .declare_symbol(
                     js_ast::symbol::Kind::Arguments,
                     func.open_parens_loc,
                     arguments_str,
                 )
-                .expect("unreachable"),
-            );
-            p.symbols[func.arguments_ref.unwrap().inner_index() as usize].must_not_be_renamed =
-                true;
+                .expect("unreachable");
+            p.symbols[func.arguments_ref.inner_index() as usize].set_must_not_be_renamed(true);
         }
 
         p.lexer.expect(T::TCloseParen)?;
-        // PORT NOTE: Zig restored via `std.mem.bytesToValue`; plain copy is equivalent.
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
@@ -416,15 +403,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut temp_opts = opts;
         func.body = p.parse_fn_body(&mut temp_opts)?;
+        if p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression {
+            func.flags.insert(Flags::Function::HasReactHooksSuppression);
+            // next-line semantics: a suppression marks the enclosing top-level
+            // function and is consumed; it never reaches that function's siblings.
+            if p.fn_or_arrow_data_parse.is_top_level {
+                p.lexer.has_react_hooks_suppression_before = false;
+            }
+        }
 
         Ok(func)
     }
 
-    pub fn parse_fn_expr(
+    pub(crate) fn parse_fn_expr(
         &mut self,
         loc: bun_ast::Loc,
         is_async: bool,
-        async_range: bun_ast::Range,
     ) -> Result<Expr, Error> {
         let p = self;
         p.lexer.next()?;
@@ -451,11 +445,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ref_ = if !text.is_empty() && text != arguments_str {
                 p.declare_symbol(js_ast::symbol::Kind::HoistedFunction, name_loc, text)?
             } else {
-                p.new_symbol(js_ast::symbol::Kind::HoistedFunction, text)?
+                p.new_symbol(js_ast::symbol::Kind::HoistedFunction, text)
             };
             name = Some(js_ast::LocRef {
                 loc: name_loc,
-                ref_: Some(ref_),
+                ref_,
             });
 
             p.lexer.next()?;
@@ -470,7 +464,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name,
             FnOrArrowDataParse {
                 needs_async_loc: loc,
-                async_range,
                 allow_await: if is_async {
                     AwaitOrYield::AllowExpr
                 } else {
@@ -492,7 +485,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Function { func }, loc))
     }
 
-    pub fn parse_fn_body(&mut self, data: &mut FnOrArrowDataParse) -> Result<G::FnBody, Error> {
+    pub(crate) fn parse_fn_body(
+        &mut self,
+        data: &mut FnOrArrowDataParse,
+    ) -> Result<G::FnBody, Error> {
         let p = self;
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         let old_allow_in = p.allow_in;
@@ -524,7 +520,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_arrow_body(
+    pub(crate) fn parse_arrow_body(
         &mut self,
         args: &'a mut [G::Arg],
         data: &mut FnOrArrowDataParse,
@@ -539,7 +535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.range(),
                 b"Unexpected newline before \"=>\"",
             );
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         p.lexer.expect(T::TEqualsGreaterThan)?;
@@ -559,37 +555,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TOpenBrace {
             let body = p.parse_fn_body(data)?;
             p.after_arrow_body_loc = p.lexer.loc();
+            let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
+                || p.lexer.has_react_hooks_block_suppression;
+            if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
+                p.lexer.has_react_hooks_suppression_before = false;
+            }
             return Ok(E::Arrow {
                 args: args_slice,
                 body,
+                has_react_hooks_suppression,
                 ..Default::default()
             });
         }
 
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, arrow_loc)?;
-        // PORT NOTE: Zig `defer p.popScope();` — moved to explicit call before each return below.
-        // TODO(port): consider scopeguard if more early-returns are added.
+        // `pop_scope` is called explicitly before each return below.
 
-        // PORT NOTE: Zig used `std.mem.toBytes`/`bytesToValue`; clone is equivalent.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
         let expr = match p.parse_expr(Level::Comma) {
             Ok(e) => e,
             Err(err) => {
-                // PORT NOTE: Zig `try` returns here without restoring fn_or_arrow_data_parse;
-                // only the `defer p.popScope()` fires on the error path.
+                // The error path returns without restoring fn_or_arrow_data_parse;
+                // only the scope pop runs.
                 p.pop_scope();
                 return Err(err);
             }
         };
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
-        // PERF(port): Zig used `p.arena.alloc(Stmt, 1)` (arena bulk-free).
         let ret_stmt = p.s(S::Return { value: Some(expr) }, expr.loc);
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
 
         p.pop_scope();
+        let has_react_hooks_suppression =
+            p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression;
+        if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
+            p.lexer.has_react_hooks_suppression_before = false;
+        }
         Ok(E::Arrow {
             args: args_slice,
             prefer_expr: true,
@@ -597,9 +601,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc: arrow_loc,
                 stmts: bun_ast::StoreSlice::new_mut(stmts),
             },
+            has_react_hooks_suppression,
             ..Default::default()
         })
     }
 }
-
-// ported from: src/js_parser/ast/parseFn.zig

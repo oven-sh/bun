@@ -13,10 +13,11 @@ DEFINE_NATIVE_MODULE(NodeProcess)
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     Bun::Process* process = globalObject->processObject();
-    if (!process->staticPropertiesReified()) {
-        process->reifyAllStaticProperties(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-    }
+    // Don't bulk-reifyAllStaticProperties here (see generateNativeModule_NodeModule
+    // for the long version). It runs every PropertyCallback back-to-back without an
+    // exception check in between, which trips BUN_JSC_validateExceptionChecks=1.
+    // The per-export get() below lazy-reifies one property at a time inside
+    // JSObject::get's own checked ThrowScope.
 
     PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     process->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);

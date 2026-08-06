@@ -11,9 +11,7 @@ use core::ffi::c_void;
 
 use super::ref_counted_str::RefCountedStr;
 
-bun_core::declare_scope!(EnvStrLog, hidden);
-
-/// Packed `u128` layout (Zig `packed struct(u128)`, LSB-first):
+/// Packed `u128` layout (LSB-first):
 /// - bits  0..48  : `ptr` (u48)
 /// - bits 48..64  : `tag` (u16)
 /// - bits 64..128 : `len` (usize)
@@ -57,8 +55,8 @@ impl EnvStr {
     #[inline]
     fn tag(self) -> Tag {
         // Only constructed via `pack` with a valid `Tag` discriminant (0..=2);
-        // any other value is corruption — trap (matches Zig's safety-checked
-        // `@enumFromInt`) rather than silently folding to `Empty`.
+        // any other value is corruption — trap rather than silently folding
+        // to `Empty`.
         match ((self.0 >> TAG_SHIFT) & TAG_MASK) as u16 {
             0 => Tag::Empty,
             1 => Tag::Refcounted,
@@ -73,7 +71,7 @@ impl EnvStr {
     }
 
     #[inline]
-    pub fn init_slice(str: &[u8]) -> EnvStr {
+    pub(crate) fn init_slice(str: &[u8]) -> EnvStr {
         if str.is_empty() {
             // Zero length strings may have invalid pointers, leading to a bad integer cast.
             return Self::pack(0, Tag::Empty, 0);
@@ -83,17 +81,15 @@ impl EnvStr {
     }
 
     /// Same thing as `init_ref_counted` except it duplicates the passed string
-    pub fn dupe_ref_counted(old_str: &[u8]) -> EnvStr {
+    pub(crate) fn dupe_ref_counted(old_str: &[u8]) -> EnvStr {
         if old_str.is_empty() {
             return Self::pack(0, Tag::Empty, 0);
         }
 
-        // PORT NOTE: Zig was `bun.handleOom(bun.default_allocator.dupe(u8, old_str))`.
-        // Global mimalloc + abort-on-OOM is the Rust default; ownership of the
-        // duplicated bytes transfers to RefCountedStr.
+        // Global mimalloc aborts on OOM; ownership of the duplicated bytes
+        // transfers to RefCountedStr.
         let str: Box<[u8]> = Box::<[u8]>::from(old_str);
         let len = str.len();
-        // TODO(port): RefCountedStr::init signature — assumed to take ownership and return *mut RefCountedStr
         Self::pack(
             to_ptr(RefCountedStr::init(str) as *const c_void),
             Tag::Refcounted,
@@ -101,33 +97,29 @@ impl EnvStr {
         )
     }
 
-    pub fn init_ref_counted(str: &[u8]) -> EnvStr {
-        // TODO(port): Zig `initRefCounted([]const u8)` hands the slice to RefCountedStr which
-        // assumes ownership of the backing allocation. Revisit RefCountedStr::init ownership
-        // contract in Phase B (caller-allocated vs. dupe-on-init).
+    /// Takes ownership of the backing allocation (hands the slice to
+    /// `RefCountedStr` without copying). Use [`Self::dupe_ref_counted`] to
+    /// copy a borrowed slice instead.
+    pub(crate) fn init_ref_counted(str: Box<[u8]>) -> EnvStr {
         if str.is_empty() {
             return Self::pack(0, Tag::Empty, 0);
         }
 
-        // PORT NOTE: Zig left `len` defaulted to 0 here (only `ptr` + `tag` set); the slice
-        // length is recovered via RefCountedStr::byte_slice(). Preserve that.
-        // PORT NOTE: Zig handed the borrowed slice to RefCountedStr which assumed ownership
-        // of its backing allocation. Rust cannot transfer ownership through `&[u8]`, so we
-        // dupe here; Phase B should revisit `init_ref_counted`'s ownership contract (likely
-        // change the param to `Box<[u8]>`).
+        // NOTE: `len` is left 0 here (only `ptr` + `tag` set); the slice
+        // length is recovered via RefCountedStr::byte_slice().
         Self::pack(
-            to_ptr(RefCountedStr::init(Box::<[u8]>::from(str)) as *const c_void),
+            to_ptr(RefCountedStr::init(str) as *const c_void),
             Tag::Refcounted,
             0,
         )
     }
 
-    pub fn slice(&self) -> &[u8] {
-        // PORT NOTE: the returned slice borrows either external memory (Tag::Slice) or the
+    pub(crate) fn slice(&self) -> &[u8] {
+        // NOTE: the returned slice borrows either external memory (Tag::Slice) or the
         // RefCountedStr buffer. Tying the return lifetime to `&self` prevents the caller from
         // conjuring `&'static [u8]` (PORTING.md §Forbidden: lifetime-extension via raw-pointer
         // deref). `EnvStr` is still `Copy`, so this is a best-effort bound — the caller is
-        // responsible for keeping the backing storage alive (same contract as Zig's `slice()`).
+        // responsible for keeping the backing storage alive.
         match self.tag() {
             Tag::Empty => b"",
             Tag::Slice => self.cast_slice(),
@@ -139,7 +131,7 @@ impl EnvStr {
         }
     }
 
-    pub fn memory_cost(self) -> usize {
+    pub(crate) fn memory_cost(self) -> usize {
         let divisor: usize = 'brk: {
             if let Some(refc) = self.as_ref_counted() {
                 break 'brk refc.refcount.get() as usize;
@@ -189,7 +181,9 @@ impl EnvStr {
         // SAFETY: tag == Slice guarantees `ptr` was derived from a valid `[*]const u8` of
         // length `len` whose lifetime is managed elsewhere (caller contract of init_slice).
         // The returned borrow is tied to `&self` so callers cannot pick `'static`.
-        // TODO(port): strict-provenance — ptr was round-tripped through an integer.
+        // Provenance: the packed-tagged-value design round-trips the pointer
+        // through an integer by construction (exposed provenance), so this is
+        // not strict-provenance clean and cannot be without unpacking EnvStr.
         unsafe { core::slice::from_raw_parts(self.ptr() as usize as *const u8, self.len()) }
     }
 
@@ -208,9 +202,6 @@ impl Default for EnvStr {
 
 #[inline]
 fn to_ptr(ptr_val: *const c_void) -> u64 {
-    // Zig: bitcast usize→[8]u8, take low 6 bytes, bitcast→u48.
-    // Equivalent to masking the low 48 bits of the address.
+    // Masks the low 48 bits of the address.
     (ptr_val as usize as u64) & ((1u64 << 48) - 1)
 }
-
-// ported from: src/shell/EnvStr.zig

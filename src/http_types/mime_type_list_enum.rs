@@ -1,47 +1,30 @@
-//! Generated for B-2 from `mime_type_list.txt` (hand-rolled stand-in until
-//! `src/codegen/generate-compact-string-table.ts` learns `.rs` output).
+//! Hand-maintained; derived from `mime_type_list.txt`.
 //!
-//! PERF(port): Zig emits a packed `enum(u14)` (length-group:7 + position:7)
-//! indexing into one contiguous byte blob - 2 bytes/entry. This stand-in
+//! PERF: a packed `enum(u14)` (length-group:7 + position:7)
+//! indexing into one contiguous byte blob would be 2 bytes/entry. This stand-in
 //! stores a `&'static str` per entry (16 bytes on 64-bit). Swap for the
-//! packed encoding when the codegen script grows a Rust backend.
-//
-// To regenerate: see `src/http_types/mime_type_list_enum.zig` header for the
-// canonical command; the `.rs` path is not wired into codegen yet.
+//! packed encoding if a packed-enum generator is added.
 
 /// Compact handle to one of the 2310 known MIME-type strings.
 ///
-/// Zig: `enum(u14)` with `@"<mime>"` variant idents. Rust idents cannot
+/// Rust idents cannot
 /// contain `/`, so we wrap the literal instead and compare by string.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct MimeTypeList(pub &'static str);
 
 impl MimeTypeList {
-    /// Const-construct from a MIME-type string literal. Mirrors
-    /// Zig `.@"<mime>"` variant syntax (used by the `t!` macro).
+    /// Const-construct from a MIME-type string literal (used by the `t!` macro).
     #[inline]
     pub const fn from_mime_literal(s: &'static str) -> Self {
         MimeTypeList(s)
     }
 
     #[inline]
-    pub const fn slice(self) -> &'static [u8] {
+    pub(crate) const fn slice(self) -> &'static [u8] {
         self.0.as_bytes()
     }
 
-    #[inline]
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
-
-    #[inline]
-    pub const fn len(self) -> usize {
-        self.0.len()
-    }
-
-    pub const COUNT: usize = 2310;
-
-    pub const ALL: &'static [MimeTypeList] = ALL;
+    pub(crate) const ALL: &'static [MimeTypeList] = ALL;
 }
 
 impl From<MimeTypeList> for &'static str {
@@ -53,7 +36,7 @@ impl From<MimeTypeList> for &'static str {
 
 /// Module-level alias of [`MimeTypeList::ALL`] so callers can
 /// `pub use mime_type_list_enum::ALL` (associated consts are not `use`-able).
-pub const ALL: &[MimeTypeList] = &[
+pub(crate) const ALL: &[MimeTypeList] = &[
     MimeTypeList("application/1d-interleaved-parityfec"),
     MimeTypeList("application/3gpdash-qoe-report+xml"),
     MimeTypeList("application/3gpp-ims+xml"),

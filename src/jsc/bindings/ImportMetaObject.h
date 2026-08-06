@@ -36,7 +36,7 @@ public:
     /// - other -> assertion failure
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL);
 
-    /// TODO(@paperclover):
+    /// TODO:
     /// The rules for this function's input is a bit weird. `specifier` is an import path specifier aka a file path.
     ///
     /// - Should be an absolute path or name of a plugin module
@@ -51,8 +51,6 @@ public:
     /// The above rules get a best estimate bandage to solve the problems
     /// stated in https://github.com/oven-sh/bun/pull/9399
     static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
-
-    static ImportMetaObject* createRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

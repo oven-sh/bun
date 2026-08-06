@@ -3,12 +3,8 @@ use core::ffi::c_void;
 use bun_core::ZigString;
 use bun_jsc::host_fn::DomCall;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSUint8Array,
-    JSValue, JsResult,
+    self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSValue, JsResult,
 };
-
-// Non-throwing `toInvalidArguments` shim — see ffi_body.rs for rationale.
-use super::ffi_body::GlobalObjectFfiExt as _;
 
 /// Reinterpret a user-supplied raw address (from `bun:ffi` JS land) as a
 /// JSC typed-array bytes deallocator. Centralized so the `usize → fn ptr`
@@ -18,27 +14,28 @@ use super::ffi_body::GlobalObjectFfiExt as _;
 /// `addr` must be either `0` or the address of a function with signature
 /// `extern "C" fn(*mut c_void, *mut c_void)`. This is user-supplied via
 /// `bun:ffi`; a bad value will crash when JSC invokes it.
-#[allow(deprecated)] // jsc::c::JSTypedArrayBytesDeallocator
 #[inline(always)]
-unsafe fn deallocator_from_addr(addr: usize) -> jsc::c::JSTypedArrayBytesDeallocator {
+unsafe fn deallocator_from_addr(addr: usize) -> jsc::JSTypedArrayBytesDeallocator {
     // SAFETY: `JSTypedArrayBytesDeallocator` is
     // `Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>`, which under
     // the null-pointer optimisation is layout-compatible with a single
     // pointer-sized word — exactly `usize` here. `0` round-trips to `None`.
-    unsafe { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(addr) }
+    unsafe { core::mem::transmute::<usize, jsc::JSTypedArrayBytesDeallocator>(addr) }
 }
 
-/// Port of Zig `JSValue.createBufferWithCtx(global, slice, ctx, callback)` —
-/// unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
-/// this variant passes the caller's (possibly null) deallocator through, so FFI-owned
-/// memory is only freed by the user-supplied callback.
-#[allow(deprecated, non_snake_case)]
+/// Frees nothing. `JSBuffer__bufferFromPointerAndLengthAndDeinit` asserts a non-null
+/// deallocator for `len > 0`, so a borrowed view supplies this instead of `None`.
+unsafe extern "C" fn noop_bytes_deallocator(_ptr: *mut c_void, _ctx: *mut c_void) {}
+
+/// Unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
+/// this passes the caller's deallocator through so FFI bytes are only freed when asked.
+#[allow(non_snake_case)]
 #[inline]
 fn create_buffer_with_ctx(
     global: &JSGlobalObject,
     slice: &mut [u8],
     ctx: *mut c_void,
-    callback: jsc::c::JSTypedArrayBytesDeallocator,
+    callback: jsc::JSTypedArrayBytesDeallocator,
 ) -> JSValue {
     unsafe extern "C" {
         fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
@@ -46,11 +43,11 @@ fn create_buffer_with_ctx(
             ptr: *mut u8,
             len: usize,
             ctx: *mut c_void,
-            deallocator: jsc::c::JSTypedArrayBytesDeallocator,
+            deallocator: jsc::JSTypedArrayBytesDeallocator,
         ) -> JSValue;
     }
-    // SAFETY: `global` is live; slice describes FFI-owned memory whose
-    // ownership transfers to JSC (freed via `callback`, or never if None).
+    // SAFETY: `global` is live; `slice` stays valid for the Buffer's lifetime.
+    // `callback` controls disposal (a no-op when the storage stays caller-owned).
     unsafe {
         JSBuffer__bufferFromPointerAndLengthAndDeinit(
             global,
@@ -63,10 +60,6 @@ fn create_buffer_with_ctx(
 }
 
 // ── DOM-call C++ put helpers (generated in ZigLazyStaticFunctions-inlines.h) ──
-// In Zig these are `@extern`ed by the comptime `DOMCall(...)` type-generator;
-// here we declare them directly since the `#[bun_jsc::dom_call]` proc-macro is
-// not yet implemented.
-// TODO(port): move to <area>_sys
 #[allow(non_snake_case)]
 unsafe extern "C" {
     fn FFI__ptr__put(global: *mut JSGlobalObject, value: JSValue);
@@ -84,7 +77,7 @@ unsafe extern "C" {
     fn Reader__f64__put(global: *mut JSGlobalObject, value: JSValue);
 }
 
-pub fn new_cstring(
+fn new_cstring(
     global_this: &JSGlobalObject,
     value: JSValue,
     byte_offset: Option<JSValue>,
@@ -100,51 +93,50 @@ pub fn new_cstring(
     }
 }
 
-// TODO(port): `DOMCall("FFI", @This(), "ptr", ...)` is a comptime type-generator that
-// emits a DOMJIT fast-path descriptor + slow-path host fn. Phase B needs a proc-macro
-// or codegen step (`bun_jsc::dom_call!`). Represented here as a const descriptor.
-// PORT NOTE: the `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed by
-// the C++ codegen, not the runtime descriptor; it lives in the generated
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Bun__FFI__CString__transcode(
+    global: &JSGlobalObject,
+    ptr: JSValue,
+    byte_offset: JSValue,
+    byte_length: JSValue,
+) -> JSValue {
+    jsc::to_js_host_fn_result(
+        global,
+        new_cstring(global, ptr, Some(byte_offset), Some(byte_length)),
+    )
+}
+
+unsafe extern "C" {
+    fn Bun__FFI__CStringConstructor(global: *const JSGlobalObject) -> JSValue;
+}
+
+// DOMJIT fast-path descriptor + slow-path host fn, represented here as a const
+// descriptor. The `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed
+// by the C++ codegen, not the runtime descriptor; it lives in the generated
 // `ZigLazyStaticFunctions-inlines.h` already.
-pub const DOM_CALL: DomCall = DomCall {
+const DOM_CALL: DomCall = DomCall {
     class_name: "FFI",
     function_name: "ptr",
     put: FFI__ptr__put,
 };
 
 pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
-    // Zig: `inline for (comptime std.meta.fieldNames(@TypeOf(fields)))` — comptime
-    // reflection over an anonymous struct. Unrolled manually here; keep in sync with
-    // `FIELDS` below.
+    // Unrolled manually; keep in sync with `FIELDS` below.
     let fields = FIELDS();
-    let object = JSValue::create_empty_object(global_object, fields.len() + 2);
+    let object = JSValue::create_empty_object(global_object, fields.len() + 3);
 
     for &(name, func) in &fields {
-        if name == "CString" {
-            // CString needs to be callable as a constructor for backward compatibility.
-            // Pass the same function as the constructor so `new CString(ptr)` works.
-            object.put(
-                global_object,
-                name.as_bytes(),
-                JSFunction::create(
-                    global_object,
-                    name,
-                    func,
-                    1,
-                    jsc::js_function::CreateJSFunctionOptions {
-                        constructor: Some(func),
-                        ..Default::default()
-                    },
-                ),
-            );
-        } else {
-            object.put(
-                global_object,
-                name.as_bytes(),
-                JSFunction::create(global_object, name, func, 1, Default::default()),
-            );
-        }
+        object.put(
+            global_object,
+            name.as_bytes(),
+            JSFunction::create(global_object, name, func, 1, Default::default()),
+        );
     }
+
+    // SAFETY: `global_object` is a live JSC handle for the duration of the call.
+    object.put(global_object, b"CString", unsafe {
+        Bun__FFI__CStringConstructor(global_object)
+    });
 
     // SAFETY: `put` is the C++-side `FFI__ptr__put` helper; global_object is live.
     unsafe { (DOM_CALL.put)(std::ptr::from_ref(global_object).cast_mut(), object) };
@@ -156,12 +148,11 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
 pub mod reader {
     use super::*;
 
-    // TODO(port): same DOMCall codegen note as `DOM_CALL` above. In Zig this is an
-    // anonymous struct of 12 `DOMCall(...)` values iterated via `inline for`.
-    // PORT NOTE: the `DOMEffect.forRead(.World)` argument is encoded on the C++ side
-    // (generated `Reader__*__put` in ZigLazyStaticFunctions-inlines.h); the runtime
-    // descriptor here only needs the `put` extern.
-    pub const DOM_CALLS: &[(&str, DomCall)] = &[
+    // Same DOMCall shape as `DOM_CALL` above. The
+    // `DOMEffect.forRead(.World)` argument is encoded on the C++ side
+    // (generated `Reader__*__put` in ZigLazyStaticFunctions-inlines.h); the
+    // runtime descriptor here only needs the `put` extern.
+    const DOM_CALLS: &[(&str, DomCall)] = &[
         (
             "u8",
             DomCall {
@@ -273,19 +264,34 @@ pub mod reader {
 
     #[inline(always)]
     fn addr_from_args(global_object: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<usize> {
-        // PORT NOTE: hoisted from repeated inline checks; identical body in every reader.
-        if arguments.is_empty() || !arguments[0].is_number() {
-            return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
-        }
-        let off = if arguments.len() > 1 {
-            usize::try_from(arguments[1].to_int32()).expect("int cast")
+        let base = if !arguments.is_empty() && arguments[0].is_number() {
+            arguments[0].as_ptr_address()
+        } else if !arguments.is_empty()
+            && arguments[0].is_big_int()
+            && arguments[0].is_big_int_in_uint64_range(1, usize::MAX as u64)
+        {
+            arguments[0].to_uint64_no_truncate() as usize
         } else {
-            0usize
+            return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         };
-        Ok(arguments[0].as_ptr_address() + off)
+        let mut addr = base;
+        if let Some(off_value) = arguments.get(1) {
+            let off = off_value.to_int32();
+            if off < 0 {
+                addr = addr.saturating_sub(off.unsigned_abs() as usize);
+            } else {
+                addr = addr.saturating_add(off as usize);
+            }
+        }
+        if addr == 0 {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "ptr cannot be zero, that would segfault Bun :("
+            )));
+        }
+        Ok(addr)
     }
 
-    /// Read a `T` from a user-supplied raw address (unaligned, `*align(1)` in Zig).
+    /// Read a `T` from a user-supplied raw address (unaligned).
     ///
     /// Single audited primitive for all `bun:ffi` `read.*` host functions
     /// (slow-path and DOMJIT fast-path alike).
@@ -293,14 +299,14 @@ pub mod reader {
     /// # Safety
     /// `addr` must point to `size_of::<T>()` readable bytes. The address is
     /// JS-supplied and **not validated** — a bad value is UB, matching the
-    /// `bun:ffi` contract (`@as(*align(1) const T, @ptrFromInt(addr)).*`).
+    /// `bun:ffi` contract (an unaligned read of `T` at `addr`).
     #[inline(always)]
-    pub(super) unsafe fn read_unaligned_at<T: Copy>(addr: usize) -> T {
+    unsafe fn read_unaligned_at<T: Copy>(addr: usize) -> T {
         // SAFETY: precondition delegated to caller (see fn-level Safety doc).
         unsafe { (addr as *const T).read_unaligned() }
     }
 
-    pub fn u8(
+    pub(crate) fn u8(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -310,7 +316,7 @@ pub mod reader {
         let value = unsafe { read_unaligned_at::<u8>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
-    pub fn u16(
+    pub(crate) fn u16(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -320,7 +326,7 @@ pub mod reader {
         let value = unsafe { read_unaligned_at::<u16>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
-    pub fn u32(
+    pub(crate) fn u32(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -330,7 +336,7 @@ pub mod reader {
         let value = unsafe { read_unaligned_at::<u32>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
-    pub fn ptr(
+    pub(crate) fn ptr(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -340,7 +346,7 @@ pub mod reader {
         let value = unsafe { read_unaligned_at::<u64>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
-    pub fn i8(
+    pub(crate) fn i8(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -350,7 +356,7 @@ pub mod reader {
         let value = unsafe { read_unaligned_at::<i8>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
-    pub fn i16(
+    pub(crate) fn i16(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -360,7 +366,7 @@ pub mod reader {
         let value = unsafe { read_unaligned_at::<i16>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
-    pub fn i32(
+    pub(crate) fn i32(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -370,7 +376,7 @@ pub mod reader {
         let value = unsafe { read_unaligned_at::<i32>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
-    pub fn intptr(
+    pub(crate) fn intptr(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -380,7 +386,7 @@ pub mod reader {
         let value = unsafe { read_unaligned_at::<i64>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
-    pub fn f32(
+    pub(crate) fn f32(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -388,9 +394,11 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<f32>(addr) };
-        Ok(JSValue::js_number(value as f64))
+        // The bytes at `addr` are arbitrary; a crafted NaN payload must not
+        // reach the NaN-boxed encoding (see `JSValue::purify_nan`).
+        Ok(JSValue::js_number(JSValue::purify_nan(value as f64)))
     }
-    pub fn f64(
+    pub(crate) fn f64(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -398,9 +406,11 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<f64>(addr) };
-        Ok(JSValue::js_number(value))
+        // The bytes at `addr` are arbitrary; a crafted NaN payload must not
+        // reach the NaN-boxed encoding (see `JSValue::purify_nan`).
+        Ok(JSValue::js_number(JSValue::purify_nan(value)))
     }
-    pub fn i64(
+    pub(crate) fn i64(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -408,9 +418,9 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<i64>(addr) };
-        Ok(JSValue::from_int64_no_truncate(global_object, value))
+        JSValue::from_int64_no_truncate(global_object, value)
     }
-    pub fn u64(
+    pub(crate) fn u64(
         global_object: &JSGlobalObject,
         _: JSValue,
         arguments: &[JSValue],
@@ -418,188 +428,20 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<u64>(addr) };
-        Ok(JSValue::from_uint64_no_truncate(global_object, value))
+        JSValue::from_uint64_no_truncate(global_object, value)
     }
 
-    // ── fast-path (DOMJIT, no type checks) readers ────────────────────────────
-    // These are `callconv(jsc.conv)` in Zig — called directly from JIT code.
-    // TODO(port): `#[bun_jsc::host_call]` emits the correct ABI ("sysv64" on
-    // win-x64, "C" elsewhere). Raw pointers are intentional (FFI boundary).
-
-    #[bun_jsc::host_call]
-    pub extern "C" fn u8_without_type_checks(
-        _: *mut JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<u8>(addr) };
-        JSValue::js_number(value as f64)
-    }
-    #[bun_jsc::host_call]
-    pub extern "C" fn u16_without_type_checks(
-        _: *mut JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<u16>(addr) };
-        JSValue::js_number(value as f64)
-    }
-    #[bun_jsc::host_call]
-    pub extern "C" fn u32_without_type_checks(
-        _: *mut JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<u32>(addr) };
-        JSValue::js_number(value as f64)
-    }
-    #[bun_jsc::host_call]
-    pub extern "C" fn ptr_without_type_checks(
-        _: *mut JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<u64>(addr) };
-        JSValue::js_number(value as f64)
-    }
-    #[bun_jsc::host_call]
-    pub extern "C" fn i8_without_type_checks(
-        _: *mut JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<i8>(addr) };
-        JSValue::js_number(value as f64)
-    }
-    #[bun_jsc::host_call]
-    pub extern "C" fn i16_without_type_checks(
-        _: *mut JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<i16>(addr) };
-        JSValue::js_number(value as f64)
-    }
-    #[bun_jsc::host_call]
-    pub extern "C" fn i32_without_type_checks(
-        _: *mut JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<i32>(addr) };
-        JSValue::js_number(value as f64)
-    }
-    #[bun_jsc::host_call]
-    pub extern "C" fn intptr_without_type_checks(
-        _: *mut JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<i64>(addr) };
-        JSValue::js_number(value as f64)
-    }
-    #[bun_jsc::host_call]
-    pub extern "C" fn f32_without_type_checks(
-        _: *mut JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<f32>(addr) };
-        JSValue::js_number(value as f64)
-    }
-    #[bun_jsc::host_call]
-    pub extern "C" fn f64_without_type_checks(
-        _: *mut JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<f64>(addr) };
-        JSValue::js_number(value)
-    }
-    #[bun_jsc::host_call]
-    pub extern "C" fn u64_without_type_checks(
-        global: &JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<u64>(addr) };
-        JSValue::from_uint64_no_truncate(global, value)
-    }
-    #[bun_jsc::host_call]
-    pub extern "C" fn i64_without_type_checks(
-        global: &JSGlobalObject,
-        _: *mut c_void,
-        raw_addr: i64,
-        offset: i32,
-    ) -> JSValue {
-        let addr = usize::try_from(raw_addr).expect("int cast")
-            + usize::try_from(offset).expect("int cast");
-        // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<i64>(addr) };
-        JSValue::from_int64_no_truncate(global, value)
-    }
+    // The DOMJIT fast-path (no type checks) readers — called directly from
+    // JIT code — live on the C++ side (generated
+    // `ZigLazyStaticFunctions-inlines.h`); only the slow paths above are here.
 }
 
-pub fn ptr(global_this: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JSValue {
+pub(crate) fn ptr(global_this: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JSValue {
     match arguments.len() {
         0 => ptr_(global_this, JSValue::ZERO, None),
         1 => ptr_(global_this, arguments[0], None),
         _ => ptr_(global_this, arguments[0], Some(arguments[1])),
     }
-}
-
-#[bun_jsc::host_call]
-pub extern "C" fn ptr_without_type_checks(
-    _: *mut JSGlobalObject,
-    _: *mut c_void,
-    array: *mut JSUint8Array,
-) -> JSValue {
-    // SAFETY: `array` is a live JSUint8Array cell on the JS thread.
-    JSValue::from_ptr_address(unsafe { (*array).ptr() } as usize)
 }
 
 fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValue>) -> JSValue {
@@ -608,7 +450,6 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     }
 
     let Some(array_buffer) = value.as_array_buffer(global_this) else {
-        // PORT NOTE: `JSType` derives `Debug` only; Zig used `@tagName`.
         return global_this.to_invalid_arguments(format_args!(
             "Expected ArrayBufferView but received {:?}",
             value.js_type()
@@ -622,9 +463,6 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     }
 
     let mut addr: usize = array_buffer.ptr as usize;
-    // const Sizes = @import("../../jsc/sizes.zig");
-    // assert(addr == @intFromPtr(value.asEncoded().ptr) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector);
-
     if let Some(off) = byte_offset {
         if !off.is_empty_or_undefined_or_null() {
             if !off.is_number() {
@@ -635,9 +473,10 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
 
         let bytei64 = off.to_int64();
         if bytei64 < 0 {
-            addr = addr.saturating_sub(usize::try_from(bytei64 * -1).expect("int cast"));
+            addr =
+                addr.saturating_sub(usize::try_from(bytei64.unsigned_abs()).unwrap_or(usize::MAX));
         } else {
-            addr += usize::try_from(bytei64).expect("int cast");
+            addr = addr.saturating_add(usize::try_from(bytei64).unwrap_or(usize::MAX));
         }
 
         if addr > array_buffer.ptr as usize + array_buffer.byte_len as usize {
@@ -661,17 +500,13 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
         ));
     }
 
-    if cfg!(debug_assertions) {
-        debug_assert!(JSValue::from_ptr_address(addr).as_ptr_address() == addr);
-    }
+    debug_assert!(JSValue::from_ptr_address(addr).as_ptr_address() == addr);
 
     JSValue::from_ptr_address(addr)
 }
 
-/// `union(enum)` → Rust enum.
-/// `Slice` carries a raw (ptr, len) because it points at caller-owned FFI memory
-/// of unknown lifetime — never freed by Rust.
-// TODO(port): lifetime — verify all consumers treat this as borrow-of-FFI-memory.
+/// `Slice` carries a raw (ptr, len) pointing at caller-owned FFI memory; consumers
+/// borrow it (or delegate disposal to a supplied finalizer), never free it from Rust.
 enum ValueOrError {
     Err(JSValue),
     Slice(*mut u8, usize),
@@ -683,34 +518,37 @@ fn get_ptr_slice(
     byte_offset: Option<JSValue>,
     byte_length: Option<JSValue>,
 ) -> ValueOrError {
-    if !value.is_number() || value.as_number() < 0.0 || value.as_number() > usize::MAX as f64 {
-        return ValueOrError::Err(
-            global_this.to_invalid_arguments(format_args!("ptr must be a number.")),
-        );
-    }
-
-    let num = value.as_ptr_address();
+    let num = if value.is_big_int() {
+        if !value.is_big_int_in_uint64_range(0, usize::MAX as u64) {
+            return ValueOrError::Err(
+                global_this.to_invalid_arguments(format_args!("ptr is out of range.")),
+            );
+        }
+        value.to_uint64_no_truncate() as usize
+    } else {
+        if !value.is_number() || value.as_number() < 0.0 || value.as_number() > usize::MAX as f64 {
+            return ValueOrError::Err(
+                global_this.to_invalid_arguments(format_args!("ptr must be a number.")),
+            );
+        }
+        value.as_ptr_address()
+    };
     if num == 0 {
         return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
             "ptr cannot be zero, that would segfault Bun :("
         )));
     }
 
-    // if (!std.math.isFinite(num)) {
-    //     return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
-    // }
-
-    // Zig: `@as(usize, @bitCast(num))` — `num` is already `usize` (asPtrAddress), so
-    // bitcast is a no-op. Preserved as identity assignment.
     let mut addr: usize = num;
 
     if let Some(byte_off) = byte_offset {
         if byte_off.is_number() {
             let off = byte_off.to_int64();
             if off < 0 {
-                addr = addr.saturating_sub(usize::try_from(off * -1).expect("int cast"));
+                addr =
+                    addr.saturating_sub(usize::try_from(off.unsigned_abs()).unwrap_or(usize::MAX));
             } else {
-                addr = addr.saturating_add(usize::try_from(off).expect("int cast"));
+                addr = addr.saturating_add(usize::try_from(off).unwrap_or(usize::MAX));
             }
 
             if addr == 0 {
@@ -771,7 +609,7 @@ fn get_ptr_slice(
         }
     }
 
-    // Zig: `bun.span(@as([*:0]u8, @ptrFromInt(addr)))` — scan for NUL terminator.
+    // Scan for the NUL terminator.
     // SAFETY: caller asserts `addr` points at a NUL-terminated C string.
     let len = unsafe { bun_core::ffi::cstr(addr as *const core::ffi::c_char) }
         .to_bytes()
@@ -787,18 +625,15 @@ fn get_cptr(value: JSValue) -> Option<usize> {
             return Some(addr);
         }
     } else if value.is_big_int() {
-        // Zig: `@as(u64, @bitCast(value.toUInt64NoTruncate()))` — already u64; bitcast is no-op.
-        let addr: u64 = value.to_uint64_no_truncate();
-        if addr > 0 {
-            return Some(addr as usize);
+        if value.is_big_int_in_uint64_range(1, usize::MAX as u64) {
+            return Some(value.to_uint64_no_truncate() as usize);
         }
     }
 
     None
 }
 
-#[allow(deprecated)] // jsc::c::JSTypedArrayBytesDeallocator — bun_jsc gates the c_api module as deprecated; no replacement path yet.
-pub fn to_array_buffer(
+fn to_array_buffer(
     global_this: &JSGlobalObject,
     value: JSValue,
     byte_offset: Option<JSValue>,
@@ -809,7 +644,7 @@ pub fn to_array_buffer(
     match get_ptr_slice(global_this, value, byte_offset, value_length) {
         ValueOrError::Err(erro) => Ok(erro),
         ValueOrError::Slice(ptr, len) => {
-            let mut callback: jsc::c::JSTypedArrayBytesDeallocator = None;
+            let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
             let mut ctx: Option<*mut c_void> = None;
             if let Some(callback_value) = finalization_callback {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
@@ -841,19 +676,24 @@ pub fn to_array_buffer(
                 }
             }
 
-            // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
-            let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-            ArrayBuffer::from_bytes(slice, jsc::JSType::ArrayBuffer).to_js_with_context(
-                global_this,
-                ctx.unwrap_or(core::ptr::null_mut()),
-                callback,
-            )
+            // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory. The
+            // `bun:ffi` user asserts the pointer stays valid for the object's
+            // lifetime and that their finalization callback/ctx pair, if
+            // provided, is sound to invoke once at GC — `toArrayBuffer(ptr,
+            // ...)` is an inherently trusting FFI API.
+            unsafe {
+                let slice = core::slice::from_raw_parts_mut(ptr, len);
+                ArrayBuffer::from_bytes(slice, jsc::JSType::ArrayBuffer).to_js_with_context(
+                    global_this,
+                    ctx.unwrap_or(core::ptr::null_mut()),
+                    callback,
+                )
+            }
         }
     }
 }
 
-#[allow(deprecated)] // jsc::c::JSTypedArrayBytesDeallocator — bun_jsc gates the c_api module as deprecated; no replacement path yet.
-pub fn to_buffer(
+fn to_buffer(
     global_this: &JSGlobalObject,
     value: JSValue,
     byte_offset: Option<JSValue>,
@@ -864,7 +704,7 @@ pub fn to_buffer(
     match get_ptr_slice(global_this, value, byte_offset, value_length) {
         ValueOrError::Err(err) => Ok(err),
         ValueOrError::Slice(ptr, len) => {
-            let mut callback: jsc::c::JSTypedArrayBytesDeallocator = None;
+            let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
             let mut ctx: Option<*mut c_void> = None;
             if let Some(callback_value) = finalization_callback {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
@@ -896,59 +736,33 @@ pub fn to_buffer(
                 }
             }
 
-            // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
+            // SAFETY: ptr/len came from get_ptr_slice; caller-owned FFI memory.
             let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-            if callback.is_some() || ctx.is_some() {
-                return Ok(create_buffer_with_ctx(
-                    global_this,
-                    slice,
-                    ctx.unwrap_or(core::ptr::null_mut()),
-                    callback,
-                ));
-            }
-
-            // Spec (FFIObject.zig:596): `jsc.JSValue.createBuffer(globalThis, slice)`
-            // — installs `MarkedArrayBuffer_deallocator` so the slice is `mi_free`d
-            // on GC. Matches Zig exactly (including the free-foreign-memory footgun).
-            Ok(JSValue::create_buffer(global_this, slice))
+            // No finalizer means borrow: the noop deallocator keeps GC from freeing
+            // caller-owned storage (oven-sh/bun#35405).
+            Ok(create_buffer_with_ctx(
+                global_this,
+                slice,
+                ctx.unwrap_or(core::ptr::null_mut()),
+                callback.or(Some(noop_bytes_deallocator)),
+            ))
         }
     }
 }
 
-pub fn to_cstring_buffer(
-    global_this: &JSGlobalObject,
-    value: JSValue,
-    byte_offset: Option<JSValue>,
-    value_length: Option<JSValue>,
-) -> JSValue {
-    match get_ptr_slice(global_this, value, byte_offset, value_length) {
-        ValueOrError::Err(err) => err,
-        ValueOrError::Slice(ptr, len) => {
-            // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
-            let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-            create_buffer_with_ctx(global_this, slice, core::ptr::null_mut(), None)
-        }
-    }
-}
-
-pub fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
+pub(crate) fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     to_js(global_object)
 }
 
 // ── `fields` host-fn thunks ──────────────────────────────────────────────────
-// Zig `fields` is an anonymous struct of `jsc.host_fn.wrapStaticMethod(...)`
-// values iterated via comptime reflection in `toJS`. `wrapStaticMethod` is a
-// comptime fn-signature reflector that decodes `CallFrame` arguments into the
-// target's parameter types (see src/jsc/host_fn.zig:654). Rust has no
-// `@typeInfo`, so the eight wrappers are unrolled manually here — each body is
-// exactly what `wrapStaticMethod(.., auto_protect=false)` would emit for that
-// signature (only the `*JSGlobalObject` / `JSValue` / `?JSValue` / `ZigString`
-// arms are exercised by this table).
+// The eight wrappers are unrolled manually here; each decodes its `CallFrame`
+// arguments into the target's parameter types (only the `*JSGlobalObject` /
+// `JSValue` / `Option<JSValue>` / `ZigString` arms are exercised by this table).
 
 /// Minimal `ArgumentsSlice::nextEat` — pops the next non-consumed argument.
 /// `wrapStaticMethod`'s arena/protect machinery is unused for the FFI fields
 /// (no `StringOrBuffer` params, `auto_protect=false`), so a bare cursor over
-/// `arguments_old(N).slice()` is semantically identical.
+/// `callframe.arguments()` is semantically identical.
 #[inline]
 fn next_eat<'a>(iter: &mut core::slice::Iter<'a, JSValue>) -> Option<JSValue> {
     iter.next().copied()
@@ -963,7 +777,7 @@ fn eat_required(
     next_eat(iter).ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))
 }
 
-/// `wrapStaticMethod` decode arm for `ZigString`.
+/// Decode arm for `ZigString` arguments.
 #[inline]
 fn eat_zig_string(
     global: &JSGlobalObject,
@@ -977,8 +791,8 @@ fn eat_zig_string(
     string_value.get_zig_string(global)
 }
 
-/// Wrap a `JsHostFnZig` body into the raw `JSHostFn` ABI — runtime half of
-/// Zig's `toJSHostFn`. Mints a fresh `unsafe extern jsc.conv fn` per call site
+/// Wrap a `JsHostFnZig` body into the raw `JSHostFn` ABI. Mints a fresh
+/// `unsafe extern jsc.conv fn` per call site
 /// so the address is usable in the static `FIELDS` table (Rust forbids
 /// fn-pointer const generics, so this is a `macro_rules!` rather than a
 /// generic fn). Uses `jsc_host_abi!` so the thunk gets `extern "sysv64"` on
@@ -1001,51 +815,49 @@ macro_rules! wrap_host_fn {
 
 mod fields {
     use super::*;
-    // PORT NOTE: `print`/`callback`/`link_symbols`/`close_callback` live on the
-    // Phase-A `ffi_body::FFI` (real, compiled bodies) — not yet hoisted onto the
-    // canonical `crate::ffi::FFI`. They are static (no `&self`), so type identity
-    // is irrelevant; route to them directly until the two `FFI` structs merge.
+    // `print`/`callback`/`link_symbols`/`close_callback` live on
+    // `ffi_body::FFI` — not yet hoisted onto the canonical `crate::ffi::FFI`.
+    // They are static (no `&self`), so type identity is irrelevant; route to
+    // them directly until the two `FFI` structs merge.
     use super::super::ffi_body::FFI as FfiImpl;
 
     // viewSource → FFI::print(global, JSValue, ?JSValue) -> JsResult<JSValue>
-    pub fn view_source(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = args.slice().iter();
+    pub(super) fn view_source(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let mut iter = callframe.arguments().iter();
         let object = eat_required(global, &mut iter)?;
         let is_callback = next_eat(&mut iter);
         FfiImpl::print(global, object, is_callback)
     }
 
     // dlopen → FFI::open(global, ZigString, JSValue) -> JSValue
-    pub fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = args.slice().iter();
+    pub(super) fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let mut iter = callframe.arguments().iter();
         let name = eat_zig_string(global, &mut iter)?;
         let object = eat_required(global, &mut iter)?;
         Ok(FfiImpl::open(global, name, object))
     }
 
     // callback → FFI::callback(global, JSValue, JSValue) -> JsResult<JSValue>
-    pub fn callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = args.slice().iter();
+    pub(super) fn callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let mut iter = callframe.arguments().iter();
         let interface = eat_required(global, &mut iter)?;
         let js_callback = eat_required(global, &mut iter)?;
         FfiImpl::callback(global, interface, js_callback)
     }
 
     // linkSymbols → FFI::link_symbols(global, JSValue) -> JSValue
-    pub fn link_symbols(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
-        let mut iter = args.slice().iter();
+    pub(super) fn link_symbols(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let mut iter = callframe.arguments().iter();
         let object = eat_required(global, &mut iter)?;
         Ok(FfiImpl::link_symbols(global, object))
     }
 
     // toBuffer → to_buffer(global, JSValue, ?JSValue×4) -> JsResult<JSValue>
-    pub fn to_buffer(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<5>();
-        let mut iter = args.slice().iter();
+    pub(super) fn to_buffer(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let mut iter = callframe.arguments().iter();
         let value = eat_required(global, &mut iter)?;
         let byte_offset = next_eat(&mut iter);
         let length = next_eat(&mut iter);
@@ -1055,9 +867,11 @@ mod fields {
     }
 
     // toArrayBuffer → to_array_buffer(global, JSValue, ?JSValue×4) -> JsResult<JSValue>
-    pub fn to_array_buffer(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<5>();
-        let mut iter = args.slice().iter();
+    pub(super) fn to_array_buffer(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let mut iter = callframe.arguments().iter();
         let value = eat_required(global, &mut iter)?;
         let byte_offset = next_eat(&mut iter);
         let length = next_eat(&mut iter);
@@ -1066,27 +880,25 @@ mod fields {
         super::to_array_buffer(global, value, byte_offset, length, final_ctx, final_cb)
     }
 
-    // closeCallback → FFI::close_callback(global, JSValue) -> JSValue
-    pub fn close_callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
-        let mut iter = args.slice().iter();
-        let ctx = eat_required(global, &mut iter)?;
-        Ok(FfiImpl::close_callback(global, ctx))
+    pub(super) fn close_jsc_callback(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let mut iter = callframe.arguments().iter();
+        let callback = eat_required(global, &mut iter)?;
+        Ok(FfiImpl::close_jsc_callback(global, callback))
     }
 
-    // CString → new_cstring(global, JSValue, ?JSValue, ?JSValue) -> JsResult<JSValue>
-    pub fn cstring(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<3>();
-        let mut iter = args.slice().iter();
-        let value = eat_required(global, &mut iter)?;
-        let byte_offset = next_eat(&mut iter);
-        let length = next_eat(&mut iter);
-        new_cstring(global, value, byte_offset, length)
+    pub(super) fn cfunction(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let mut iter = callframe.arguments().iter();
+        let options = eat_required(global, &mut iter)?;
+        let name = next_eat(&mut iter);
+        FfiImpl::create_cfunction(global, options, name)
     }
 }
 
 // Represented here as a const slice of (name, JSHostFn) so `to_js` can iterate.
-// PORT NOTE: cannot be `const` — `wrap_host_fn!` expands to a block expression
+// Cannot be `const` — `wrap_host_fn!` expands to a block expression
 // (item + cast), which const-eval rejects in array-literal position. The slice
 // is tiny and only built once in `to_js`, so the runtime cost is nil.
 #[allow(non_snake_case)]
@@ -1098,16 +910,13 @@ fn FIELDS() -> [(&'static str, jsc::JSHostFn); 8] {
         ("linkSymbols", wrap_host_fn!(fields::link_symbols)),
         ("toBuffer", wrap_host_fn!(fields::to_buffer)),
         ("toArrayBuffer", wrap_host_fn!(fields::to_array_buffer)),
-        ("closeCallback", wrap_host_fn!(fields::close_callback)),
-        ("CString", wrap_host_fn!(fields::cstring)),
+        ("closeCallback", wrap_host_fn!(fields::close_jsc_callback)),
+        ("cfunction", wrap_host_fn!(fields::cfunction)),
     ]
 }
 
 const MAX_ADDRESSABLE_MEMORY: usize = u56_max();
 
 const fn u56_max() -> usize {
-    // std.math.maxInt(u56)
     (1usize << 56) - 1
 }
-
-// ported from: src/runtime/ffi/FFIObject.zig

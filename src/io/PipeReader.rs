@@ -1,8 +1,6 @@
 use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
-#[cfg(windows)]
-use std::sync::Arc;
 
 use bun_sys::{self as sys, Fd};
 
@@ -35,29 +33,26 @@ use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 // `close`/`set_data`/`is_closed` are default trait methods; bring traits into
 // scope so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
-use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
+use bun_sys::windows::libuv::UvHandle as _;
 
-// PipeReader.zig declares no `Output.scoped(.PipeReader, …)` scope; all logging
-// goes through `bun.sys.syslog` (the `SYS` scope) or `libuv::log!`.
+// All logging in this module goes through `bun.sys.syslog` (the `SYS` scope)
+// or `libuv::log!`.
 
 // ──────────────────────────────────────────────────────────────────────────
 // BufferedReaderVTable
 // ──────────────────────────────────────────────────────────────────────────
 
-// This is a runtime type instead of comptime due to bugs in Zig.
-// https://github.com/ziglang/zig/issues/18664
+#[derive(Clone, Copy)]
 pub struct BufferedReaderVTable {
-    pub parent: *mut c_void,
-    pub kind: crate::BufferedReaderParentLinkKind,
+    pub(crate) parent: *mut c_void,
+    pub(crate) kind: crate::BufferedReaderParentLinkKind,
 }
 
 /// Trait that parent types implement to receive buffered-reader callbacks.
-/// Mirrors the duck-typed `Type.onReaderDone` / `Type.onReaderError` etc. in Zig.
 ///
 /// ## Aliasing contract (raw `*mut Self`, not `&mut self`)
 ///
-/// In the Zig spec these thunks receive `*anyopaque`, cast to `*Type`, and call
-/// the decl — Zig pointers freely alias. In Rust the parent `Self` *contains*
+/// The parent `Self` *contains*
 /// the `BufferedReader` as a field, and these callbacks are invoked from inside
 /// `BufferedReader` methods that hold a live `&mut BufferedReader`. Taking
 /// `&mut self` here would therefore materialize a `&mut Self` overlapping that
@@ -88,16 +83,10 @@ pub trait BufferedReaderParent {
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error);
     unsafe fn loop_(this: *mut Self) -> *mut Loop;
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
-    /// Fired when this reader's `MaxBuf` budget goes negative. Only
-    /// `SubprocessPipeReader` overrides this; the default no-ops because no
-    /// other parent type wires a `MaxBuf`.
-    unsafe fn on_max_buffer_overflow(this: *mut Self, maxbuf: NonNull<MaxBuf>) {
-        let _ = (this, maxbuf);
-    }
 }
 
 impl BufferedReaderVTable {
-    pub fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
+    fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
         BufferedReaderVTable {
             parent: core::ptr::null_mut(),
             kind: T::KIND,
@@ -111,36 +100,31 @@ impl BufferedReaderVTable {
         unsafe { crate::BufferedReaderParentLink::new(self.kind, self.parent) }
     }
 
-    pub fn event_loop(&self) -> EventLoopHandle {
+    fn event_loop(&self) -> EventLoopHandle {
         self.link().event_loop()
     }
 
-    pub fn loop_(&self) -> *mut Loop {
+    fn loop_(&self) -> *mut Loop {
         self.link().loop_ptr()
     }
 
-    pub fn is_streaming_enabled(&self) -> bool {
+    fn is_streaming_enabled(&self) -> bool {
         self.link().has_on_read_chunk()
     }
 
     /// When the reader has read a chunk of data
     /// and hasMore is true, it means that there might be more data to read.
-    ///
     /// Returning false prevents the reader from reading more data.
-    pub fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
         self.link().on_read_chunk(chunk, has_more)
     }
 
-    pub fn on_reader_done(&self) {
+    fn on_reader_done(&self) {
         self.link().on_reader_done()
     }
 
-    pub fn on_reader_error(&self, err: sys::Error) {
+    fn on_reader_error(&self, err: sys::Error) {
         self.link().on_reader_error(err)
-    }
-
-    pub fn on_max_buffer_overflow(&self, maxbuf: NonNull<MaxBuf>) {
-        self.link().on_max_buffer_overflow(maxbuf)
     }
 }
 
@@ -151,11 +135,10 @@ impl BufferedReaderVTable {
 pub struct PosixBufferedReader {
     pub handle: PollOrFd,
     pub _buffer: Vec<u8>,
-    pub _offset: usize,
-    pub vtable: BufferedReaderVTable,
+    pub(crate) _offset: usize,
+    pub(crate) vtable: BufferedReaderVTable,
     pub flags: PosixFlags,
-    pub count: usize,
-    // PORT NOTE: MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
+    // MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
     // `add_to_pipereader`/`remove_from_pipereader`, not Arc — see MaxBuf.rs.
     pub maxbuf: Option<NonNull<MaxBuf>>,
 }
@@ -173,13 +156,13 @@ bitflags::bitflags! {
         const MEMFD                    = 1 << 7;
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
+        const KEEP_ALIVE               = 1 << 10; // default true
     }
 }
 
 impl PosixFlags {
-    /// Zig default: `.{ .close_handle = true }`
-    pub const fn new() -> Self {
-        PosixFlags::CLOSE_HANDLE
+    pub(crate) const fn new() -> Self {
+        Self::from_bits_truncate(PosixFlags::CLOSE_HANDLE.bits() | PosixFlags::KEEP_ALIVE.bits())
     }
 }
 
@@ -191,12 +174,14 @@ impl PosixBufferedReader {
             _offset: 0,
             vtable: BufferedReaderVTable::init::<T>(),
             flags: PosixFlags::new(),
-            count: 0,
             maxbuf: None,
         }
     }
 
-    pub fn update_ref(&self, value: bool) {
+    pub fn update_ref(&mut self, value: bool) {
+        // Remember the ref state so a poll created later (lazy start) honours
+        // an unref() that preceded the first registration.
+        self.flags.set(PosixFlags::KEEP_ALIVE, value);
         let Some(poll) = self.handle.get_poll() else {
             return;
         };
@@ -222,15 +207,13 @@ impl PosixBufferedReader {
             _offset: other._offset,
             flags: other.flags,
             vtable: BufferedReaderVTable { kind, parent },
-            count: 0,
             maxbuf: None,
         };
-        // PORT NOTE: `other.buffer().* = init(default_allocator)` and
-        // `other.handle = .closed` handled by mem::replace/mem::take above.
         other.flags.insert(PosixFlags::IS_DONE);
         other._offset = 0;
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
-        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
+        // Capture *mut Self before borrowing `handle` so the owner pointer
+        // doesn't conflict with the field borrow.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
             .set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
@@ -241,7 +224,8 @@ impl PosixBufferedReader {
 
     pub fn set_parent(&mut self, parent: *mut c_void) {
         self.vtable.parent = parent;
-        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
+        // Capture *mut Self before borrowing `handle` so the owner pointer
+        // doesn't conflict with the field borrow.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
             .set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
@@ -252,7 +236,7 @@ impl PosixBufferedReader {
         self.handle = PollOrFd::Fd(fd);
     }
 
-    pub fn get_file_type(&self) -> FileType {
+    pub(crate) fn get_file_type(&self) -> FileType {
         let flags = self.flags;
         if flags.contains(PosixFlags::SOCKET) {
             return FileType::Socket;
@@ -270,11 +254,14 @@ impl PosixBufferedReader {
     }
 
     pub fn close(&mut self) {
-        self.close_handle();
+        // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
+        // a protector across the (maybe-freeing) done dispatch — pre-existing
+        // on the parent chain, tracked with the raw-dispatch follow-up.
+        unsafe { Self::close_handle(std::ptr::from_mut(self)) };
     }
 
     /// Explicit teardown that does **not** fire `on_reader_done` (unlike
-    /// [`close`]). Mirrors Zig `PosixBufferedReader.deinit`. Safe to call
+    /// [`close`]). Safe to call
     /// before Drop; both paths are idempotent over an already-released handle.
     pub fn deinit(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
@@ -331,18 +318,15 @@ impl PosixBufferedReader {
     pub fn final_buffer(&mut self) -> &mut Vec<u8> {
         if self.flags.contains(PosixFlags::MEMFD) {
             if let PollOrFd::Fd(fd) = self.handle {
-                // PORT NOTE: Zig `defer this.handle.close(null, {})` — close after
-                // the read regardless of result.
-                let result = sys::File { handle: fd }
+                // The handle is closed after the read regardless of result.
+                // `self.handle` owns the fd;
+                // borrow a non-owning `File` view so the temporary doesn't
+                // close it on drop (handle.close() below does).
+                let result = sys::File::borrow(&fd)
                     .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize);
                 self.handle.close(None, None::<fn(*mut c_void)>);
                 if let Err(err) = result {
-                    // TODO(b2-blocked): bun_core::debug_warn — macro form is
-                    // broken (concat! into $fmt:literal); use the fn for now.
-                    bun_core::output::debug_warn(&format_args!(
-                        "error reading from memfd\n{}",
-                        err
-                    ));
+                    bun_core::debug_warn!("error reading from memfd\n{}", err);
                     return self.buffer();
                 }
             }
@@ -351,12 +335,8 @@ impl PosixBufferedReader {
         self.buffer()
     }
 
-    pub fn disable_keeping_process_alive<C>(&self, _event_loop_ctx: C) {
+    pub fn disable_keeping_process_alive<C>(&mut self, _event_loop_ctx: C) {
         self.update_ref(false);
-    }
-
-    pub fn enable_keeping_process_alive<C>(&self, _event_loop_ctx: C) {
-        self.update_ref(true);
     }
 
     fn finish(&mut self) {
@@ -364,7 +344,10 @@ impl PosixBufferedReader {
             || self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING)
         {
             if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-                self.close_handle();
+                // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
+                // a protector across the (maybe-freeing) done dispatch — pre-existing
+                // on the parent chain, tracked with the raw-dispatch follow-up.
+                unsafe { Self::close_handle(std::ptr::from_mut(self)) };
             }
             return;
         }
@@ -374,41 +357,101 @@ impl PosixBufferedReader {
         self._buffer.shrink_to_fit();
     }
 
-    fn close_handle(&mut self) {
-        if self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) {
-            self.flags.remove(PosixFlags::CLOSED_WITHOUT_REPORTING);
-            self.done();
+    /// # Safety
+    /// `this` is the live reader. Raw (not `&mut self`): the `done` it can
+    /// reach dispatches `on_reader_done`, which may drop the last reference to
+    /// the struct embedding `*this` — a free must never run under a live
+    /// receiver protector.
+    unsafe fn close_handle(this: *mut Self) {
+        // SAFETY: caller contract; borrows end at each `;`.
+        let deferred_report =
+            unsafe { (*this).flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) };
+        if deferred_report {
+            // SAFETY: caller contract; borrow ends before the (maybe-freeing) done.
+            unsafe {
+                (*this).flags.remove(PosixFlags::CLOSED_WITHOUT_REPORTING);
+                Self::done(this);
+            }
             return;
         }
 
-        if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-            let owner = std::ptr::from_mut(self).cast::<c_void>();
-            self.handle.close(
-                Some(owner),
-                // SAFETY: ctx == &mut PosixBufferedReader (this fn's `self`).
-                Some(|ctx: *mut c_void| unsafe { (*ctx.cast::<PosixBufferedReader>()).done() }),
-            );
+        // SAFETY: caller contract; the `handle` borrow is scoped to the call.
+        // The close callback receives the same raw pointer, so its `done` also
+        // runs without a receiver borrow.
+        unsafe {
+            if (*this).flags.contains(PosixFlags::CLOSE_HANDLE) {
+                (*this).handle.close(
+                    Some(this.cast::<c_void>()),
+                    // SAFETY: ctx is the live reader raw pointer passed above.
+                    Some(|ctx: *mut c_void| Self::done(ctx.cast::<PosixBufferedReader>())),
+                );
+            }
         }
     }
 
-    pub fn done(&mut self) {
-        if !matches!(self.handle, PollOrFd::Closed) && self.flags.contains(PosixFlags::CLOSE_HANDLE)
-        {
-            self.close_handle();
-            return;
-        } else if self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) {
-            self.flags.remove(PosixFlags::CLOSED_WITHOUT_REPORTING);
+    /// # Safety
+    /// Same contract as [`Self::close_handle`]: `this` is live, and the
+    /// terminal `on_reader_done` dispatch may free the parent embedding
+    /// `*this`, so it runs with no `&Self`/`&mut Self` live.
+    pub(crate) unsafe fn done(this: *mut Self) {
+        // SAFETY: caller contract; borrows end at each `;`.
+        unsafe {
+            if !matches!((*this).handle, PollOrFd::Closed)
+                && (*this).flags.contains(PosixFlags::CLOSE_HANDLE)
+            {
+                Self::close_handle(this);
+                return;
+            } else if (*this).flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) {
+                (*this).flags.remove(PosixFlags::CLOSED_WITHOUT_REPORTING);
+            }
+            (*this).finish();
         }
-        self.finish();
-        self.vtable.on_reader_done();
+        // Copy the (Copy) vtable out so no borrow of `*this` spans the
+        // callback, which may free the parent.
+        // SAFETY: caller contract.
+        let vtable = unsafe { (*this).vtable };
+        vtable.on_reader_done();
     }
 
-    pub fn on_error(&mut self, err: sys::Error) {
-        self.vtable.on_reader_error(err);
+    /// # Safety
+    /// `this` is live; `on_reader_error` may free the parent embedding
+    /// `*this`, so it runs with no borrow of `*this` live.
+    pub unsafe fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: caller contract; the (Copy) vtable is copied out first.
+        let vtable = unsafe { (*this).vtable };
+        vtable.on_reader_error(err);
     }
 
-    pub fn register_poll(&mut self) {
-        // PORT NOTE: reshaped for borrowck — hoist vtable-derived scalars and
+    /// Returns `false` when registration failed and `on_reader_error` was
+    /// dispatched. That callback may drop the last reference to the struct
+    /// embedding `*this` (the shell `PipeReader` does exactly that), so the
+    /// caller must not touch `this` again after a `false` return.
+    ///
+    /// # Safety
+    /// `this` is the live reader; the error dispatch runs with no borrow of
+    /// `*this` live, so the free is never under a receiver protector.
+    pub(crate) unsafe fn register_poll(this: *mut Self) -> bool {
+        // SAFETY: caller contract; `try_register_poll`'s receiver borrow ends
+        // when it returns — before the dispatch below.
+        match unsafe { (*this).try_register_poll() } {
+            Ok(()) => true,
+            Err(err) => {
+                // SAFETY: caller contract; (Copy) vtable copied out, no borrow
+                // of `*this` spans the (maybe-freeing) callback.
+                let vtable = unsafe { (*this).vtable };
+                vtable.on_reader_error(err);
+                false
+            }
+        }
+    }
+
+    fn try_register_poll(&mut self) -> Result<(), sys::Error> {
+        // pause() may land from inside on_read_chunk's JS re-entry while the
+        // loop's own re-arm is still ahead on the stack.
+        if self.flags.contains(PosixFlags::IS_PAUSED) {
+            return Ok(());
+        }
+        // Hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.
         let ev = self.vtable.event_loop();
@@ -417,7 +460,7 @@ impl PosixBufferedReader {
 
         if let PollOrFd::Fd(fd) = self.handle {
             if !self.flags.contains(PosixFlags::POLLABLE) {
-                return;
+                return Ok(());
             }
             self.handle = PollOrFd::Poll(FilePollRef::init(
                 ev,
@@ -426,19 +469,19 @@ impl PosixBufferedReader {
             ));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
-            return;
+            return Ok(());
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
-        if !poll.has_flag(FilePollFlag::WasEverRegistered) {
+        if !poll.has_flag(FilePollFlag::WasEverRegistered)
+            && self.flags.contains(PosixFlags::KEEP_ALIVE)
+        {
             poll.enable_keeping_process_alive(ev);
         }
 
         match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
-            sys::Result::Err(err) => {
-                self.vtable.on_reader_error(err);
-            }
-            sys::Result::Ok(()) => {}
+            sys::Result::Err(err) => Err(err),
+            sys::Result::Ok(()) => Ok(()),
         }
     }
 
@@ -454,7 +497,12 @@ impl PosixBufferedReader {
         if self.get_fd() != fd {
             self.handle = PollOrFd::Fd(fd);
         }
-        self.register_poll();
+        if !self.flags.contains(PosixFlags::IS_PAUSED) {
+            // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
+            // a protector across the (maybe-freeing) error dispatch — pre-existing
+            // on the parent chain, tracked with the raw-dispatch follow-up.
+            unsafe { Self::register_poll(std::ptr::from_mut(self)) };
+        }
 
         sys::Result::Ok(())
     }
@@ -467,12 +515,21 @@ impl PosixBufferedReader {
 
     // Exists for consistently with Windows.
     pub fn has_pending_read(&self) -> bool {
-        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_registered())
+        // `is_watching()` (registered && !needs-rearm) rather than
+        // `is_registered()`: a one-shot poll that has fired but not been
+        // re-armed will not deliver another callback, so callers that skip
+        // `read()` on "pending" must not be told one is in flight.
+        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
     }
 
     pub fn watch(&mut self) {
-        if self.flags.contains(PosixFlags::POLLABLE) {
-            self.register_poll();
+        if self.flags.contains(PosixFlags::POLLABLE)
+            && !matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
+        {
+            // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
+            // a protector across the (maybe-freeing) error dispatch — pre-existing
+            // on the parent chain, tracked with the raw-dispatch follow-up.
+            unsafe { Self::register_poll(std::ptr::from_mut(self)) };
         }
     }
 
@@ -484,67 +541,100 @@ impl PosixBufferedReader {
         }
     }
 
-    pub fn loop_(&self) -> *mut Loop {
-        self.vtable.loop_()
-    }
-
-    pub fn event_loop(&self) -> EventLoopHandle {
-        self.vtable.event_loop()
-    }
-
-    pub fn read(&mut self) {
+    /// # Safety
+    /// `this` is the live reader. Raw (not `&mut self`) because
+    /// `on_read_chunk` dispatched from the read loops re-enters JS, which can
+    /// reach this reader again through its parent — a protected `&mut`
+    /// spanning that re-entry is exactly the aliasing this API avoids.
+    pub unsafe fn read(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; borrows end at each `;`.
+        let (paused, fd, file_type) = unsafe {
+            (
+                (*this).flags.contains(PosixFlags::IS_PAUSED),
+                (*this).get_fd(),
+                (*this).get_file_type(),
+            )
+        };
         // Don't initiate new reads if paused
-        if self.flags.contains(PosixFlags::IS_PAUSED) {
+        if paused {
             return;
         }
 
-        let fd = self.get_fd();
-
-        match self.get_file_type() {
+        match file_type {
             FileType::NonblockingPipe => {
-                Self::read_pipe(self, fd, 0, false);
+                // SAFETY: caller contract.
+                unsafe { Self::read_pipe(this, fd, 0, false) };
             }
             FileType::File => {
-                Self::read_file(self, fd, 0, false);
+                // SAFETY: caller contract.
+                unsafe { Self::read_file(this, fd, 0, false) };
             }
             FileType::Socket => {
-                Self::read_socket(self, fd, 0, false);
+                // SAFETY: caller contract.
+                unsafe { Self::read_socket(this, fd, 0, false) };
             }
             FileType::Pipe => match bun_core::is_readable(fd) {
                 bun_core::Pollable::Ready => {
-                    Self::read_from_blocking_pipe_without_blocking(self, fd, 0, false);
+                    // SAFETY: caller contract.
+                    unsafe { Self::read_from_blocking_pipe_without_blocking(this, fd, 0, false) };
                 }
                 bun_core::Pollable::Hup => {
-                    Self::read_from_blocking_pipe_without_blocking(self, fd, 0, true);
+                    // SAFETY: caller contract.
+                    unsafe { Self::read_from_blocking_pipe_without_blocking(this, fd, 0, true) };
                 }
                 bun_core::Pollable::NotReady => {
-                    self.register_poll();
+                    // SAFETY: caller contract; borrow scoped to the call.
+                    unsafe { Self::register_poll(this) };
                 }
             },
         }
     }
 
-    pub fn on_poll(parent: &mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
-        let fd = parent.get_fd();
+    /// # Safety
+    /// `this` is the live reader registered as the poll's user data; see
+    /// [`Self::read`] for why the entry is raw.
+    pub unsafe fn on_poll(this: *mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
+        // SAFETY: caller contract — `this` is live; borrows end at each `;`.
+        let (paused, fd, file_type) = unsafe {
+            (
+                (*this).flags.contains(PosixFlags::IS_PAUSED),
+                (*this).get_fd(),
+                (*this).get_file_type(),
+            )
+        };
+        if paused {
+            return;
+        }
         bun_sys::syslog!("onPoll({}) = {}", fd, size_hint);
 
-        match parent.get_file_type() {
+        match file_type {
             FileType::NonblockingPipe => {
-                Self::read_pipe(parent, fd, size_hint, received_hup);
+                // SAFETY: caller contract.
+                unsafe { Self::read_pipe(this, fd, size_hint, received_hup) };
             }
             FileType::File => {
-                Self::read_file(parent, fd, size_hint, received_hup);
+                // SAFETY: caller contract.
+                unsafe { Self::read_file(this, fd, size_hint, received_hup) };
             }
             FileType::Socket => {
-                Self::read_socket(parent, fd, size_hint, received_hup);
+                // SAFETY: caller contract.
+                unsafe { Self::read_socket(this, fd, size_hint, received_hup) };
             }
             FileType::Pipe => {
-                Self::read_from_blocking_pipe_without_blocking(parent, fd, size_hint, received_hup);
+                // SAFETY: caller contract.
+                unsafe {
+                    Self::read_from_blocking_pipe_without_blocking(
+                        this,
+                        fd,
+                        size_hint,
+                        received_hup,
+                    )
+                };
             }
         }
     }
 
-    // PORT NOTE: reshaped for borrowck — takes &vtable instead of &mut Self so
+    // Takes &vtable instead of &mut Self so
     // call sites can pass &parent._buffer alongside without a raw-pointer escape.
     #[inline]
     fn drain_chunk(vtable: &BufferedReaderVTable, chunk: &[u8], has_more: ReadState) -> bool {
@@ -557,121 +647,164 @@ impl PosixBufferedReader {
         false
     }
 
-    fn wrap_read_fn(
-        func: fn(Fd, &mut [u8]) -> sys::Result<usize>,
-    ) -> impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize> {
-        move |fd, buf, _offset| func(fd, buf)
+    /// Charges `bytes_read` against the `maxBuffer` budget, returning `true`
+    /// once it is gone. The overflow callback only kills the child, which takes
+    /// effect asynchronously, so the caller must also stop reading.
+    #[inline]
+    fn charge_max_buffer(parent: &mut PosixBufferedReader, bytes_read: usize) -> bool {
+        let Some(maxbuf) = parent.maxbuf else {
+            return false;
+        };
+        MaxBuf::on_read_bytes(maxbuf, bytes_read as u64)
     }
 
-    fn read_file(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
+    /// Closes the handle so the child cannot put more bytes in the pipe, then
+    /// reports what was buffered. Raw (not `&mut`) like [`Self::done`]: the
+    /// `done` dispatch may free the parent embedding `*this`, so no receiver
+    /// protector may be live around it. Callers must already have handed the
+    /// overflowing chunk to the consumer.
+    ///
+    /// # Safety
+    /// `this` is the live reader.
+    unsafe fn stop_for_max_buffer(this: *mut PosixBufferedReader) {
+        // SAFETY: caller contract; the borrow ends at `;`, before the dispatch.
+        let already_done = unsafe {
+            (*this).close_without_reporting();
+            (*this).flags.contains(PosixFlags::IS_DONE)
+        };
+        if !already_done {
+            // SAFETY: caller contract; no borrow of `*this` is live.
+            unsafe { Self::done(this) };
+        }
+    }
+
+    /// # Safety
+    /// Same contract as [`Self::read`].
+    unsafe fn read_file(
+        this: *mut PosixBufferedReader,
+        fd: Fd,
+        size_hint: isize,
+        received_hup: bool,
+    ) {
         fn pread_fn(fd1: Fd, buf: &mut [u8], offset: usize) -> sys::Result<usize> {
             sys::pread(fd1, buf, i64::try_from(offset).expect("int cast"))
         }
-        if parent.flags.contains(PosixFlags::USE_PREAD) {
-            Self::read_with_fn(
-                parent,
-                FileType::File,
-                fd,
-                size_hint,
-                received_hup,
-                pread_fn,
-            );
+        // SAFETY: caller contract; borrow ends at `;`.
+        let use_pread = unsafe { (*this).flags.contains(PosixFlags::USE_PREAD) };
+        if use_pread {
+            // SAFETY: caller contract.
+            unsafe {
+                Self::read_with_fn(this, FileType::File, fd, size_hint, received_hup, pread_fn)
+            };
         } else {
-            Self::read_with_fn(
-                parent,
-                FileType::File,
-                fd,
-                size_hint,
-                received_hup,
-                |fd, buf, _| sys::read(fd, buf),
-            );
+            // SAFETY: caller contract.
+            unsafe {
+                Self::read_with_fn(
+                    this,
+                    FileType::File,
+                    fd,
+                    size_hint,
+                    received_hup,
+                    |fd, buf, _| sys::read(fd, buf),
+                )
+            };
         }
     }
 
-    fn read_socket(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
-        Self::read_with_fn(
-            parent,
-            FileType::Socket,
-            fd,
-            size_hint,
-            received_hup,
-            |fd, buf, _| sys::recv_non_block(fd, buf),
-        );
+    /// # Safety
+    /// Same contract as [`Self::read`].
+    unsafe fn read_socket(
+        this: *mut PosixBufferedReader,
+        fd: Fd,
+        size_hint: isize,
+        received_hup: bool,
+    ) {
+        // SAFETY: caller contract.
+        unsafe {
+            Self::read_with_fn(
+                this,
+                FileType::Socket,
+                fd,
+                size_hint,
+                received_hup,
+                |fd, buf, _| sys::recv_non_block(fd, buf),
+            )
+        };
     }
 
-    fn read_pipe(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
-        Self::read_with_fn(
-            parent,
-            FileType::NonblockingPipe,
-            fd,
-            size_hint,
-            received_hup,
-            |fd, buf, _| sys::read_nonblocking(fd, buf),
-        );
+    /// # Safety
+    /// Same contract as [`Self::read`].
+    unsafe fn read_pipe(
+        this: *mut PosixBufferedReader,
+        fd: Fd,
+        size_hint: isize,
+        received_hup: bool,
+    ) {
+        // SAFETY: caller contract.
+        unsafe {
+            Self::read_with_fn(
+                this,
+                FileType::NonblockingPipe,
+                fd,
+                size_hint,
+                received_hup,
+                |fd, buf, _| sys::read_nonblocking(fd, buf),
+            )
+        };
     }
 
-    // PORT NOTE: reshaped for borrowck — `resizable_buffer` is no longer passed
-    // separately; functions access `parent._buffer` directly. In Zig the buffer
-    // pointer was always `parent.buffer()` anyway.
-    fn read_blocking_pipe(
-        parent: &mut PosixBufferedReader,
+    /// # Safety
+    /// `this` is the live reader (an inline field of its parent).
+    /// `on_read_chunk` re-entry never frees it (`BufferedReaderParent`
+    /// contract) but may mutate it — no borrow of `*this` is held across any
+    /// dispatch below. `on_error()` / `done()` MAY free the parent, so both
+    /// are dispatched in tail position.
+    unsafe fn read_blocking_pipe(
+        this: *mut PosixBufferedReader,
         fd: Fd,
         _size_hint: isize,
         received_hup_initially: bool,
     ) {
-        // PORT_NOTES_PLAN R-2: `&mut parent` carries LLVM `noalias`, but
-        // `vtable.on_read_chunk` below re-enters JS (e.g.
-        // `FileReader::on_read_chunk` resolves a promise → drains microtasks)
-        // and user code can reach this reader via a fresh
-        // `&mut PosixBufferedReader` from the parent's intrusive `reader`
-        // field, writing `self.flags` / `self._buffer` / `self.handle`. Not
-        // currently ASM-cached (noalias-hunt SUSPECT), but one inlining change
-        // away from caching `flags`/`_buffer.{ptr,cap}` across the call so the
-        // next loop iteration's `_buffer.capacity()` / `IS_DONE` check / poll
-        // re-arm operate on stale state. Launder so `parent` is derived from
-        // an opaque pointer that LLVM must assume the vtable dispatch may
-        // write through; mirrors the cork fix at b818e70e1c57. Stacked-Borrows
-        // is still violated by the re-entrant `&mut` alias regardless — this
-        // addresses the codegen hazard only.
-        let this: *mut PosixBufferedReader = core::hint::black_box(core::ptr::from_mut(parent));
-        // SAFETY: `this` aliases the live `&mut parent`; single JS thread.
-        // Shadow-rebind so the local `parent` is no longer the `noalias` arg
-        // but a raw-ptr-derived borrow whose loads must reload after each
-        // opaque vtable call (precedent: `JSMySQLQuery::resolve`'s guard
-        // re-borrow). The reader struct is an inline field of its parent
-        // (never freed mid-call), so `*this` stays a valid place even if
-        // re-entry calls `done()`/`close()`.
-        let parent = unsafe { &mut *this };
+        // The vtable is two Copy scalars set once at `start()`; copying it out
+        // lets every `on_read_chunk` dispatch run with no borrow of `*this`.
+        // SAFETY: caller contract — `this` is live.
+        let vtable = unsafe { (*this).vtable };
         let mut received_hup = received_hup_initially;
         loop {
-            let streaming = parent.vtable.is_streaming_enabled();
+            let streaming = vtable.is_streaming_enabled();
             let mut got_retry = false;
 
-            if parent._buffer.capacity() == 0 {
+            // SAFETY: caller contract; borrow ends at `;`.
+            let unbuffered = unsafe { (*this)._buffer.capacity() == 0 };
+            if unbuffered {
                 // Use stack buffer for streaming — per-loop scratch buffer;
                 // single-threaded event loop (see `EventLoopCtx::pipe_read_buffer_mut`).
-                let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
+                // SAFETY: caller contract; `maxbuf` is Copy.
+                let maxbuf = unsafe { (*this).maxbuf };
+                let stack_buffer = vtable.event_loop().pipe_read_buffer_mut();
+                let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, stack_buffer);
 
                 match sys::read_nonblocking(fd, stack_buffer) {
                     sys::Result::Ok(bytes_read) => {
-                        if let Some(l) = parent.maxbuf {
-                            if MaxBuf::on_read_bytes(l, bytes_read as u64) {
-                                parent.vtable.on_max_buffer_overflow(l);
-                            }
-                        }
+                        // SAFETY: caller contract; borrow scoped to the call.
+                        let over_budget =
+                            Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
 
                         if bytes_read == 0 {
                             // EOF - finished and closed pipe
-                            parent.close_without_reporting();
-                            if !parent.flags.contains(PosixFlags::IS_DONE) {
-                                parent.done();
+                            // SAFETY: caller contract; `done()` is the tail.
+                            unsafe {
+                                (*this).close_without_reporting();
+                                if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                                    Self::done(this);
+                                }
                             }
                             return;
                         }
 
                         if streaming {
                             // Stream this chunk and register for next cycle
-                            let _ = parent.vtable.on_read_chunk(
+                            let keep_going = vtable.on_read_chunk(
                                 &stack_buffer[..bytes_read],
                                 if received_hup && bytes_read < stack_buffer.len() {
                                     ReadState::Eof
@@ -679,15 +812,35 @@ impl PosixBufferedReader {
                                     ReadState::Progress
                                 },
                             );
+                            // Re-entrant JS inside on_read_chunk can close the
+                            // reader (nested on_pull -> read -> EOF); the
+                            // captured `fd` is then stale regardless of HUP.
+                            // SAFETY: caller contract (re-entry never frees `*this`).
+                            if unsafe { (*this).is_done() } {
+                                return;
+                            }
+                            if !keep_going && !received_hup && !over_budget {
+                                return;
+                            }
                         } else {
-                            parent
-                                ._buffer
-                                .extend_from_slice(&stack_buffer[..bytes_read]);
+                            // SAFETY: caller contract; borrow ends at `;`.
+                            unsafe {
+                                (*this)
+                                    ._buffer
+                                    .extend_from_slice(&stack_buffer[..bytes_read]);
+                            }
+                        }
+
+                        if over_budget {
+                            // SAFETY: caller contract; tail position, raw entry.
+                            unsafe { Self::stop_for_max_buffer(this) };
+                            return;
                         }
                     }
                     sys::Result::Err(err) => {
                         if !err.is_retry() {
-                            parent.on_error(err);
+                            // SAFETY: caller contract; `on_error` is the tail.
+                            unsafe { Self::on_error(this, err) };
                             return;
                         }
                         // EAGAIN - fall through to register for next poll
@@ -695,64 +848,99 @@ impl PosixBufferedReader {
                     }
                 }
             } else {
-                parent._buffer.reserve(16 * 1024);
-                let buf_len = {
-                    // SAFETY: sys::read_nonblocking writes only initialized bytes into
-                    // the prefix it reports; commit_spare exposes exactly that prefix.
-                    let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
+                // SAFETY: caller contract; `maxbuf` is Copy, borrow ends at `;`.
+                let maxbuf = unsafe { (*this).maxbuf };
+                // SAFETY: caller contract; borrow ends at `;`.
+                unsafe { (*this)._buffer.reserve(16 * 1024) };
+                // SAFETY: caller contract. `sys::read_nonblocking` writes only
+                // initialized bytes into the prefix it reports; `commit_spare`
+                // exposes exactly that prefix. The `_buffer` borrow ends before
+                // any dispatch.
+                let read_result = unsafe {
+                    let buf = bun_core::vec::spare_bytes_mut(&mut (*this)._buffer);
+                    let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
                     let buf_len = buf.len();
-                    match sys::read_nonblocking(fd, buf) {
-                        sys::Result::Ok(bytes_read) => {
-                            if let Some(l) = parent.maxbuf {
-                                if MaxBuf::on_read_bytes(l, bytes_read as u64) {
-                                    parent.vtable.on_max_buffer_overflow(l);
-                                }
-                            }
-                            parent._offset += bytes_read;
-                            // SAFETY: bytes_read bytes were just initialized by the syscall.
-                            unsafe { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
-
-                            if bytes_read == 0 {
-                                parent.close_without_reporting();
-                                if !parent.flags.contains(PosixFlags::IS_DONE) {
-                                    parent.done();
-                                }
-                                return;
-                            }
-
-                            if streaming {
-                                // PORT NOTE: reshaped for borrowck — re-slice from _buffer.
-                                let new_len = parent._buffer.len();
-                                let chunk = &parent._buffer[new_len - bytes_read..new_len];
-                                if !parent.vtable.on_read_chunk(
-                                    chunk,
-                                    if received_hup && bytes_read < buf_len {
-                                        ReadState::Eof
-                                    } else {
-                                        ReadState::Progress
-                                    },
-                                ) {
-                                    return;
-                                }
-                            }
-                            buf_len
+                    (sys::read_nonblocking(fd, buf), buf_len)
+                };
+                match read_result {
+                    (sys::Result::Ok(bytes_read), buf_len) => {
+                        // SAFETY: caller contract; borrow scoped to the call.
+                        let over_budget =
+                            Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
+                        // SAFETY: caller contract; `bytes_read` bytes were just
+                        // initialized by the syscall; borrows end at each `;`.
+                        unsafe {
+                            (*this)._offset += bytes_read;
+                            bun_core::vec::commit_spare(&mut (*this)._buffer, bytes_read);
                         }
-                        sys::Result::Err(err) => {
-                            if !err.is_retry() {
-                                parent.on_error(err);
+
+                        if bytes_read == 0 {
+                            // SAFETY: caller contract; `done()` is the tail.
+                            unsafe {
+                                (*this).close_without_reporting();
+                                if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                                    Self::done(this);
+                                }
+                            }
+                            return;
+                        }
+
+                        if streaming {
+                            // Move the buffer out for the dispatch so re-entrant
+                            // access to the reader cannot alias or reallocate it
+                            // under the chunk slice.
+                            // SAFETY: caller contract; borrow ends at `;`.
+                            let buffer = unsafe { core::mem::take(&mut (*this)._buffer) };
+                            let new_len = buffer.len();
+                            let keep_going = vtable.on_read_chunk(
+                                &buffer[new_len - bytes_read..new_len],
+                                if received_hup && bytes_read < buf_len {
+                                    ReadState::Eof
+                                } else {
+                                    ReadState::Progress
+                                },
+                            );
+                            // Reinstall; anything re-entry buffered lands after
+                            // the bytes it was delivered.
+                            // SAFETY: caller contract; borrows end at the block.
+                            unsafe {
+                                let mut buffer = buffer;
+                                buffer.extend_from_slice(&(*this)._buffer);
+                                (*this)._buffer = buffer;
+                            }
+                            // SAFETY: caller contract.
+                            if unsafe { (*this).is_done() } {
                                 return;
                             }
-                            got_retry = true;
-                            buf_len
+                            // Closing for `over_budget` outranks the
+                            // consumer asking us to stop: it must still
+                            // happen, or nothing ever caps the pipe.
+                            if !keep_going && !over_budget {
+                                return;
+                            }
+                        }
+
+                        if over_budget {
+                            // SAFETY: caller contract; tail position, raw entry.
+                            unsafe { Self::stop_for_max_buffer(this) };
+                            return;
                         }
                     }
-                };
-                let _ = buf_len;
+                    (sys::Result::Err(err), _) => {
+                        if !err.is_retry() {
+                            // SAFETY: caller contract; `on_error` is the tail.
+                            unsafe { Self::on_error(this, err) };
+                            return;
+                        }
+                        got_retry = true;
+                    }
+                }
             }
 
             // Register for next poll cycle unless we got HUP
             if !received_hup {
-                parent.register_poll();
+                // SAFETY: caller contract; borrow scoped to the call.
+                unsafe { Self::register_poll(this) };
                 return;
             }
 
@@ -773,7 +961,8 @@ impl PosixBufferedReader {
             //
             // An explicit EAGAIN proves the HUP is stale, so re-arm.
             if got_retry {
-                parent.register_poll();
+                // SAFETY: caller contract; borrow scoped to the call.
+                unsafe { Self::register_poll(this) };
                 return;
             }
             // Otherwise we just returned from user JS; re-poll the fd to see
@@ -793,84 +982,85 @@ impl PosixBufferedReader {
                 bun_core::Pollable::NotReady => {
                     // No data and no HUP: a writer exists. Go back to the
                     // event loop instead of blocking in read().
-                    parent.register_poll();
+                    // SAFETY: caller contract; borrow scoped to the call.
+                    unsafe { Self::register_poll(this) };
                     return;
                 }
             }
         }
     }
 
-    // PERF(port): `file_type` and `sys_fn` were comptime in Zig (monomorphization).
-    // adt_const_params is unstable, so `file_type` is a runtime arg; `sys_fn` is
-    // generic so it still monomorphizes — profile in Phase B.
-    fn read_with_fn(
-        parent: &mut PosixBufferedReader,
+    // PERF: `file_type` is a runtime arg (adt_const_params is unstable); `sys_fn`
+    // is generic so it still monomorphizes — profile if hot.
+    /// # Safety
+    /// Same contract as [`Self::read_blocking_pipe`]: `this` is live, re-entry
+    /// through `on_read_chunk` may mutate but never frees `*this`, and no
+    /// borrow of `*this` is held across any dispatch; `on_error()` / `done()`
+    /// are tail-positioned because they may free the parent.
+    unsafe fn read_with_fn(
+        this: *mut PosixBufferedReader,
         file_type: FileType,
         fd: Fd,
         _size_hint: isize,
         received_hup: bool,
         sys_fn: impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize>,
     ) {
-        // PORT_NOTES_PLAN R-2: `&mut parent` carries LLVM `noalias`, but
-        // `vtable.on_read_chunk` below re-enters JS (resolves the pending
-        // read, drains microtasks, fires `'data'`) and user code can reach
-        // this reader via a fresh `&mut PosixBufferedReader` from the parent's
-        // intrusive `reader` field, writing `self._buffer` / `self.flags` /
-        // `self.handle`. Not currently ASM-cached (noalias-hunt SUSPECT), but
-        // one inlining change away from caching `_buffer.{ptr,len,cap}` across
-        // the call so the post-call `_buffer.clear()` / `capacity()` / inner-
-        // loop `set_len` operate on a stale Vec header (UAF if re-entry
-        // reallocated). Launder so `parent` is derived from an opaque pointer
-        // that LLVM must assume the vtable dispatch may write through; mirrors
-        // the cork fix at b818e70e1c57. Stacked-Borrows is still violated by
-        // the re-entrant `&mut` alias regardless — this addresses the codegen
-        // hazard only.
-        let this: *mut PosixBufferedReader = core::hint::black_box(core::ptr::from_mut(parent));
-        // SAFETY: `this` aliases the live `&mut parent`; single JS thread.
-        // Shadow-rebind so the local `parent` is no longer the `noalias` arg
-        // but a raw-ptr-derived borrow (precedent: `JSMySQLQuery::resolve`).
-        // The reader struct is an inline field of its parent (never freed
-        // mid-call), so `*this` stays a valid place across re-entry.
-        let parent = unsafe { &mut *this };
-        let streaming = parent.vtable.is_streaming_enabled();
+        // Copy scalars set once at `start()`; dispatching through the copy
+        // keeps `*this` unborrowed across every re-entry point.
+        // SAFETY: caller contract — `this` is live.
+        let vtable = unsafe { (*this).vtable };
+        let streaming = vtable.is_streaming_enabled();
 
         if streaming {
             // Per-loop scratch buffer; single-threaded event loop (see
             // `EventLoopCtx::pipe_read_buffer_mut`).
-            let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
-            let stack_buffer_len = stack_buffer.len();
-            while parent._buffer.capacity() == 0 {
+            let event_loop = vtable.event_loop();
+            let stack_buffer_len = event_loop.pipe_read_buffer_mut().len();
+            // SAFETY: caller contract; borrow ends at the loop test.
+            while unsafe { (*this)._buffer.capacity() == 0 } {
                 let stack_buffer_cutoff = stack_buffer_len / 2;
                 let mut head_start = 0usize; // index into stack_buffer where the unwritten head begins
                 while stack_buffer_len - head_start > 16 * 1024 {
-                    let buf = &mut stack_buffer[head_start..];
+                    // SAFETY: caller contract; the `maxbuf`/`_offset` reads end
+                    // before the syscall's buffer borrow (event-loop scratch,
+                    // not `*this`).
+                    let (maxbuf, offset) = unsafe { ((*this).maxbuf, (*this)._offset) };
+                    let buf = &mut event_loop.pipe_read_buffer_mut()[head_start..];
+                    let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
 
-                    match sys_fn(fd, buf, parent._offset) {
+                    match sys_fn(fd, buf, offset) {
                         sys::Result::Ok(bytes_read) => {
-                            if let Some(l) = parent.maxbuf {
-                                if MaxBuf::on_read_bytes(l, bytes_read as u64) {
-                                    parent.vtable.on_max_buffer_overflow(l);
-                                }
-                            }
-                            parent._offset += bytes_read;
+                            // SAFETY: caller contract; borrow scoped to the call.
+                            let over_budget =
+                                Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
+                            // SAFETY: caller contract; borrow ends at `;`.
+                            unsafe { (*this)._offset += bytes_read };
                             head_start += bytes_read;
 
-                            if bytes_read == 0 {
-                                parent.close_without_reporting();
+                            // `over_budget` is terminal for the same reason EOF
+                            // is: the child was killed and nothing past the cap
+                            // may reach the consumer.
+                            if bytes_read == 0 || over_budget {
+                                // SAFETY: caller contract; borrow ends at `;`.
+                                unsafe { (*this).close_without_reporting() };
                                 if head_start > 0 {
-                                    let _ = parent
-                                        .vtable
-                                        .on_read_chunk(&stack_buffer[..head_start], ReadState::Eof);
+                                    let _ = vtable.on_read_chunk(
+                                        &event_loop.pipe_read_buffer_mut()[..head_start],
+                                        ReadState::Eof,
+                                    );
                                 }
-                                if !parent.flags.contains(PosixFlags::IS_DONE) {
-                                    parent.done();
+                                // SAFETY: caller contract; `done()` is the tail.
+                                unsafe {
+                                    if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                                        Self::done(this);
+                                    }
                                 }
                                 return;
                             }
 
                             // Keep reading as much as we can
                             if (stack_buffer_len - head_start) < stack_buffer_cutoff {
-                                // PORT NOTE: `&& !received_hup` mirrors the
+                                // `&& !received_hup` mirrors the
                                 // after-inner-loop flush below (line ~855).
                                 // Without it, a peer close (HUP) with >cutoff
                                 // bytes still buffered makes a parent that
@@ -878,21 +1068,26 @@ impl PosixBufferedReader {
                                 // `PipeReader::on_read_chunk`) early-return
                                 // here with data left in the kernel and no
                                 // `register_poll`/`done()` → 90s hang in
-                                // shell-blocking-pipe.test.ts. The Zig spec
-                                // has the same asymmetry (PipeReader.zig:605)
-                                // but the Rust port hits the timing window
-                                // far more often; once HUP is set the kernel
+                                // shell-blocking-pipe.test.ts.
+                                // Once HUP is set the kernel
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
-                                if !parent.vtable.on_read_chunk(
-                                    &stack_buffer[..head_start],
+                                let keep_going = vtable.on_read_chunk(
+                                    &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
                                         ReadState::Eof
                                     } else {
                                         ReadState::Progress
                                     },
-                                ) && !received_hup
-                                {
+                                );
+                                // Re-entrant close (nested on_pull -> read ->
+                                // EOF) invalidates the captured `fd`; stop
+                                // before the next recv regardless of HUP.
+                                // SAFETY: caller contract.
+                                if unsafe { (*this).is_done() } {
+                                    return;
+                                }
+                                if !keep_going && !received_hup {
                                     return;
                                 }
                                 head_start = 0;
@@ -901,16 +1096,23 @@ impl PosixBufferedReader {
                         sys::Result::Err(err) => {
                             if err.is_retry() {
                                 if file_type == FileType::File {
-                                    bun_core::output::debug_warn(
+                                    bun_core::debug_warn!(
                                         "Received EAGAIN while reading from a file. This is a bug.",
                                     );
                                 } else {
-                                    parent.register_poll();
+                                    // SAFETY: caller contract; borrow scoped to
+                                    // the call. `on_reader_error` from a failed
+                                    // re-arm may have freed the struct embedding
+                                    // `*this`; the drained head must not be
+                                    // delivered.
+                                    if !unsafe { Self::register_poll(this) } {
+                                        return;
+                                    }
                                 }
 
                                 if head_start > 0 {
-                                    let _ = parent.vtable.on_read_chunk(
-                                        &stack_buffer[..head_start],
+                                    let _ = vtable.on_read_chunk(
+                                        &event_loop.pipe_read_buffer_mut()[..head_start],
                                         ReadState::Drained,
                                     );
                                 }
@@ -918,173 +1120,251 @@ impl PosixBufferedReader {
                             }
 
                             if head_start > 0 {
-                                let _ = parent.vtable.on_read_chunk(
-                                    &stack_buffer[..head_start],
+                                let _ = vtable.on_read_chunk(
+                                    &event_loop.pipe_read_buffer_mut()[..head_start],
                                     ReadState::Progress,
                                 );
                             }
-                            parent.on_error(err);
+                            // SAFETY: caller contract; `on_error` is the tail.
+                            unsafe { Self::on_error(this, err) };
                             return;
                         }
                     }
                 }
 
                 if head_start > 0 {
-                    if !parent.vtable.on_read_chunk(
-                        &stack_buffer[..head_start],
+                    let keep_going = vtable.on_read_chunk(
+                        &event_loop.pipe_read_buffer_mut()[..head_start],
                         if received_hup {
                             ReadState::Eof
                         } else {
                             ReadState::Progress
                         },
-                    ) && !received_hup
-                    {
+                    );
+                    // SAFETY: caller contract.
+                    if unsafe { (*this).is_done() } {
+                        return;
+                    }
+                    if !keep_going && !received_hup {
                         return;
                     }
                 }
 
-                if !parent.vtable.is_streaming_enabled() {
+                if !vtable.is_streaming_enabled() {
                     break;
                 }
             }
-        } else if parent._buffer.capacity() == 0 && parent._offset == 0 {
-            // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.
-            // Per-loop scratch buffer; single-threaded event loop (see
-            // `EventLoopCtx::pipe_read_buffer_mut`).
-            let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
+        } else {
+            // SAFETY: caller contract; borrows end at `;`.
+            let take_stack_path =
+                unsafe { (*this)._buffer.capacity() == 0 && (*this)._offset == 0 };
+            if take_stack_path {
+                // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.
+                // Per-loop scratch buffer; single-threaded event loop (see
+                // `EventLoopCtx::pipe_read_buffer_mut`).
+                // SAFETY: caller contract; `maxbuf` is Copy.
+                let maxbuf = unsafe { (*this).maxbuf };
+                let stack_buffer = vtable.event_loop().pipe_read_buffer_mut();
+                let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, stack_buffer);
 
-            // Unlike the block of code following this one, only handle the non-streaming case.
-            debug_assert!(!streaming);
+                // Unlike the block of code following this one, only handle the non-streaming case.
+                debug_assert!(!streaming);
 
-            match sys_fn(fd, stack_buffer, 0) {
-                sys::Result::Ok(bytes_read) => {
-                    if bytes_read > 0 {
-                        parent
-                            ._buffer
-                            .extend_from_slice(&stack_buffer[..bytes_read]);
-                    }
-                    if let Some(l) = parent.maxbuf {
-                        if MaxBuf::on_read_bytes(l, bytes_read as u64) {
-                            parent.vtable.on_max_buffer_overflow(l);
+                match sys_fn(fd, stack_buffer, 0) {
+                    sys::Result::Ok(bytes_read) => {
+                        if bytes_read > 0 {
+                            // SAFETY: caller contract; borrow ends at `;`.
+                            unsafe {
+                                (*this)
+                                    ._buffer
+                                    .extend_from_slice(&stack_buffer[..bytes_read]);
+                            }
+                        }
+                        // SAFETY: caller contract; borrow scoped to the call.
+                        let over_budget =
+                            Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
+                        // SAFETY: caller contract; borrow ends at `;`.
+                        unsafe { (*this)._offset += bytes_read };
+
+                        // `over_budget` is terminal for the same reason EOF is: the
+                        // child was killed and nothing past the cap may be buffered.
+                        if bytes_read == 0 || over_budget {
+                            // Move the buffer out so a re-entrant read cannot
+                            // alias it across the drain dispatch.
+                            // SAFETY: caller contract; borrows end at each `;`.
+                            let buffer = unsafe {
+                                (*this).close_without_reporting();
+                                core::mem::take(&mut (*this)._buffer)
+                            };
+                            let delivered = vtable.is_streaming_enabled() && !buffer.is_empty();
+                            let _ = Self::drain_chunk(&vtable, &buffer, ReadState::Eof);
+                            // SAFETY: caller contract; `done()` is the tail.
+                            unsafe {
+                                if !delivered {
+                                    let mut buffer = buffer;
+                                    buffer.extend_from_slice(&(*this)._buffer);
+                                    (*this)._buffer = buffer;
+                                }
+                                if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                                    Self::done(this);
+                                }
+                            }
+                            return;
                         }
                     }
-                    parent._offset += bytes_read;
-
-                    if bytes_read == 0 {
-                        parent.close_without_reporting();
-                        let _ = Self::drain_chunk(&parent.vtable, &parent._buffer, ReadState::Eof);
-                        if !parent.flags.contains(PosixFlags::IS_DONE) {
-                            parent.done();
+                    sys::Result::Err(err) => {
+                        if err.is_retry() {
+                            if file_type == FileType::File {
+                                bun_core::debug_warn!(
+                                    "Received EAGAIN while reading from a file. This is a bug.",
+                                );
+                            } else {
+                                // SAFETY: caller contract; borrow scoped to the call.
+                                unsafe { Self::register_poll(this) };
+                            }
+                            return;
                         }
+                        // SAFETY: caller contract; `on_error` is the tail.
+                        unsafe { Self::on_error(this, err) };
                         return;
                     }
                 }
-                sys::Result::Err(err) => {
-                    if err.is_retry() {
-                        if file_type == FileType::File {
-                            bun_core::output::debug_warn(
-                                "Received EAGAIN while reading from a file. This is a bug.",
-                            );
-                        } else {
-                            parent.register_poll();
-                        }
-                        return;
-                    }
-                    parent.on_error(err);
-                    return;
-                }
+
+                // Allow falling through
             }
-
-            // Allow falling through
         }
 
         loop {
-            parent._buffer.reserve(16 * 1024);
-            // SAFETY: writing into spare capacity; commit after syscall reports bytes written.
-            let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
+            // SAFETY: caller contract. The `_buffer` borrow (reserve + spare
+            // prefix) and the syscall both end inside this block, before any
+            // dispatch.
+            let read_result = unsafe {
+                let maxbuf = (*this).maxbuf;
+                (*this)._buffer.reserve(16 * 1024);
+                let buf = bun_core::vec::spare_bytes_mut(&mut (*this)._buffer);
+                let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
+                sys_fn(fd, buf, (*this)._offset)
+            };
 
-            match sys_fn(fd, buf, parent._offset) {
+            match read_result {
                 sys::Result::Ok(bytes_read) => {
-                    if let Some(l) = parent.maxbuf {
-                        if MaxBuf::on_read_bytes(l, bytes_read as u64) {
-                            parent.vtable.on_max_buffer_overflow(l);
-                        }
+                    // SAFETY: caller contract; borrow scoped to the call.
+                    let over_budget = Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
+                    // SAFETY: caller contract; `bytes_read` bytes were just
+                    // initialized by `sys_fn`; borrows end at each `;`.
+                    unsafe {
+                        (*this)._offset += bytes_read;
+                        bun_core::vec::commit_spare(&mut (*this)._buffer, bytes_read);
                     }
-                    parent._offset += bytes_read;
-                    // SAFETY: bytes_read bytes initialized by sys_fn.
-                    unsafe { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
 
-                    if bytes_read == 0 {
-                        parent.close_without_reporting();
-                        let _ = Self::drain_chunk(&parent.vtable, &parent._buffer, ReadState::Eof);
-                        if !parent.flags.contains(PosixFlags::IS_DONE) {
-                            parent.done();
+                    // `over_budget` is terminal for the same reason EOF is: the
+                    // child was killed and nothing past the cap may be buffered.
+                    if bytes_read == 0 || over_budget {
+                        // SAFETY: caller contract; borrows end at each `;`.
+                        let buffer = unsafe {
+                            (*this).close_without_reporting();
+                            core::mem::take(&mut (*this)._buffer)
+                        };
+                        let delivered = vtable.is_streaming_enabled() && !buffer.is_empty();
+                        let _ = Self::drain_chunk(&vtable, &buffer, ReadState::Eof);
+                        // SAFETY: caller contract; `done()` is the tail.
+                        unsafe {
+                            if !delivered {
+                                let mut buffer = buffer;
+                                buffer.extend_from_slice(&(*this)._buffer);
+                                (*this)._buffer = buffer;
+                            }
+                            if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                                Self::done(this);
+                            }
                         }
                         return;
                     }
 
-                    if parent.vtable.is_streaming_enabled() {
-                        if parent._buffer.len() > 128_000 {
-                            // PORT NOTE: `defer resizable_buffer.clearRetainingCapacity()` inlined below.
-                            let keep_going = parent
-                                .vtable
-                                .on_read_chunk(&parent._buffer, ReadState::Progress);
-                            parent._buffer.clear();
-                            if !keep_going {
-                                return;
+                    if vtable.is_streaming_enabled() {
+                        // SAFETY: caller contract; borrow ends at `;`.
+                        let over_highwater = unsafe { (*this)._buffer.len() > 128_000 };
+                        if over_highwater {
+                            // Move the buffer out for the dispatch, then
+                            // reinstall it cleared (matching the pre-existing
+                            // clear-after-dispatch semantics).
+                            // SAFETY: caller contract; borrow ends at `;`.
+                            let mut buffer = unsafe { core::mem::take(&mut (*this)._buffer) };
+                            let keep_going = vtable.on_read_chunk(&buffer, ReadState::Progress);
+                            buffer.clear();
+                            // SAFETY: caller contract; borrows end at each `;`.
+                            unsafe {
+                                (*this)._buffer = buffer;
+                                if (*this).is_done() || !keep_going {
+                                    return;
+                                }
                             }
                             continue;
                         }
                     }
                 }
                 sys::Result::Err(err) => {
-                    if parent.vtable.is_streaming_enabled() {
-                        if !parent._buffer.is_empty() {
-                            let _ = parent
-                                .vtable
-                                .on_read_chunk(&parent._buffer, ReadState::Drained);
-                            parent._buffer.clear();
+                    if vtable.is_streaming_enabled() {
+                        // SAFETY: caller contract; borrow ends at `;`.
+                        let buffer = unsafe { core::mem::take(&mut (*this)._buffer) };
+                        if !buffer.is_empty() {
+                            let _ = vtable.on_read_chunk(&buffer, ReadState::Drained);
+                        }
+                        // Reinstall cleared (capacity reuse; pre-existing
+                        // clear-after-dispatch semantics).
+                        // SAFETY: caller contract; borrow ends at `;`.
+                        unsafe {
+                            let mut buffer = buffer;
+                            buffer.clear();
+                            (*this)._buffer = buffer;
                         }
                     }
 
                     if err.is_retry() {
                         if file_type == FileType::File {
-                            bun_core::output::debug_warn(
+                            bun_core::debug_warn!(
                                 "Received EAGAIN while reading from a file. This is a bug.",
                             );
                         } else {
-                            parent.register_poll();
+                            // SAFETY: caller contract; borrow scoped to the call.
+                            unsafe { Self::register_poll(this) };
                         }
                         return;
                     }
-                    parent.on_error(err);
+                    // SAFETY: caller contract; `on_error` is the tail.
+                    unsafe { Self::on_error(this, err) };
                     return;
                 }
             }
         }
     }
 
-    fn read_from_blocking_pipe_without_blocking(
-        parent: &mut PosixBufferedReader,
+    /// # Safety
+    /// Same contract as [`Self::read`].
+    unsafe fn read_from_blocking_pipe_without_blocking(
+        this: *mut PosixBufferedReader,
         fd: Fd,
         size_hint: isize,
         received_hup: bool,
     ) {
-        if parent.vtable.is_streaming_enabled() {
-            parent._buffer.clear();
+        // SAFETY: caller contract; borrow ends at `;`.
+        unsafe {
+            if (*this).vtable.is_streaming_enabled() {
+                (*this)._buffer.clear();
+            }
         }
 
-        Self::read_blocking_pipe(parent, fd, size_hint, received_hup);
+        // SAFETY: caller contract.
+        unsafe { Self::read_blocking_pipe(this, fd, size_hint, received_hup) };
     }
-
-    // PORT NOTE: `comptime { bun.meta.banFieldType(@This(), bool); }` dropped —
-    // bitflags! ensures bools are packed.
 }
+
+// Keep boolean state in the `PosixFlags` bitflags field — no loose `bool`
+// fields on `PosixBufferedReader`.
 
 impl Drop for PosixBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        // _buffer freed by Vec Drop.
         self.close_without_reporting();
     }
 }
@@ -1098,14 +1378,13 @@ pub struct WindowsBufferedReader {
     /// The pointer to this pipe must be stable.
     /// It cannot change because we don't know what libuv will do with it.
     pub source: Option<Source>,
-    pub _offset: usize,
+    pub(crate) _offset: usize,
     pub _buffer: Vec<u8>,
     // for compatibility with Linux
     pub flags: WindowsFlags,
     pub maxbuf: Option<NonNull<MaxBuf>>,
 
-    pub parent: *mut c_void,
-    pub vtable: BufferedReaderVTable,
+    pub(crate) vtable: BufferedReaderVTable,
 }
 
 bitflags::bitflags! {
@@ -1126,9 +1405,9 @@ bitflags::bitflags! {
     }
 }
 
+#[cfg(windows)]
 impl WindowsFlags {
-    /// Zig default: `.{ .close_handle = true, .is_paused = true }`
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self::from_bits_truncate(WindowsFlags::CLOSE_HANDLE.bits() | WindowsFlags::IS_PAUSED.bits())
     }
 }
@@ -1146,7 +1425,6 @@ impl WindowsBufferedReader {
             _buffer: Vec::new(),
             flags: WindowsFlags::new(),
             maxbuf: None,
-            parent: core::ptr::null_mut(),
             vtable: BufferedReaderVTable::init::<T>(),
         }
     }
@@ -1162,7 +1440,7 @@ impl WindowsBufferedReader {
 
     pub fn from(&mut self, other: &mut WindowsBufferedReader, parent: *mut c_void) {
         debug_assert!(other.source.is_some() && self.source.is_none());
-        // PORT NOTE: keep self.vtable; move other's state in.
+        // Keep self.vtable; move other's state in.
         self.flags = other.flags;
         self._buffer = mem::take(other.buffer());
         self._offset = other._offset;
@@ -1171,11 +1449,9 @@ impl WindowsBufferedReader {
         other.flags.insert(WindowsFlags::IS_DONE);
         other._offset = 0;
         // other._buffer / other.source already cleared by mem::take above.
-        // Zig spec (PipeReader.zig:825-831) re-inits `to.*` with a struct literal,
-        // which resets every unlisted field — including `maxbuf` — to its default
-        // (`null`) BEFORE `transferToPipereader`. The field-by-field assigns above
-        // leave `self.maxbuf` untouched, so drop any prior owner-count first to
-        // avoid leaking a MaxBuf ref when the destination already held one.
+        // The field-by-field assigns above leave `self.maxbuf` untouched, so
+        // drop any prior owner-count first to avoid leaking a MaxBuf ref when
+        // the destination already held one.
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         self.set_parent(parent);
@@ -1193,7 +1469,6 @@ impl WindowsBufferedReader {
     }
 
     pub fn set_parent(&mut self, parent: *mut c_void) {
-        self.parent = parent;
         self.vtable.parent = parent;
         if !self.flags.contains(WindowsFlags::IS_DONE) {
             // `Source::set_data` only writes the libuv `.data` field (raw ptr
@@ -1214,10 +1489,6 @@ impl WindowsBufferedReader {
                 source.unref();
             }
         }
-    }
-
-    pub fn enable_keeping_process_alive<C>(&mut self, _: C) {
-        self.update_ref(true);
     }
 
     pub fn disable_keeping_process_alive<C>(&mut self, _: C) {
@@ -1258,13 +1529,17 @@ impl WindowsBufferedReader {
         }
     }
 
-    fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
-        if let Some(m) = self.maxbuf {
-            if MaxBuf::on_read_bytes(m, buf.len() as u64) {
-                self.vtable.on_max_buffer_overflow(m);
-            }
-        }
+    /// Charges `bytes_read` against the `maxBuffer` budget, returning `true`
+    /// once it is gone. The overflow callback only kills the child, which takes
+    /// effect asynchronously, so the caller must also close the handle.
+    fn charge_max_buffer(&mut self, bytes_read: usize) -> bool {
+        let Some(maxbuf) = self.maxbuf else {
+            return false;
+        };
+        MaxBuf::on_read_bytes(maxbuf, bytes_read as u64)
+    }
 
+    fn on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
         if has_more == ReadState::Eof {
             self.flags.insert(WindowsFlags::RECEIVED_EOF);
         }
@@ -1304,7 +1579,7 @@ impl WindowsBufferedReader {
         self._buffer.shrink_to_fit();
     }
 
-    pub fn done(&mut self) {
+    fn done(&mut self) {
         if let Some(source) = &self.source {
             debug_assert!(source.is_closed());
         }
@@ -1314,19 +1589,28 @@ impl WindowsBufferedReader {
         self.vtable.on_reader_done();
     }
 
-    pub fn on_error(&mut self, err: sys::Error) {
-        self.finish();
-        self.vtable.on_reader_error(err);
+    /// # Safety
+    /// `this` is live; raw for parity with the POSIX entry so the
+    /// (maybe-freeing) error dispatch runs under no receiver protector.
+    pub unsafe fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: caller contract; `finish`'s receiver borrow ends when it
+        // returns, and the (Copy) vtable is copied out before the dispatch.
+        let vtable = unsafe {
+            (*this).finish();
+            (*this).vtable
+        };
+        vtable.on_reader_error(err);
     }
 
-    pub fn get_read_buffer_with_stable_memory_address(
-        &mut self,
-        suggested_size: usize,
-    ) -> &mut [u8] {
+    fn get_read_buffer_with_stable_memory_address(&mut self, suggested_size: usize) -> &mut [u8] {
         self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
+        // Spare capacity grows well past `suggested_size`, so an unclamped read
+        // overshoots `maxBuffer` by however much the buffer had room for.
+        let maxbuf = self.maxbuf;
         self._buffer.reserve(suggested_size);
         // SAFETY: returning spare capacity for libuv to write into; len updated in on_read.
-        unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) }
+        let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) };
+        MaxBuf::clamp_read_buf(maxbuf, buf)
     }
 
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {
@@ -1335,6 +1619,14 @@ impl WindowsBufferedReader {
         self.source.as_mut().unwrap().set_data(self_ptr);
         self.buffer().clear();
         self.flags.remove(WindowsFlags::IS_DONE);
+        // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts:
+        // a real uv_read_start failure on a freshly-spawned stdio pipe cannot be
+        // triggered from JS, so the test exercises the consumer's error path this way.
+        #[cfg(debug_assertions)]
+        if bun_core::env_var::feature_flag::BUN_INTERNAL_FAIL_PIPE_READER_START.get() == Some(true)
+        {
+            return sys::Result::Err(sys::Error::from_code(sys::E::INVAL, sys::Tag::open));
+        }
         self.start_reading()
     }
 
@@ -1472,9 +1764,13 @@ impl WindowsBufferedReader {
         // ALWAYS complete the read first (cleans up fs_t, updates state)
         file.complete(was_canceled);
 
-        // If detached, file should be closing itself now
         if parent_ptr.is_null() {
-            debug_assert!(file.state == crate::source::FileState::Closing); // complete should have started close
+            if file.state != crate::source::FileState::Closing {
+                // detach_borrowed_fd path: no close scheduled, so reclaim here.
+                // SAFETY: sole &mut to the into_raw'd Box; no fs callback left.
+                drop(unsafe { bun_core::heap::take(core::ptr::from_mut(file)) });
+            }
+            // else: detach() set close_after_operation; on_close_complete frees.
             return;
         }
 
@@ -1520,7 +1816,6 @@ impl WindowsBufferedReader {
                     return;
                 }
 
-                // PORT NOTE: defer block inlined after body — see below.
                 let len: usize = usize::try_from(nread_int).expect("int cast");
                 this._offset += len;
                 // we got some data lets get the current iov
@@ -1529,8 +1824,7 @@ impl WindowsBufferedReader {
                 // *and* a slice borrowed from `self.source.File.iov`; under
                 // Stacked Borrows that's a self-mut + field-shared conflict.
                 // The boxed `File` lives in its own heap allocation, so a
-                // `*mut File` snapshot is provenance-disjoint from `&mut self`
-                // — same as the Zig `*File` pointer the original kept.
+                // `*mut File` snapshot is provenance-disjoint from `&mut self`.
                 let file_raw: *mut crate::source::File = match this.source.as_mut() {
                     Some(Source::File(f)) => f.as_mut() as *mut _,
                     _ => core::ptr::null_mut(),
@@ -1550,8 +1844,7 @@ impl WindowsBufferedReader {
                     );
                 }
 
-                // PORT NOTE: this is the Zig `defer { ... }` body, inlined after the body
-                // because both body paths fall through (void return).
+                // Shared epilogue: both body paths above fall through here.
                 // if we are not paused we keep reading until EOF or err
                 if !this.flags.contains(WindowsFlags::IS_PAUSED) {
                     // Re-snapshot — `on_read` may have mutated `this.source`.
@@ -1561,14 +1854,20 @@ impl WindowsBufferedReader {
                         _ => core::ptr::null_mut(),
                     };
                     if !file_raw.is_null() {
-                        // SAFETY: see above; raw-ptr break for self-aliasing.
-                        let file = unsafe { &mut *file_raw };
+                        // SAFETY (each access below): see the snapshot above —
+                        // `file_raw` points into the boxed `File`, a heap
+                        // allocation disjoint from `*this`, so the scoped
+                        // borrows never overlap the `this` accesses interleaved
+                        // here.
                         // Can only start if file is in deinitialized state
-                        if file.can_start() {
-                            file.fs.data = this_ptr;
-                            file.prepare();
+                        if unsafe { (*file_raw).can_start() } {
+                            // SAFETY: see above.
+                            unsafe { (*file_raw).fs.data = this_ptr };
+                            // SAFETY: see above.
+                            unsafe { (*file_raw).prepare() };
                             let buf = this.get_read_buffer_with_stable_memory_address(64 * 1024);
-                            file.iov = uv::uv_buf_t::init(buf);
+                            // SAFETY: see above.
+                            unsafe { (*file_raw).iov = uv::uv_buf_t::init(buf) };
                             this.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
 
                             let offset = if this.flags.contains(WindowsFlags::USE_PREAD) {
@@ -1576,26 +1875,26 @@ impl WindowsBufferedReader {
                             } else {
                                 -1
                             };
-                            // SAFETY: `file` is fully initialized; libuv stores
-                            // the cb and fires it on the event loop.
+                            // SAFETY: the file is fully initialized; libuv
+                            // stores the cb and fires it on the event loop.
                             if let Some(err) = unsafe {
                                 uv::uv_fs_read(
                                     this.vtable.loop_().cast(),
-                                    &mut file.fs,
-                                    file.file,
-                                    &file.iov,
+                                    &mut (*file_raw).fs,
+                                    (*file_raw).file,
+                                    &(*file_raw).iov,
                                     1,
                                     offset,
                                     Some(Self::on_file_read),
                                 )
                             }
-                            // PORT NOTE: Zig PipeReader.zig:1113 tags this `.write` even
-                            // though the syscall is `uv_fs_read` (a Zig bug). Match the
-                            // spec for now so user-visible `error.syscall` stays
-                            // bit-identical; fix upstream in Zig first.
+                            // Tagged `.write` even though the syscall is
+                            // `uv_fs_read`, so user-visible `error.syscall`
+                            // stays bit-identical with previous releases.
                             .to_error(sys::Tag::write)
                             {
-                                file.complete(false);
+                                // SAFETY: see above.
+                                unsafe { (*file_raw).complete(false) };
                                 this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
                                 this.flags.insert(WindowsFlags::IS_PAUSED);
                                 // we should inform the error if we are unable to keep reading
@@ -1609,7 +1908,7 @@ impl WindowsBufferedReader {
     }
 
     #[cfg(windows)]
-    pub fn start_reading(&mut self) -> sys::Result<()> {
+    fn start_reading(&mut self) -> sys::Result<()> {
         if self.flags.contains(WindowsFlags::IS_DONE)
             || !self.flags.contains(WindowsFlags::IS_PAUSED)
         {
@@ -1629,19 +1928,24 @@ impl WindowsBufferedReader {
         match source {
             Source::File(file) => {
                 let file_raw: *mut crate::source::File = file.as_mut();
-                // SAFETY: `file_raw` points into the boxed File owned by
-                // `self.source`; live until `self.source` is replaced.
-                let file = unsafe { &mut *file_raw };
+                // SAFETY (each access below): `file_raw` points into the boxed
+                // File owned by `self.source` — a heap allocation disjoint
+                // from `*self` — and is live until `self.source` is replaced;
+                // the scoped borrows never overlap the `self` accesses
+                // interleaved here.
                 // If already reading, just set data and unpause
-                file.fs.data = self_ptr;
-                if !file.can_start() {
+                unsafe { (*file_raw).fs.data = self_ptr };
+                // SAFETY: see above.
+                if !unsafe { (*file_raw).can_start() } {
                     return sys::Result::Ok(());
                 }
 
                 // Start new read - set data before prepare
-                file.prepare();
+                // SAFETY: see above.
+                unsafe { (*file_raw).prepare() };
                 let buf = self.get_read_buffer_with_stable_memory_address(64 * 1024);
-                file.iov = uv::uv_buf_t::init(buf);
+                // SAFETY: see above.
+                unsafe { (*file_raw).iov = uv::uv_buf_t::init(buf) };
                 self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
 
                 let offset = if self.flags.contains(WindowsFlags::USE_PREAD) {
@@ -1649,26 +1953,26 @@ impl WindowsBufferedReader {
                 } else {
                     -1
                 };
-                // SAFETY: file is fully initialized; libuv stores cb and fires
-                // it on the event loop.
+                // SAFETY: the file is fully initialized; libuv stores cb and
+                // fires it on the event loop.
                 if let Some(err) = unsafe {
                     uv::uv_fs_read(
                         self.vtable.loop_().cast(),
-                        &mut file.fs,
-                        file.file,
-                        &file.iov,
+                        &mut (*file_raw).fs,
+                        (*file_raw).file,
+                        &(*file_raw).iov,
                         1,
                         offset,
                         Some(Self::on_file_read),
                     )
                 }
-                // PORT NOTE: Zig PipeReader.zig:1163 tags this `.write` even though the
-                // syscall is `uv_fs_read` (a Zig bug). Match the spec for now so
-                // user-visible `error.syscall` stays bit-identical; fix upstream in
-                // Zig first.
+                // Tagged `.write` even though the syscall is `uv_fs_read`, so
+                // user-visible `error.syscall` stays bit-identical with
+                // previous releases.
                 .to_error(sys::Tag::write)
                 {
-                    file.complete(false);
+                    // SAFETY: see above.
+                    unsafe { (*file_raw).complete(false) };
                     self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
                     return sys::Result::Err(err);
                 }
@@ -1684,9 +1988,8 @@ impl WindowsBufferedReader {
                 }
                 .to_error(sys::Tag::open)
                 {
-                    // Zig spec PipeReader.zig:1171 routes through
-                    // `bun.windows.libuv.log` (the `uv` debug scope, toggled by
-                    // `BUN_DEBUG_uv=1`), not `SYS`.
+                    // Routed through `bun.windows.libuv.log` (the `uv` debug
+                    // scope, toggled by `BUN_DEBUG_uv=1`), not `SYS`.
                     bun_sys::windows::libuv::log!(
                         "uv_read_start() = {}",
                         bstr::BStr::new(err.name()),
@@ -1696,12 +1999,6 @@ impl WindowsBufferedReader {
             }
         }
 
-        sys::Result::Ok(())
-    }
-
-    #[cfg(not(windows))]
-    pub fn start_reading(&mut self) -> sys::Result<()> {
-        // TODO(port): Windows-only path; stubbed on non-Windows so the type still compiles.
         sys::Result::Ok(())
     }
 
@@ -1731,7 +2028,6 @@ impl WindowsBufferedReader {
         if let Some(source) = self.source.take() {
             match source {
                 Source::SyncFile(file) | Source::File(file) => {
-                    // Detach - file will close itself after operation completes.
                     // Hand the Box off to libuv: detach() leaves either an
                     // in-flight uv_fs_read (on_file_read) or a scheduled
                     // uv_fs_close (on_close_complete) pending; the callback
@@ -1739,8 +2035,17 @@ impl WindowsBufferedReader {
                     // Box here would free the uv_fs_t out from under libuv.
                     let raw = bun_core::heap::into_raw(file);
                     // SAFETY: raw is a live heap File*; the pending fs callback
-                    // is the sole reclaimer (heap::take in on_close_complete).
-                    unsafe { (*raw).detach() };
+                    // is the sole reclaimer (heap::take in on_close_complete /
+                    // on_file_read's detached path) when one is left pending.
+                    unsafe {
+                        if self.flags.contains(WindowsFlags::CLOSE_HANDLE) {
+                            (*raw).detach();
+                        } else if !(*raw).detach_borrowed_fd() {
+                            // Idle and the fd is parent-owned: nothing pending,
+                            // nothing to close. Reclaim and drop the Box.
+                            drop(bun_core::heap::take(raw));
+                        }
+                    }
                 }
                 #[cfg(windows)]
                 Source::Pipe(pipe) => {
@@ -1769,9 +2074,7 @@ impl WindowsBufferedReader {
                     self.flags.insert(WindowsFlags::IS_PAUSED);
                 }
                 #[cfg(not(windows))]
-                _ => {
-                    // TODO(port): Pipe/Tty arms are Windows-only.
-                }
+                _ => {}
             }
             // self.source already None via take().
             if CALL_DONE {
@@ -1804,7 +2107,7 @@ impl WindowsBufferedReader {
     }
 
     /// Explicit teardown that does **not** fire `on_reader_done` (unlike
-    /// [`close`]). Mirrors Zig `WindowsBufferedReader.deinit`. Safe to call
+    /// [`close`]). Safe to call
     /// before Drop; both paths are idempotent over an already-taken source.
     pub fn deinit(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
@@ -1814,18 +2117,16 @@ impl WindowsBufferedReader {
         };
         if !source.is_closed() {
             // closeImpl will take care of freeing the source.
-            // PORT NOTE: Zig nulls `source` *before* calling closeImpl, which
-            // makes that call a no-op (latent Zig leak). We cannot mirror that
-            // verbatim: in Zig nulling a `?*Pipe` leaks; in Rust dropping
-            // `Box<Pipe>` frees a uv_pipe_t still linked into the loop's
-            // handle queue → UAF. Restore the source so close_impl can do the
-            // proper take + hand-off to libuv (into_raw + uv_close).
+            // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
+            // linked into the loop's handle queue → UAF. Restore the source so
+            // close_impl can do the proper take + hand-off to libuv
+            // (into_raw + uv_close).
             self.source = Some(source);
             self.close_impl::<false>();
         } else {
             // Already closing/closed: a uv close callback may still be pending
-            // on this allocation. Zig leaks here (pointer nulled, no dtor);
-            // match that — dropping the Box would free memory libuv still owns.
+            // on this allocation; dropping the Box would free memory libuv
+            // still owns, so leak it instead.
             core::mem::forget(source);
         }
     }
@@ -1850,9 +2151,12 @@ impl WindowsBufferedReader {
         drop(unsafe { bun_core::heap::take(handle) });
     }
 
-    pub fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {
+    fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {
         if let sys::Result::Err(err) = amount {
-            self.on_error(err);
+            // SAFETY: live reader. Note: this `&mut self` receiver still carries
+            // a protector across the (maybe-freeing) error dispatch — pre-existing
+            // on the parent chain, tracked with the raw-dispatch follow-up.
+            unsafe { Self::on_error(std::ptr::from_mut(self), err) };
             return;
         }
         let amount_result = match amount {
@@ -1876,25 +2180,32 @@ impl WindowsBufferedReader {
         // SAFETY: slice is inside _buffer's spare capacity; libuv wrote `amount_result` bytes.
         unsafe { bun_core::vec::commit_spare(&mut self._buffer, amount_result) };
 
-        let should_continue = self._on_read_chunk(slice, has_more);
+        let over_budget = self.charge_max_buffer(amount_result);
 
-        // PORT NOTE: Spec parents that stream (IOReader.zig:161,
-        // shell/subproc.zig:1230) call `this.reader.startWithCurrentPipe()`
-        // from inside their `onReadChunk` callback on Windows. The Rust
-        // shell IOReader port cannot re-derive `&mut Self` from inside the
-        // vtable callback (Stacked-Borrows; see shell/IOReader.rs PORT NOTE),
-        // so the call is omitted there. The re-arm half of that call is
-        // already handled by `on_file_read`'s defer block / `uv_read_start`,
-        // but its other side effect — `buffer().clearRetainingCapacity()`
-        // (PipeReader.zig:949) — is load-bearing: without it `_buffer.len`
+        let should_continue = self.on_read_chunk(slice, has_more);
+
+        // Streaming parents (shell IOReader, subprocess) cannot re-derive
+        // `&mut Self` from inside the vtable callback to restart the pipe
+        // (Stacked-Borrows; see the comment in shell/IOReader.rs). The re-arm
+        // is already handled by `on_file_read`'s epilogue / `uv_read_start`,
+        // but clearing the buffer here is load-bearing: without it `_buffer.len`
         // grows by `amount_result` every chunk and never resets, so a 1 GB
         // `cat` holds 1 GB resident instead of ~64 KB. Clear it here, after
         // the streaming consumer has finished with `slice`.
-        if should_continue && has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
+        // `should_continue` no longer gates the clear: FileReader may say
+        // stop at its highwater mark while uv keeps delivering, and leaving
+        // `_buffer` uncleared would double-buffer (here + FileReader.buffered).
+        // Parents that want the reader paused call `reader().pause()`
+        // themselves; stopping here could free a parent whose caller still
+        // holds `this` (FileResponseStream on abort).
+        let _ = should_continue;
+        if has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
             self._buffer.clear();
         }
 
-        if has_more == ReadState::Eof {
+        // `over_budget` is terminal for the same reason EOF is: the child was
+        // killed and nothing past the cap may be buffered.
+        if has_more == ReadState::Eof || over_budget {
             self.close();
         }
     }
@@ -1907,28 +2218,30 @@ impl WindowsBufferedReader {
         let _ = self.start_reading();
     }
 
-    pub fn read(&mut self) {
+    /// # Safety
+    /// `this` is the live reader. Raw for signature parity with the POSIX
+    /// entry (callers dispatch through a `*mut`); the body only unpauses.
+    pub unsafe fn read(this: *mut Self) {
         // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
-        self.unpause();
+        // SAFETY: caller contract; borrow scoped to the call.
+        unsafe { (*this).unpause() };
     }
-
-    // PORT NOTE: `comptime { bun.meta.banFieldType(WindowsBufferedReader, bool); }` dropped —
-    // bitflags! ensures bools are packed.
 }
+
+// Keep boolean state in the `WindowsFlags` bitflags field — no loose `bool`
+// fields on `WindowsBufferedReader`.
 
 #[cfg(windows)]
 impl Drop for WindowsBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        // _buffer freed by Vec Drop.
         // Do NOT take() source here and let it drop: Box<Pipe>/Box<File> own
         // live uv handles registered with the loop. Let close_impl perform the
         // take + into_raw hand-off so the uv close callback reclaims them.
-        // PORT NOTE: Zig `WindowsBufferedReader.deinit` (PipeReader.zig:979)
-        // skips closeImpl when `source.isClosed()` — a uv_close is already
-        // pending on that allocation, so closing again would double-close and
-        // freeing the Box would UAF the handle libuv still references. Mirror
-        // deinit(): leak the already-closing handle (Zig parity).
+        // Skip close_impl when the source is already closed — a uv_close is
+        // already pending on that allocation, so closing again would
+        // double-close and freeing the Box would UAF the handle libuv still
+        // references. Same as deinit(): leak the already-closing handle.
         if let Some(source) = self.source.take() {
             if !source.is_closed() {
                 self.source = Some(source);
@@ -1950,5 +2263,3 @@ pub type BufferedReader = PosixBufferedReader;
 pub type BufferedReader = WindowsBufferedReader;
 #[cfg(not(any(unix, windows)))]
 compile_error!("Unsupported platform");
-
-// ported from: src/io/PipeReader.zig

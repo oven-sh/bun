@@ -1,4 +1,5 @@
 // ESM tests are about various esm features in development mode.
+import { expect } from "bun:test";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
@@ -272,6 +273,58 @@ devTest("ESM <-> CJS (async)", {
     await c.expectMessage("PASS");
   },
 });
+devTest("importer tracking survives flipping a module from ESM to CJS", {
+  // https://github.com/oven-sh/bun/issues/31942
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import './dep';
+      import.meta.hot.data.runs = (import.meta.hot.data.runs ?? 0) + 1;
+      console.log('index run ' + import.meta.hot.data.runs);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `
+      export const value = 'esm';
+    `,
+    "leaf.ts": `
+      console.log('leaf 1');
+      export const value = 'leaf1';
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("index run 1");
+    // Flip `dep` from ESM to CJS. The dead branch gets `leaf` bundled (direct
+    // `require` calls are statically rewritten to `hmr.require`, which binds
+    // `this` correctly), while the indirect `m.require(...)` call is emitted
+    // verbatim and goes through the `require` function bound onto the
+    // replacement CJS module object, which must record `dep` as an importer
+    // of `leaf`.
+    await dev.write(
+      "dep.ts",
+      `
+        if (globalThis.__never_set) require('./leaf');
+        const m = module;
+        module.exports = { value: m.require(module.id.replace('dep', 'leaf')).value };
+      `,
+    );
+    await c.expectMessage("leaf 1", "index run 2");
+    // Editing `leaf` must propagate through the flipped module up to the
+    // self-accepting root as a hot update. If the importer edge was dropped,
+    // the dev server forces a full page reload instead (the client harness
+    // fails on unexpected reloads).
+    await dev.write(
+      "leaf.ts",
+      `
+        console.log('leaf 2');
+        export const value = 'leaf2';
+      `,
+    );
+    await c.expectMessage("leaf 2", "index run 3");
+  },
+});
 devTest("cannot require a module with top level await", {
   // TODO: after the module-loader rewrite the dev server's /_bun/report_error
   // handler can hang (never responds), so the client overlay never mounts and
@@ -396,5 +449,119 @@ devTest("browser field is used", {
   async test(dev) {
     await using c = await dev.client();
     await c.expectMessage("PASS");
+  },
+});
+
+devTest("browser console forwarding strips terminal control bytes", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("loaded");
+    `,
+    // The harness-generated bun.app.ts does not enable the dev console echo,
+    // so provide one directly. `htmlFiles: []` tells the harness not to
+    // generate its own config from index.html.
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: {
+          "/": html,
+        },
+        development: {
+          console: true,
+        },
+        fetch(req) {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    // The harness already holds an open /_bun/hmr websocket in `dev.socket`.
+    // A ConsoleLog frame is 'l' (message id) + 'l' (kind = log) + payload;
+    // the payload is echoed to the dev server's terminal when
+    // `development.console` is enabled. Send a payload carrying an OSC 52
+    // clipboard-write sequence and assert the escape introducer never
+    // reaches the terminal.
+    dev.socket!.send("ll" + "\x1b]52;c;aGVsbG8=\x07" + "clipboard-probe-end");
+    const filtered = await dev.output.waitForLine(/\[browser\].*clipboard-probe-end/);
+    expect(filtered.input).not.toContain("\x1b]52");
+    expect(filtered.input).not.toContain("\x07");
+
+    // A plain printable payload is still forwarded verbatim.
+    dev.socket!.send("ll" + "plain-console-probe");
+    const plain = await dev.output.waitForLine(/\[browser\].*plain-console-probe/);
+    expect(plain.input).toContain("plain-console-probe");
+  },
+});
+
+devTest("error report endpoint tolerates a browser url whose normalized origin is longer than the input", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function (req, meta) {
+        return new Response('OK');
+      }
+    `,
+  },
+  async test(dev) {
+    // /_bun/report_error payload: name, message and browser-url as
+    // (u32-LE length + bytes) each, followed by a u32-LE stack-frame count.
+    const enc = new TextEncoder();
+    function str32(s: string) {
+      const bytes = enc.encode(s);
+      const out = new Uint8Array(4 + bytes.length);
+      new DataView(out.buffer).setUint32(0, bytes.length, true);
+      out.set(bytes, 4);
+      return out;
+    }
+    // "http:h" serializes to "http://h/", so the parser reports an origin
+    // length (9) that is longer than the 6-byte input.
+    const parts = [str32("ReportName"), str32("report-message-sentinel"), str32("http:h"), new Uint8Array(4)];
+    const body = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let offset = 0;
+    for (const part of parts) {
+      body.set(part, offset);
+      offset += part.length;
+    }
+
+    // Fire the report without awaiting the response (the handler's reply
+    // path is independently flaky; see the skip note on the top-level-await
+    // test above). The handler logs the reported error to the terminal only
+    // after it has parsed the payload, including the malformed browser url.
+    dev.fetch("/_bun/report_error", { method: "POST", body }).catch(() => {});
+    await dev.output.waitForLine(/report-message-sentinel/);
+
+    // The dev server is still alive and serving requests.
+    await dev.fetch("/").equals("OK");
+  },
+});
+
+devTest("html routes reject requests whose host header does not match the dev server", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("loaded");
+    `,
+  },
+  async test(dev) {
+    // A request that reaches the listening socket but carries a foreign Host
+    // header (the shape of a DNS-rebound origin) must not receive the HTML
+    // document, which embeds the secret-bearing /_bun/client/... script URL.
+    const rebound = await dev.fetch("/", { headers: { Host: "rebound-host.example" } });
+    const reboundBody = await rebound.text();
+    expect(reboundBody).not.toContain("/_bun/client/");
+    expect(rebound.status).toBe(403);
+
+    // The same request with the dev server's own host still serves the page
+    // and its client bundle script tag.
+    const normal = await dev.fetch("/");
+    expect(await normal.text()).toContain("/_bun/client/");
+    expect(normal.status).toBe(200);
   },
 });

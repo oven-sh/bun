@@ -1,14 +1,16 @@
-// Variant names intentionally match the Zig error tags 1:1 (including
-// SCREAMING_CASE) so that `IntoStaticStr` yields the same string as Zig's
-// `@errorName`, which JS `error.code` / snapshot tests depend on.
+// Variant names (including SCREAMING_CASE) are exactly the strings that
+// `IntoStaticStr` yields, which JS `error.code` / snapshot tests depend on —
+// do not rename them.
 // NOTE: not `thiserror::Error` — that derive requires a per-variant
 // `#[error("...")]` attr (and would conflict with the manual Display below).
-// We hand-roll Display via `IntoStaticStr` so the message == the variant name
-// (matching Zig `@errorName`), and impl `std::error::Error` manually.
+// We hand-roll Display via `IntoStaticStr` so the message == the variant name,
+// and impl `std::error::Error` manually.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, strum::IntoStaticStr, strum::EnumString)]
 pub enum AnyPostgresError {
     ConnectionClosed,
+    ConnectionFailed,
+    ConnectionRefused,
     ExpectedRequest,
     ExpectedStatement,
     InvalidBackendKeyData,
@@ -47,14 +49,12 @@ pub enum AnyPostgresError {
 
 bun_core::impl_tag_error!(AnyPostgresError);
 
-bun_core::named_error_set!(AnyPostgresError);
-
-// Reverse of the above: `bun_core::Error` is just an interned name; recover the
+// Reverse of the above: `crate::Error` is just an interned name; recover the
 // matching variant by name (or `JSError` as a catch-all). Needed because the
-// protocol `write_internal` helpers were widened to `bun_core::Error` while
+// protocol `write_internal` helpers were widened to `crate::Error` while
 // callers (e.g. `PostgresRequest`) still propagate `AnyPostgresError`.
-impl From<bun_core::Error> for AnyPostgresError {
-    fn from(e: bun_core::Error) -> Self {
+impl From<crate::Error> for AnyPostgresError {
+    fn from(e: crate::Error) -> Self {
         e.name().parse().unwrap_or(AnyPostgresError::JSError)
     }
 }
@@ -106,9 +106,5 @@ impl Default for PostgresErrorOptions<'_> {
     }
 }
 
-// Zig re-exported `createPostgresError` / `postgresErrorToJS` from
-// `src/sql_jsc/postgres/error_jsc.zig` here. Per PORTING.md, `*_jsc` alias
-// re-exports are deleted: in Rust those live as extension-trait methods in
-// the `bun_sql_jsc` crate and the base crate has no mention of jsc.
-
-// ported from: src/sql/postgres/AnyPostgresError.zig
+// `createPostgresError` / `postgresErrorToJS` live as extension-trait methods
+// in the `bun_sql_jsc` crate; the base crate has no mention of jsc.

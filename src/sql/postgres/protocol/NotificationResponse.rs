@@ -1,49 +1,26 @@
-use bun_collections::{ByteVecExt, VecExt};
-
-use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
-use crate::postgres::postgres_types::Int4;
+use crate::postgres::AnyPostgresError;
 
 #[derive(Default)]
-pub struct NotificationResponse {
-    pub pid: Int4,
-    pub channel: Vec<u8>,
-    pub payload: Vec<u8>,
-}
-
-// PORT NOTE: Zig `deinit` only freed `channel`/`payload` via `clearAndFree(bun.default_allocator)`.
-// `Vec<u8>` (= `Vec<u8>`) owns its allocation and frees on Drop, so no explicit `impl Drop`
-// is needed here.
+pub struct NotificationResponse {}
 
 impl NotificationResponse {
-    // PORT NOTE: reshaped from out-param `fn(this: *@This(), ...) !void` with `this.* = .{...}`
-    // to a value-returning constructor (PORTING.md §Ground rules, out-param exception).
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
-    ) -> Result<Self, bun_core::Error> {
-        // TODO(port): narrow error set
-        let length = reader.length()?;
-        debug_assert!(length >= 4);
+    ) -> Result<Self, AnyPostgresError> {
+        let mut remaining = reader.body_length()?;
+        if remaining < 4 {
+            return Err(AnyPostgresError::InvalidMessage);
+        }
+        // pid
+        reader.int4()?;
+        remaining -= 4;
+        // channel
+        let (_, consumed) = reader.string_within(remaining)?;
+        remaining -= consumed;
+        // payload
+        reader.string_within(remaining)?;
 
-        Ok(Self {
-            pid: reader.int4()?,
-            channel: reader
-                .read_z()?
-                .to_owned()
-                .map_err(|_| bun_core::err!(OutOfMemory))?,
-            payload: reader
-                .read_z()?
-                .to_owned()
-                .map_err(|_| bun_core::err!(OutOfMemory))?,
-        })
-    }
-
-    // Zig: `pub const decode = DecoderWrap(NotificationResponse, decodeInternal).decode;`
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, bun_core::Error> {
-        Self::decode_internal(NewReader { wrapped: context })
+        Ok(Self {})
     }
 }
-
-// ported from: src/sql/postgres/protocol/NotificationResponse.zig

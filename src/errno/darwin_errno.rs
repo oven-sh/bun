@@ -126,11 +126,21 @@ pub mod uv_e {
     // Native `SystemErrno::$e as i32`; libuv-synthetic fallback for codes
     // Darwin lacks (ECHARSET / ENONET / EREMOTEIO / EUNATCH).
     macro_rules! __v {
-        (CHARSET,  $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        (NONET,    $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        (REMOTEIO, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        (UNATCH,   $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        ($i:tt,    $e:tt, $uv:tt) => { super::SystemErrno::$e as i32 };
+        (CHARSET,  $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        (NONET,    $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        (REMOTEIO, $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        (UNATCH,   $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        ($i:tt,    $e:tt, $uv:tt) => {
+            super::SystemErrno::$e as i32
+        };
     }
     crate::__uv_e_rows!(__v);
 }
@@ -139,5 +149,3 @@ pub mod uv_e {
 // kernel entry goes through libc, so all widths — including `usize` — route to
 // the thread-local `__error()` slot via the shared macro.
 impl_get_errno_libc!(i32, u32, isize, usize, i64);
-
-// ported from: src/errno/darwin_errno.zig

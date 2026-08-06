@@ -110,7 +110,9 @@ void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
         exportSymbolTable->set(NoLockingNecessary, exportIdentifier.releaseImpl().get(), SymbolTableEntry(VarOffset(offset)));
     }
 
-    JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsTDZValue(), moduleRecord);
+    // V8 initializes synthetic-module exports to undefined (reading one
+    // before setExport() yields undefined), unlike TDZ which would throw.
+    JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsUndefined(), moduleRecord);
     moduleRecord->setModuleEnvironment(globalObject, moduleEnvironment);
 }
 
@@ -184,7 +186,9 @@ JSValue NodeVMSyntheticModule::evaluate(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (m_status != Status::Linked) {
+    // NodeVMModule::evaluate flips the status to Evaluating before invoking
+    // the user's evaluation steps (it is the only caller of this method).
+    if (m_status != Status::Evaluating) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "SyntheticModule must be linked before evaluating"_s);
         return {};
     }

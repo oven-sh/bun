@@ -6,13 +6,10 @@ use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{WStr, ZStr, ZigString};
 use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
-use bun_paths::{
-    self as path_handler, MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer,
-};
+use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
-use crate::webcore::BlobExt as _;
 use crate::webcore::{Blob, Request, Response};
 
 pub use bun_core::SliceWithUnderlyingString;
@@ -23,15 +20,15 @@ pub use jsc::MarkedArrayBuffer as Buffer;
 pub use jsc::ArgumentsSlice;
 
 // LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
-// canonical `bun_sys_jsc::FdJsc` extension trait (full range/type validation
-// per Zig `bun.FD.fromJSValidated`). Re-exported so existing
+// canonical `bun_sys_jsc::FdJsc` extension trait (full range/type
+// validation). Re-exported so existing
 // `crate::node::types::FdJsc` import paths keep resolving.
 pub use bun_sys_jsc::FdJsc;
 
 /// `bun_runtime`-tier required-argument helper layered on `FdJsc`. Collapses
 /// the `next_eat → from_js_validated → ok_or_else(throw_invalid_fd_error)`
 /// boilerplate repeated 12× across `node_fs.rs::args::*::from_js`.
-pub trait FdArgExt: FdJsc {
+pub(crate) trait FdArgExt: FdJsc {
     #[inline]
     fn from_js_required(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
         let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -63,7 +60,7 @@ pub use bun_sys::PlatformIoVec;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub enum BlobOrStringOrBuffer {
-    Blob(Blob),
+    Blob(Box<Blob>),
     StringOrBuffer(StringOrBuffer),
 }
 
@@ -71,9 +68,6 @@ impl Drop for BlobOrStringOrBuffer {
     fn drop(&mut self) {
         match self {
             Self::Blob(blob) => {
-                // `.blob` is a raw bitwise copy of a live JS Blob — it does NOT own
-                // content_type/name. Only release the store reference.
-                // `StoreRef::drop` (via `Option::take`) calls `Store::deref()`.
                 let _ = blob.store.with_mut(|s| s.take());
             }
             Self::StringOrBuffer(_) => {
@@ -84,25 +78,18 @@ impl Drop for BlobOrStringOrBuffer {
 }
 
 impl BlobOrStringOrBuffer {
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::Blob(blob) => blob.shared_view(),
             Self::StringOrBuffer(str) => str.slice(),
         }
     }
 
-    pub fn protect(&self) {
-        match self {
-            Self::StringOrBuffer(sob) => sob.protect(),
-            _ => {}
-        }
-    }
-
-    pub fn byte_length(&self) -> usize {
+    pub(crate) fn byte_length(&self) -> usize {
         self.slice().len()
     }
 
-    pub fn from_js_maybe_file_maybe_async(
+    pub(crate) fn from_js_maybe_file_maybe_async(
         global: &JSGlobalObject,
         value: JSValue,
         allow_file: bool,
@@ -135,14 +122,14 @@ impl BlobOrStringOrBuffer {
                 }
 
                 // `Blob::dupe()` clones the StoreRef (bumps refcount) and bit-copies fields.
-                return Ok(Some(Self::Blob(blob.dupe())));
+                return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
             }
         };
 
         Ok(Some(Self::StringOrBuffer(str)))
     }
 
-    pub fn from_js_maybe_file(
+    pub(crate) fn from_js_maybe_file(
         global: &JSGlobalObject,
         value: JSValue,
         allow_file: bool,
@@ -157,27 +144,34 @@ impl BlobOrStringOrBuffer {
         Self::from_js_maybe_file(global, value, true)
     }
 
-    pub fn from_js_async(
+    pub(crate) fn from_js_async(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         Self::from_js_maybe_file_maybe_async(global, value, true, true)
     }
 
-    pub fn from_js_with_encoding_value(
+    /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
+    /// already-parsed [`Encoding`], so callers that must inspect the encoding
+    /// first (e.g. to validate odd-length hex) don't coerce `encoding_value`
+    /// twice.
+    pub(crate) fn from_js_with_encoding(
         global: &JSGlobalObject,
         value: JSValue,
-        encoding_value: JSValue,
+        encoding: Encoding,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_with_encoding_value_allow_request_response(
-            global,
-            value,
-            encoding_value,
-            false,
-        )
+        if value.js_type() == jsc::JSType::DOMWrapper {
+            if let Some(blob) = value.as_class_ref::<Blob>() {
+                return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
+            }
+        }
+        match StringOrBuffer::from_js_with_encoding(global, value, encoding)? {
+            Some(s) => Ok(Some(Self::StringOrBuffer(s))),
+            None => Ok(None),
+        }
     }
 
-    pub fn from_js_with_encoding_value_allow_request_response(
+    pub(crate) fn from_js_with_encoding_value_allow_request_response(
         global: &JSGlobalObject,
         value: JSValue,
         encoding_value: JSValue,
@@ -189,7 +183,7 @@ impl BlobOrStringOrBuffer {
                 // deref proof in `JSValue`); the JS wrapper roots the payload
                 // while `value` is on the stack.
                 if let Some(blob) = value.as_class_ref::<Blob>() {
-                    return Ok(Some(Self::Blob(blob.dupe())));
+                    return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
                 }
                 if allow_request_response {
                     if let Some(request) = value.as_class_ref::<Request>() {
@@ -199,7 +193,7 @@ impl BlobOrStringOrBuffer {
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
                             let blob = any_blob.to_blob(global);
                             any_blob.detach();
-                            return Ok(Some(Self::Blob(blob)));
+                            return Ok(Some(Self::Blob(Box::new(blob))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -214,7 +208,7 @@ impl BlobOrStringOrBuffer {
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
                             let blob = any_blob.to_blob(global);
                             any_blob.detach();
-                            return Ok(Some(Self::Blob(blob)));
+                            return Ok(Some(Self::Blob(Box::new(blob))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -255,9 +249,9 @@ impl Default for StringOrBuffer {
 }
 
 impl StringOrBuffer {
-    pub const EMPTY: StringOrBuffer = StringOrBuffer::EncodedSlice(ZigStringSlice::EMPTY);
+    pub(crate) const EMPTY: StringOrBuffer = StringOrBuffer::EncodedSlice(ZigStringSlice::EMPTY);
 
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::String(str) => str.slice(),
             Self::ThreadsafeString(str) => str.slice(),
@@ -286,7 +280,7 @@ impl Drop for StringOrBuffer {
 }
 
 impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
-    /// Zig `BlobOrStringOrBuffer.deinitAndUnprotect`, JS-side half — owned
+    /// JS-side half of cleanup — owned
     /// payloads are released by `Drop` (which runs next when held in a
     /// [`bun_jsc::ThreadSafe`]).
     #[inline]
@@ -298,24 +292,27 @@ impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
 }
 
 impl bun_jsc::Unprotect for StringOrBuffer {
-    /// Zig `StringOrBuffer.deinitAndUnprotect`, JS-side half — undo the
+    /// JS-side half of cleanup — undo the
     /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
     /// `from_js_maybe_async(.., is_async=true)`. Owned slices are released by
     /// `Drop`.
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(buffer) = self {
+            if buffer.pinned {
+                buffer.pinned = false;
+                buffer.buffer.unpin();
+            }
             buffer.buffer.value.unprotect();
         }
     }
 }
 
 impl StringOrBuffer {
-    pub fn to_thread_safe(&mut self) {
+    pub(crate) fn to_thread_safe(&mut self) {
         match self {
             Self::String(s) => {
                 s.to_thread_safe();
-                // PORT NOTE: reshaped for borrowck — Zig moves the payload between variants.
                 let str = core::mem::take(s);
                 *self = Self::ThreadsafeString(str);
             }
@@ -327,14 +324,7 @@ impl StringOrBuffer {
         }
     }
 
-    /// Consuming `to_thread_safe()` — see [`PathLike::into_thread_safe`].
-    #[inline]
-    pub fn into_thread_safe(mut self) -> bun_jsc::ThreadSafe<Self> {
-        self.to_thread_safe();
-        bun_jsc::ThreadSafe::adopt(self)
-    }
-
-    pub fn from_js_to_owned_slice(
+    pub(crate) fn from_js_to_owned_slice(
         global_object: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Vec<u8>> {
@@ -359,7 +349,6 @@ impl StringOrBuffer {
             Self::ThreadsafeString(str) | Self::String(str) => str.transfer_to_js(ctx),
             Self::EncodedSlice(encoded_slice) => {
                 let result = jsc::bun_string_jsc::create_utf8_for_js(ctx, encoded_slice.slice());
-                // Zig: `defer { this.encoded_slice.deinit(); this.encoded_slice = .{}; }`
                 *encoded_slice = ZigStringSlice::default();
                 result
             }
@@ -372,18 +361,9 @@ impl StringOrBuffer {
         }
     }
 
-    /// Zig `StringOrBuffer.protect` — mirrors `to_thread_safe` but only
-    /// protects the JS-side buffer value (no string conversion).
-    #[inline]
-    pub fn protect(&self) {
-        if let Self::Buffer(buffer) = self {
-            buffer.buffer.value.protect();
-        }
-    }
-
     /// Returns the buffer payload if this is `Self::Buffer`.
     #[inline]
-    pub fn buffer(&self) -> Option<&Buffer> {
+    pub(crate) fn buffer(&self) -> Option<&Buffer> {
         if let Self::Buffer(b) = self {
             Some(b)
         } else {
@@ -392,7 +372,7 @@ impl StringOrBuffer {
     }
 
     /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
-    /// directly into `*out` (Zig result-location semantics) and returns
+    /// directly into `*out` and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
     /// type. `*out` is left untouched on `Ok(false)` / `Err`.
     ///
@@ -401,7 +381,7 @@ impl StringOrBuffer {
     /// to ~128B of `vmovups` stack-to-stack copies per call which the
     /// `Option<>`-returning wrappers below cannot always NRVO away.
     #[inline]
-    pub fn from_js_maybe_async_into(
+    pub(crate) fn from_js_maybe_async_into(
         out: &mut StringOrBuffer,
         global: &JSGlobalObject,
         value: JSValue,
@@ -427,7 +407,7 @@ impl StringOrBuffer {
                     str.deref();
 
                     if sliced.underlying.is_empty() {
-                        // PORT NOTE: partial-move out of `SliceWithUnderlyingString` —
+                        // partial-move out of `SliceWithUnderlyingString` —
                         // take `utf8` and leave the rest defaulted (no Drop on the type).
                         *out = Self::EncodedSlice(core::mem::take(&mut sliced.utf8));
                         return Ok(true);
@@ -457,7 +437,12 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = Buffer::from_array_buffer(global, value);
+                let buffer = if is_async {
+                    Buffer::from_js_pinned(global, value)
+                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+                } else {
+                    Buffer::from_array_buffer(global, value)
+                };
 
                 if is_async {
                     buffer.buffer.value.protect();
@@ -471,7 +456,7 @@ impl StringOrBuffer {
     }
 
     #[inline]
-    pub fn from_js_maybe_async(
+    pub(crate) fn from_js_maybe_async(
         global: &JSGlobalObject,
         value: JSValue,
         is_async: bool,
@@ -491,7 +476,7 @@ impl StringOrBuffer {
     }
 
     #[inline]
-    pub fn from_js_with_encoding(
+    pub(crate) fn from_js_with_encoding(
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
@@ -501,7 +486,7 @@ impl StringOrBuffer {
 
     /// Out-param convenience wrapper — see [`from_js_with_encoding_maybe_async_into`].
     #[inline]
-    pub fn from_js_with_encoding_into(
+    pub(crate) fn from_js_with_encoding_into(
         out: &mut StringOrBuffer,
         global: &JSGlobalObject,
         value: JSValue,
@@ -514,7 +499,7 @@ impl StringOrBuffer {
     /// `*out` and returns `Ok(true)` on success, `Ok(false)` for not-a-
     /// string-or-buffer. See [`from_js_maybe_async_into`] for rationale.
     #[inline]
-    pub fn from_js_with_encoding_maybe_async_into(
+    pub(crate) fn from_js_with_encoding_maybe_async_into(
         out: &mut StringOrBuffer,
         global: &JSGlobalObject,
         value: JSValue,
@@ -523,7 +508,12 @@ impl StringOrBuffer {
         allow_string_object: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = Buffer::from_array_buffer(global, value);
+            let buffer = if is_async {
+                Buffer::from_js_pinned(global, value)
+                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+            } else {
+                Buffer::from_array_buffer(global, value)
+            };
             if is_async {
                 buffer.buffer.value.protect();
             }
@@ -532,7 +522,13 @@ impl StringOrBuffer {
         }
 
         if encoding == Encoding::Utf8 {
-            return Self::from_js_maybe_async_into(out, global, value, is_async, allow_string_object);
+            return Self::from_js_maybe_async_into(
+                out,
+                global,
+                value,
+                is_async,
+                allow_string_object,
+            );
         }
 
         if value.is_string() {
@@ -559,7 +555,7 @@ impl StringOrBuffer {
     }
 
     #[inline]
-    pub fn from_js_with_encoding_maybe_async(
+    pub(crate) fn from_js_with_encoding_maybe_async(
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
@@ -581,22 +577,7 @@ impl StringOrBuffer {
         }
     }
 
-    pub fn from_js_with_encoding_value(
-        global: &JSGlobalObject,
-        value: JSValue,
-        encoding_value: JSValue,
-    ) -> JsResult<Option<StringOrBuffer>> {
-        let encoding: Encoding = 'brk: {
-            if !encoding_value.is_cell() {
-                break 'brk Encoding::Utf8;
-            }
-            break 'brk Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8);
-        };
-
-        Self::from_js_with_encoding(global, value, encoding)
-    }
-
-    pub fn from_js_with_encoding_value_allow_string_object(
+    pub(crate) fn from_js_with_encoding_value_allow_string_object(
         global: &JSGlobalObject,
         value: JSValue,
         encoding_value: JSValue,
@@ -619,7 +600,7 @@ impl StringOrBuffer {
     }
 }
 
-// `bun.String.encode` — see `crate::webcore::encoding::BunStringEncode`.
+// String encoding — see `crate::webcore::encoding::BunStringEncode`.
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -642,12 +623,25 @@ pub enum Encoding {
     Buffer,
 }
 
-// PORT NOTE: Zig used `ComptimeStringMap` (`fromJSCaseInsensitive` /
-// `inMapCaseInsensitive`). Phase A originally lowered this to a `phf::Map`,
-// but with only 13 short keys spread across 7 distinct lengths (max 4 keys at
-// len==6) a length-gated byte match beats phf's hash+probe — see
-// `Encoding::from` below. The case-insensitive entry points lowercase into a
-// stack buffer first.
+bun_core::comptime_string_map! {
+    /// Buffer encoding names → [`Encoding`]. Looked up case-insensitively
+    /// ([`Encoding::from`]), so keys must stay lowercase.
+    static ENCODING_MAP: Encoding = {
+        b"hex" => Encoding::Hex,
+        b"utf8" => Encoding::Utf8,
+        b"ucs2" => Encoding::Utf16le,
+        b"utf-8" => Encoding::Utf8,
+        b"ucs-2" => Encoding::Utf16le,
+        b"ascii" => Encoding::Ascii,
+        b"base64" => Encoding::Base64,
+        b"binary" => Encoding::Latin1,
+        b"latin1" => Encoding::Latin1,
+        b"buffer" => Encoding::Buffer,
+        b"utf16le" => Encoding::Utf16le,
+        b"utf16-le" => Encoding::Utf16le,
+        b"base64url" => Encoding::Base64url,
+    };
+}
 
 impl From<Encoding> for bun_core::NodeEncoding {
     fn from(e: Encoding) -> Self {
@@ -686,76 +680,39 @@ impl From<bun_core::NodeEncoding> for Encoding {
     }
 }
 
+pub(crate) fn js_assert_encoding_valid(
+    global: &JSGlobalObject,
+    call_frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let value = call_frame.argument(0);
+    let _ = Encoding::assert(value, global, Encoding::Utf8)?;
+    Ok(JSValue::UNDEFINED)
+}
+
 impl Encoding {
-    pub fn is_binary_to_text(self) -> bool {
-        matches!(self, Self::Hex | Self::Base64 | Self::Base64url)
-    }
-
     /// Caller must verify the value is a string
-    pub fn from(slice: &[u8]) -> Option<Encoding> {
-        // PERF(port): length-gated match in lieu of `phf::Map` — 13 keys over
-        // 7 distinct lengths (3..=9, max 4 collisions at len 6). The outer
-        // `match len` rejects almost every miss on a single `usize` compare;
-        // the inner byte compares are at known fixed lengths so LLVM lowers
-        // them to word-sized loads. Same pattern as `clap::find_param`
-        // (12577e958d71). Case-insensitive: lowercase into a 9-byte stack
-        // buffer first (longest key is "base64url").
-        let len = slice.len();
-        if len < 3 || len > 9 {
-            return None;
-        }
-        let (buf, _) = bun_core::ascii_lowercase_buf::<9>(slice)?;
-        let s = &buf[..len];
-        match len {
-            3 if s == b"hex" => Some(Encoding::Hex),
-            4 => match s {
-                b"utf8" => Some(Encoding::Utf8),
-                b"ucs2" => Some(Encoding::Utf16le),
-                _ => None,
-            },
-            5 => match s {
-                b"utf-8" => Some(Encoding::Utf8),
-                b"ucs-2" => Some(Encoding::Utf16le),
-                b"ascii" => Some(Encoding::Ascii),
-                _ => None,
-            },
-            6 => match s {
-                b"base64" => Some(Encoding::Base64),
-                b"binary" => Some(Encoding::Latin1),
-                b"latin1" => Some(Encoding::Latin1),
-                b"buffer" => Some(Encoding::Buffer),
-                _ => None,
-            },
-            7 if s == b"utf16le" => Some(Encoding::Utf16le),
-            8 if s == b"utf16-le" => Some(Encoding::Utf16le),
-            9 if s == b"base64url" => Some(Encoding::Base64url),
-            _ => None,
-        }
+    pub(crate) fn from(slice: &[u8]) -> Option<Encoding> {
+        ENCODING_MAP.get_ascii_case_insensitive(slice).copied()
     }
 
-    /// Case-insensitive lookup against a `bun.String` without allocating.
-    /// Replaces the former `str.in_map_case_insensitive(&ENCODING_MAP)` path:
-    /// narrows UTF-16/Latin-1 code units into a stack buffer (rejecting any
-    /// non-ASCII unit — no encoding name contains one) and dispatches to
-    /// [`Encoding::from`].
-    pub fn from_bun_string(s: &bun_core::String) -> Option<Encoding> {
-        // NOTE: tightens the Latin-1 path to reject `>= 0x80` (was pass-through);
-        // safe — no encoding name is non-ASCII, downstream match would miss anyway.
-        let mut buf = [0u8; 9];
-        Self::from(s.ascii_into(&mut buf)?)
+    /// Case-insensitive lookup against a `bun.String` without allocating
+    /// (`bun.String.inMapCaseInsensitive`): UTF-16 code units are narrowed
+    /// into a stack buffer (any non-ASCII unit ⇒ miss — no encoding name
+    /// contains one) before the map lookup.
+    pub(crate) fn from_bun_string(s: &bun_core::String) -> Option<Encoding> {
+        s.in_map_case_insensitive(&ENCODING_MAP)
     }
 }
 
 impl Encoding {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
-        // PORT NOTE: ComptimeStringMap::fromJSCaseInsensitive — emulated via
-        // `from_bun_string` (stack-buffer narrow + length-gated match; no
-        // `to_utf8()` allocation needed for a ≤9-byte ASCII key).
+        // `from_bun_string` narrows into a stack buffer — no `to_utf8()`
+        // allocation needed for a short ASCII key.
         let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
         Ok(Self::from_bun_string(&str))
     }
 
-    pub fn assert(
+    pub(crate) fn assert(
         value: JSValue,
         global_object: &JSGlobalObject,
         default: Encoding,
@@ -774,7 +731,7 @@ impl Encoding {
         }
     }
 
-    pub fn from_js_with_default_on_empty(
+    pub(crate) fn from_js_with_default_on_empty(
         value: JSValue,
         global_object: &JSGlobalObject,
         default: Encoding,
@@ -786,7 +743,10 @@ impl Encoding {
         Ok(Self::from(str.to_utf8().slice()))
     }
 
-    pub fn throw_encoding_error(global_object: &JSGlobalObject, value: JSValue) -> jsc::JsError {
+    pub(crate) fn throw_encoding_error(
+        global_object: &JSGlobalObject,
+        value: JSValue,
+    ) -> jsc::JsError {
         global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -798,27 +758,9 @@ impl Encoding {
             .throw()
     }
 
-    /// Zig `encodeWithSize(comptime size, *const [size]u8)`. In Zig the two
-    /// `encodeWith*` fns differed only in their comptime stack-buffer size
-    /// (`[size*4]u8` vs `[max_size*4]u8`); in Rust both heap-allocate, so the
-    /// match-arm bodies were byte-identical for Base64url/Hex/Buffer/else and
-    /// `size` was unused past the assert. Collapsed into a thin assertion
-    /// wrapper. Kept for Zig-port symmetry; currently has no Rust callers
-    /// (CryptoHasher.rs ported all sites to `encode_with_max_size`).
-    #[inline]
-    pub fn encode_with_size(
-        self,
-        global_object: &JSGlobalObject,
-        size: usize,
-        input: &[u8],
-    ) -> JsResult<JSValue> {
-        debug_assert_eq!(input.len(), size);
-        self.encode_with_max_size(global_object, size, input)
-    }
-
-    /// Zig `encodeWithMaxSize(comptime max_size, []const u8)`. `max_size` is a
-    /// runtime arg (see `encode_with_size`); callers pass `EVP_MAX_MD_SIZE` etc.
-    pub fn encode_with_max_size(
+    /// `max_size` is a runtime arg (see `encode_with_size`); callers pass
+    /// `EVP_MAX_MD_SIZE` etc.
+    pub(crate) fn encode_with_max_size(
         self,
         global_object: &JSGlobalObject,
         max_size: usize,
@@ -830,16 +772,18 @@ impl Encoding {
             input.len(),
             max_size,
         );
-        // PERF(port): Zig used comptime-sized stack buffers; stable Rust forbids
-        // const-generic arithmetic in array lengths, so we heap-allocate.
+        // Stable Rust forbids const-generic arithmetic in array lengths, so
+        // we heap-allocate.
         match self {
             Self::Base64 => {
-                let mut base64_buf =
-                    vec![0u8; bun_core::base64::standard_encoder_calc_size(max_size * 4)];
-                let encoded_len = bun_core::base64::encode(&mut base64_buf, input);
+                let encoded_len = bun_core::base64::encode_len(input);
                 let (mut encoded, bytes) =
                     bun_core::String::create_uninitialized_latin1(encoded_len);
-                bytes.copy_from_slice(&base64_buf[..encoded_len]);
+                if encoded.is_dead() {
+                    return encoded.transfer_to_js(global_object);
+                }
+                let n = bun_core::base64::encode(bytes, input);
+                debug_assert_eq!(n, encoded_len);
                 encoded.transfer_to_js(global_object)
             }
             Self::Base64url => {
@@ -847,7 +791,6 @@ impl Encoding {
                 Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
             }
             Self::Hex => {
-                // PORT NOTE: Zig used `bufPrint("{x}", input)` into a stack buffer.
                 // The byte-by-byte `write!` formatting machinery is pathologically
                 // slow in debug builds, so encode via LUT directly into the
                 // destination JS string buffer.
@@ -863,7 +806,6 @@ impl Encoding {
                 encoded.transfer_to_js(global_object)
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
-            // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B
             enc => crate::webcore::encoding::to_string(input, global_object, enc),
         }
     }
@@ -874,77 +816,13 @@ impl Encoding {
     }
 }
 
-// TODO(port): move to runtime_sys
+// Externs stay in this crate per PORTING.md §FFI: "If your file has externs
+// and isn't already *_sys, leave them in place".
 unsafe extern "C" {
     safe fn WebCore_BufferEncodingType_toJS(
         global_object: &JSGlobalObject,
         encoding: Encoding,
     ) -> JSValue;
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
-/// This is used on the windows implementation of realpath, which is in javascript
-
-pub fn js_assert_encoding_valid(
-    global: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let value = call_frame.argument(0);
-    let _ = Encoding::assert(value, global, Encoding::Utf8)?;
-    Ok(JSValue::UNDEFINED)
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
-#[allow(dead_code)]
-pub enum PathOrBuffer {
-    Path(bun_core::PathString),
-    Buffer(Buffer),
-}
-
-impl PathOrBuffer {
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        // PORT NOTE: Zig only ever returns `self.path.slice()` here regardless of variant —
-        // preserved verbatim (likely a latent bug or this type is unused).
-        match self {
-            Self::Path(p) => p.slice(),
-            Self::Buffer(_) => unreachable!("Zig accessed .path unconditionally"),
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct CallbackTask<Result> {
-    pub callback: jsc::C::JSObjectRef,
-    pub option: CallbackTaskOption<Result>,
-    pub success: bool,
-}
-
-// PORT NOTE: Zig uses an untagged `union` discriminated by `success: bool`.
-// Represented here as a Rust enum; callers must keep `success` in sync or
-// drop the `success` field entirely in Phase B.
-pub enum CallbackTaskOption<Result> {
-    Err(bun_sys::SystemError),
-    Result(Result),
-}
-
-impl<Result> Default for CallbackTask<Result>
-where
-    CallbackTaskOption<Result>: Default,
-{
-    fn default() -> Self {
-        // Zig only sets `success = false` and leaves the rest `undefined`;
-        // Rust requires every field initialized, so zero the callback handle
-        // and lean on the `CallbackTaskOption<Result>: Default` bound.
-        Self {
-            callback: core::ptr::null_mut(),
-            option: Default::default(),
-            success: false,
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -955,6 +833,15 @@ where
 // re-exports them and layers the JS-argument-parsing helpers via the
 // `PathLikeExt` / `PathOrFdExt` extension traits.
 pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
+
+/// Returned by [`PathLikeExt::slice_w`] / [`PathLikeExt::os_path`] /
+/// [`PathLikeExt::os_path_kernel32`] when the path's UTF-16 form would not
+/// fit a `WPathBuffer` (`strings::fits_in_wide_path_buffer`). NT caps paths
+/// at `PATH_MAX_WIDE` units, so such a path cannot exist on disk — callers
+/// map this to `false`/`ENAMETOOLONG` as appropriate instead of letting the
+/// conversion overflow (oven-sh/bun#27775).
+#[derive(Debug, Clone, Copy)]
+pub struct NameTooLong;
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
 ///
@@ -972,13 +859,16 @@ pub trait PathLikeExt {
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr
+    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> &'a OSPathSliceZ
+    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
-    fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a OSPathSliceZ
+    fn os_path_kernel32<'a>(
+        &'a self,
+        buf: &'a mut PathBuffer,
+    ) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
     fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Option<PathLike>>
@@ -1019,7 +909,7 @@ pub trait PathLikeExt {
 }
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathOrFileDescriptor`.
-pub trait PathOrFdExt {
+pub(crate) trait PathOrFdExt {
     fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
@@ -1029,9 +919,9 @@ pub trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike {
-    // TODO(port): Zig return type is `if (force) [:0]u8 else [:0]const u8`.
-    // Rust const-generics can't change return mutability; we always return `&ZStr`.
-    // The single force=true caller (if any) needs `&mut ZStr` — handle in Phase B.
+    // Const-generics can't change return mutability, so this always returns
+    // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
+    // separate method.
     fn slice_z_with_force_copy<'a, const FORCE: bool>(
         &'a self,
         buf: &'a mut PathBuffer,
@@ -1040,7 +930,16 @@ impl PathLikeExt for PathLike {
 
         #[cfg(windows)]
         {
-            if bun_paths::is_absolute(sliced) {
+            // Only take the fast path for paths that can exist on NT at
+            // all (≤ ~32757 UTF-16 units). That bounds the `\\?\`-prefixed
+            // copy below in bytes too (≤ 3×32757 + 5 < MAX_PATH_BYTES);
+            // the cwd-join branch of `resolve_cwd_with_external_buf_z`
+            // prepends the cwd's filesystem root — arbitrarily long for UNC
+            // cwds — and bounds-checks internally, surfacing NameTooLong.
+            // Anything over-long falls through to the plain copy at the
+            // bottom, which fits without the prefix (or takes the too-long
+            // fallback) and fails at the syscall.
+            if bun_paths::is_absolute(sliced) && strings::fits_in_wide_path_buffer(sliced) {
                 if sliced.len() > 2
                     && bun_paths::is_drive_letter(sliced[0])
                     && sliced[1] == b':'
@@ -1061,8 +960,21 @@ impl PathLikeExt for PathLike {
                     // SAFETY: buf[4+n] == 0 written above.
                     return ZStr::from_buf(&buf[..], 4 + n);
                 }
-                return path_handler::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced)
-                    .unwrap_or_else(|_| panic!("Error while resolving path."));
+                // reshaped for borrowck — capture the length so
+                // the `Ok` borrow ends at the match, then re-derive.
+                let resolved_len = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
+                    Ok(res) => Some(res.len()),
+                    // The cwd root + path don't fit `buf` (UNC cwds can push
+                    // a near-MAX_PATH_BYTES path over); fall through to the
+                    // plain copy / too-long handling below.
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
+                    Err(e) => panic!("Error while resolving path: {e:?}"),
+                };
+                if let Some(len) = resolved_len {
+                    // SAFETY: `resolve_cwd_with_external_buf_z` wrote the NUL
+                    // at `buf[len]`.
+                    return ZStr::from_buf(&buf[..], len);
+                }
             }
         }
 
@@ -1079,7 +991,7 @@ impl PathLikeExt for PathLike {
         if !FORCE {
             if sliced[sliced.len() - 1] == 0 {
                 // SAFETY: last byte is NUL.
-                return ZStr::from_slice_with_nul(&sliced[..]);
+                return ZStr::from_slice_with_nul(sliced);
             }
         }
 
@@ -1110,24 +1022,31 @@ impl PathLikeExt for PathLike {
     }
 
     #[inline]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr {
-        strings::paths::to_w_path(buf, self.slice())
+    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
+        let sliced = self.slice();
+        if !strings::fits_in_wide_path_buffer(sliced) {
+            return Err(NameTooLong);
+        }
+        Ok(strings::paths::to_w_path(buf, sliced))
     }
 
     #[inline]
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> &'a OSPathSliceZ {
+    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
         {
             return self.slice_w(buf);
         }
         #[cfg(not(windows))]
         {
-            self.slice_z_with_force_copy::<false>(buf)
+            Ok(self.slice_z_with_force_copy::<false>(buf))
         }
     }
 
     #[inline]
-    fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a OSPathSliceZ {
+    fn os_path_kernel32<'a>(
+        &'a self,
+        buf: &'a mut PathBuffer,
+    ) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
         {
             let s = self.slice();
@@ -1142,45 +1061,71 @@ impl PathLikeExt for PathLike {
                 && (s[2] == b'.' || s[2] == b'?')
                 && bun_paths::is_sep_any(s[3])
             {
+                if !strings::fits_in_wide_path_buffer(s) {
+                    return Err(NameTooLong);
+                }
                 // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte
-                // alignment is runtime-asserted inside `bytes_as_slice_mut`
-                // (port of Zig `@alignCast`); see PathBuffer doc comment for
+                // alignment is runtime-asserted inside `bytes_as_slice_mut`;
+                // see PathBuffer doc comment for
                 // why the buffer is always sufficiently aligned in practice.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return strings::to_kernel32_path(buf_u16, s);
+                return Ok(strings::to_kernel32_path(buf_u16, s));
             }
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
+                // Bail before the cwd resolution + normalization below write
+                // into fixed u8 buffers: UNC-shaped inputs pass through the
+                // resolver untouched and can reach `normalize_buf` at full
+                // MAX_PATH_BYTES length, whose root handling writes one past
+                // the input length.
+                if !strings::fits_in_wide_path_buffer(s) {
+                    return Err(NameTooLong);
+                }
                 // `buf` is the scratch for cwd-resolution; `b` is the pooled
                 // scratch for normalisation; final wide path lands back in `buf`.
-                let resolve = path_handler::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(buf, s)
-                    .unwrap_or_else(|_| panic!("Error while resolving path."));
-                let normal = path_handler::resolve_path::normalize_buf::<
-                    bun_paths::platform::Windows,
-                >(resolve, &mut b[..]);
+                let resolve = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(
+                    buf, s,
+                ) {
+                    Ok(r) => r,
+                    // The cwd root + path don't fit the resolution buffer
+                    // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
+                    // such a path can't exist on NT.
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
+                    Err(e) => panic!("Error while resolving path: {e:?}"),
+                };
+                let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
+                    resolve,
+                    &mut b[..],
+                );
+                if !strings::fits_in_wide_path_buffer(normal) {
+                    return Err(NameTooLong);
+                }
                 // `resolve`'s borrow of `buf` ended at the line above (NLL).
                 // SAFETY: same alignment note as above.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return strings::to_kernel32_path(buf_u16, normal);
+                return Ok(strings::to_kernel32_path(buf_u16, normal));
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {
                 // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return strings::to_kernel32_path(buf_u16, b".");
+                return Ok(strings::to_kernel32_path(buf_u16, b"."));
             }
-            let normal = path_handler::resolve_path::normalize_string_buf::<
+            let normal = bun_paths::resolve_path::normalize_string_buf::<
                 true,
                 bun_paths::platform::Windows,
                 false,
             >(s, &mut b[..]);
+            if !strings::fits_in_wide_path_buffer(normal) {
+                return Err(NameTooLong);
+            }
             // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
             let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-            return strings::to_kernel32_path(buf_u16, normal);
+            return Ok(strings::to_kernel32_path(buf_u16, normal));
         }
 
         #[cfg(not(windows))]
         {
-            self.slice_z_with_force_copy::<false>(buf)
+            Ok(self.slice_z_with_force_copy::<false>(buf))
         }
     }
 
@@ -1198,18 +1143,34 @@ impl PathLikeExt for PathLike {
         use jsc::JSType;
         match arg.js_type() {
             JSType::Uint8Array | JSType::DataView => {
-                let buffer = Buffer::from_typed_array(ctx, arg);
-                Valid::path_buffer(&buffer, ctx)?;
-                Valid::path_null_bytes(buffer.slice(), ctx)?;
+                let mut buffer = Buffer::from_js_pinned(ctx, arg)
+                    .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg));
+                if let Err(err) = Valid::path_buffer(&buffer, ctx)
+                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
+                {
+                    if buffer.pinned {
+                        buffer.pinned = false;
+                        buffer.buffer.unpin();
+                    }
+                    return Err(err);
+                }
 
                 arguments.protect_eat();
                 Ok(Some(Self::Buffer(buffer)))
             }
 
             JSType::ArrayBuffer => {
-                let buffer = Buffer::from_array_buffer(ctx, arg);
-                Valid::path_buffer(&buffer, ctx)?;
-                Valid::path_null_bytes(buffer.slice(), ctx)?;
+                let mut buffer = Buffer::from_js_pinned(ctx, arg)
+                    .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg));
+                if let Err(err) = Valid::path_buffer(&buffer, ctx)
+                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
+                {
+                    if buffer.pinned {
+                        buffer.pinned = false;
+                        buffer.buffer.unpin();
+                    }
+                    return Err(err);
+                }
 
                 arguments.protect_eat();
                 Ok(Some(Self::Buffer(buffer)))
@@ -1283,10 +1244,9 @@ impl PathLikeExt for PathLike {
         str: &mut bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> {
-        // TODO(port): narrow error set
         if will_be_async {
-            let mut sliced = str.to_thread_safe_slice();
-            let mut sliced = scopeguard::guard(sliced, |s| s.deinit());
+            let sliced = str.to_thread_safe_slice();
+            let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.
@@ -1301,8 +1261,8 @@ impl PathLikeExt for PathLike {
             }
             Ok(Self::ThreadsafeString(sliced))
         } else {
-            let mut sliced = str.to_slice();
-            let mut sliced = scopeguard::guard(sliced, |s| s.deinit());
+            let sliced = str.to_slice();
+            let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.
@@ -1318,8 +1278,13 @@ impl PathLikeExt for PathLike {
 
             sliced.report_extra_memory(global.vm());
 
-            // It is expensive to keep both around.
-            Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)))
+            // It is expensive to keep both around. `utf8` here is an Owned
+            // transcoded copy (UTF-16 or non-ASCII Latin-1 input), so the
+            // returned EncodedSlice is independent of `underlying` — release
+            // the WTFStringImpl ref `to_slice` moved into it.
+            let utf8 = core::mem::take(&mut sliced.utf8);
+            sliced.deinit();
+            Ok(Self::EncodedSlice(utf8))
         }
     }
 }
@@ -1329,56 +1294,42 @@ impl PathLikeExt for PathLike {
 pub struct Valid;
 
 impl Valid {
-    pub fn path_slice(zig_str: &ZigStringSlice, ctx: &JSGlobalObject) -> JsResult<()> {
-        match zig_str.slice().len() {
-            0..=MAX_PATH_BYTES => Ok(()),
-            _ => {
-                let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .with_path(zig_str.slice())
-                        .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
-                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
-            }
-        }
-    }
-
-    pub fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
         match len {
-            0..=MAX_PATH_BYTES => Ok(()),
+            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
+            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
+            0..MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                         .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
+                system_error.syscall = bun_core::String::DEAD.into();
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
     }
 
-    pub fn path_string(zig_str: &ZigString, ctx: &JSGlobalObject) -> JsResult<()> {
-        Self::path_string_length(zig_str.len, ctx)
-    }
-
-    pub fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
         let slice = buffer.slice();
         match slice.len() {
             0 => {
                 Err(ctx
                     .throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty")))
             }
-            1..=MAX_PATH_BYTES => Ok(()),
+            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
+            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
+            1..MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                         .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
+                system_error.syscall = bun_core::String::DEAD.into();
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
     }
 
-    pub fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {
         if strings::index_of_char(slice, 0).is_some() {
             return Err(global
                 .err(
@@ -1397,53 +1348,127 @@ impl Valid {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct VectorArrayBuffer {
-    // PORT NOTE: bare JSValue field — only sound while this lives on the stack.
+    // bare JSValue field — only sound while this lives on the stack.
     // Stored in a stack-local during writev; never heap-allocated.
     pub value: JSValue,
-    pub buffers: Vec<PlatformIoVec>,
+    pub(crate) buffers: Vec<PlatformIoVec>,
+    /// The collected elements, in order. Rooted (and their backing stores
+    /// pinned) for the lifetime of an async operation; see [`Self::release`].
+    pub(crate) views: Vec<JSValue>,
+    pinned: bool,
 }
 
 impl VectorArrayBuffer {
-    pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
-        self.value
+    /// Release the per-element roots and pins taken by `from_js(.., pin: true)`.
+    /// Must run on the JS thread, exactly once, after the I/O completes.
+    pub(crate) fn release(&mut self) {
+        if !self.pinned {
+            return;
+        }
+        self.pinned = false;
+        for view in self.views.drain(..) {
+            view.unpin_array_buffer();
+            view.unprotect();
+        }
     }
 }
 
+unsafe extern "C" {
+    fn Bun__JSArray__collectBufferSpans(
+        global_object: &JSGlobalObject,
+        value: JSValue,
+        pin_buffers: bool,
+        ctx: *mut std::ffi::c_void,
+        append: unsafe extern "C" fn(
+            ctx: *mut std::ffi::c_void,
+            element: JSValue,
+            data: *mut u8,
+            byte_len: usize,
+        ),
+    ) -> i32;
+}
+
+unsafe extern "C" fn append_buffer_span(
+    ctx: *mut std::ffi::c_void,
+    element: JSValue,
+    data: *mut u8,
+    byte_len: usize,
+) {
+    // SAFETY: `ctx` is the `&mut VectorArrayBuffer` passed to
+    // `Bun__JSArray__collectBufferSpans` by `from_js` below, alive for the
+    // duration of the call.
+    let out = unsafe { &mut *ctx.cast::<VectorArrayBuffer>() };
+    let slice: &mut [u8] = if data.is_null() || byte_len == 0 {
+        &mut []
+    } else {
+        // SAFETY: `data..data + byte_len` is the byte range of `element`'s
+        // backing store, valid and unaliased for the duration of the callback.
+        unsafe { std::slice::from_raw_parts_mut(data, byte_len) }
+    };
+    out.buffers.push(bun_sys::platform_iovec_create(slice));
+    out.views.push(element);
+}
+
 impl VectorArrayBuffer {
-    pub fn from_js(global_object: &JSGlobalObject, val: JSValue) -> JsResult<VectorArrayBuffer> {
-        if !val.js_type().is_array_like() {
-            return Err(
-                global_object.throw_invalid_arguments(format_args!("Expected ArrayBufferView[]"))
-            );
-        }
-
-        let mut bufferlist: Vec<PlatformIoVec> = Vec::new();
-        let mut i: usize = 0;
-        let len = val.get_length(global_object)? as usize;
-        bufferlist.reserve_exact(len);
-
-        while i < len {
-            let element = val.get_index(global_object, i as u32)?;
-
-            if !element.is_cell() {
-                return Err(global_object
-                    .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
-            }
-
-            let Some(mut array_buffer) = element.as_array_buffer(global_object) else {
-                return Err(global_object
-                    .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
-            };
-
-            let buf = array_buffer.byte_slice_mut();
-            bufferlist.push(bun_sys::platform_iovec_create(buf));
-            i += 1;
-        }
-
-        Ok(VectorArrayBuffer {
+    /// Collect an array of ArrayBufferViews into iovecs. Every element is read
+    /// before any raw pointer is taken, so user code run by an indexed read (a
+    /// getter, a proxy trap) cannot free a backing store that has already been
+    /// captured.
+    ///
+    /// `pin` is required when the spans outlive this call (async I/O): each
+    /// element is rooted and its backing store is pinned against detach until
+    /// [`Self::release`] runs.
+    pub fn from_js(
+        global_object: &JSGlobalObject,
+        val: JSValue,
+        pin: bool,
+    ) -> JsResult<VectorArrayBuffer> {
+        let mut out = VectorArrayBuffer {
             value: val,
-            buffers: bufferlist,
-        })
+            buffers: Vec::new(),
+            views: Vec::new(),
+            pinned: false,
+        };
+        bun_jsc::validation_scope!(scope, global_object);
+        // SAFETY: `out` outlives the call; the callback only dereferences the
+        // ctx pointer it is handed.
+        let status = unsafe {
+            Bun__JSArray__collectBufferSpans(
+                global_object,
+                val,
+                pin,
+                (&raw mut out).cast(),
+                append_buffer_span,
+            )
+        };
+        scope.assert_exception_presence_matches(status == -1);
+        if pin {
+            // The C++ side already pinned each backing store; root the views
+            // themselves so a getter-returned element that is not reachable
+            // from `value` survives until completion. Set `pinned` even on
+            // failure so `release()` balances the elements collected before
+            // the error.
+            out.pinned = true;
+            for view in &out.views {
+                view.protect();
+            }
+        }
+        match status {
+            0 => Ok(out),
+            -1 => {
+                out.release();
+                Err(jsc::JsError::Thrown)
+            }
+            2 => {
+                out.release();
+                Err(global_object.throw_out_of_memory())
+            }
+            _ => {
+                out.release();
+                Err(global_object
+                    .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")))
+            }
+        }
     }
 }
 
@@ -1457,7 +1482,9 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
             return Ok(None);
         }
 
-        if !value.is_string() {
+        // Node gates on `typeof value === 'string'`, so a `new String(...)`
+        // wrapper falls through to the number-only validator.
+        if !value.is_string_literal() {
             return Err(ctx.throw_invalid_argument_type_value(b"mode", b"number", value));
         }
 
@@ -1469,32 +1496,39 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 
         let mut zig_str = ZigString::EMPTY;
         value.to_zig_string(&mut zig_str, ctx)?;
-        let mut slice = zig_str.slice();
-        if slice.starts_with(b"0o") {
-            slice = &slice[2..];
+        // `to_slice()` handles both storage forms: the 8-bit-only `slice()`
+        // would misread a UTF-16 buffer, and JSC can store pure-ASCII content
+        // 16-bit, so bitness cannot be used to pre-filter.
+        let utf8 = zig_str.to_slice();
+        let slice = utf8.slice();
+
+        // Node validates mode strings against /^[0-7]+$/ before parsing.
+        if slice.is_empty() || !slice.iter().all(|b| (b'0'..=b'7').contains(b)) {
+            let actual = JSGlobalObject::inspect_for_error_message(ctx, value)?;
+            return Err(ctx
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}",
+                        actual
+                    ),
+                )
+                .throw());
         }
 
-        // TODO(port): std.fmt.parseInt over &[u8] — need byte-slice radix parser in bun_core
-        match strings::parse_int::<Mode>(slice, 8) {
-            Ok(v) => v as u32,
-            Err(_) => {
-                let mut formatter = jsc::console_object::Formatter::new(ctx);
-                // formatter.deinit() on Drop
-                return Err(ctx.throw_value(
-                    ctx.err(
-                        jsc::ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}",
-                            value.to_fmt(&mut formatter)
-                        ),
-                    )
-                    .to_js(),
-                ));
-            }
-        }
+        // Node range-checks the parsed octal string with the same validateUint32
+        // as numeric modes (> u32::MAX is ERR_OUT_OF_RANGE). `slice` is already
+        // [0-7]+, so the only parse error is Overflow; u64::MAX stays out of range.
+        let parsed = strings::parse_int::<u64>(slice, 8).unwrap_or(u64::MAX);
+        validators::validate_uint32(
+            ctx,
+            JSValue::js_number_from_uint64(parsed),
+            format_args!("mode"),
+            false,
+        )?
     };
 
-    Ok(Some((mode_int & 0o777) as Mode))
+    Ok(Some(mode_int as Mode))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1505,11 +1539,11 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 // `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
 pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
-// PORT NOTE: Zig copies these tagged unions by value freely; the Rust port adds
-// `Drop` for the path-owning variants, so an explicit `dupe()` is provided for
+// The path-owning variants have
+// `Drop`, so an explicit `dupe()` is provided for
 // callers (Blob, Store::File) that need a fresh copy. Ref-counting variants are
 // bumped where the underlying type supports it; otherwise we bitwise-copy
-// (matching Zig semantics) and leave proper ref-counting to a later pass.
+// and leave proper ref-counting to a later pass.
 
 impl PathOrFdExt for PathOrFileDescriptor {
     fn from_js(
@@ -1538,7 +1572,7 @@ impl PathOrFdExt for PathOrFileDescriptor {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Non-exhaustive enum in Zig (`enum(c_int) { ... _ }`) → newtype over c_int.
+/// Non-exhaustive set of flag values; newtype over c_int.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct FileSystemFlags(pub c_int);
@@ -1550,19 +1584,18 @@ pub enum FileSystemFlagsKind {
 }
 
 impl FileSystemFlags {
-    // PORT NOTE: `pub type TagType = c_int;` would be an inherent associated
+    // `pub type TagType = c_int;` would be an inherent associated
     // type (unstable). Dropped — callers use `c_int` directly.
 
-    // Named variants from the Zig enum:
     /// Open file for appending. The file is created if it does not exist.
-    pub const A: Self = Self(O::APPEND | O::WRONLY | O::CREAT);
+    pub(crate) const A: Self = Self(O::APPEND | O::WRONLY | O::CREAT);
     /// Open file for reading. An exception occurs if the file does not exist.
-    pub const R: Self = Self(O::RDONLY);
+    pub(crate) const R: Self = Self(O::RDONLY);
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    pub const W: Self = Self(O::WRONLY | O::CREAT);
+    pub(crate) const W: Self = Self(O::TRUNC | O::CREAT | O::WRONLY);
 
     #[inline]
-    pub fn as_int(self) -> c_int {
+    pub(crate) fn as_int(self) -> c_int {
         self.0
     }
 }
@@ -1570,19 +1603,13 @@ impl FileSystemFlags {
 impl FileSystemFlags {
     pub fn from_js(ctx: &JSGlobalObject, val: JSValue) -> JsResult<Option<FileSystemFlags>> {
         if val.is_number() {
-            if !val.is_int32() {
-                return Err(ctx.throw_value(
-                    ctx.err(
-                        jsc::ErrorCode::OUT_OF_RANGE,
-                        format_args!(
-                            "The value of \"flags\" is out of range. It must be an integer. Received {}",
-                            val.as_number()
-                        ),
-                    )
-                    .to_js(),
-                ));
-            }
-            let number = val.coerce_to_i32(ctx)?;
+            // Match Node's stringToFlags, which runs validateInt32 on a numeric
+            // `flags`: accept any integer-valued number in the int32 range,
+            // regardless of whether JSC boxed it as an int32 or a double. Go's
+            // `syscall/js` bridge reads arguments out of wasm memory with
+            // getFloat64, so valid flags like 578 (O_RDWR|O_CREAT|O_TRUNC)
+            // arrive double-boxed and must not be rejected.
+            let number = validators::validate_int32(ctx, val, "flags", None, None)?;
             let flags = number.max(0);
             // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
             // use the platform's native MSVC/libuv values which differ from the
@@ -1598,67 +1625,34 @@ impl FileSystemFlags {
             }
         }
 
-        let js_type = val.js_type();
-        if js_type.is_string_like() {
-            let str = val.get_zig_string(ctx)?;
-            if str.len == 0 {
-                return Err(ctx.throw_invalid_arguments(format_args!(
-                    "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                )));
-            }
-            // it's definitely wrong when the string is super long
-            else if str.len > 12 {
-                return Err(ctx.throw_invalid_arguments(format_args!(
-                    "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                    str
-                )));
-            }
-
-            let flags: Option<i32> = 'brk: {
-                // PERF(port): was comptime bool dispatch (`inline else`) — profile in Phase B
-                if str.is_16bit() {
-                    let chars = str.utf16_slice_aligned();
-                    if (chars[0] as u8).is_ascii_digit() {
-                        // node allows "0o644" as a string :(
-                        let slice = str.to_slice();
-                        // slice.deinit() on Drop
-                        // Zig: `@as(i32, @intCast(...))` — release builds wrap.
-                        break 'brk strings::parse_int::<Mode>(slice.slice(), 10)
-                            .ok()
-                            .map(|v| v as i32);
-                    }
-                } else {
-                    let chars = str.slice();
-                    if chars[0].is_ascii_digit() {
-                        break 'brk strings::parse_int::<Mode>(chars, 10).ok().map(|v| v as i32);
-                    }
-                }
-
-                // PORT NOTE: Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
-                // Convert the ZigString (≤12 bytes here) to a UTF-8 slice and
-                // dispatch through the length-gated match below.
-                let key_slice = str.to_slice();
-                break 'brk lookup_file_system_flags(key_slice.slice());
-            };
-
-            let Some(flags) = flags else {
-                return Err(ctx.throw_invalid_arguments(format_args!(
-                    "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                    str
-                )));
-            };
-
-            return Ok(Some(FileSystemFlags(flags)));
+        if val.is_undefined_or_null() {
+            return Ok(None);
         }
 
-        Ok(None)
+        // Node switches on the value with strict equality, so only primitive
+        // strings can match; `new String("w")` and every other object throw.
+        if val.is_string_literal() {
+            let str = val.get_zig_string(ctx)?;
+            // The longest valid flag string is 3 bytes ("as+" etc).
+            if str.len >= 1 && str.len <= 3 {
+                let key_slice = str.to_slice();
+                if let Some(flags) = FILE_SYSTEM_FLAGS_MAP.get(key_slice.slice()).copied() {
+                    return Ok(Some(FileSystemFlags(flags)));
+                }
+            }
+        }
+
+        let actual = JSGlobalObject::inspect_for_error_message(ctx, val)?;
+        Err(ctx
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!("The argument 'flags' is invalid. Received {}", actual),
+            )
+            .throw())
     }
 
     /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
-    // PORT NOTE: Zig took `comptime kind: enum { access, copy_file }`; lowered to a
-    // runtime arg here so callers (`node_fs.rs`) can pass it positionally without
-    // needing `adt_const_params` const-generic dispatch.
-    pub fn from_js_number_only(
+    pub(crate) fn from_js_number_only(
         global: &JSGlobalObject,
         value: JSValue,
         kind: FileSystemFlagsKind,
@@ -1686,7 +1680,6 @@ impl FileSystemFlags {
                 return Err(global
                     .err(
                         jsc::ErrorCode::OUT_OF_RANGE,
-                        // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
                         format_args!("mode is out of range: >= 0 and <= 7"),
                     )
                     .throw());
@@ -1698,7 +1691,6 @@ impl FileSystemFlags {
                 return Err(global
                     .err(
                         jsc::ErrorCode::OUT_OF_RANGE,
-                        // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
                         format_args!("mode is out of range: >= 0 and <= 7"),
                     )
                     .throw());
@@ -1708,66 +1700,33 @@ impl FileSystemFlags {
     }
 }
 
-// PERF(port): Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
-// Phase A lowered this to a 44-entry `phf::Map`, but the keys are tiny (1..=3
-// bytes) and cluster heavily by length (6/22/16). phf's hash+probe is dominated
-// by the SipHash of the input slice; a length-gated byte match rejects on a
-// single `usize` compare and lowers the inner arms to 1-2 register compares.
-// Same pattern as `clap::find_param` (12577e958d71).
-//
-// 2-level dispatch: `len` → `(b0, b1)` tuple. The original 44 keys are 22
-// distinct values × {lower, UPPER}; mixed case (e.g. "Rs") is *not* accepted,
-// so each arm lists both case variants explicitly rather than lowercasing.
-// Every length-3 key ends in `'+'`, so that byte is checked once up front and
-// the len-3 arm reuses the same `(b0, b1)` table as len-2 with RDWR semantics.
-#[inline]
-fn lookup_file_system_flags(bytes: &[u8]) -> Option<i32> {
-    match bytes.len() {
-        1 => match bytes[0] {
-            b'r' | b'R' => Some(O::RDONLY),
-            b'w' | b'W' => Some(O::TRUNC | O::CREAT | O::WRONLY),
-            b'a' | b'A' => Some(O::APPEND | O::CREAT | O::WRONLY),
-            _ => None,
-        },
-        2 => match (bytes[0], bytes[1]) {
-            (b'r', b'+') | (b'R', b'+') => Some(O::RDWR),
-            (b'w', b'+') | (b'W', b'+') => Some(O::TRUNC | O::CREAT | O::RDWR),
-            (b'a', b'+') | (b'A', b'+') => Some(O::APPEND | O::CREAT | O::RDWR),
-            (b'r', b's') | (b'R', b'S') | (b's', b'r') | (b'S', b'R') => Some(O::RDONLY | O::SYNC),
-            (b'w', b'x') | (b'W', b'X') | (b'x', b'w') | (b'X', b'W') => {
-                Some(O::TRUNC | O::CREAT | O::WRONLY | O::EXCL)
-            }
-            (b'a', b'x') | (b'A', b'X') | (b'x', b'a') | (b'X', b'A') => {
-                Some(O::APPEND | O::CREAT | O::WRONLY | O::EXCL)
-            }
-            (b'a', b's') | (b'A', b'S') | (b's', b'a') | (b'S', b'A') => {
-                Some(O::APPEND | O::CREAT | O::WRONLY | O::SYNC)
-            }
-            _ => None,
-        },
-        3 => {
-            // Every 3-byte flag is "<2-byte flag>+".
-            if bytes[2] != b'+' {
-                return None;
-            }
-            match (bytes[0], bytes[1]) {
-                (b'r', b's') | (b'R', b'S') | (b's', b'r') | (b'S', b'R') => {
-                    Some(O::RDWR | O::SYNC)
-                }
-                (b'w', b'x') | (b'W', b'X') | (b'x', b'w') | (b'X', b'W') => {
-                    Some(O::TRUNC | O::CREAT | O::RDWR | O::EXCL)
-                }
-                (b'a', b'x') | (b'A', b'X') | (b'x', b'a') | (b'X', b'A') => {
-                    Some(O::APPEND | O::CREAT | O::RDWR | O::EXCL)
-                }
-                (b'a', b's') | (b'A', b'S') | (b's', b'a') | (b'S', b'A') => {
-                    Some(O::APPEND | O::CREAT | O::RDWR | O::SYNC)
-                }
-                _ => None,
-            }
-        }
-        _ => None,
-    }
+bun_core::comptime_string_map! {
+    /// Node's `stringToFlags` table. Case-sensitive: uppercase spellings
+    /// ("W", "A+", ...) are rejected by Node with ERR_INVALID_ARG_VALUE.
+    static FILE_SYSTEM_FLAGS_MAP: c_int = {
+        b"r" => O::RDONLY,
+        b"w" => O::TRUNC | O::CREAT | O::WRONLY,
+        b"a" => O::APPEND | O::CREAT | O::WRONLY,
+        b"r+" => O::RDWR,
+        b"w+" => O::TRUNC | O::CREAT | O::RDWR,
+        b"a+" => O::APPEND | O::CREAT | O::RDWR,
+        b"rs" => O::RDONLY | O::SYNC,
+        b"sr" => O::RDONLY | O::SYNC,
+        b"wx" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
+        b"xw" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
+        b"ax" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
+        b"xa" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
+        b"as" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
+        b"sa" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
+        b"rs+" => O::RDWR | O::SYNC,
+        b"sr+" => O::RDWR | O::SYNC,
+        b"wx+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
+        b"xw+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
+        b"ax+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
+        b"xa+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
+        b"as+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
+        b"sa+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
+    };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1795,13 +1754,13 @@ pub struct Dirent {
     pub name: bun_core::String,
     pub path: bun_core::String,
     // not publicly exposed
-    pub kind: DirentKind,
+    pub(crate) kind: DirentKind,
 }
 
-// TODO(port): Zig used `std.fs.File.Kind`. std::fs is banned; map to bun_sys::FileKind.
 pub type DirentKind = bun_sys::FileKind;
 
-// TODO(port): move to runtime_sys
+// Externs stay in this crate per PORTING.md §FFI: "If your file has externs
+// and isn't already *_sys, leave them in place".
 // `&JSGlobalObject` / `&mut bun_core::String` are ABI-identical to non-null
 // pointers; `Option<&mut *mut JSString>` uses the niche-optimization layout
 // (`*mut *mut JSString`), so the validity proof lives in the type signature.
@@ -1817,7 +1776,7 @@ unsafe extern "C" {
 }
 
 impl Dirent {
-    pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_constructor(global: &JSGlobalObject) -> JSValue {
         Bun__JSDirentObjectConstructor(global)
     }
 
@@ -1852,7 +1811,7 @@ impl Dirent {
         })
     }
 
-    pub fn to_js_newly_created(
+    pub(crate) fn to_js_newly_created(
         &mut self,
         global_object: &JSGlobalObject,
         previous_jsstring: Option<&mut *mut jsc::JSString>,
@@ -1873,11 +1832,11 @@ impl Dirent {
 
 pub enum PathOrBlob {
     Path(PathOrFileDescriptor),
-    Blob(Blob),
+    Blob(Box<Blob>),
 }
 
 impl PathOrBlob {
-    pub fn from_js_no_copy(
+    pub(crate) fn from_js_no_copy(
         ctx: &JSGlobalObject,
         args: &mut ArgumentsSlice,
     ) -> JsResult<PathOrBlob> {
@@ -1893,14 +1852,7 @@ impl PathOrBlob {
             ));
         };
         if let Some(blob) = arg.as_class_ref::<Blob>() {
-            // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
-            // never `deinit()`. `borrowed_view()` is the sound Rust spelling: it
-            // clones only the `StoreRef` (whose `Drop` balances the +1) and
-            // aliases `name`/`content_type`; `dupe()` would leak both since
-            // `Blob` has no `Drop`. `as_class_ref` is the safe shared-borrow
-            // downcast — the JS wrapper roots the payload while `arg` is on the
-            // stack.
-            return Ok(PathOrBlob::Blob(blob.borrowed_view()));
+            return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
         }
         Err(ctx.throw_invalid_argument_type_value(
             b"destination",
@@ -1909,5 +1861,3 @@ impl PathOrBlob {
         ))
     }
 }
-
-// ported from: src/runtime/node/types.zig

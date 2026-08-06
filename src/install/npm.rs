@@ -1,19 +1,18 @@
 use bun_collections::VecExt;
-use core::ffi::c_void;
 use std::io::Write as _;
 
+use crate::Error;
 use crate::bun_json as JSON;
 use crate::bun_schema::api;
 use bun_alloc::AllocError;
-use bun_collections::{HashMap, StringSet};
-use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
+use bun_collections::{HashMap, IdentityContext, StringSet};
+use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
-use bun_http::{self as http, AsyncHTTP, HTTPClient, HeaderBuilder};
+use bun_http::{self as http, AsyncHTTP, HeaderBuilder};
 use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
-use bun_sys::{self, CloseOnDrop, Fd, File};
-use bun_threading::ThreadPool;
+use bun_sys::{self, Fd, File};
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
@@ -21,8 +20,8 @@ use crate::bin::{self, Bin};
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
 use crate::{
-    Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, IdentityContext, PackageManager,
-    PackageNameHash, VersionSlice, initialize_mini_store as initialize_store,
+    Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
+    VersionSlice, initialize_mini_store as initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -84,12 +83,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
         write!(
             &mut print_buf,
-            "{} {} {} workspaces/{}{}{}",
+            "{} {} {} workspaces/false{}{}",
             Global::user_agent,
             Global::os_name,
             Global::arch_name,
-            // TODO: figure out how npm determines workspaces=true
-            false,
             if ci_name.is_some() { " ci/" } else { "" },
             bstr::BStr::new(ci_name.unwrap_or(b"")),
         )
@@ -121,11 +118,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
         write!(
             &mut print_buf,
-            "{} {} {} workspaces/{}{}{}",
+            "{} {} {} workspaces/false{}{}",
             Global::user_agent,
             Global::os_name,
             Global::arch_name,
-            false,
             if ci_name.is_some() { " ci/" } else { "" },
             bstr::BStr::new(ci_name.unwrap_or(b"")),
         )
@@ -147,9 +143,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let mut response_buf = MutableString::init(1024)?;
 
     // `print_buf` stays live on this frame until after `req.send_sync()`
-    // returns (Zig: `defer print_buf.deinit()`, npm.zig:25). `init_sync`
-    // borrows the URL/header buffers for the duration of the synchronous
-    // request only.
+    // returns. `init_sync` borrows the URL/header buffers for the duration of
+    // the synchronous request only.
     let url = URL::parse(&print_buf);
 
     // `headers.allocate()` set `content.ptr` to a valid `content.len`-byte
@@ -163,42 +158,41 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         url,
         headers.entries,
         header_buf,
-        &raw mut response_buf,
         b"",
         None,
         None,
         http::FetchRedirect::Follow,
     );
 
-    let res = match req.send_sync() {
+    let res = match req.send_sync(&mut response_buf) {
         Ok(res) => res,
-        Err(e) if e == err!("OutOfMemory") => return Err(WhoamiError::OutOfMemory),
+        Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
+            return Err(WhoamiError::OutOfMemory);
+        }
         Err(e) => {
             Output::err(e, "whoami request failed to send", format_args!(""));
             Global::crash();
         }
     };
 
-    if res.status_code >= 400 {
+    if res.status_code() >= 400 {
         const OTP_RESPONSE: bool = false;
         response_error::<OTP_RESPONSE>(&req, &res, None, &mut response_buf)?;
     }
 
-    if let Some(notice) = res
-        .headers
-        .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
-    {
+    if let Some(notice) = res.header_if_other_is_absent(b"npm-notice", b"x-local-cache") {
         Output::print_error("\n");
-        Output::note(format_args!("{}", bstr::BStr::new(notice)));
+        bun_core::note!("{}", bstr::BStr::new(notice));
         Output::flush();
     }
 
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
-    let bump = bun_alloc::Arena::new();
-    let json = match JSON::parse_utf8(&source, &mut log, &bump) {
+    let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
         Ok(j) => j,
-        Err(e) if e == err!("OutOfMemory") => return Err(WhoamiError::OutOfMemory),
+        Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
+            return Err(WhoamiError::OutOfMemory);
+        }
         Err(e) => {
             Output::err(
                 e,
@@ -208,19 +202,22 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
             Global::crash();
         }
     };
+    let json = parsed.root;
 
-    let Some(username) = json.get(b"username").and_then(|e| e.as_string(&bump)) else {
+    let username_expr = json.get(b"username");
+    let Some(username) = username_expr
+        .as_ref()
+        .and_then(|e| e.as_utf8_string_literal())
+    else {
         // no username, invalid auth probably
         return Err(WhoamiError::ProbablyInvalidAuth);
     };
     Ok(username.to_vec())
 }
 
-// TODO(b2): body gated — picohttp::Response field shape drift
-
 pub fn response_error<const OTP_RESPONSE: bool>(
     req: &AsyncHTTP,
-    res: &picohttp::Response,
+    res: &bun_http::HTTPResponseMetadata,
     // `<name>@<version>`
     pkg_id: Option<(&[u8], &[u8])>,
     response_body: &mut MutableString,
@@ -228,47 +225,54 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     let message: Option<Vec<u8>> = 'message: {
         let mut log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
-        let bump = bun_alloc::Arena::new();
-        let json = match JSON::parse_utf8(&source, &mut log, &bump) {
+        let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
             Ok(j) => j,
-            Err(e) if e == err!("OutOfMemory") => return Err(AllocError),
+            Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
+                return Err(AllocError);
+            }
             Err(_) => break 'message None,
         };
 
-        let Some(error) = json.get(b"error").and_then(|e| e.as_string(&bump)) else {
+        let error_expr = parsed.root.get(b"error");
+        let Some(error) = error_expr.as_ref().and_then(|e| e.as_utf8_string_literal()) else {
             break 'message None;
         };
         Some(error.to_vec())
     };
 
-    Output::pretty_errorln(format_args!(
+    bun_core::pretty_errorln!(
         "\n<red>{}<r>{}{}: {}\n",
-        res.status_code,
-        if !res.status.is_empty() { " " } else { "" },
-        bstr::BStr::new(&res.status),
-        bun_fmt::redacted_npm_url(&req.url.href),
-    ));
+        res.status_code(),
+        if !res.status_text().is_empty() {
+            " "
+        } else {
+            ""
+        },
+        bstr::BStr::new(res.status_text()),
+        bun_fmt::redacted_npm_url(req.url.href),
+    );
 
-    if res.status_code == 404 && pkg_id.is_some() {
-        let (package_name, package_version) = pkg_id.unwrap();
-        Output::pretty_errorln(format_args!(
+    if res.status_code() == 404
+        && let Some((package_name, package_version)) = pkg_id
+    {
+        bun_core::pretty_errorln!(
             "\n - '{}@{}' does not exist in this registry",
             bstr::BStr::new(package_name),
             bstr::BStr::new(package_version),
-        ));
+        );
     } else if let Some(msg) = &message {
         if OTP_RESPONSE {
-            if res.status_code == 401
+            if res.status_code() == 401
                 && strings::contains(
                     msg,
                     b"You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.",
                 )
             {
-                Output::pretty_errorln("\n - Received invalid OTP");
+                bun_core::pretty_errorln!("\n - Received invalid OTP");
                 Global::crash();
             }
         }
-        Output::pretty_errorln(format_args!("\n - {}", bstr::BStr::new(msg)));
+        bun_core::pretty_errorln!("\n - {}", bstr::BStr::new(msg));
     }
 
     Global::crash();
@@ -287,11 +291,7 @@ pub mod registry {
     pub const DEFAULT_URL: &str = bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL;
     pub static DEFAULT_URL_HASH: std::sync::LazyLock<u64> =
         std::sync::LazyLock::new(bun_install_types::NodeLinker::npm::Registry::default_url_hash);
-    pub fn default_url_hash() -> u64 {
-        *DEFAULT_URL_HASH
-    }
 
-    // Zig: `ObjectPool(MutableString, MutableString.init2048, true, 8)`.
     // `MutableString: ObjectPoolType` (init = init2048) is provided in
     // bun_string; the `object_pool!` macro generates the per-monomorphization
     // thread-local storage so `BodyPool::get()` doesn't hit `UnwiredStorage`'s
@@ -322,7 +322,7 @@ pub mod registry {
             bun_semver::semver_string::Builder::string_hash(str)
         }
 
-        pub fn get_name(name: &[u8]) -> &[u8] {
+        pub(crate) fn get_name(name: &[u8]) -> &[u8] {
             if name.is_empty() || name[0] != b'@' {
                 return name;
             }
@@ -334,7 +334,7 @@ pub mod registry {
             &name[1..]
         }
 
-        pub fn from_api(
+        pub(crate) fn from_api(
             name: &[u8],
             registry_: api::NpmRegistry,
             env: &mut DotEnv,
@@ -351,10 +351,9 @@ pub mod registry {
                 }
             }
 
-            // PORT NOTE: Zig's `URL.parse(registry.url)` borrows the input
-            // `[]const u8`; here `url` borrows the owned `registry_url` buffer
-            // for the duration of parsing. The final href is moved into
-            // `Scope.url: OwnedURL` (owned `Box<[u8]>`).
+            // `url` borrows the owned `registry_url` buffer for the duration
+            // of parsing. The final href is moved into `Scope.url: OwnedURL`
+            // (owned `Box<[u8]>`).
             let registry_url: Box<[u8]> = core::mem::take(&mut registry.url);
             let mut url = URL::parse(&registry_url);
             let mut auth: &[u8] = b"";
@@ -362,7 +361,7 @@ pub mod registry {
             let mut needs_normalize = false;
 
             // Backing storage for `user`/`auth` when synthesized from
-            // username:password (Zig used a single `default_allocator.alloc`).
+            // username:password.
             let mut output_buf_owned: Box<[u8]> = Box::default();
 
             if registry.token.is_empty() {
@@ -372,8 +371,8 @@ pub mod registry {
                         // defer { url.pathname = pathname; url.path = pathname; } — applied below
                         let mut needs_to_check_slash = true;
                         while let Some(colon) = strings::last_index_of_char(pathname, b':') {
-                            let mut segment = &pathname[colon as usize + 1..];
-                            pathname = &pathname[..colon as usize];
+                            let mut segment = &pathname[colon + 1..];
+                            pathname = &pathname[..colon];
                             needs_to_check_slash = false;
                             needs_normalize = true;
                             if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
@@ -390,15 +389,15 @@ pub mod registry {
                             // Bearer Token
                             if segment == b"_authToken" {
                                 registry.token = value.into();
-                                url.pathname = pathname.into();
-                                url.path = pathname.into();
+                                url.pathname = pathname;
+                                url.path = pathname;
                                 break 'outer;
                             }
 
                             if segment == b"_auth" {
                                 auth = value;
-                                url.pathname = pathname.into();
-                                url.path = pathname.into();
+                                url.pathname = pathname;
+                                url.path = pathname;
                                 break 'outer;
                             }
 
@@ -416,7 +415,7 @@ pub mod registry {
                         // In this case, there is only one.
                         if needs_to_check_slash {
                             if let Some(last_slash) = strings::last_index_of_char(pathname, b'/') {
-                                let remain = &pathname[last_slash as usize + 1..];
+                                let remain = &pathname[last_slash + 1..];
                                 if let Some(eql_i) = strings::index_of_char(remain, b'=') {
                                     let segment = &remain[..eql_i as usize];
                                     let value = &remain[eql_i as usize + 1..];
@@ -425,47 +424,47 @@ pub mod registry {
                                     // Bearer Token
                                     if segment == b"_authToken" {
                                         registry.token = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
                                     if segment == b"_auth" {
                                         auth = value;
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
                                     if segment == b"username" {
                                         registry.username = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
                                     if segment == b"_password" {
                                         registry.password = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
                                 }
                             }
                         }
 
-                        // PORT NOTE: reshaped for borrowck — Zig's `defer { url.pathname = pathname; url.path = pathname; }`
-                        // is applied at every `break 'outer` above and once more here at fallthrough.
-                        url.pathname = pathname.into();
-                        url.path = pathname.into();
+                        // The pathname write-back is applied at every `break 'outer`
+                        // above and once more here at fallthrough.
+                        url.pathname = pathname;
+                        url.path = pathname;
                     }
 
                     registry.username = env.get_auto(&registry.username).into();
@@ -503,7 +502,7 @@ pub mod registry {
             let final_href: Box<[u8]> = if needs_normalize {
                 url.href_without_auth()
             } else {
-                // PORT NOTE: reshaped for borrowck — `url` (borrowing
+                // reshaped for borrowck — `url` (borrowing
                 // `registry_url`) is dead on this branch (every path that
                 // mutated `url.pathname` also set `needs_normalize = true`).
                 registry_url
@@ -522,16 +521,16 @@ pub mod registry {
         }
     }
 
-    // TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
-    pub type Map = HashMap<u64, Scope>;
+    // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.
+    pub type Map = HashMap<u64, Scope, bun_collections::IdentityContext<u64>>;
 
-    pub enum PackageVersionResponse {
+    pub(crate) enum PackageVersionResponse {
         Cached(PackageManifest),
         Fresh(PackageManifest),
         NotFound,
     }
 
-    pub fn get_package_metadata(
+    pub(crate) fn get_package_metadata(
         scope: &Scope,
         response: picohttp::Response,
         body: &[u8],
@@ -541,13 +540,15 @@ pub mod registry {
         package_manager: &mut PackageManager,
         is_extended_manifest: bool,
     ) -> Result<PackageVersionResponse, Error> {
-        // TODO(port): narrow error set
         match response.status_code {
-            400 => return Err(err!("BadRequest")),
-            429 => return Err(err!("TooManyRequests")),
+            400 => return Err(crate::Error::BadRequest),
+            429 => return Err(crate::Error::TooManyRequests),
             404 => return Ok(PackageVersionResponse::NotFound),
-            500..=599 => return Err(err!("HTTPInternalServerError")),
-            304 => return Ok(PackageVersionResponse::Cached(loaded_manifest.unwrap())),
+            500..=599 => return Err(crate::Error::HTTPInternalServerError),
+            304 => match loaded_manifest {
+                Some(manifest) => return Ok(PackageVersionResponse::Cached(manifest)),
+                None => return Err(crate::Error::UnexpectedNotModified),
+            },
             _ => {}
         }
 
@@ -576,14 +577,14 @@ pub mod registry {
                     &package,
                     scope,
                     package_manager.get_temporary_directory().handle.fd,
-                    package_manager.get_cache_directory().fd,
+                    package_manager.get_cache_directory(),
                 );
             }
 
             return Ok(PackageVersionResponse::Fresh(package));
         }
 
-        Err(err!("PackageFailedToParse"))
+        Err(crate::Error::PackageFailedToParse)
     }
 }
 
@@ -594,21 +595,21 @@ pub use registry as Registry;
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct DistTagMap {
-    pub tags: ExternalStringList,
-    pub versions: VersionSlice,
+    pub(crate) tags: ExternalStringList,
+    pub(crate) versions: VersionSlice,
 }
 
-pub type PackageVersionList = ExternalSlice<PackageVersion>;
+pub(crate) type PackageVersionList = ExternalSlice<PackageVersion>;
 
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct ExternVersionMap {
-    pub keys: VersionSlice,
-    pub values: PackageVersionList,
+    pub(crate) keys: VersionSlice,
+    pub(crate) values: PackageVersionList,
 }
 
 impl ExternVersionMap {
-    pub fn find_key_index(self, buf: &[Semver::Version], find: Semver::Version) -> Option<u32> {
+    fn find_key_index(self, buf: &[Semver::Version], find: Semver::Version) -> Option<u32> {
         for (i, key) in self.keys.get(buf).iter().enumerate() {
             if key.eql(find) {
                 return Some(i as u32);
@@ -630,14 +631,14 @@ pub use bun_install_types::resolver_hooks::{
     Architecture, Libc, Negatable, NegatableEnum, NegatableExt, OperatingSystem,
 };
 
-/// Port of `Negatable(T).fromJson` (src/install/npm.zig). Lives here (not in
-/// `bun_install_types`) because `bun_ast::Expr` is not reachable from that crate.
-pub fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result<T, AllocError> {
+/// Lives here (not in `bun_install_types`) because `bun_ast::Expr` is not
+/// reachable from that crate.
+pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result<T, AllocError> {
     let mut this = T::NONE.negatable();
     if let JSON::ExprData::EArray(a) = &expr.data {
         for item in a.items.slice() {
             // JSON parsed via `parse_utf8` always yields UTF-8 EStrings,
-            // so no transcode allocator is needed (Zig: asString(allocator)).
+            // so no transcode allocator is needed.
             if let Some(value) = item.as_utf8_string_literal() {
                 this.apply(value);
             }
@@ -649,6 +650,23 @@ pub fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result<T, All
     Ok(this.combine())
 }
 
+pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonValue) -> T {
+    let mut this = T::NONE.negatable();
+    match value {
+        JSON::E::JsonValue::Array(arr) => {
+            for item in arr.get().items() {
+                if let Some(value) = item.as_str() {
+                    this.apply(value);
+                }
+            }
+        }
+        JSON::E::JsonValue::String(str) => this.apply(str.slice()),
+        _ => {}
+    }
+
+    this.combine()
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -657,63 +675,74 @@ pub struct PackageVersion {
     /// `"integrity"` field || `"shasum"` field
     /// https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#dist
     // Splitting this into it's own array ends up increasing the final size a little bit.
-    pub integrity: Integrity,
+    pub(crate) integrity: Integrity,
+
+    // Explicit padding so this struct has no implicit (uninitialized) padding
+    // bytes — `Serializer::write_array` reinterprets the whole slice as `&[u8]`,
+    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
+    // fields, `Default` zero-fills them and every byte of the struct is
+    // initialized. Layout (size=240, align=8) is unchanged; see the
+    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
+    pub(crate) _padding_after_integrity: [u8; 3],
 
     /// "dependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#dependencies)
-    pub dependencies: ExternalStringMap,
+    pub(crate) dependencies: ExternalStringMap,
 
     /// `"optionalDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies)
-    pub optional_dependencies: ExternalStringMap,
+    pub(crate) optional_dependencies: ExternalStringMap,
 
     /// `"peerDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependencies)
     /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items are optional
-    pub peer_dependencies: ExternalStringMap,
+    pub(crate) peer_dependencies: ExternalStringMap,
 
     /// `"devDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#devdependencies)
     /// We deliberately choose not to populate this field.
     /// We keep it in the data layout so that if it turns out we do need it, we can add it without invalidating everyone's history.
-    pub dev_dependencies: ExternalStringMap,
+    pub(crate) dev_dependencies: ExternalStringMap,
 
-    pub bundled_dependencies: ExternalPackageNameHashList,
+    pub(crate) bundled_dependencies: ExternalPackageNameHashList,
 
     /// `"bin"` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
-    pub bin: Bin,
+    pub(crate) bin: Bin,
 
     /// `"engines"` field in package.json
-    pub engines: ExternalStringMap,
+    pub(crate) engines: ExternalStringMap,
 
     /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependenciesmeta)
     /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items of `peer_dependencies` are optional
-    pub non_optional_peer_dependencies_start: u32,
+    pub(crate) non_optional_peer_dependencies_start: u32,
+    pub(crate) _padding_before_man_dir: [u8; 4],
 
-    pub man_dir: ExternalString,
+    pub(crate) man_dir: ExternalString,
 
     /// can be empty!
     /// When empty, it means that the tarball URL can be inferred
-    pub tarball_url: ExternalString,
+    pub(crate) tarball_url: ExternalString,
 
-    pub unpacked_size: u32,
-    pub file_count: u32,
+    pub(crate) unpacked_size: u32,
+    pub(crate) file_count: u32,
 
     /// `"os"` field in package.json
-    pub os: OperatingSystem,
+    pub(crate) os: OperatingSystem,
     /// `"cpu"` field in package.json
-    pub cpu: Architecture,
+    pub(crate) cpu: Architecture,
 
     /// `"libc"` field in package.json
-    pub libc: Libc,
+    pub(crate) libc: Libc,
 
     /// `hasInstallScript` field in registry API.
-    pub has_install_script: bool,
+    pub(crate) has_install_script: bool,
+    pub(crate) _padding_tail: [u8; 2],
 
     /// Unix timestamp when this version was published (0 if unknown)
-    pub publish_timestamp_ms: f64,
+    pub(crate) publish_timestamp_ms: f64,
 }
 
 impl Default for PackageVersion {
     fn default() -> Self {
         Self {
             integrity: Integrity::default(),
+            _padding_after_integrity: [0; 3],
             dependencies: ExternalStringMap::default(),
             optional_dependencies: ExternalStringMap::default(),
             peer_dependencies: ExternalStringMap::default(),
@@ -722,6 +751,7 @@ impl Default for PackageVersion {
             bin: Bin::default(),
             engines: ExternalStringMap::default(),
             non_optional_peer_dependencies_start: 0,
+            _padding_before_man_dir: [0; 4],
             man_dir: ExternalString::default(),
             tarball_url: ExternalString::default(),
             unpacked_size: 0,
@@ -730,19 +760,19 @@ impl Default for PackageVersion {
             cpu: Architecture::ALL,
             libc: Libc::NONE,
             has_install_script: false,
+            _padding_tail: [0; 2],
             publish_timestamp_ms: 0.0,
         }
     }
 }
 
 impl PackageVersion {
-    pub fn all_dependencies_bundled(&self) -> bool {
+    pub(crate) fn all_dependencies_bundled(&self) -> bool {
         self.bundled_dependencies.is_invalid()
     }
 
-    /// Port of Zig's `@field(package_version, group.field)` reflection used by
-    /// `Package.fromNPM` to walk dependency groups by name.
-    pub fn dep_group(&self, field: &[u8]) -> ExternalStringMap {
+    /// Used by `Package.fromNPM` to walk dependency groups by name.
+    pub(crate) fn dep_group(&self, field: &[u8]) -> ExternalStringMap {
         match field {
             b"dependencies" => self.dependencies,
             b"dev_dependencies" => self.dev_dependencies,
@@ -753,17 +783,51 @@ impl PackageVersion {
     }
 }
 
-// Layout pin (mirrors Zig `comptime { if (@sizeOf(Npm.PackageVersion) != 240) @compileError(...) }`).
-// `PackageVersion` is `std.mem.sliceAsBytes`-serialised into the on-disk
-// `.npm` manifest cache, so its size and field offsets are an ABI contract
-// with every Zig-built Bun that wrote a cache entry. A mismatch here means a
-// cross-runtime cache read will mis-slice — fail loudly at compile time
-// instead. (Full per-type asserts live in `padding_checker::layout_asserts`.)
+// Layout pin. `PackageVersion` is byte-serialised into the on-disk `.npm`
+// manifest cache, so its size and field offsets are an ABI contract with
+// every previously released Bun that wrote a cache entry. A mismatch here
+// means a cross-version cache read will mis-slice — fail loudly at compile
+// time instead. (Full per-type asserts live in `padding_checker::layout_asserts`.)
 const _: () = assert!(
     core::mem::size_of::<PackageVersion>() == 240,
     "Npm.PackageVersion layout drifted from Zig spec (expected 240 bytes); \
      bump PackageManifest::Serializer::VERSION if intentional",
 );
+
+// Compile-time proof that the explicit `_padding_*` fields above leave no
+// implicit padding gaps in `PackageVersion` (so `&[PackageVersion] as &[u8]`
+// in `Serializer::write_array` reads only initialized bytes). Mirrors the
+// `NpmPackage` checks below and `padding_checker.rs`.
+const _: () = {
+    use core::mem::{offset_of, size_of};
+    // gap between `integrity` (size 65, align 1) and `dependencies` (align 4 → 68)
+    assert!(
+        offset_of!(PackageVersion, _padding_after_integrity)
+            == offset_of!(PackageVersion, integrity) + size_of::<Integrity>()
+    );
+    assert!(
+        offset_of!(PackageVersion, dependencies)
+            == offset_of!(PackageVersion, _padding_after_integrity) + 3
+    );
+    // gap between `non_optional_peer_dependencies_start` (u32, ends at 180) and `man_dir` (align 8 → 184)
+    assert!(
+        offset_of!(PackageVersion, _padding_before_man_dir)
+            == offset_of!(PackageVersion, non_optional_peer_dependencies_start) + size_of::<u32>()
+    );
+    assert!(
+        offset_of!(PackageVersion, man_dir)
+            == offset_of!(PackageVersion, _padding_before_man_dir) + 4
+    );
+    // gap between `has_install_script` (bool, ends at 230) and `publish_timestamp_ms` (align 8 → 232)
+    assert!(
+        offset_of!(PackageVersion, _padding_tail)
+            == offset_of!(PackageVersion, has_install_script) + size_of::<bool>()
+    );
+    assert!(
+        offset_of!(PackageVersion, publish_timestamp_ms)
+            == offset_of!(PackageVersion, _padding_tail) + 2
+    );
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -771,32 +835,32 @@ const _: () = assert!(
 #[derive(Default, Clone, Copy)]
 pub struct NpmPackage {
     /// HTTP response headers
-    pub last_modified: SemverString,
-    pub etag: SemverString,
+    pub(crate) last_modified: SemverString,
+    pub(crate) etag: SemverString,
 
     /// "modified" in the JSON
-    pub modified: SemverString,
-    pub public_max_age: u32,
+    pub(crate) modified: SemverString,
+    pub(crate) public_max_age: u32,
     // Explicit padding so this struct has no implicit (uninitialized) padding
     // bytes — `Serializer::write` reinterprets the whole struct as `&[u8]`,
     // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
     // fields, `Default` zero-fills them and every byte of the struct is
     // initialized. Layout (size=120, align=8) is unchanged; see the
     // `offset_of!` asserts below and `padding_checker.rs` for the contract.
-    pub _padding_after_max_age: [u8; 4],
+    pub(crate) _padding_after_max_age: [u8; 4],
 
-    pub name: ExternalString,
+    pub(crate) name: ExternalString,
 
-    pub releases: ExternVersionMap,
-    pub prereleases: ExternVersionMap,
-    pub dist_tags: DistTagMap,
+    pub(crate) releases: ExternVersionMap,
+    pub(crate) prereleases: ExternVersionMap,
+    pub(crate) dist_tags: DistTagMap,
 
-    pub versions_buf: VersionSlice,
-    pub string_lists_buf: ExternalStringList,
+    pub(crate) versions_buf: VersionSlice,
+    pub(crate) string_lists_buf: ExternalStringList,
 
     // Flag to indicate if we have timestamp data from extended manifest
-    pub has_extended_manifest: bool,
-    pub _padding_tail: [u8; 7],
+    pub(crate) has_extended_manifest: bool,
+    pub(crate) _padding_tail: [u8; 7],
 }
 
 // Compile-time proof that the explicit `_padding_*` fields above leave no
@@ -823,16 +887,16 @@ const _: () = {
 
 #[derive(Default, Clone)]
 pub struct PackageManifest {
-    pub pkg: NpmPackage,
+    pub(crate) pkg: NpmPackage,
 
     pub string_buf: Box<[u8]>,
     pub versions: Box<[Semver::Version]>,
-    pub external_strings: Box<[ExternalString]>,
+    pub(crate) external_strings: Box<[ExternalString]>,
     // We store this in a separate buffer so that we can dedupe contiguous identical versions without an extra pass
-    pub external_strings_for_versions: Box<[ExternalString]>,
-    pub package_versions: Box<[PackageVersion]>,
-    pub extern_strings_bin_entries: Box<[ExternalString]>,
-    pub bundled_deps_buf: Box<[PackageNameHash]>,
+    pub(crate) external_strings_for_versions: Box<[ExternalString]>,
+    pub(crate) package_versions: Box<[PackageVersion]>,
+    pub(crate) extern_strings_bin_entries: Box<[ExternalString]>,
+    pub(crate) bundled_deps_buf: Box<[PackageNameHash]>,
 }
 
 impl PackageManifest {
@@ -841,9 +905,7 @@ impl PackageManifest {
         self.pkg.name.slice(&self.string_buf)
     }
 
-    // TODO(b2): bun_io::DiscardingWriter — counting writer not exposed yet
-
-    pub fn byte_length(&self, scope: &registry::Scope) -> usize {
+    pub(crate) fn byte_length(&self, scope: &registry::Scope) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
         match package_manifest::Serializer::write(self, scope, &mut counter) {
             Ok(()) => counter.count,
@@ -866,23 +928,11 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
-        pub const VERSION: &'static str = "bun-npm-manifest-cache-v0.0.7\n";
         const HEADER_BYTES: &'static str =
             concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
 
-        // TODO(port): `sizes` was a comptime block iterating PackageManifest's fields by alignment.
-        // Rust cannot reflect struct fields. Hardcode the field order produced by the Zig sort
-        // (descending alignment) and verify in Phase B against the Zig output.
-        pub const SIZES_FIELDS: &'static [&'static str] = &[
-            "pkg",
-            "string_buf",
-            "versions",
-            "external_strings",
-            "external_strings_for_versions",
-            "package_versions",
-            "extern_strings_bin_entries",
-            "bundled_deps_buf",
-        ];
+        // Field order is hardcoded (descending alignment). Re-verify if the
+        // layout changes.
     }
 
     const _: () = assert!(
@@ -891,7 +941,7 @@ pub mod package_manifest {
     );
 
     impl Serializer {
-        pub fn write_array<W: bun_io::Write, T: Copy>(
+        pub(crate) fn write_array<W: bun_io::Write, T: Copy>(
             writer: &mut W,
             array: &[T],
             pos: &mut u64,
@@ -915,9 +965,9 @@ pub mod package_manifest {
             Ok(())
         }
 
-        pub fn read_array<'a, T: Copy>(
+        fn read_array_bytes<'a, T: Copy>(
             stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
-        ) -> Result<&'a [T], Error> {
+        ) -> Result<&'a [u8], Error> {
             let byte_len = stream.read_int_le::<u64>()?;
             if byte_len == 0 {
                 return Ok(&[]);
@@ -926,21 +976,35 @@ pub mod package_manifest {
             stream.pos += Aligner::skip_amount::<T>(stream.pos);
             let remaining = &stream.buffer[stream.pos.min(stream.buffer.len())..];
             if (remaining.len() as u64) < byte_len {
-                return Err(err!("BufferTooSmall"));
+                return Err(crate::Error::BufferTooSmall);
             }
             let result_bytes = &remaining[..byte_len as usize];
+            stream.pos += result_bytes.len();
+            Ok(result_bytes)
+        }
+
+        fn array_from_bytes<T: Copy>(result_bytes: &[u8]) -> &[T] {
+            if result_bytes.is_empty() {
+                return &[];
+            }
             // SAFETY: alignment was advanced by Aligner::skip_amount; T is POD
-            let result = unsafe {
+            unsafe {
                 bun_core::ffi::slice(
                     result_bytes.as_ptr().cast::<T>(),
                     result_bytes.len() / core::mem::size_of::<T>(),
                 )
-            };
-            stream.pos += result_bytes.len();
-            Ok(result)
+            }
         }
 
-        pub fn write<W: bun_io::Write>(
+        pub fn read_array<'a, T: Copy>(
+            stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
+        ) -> Result<&'a [T], Error> {
+            Ok(Self::array_from_bytes::<T>(Self::read_array_bytes::<T>(
+                stream,
+            )?))
+        }
+
+        pub(crate) fn write<W: bun_io::Write>(
             this: &PackageManifest,
             scope: &registry::Scope,
             writer: &mut W,
@@ -956,8 +1020,8 @@ pub mod package_manifest {
 
             pos += 128 / 8;
 
-            // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand. Phase B: verify field
-            // order matches Zig comptime sort (descending alignment).
+            // Verify field order matches SIZES_FIELDS (descending alignment)
+            // if the layout changes.
             {
                 // "pkg"
                 // SAFETY: NpmPackage is `#[repr(C)]`, `Copy`, and has **no
@@ -997,13 +1061,11 @@ pub mod package_manifest {
             outpath: &bun_core::ZStr,
         ) -> Result<(), Error> {
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
-            // PERF(port): was stack-fallback alloc — profile in Phase B
             let mut buffer: Vec<u8> = Vec::with_capacity(this.byte_length(scope) + 64);
             Serializer::write(this, scope, &mut buffer)?;
             // --- Perf Improvement #1 ----
             // Do not forget to buffer writes!
             //
-            // (benchmark output elided — see npm.zig)
             // --- Perf Improvement #2 ----
             // GetFinalPathnameByHandle is very expensive if called many times
             // We skip calling it when we are giving an absolute file path.
@@ -1025,10 +1087,13 @@ pub mod package_manifest {
             let path_to_use_for_opening_file = tmp_path;
             #[cfg(not(windows))]
             let _ = &mut realpath_buf;
+            #[cfg(windows)]
+            let _ = cache_dir;
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             let mut is_using_o_tmpfile = false;
 
+            #[allow(unused_labels)]
             let file: File = 'brk: {
                 let flags = bun_sys::O::WRONLY;
                 #[cfg(unix)]
@@ -1039,7 +1104,7 @@ pub mod package_manifest {
                 // Do our best to use O_TMPFILE, so that if this process is interrupted, we don't leave a temporary file behind.
                 // O_TMPFILE is Linux-only. Not all filesystems support O_TMPFILE.
                 // https://manpages.debian.org/testing/manpages-dev/openat.2.en.html#O_TMPFILE
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     match File::openat(
                         cache_dir,
@@ -1056,7 +1121,7 @@ pub mod package_manifest {
                                 // previously set this to true.
                                 if !DID_WARN.swap(true, core::sync::atomic::Ordering::Relaxed) {
                                     // This is not an error. Nor is it really a warning.
-                                    Output::note(
+                                    bun_core::note!(
                                         "Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead.",
                                     );
                                     Output::flush();
@@ -1081,19 +1146,11 @@ pub mod package_manifest {
                 )?
             };
 
-            {
-                // errdefer file.close()
-                let guard = CloseOnDrop::file(&file);
-                file.write_all(&buffer)?;
-                let _ = guard.into_inner();
-            }
+            file.write_all(&buffer)?;
 
             #[cfg(windows)]
             {
                 let mut realpath2_buf = bun_paths::PathBuffer::uninit();
-                // errdefer if (!did_close) file.close() — disarmed once we close explicitly below.
-                let guard = CloseOnDrop::file(&file);
-
                 let cache_dir_abs = &PackageManager::get().cache_directory_path;
                 let cache_path_abs =
                     bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
@@ -1101,11 +1158,10 @@ pub mod package_manifest {
                         &mut realpath2_buf[..],
                         &[cache_dir_abs, outpath.as_bytes()],
                     );
-                let _ = guard.into_inner();
-                // Zig spec discards the close error too — the renameat
-                // immediately below surfaces a usable error if the temp
-                // file is in a bad state, and on POSIX the close cannot
-                // fail for a regular-file fd we just wrote.
+                // The close error is discarded — the renameat immediately
+                // below surfaces a usable error if the temp file is in a
+                // bad state, and on POSIX the close cannot fail for a
+                // regular-file fd we just wrote.
                 let _ = file.close();
                 bun_sys::renameat(
                     Fd::cwd(),
@@ -1116,9 +1172,8 @@ pub mod package_manifest {
                 return Ok(());
             }
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_using_o_tmpfile {
-                let _close = CloseOnDrop::file(&file);
                 // Attempt #1.
                 if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
                     // Attempt #2: the file may already exist. Let's unlink and try again.
@@ -1131,7 +1186,6 @@ pub mod package_manifest {
 
             #[cfg(not(windows))]
             {
-                let _close = CloseOnDrop::file(&file);
                 // Attempt #1. Rename the file.
                 let rc = bun_sys::renameat(tmpdir, tmp_path, cache_dir, outpath);
 
@@ -1143,21 +1197,19 @@ pub mod package_manifest {
                             let _ = bun_sys::unlinkat(tmpdir, tmp_path);
                         }
 
-                        // Zig (npm.zig:1128) matches `.OPNOTSUPP`, which on
-                        // Darwin is errno **45** (collapsed with NOTSUP). The
-                        // Rust `Errno::EOPNOTSUPP` resolves to 102 on Darwin,
-                        // so match `ENOTSUP` as well to keep the macOS
+                        // On Darwin `Errno::EOPNOTSUPP` resolves to 102 while
+                        // the kernel reports errno **45** (ENOTSUP), so match
+                        // `ENOTSUP` as well to keep the macOS
                         // `renameat2(.exchange)` fallback reachable. On
-                        // Linux/FreeBSD the two names alias the same value;
-                        // the redundant arm is intentional.
-                        #[allow(unreachable_patterns)]
-                        if matches!(
-                            err.get_errno(),
-                            bun_sys::Errno::EEXIST
-                                | bun_sys::Errno::ENOTEMPTY
-                                | bun_sys::Errno::ENOTSUP
-                                | bun_sys::Errno::EOPNOTSUPP
-                        ) {
+                        // Linux/FreeBSD the two names alias the same value,
+                        // so compare by equality (a `matches!` pattern would
+                        // flag the alias as unreachable).
+                        let errno = err.get_errno();
+                        if errno == bun_sys::Errno::EEXIST
+                            || errno == bun_sys::Errno::ENOTEMPTY
+                            || errno == bun_sys::Errno::ENOTSUP
+                            || errno == bun_sys::Errno::EOPNOTSUPP
+                        {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(
                                 tmpdir,
@@ -1165,7 +1217,7 @@ pub mod package_manifest {
                                 cache_dir,
                                 outpath,
                                 bun_sys::Renameat2Flags {
-                                    exchange: true,
+                                    mode: bun_sys::RenameMode::Exchange,
                                     ..Default::default()
                                 },
                             )?;
@@ -1180,6 +1232,7 @@ pub mod package_manifest {
                 rc?;
             }
 
+            #[cfg(not(windows))]
             Ok(())
         }
 
@@ -1189,7 +1242,7 @@ pub mod package_manifest {
         /// Therefore, we choose to not increment the pending task count or wake up the main thread.
         ///
         /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
-        pub fn save_async(
+        pub(crate) fn save_async(
             this: &PackageManifest,
             scope: &registry::Scope,
             tmpdir: Fd,
@@ -1199,19 +1252,21 @@ pub mod package_manifest {
                 Batch as PoolBatch, Node as PoolNode, Task as PoolTask,
             };
 
-            pub struct SaveTask<'a> {
+            struct SaveTask {
                 manifest: PackageManifest,
-                scope: &'a registry::Scope,
+                // Owned: the thread-pool task can outlive the caller's borrow
+                // of the Registry.Scope, so it owns a clone.
+                scope: registry::Scope,
                 tmpdir: Fd,
                 cache_dir: Fd,
 
                 task: PoolTask,
             }
 
-            bun_threading::intrusive_work_task!(['a] SaveTask<'a>, task);
+            bun_threading::intrusive_work_task!(SaveTask, task);
 
-            impl<'a> SaveTask<'a> {
-                pub fn new(init: SaveTask<'a>) -> Box<SaveTask<'a>> {
+            impl SaveTask {
+                fn new(init: SaveTask) -> Box<SaveTask> {
                     Box::new(init)
                 }
 
@@ -1223,7 +1278,7 @@ pub mod package_manifest {
                 // discharged locally (matches `HardLinkWindowsInstallTask::
                 // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
                 // coerces to the `unsafe fn(*mut Task)` field type.
-                pub fn run(task: *mut PoolTask) {
+                fn run(task: *mut PoolTask) {
                     use bun_threading::IntrusiveWorkTask as _;
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 
@@ -1233,27 +1288,25 @@ pub mod package_manifest {
 
                     if let Err(err) = Serializer::save(
                         &save_task.manifest,
-                        save_task.scope,
+                        &save_task.scope,
                         save_task.tmpdir,
                         save_task.cache_dir,
                     ) {
                         if PackageManager::verbose_install() {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "Error caching manifest for {}: {}",
                                 bstr::BStr::new(save_task.manifest.name()),
                                 err.name(),
-                            ));
+                            );
                             Output::flush();
                         }
                     }
                 }
             }
 
-            // TODO(port): lifetime — `scope` is borrowed across a thread boundary; Zig assumed
-            // the Registry.Scope outlives the threadpool task. Phase B: prove or change to owned.
             let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
-                manifest: this.clone(), // TODO(port): Zig copied PackageManifest by value
-                scope,
+                manifest: this.clone(),
+                scope: scope.clone(),
                 tmpdir,
                 cache_dir,
                 task: PoolTask {
@@ -1272,7 +1325,6 @@ pub mod package_manifest {
             file_id: u64,
             scope: &registry::Scope,
         ) -> Result<&'b bun_core::ZStr, Error> {
-            use core::fmt::Write as _;
             let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
             let mut stream = bun_io::FixedBufferStream::new_mut(buf);
             if scope.url_hash == *registry::DEFAULT_URL_HASH {
@@ -1291,7 +1343,7 @@ pub mod package_manifest {
             Ok(bun_core::ZStr::from_buf_mut(buf, len - 1))
         }
 
-        pub fn save(
+        pub(crate) fn save(
             this: &PackageManifest,
             scope: &registry::Scope,
             tmpdir: Fd,
@@ -1318,7 +1370,7 @@ pub mod package_manifest {
             Self::write_file(this, scope, tmp_path, tmpdir, cache_dir, out_path)
         }
 
-        pub fn load_by_file_id(
+        pub(crate) fn load_by_file_id(
             scope: &registry::Scope,
             cache_dir: Fd,
             file_id: u64,
@@ -1328,7 +1380,6 @@ pub mod package_manifest {
             let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
                 return Ok(None);
             };
-            let _close_cache_file = CloseOnDrop::file(&cache_file);
 
             'delete: {
                 match Self::load_by_file(scope, &cache_file) {
@@ -1364,7 +1415,6 @@ pub mod package_manifest {
                 return Ok(None);
             }
 
-            // TODO(port): manifest borrows `bytes` in Zig; here read_all copies into Box<[T]>.
             Ok(Some(manifest))
         }
 
@@ -1390,12 +1440,16 @@ pub mod package_manifest {
                 return Ok(None);
             }
 
-            // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand
+            // Keep the order in sync with `Serializer::write` and SIZES_FIELDS.
             {
-                // std.mem.alignForward(usize, pos, alignOf(NpmPackage))
                 pkg_stream.pos = pkg_stream
                     .pos
                     .next_multiple_of(core::mem::align_of::<NpmPackage>());
+                let flag_at =
+                    pkg_stream.pos + core::mem::offset_of!(NpmPackage, has_extended_manifest);
+                if !matches!(bytes.get(flag_at).copied(), Some(0 | 1)) {
+                    return Ok(None);
+                }
                 package_manifest.pkg = pkg_stream.read_struct::<NpmPackage>()?;
             }
             package_manifest.string_buf = Self::read_array::<u8>(&mut pkg_stream)?.into();
@@ -1405,8 +1459,23 @@ pub mod package_manifest {
                 Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
             package_manifest.external_strings_for_versions =
                 Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.package_versions =
-                Self::read_array::<PackageVersion>(&mut pkg_stream)?.into();
+            package_manifest.package_versions = {
+                let raw = Self::read_array_bytes::<PackageVersion>(&mut pkg_stream)?;
+                let bin_tag_at =
+                    core::mem::offset_of!(PackageVersion, bin) + core::mem::offset_of!(Bin, tag);
+                let install_script_at = core::mem::offset_of!(PackageVersion, has_install_script);
+                for raw_pkg in raw
+                    .as_chunks::<{ core::mem::size_of::<PackageVersion>() }>()
+                    .0
+                {
+                    if !matches!(raw_pkg[bin_tag_at], 0..=4)
+                        || !matches!(raw_pkg[install_script_at], 0 | 1)
+                    {
+                        return Ok(None);
+                    }
+                }
+                Self::array_from_bytes::<PackageVersion>(raw).into()
+            };
             package_manifest.extern_strings_bin_entries =
                 Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
             package_manifest.bundled_deps_buf =
@@ -1420,45 +1489,19 @@ pub mod package_manifest {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManifest {
-    pub fn str<'a>(&'a self, external: &'a ExternalString) -> &'a [u8] {
+    pub(crate) fn str<'a>(&'a self, external: &'a ExternalString) -> &'a [u8] {
         external.slice(&self.string_buf)
-    }
-
-    pub fn report_size(&self) {
-        Output::pretty_errorln(format_args!(
-            " Versions count:            {}\n \
-             External Strings count:    {}\n \
-             Package Versions count:    {}\n\n \
-             Bytes:\n\n  \
-             Versions:   {}\n  \
-             External:   {}\n  \
-             Packages:   {}\n  \
-             Strings:    {}\n  \
-             Total:      {}",
-            self.versions.len(),
-            self.external_strings.len(),
-            self.package_versions.len(),
-            core::mem::size_of_val(&*self.versions),
-            core::mem::size_of_val(&*self.external_strings),
-            core::mem::size_of_val(&*self.package_versions),
-            core::mem::size_of_val(&*self.string_buf),
-            core::mem::size_of_val(&*self.versions)
-                + core::mem::size_of_val(&*self.external_strings)
-                + core::mem::size_of_val(&*self.package_versions)
-                + core::mem::size_of_val(&*self.string_buf),
-        ));
-        Output::flush();
     }
 }
 
 #[derive(Clone, Copy)]
 pub struct FindResult<'a> {
     pub version: Semver::Version,
-    pub package: &'a PackageVersion,
+    pub(crate) package: &'a PackageVersion,
 }
 
 impl PackageManifest {
-    pub fn find_by_version(&self, version: Semver::Version) -> Option<FindResult<'_>> {
+    pub(crate) fn find_by_version(&self, version: Semver::Version) -> Option<FindResult<'_>> {
         let list = if !version.tag.has_pre() {
             self.pkg.releases
         } else {
@@ -1492,7 +1535,7 @@ impl PackageManifest {
         None
     }
 
-    pub fn should_exclude_from_age_filter(&self, exclusions: Option<&[&[u8]]>) -> bool {
+    pub(crate) fn should_exclude_from_age_filter(&self, exclusions: Option<&[&[u8]]>) -> bool {
         if let Some(excl) = exclusions {
             let pkg_name = self.name();
             for excluded in excl {
@@ -1505,7 +1548,7 @@ impl PackageManifest {
     }
 
     #[inline]
-    pub fn is_package_version_too_recent(
+    pub(crate) fn is_package_version_too_recent(
         package_version: &PackageVersion,
         minimum_release_age_ms: f64,
     ) -> bool {
@@ -1908,8 +1951,8 @@ impl PackageManifest {
     }
 }
 
-// TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
-type ExternalStringMapDeduper = HashMap<u64, ExternalStringList>;
+// Keys are pre-hashed string hashes, so don't re-hash them.
+type ExternalStringMapDeduper = HashMap<u64, ExternalStringList, IdentityContext<u64>>;
 
 use bun_install_types::DependencyGroup;
 /// Abbreviated registry metadata never carries `devDependencies` — keep this 3-wide intentionally.
@@ -1931,33 +1974,29 @@ impl PackageManifest {
         public_max_age: u32,
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
-        // TODO(port): narrow error set
         // `bun_ast::Source::init_path_string` accepts borrowed `&[u8]` via
         // `IntoStr`; the Source only lives for the duration of this function,
         // so pass the caller's buffers through directly without manufacturing
         // `'static` references here (PORTING.md §Forbidden lifetime extension).
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
-        // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop() — Zig
-        // pushed/popped the AST arena around the parse so the JSON AST is
-        // bulk-freed on return. `initialize_mini_store` already does the push;
-        // the pop is handled by resetting on the next call. Phase B should wire
-        // an explicit RAII guard once `ASTMemoryAllocator::pop` is exposed.
-        // PERF(port): was arena bulk-free — profile in Phase B
-        let bump = bun_alloc::Arena::new();
-        let json = match JSON::parse_utf8(&source, log, &bump) {
+        // `initialize_mini_store` deliberately keeps the allocator pushed
+        // across calls (the AstAlloc state stays installed for the re-arm) and
+        // bulk-frees via `reset_retain_with_limit` on the next call — see
+        // `initialize_mini_store` in lib.rs for why.
+        let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
             Err(_) => {
-                // don't use the arena memory!
                 let mut cloned_log = bun_ast::Log::init();
                 log.clone_to_with_recycled(&mut cloned_log, true);
                 *log = cloned_log;
                 return Ok(None);
             }
         };
+        let json = parsed.root;
 
         if let Some(error_q) = json.as_property(b"error") {
-            if let Some(err) = error_q.expr.as_string(&bump) {
+            if let Some(err) = error_q.expr.as_utf8_string_literal() {
                 log.add_error_fmt(
                     Some(&source),
                     bun_ast::Loc::EMPTY,
@@ -1967,15 +2006,17 @@ impl PackageManifest {
             }
         }
 
+        // For cache determinism the serialized `NpmPackage` has explicit
+        // `_padding_*` fields zeroed by `Default`, so plain `default()` is
+        // already deterministic here.
         let mut result: PackageManifest = PackageManifest::default();
-        // TODO(port): bun.serializable() — zero-init for serialization determinism
 
         let mut all_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
         let mut version_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
         let mut optional_peer_dep_names: Vec<u64> = Vec::new();
 
         let mut bundled_deps_set = StringSet::init();
-        let mut bundle_all_deps = false;
+        let mut bundle_all_deps: bool;
 
         let mut bundled_deps_count: usize = 0;
 
@@ -1986,7 +2027,7 @@ impl PackageManifest {
 
         if PackageManager::verbose_install() {
             if let Some(name_q) = json.as_property(b"name") {
-                let Some(received_name) = name_q.expr.as_string(&bump) else {
+                let Some(received_name) = name_q.expr.as_utf8_string_literal() else {
                     return Ok(None);
                 };
                 // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
@@ -1995,11 +2036,11 @@ impl PackageManifest {
                 if scope.url_hash == *registry::DEFAULT_URL_HASH
                     && !strings::eql_long(expected_name, received_name, true)
                 {
-                    Output::warn(format_args!(
+                    bun_core::warn!(
                         "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",
                         bstr::BStr::new(expected_name),
                         bstr::BStr::new(received_name),
-                    ));
+                    );
                 }
             }
         }
@@ -2007,7 +2048,7 @@ impl PackageManifest {
         string_builder.count(expected_name);
 
         if let Some(name_q) = json.as_property(b"modified") {
-            let Some(field) = name_q.expr.as_string(&bump) else {
+            let Some(field) = name_q.expr.as_utf8_string_literal() else {
                 return Ok(None);
             };
             string_builder.count(field);
@@ -2020,33 +2061,24 @@ impl PackageManifest {
         let mut extern_string_count_bin: usize = 0;
         let mut tarball_urls_count: usize = 0;
         'get_versions: {
-            let Some(versions_q) = json.as_property(b"versions") else {
+            let Some(versions_expr) = json.get(b"versions") else {
                 break 'get_versions;
             };
-            let JSON::ExprData::EObject(versions_obj) = &versions_q.expr.data else {
+            let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
                 break 'get_versions;
             };
 
-            let versions = versions_obj.properties.slice();
+            let versions = versions_obj.get().properties();
             for prop in versions {
-                let Some(version_name) = prop
-                    .key
-                    .as_ref()
-                    .expect("infallible: prop has key")
-                    .as_string(&bump)
-                else {
-                    continue;
-                };
+                let version_name = prop.key.slice();
                 let sliced_version = SlicedString::init(version_name, version_name);
                 let parsed_version = Semver::Version::parse(sliced_version);
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(parsed_version.valid);
-                }
+                debug_assert!(parsed_version.valid);
                 if !parsed_version.valid {
                     log.add_error_fmt(
                         Some(&source),
-                        prop.value.as_ref().expect("infallible: prop has value").loc,
+                        prop.key_loc,
                         format_args!(
                             "Failed to parse dependency {}",
                             bstr::BStr::new(version_name)
@@ -2066,105 +2098,71 @@ impl PackageManifest {
 
                 string_builder.count(version_name);
 
-                if let Some(dist_q) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"dist")
+                let version_obj = prop.value.as_object();
+
+                if let Some(tarball) = version_obj
+                    .and_then(|o| o.get(b"dist"))
+                    .and_then(|dist| dist.as_object())
+                    .and_then(|dist| dist.get(b"tarball"))
+                    .and_then(|tarball| tarball.as_str())
                 {
-                    if let Some(tarball_prop) = dist_q.expr.get(b"tarball") {
-                        if let JSON::ExprData::EString(s) = &tarball_prop.data {
-                            let tarball = s.data.slice();
-                            string_builder.count(tarball);
-                            tarball_urls_count += (!tarball.is_empty()) as usize;
-                        }
-                    }
+                    string_builder.count(tarball);
+                    tarball_urls_count += (!tarball.is_empty()) as usize;
                 }
 
                 'bin: {
-                    if let Some(bin) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(b"bin")
-                    {
-                        match &bin.expr.data {
-                            JSON::ExprData::EObject(obj) => {
-                                match obj.properties.slice().len() {
+                    if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
+                        match bin {
+                            JSON::E::JsonValue::Object(obj) => {
+                                let bin_props = obj.get().properties();
+                                match bin_props.len() {
                                     0 => break 'bin,
                                     1 => {}
                                     _ => {
-                                        extern_string_count_bin += obj.properties.slice().len() * 2;
+                                        extern_string_count_bin += bin_props.len() * 2;
                                     }
                                 }
 
-                                for bin_prop in obj.properties.slice() {
-                                    let Some(k) = bin_prop
-                                        .key
-                                        .as_ref()
-                                        .expect("infallible: prop has key")
-                                        .as_string(&bump)
-                                    else {
-                                        break 'bin;
-                                    };
-                                    string_builder.count(k);
-                                    let Some(v) = bin_prop
-                                        .value
-                                        .as_ref()
-                                        .expect("infallible: prop has value")
-                                        .as_string(&bump)
-                                    else {
+                                for bin_prop in bin_props {
+                                    string_builder.count(bin_prop.key.slice());
+                                    let Some(v) = bin_prop.value.as_str() else {
                                         break 'bin;
                                     };
                                     string_builder.count(v);
                                 }
                             }
-                            JSON::ExprData::EString(_) => {
-                                if let Some(str_) = bin.expr.as_string(&bump) {
-                                    string_builder.count(str_);
-                                    break 'bin;
-                                }
+                            JSON::E::JsonValue::String(str_) => {
+                                string_builder.count(str_.slice());
+                                break 'bin;
                             }
                             _ => {}
                         }
                     }
 
-                    if let Some(dirs) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(b"directories")
+                    if let Some(str_) = version_obj
+                        .and_then(|o| o.get(b"directories"))
+                        .and_then(|dirs| dirs.as_object())
+                        .and_then(|dirs| dirs.get(b"bin"))
+                        .and_then(|bin| bin.as_str())
                     {
-                        if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                            if let Some(str_) = bin_prop.expr.as_string(&bump) {
-                                string_builder.count(str_);
-                                break 'bin;
-                            }
-                        }
+                        string_builder.count(str_);
+                        break 'bin;
                     }
                 }
 
                 bundled_deps_set.map.clear_retaining_capacity();
                 bundle_all_deps = false;
-                if let Some(bundled_deps_expr) = prop
-                    .value
-                    .as_ref()
-                    .unwrap()
-                    .get(b"bundleDependencies")
-                    .or_else(|| {
-                        prop.value
-                            .as_ref()
-                            .expect("infallible: prop has value")
-                            .get(b"bundledDependencies")
-                    })
+                if let Some(bundled_deps_value) = version_obj
+                    .and_then(|o| o.get(b"bundleDependencies"))
+                    .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
                 {
-                    match &bundled_deps_expr.data {
-                        JSON::ExprData::EBoolean(boolean) => {
-                            bundle_all_deps = boolean.value;
+                    match bundled_deps_value {
+                        JSON::E::JsonValue::Boolean(boolean) => {
+                            bundle_all_deps = *boolean;
                         }
-                        JSON::ExprData::EArray(arr) => {
-                            for bundled_dep in arr.slice() {
-                                let Some(s) = bundled_dep.as_string(&bump) else {
+                        JSON::E::JsonValue::Array(arr) => {
+                            for bundled_dep in arr.get().items() {
+                                let Some(s) = bundled_dep.as_str() else {
                                     continue;
                                 };
                                 bundled_deps_set.insert(s)?;
@@ -2175,39 +2173,21 @@ impl PackageManifest {
                 }
 
                 for pair in &DEPENDENCY_GROUPS {
-                    // PERF(port): was comptime monomorphization — profile in Phase B
-                    if let Some(versioned_deps) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(pair.prop)
+                    if let Some(obj) = version_obj
+                        .and_then(|o| o.get(pair.prop))
+                        .and_then(|deps| deps.as_object())
                     {
-                        if let JSON::ExprData::EObject(obj) = &versioned_deps.expr.data {
-                            dependency_sum += obj.properties.slice().len();
-                            let properties = obj.properties.slice();
-                            for property in properties {
-                                if let Some(key) = property
-                                    .key
-                                    .as_ref()
-                                    .expect("infallible: prop has key")
-                                    .as_string(&bump)
-                                {
-                                    if !bundle_all_deps && bundled_deps_set.swap_remove(key) {
-                                        // swap remove the dependency name because it could exist in
-                                        // multiple behavior groups.
-                                        bundled_deps_count += 1;
-                                    }
-                                    string_builder.count(key);
-                                    string_builder.count(
-                                        property
-                                            .value
-                                            .as_ref()
-                                            .expect("infallible: prop has value")
-                                            .as_string(&bump)
-                                            .unwrap_or(b""),
-                                    );
-                                }
+                        let properties = obj.properties();
+                        dependency_sum += properties.len();
+                        for property in properties {
+                            let key = property.key.slice();
+                            if !bundle_all_deps && bundled_deps_set.swap_remove(key) {
+                                // swap remove the dependency name because it could exist in
+                                // multiple behavior groups.
+                                bundled_deps_count += 1;
                             }
+                            string_builder.count(key);
+                            string_builder.count(property.value.as_str().unwrap_or(b""));
                         }
                     }
                 }
@@ -2216,40 +2196,24 @@ impl PackageManifest {
                 // entries that appear in `peerDependenciesMeta` but not in
                 // `peerDependencies`. Reserve space for them; the build
                 // pass below appends them after the declared peer deps.
-                if let Some(meta) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"peerDependenciesMeta")
+                if let Some(obj) = version_obj
+                    .and_then(|o| o.get(b"peerDependenciesMeta"))
+                    .and_then(|meta| meta.as_object())
                 {
-                    if let JSON::ExprData::EObject(obj) = &meta.expr.data {
-                        for meta_prop in obj.properties.slice() {
-                            let Some(optional) = meta_prop
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_property(b"optional")
-                            else {
-                                continue;
-                            };
-                            let JSON::ExprData::EBoolean(b) = &optional.expr.data else {
-                                continue;
-                            };
-                            if !b.value {
-                                continue;
-                            }
-                            let Some(key) = meta_prop
-                                .key
-                                .as_ref()
-                                .expect("infallible: prop has key")
-                                .as_string(&bump)
-                            else {
-                                continue;
-                            };
-                            dependency_sum += 1;
-                            string_builder.count(key);
-                            string_builder.count(b"*");
-                        }
+                    for meta_prop in obj.properties() {
+                        let Some(optional) = meta_prop
+                            .value
+                            .as_object()
+                            .and_then(|meta| meta.get(b"optional"))
+                        else {
+                            continue;
+                        };
+                        let JSON::E::JsonValue::Boolean(true) = optional else {
+                            continue;
+                        };
+                        dependency_sum += 1;
+                        string_builder.count(meta_prop.key.slice());
+                        string_builder.count(b"*");
                     }
                 }
             }
@@ -2258,28 +2222,14 @@ impl PackageManifest {
         extern_string_count += dependency_sum;
 
         let mut dist_tags_count: usize = 0;
-        if let Some(dist) = json.as_property(b"dist-tags") {
-            if let JSON::ExprData::EObject(obj) = &dist.expr.data {
-                let tags = obj.properties.slice();
-                for tag in tags {
-                    if let Some(key) = tag
-                        .key
-                        .as_ref()
-                        .expect("infallible: prop has key")
-                        .as_string(&bump)
-                    {
-                        string_builder.count(key);
-                        extern_string_count += 2;
+        if let Some(dist) = json.get(b"dist-tags") {
+            if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
+                for tag in obj.get().properties() {
+                    string_builder.count(tag.key.slice());
+                    extern_string_count += 2;
 
-                        string_builder.count(
-                            tag.value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_string(&bump)
-                                .unwrap_or(b""),
-                        );
-                        dist_tags_count += 1;
-                    }
+                    string_builder.count(tag.value.as_str().unwrap_or(b""));
+                    dist_tags_count += 1;
                 }
             }
         }
@@ -2314,11 +2264,10 @@ impl PackageManifest {
             vec![PackageNameHash::default(); bundled_deps_count].into_boxed_slice();
         let mut bundled_deps_offset: usize = 0;
 
-        // PORT NOTE: Zig manually @memset zeroed the buffers; Default::default() above achieves
-        // the same determinism for these POD types.
+        // Default::default() above zeroes the buffers for determinism.
 
-        // PORT NOTE: reshaped for borrowck — Zig used overlapping mutable subslices into the
-        // same allocation. Rust uses index cursors instead and re-slices on demand.
+        // Index cursors are used instead of overlapping mutable subslices into
+        // the same allocation; re-slice on demand.
         let mut versioned_package_releases_start: usize = 0;
         let all_versioned_package_releases_range = 0..release_versions_len;
         let mut versioned_package_prereleases_start: usize = release_versions_len;
@@ -2330,9 +2279,6 @@ impl PackageManifest {
         let all_prerelease_versions_range =
             release_versions_len..release_versions_len + pre_versions_len;
         let dist_tag_versions_start = release_versions_len + pre_versions_len;
-        // SAFETY: all_semver_versions is heap-allocated; we need disjoint mutable subslices.
-        // TODO(port): use split_at_mut chain instead of raw pointers in Phase B.
-        let all_semver_versions_ptr: *mut Semver::Version = all_semver_versions.as_mut_ptr();
         let mut release_versions_cursor: usize = 0;
         let mut prerelease_versions_cursor: usize = release_versions_len;
 
@@ -2345,13 +2291,11 @@ impl PackageManifest {
 
         string_builder.allocate()?;
 
-        // PORT NOTE: Zig zeroed the freshly allocated buffer for determinism;
-        // `Builder::allocate` already produces a zeroed `Box<[u8]>`.
+        // `Builder::allocate` produces a zeroed `Box<[u8]>` for determinism.
         //
-        // Zig kept a single `string_buf` slice over the builder's backing
-        // allocation for the rest of the function. In Rust that would alias a
-        // `&[u8]` across the `&mut self` borrows taken by every `append` below
-        // (Stacked Borrows UB even though the allocation never moves). Instead
+        // A single `&[u8]` over the builder's backing allocation held across
+        // the `&mut self` borrows taken by every `append` below would be
+        // Stacked Borrows UB (even though the allocation never moves). Instead
         // we re-borrow `string_builder.allocated_slice()` at each read site —
         // `Builder::append*` only writes in-place and never grows/replaces
         // `ptr`, so the slice contents are stable, and NLL releases each
@@ -2367,14 +2311,14 @@ impl PackageManifest {
         let all_dependency_names_and_values_len = dependency_sum;
 
         'get_versions2: {
-            let Some(versions_q) = json.as_property(b"versions") else {
+            let Some(versions_expr) = json.get(b"versions") else {
                 break 'get_versions2;
             };
-            let JSON::ExprData::EObject(versions_obj) = &versions_q.expr.data else {
+            let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
                 break 'get_versions2;
             };
 
-            let versions = versions_obj.properties.slice();
+            let versions = versions_obj.get().properties();
 
             // versions change more often than names
             // so names go last because we are better able to dedupe at the end
@@ -2383,61 +2327,66 @@ impl PackageManifest {
                 bin: Bin::init(),
                 ..PackageVersion::default()
             };
-            // TODO(port): bun.serializable() on empty_version
+            // PackageVersion's explicit `_padding_*` fields are zeroed by
+            // `Default`, so no separate padding scrub is needed.
+
+            // Index the root `time` object once so the per-version publish-time
+            // lookup below is O(1) instead of a linear scan of ~V entries.
+            let time_obj = json.get(b"time").and_then(|e| match e.data {
+                JSON::ExprData::EObjectJSON(obj) => Some(obj),
+                _ => None,
+            });
+            let time_props: &[JSON::E::PropertyJSON] = time_obj
+                .as_ref()
+                .map(|o| o.get().properties())
+                .unwrap_or(&[]);
+            let mut time_index: HashMap<u64, u32, IdentityContext<u64>> = HashMap::default();
+            if !time_props.is_empty() {
+                time_index.ensure_total_capacity(time_props.len())?;
+                for (i, p) in time_props.iter().enumerate() {
+                    let gop = time_index.get_or_put(Wyhash11::hash(0, p.key.slice()))?;
+                    if !gop.found_existing {
+                        *gop.value_ptr = i as u32;
+                    }
+                }
+            }
 
             for prop in versions {
-                let Some(version_name) = prop
-                    .key
-                    .as_ref()
-                    .expect("infallible: prop has key")
-                    .as_string(&bump)
-                else {
-                    continue;
-                };
+                let version_name = prop.key.slice();
                 let mut sliced_version = SlicedString::init(version_name, version_name);
                 let mut parsed_version = Semver::Version::parse(sliced_version);
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(parsed_version.valid);
-                }
+                debug_assert!(parsed_version.valid);
                 // We only need to copy the version tags if it contains pre and/or build
                 if parsed_version.version.tag.has_build() || parsed_version.version.tag.has_pre() {
                     let version_string = string_builder.append::<SemverString>(version_name);
                     sliced_version = version_string.sliced(string_builder.allocated_slice());
                     parsed_version = Semver::Version::parse(sliced_version);
-                    if cfg!(debug_assertions) {
-                        debug_assert!(parsed_version.valid);
-                        debug_assert!(
-                            parsed_version.version.tag.has_build()
-                                || parsed_version.version.tag.has_pre()
-                        );
-                    }
+                    debug_assert!(parsed_version.valid);
+                    debug_assert!(
+                        parsed_version.version.tag.has_build()
+                            || parsed_version.version.tag.has_pre()
+                    );
                 }
                 if !parsed_version.valid {
                     continue;
                 }
 
+                let version_obj = prop.value.as_object();
+
                 bundled_deps_set.map.clear_retaining_capacity();
                 bundle_all_deps = false;
-                if let Some(bundled_deps_expr) = prop
-                    .value
-                    .as_ref()
-                    .unwrap()
-                    .get(b"bundleDependencies")
-                    .or_else(|| {
-                        prop.value
-                            .as_ref()
-                            .expect("infallible: prop has value")
-                            .get(b"bundledDependencies")
-                    })
+                if let Some(bundled_deps_value) = version_obj
+                    .and_then(|o| o.get(b"bundleDependencies"))
+                    .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
                 {
-                    match &bundled_deps_expr.data {
-                        JSON::ExprData::EBoolean(boolean) => {
-                            bundle_all_deps = boolean.value;
+                    match bundled_deps_value {
+                        JSON::E::JsonValue::Boolean(boolean) => {
+                            bundle_all_deps = *boolean;
                         }
-                        JSON::ExprData::EArray(arr) => {
-                            for bundled_dep in arr.slice() {
-                                let Some(s) = bundled_dep.as_string(&bump) else {
+                        JSON::E::JsonValue::Array(arr) => {
+                            for bundled_dep in arr.get().items() {
+                                let Some(s) = bundled_dep.as_str() else {
                                     continue;
                                 };
                                 bundled_deps_set.insert(s)?;
@@ -2449,72 +2398,36 @@ impl PackageManifest {
 
                 let mut package_version: PackageVersion = empty_version;
 
-                if let Some(cpu_q) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"cpu")
-                {
-                    package_version.cpu = negatable_from_json::<Architecture>(&cpu_q.expr)?;
+                if let Some(cpu) = version_obj.and_then(|o| o.get(b"cpu")) {
+                    package_version.cpu = negatable_from_json_value::<Architecture>(cpu);
                 }
 
-                if let Some(os_q) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"os")
-                {
-                    package_version.os = negatable_from_json::<OperatingSystem>(&os_q.expr)?;
+                if let Some(os) = version_obj.and_then(|o| o.get(b"os")) {
+                    package_version.os = negatable_from_json_value::<OperatingSystem>(os);
                 }
 
-                if let Some(libc) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"libc")
-                {
-                    package_version.libc = negatable_from_json::<Libc>(&libc.expr)?;
+                if let Some(libc) = version_obj.and_then(|o| o.get(b"libc")) {
+                    package_version.libc = negatable_from_json_value::<Libc>(libc);
                 }
 
-                if let Some(has_install_script) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"hasInstallScript")
+                if let Some(JSON::E::JsonValue::Boolean(val)) =
+                    version_obj.and_then(|o| o.get(b"hasInstallScript"))
                 {
-                    if let JSON::ExprData::EBoolean(val) = &has_install_script.expr.data {
-                        package_version.has_install_script = val.value;
-                    }
+                    package_version.has_install_script = *val;
                 }
 
                 'bin: {
                     // bins are extremely repetitive
                     // We try to avoid storing copies the string
-                    if let Some(bin) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(b"bin")
-                    {
-                        match &bin.expr.data {
-                            JSON::ExprData::EObject(obj) => {
-                                match obj.properties.slice().len() {
+                    if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
+                        match bin {
+                            JSON::E::JsonValue::Object(obj) => {
+                                let bin_props = obj.get().properties();
+                                match bin_props.len() {
                                     0 => {}
                                     1 => {
-                                        let Some(bin_name) = obj.properties.slice()[0]
-                                            .key
-                                            .as_ref()
-                                            .unwrap()
-                                            .as_string(&bump)
-                                        else {
-                                            break 'bin;
-                                        };
-                                        let Some(value) = obj.properties.slice()[0]
-                                            .value
-                                            .as_ref()
-                                            .unwrap()
-                                            .as_string(&bump)
-                                        else {
+                                        let bin_name = bin_props[0].key.slice();
+                                        let Some(value) = bin_props[0].value.as_str() else {
                                             break 'bin;
                                         };
 
@@ -2529,7 +2442,7 @@ impl PackageManifest {
                                     }
                                     _ => {
                                         let group_start = extern_strings_bin_entries_cursor;
-                                        let group_len = obj.properties.slice().len() * 2;
+                                        let group_len = bin_props.len() * 2;
 
                                         let mut is_identical = match &prev_extern_bin_group {
                                             Some(r) => r.len() == group_len,
@@ -2537,22 +2450,14 @@ impl PackageManifest {
                                         };
                                         let mut group_i: u32 = 0;
 
-                                        // PORT NOTE: Zig wrote through a raw `*[len]ExternalString`
-                                        // sub-pointer. The boxed slice is fully initialised
+                                        // The boxed slice is fully initialised
                                         // (`vec![Default; n].into_boxed_slice()` in the counting
                                         // pass) and `ExternalString: Copy`, so plain absolute
-                                        // indexing at `group_start + group_i` is the safe
-                                        // equivalent — no `from_raw_parts`/`.add()` needed, and
-                                        // the `prev` read at a disjoint index needs no split.
-                                        for bin_prop in obj.properties.slice() {
-                                            let Some(k) = bin_prop
-                                                .key
-                                                .as_ref()
-                                                .expect("infallible: prop has key")
-                                                .as_string(&bump)
-                                            else {
-                                                break 'bin;
-                                            };
+                                        // indexing at `group_start + group_i` works — no
+                                        // `from_raw_parts`/`.add()` needed, and the `prev` read
+                                        // at a disjoint index needs no split.
+                                        for bin_prop in bin_props {
+                                            let k = bin_prop.key.slice();
                                             let cur = string_builder.append::<ExternalString>(k);
                                             all_extern_strings_bin_entries
                                                 [group_start + group_i as usize] = cur;
@@ -2577,12 +2482,7 @@ impl PackageManifest {
                                             }
                                             group_i += 1;
 
-                                            let Some(v) = bin_prop
-                                                .value
-                                                .as_ref()
-                                                .expect("infallible: prop has value")
-                                                .as_string(&bump)
-                                            else {
+                                            let Some(v) = bin_prop.value.as_str() else {
                                                 break 'bin;
                                             };
                                             let cur = string_builder.append::<ExternalString>(v);
@@ -2632,13 +2532,14 @@ impl PackageManifest {
 
                                 break 'bin;
                             }
-                            JSON::ExprData::EString(stri) => {
-                                if !stri.data.is_empty() {
+                            JSON::E::JsonValue::String(stri) => {
+                                let stri = stri.slice();
+                                if !stri.is_empty() {
                                     package_version.bin = Bin {
                                         tag: bin::Tag::File,
                                         _padding_tag: [0; 3],
                                         value: bin::Value::init_file(
-                                            string_builder.append::<SemverString>(&stri.data),
+                                            string_builder.append::<SemverString>(stri),
                                         ),
                                     };
                                     break 'bin;
@@ -2648,90 +2549,71 @@ impl PackageManifest {
                         }
                     }
 
-                    if let Some(dirs) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(b"directories")
+                    // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
+                    // Because of the way the bin directive works,
+                    // specifying both a bin path and setting
+                    // directories.bin is an error. If you want to
+                    // specify individual files, use bin, and for all
+                    // the files in an existing bin directory, use
+                    // directories.bin.
+                    if let Some(str_) = version_obj
+                        .and_then(|o| o.get(b"directories"))
+                        .and_then(|dirs| dirs.as_object())
+                        .and_then(|dirs| dirs.get(b"bin"))
+                        .and_then(|bin| bin.as_str())
                     {
-                        // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
-                        // Because of the way the bin directive works,
-                        // specifying both a bin path and setting
-                        // directories.bin is an error. If you want to
-                        // specify individual files, use bin, and for all
-                        // the files in an existing bin directory, use
-                        // directories.bin.
-                        if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                            if let Some(str_) = bin_prop.expr.as_string(&bump) {
-                                if !str_.is_empty() {
-                                    package_version.bin = Bin {
-                                        tag: bin::Tag::Dir,
-                                        _padding_tag: [0; 3],
-                                        value: bin::Value::init_dir(
-                                            string_builder.append::<SemverString>(str_),
-                                        ),
-                                    };
-                                    break 'bin;
-                                }
-                            }
+                        if !str_.is_empty() {
+                            package_version.bin = Bin {
+                                tag: bin::Tag::Dir,
+                                _padding_tag: [0; 3],
+                                value: bin::Value::init_dir(
+                                    string_builder.append::<SemverString>(str_),
+                                ),
+                            };
+                            break 'bin;
                         }
                     }
                 }
 
                 'integrity: {
-                    if let Some(dist) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(b"dist")
+                    if let Some(dist) = version_obj
+                        .and_then(|o| o.get(b"dist"))
+                        .and_then(|dist| dist.as_object())
                     {
-                        if let JSON::ExprData::EObject(_) = &dist.expr.data {
-                            if let Some(tarball_q) = dist.expr.as_property(b"tarball") {
-                                if let JSON::ExprData::EString(s) = &tarball_q.expr.data {
-                                    if s.len() > 0 {
-                                        package_version.tarball_url =
-                                            string_builder.append::<ExternalString>(&s.data);
-                                        all_tarball_url_strings[tarball_url_strings_cursor] =
-                                            package_version.tarball_url;
-                                        tarball_url_strings_cursor += 1;
-                                    }
-                                }
+                        if let Some(tarball) = dist.get(b"tarball").and_then(|t| t.as_str()) {
+                            if !tarball.is_empty() {
+                                package_version.tarball_url =
+                                    string_builder.append::<ExternalString>(tarball);
+                                all_tarball_url_strings[tarball_url_strings_cursor] =
+                                    package_version.tarball_url;
+                                tarball_url_strings_cursor += 1;
                             }
+                        }
 
-                            if let Some(file_count_) = dist.expr.as_property(b"fileCount") {
-                                if let JSON::ExprData::ENumber(n) = &file_count_.expr.data {
-                                    package_version.file_count = n.value as u32;
-                                }
-                            }
+                        if let Some(JSON::E::JsonValue::Number(n)) = dist.get(b"fileCount") {
+                            package_version.file_count = n.value() as u32;
+                        }
 
-                            if let Some(file_count_) = dist.expr.as_property(b"unpackedSize") {
-                                if let JSON::ExprData::ENumber(n) = &file_count_.expr.data {
-                                    package_version.unpacked_size = n.value as u32;
-                                }
-                            }
+                        if let Some(JSON::E::JsonValue::Number(n)) = dist.get(b"unpackedSize") {
+                            package_version.unpacked_size = n.value() as u32;
+                        }
 
-                            if let Some(shasum) = dist.expr.as_property(b"integrity") {
-                                if let Some(shasum_str) = shasum.expr.as_string(&bump) {
-                                    package_version.integrity = Integrity::parse(shasum_str);
-                                    if package_version.integrity.tag.is_supported() {
-                                        break 'integrity;
-                                    }
-                                }
+                        if let Some(shasum_str) = dist.get(b"integrity").and_then(|v| v.as_str()) {
+                            package_version.integrity = Integrity::parse(shasum_str);
+                            if package_version.integrity.tag.is_supported() {
+                                break 'integrity;
                             }
+                        }
 
-                            if let Some(shasum) = dist.expr.as_property(b"shasum") {
-                                if let Some(shasum_str) = shasum.expr.as_string(&bump) {
-                                    package_version.integrity =
-                                        Integrity::parse_sha_sum(shasum_str).unwrap_or_default();
-                                }
-                            }
+                        if let Some(shasum_str) = dist.get(b"shasum").and_then(|v| v.as_str()) {
+                            package_version.integrity =
+                                Integrity::parse_sha_sum(shasum_str).unwrap_or_default();
                         }
                     }
                 }
 
                 let mut non_optional_peer_dependency_offset: usize = 0;
 
-                // PERF(port): was comptime monomorphization (`inline for`) — profile in Phase B
                 for (group_idx, pair) in DEPENDENCY_GROUPS.iter().enumerate() {
                     let is_peer = pair.prop == b"peerDependencies";
                     // For peer deps, fall through with an empty `items`
@@ -2744,40 +2626,22 @@ impl PackageManifest {
                     // iteration's slice of `bundled_deps_buf`, so an
                     // unconditional empty pass would clobber the value the
                     // `dependencies` iteration just produced.
-                    // PORT NOTE: hoist `versioned_deps` so the borrowed
-                    // `obj.properties.slice()` outlives the labelled block.
-                    let versioned_deps = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(pair.prop);
-                    let items: &[JSON::Property] = 'items: {
-                        if let Some(versioned_deps) = &versioned_deps {
-                            if let JSON::ExprData::EObject(obj) = &versioned_deps.expr.data {
-                                break 'items obj.properties.slice();
-                            }
-                        }
-                        &[]
+                    let items: &[JSON::E::PropertyJSON] = version_obj
+                        .and_then(|o| o.get(pair.prop))
+                        .and_then(|deps| deps.as_object())
+                        .map(JSON::E::ObjectJSON::properties)
+                        .unwrap_or(&[]);
+                    let peer_deps_meta: Option<&JSON::E::ObjectJSON> = if is_peer {
+                        version_obj
+                            .and_then(|o| o.get(b"peerDependenciesMeta"))
+                            .and_then(|meta| meta.as_object())
+                    } else {
+                        None
                     };
-                    let has_meta_only_peers = is_peer
-                        && 'blk: {
-                            let Some(meta) = prop
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_property(b"peerDependenciesMeta")
-                            else {
-                                break 'blk false;
-                            };
-                            match &meta.expr.data {
-                                JSON::ExprData::EObject(obj) => obj.properties.slice().len() > 0,
-                                _ => false,
-                            }
-                        };
+                    let has_meta_only_peers =
+                        peer_deps_meta.is_some_and(|meta| !meta.properties().is_empty());
                     if items.len() > 0 || has_meta_only_peers {
-                        let mut count = items.len();
-
-                        // PORT NOTE: reshaped for borrowck — index into all_extern_strings / version_extern_strings
+                        // reshaped for borrowck — index into all_extern_strings / version_extern_strings
                         let names_base = dependency_names_cursor;
                         let values_base = dependency_values_cursor;
 
@@ -2787,48 +2651,24 @@ impl PackageManifest {
                         if is_peer {
                             optional_peer_dep_names.clear();
 
-                            if let Some(meta) = prop
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_property(b"peerDependenciesMeta")
-                            {
-                                if let JSON::ExprData::EObject(obj) = &meta.expr.data {
-                                    let meta_props = obj.properties.slice();
-                                    optional_peer_dep_names.reserve(meta_props.len());
-                                    // PERF(port): was assume_capacity
-                                    for meta_prop in meta_props {
-                                        if let Some(optional) = meta_prop
-                                            .value
-                                            .as_ref()
-                                            .expect("infallible: prop has value")
-                                            .as_property(b"optional")
-                                        {
-                                            let JSON::ExprData::EBoolean(b) = &optional.expr.data
-                                            else {
-                                                continue;
-                                            };
-                                            if !b.value {
-                                                continue;
-                                            }
+                            if let Some(meta) = peer_deps_meta {
+                                let meta_props = meta.properties();
+                                optional_peer_dep_names.reserve(meta_props.len());
+                                for meta_prop in meta_props {
+                                    if let Some(optional) = meta_prop
+                                        .value
+                                        .as_object()
+                                        .and_then(|meta| meta.get(b"optional"))
+                                    {
+                                        let JSON::E::JsonValue::Boolean(true) = optional else {
+                                            continue;
+                                        };
 
-                                            let meta_key = meta_prop
-                                                .key
-                                                .as_ref()
-                                                .unwrap()
-                                                .as_string(&bump)
-                                                .expect("unreachable");
-                                            optional_peer_dep_names.push(
-                                                Semver::semver_string::Builder::string_hash(
-                                                    meta_key,
-                                                ),
-                                            );
-
-                                            // Reserve a slot for a meta-only synthesised peer.
-                                            // The slot is unused if `meta_key` also appears in
-                                            // `peerDependencies` below.
-                                            count += 1;
-                                        }
+                                        optional_peer_dep_names.push(
+                                            Semver::semver_string::Builder::string_hash(
+                                                meta_prop.key.slice(),
+                                            ),
+                                        );
                                     }
                                 }
                             }
@@ -2839,27 +2679,8 @@ impl PackageManifest {
                         let mut i: usize = 0;
 
                         for item in items {
-                            let name_str = match item
-                                .key
-                                .as_ref()
-                                .expect("infallible: prop has key")
-                                .as_string(&bump)
-                            {
-                                Some(s) => s,
-                                None => {
-                                    if cfg!(debug_assertions) {
-                                        unreachable!("non-value Expr from JSON parser")
-                                    } else {
-                                        continue;
-                                    }
-                                }
-                            };
-                            let version_str = match item
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_string(&bump)
-                            {
+                            let name_str = item.key.slice();
+                            let version_str = match item.value.as_str() {
                                 Some(s) => s,
                                 None => {
                                     if cfg!(debug_assertions) {
@@ -2932,71 +2753,48 @@ impl PackageManifest {
                             // `peerDependencies`) as `"*"` versions.
                             // pnpm/yarn do this; webpack relies on it
                             // to make `webpack-cli` reachable.
-                            if let Some(meta) = prop
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_property(b"peerDependenciesMeta")
-                            {
-                                if let JSON::ExprData::EObject(obj) = &meta.expr.data {
-                                    'outer: for meta_prop in obj.properties.slice() {
-                                        let Some(optional) = meta_prop
-                                            .value
-                                            .as_ref()
-                                            .expect("infallible: prop has value")
-                                            .as_property(b"optional")
-                                        else {
-                                            continue;
-                                        };
-                                        let JSON::ExprData::EBoolean(b) = &optional.expr.data
-                                        else {
-                                            continue;
-                                        };
-                                        if !b.value {
-                                            continue;
+                            if let Some(meta) = peer_deps_meta {
+                                'outer: for meta_prop in meta.properties() {
+                                    let Some(optional) = meta_prop
+                                        .value
+                                        .as_object()
+                                        .and_then(|meta| meta.get(b"optional"))
+                                    else {
+                                        continue;
+                                    };
+                                    let JSON::E::JsonValue::Boolean(true) = optional else {
+                                        continue;
+                                    };
+                                    let meta_key = meta_prop.key.slice();
+                                    let meta_hash =
+                                        Semver::semver_string::Builder::string_hash(meta_key);
+                                    for existing in &all_extern_strings[names_base..names_base + i]
+                                    {
+                                        if existing.hash == meta_hash {
+                                            continue 'outer;
                                         }
-                                        let Some(meta_key) = meta_prop
-                                            .key
-                                            .as_ref()
-                                            .expect("infallible: prop has key")
-                                            .as_string(&bump)
-                                        else {
-                                            continue;
-                                        };
-                                        let meta_hash =
-                                            Semver::semver_string::Builder::string_hash(meta_key);
-                                        for existing in
-                                            &all_extern_strings[names_base..names_base + i]
-                                        {
-                                            if existing.hash == meta_hash {
-                                                continue 'outer;
-                                            }
-                                        }
-                                        all_extern_strings[names_base + i] =
-                                            string_builder.append::<ExternalString>(meta_key);
-                                        version_extern_strings[values_base + i] =
-                                            string_builder.append::<ExternalString>(b"*");
-                                        // Swap to the optional-peer
-                                        // prefix the rest of the loop
-                                        // body would have produced.
-                                        if non_optional_peer_dependency_offset != i {
-                                            all_extern_strings.swap(
-                                                names_base + i,
-                                                names_base + non_optional_peer_dependency_offset,
-                                            );
-                                            version_extern_strings.swap(
-                                                values_base + i,
-                                                values_base + non_optional_peer_dependency_offset,
-                                            );
-                                        }
-                                        non_optional_peer_dependency_offset += 1;
-                                        i += 1;
                                     }
+                                    all_extern_strings[names_base + i] =
+                                        string_builder.append::<ExternalString>(meta_key);
+                                    version_extern_strings[values_base + i] =
+                                        string_builder.append::<ExternalString>(b"*");
+                                    if non_optional_peer_dependency_offset != i {
+                                        all_extern_strings.swap(
+                                            names_base + i,
+                                            names_base + non_optional_peer_dependency_offset,
+                                        );
+                                        version_extern_strings.swap(
+                                            values_base + i,
+                                            values_base + non_optional_peer_dependency_offset,
+                                        );
+                                    }
+                                    non_optional_peer_dependency_offset += 1;
+                                    i += 1;
                                 }
                             }
                         }
 
-                        count = i;
+                        let count = i;
                         // The peer slice was over-reserved by the
                         // number of `peerDependenciesMeta` entries (so
                         // meta-only synthesised peers had room); trim
@@ -3077,38 +2875,101 @@ impl PackageManifest {
                             _ => unreachable!("non-value Expr from JSON parser"),
                         }
 
-                        // TODO(port): debug-assertions block (Zig lines 2478-2522) elided —
-                        // it re-reads `this_names`/`this_versions` via `mut()` after dedupe.
-                        // Phase B can re-add with cursor-based slicing.
-                        let _ = (this_names, this_versions);
-                    }
-                }
+                        // The dedupe must hand back
+                        // lists resolving to identical contents. The string
+                        // pool dedupes equal strings to equal offsets, so
+                        // field equality holds even when `name_list` points
+                        // at an earlier entry's region.
+                        #[cfg(debug_assertions)]
+                        {
+                            let dependencies_list = map;
+                            debug_assert!(
+                                (dependencies_list.name.off as usize) < all_extern_strings.len()
+                            );
+                            debug_assert!(
+                                (dependencies_list.value.off as usize) < all_extern_strings.len()
+                            );
+                            debug_assert!(
+                                dependencies_list.name.off as usize
+                                    + (dependencies_list.name.len as usize)
+                                    < all_extern_strings.len()
+                            );
+                            debug_assert!(
+                                dependencies_list.value.off as usize
+                                    + (dependencies_list.value.len as usize)
+                                    < all_extern_strings.len()
+                            );
 
-                if let Some(time_obj) = json.as_property(b"time") {
-                    if let Some(publish_time_expr) = time_obj.expr.get(version_name) {
-                        if let Some(publish_time_str) = publish_time_expr.as_string(&bump) {
-                            if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
-                                package_version.publish_timestamp_ms = ms;
+                            let name_dependencies = dependencies_list.name.get(&all_extern_strings);
+                            let value_dependencies =
+                                dependencies_list.value.get(&version_extern_strings);
+
+                            // Element-wise field equality.
+                            debug_assert!(name_dependencies.len() == this_names.len());
+                            debug_assert!(value_dependencies.len() == this_versions.len());
+                            for (a, b) in name_dependencies.iter().zip(this_names.iter()) {
+                                debug_assert!(a.hash == b.hash && a.value == b.value);
+                            }
+                            for (a, b) in value_dependencies.iter().zip(this_versions.iter()) {
+                                debug_assert!(a.hash == b.hash && a.value == b.value);
+                            }
+
+                            // Per-element string-content checks against the
+                            // source JSON. Skipped when meta-only
+                            // optional peers may have been synthesised, since
+                            // `items[j]` correspondence no longer holds then.
+                            if !is_peer || optional_peer_dep_names.is_empty() {
+                                let string_buf: &[u8] = string_builder.allocated_slice();
+                                for (j, dep_name) in name_dependencies.iter().enumerate() {
+                                    debug_assert!(
+                                        dep_name.value.slice(string_buf)
+                                            == this_names[j].value.slice(string_buf)
+                                    );
+                                    debug_assert!(
+                                        dep_name.value.slice(string_buf) == items[j].key.slice()
+                                    );
+                                }
+                                for (j, dep_version) in value_dependencies.iter().enumerate() {
+                                    debug_assert!(
+                                        dep_version.value.slice(string_buf)
+                                            == this_versions[j].value.slice(string_buf)
+                                    );
+                                    debug_assert!(
+                                        dep_version.value.slice(string_buf)
+                                            == items[j]
+                                                .value
+                                                .as_str()
+                                                .expect("dependency value must be a string")
+                                    );
+                                }
                             }
                         }
                     }
                 }
 
-                if !parsed_version.version.tag.has_pre() {
-                    // SAFETY: cursor < release_versions_len by counting pass
-                    unsafe {
-                        *all_semver_versions_ptr.add(release_versions_cursor) =
-                            parsed_version.version.min();
+                if let Some(&i) = time_index.get(&Wyhash11::hash(0, version_name)) {
+                    let indexed = &time_props[i as usize];
+                    let entry = if indexed.key.slice() == version_name {
+                        Some(indexed)
+                    } else {
+                        // Hash collision: fall back to a linear scan so the
+                        // result matches the previous `ObjectJSON::get` exactly.
+                        time_props.iter().find(|p| p.key.slice() == version_name)
+                    };
+                    if let Some(publish_time_str) = entry.and_then(|p| p.value.as_str()) {
+                        if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
+                            package_version.publish_timestamp_ms = ms;
+                        }
                     }
+                }
+
+                if !parsed_version.version.tag.has_pre() {
+                    all_semver_versions[release_versions_cursor] = parsed_version.version.min();
                     versioned_packages[versioned_package_releases_start] = package_version;
                     release_versions_cursor += 1;
                     versioned_package_releases_start += 1;
                 } else {
-                    // SAFETY: cursor in prerelease range
-                    unsafe {
-                        *all_semver_versions_ptr.add(prerelease_versions_cursor) =
-                            parsed_version.version.min();
-                    }
+                    all_semver_versions[prerelease_versions_cursor] = parsed_version.version.min();
                     versioned_packages[versioned_package_prereleases_start] = package_version;
                     prerelease_versions_cursor += 1;
                     versioned_package_prereleases_start += 1;
@@ -3117,7 +2978,6 @@ impl PackageManifest {
 
             extern_strings_consumed = dependency_names_cursor;
             // version_extern_strings trimmed below
-            // PORT NOTE: Zig: version_extern_strings = version_extern_strings[0 .. len - dependency_values.len]
         }
         let version_extern_strings_len = dependency_values_cursor;
 
@@ -3125,45 +2985,30 @@ impl PackageManifest {
         let mut extern_strings_cursor = extern_strings_consumed;
         let _ = all_dependency_names_and_values_len;
 
-        if let Some(dist) = json.as_property(b"dist-tags") {
-            if let JSON::ExprData::EObject(obj) = &dist.expr.data {
-                let tags = obj.properties.slice();
+        if let Some(dist) = json.get(b"dist-tags") {
+            if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
+                let tags = obj.get().properties();
                 let extern_strings_slice_start = extern_strings_cursor;
                 let mut dist_tag_i: usize = 0;
 
                 for tag in tags {
-                    if let Some(key) = tag
-                        .key
-                        .as_ref()
-                        .expect("infallible: prop has key")
-                        .as_string(&bump)
-                    {
-                        all_extern_strings[extern_strings_slice_start + dist_tag_i] =
-                            string_builder.append::<ExternalString>(key);
+                    all_extern_strings[extern_strings_slice_start + dist_tag_i] =
+                        string_builder.append::<ExternalString>(tag.key.slice());
 
-                        let Some(version_name) = tag
-                            .value
-                            .as_ref()
-                            .expect("infallible: prop has value")
-                            .as_string(&bump)
-                        else {
-                            continue;
-                        };
+                    let Some(version_name) = tag.value.as_str() else {
+                        continue;
+                    };
 
-                        let dist_tag_value_literal =
-                            string_builder.append::<ExternalString>(version_name);
+                    let dist_tag_value_literal =
+                        string_builder.append::<ExternalString>(version_name);
 
-                        let sliced_string = dist_tag_value_literal
-                            .value
-                            .sliced(string_builder.allocated_slice());
+                    let sliced_string = dist_tag_value_literal
+                        .value
+                        .sliced(string_builder.allocated_slice());
 
-                        // SAFETY: dist_tag_versions_start + dist_tag_i < all_semver_versions.len()
-                        unsafe {
-                            *all_semver_versions_ptr.add(dist_tag_versions_start + dist_tag_i) =
-                                Semver::Version::parse(sliced_string).version.min();
-                        }
-                        dist_tag_i += 1;
-                    }
+                    all_semver_versions[dist_tag_versions_start + dist_tag_i] =
+                        Semver::Version::parse(sliced_string).version.min();
+                    dist_tag_i += 1;
                 }
 
                 result.pkg.dist_tags = DistTagMap {
@@ -3179,8 +3024,23 @@ impl PackageManifest {
                     ),
                 };
 
-                if cfg!(debug_assertions) {
-                    // TODO(port): std.meta.eql sanity checks elided
+                #[cfg(debug_assertions)]
+                {
+                    // Round-trip check of the just-initialized slices. `init`
+                    // is a pointer-offset round-trip, so slice identity
+                    // (ptr + len) implies element equality.
+                    let tags_rt = result.pkg.dist_tags.tags.get(&all_extern_strings);
+                    debug_assert!(core::ptr::eq(
+                        tags_rt.as_ptr(),
+                        all_extern_strings[extern_strings_slice_start..].as_ptr()
+                    ));
+                    debug_assert!(tags_rt.len() == dist_tag_i);
+                    let versions_rt = result.pkg.dist_tags.versions.get(&all_semver_versions);
+                    debug_assert!(core::ptr::eq(
+                        versions_rt.as_ptr(),
+                        all_semver_versions[dist_tag_versions_start..].as_ptr()
+                    ));
+                    debug_assert!(versions_rt.len() == dist_tag_i);
                 }
 
                 extern_strings_cursor += dist_tag_i;
@@ -3196,7 +3056,7 @@ impl PackageManifest {
         }
 
         if let Some(name_q) = json.as_property(b"modified") {
-            let Some(field) = name_q.expr.as_string(&bump) else {
+            let Some(field) = name_q.expr.as_utf8_string_literal() else {
                 return Ok(None);
             };
             result.pkg.modified = string_builder.append::<SemverString>(field);
@@ -3208,7 +3068,7 @@ impl PackageManifest {
         );
         result.pkg.releases.values = PackageVersionList::init(
             &versioned_packages,
-            &versioned_packages[all_versioned_package_releases_range.clone()],
+            &versioned_packages[all_versioned_package_releases_range],
         );
 
         result.pkg.prereleases.keys = VersionSlice::init(
@@ -3217,7 +3077,7 @@ impl PackageManifest {
         );
         result.pkg.prereleases.values = PackageVersionList::init(
             &versioned_packages,
-            &versioned_packages[all_versioned_package_prereleases_range.clone()],
+            &versioned_packages[all_versioned_package_prereleases_range],
         );
 
         let max_versions_count = all_release_versions_range
@@ -3244,12 +3104,12 @@ impl PackageManifest {
             n => {
                 // ceil(log2_int_ceil(n) / 8)
                 let bits = (usize::BITS - (n - 1).leading_zeros()) as usize;
-                (bits + 7) / 8
+                bits.div_ceil(8)
             }
         };
 
-        // PERF(port): was comptime monomorphization over Int width — using a macro to expand
-        // the 1..=8 byte cases. Phase B may collapse to a single usize path if profiling allows.
+        // A macro expands
+        // the 1..=8 byte cases. Could collapse to a single usize path if profiling allows.
         macro_rules! sort_with_int {
             ($Int:ty) => {{
                 type Int = $Int;
@@ -3270,11 +3130,10 @@ impl PackageManifest {
                     let cloned_versions = &mut all_cloned_versions[..len];
                     // `ExternalSlice` offsets index into `versioned_packages` /
                     // `all_semver_versions`, both fully-initialised `Box<[T]>`s
-                    // (created via `vec![Default; n].into_boxed_slice()` above) —
-                    // safe slice indexing replaces the `from_raw_parts_mut`
-                    // reconstruction Zig's `@constCast(release.values.get(..))`
-                    // forced. The two boxes are distinct allocations so the two
-                    // `&mut` borrows do not overlap.
+                    // (created via `vec![Default; n].into_boxed_slice()` above),
+                    // so safe slice indexing suffices. The two boxes are
+                    // distinct allocations so the two `&mut` borrows do not
+                    // overlap.
                     let versioned_packages_ =
                         &mut versioned_packages[release.values.off as usize..][..len];
                     let semver_versions_ =
@@ -3294,9 +3153,6 @@ impl PackageManifest {
                             string_bytes,
                         )
                     });
-                    // PORT NOTE: Zig sorted indices against semver_versions_ (which is unmutated
-                    // until after sort) — equivalent to sorting against cloned_versions.
-
                     debug_assert_eq!(indices.len(), versioned_packages_.len());
                     debug_assert_eq!(indices.len(), semver_versions_.len());
                     for ((i, pkg), version) in indices
@@ -3328,9 +3184,9 @@ impl PackageManifest {
         match how_many_bytes_to_store_indices {
             1 => sort_with_int!(u8),
             2 => sort_with_int!(u16),
-            3 => sort_with_int!(u32), // TODO(port): Zig used u24; Rust has no u24, use u32
+            3 => sort_with_int!(u32),
             4 => sort_with_int!(u32),
-            5 | 6 | 7 | 8 => sort_with_int!(u64),
+            5..=8 => sort_with_int!(u64),
             _ => {
                 debug_assert!(max_versions_count == 0);
             }
@@ -3340,17 +3196,15 @@ impl PackageManifest {
         if extern_strings_remaining + tarball_urls_count > 0 {
             let src_len = tarball_url_strings_cursor;
             if src_len > 0 {
-                // `ExternalString` is `Copy` POD — Zig used `@memcpy` over
-                // `sliceAsBytes` views here; an element-wise `copy_from_slice`
-                // is bit-identical and lets us drop the `from_raw_parts`
-                // byte-view reconstruction over the same boxed slices.
+                // `ExternalString` is `Copy` POD — an element-wise
+                // `copy_from_slice` suffices.
                 debug_assert!(all_extern_strings.len() - extern_strings_cursor >= src_len);
                 all_extern_strings[extern_strings_cursor..extern_strings_cursor + src_len]
                     .copy_from_slice(&all_tarball_url_strings[..src_len]);
             }
 
             // all_extern_strings = all_extern_strings[0 .. len - extern_strings_remaining]
-            // PORT NOTE: trim by truncating the boxed slice via Vec round-trip
+            // trim by truncating the boxed slice via Vec round-trip
             let new_len = all_extern_strings.len() - extern_strings_remaining;
             let mut v = core::mem::take(&mut all_extern_strings).into_vec();
             v.truncate(new_len);
@@ -3381,18 +3235,13 @@ impl PackageManifest {
         result.pkg.has_extended_manifest = is_extended_manifest;
 
         if let Some(buf) = string_builder.ptr.take() {
-            // TODO(port): string_builder owns this allocation; copy out the
-            // written prefix. Phase B can add a `Builder::into_owned()` that
-            // yields `Box<[u8]>` without the truncate copy.
             let mut v = buf.into_vec();
             v.truncate(string_builder.len);
             result.string_buf = v.into_boxed_slice();
         }
 
-        let _ = all_tarball_url_strings; // suppress unused-mut warnings in Phase A
+        let _ = all_tarball_url_strings; // suppress unused-mut warnings
 
         Ok(Some(result))
     }
 }
-
-// ported from: src/install/npm.zig

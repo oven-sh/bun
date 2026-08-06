@@ -27,12 +27,8 @@
 #include "JSDOMPromiseDeferred.h"
 
 // #include "DOMWindow.h"
-// #include "EventLoop.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMPromise.h"
-// #include "JSDOMWindow.h"
-// #include "ScriptController.h"
-// #include "WorkerGlobalScope.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -59,20 +55,6 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
     if (shouldIgnoreRequestToFulfill())
         return;
 
-    // if (activeDOMObjectsAreSuspended()) {
-    //     JSC::Strong<JSC::Unknown, ShouldStrongDestructorGrabLock::Yes> strongResolution(lexicalGlobalObject.vm(), resolution);
-    //     ASSERT(scriptExecutionContext()->eventLoop().isSuspended());
-    //     scriptExecutionContext()->eventLoop().queueTask(TaskSource::Networking, [this, protectedThis = Ref { *this }, mode, strongResolution = WTF::move(strongResolution)]() mutable {
-    //         if (shouldIgnoreRequestToFulfill())
-    //             return;
-
-    //         JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
-    //         JSC::JSLockHolder locker(lexicalGlobalObject);
-    //         callFunction(*globalObject(), mode, strongResolution.get());
-    //     });
-    //     return;
-    // }
-
     auto& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto handleExceptionOnExit = makeScopeExit([&] {
@@ -84,10 +66,10 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
         deferred()->resolve(&lexicalGlobalObject, vm, resolution);
         break;
     case ResolveMode::Reject:
-        deferred()->reject(vm, &lexicalGlobalObject, resolution);
+        deferred()->reject(vm, resolution);
         break;
     case ResolveMode::RejectAsHandled:
-        deferred()->rejectAsHandled(vm, &lexicalGlobalObject, resolution);
+        deferred()->rejectAsHandled(vm, resolution);
         break;
     }
 
@@ -99,13 +81,6 @@ void DeferredPromise::whenSettled(Function<void()>&& callback)
 {
     if (shouldIgnoreRequestToFulfill())
         return;
-
-    // if (activeDOMObjectsAreSuspended()) {
-    //     scriptExecutionContext()->eventLoop().queueTask(TaskSource::Networking, [this, protectedThis = Ref { *this }, callback = WTF::move(callback)]() mutable {
-    //         whenSettled(WTF::move(callback));
-    //     });
-    //     return;
-    // }
 
     DOMPromise::whenPromiseIsSettled(globalObject(), deferred(), WTF::move(callback));
 }

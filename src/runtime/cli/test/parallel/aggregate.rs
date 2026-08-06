@@ -1,6 +1,5 @@
-//! Per-worker JUnit XML and LCOV coverage fragment merging. Workers write
-//! their own fragments to a shared temp dir; the coordinator stitches them
-//! into a single document/report after `drive()` completes.
+//! Merges the JUnit and LCOV chunks workers stream over IPC into the
+//! single report the coordinator writes after `drive()` completes.
 
 use std::io::Write as _;
 
@@ -8,7 +7,7 @@ use bstr::BStr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::strings;
-use bun_core::{self, Output, ZBox, err};
+use bun_core::{self, Output, ZBox};
 use bun_options_types::code_coverage_options::{CodeCoverageOptions, Fraction as CoverageFraction};
 use bun_paths::{self, PathBuffer};
 use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
@@ -21,7 +20,6 @@ use crate::test_command;
 use crate::test_runner::jest::Summary;
 
 fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
-    // PERF(port): was comptime `" " ++ name ++ "=\""` concat — profile in Phase B
     let needle = [b" ", name, b"=\""].concat();
     let Some(idx) = strings::index_of(head, &needle) else {
         return 0;
@@ -31,72 +29,60 @@ fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
         return 0;
     };
     let end = start + q as usize;
-    // TODO(port): narrow error set
     strings::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
 }
 
-pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
+#[derive(Default)]
+pub struct JunitTotals {
+    pub tests: u32,
+    pub failures: u32,
+    pub skipped: u32,
+}
+
+pub(crate) fn add_junit_chunk_totals(totals: &mut JunitTotals, chunk: &[u8]) {
+    let Some(open) = strings::index_of(chunk, b"<testsuite ") else {
+        return;
+    };
+    let Some(gt) = strings::index_of_char(&chunk[open..], b'>') else {
+        return;
+    };
+    let head = &chunk[open..open + gt as usize];
+    totals.tests += attr_value(head, b"tests");
+    totals.failures += attr_value(head, b"failures");
+    totals.skipped += attr_value(head, b"skipped");
+}
+
+pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
+    let mut totals = core::mem::take(&mut coord.junit_totals);
+    let chunks = core::mem::take(&mut coord.junit_chunks);
+    let crashed = core::mem::take(&mut coord.crashed_files);
     let mut body: Vec<u8> = Vec::new();
-    // Crashed workers never reach workerFlushAggregates, so any files they ran
-    // (including earlier passing ones) have no fragment. Compute the outer
-    // <testsuites> totals from what we actually emit so they always equal the
-    // sum of inner <testsuite> elements; CI tools schema-validate this.
-    #[derive(Default)]
-    struct Totals {
-        tests: u32,
-        failures: u32,
-        skipped: u32,
-    }
-    let mut totals = Totals::default();
-
-    for path in &coord.junit_fragments {
-        let file = match File::read_from(Fd::cwd(), path) {
-            bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(_) => continue,
-        };
-        // Each fragment is a full <testsuites> document; extract its header
-        // attributes for the merged totals and its body for the inner suites.
-        let Some(open_start) = strings::index_of(&file, b"<testsuites") else {
-            continue;
-        };
-        let Some(gt) = strings::index_of_char(&file[open_start..], b'>') else {
-            continue;
-        };
-        let head_end = open_start + gt as usize;
-        let head = &file[open_start..head_end];
-        totals.tests += attr_value(head, b"tests");
-        totals.failures += attr_value(head, b"failures");
-        totals.skipped += attr_value(head, b"skipped");
-        let body_start = head_end + 1;
-        let Some(body_end) = strings::last_index_of(&file, b"</testsuites>") else {
-            continue;
-        };
-        if body_start >= body_end {
-            continue;
+    for (idx, slot) in chunks.into_iter().enumerate() {
+        if let Some(chunk) = slot {
+            body.extend_from_slice(&chunk);
+            if !strings::ends_with_char(&chunk, b'\n') {
+                body.push(b'\n');
+            }
         }
-        let inner = strings::trim(&file[body_start..body_end], b"\n");
-        if inner.is_empty() {
-            continue;
+        if crashed.contains(&(idx as u32)) {
+            let rel = coord.rel_path(idx as u32);
+            body.extend_from_slice(b"  <testsuite name=\"");
+            let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
+            body.extend_from_slice(b"\" file=\"");
+            let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
+            body.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
+            let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
+            body.extend_from_slice(
+                b"\">\n\
+                  \x20     <failure message=\"worker process crashed before reporting results\"></failure>\n\
+                  \x20   </testcase>\n\
+                  \x20 </testsuite>\n",
+            );
+            totals.tests += 1;
+            totals.failures += 1;
         }
-        body.extend_from_slice(inner);
-        body.push(b'\n');
     }
-
-    for &idx in &coord.crashed_files {
-        let rel = coord.rel_path(idx);
-        body.extend_from_slice(b"  <testsuite name=\"");
-        let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
-        body.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
-        let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
-        body.extend_from_slice(
-            b"\">\n\
-              \x20     <failure message=\"worker process crashed before reporting results\"></failure>\n\
-              \x20   </testcase>\n\
-              \x20 </testsuite>\n",
-        );
-        totals.tests += 1;
-        totals.failures += 1;
-    }
+    coord.crashed_files = crashed;
 
     let mut contents: Vec<u8> = Vec::new();
     let elapsed_time =
@@ -113,22 +99,18 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
     let out_z = ZBox::from_bytes(outfile);
     match File::openat(Fd::cwd(), &out_z, O::WRONLY | O::CREAT | O::TRUNC, 0o664) {
         bun_sys::Result::Err(e) => Output::err(
-            err!("JUnitReportFailed"),
+            crate::Error::JUnitReportFailed,
             "Failed to write JUnit report to {}\n{}",
             (BStr::new(outfile), e),
         ),
-        bun_sys::Result::Ok(fd) => {
-            let fd = fd; // moved into scope; closed on drop
-            match File::write_all(&fd, &contents) {
-                bun_sys::Result::Err(e) => Output::err(
-                    err!("JUnitReportFailed"),
-                    "Failed to write JUnit report to {}\n{}",
-                    (BStr::new(outfile), e),
-                ),
-                bun_sys::Result::Ok(()) => {}
-            }
-            let _ = fd.close();
-        }
+        bun_sys::Result::Ok(fd) => match File::write_all(&fd, &contents) {
+            bun_sys::Result::Err(e) => Output::err(
+                crate::Error::JUnitReportFailed,
+                "Failed to write JUnit report to {}\n{}",
+                (BStr::new(outfile), e),
+            ),
+            bun_sys::Result::Ok(()) => {}
+        },
     }
 }
 
@@ -156,21 +138,15 @@ impl FileCoverage {
 /// emit per-function FN/FNDA records yet, so disjoint per-worker function hits
 /// can't be unioned; this under-reports % Funcs when workers cover different
 /// functions of the same file. The non-parallel path has the same FN/FNDA gap.
-pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
-    paths: &[&[u8]],
+pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
+    chunks: &[&[u8]],
     opts: &mut CodeCoverageOptions,
 ) {
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
-
     let mut by_file: StringArrayHashMap<FileCoverage> = StringArrayHashMap::default();
 
-    for &path in paths {
-        let data = match File::read_from(Fd::cwd(), path) {
-            bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(_) => continue,
-        };
+    for &data in chunks {
         let mut cur: Option<usize> = None; // index into by_file; raw &mut would alias across getOrPut
-        // PORT NOTE: reshaped for borrowck — store index instead of *mut FileCoverage
+        // reshaped for borrowck — store index instead of *mut FileCoverage
         for raw in data.split(|b| *b == b'\n') {
             let line = strings::trim_right(raw, b"\r");
             if line.starts_with(b"SF:") {
@@ -178,7 +154,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 let gop = bun_core::handle_oom(by_file.get_or_put(name));
                 if !gop.found_existing {
                     let owned: Box<[u8]> = Box::from(name);
-                    *gop.key_ptr = owned.clone();
+                    gop.key_ptr.clone_from(&owned);
                     *gop.value_ptr = FileCoverage {
                         path: owned,
                         ..Default::default()
@@ -222,8 +198,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         return;
     }
 
-    // Stable output order. Zig's `ArrayHashMap.sort` reorders entries in place;
-    // PORT NOTE: reshaped — ArrayHashMap has no in-place sort yet, so build a
+    // Stable output order. ArrayHashMap has no in-place sort yet, so build a
     // permutation and iterate via `order` everywhere below.
     let mut order: Vec<usize> = (0..by_file.count()).collect();
     {
@@ -253,12 +228,12 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             0o644,
         ) {
             bun_sys::Result::Err(e) => Output::err(
-                err!("lcovCoverageError"),
+                crate::Error::lcovCoverageError,
                 "Failed to write merged lcov.info\n{}",
                 (e,),
             ),
             bun_sys::Result::Ok(f) => {
-                // TODO(port): Zig used a 64KiB-buffered writer adapter; building in Vec then one write_all
+                // Build the whole report in a Vec, then issue one write_all.
                 let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
                 for &i in &order {
                     let fc = &by_file.values()[i];
@@ -272,12 +247,8 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                         fc.fnh
                     );
                     for &ln in &sorted {
-                        let _ = write!(
-                            &mut w,
-                            "DA:{},{}\n",
-                            ln,
-                            fc.da.get(&ln).expect("unreachable")
-                        );
+                        let _ =
+                            writeln!(&mut w, "DA:{},{}", ln, fc.da.get(&ln).expect("unreachable"));
                     }
                     let _ = write!(
                         &mut w,
@@ -287,7 +258,6 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                     );
                 }
                 let _ = File::write_all(&f, &w);
-                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
             }
         }
     }
@@ -337,8 +307,14 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         let console = Output::error_writer();
         fn sep<const COLORS: bool>(c: &mut bun_core::io::Writer, n: usize) {
             let _ = c.write_all(Output::pretty_fmt::<COLORS>("<r><d>").as_ref());
-            // TODO(port): splatByteAll equivalent on writer
-            let _ = c.write_all(&vec![b'-'; n + 2]);
+            // Repeat the byte without a heap allocation.
+            const DASHES: [u8; 64] = [b'-'; 64];
+            let mut left = n + 2;
+            while left > 0 {
+                let take = left.min(DASHES.len());
+                let _ = c.write_all(&DASHES[..take]);
+                left -= take;
+            }
             let _ = c.write_all(
                 Output::pretty_fmt::<COLORS>("|---------|---------|-------------------<r>\n")
                     .as_ref(),
@@ -402,7 +378,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             avg.stmts /= avg_n;
         }
         let _ = console.write_all(&body);
-        // PORT NOTE: bun_core::io::Writer doesn't impl bun_io::Write — buffer
+        // bun_core::io::Writer doesn't impl bun_io::Write — buffer
         // through a Vec then write_all once.
         let mut all_files: Vec<u8> = Vec::new();
         let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(
@@ -434,5 +410,3 @@ fn write_range<const COLORS: bool>(w: &mut impl std::io::Write, first: &mut bool
         let _ = write!(w, "{}{}-{}", Output::pretty_fmt::<COLORS>("<red>"), a, b);
     }
 }
-
-// ported from: src/cli/test/parallel/aggregate.zig

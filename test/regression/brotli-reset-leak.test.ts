@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
+import { isASAN, rss } from "harness";
 import { createBrotliCompress, createBrotliDecompress } from "zlib";
+
+// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
+// run far higher under bun-asan; widen the threshold there.
+const MEMORY_GROWTH_LIMIT_MB = isASAN ? 400 : 50;
 
 // This test verifies that calling reset() on Brotli streams doesn't leak memory.
 // Before the fix, each reset() call would allocate a new Brotli encoder/decoder
@@ -11,7 +16,7 @@ test("Brotli reset() should not leak memory", { timeout: 30_000 }, async () => {
   // Get baseline memory
   Bun.gc(true);
   await Bun.sleep(10);
-  const baselineMemory = process.memoryUsage.rss();
+  const baselineMemory = rss();
 
   const compressor = createBrotliCompress();
 
@@ -25,7 +30,7 @@ test("Brotli reset() should not leak memory", { timeout: 30_000 }, async () => {
   // Force GC and measure
   Bun.gc(true);
   await Bun.sleep(10);
-  const finalMemory = process.memoryUsage.rss();
+  const finalMemory = rss();
 
   const memoryGrowth = finalMemory - baselineMemory;
   const memoryGrowthMB = memoryGrowth / 1024 / 1024;
@@ -34,7 +39,7 @@ test("Brotli reset() should not leak memory", { timeout: 30_000 }, async () => {
 
   // With 100k iterations and ~400KB per leak, we'd expect ~40GB of leakage without the fix.
   // With the fix, memory growth should be minimal (under 50MB accounting for test overhead).
-  expect(memoryGrowthMB).toBeLessThan(50);
+  expect(memoryGrowthMB).toBeLessThan(MEMORY_GROWTH_LIMIT_MB);
 });
 
 test("BrotliDecompress reset() should not leak memory", { timeout: 30_000 }, async () => {
@@ -42,7 +47,7 @@ test("BrotliDecompress reset() should not leak memory", { timeout: 30_000 }, asy
 
   Bun.gc(true);
   await Bun.sleep(10);
-  const baselineMemory = process.memoryUsage.rss();
+  const baselineMemory = rss();
 
   const decompressor = createBrotliDecompress();
 
@@ -54,12 +59,12 @@ test("BrotliDecompress reset() should not leak memory", { timeout: 30_000 }, asy
 
   Bun.gc(true);
   await Bun.sleep(10);
-  const finalMemory = process.memoryUsage.rss();
+  const finalMemory = rss();
 
   const memoryGrowth = finalMemory - baselineMemory;
   const memoryGrowthMB = memoryGrowth / 1024 / 1024;
 
   console.log(`Memory growth after ${iterations} reset() calls: ${memoryGrowthMB.toFixed(2)} MB`);
 
-  expect(memoryGrowthMB).toBeLessThan(50);
+  expect(memoryGrowthMB).toBeLessThan(MEMORY_GROWTH_LIMIT_MB);
 });

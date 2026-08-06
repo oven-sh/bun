@@ -3,8 +3,6 @@
 //! exceptions as well as bundler errors. A serialized failure carries a handle
 //! on the file or route it came from so the bundler can dismiss/update stale
 //! failures by index instead of resending the whole payload.
-//!
-//! Spec: src/runtime/bake/DevServer/SerializedFailure.zig
 
 use bun_io::Write as _;
 
@@ -16,18 +14,17 @@ use crate::bake::Side;
 ///
 /// Distinct from `Packed` (2-bit kind + 30-bit data) below: this encoding only
 /// covers `Client`/`Server` owners and is used as the `bundling_failures` map
-/// key (Zig hashed via `ArrayHashContextViaOwner`; the port keys the map by
-/// this newtype directly).
+/// key directly.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub struct OwnerPacked(pub u32);
+pub struct OwnerPacked(pub(crate) u32);
 impl OwnerPacked {
     #[inline]
-    pub fn new(side: Side, file: u32) -> Self {
+    pub(crate) fn new(side: Side, file: u32) -> Self {
         Self(file | ((side as u32) << 31))
     }
     #[inline]
-    pub fn side(self) -> Side {
+    pub(crate) fn side(self) -> Side {
         if self.0 >> 31 == 0 {
             Side::Client
         } else {
@@ -35,13 +32,14 @@ impl OwnerPacked {
         }
     }
     #[inline]
-    pub fn file(self) -> u32 {
+    pub(crate) fn file(self) -> u32 {
         self.0 & 0x7FFF_FFFF
     }
 }
 
 /// The metaphorical owner of an incremental file error. The packed variant is
 /// given to the HMR runtime as an opaque handle.
+#[derive(Copy, Clone)]
 pub enum Owner {
     None,
     Route(route_bundle::Index),
@@ -50,7 +48,7 @@ pub enum Owner {
 }
 
 impl Owner {
-    pub fn encode(&self) -> Packed {
+    pub(crate) fn encode(self) -> Packed {
         match self {
             Owner::None => Packed::new(PackedKind::None, 0),
             Owner::Client(data) => Packed::new(PackedKind::Client, data.get()),
@@ -60,8 +58,7 @@ impl Owner {
     }
 }
 
-/// Zig: `packed struct(u32) { data: u30, kind: enum(u2) }`
-/// First field at LSB → `data` = bits 0..30, `kind` = bits 30..32.
+/// Packed u32: `data` = bits 0..30, `kind` = bits 30..32.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Packed(u32);
@@ -79,16 +76,16 @@ impl Packed {
     const DATA_MASK: u32 = (1 << 30) - 1;
 
     #[inline]
-    pub const fn new(kind: PackedKind, data: u32) -> Self {
+    pub(crate) const fn new(kind: PackedKind, data: u32) -> Self {
         debug_assert!(data <= Self::DATA_MASK);
         Packed((data & Self::DATA_MASK) | ((kind as u32) << 30))
     }
     #[inline]
-    pub const fn data(self) -> u32 {
+    pub(crate) const fn data(self) -> u32 {
         self.0 & Self::DATA_MASK
     }
     #[inline]
-    pub const fn kind(self) -> PackedKind {
+    pub(crate) const fn kind(self) -> PackedKind {
         match (self.0 >> 30) as u8 {
             0 => PackedKind::None,
             1 => PackedKind::Route,
@@ -97,15 +94,15 @@ impl Packed {
         }
     }
     #[inline]
-    pub const fn bits(self) -> u32 {
+    pub(crate) const fn bits(self) -> u32 {
         self.0
     }
     #[inline]
-    pub const fn from_bits(bits: u32) -> Self {
+    pub(crate) const fn from_bits(bits: u32) -> Self {
         Packed(bits)
     }
 
-    pub fn decode(self) -> Owner {
+    pub(crate) fn decode(self) -> Owner {
         match self.kind() {
             PackedKind::None => Owner::None,
             PackedKind::Client => Owner::Client(ClientFileIndex::init(self.data())),
@@ -115,25 +112,22 @@ impl Packed {
     }
 }
 
-// Zig: comptime { assert(@as(u32, @bitCast(Packed{ .kind = .none, .data = 1 })) == 1); }
 const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 
 /// Stored in `dev.bundling_failures` keyed by its `OwnerPacked`.
 ///
-/// PERF(port): Zig's `SerializedFailure` is a slice header (`data: []u8`) and
-/// gets shallow-copied between `bundling_failures` and the `failures_added`/
-/// `failures_removed` lists. The Rust port owns `data` as `Box<[u8]>`, so
-/// `Clone` deep-copies — profile in Phase B if this shows up.
+/// PERF: `data` is an owned `Box<[u8]>`, so `Clone` deep-copies between
+/// `bundling_failures` and the `failures_added`/`failures_removed` lists —
+/// profile if this shows up on a hot path.
 #[derive(Clone, Default)]
 pub struct SerializedFailure {
     /// Wire-format bytes (length-prefixed; first 4 bytes encode `Owner.Packed`).
-    pub data: Box<[u8]>,
+    pub(crate) data: Box<[u8]>,
 }
 
 impl SerializedFailure {
-    /// `SerializedFailure.getOwner` — decodes the leading 4-byte `Owner.Packed`
-    /// from `data` (Zig: `std.mem.bytesAsValue(Owner.Packed, data[0..4]).decode()`).
-    pub fn get_owner(&self) -> Owner {
+    /// Decodes the leading 4-byte packed owner from `data`.
+    pub(crate) fn get_owner(&self) -> Owner {
         let raw = u32::from_ne_bytes(
             self.data[0..4]
                 .try_into()
@@ -142,16 +136,15 @@ impl SerializedFailure {
         Packed::from_bits(raw).decode()
     }
 
-    /// `SerializedFailure.deinit` — releases `data`. The dev-server owns the
-    /// allocator in Zig; here `Box<[u8]>` drop suffices, but we keep the
-    /// signature so call sites stay 1:1 with the spec.
-    pub fn deinit<D>(&self, _dev: &D) {
+    /// Releases `data`. `Box<[u8]>` drop suffices; the signature keeps a
+    /// `_dev` parameter so call sites read uniformly.
+    pub(crate) fn deinit<D>(&self, _dev: &D) {
         // Drop happens via owner; nothing to do for the borrow form used by
         // `index_failures` (which iterates `&SerializedFailure`).
     }
 
     /// `SerializedFailure.initFromLog`.
-    pub fn init_from_log(
+    pub(crate) fn init_from_log(
         owner: Owner,
         // for .client and .server, these are meant to be relative file paths
         owner_display_name: &[u8],
@@ -160,7 +153,6 @@ impl SerializedFailure {
         debug_assert!(!messages.is_empty());
 
         // Avoid small re-allocations without requesting so much from the heap
-        // PERF(port): was stack-fallback (std.heap.stackFallback(65536, dev.arena())) — profile in Phase B
         let mut payload: Vec<u8> = Vec::with_capacity(65536);
         let w = &mut payload;
 
@@ -172,33 +164,10 @@ impl SerializedFailure {
             write_log_msg(msg, w);
         }
 
-        // Zig avoided re-cloning if the stack-fallback had spilled to heap; with
-        // a plain Vec the buffer is always heap-backed, so just take ownership.
+        // The buffer is always heap-backed, so just take ownership.
         Ok(SerializedFailure {
             data: payload.into_boxed_slice(),
         })
-    }
-}
-
-/// This assumes the hash map contains only one SerializedFailure per owner.
-/// This is okay since SerializedFailure can contain more than one error.
-pub struct ArrayHashContextViaOwner;
-impl ArrayHashContextViaOwner {
-    pub fn hash(&self, k: &SerializedFailure) -> u32 {
-        bun_wyhash::hash_int(k.get_owner().encode().bits())
-    }
-    pub fn eql(&self, a: &SerializedFailure, b: &SerializedFailure, _: usize) -> bool {
-        a.get_owner().encode().bits() == b.get_owner().encode().bits()
-    }
-}
-
-pub struct ArrayHashAdapter;
-impl ArrayHashAdapter {
-    pub fn hash(&self, own: &Owner) -> u32 {
-        bun_wyhash::hash_int(own.encode().bits())
-    }
-    pub fn eql(&self, a: &Owner, b: &SerializedFailure, _: usize) -> bool {
-        a.encode().bits() == b.get_owner().encode().bits()
     }
 }
 
@@ -230,11 +199,9 @@ pub enum ErrorKind {
 }
 
 // All "write" functions get a corresponding "read" function in ./client/error.ts
-// Zig: const Writer = std.array_list.Managed(u8).Writer;
 type Writer = Vec<u8>;
 
 fn write_log_msg(msg: &bun_ast::Msg, w: &mut Writer) {
-    // Zig: switch (msg.kind) { inline else => |k| @intFromEnum(@field(ErrorKind, "bundler_log_" ++ @tagName(k))) }
     let kind_byte = match msg.kind {
         bun_ast::Kind::Err => ErrorKind::BundlerLogErr,
         bun_ast::Kind::Warn => ErrorKind::BundlerLogWarn,
@@ -260,7 +227,7 @@ fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
         }
         debug_assert!(loc.column >= 0); // zero based and not negative
 
-        _ = w.write_int_le::<i32>(i32::try_from(loc.line).expect("int cast"));
+        _ = w.write_int_le::<i32>(loc.line);
         _ = w.write_int_le::<u32>(u32::try_from(loc.column).expect("int cast"));
         _ = w.write_int_le::<u32>(u32::try_from(loc.length).expect("int cast"));
 

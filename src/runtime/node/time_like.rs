@@ -6,11 +6,11 @@ use bun_jsc::{JSGlobalObject, JSType as JsType, JSValue, JsResult};
 pub type TimeLike = f64;
 #[cfg(not(windows))]
 pub type TimeLike = libc::timespec;
-// TODO(port): Zig's `std.posix.timespec` uses field names `sec`/`nsec`; libc::timespec
-// uses `tv_sec`/`tv_nsec`. Confirm bun_sys exposes a wrapper or stick with libc.
 
 const NS_PER_S: f64 = bun_core::time::NS_PER_S as f64;
+#[cfg(not(windows))]
 const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
+#[cfg(not(windows))]
 const NS_PER_MS: f64 = bun_core::time::NS_PER_MS as f64;
 
 // Equivalent to `toUnixTimestamp`
@@ -56,10 +56,19 @@ fn from_seconds(seconds: f64) -> TimeLike {
 
 #[cfg(not(windows))]
 fn from_seconds(seconds: f64) -> TimeLike {
+    // floor (not truncate) so negative fractions pair with the
+    // always-non-negative `rem_euclid` nanoseconds.
+    let mut sec = seconds.div_euclid(1.0);
+    let mut nsec = seconds.rem_euclid(1.0) * NS_PER_S;
+    // rem_euclid can round to exactly 1.0 for tiny negative inputs; borrow back.
+    if nsec >= NS_PER_S {
+        nsec -= NS_PER_S;
+        sec += 1.0;
+    }
     libc::timespec {
-        // PORT NOTE: Rust `as` saturates on overflow/NaN where Zig @intFromFloat is UB.
-        tv_sec: seconds as _,
-        tv_nsec: (seconds.rem_euclid(1.0) * NS_PER_S) as _,
+        // `as` saturates on overflow/NaN.
+        tv_sec: sec as _,
+        tv_nsec: nsec as _,
     }
 }
 
@@ -70,24 +79,14 @@ fn from_milliseconds(milliseconds: f64) -> TimeLike {
 
 #[cfg(not(windows))]
 fn from_milliseconds(milliseconds: f64) -> TimeLike {
-    let mut sec: f64 = milliseconds.div_euclid(MS_PER_S);
-    let mut nsec: f64 = milliseconds.rem_euclid(MS_PER_S) * NS_PER_MS;
-
-    if nsec < 0.0 {
-        nsec += NS_PER_S;
-        sec -= 1.0;
-    }
-
     libc::timespec {
-        tv_sec: sec as _,
-        tv_nsec: nsec as _,
+        tv_sec: milliseconds.div_euclid(MS_PER_S) as _,
+        tv_nsec: (milliseconds.rem_euclid(MS_PER_S) * NS_PER_MS) as _,
     }
 }
 
 #[cfg(windows)]
 fn from_now() -> TimeLike {
-    // TODO(port): std.time.nanoTimestamp() — confirm bun_core/bun_sys provides a
-    // nanosecond-since-epoch helper; std::time::SystemTime is a fallback.
     let nanos = bun_core::time::nano_timestamp();
     (nanos as f64) / NS_PER_S
 }
@@ -115,11 +114,9 @@ fn from_now() -> TimeLike {
     //        timestamps are not modified, but other error conditions may still
     libc::timespec {
         tv_sec: 0,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         tv_nsec: libc::UTIME_NOW as _,
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         tv_nsec: bun_sys::c::UTIME_NOW as _,
     }
 }
-
-// ported from: src/runtime/node/time_like.zig

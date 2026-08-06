@@ -1,13 +1,13 @@
+use core::cell::{Cell, UnsafeCell};
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit, size_of};
+use core::ops::Deref;
 use core::ptr::NonNull;
 
 use bun_core::asan;
 
 /// Fixed-width occupancy bitset for [`HiveArray`].
 ///
-/// PORT NOTE: Zig's `std.bit_set.IntegerBitSet(N)` is backed by an exact-width
-/// `uN` integer (`u128`, `u256`, `u2048`, …). The Rust port's
 /// [`IntegerBitSet`](crate::bit_set::IntegerBitSet) is backed by a single
 /// `usize`, so for `N > 64` it silently held only 64 usable bits — every
 /// `HiveArray<_, 128/256/2048>` pool degraded to 64 effective slots and spilled
@@ -17,14 +17,14 @@ use bun_core::asan;
 ///
 /// We can't spell `[usize; (CAPACITY+63)/64]` without `generic_const_exprs`
 /// (which would virally add `where` bounds on every `HiveArray` consumer), so
-/// this uses a fixed `[usize; 32]` backing array — 2048 bits, which is the
-/// largest in-tree `HiveArray` capacity. Only the first
-/// `ceil(CAPACITY/64)` words are touched, so smaller pools pay 256 B of dead
-/// storage (negligible next to `buffer: [MaybeUninit<T>; CAPACITY]`).
+/// this uses a fixed `[Cell<usize>; 32]` backing array — 2048 bits, which is the
+/// largest in-tree `HiveArray` capacity. Only the first `ceil(CAPACITY/64)`
+/// words are touched, so smaller pools pay 256 B of dead storage (negligible
+/// next to `buffer`). The words are `Cell` so the bitset can be mutated through
+/// a `&self` pool, matching `HiveArray`'s interior-mutability model.
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub struct HiveBitSet<const CAPACITY: usize> {
-    masks: [usize; HIVE_BITSET_WORDS],
+    masks: [Cell<usize>; HIVE_BITSET_WORDS],
 }
 
 const HIVE_BITSET_WORDS: usize = 32;
@@ -34,7 +34,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     const NUM_WORDS: usize = if CAPACITY == 0 {
         0
     } else {
-        (CAPACITY + WORD_BITS - 1) / WORD_BITS
+        CAPACITY.div_ceil(WORD_BITS)
     };
     const _FITS: () = assert!(
         CAPACITY <= HIVE_BITSET_WORDS * WORD_BITS,
@@ -44,38 +44,49 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     /// multiple of 64; otherwise zeros in the high padding bits).
     const LAST_WORD_MASK: usize = {
         let rem = CAPACITY % WORD_BITS;
-        if rem == 0 { usize::MAX } else { (1usize << rem) - 1 }
+        if rem == 0 {
+            usize::MAX
+        } else {
+            (1usize << rem) - 1
+        }
     };
 
     pub const fn init_empty() -> Self {
         Self {
-            masks: [0; HIVE_BITSET_WORDS],
+            masks: [const { Cell::new(0) }; HIVE_BITSET_WORDS],
         }
     }
 
     #[inline]
-    pub fn is_set(&self, index: usize) -> bool {
+    pub(crate) fn is_set(&self, index: usize) -> bool {
         debug_assert!(index < CAPACITY);
-        (self.masks[index / WORD_BITS] >> (index % WORD_BITS)) & 1 != 0
+        (self.masks[index / WORD_BITS].get() >> (index % WORD_BITS)) & 1 != 0
     }
 
+    /// Private — toggling occupancy from outside `HiveArray` while a
+    /// `HiveSlot`/`HiveBox` for the same index is alive would let a
+    /// re-`claim()` alias it. Use [`HiveArray::claim`]/[`get_init`](HiveArray::get_init)/
+    /// [`put`](HiveArray::put)/[`box_at`](HiveArray::box_at).
     #[inline]
-    pub fn set(&mut self, index: usize) {
+    fn set(&self, index: usize) {
         debug_assert!(index < CAPACITY);
-        self.masks[index / WORD_BITS] |= 1usize << (index % WORD_BITS);
+        let w = index / WORD_BITS;
+        self.masks[w].set(self.masks[w].get() | (1usize << (index % WORD_BITS)));
     }
 
+    /// Private — see [`set`](Self::set).
     #[inline]
-    pub fn unset(&mut self, index: usize) {
+    fn unset(&self, index: usize) {
         debug_assert!(index < CAPACITY);
-        self.masks[index / WORD_BITS] &= !(1usize << (index % WORD_BITS));
+        let w = index / WORD_BITS;
+        self.masks[w].set(self.masks[w].get() & !(1usize << (index % WORD_BITS)));
     }
 
     #[inline]
     pub fn find_first_set(&self) -> Option<usize> {
         let mut i = 0;
         while i < Self::NUM_WORDS {
-            let m = self.masks[i];
+            let m = self.masks[i].get();
             if m != 0 {
                 return Some(i * WORD_BITS + m.trailing_zeros() as usize);
             }
@@ -85,7 +96,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     }
 
     #[inline]
-    pub fn find_first_unset(&self) -> Option<usize> {
+    pub(crate) fn find_first_unset(&self) -> Option<usize> {
         let mut i = 0;
         while i < Self::NUM_WORDS {
             let live_mask = if i + 1 == Self::NUM_WORDS {
@@ -93,7 +104,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
             } else {
                 usize::MAX
             };
-            let inv = !self.masks[i] & live_mask;
+            let inv = !self.masks[i].get() & live_mask;
             if inv != 0 {
                 return Some(i * WORD_BITS + inv.trailing_zeros() as usize);
             }
@@ -113,12 +124,17 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     /// the `<KIND_SET=true, DIR_FWD=true>` combination is implemented (the
     /// only one used in-tree); other params assert.
     #[inline]
-    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
-        &self,
-    ) -> HiveBitSetIter<CAPACITY> {
-        const { assert!(KIND_SET && DIR_FWD, "HiveBitSet::iterator only supports <true,true>") };
+    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(&self) -> HiveBitSetIter<CAPACITY> {
+        const {
+            assert!(
+                KIND_SET && DIR_FWD,
+                "HiveBitSet::iterator only supports <true,true>"
+            )
+        };
+        // Snapshot the live words into a non-`Cell` array so the iterator can
+        // outlive transient mutations of the source bitset.
         HiveBitSetIter {
-            masks: self.masks,
+            masks: self.masks.each_ref().map(Cell::get),
             word: 0,
         }
     }
@@ -149,23 +165,19 @@ impl<const CAPACITY: usize> HiveBitSetIter<CAPACITY> {
 /// An array that efficiently tracks which elements are in use.
 /// The pointers are intended to be stable
 /// Sorta related to https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p0447r15.html
-// PORT NOTE: Zig's `capacity: u16` is widened to `usize` here because Rust array
-// lengths require a `usize` const generic on stable.
+///
+/// All slot operations take `&self` and the buffer is `UnsafeCell` — slot
+/// pointers come from `UnsafeCell::get()` and so survive `&self` reborrows of
+/// the pool (the `bumpalo` / `typed-arena` shape). `HiveArray` is `!Sync`.
 pub struct HiveArray<T, const CAPACITY: usize> {
-    pub buffer: [MaybeUninit<T>; CAPACITY],
+    buffer: UnsafeCell<[MaybeUninit<T>; CAPACITY]>,
     pub used: HiveBitSet<CAPACITY>,
 }
 
 impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
-    pub const SIZE: usize = CAPACITY;
-
-    // PORT NOTE: Zig had `pub var empty: Self` as a mutable static to work around
-    // https://github.com/ziglang/zig/issues/22462 and /21988. Rust has no such
-    // limitation; callers should use `init()` (which is `const`).
-
     pub const fn init() -> Self {
         Self {
-            buffer: [const { MaybeUninit::uninit() }; CAPACITY],
+            buffer: UnsafeCell::new([const { MaybeUninit::uninit() }; CAPACITY]),
             used: HiveBitSet::init_empty(),
         }
     }
@@ -185,34 +197,55 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// `out` must be non-null, properly aligned, and valid for writes of
     /// `size_of::<Self>()` bytes. The previous contents are not dropped.
     #[inline]
-    pub unsafe fn init_in_place(out: *mut Self) {
-        // SAFETY: caller contract — `out` is aligned and writable. We form a
-        // place expression on `*out` only to project to `used`; no `&mut Self`
-        // is created over the (uninitialized) whole struct.
+    pub(crate) unsafe fn init_in_place(out: *mut Self) {
+        // SAFETY: caller contract — `out` is aligned and writable; only the
+        // `used` field is projected and written.
         unsafe {
             core::ptr::addr_of_mut!((*out).used).write(HiveBitSet::init_empty());
         }
-        // `buffer: [MaybeUninit<T>; CAPACITY]` intentionally untouched.
+        // `buffer: UnsafeCell<[MaybeUninit<T>; CAPACITY]>` intentionally untouched.
     }
 
-    /// Claim a slot and return a raw pointer to its **uninitialized** storage.
+    /// Raw pointer to slot `index`. Carries the buffer's `UnsafeCell` tag so
+    /// it survives later `&self` reborrows. Safe to obtain; deref requires
+    /// the slot to be claimed and initialized.
+    #[inline]
+    pub fn ptr_at(&self, index: usize) -> *mut T {
+        // `assert!`, not `debug_assert!` — `ptr.add()` past the end is UB, not
+        // a panic, in release builds. Keep this a safe `pub fn`.
+        assert!(index < CAPACITY);
+        // SAFETY: `index < CAPACITY` (asserted above); in-bounds offset.
+        unsafe {
+            self.buffer
+                .get()
+                .cast::<MaybeUninit<T>>()
+                .add(index)
+                .cast::<T>()
+        }
+    }
+
+    /// Recover a [`HiveBox`] for a slot whose [`index_of`](Self::index_of)
+    /// was stored across a callback. `None` if `index` is out of bounds or
+    /// the slot is free — a stale index is `None`, not UB.
     ///
-    /// Prefer [`get_init`](Self::get_init) / [`emplace`](Self::emplace) /
-    /// [`claim`](Self::claim), which encode the "a `used` slot is always
-    /// fully initialized" invariant in the type system. This entry point
-    /// hands out `*mut T` to garbage; forming `&mut T` over it is instant UB
-    /// when `T` has niche-bearing fields, and an early return between `get()`
-    /// and the caller's `ptr::write` leaves the slot claimed-but-uninit so a
-    /// later [`put`](Self::put) drops garbage.
-    #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
-    pub fn get(&mut self) -> Option<*mut T> {
-        let Some(index) = self.used.find_first_unset() else {
+    /// # Safety
+    /// The slot at `index`, if occupied, must hold a fully-initialized `T`,
+    /// and no other live access path ([`HiveSlot`], [`HiveBox`], `*mut T`) to
+    /// it may exist. The bitset check cannot prove this: [`claim`](Self::claim)
+    /// sets the `used` bit *before* the slot is written, so safe code holding a
+    /// claim token can have an occupied-but-uninit slot. Pools that only use
+    /// [`get_init`](Self::get_init) (which writes before returning) trivially
+    /// satisfy this.
+    #[inline]
+    pub unsafe fn box_at(&self, index: usize) -> Option<HiveBox<'_, T, CAPACITY>> {
+        if index >= CAPACITY || !self.used.is_set(index) {
             return None;
-        };
-        self.used.set(index);
-        let ret = self.buffer[index].as_mut_ptr();
-        asan::unpoison(ret.cast(), size_of::<T>());
-        Some(ret)
+        }
+        Some(HiveBox {
+            // SAFETY: `index < CAPACITY` (checked above); `ptr_at` is in-bounds.
+            slot: unsafe { NonNull::new_unchecked(self.ptr_at(index)) },
+            owner: self,
+        })
     }
 
     /// One-shot claim + write. Preferred entry point — no uninit window.
@@ -220,57 +253,40 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// Returns `None` (and does **not** consume `value`'s slot) if the hive
     /// is full; on `None` the caller still owns `value` and must drop it.
     #[inline]
-    pub fn get_init(&mut self, value: T) -> Option<NonNull<T>> {
+    pub fn get_init(&self, value: T) -> Option<NonNull<T>> {
         Some(self.claim()?.write(value))
     }
 
-    /// Claim + write where `T` is self-referential on its own slot address
-    /// (e.g. a struct that registers itself as a uws/libuv user-data pointer
-    /// inside its own constructor). `init` receives the slot's stable address
-    /// and must return the value to be stored there.
-    #[inline]
-    pub fn emplace(&mut self, init: impl FnOnce(NonNull<T>) -> T) -> Option<NonNull<T>> {
-        let slot = self.claim()?;
-        let addr = slot.addr();
-        Some(slot.write(init(addr)))
-    }
-
-    /// Low-level reservation. Only when [`get_init`](Self::get_init) /
-    /// [`emplace`](Self::emplace) are insufficient — typically when the caller
-    /// must interleave fallible work between claim and commit, or perform
-    /// `repr(C)` placement-new via [`HiveSlot::as_uninit`].
-    ///
-    /// The returned token borrows `self` for `'_`; precompute any raw
-    /// back-pointers to the parent struct *before* calling `claim()` if they
-    /// are needed inside the initializer.
-    pub fn claim(&mut self) -> Option<HiveSlot<'_, T, CAPACITY>> {
+    /// Low-level reservation. Only when [`get_init`](Self::get_init) is
+    /// insufficient — typically when the caller must interleave fallible
+    /// work between claim and commit, or perform `repr(C)` placement-new
+    /// through [`HiveSlot::addr`].
+    pub fn claim(&self) -> Option<HiveSlot<'_, T, CAPACITY>> {
         let index = self.used.find_first_unset()?;
         self.used.set(index);
-        let slot = NonNull::from(&mut self.buffer[index]);
+        // SAFETY: `index < CAPACITY` ⇒ in-bounds; `UnsafeCell::get` is non-null.
+        let slot = unsafe {
+            NonNull::new_unchecked(self.buffer.get().cast::<MaybeUninit<T>>().add(index))
+        };
         asan::unpoison(slot.as_ptr().cast(), size_of::<T>());
-        let owner = core::ptr::from_mut(self) as usize;
-        // Tagged-pointer scheme requires the low bit clear for inline slots.
-        // `HiveArray` is at least pointer-aligned via `IntegerBitSet`'s
-        // backing word, and in practice `align_of::<T>() >= 2` for every `T`
-        // we pool; assert in debug so a future 1-byte `T` is caught.
-        debug_assert_eq!(
-            owner & 1,
-            0,
-            "HiveArray must be >=2-byte aligned for HiveSlot owner tag"
-        );
         Some(HiveSlot {
             slot,
-            owner,
+            owner: core::ptr::from_ref(self),
             _marker: PhantomData,
         })
     }
 
-    /// Recycle a slot **without** running `T::drop`. Safe: if `value` does not
-    /// point into this hive, returns `false` and is a no-op. Use when the
-    /// caller has already moved the contents out / destructured them, or when
-    /// `T` is POD and the slot is being released on an error path before it
-    /// was fully initialized (Zig `value.* = undefined`).
-    pub fn put_raw(&mut self, value: *mut T) -> bool {
+    /// Recycle a slot **without** running `T::drop`. If `value` does not point
+    /// into this hive, returns `false` and is a no-op. Use when the caller has
+    /// already moved the contents out / destructured them, or when `T` is POD
+    /// and the slot is being released on an error path before it was fully
+    /// initialized.
+    ///
+    /// # Safety
+    /// No live token ([`HiveSlot`], [`HiveBox`]) may exist for this slot — once
+    /// the `used` bit is cleared, [`claim`](Self::claim) can hand it out
+    /// again, aliasing the stale token's `DerefMut`/`Drop`.
+    pub(crate) unsafe fn put_raw(&self, value: *mut T) -> bool {
         let Some(index) = self.index_of(value) else {
             return false;
         };
@@ -280,16 +296,16 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         true
     }
 
-    pub fn at(&mut self, index: u16) -> *mut T {
+    pub fn at(&self, index: u16) -> *mut T {
         debug_assert!((index as usize) < CAPACITY);
-        let ret = self.buffer[index as usize].as_mut_ptr();
+        let ret = self.ptr_at(index as usize);
         asan::assert_unpoisoned(ret.cast::<u8>());
         ret
     }
 
     pub fn index_of(&self, value: *const T) -> Option<u32> {
         asan::assert_unpoisoned(value.cast::<u8>());
-        let start = self.buffer.as_ptr().cast::<T>();
+        let start = self.buffer.get().cast::<T>();
         // One-past-the-end pointer of `buffer`; `wrapping_add` is sound for
         // the in-allocation offset and matches `add` exactly here.
         let end = start.wrapping_add(CAPACITY);
@@ -300,15 +316,37 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         // aligned to the size of T
         let index = ((value as usize) - (start as usize)) / size_of::<T>();
         debug_assert!(index < CAPACITY);
-        debug_assert!(self.buffer[index].as_ptr().cast::<T>() == value);
+        debug_assert!(self.ptr_at(index).cast_const() == value);
         Some(u32::try_from(index).expect("int cast"))
     }
 
-    pub fn r#in(&self, value: *const T) -> bool {
-        asan::assert_unpoisoned(value.cast::<u8>());
-        let start = self.buffer.as_ptr().cast::<T>();
-        let end = start.wrapping_add(CAPACITY);
-        (value as usize) >= (start as usize) && (value as usize) < (end as usize)
+    /// Drop every occupied slot in place and mark it free. Runs from
+    /// [`Drop`]; also callable explicitly when an owner wants to release
+    /// slot payloads earlier than the hive itself is dropped.
+    ///
+    /// # Safety
+    /// Every slot whose `used` bit is set must hold a fully-initialized `T`
+    /// (the invariant [`get_init`](Self::get_init) /
+    /// [`claim`](Self::claim)+[`write`](HiveSlot::write) maintain). A slot
+    /// claimed but never written violates this and makes the
+    /// `drop_in_place` UB.
+    pub(crate) unsafe fn drop_all(&mut self) {
+        if core::mem::needs_drop::<T>() {
+            // `iter_set` snapshots the bitset, so `unset` inside the loop is
+            // invisible to it. Unsetting before `drop_in_place` means a later
+            // `drop_all` (e.g. from `Drop` after an explicit call) never
+            // revisits an already-dropped slot.
+            let mut iter = self.used.iter_set();
+            while let Some(index) = iter.next() {
+                let slot = self.ptr_at(index);
+                self.used.unset(index);
+                // SAFETY: caller contract — `used` bit set ⇒ slot is a fully
+                // initialized `T` (see fn doc).
+                unsafe { core::ptr::drop_in_place(slot) };
+                asan::poison(slot.cast(), size_of::<T>());
+            }
+        }
+        self.used = HiveBitSet::init_empty();
     }
 
     /// Return a slot to the pool, dropping the contained `T` in place.
@@ -318,20 +356,17 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     ///
     /// # Safety
     /// If `value` points into this hive, it must point to a fully-initialized
-    /// `T` previously obtained via [`get`](Self::get) and written by the
-    /// caller. The slot is dropped in place; passing a moved-from or
+    /// `T` previously handed out by this hive and written by the caller. The slot is dropped in place; passing a moved-from or
     /// uninitialized slot is UB for `T` with drop glue.
-    pub unsafe fn put(&mut self, value: *mut T) -> bool {
+    pub unsafe fn put(&self, value: *mut T) -> bool {
         let Some(index) = self.index_of(value) else {
             return false;
         };
 
         debug_assert!(self.used.is_set(index as usize));
-        debug_assert!(self.buffer[index as usize].as_ptr().cast::<T>() == value.cast_const());
+        debug_assert!(self.ptr_at(index as usize).cast_const() == value.cast_const());
 
-        // PORT NOTE: Zig wrote `value.* = undefined;` — Zig has no destructors,
-        // so the slot was simply marked logically uninitialized. In the Rust
-        // port several `T` carry owned heap data (e.g. `NumberScope.name_counts:
+        // Several `T` carry owned heap data (e.g. `NumberScope.name_counts:
         // StringHashMap`, `NetworkTask.url_buf: Box<[u8]>`); drop the slot
         // before recycling so the put/get cycle does not leak it. Callers that
         // pre-clean fields (`PooledSocket::release_parked_refs`) leave only
@@ -345,15 +380,25 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     }
 }
 
+impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `get_init` sets `used` and writes the slot in one `&self`
+        // call, and `claim()` hands out a `HiveSlot<'_>` that borrows the pool
+        // (its Drop unsets the bit if never written), so by the time
+        // `&mut self` is obtainable every `used` slot is fully initialized.
+        unsafe { self.drop_all() };
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // HiveSlot
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Linear reservation token for a claimed-but-uninitialized hive slot.
 ///
-/// `HiveArray` slots are `[MaybeUninit<T>; CAP]`. The legacy [`HiveArray::get`]
-/// contract was two-phase — claim a `*mut T` to garbage, then `ptr::write` it
-/// — which opened three UB hazards in the gap: (H1) early-return / `?` / panic
+/// `HiveArray` slots are `[MaybeUninit<T>; CAP]`. A two-phase claim-then-
+/// `ptr::write` contract opens three UB hazards in the gap: (H1) early-return / `?` / panic
 /// leaves the slot claimed-uninit so a later `put()` drops garbage; (H2)
 /// `&mut *p` over uninit `T` is instant validity UB when `T` has niches; (H3)
 /// partial field-write then `assume_init_ref` on the whole slot.
@@ -365,22 +410,16 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 /// dropped (early return, `?`, panic) the slot is released **without** running
 /// `T::drop` — it was never written.
 ///
-/// Two-pointer-sized; `owner` is a tagged `usize`:
-///   - low bit `0` ⇒ `*mut HiveArray<T, CAP>` (release = unset `used` bit + poison),
-///   - low bit `1` ⇒ heap `Box<MaybeUninit<T>>` (release = dealloc, no `T::drop`).
-///
-/// **Aliasing note** (matches the `BackRef<T>` precedent in `bun_ptr`): the
-/// token stores a raw `*mut HiveArray` rather than `&'h mut HiveArray`. The
-/// `PhantomData<&'h mut _>` keeps it lifetime-scoped to the `claim()` borrow,
-/// but the structural guarantee — the hive is a field of a long-lived owner
-/// that is not moved between `claim()` and `write()` — is the caller's, same
-/// as every back-pointer in the port.
+/// Two-pointer-sized; `owner` discriminates release behavior:
+///   - non-null ⇒ `*const HiveArray<T, CAP>` (release = unset `used` bit + poison),
+///   - null     ⇒ heap `Box<MaybeUninit<T>>` (release = dealloc, no `T::drop`).
 #[must_use = "claimed hive slot is leaked if neither written nor dropped"]
 pub struct HiveSlot<'h, T, const CAPACITY: usize> {
     slot: NonNull<MaybeUninit<T>>,
-    /// Tagged owner; see type-level docs.
-    owner: usize,
-    _marker: PhantomData<&'h mut HiveArray<T, CAPACITY>>,
+    /// Typed `*const` (not `usize` + low-bit tag) so provenance survives `Drop`.
+    /// Null = heap-fallback sentinel (`from_ref(self)` is never null).
+    owner: *const HiveArray<T, CAPACITY>,
+    _marker: PhantomData<&'h HiveArray<T, CAPACITY>>,
 }
 
 impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
@@ -392,27 +431,21 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
         self.slot.cast::<T>()
     }
 
-    /// `&mut MaybeUninit<T>` for piecewise init via `addr_of_mut!`. Prefer
-    /// [`write`](Self::write); this exists for `repr(C)` placement-new
-    /// (`create_in`-style constructors that take `&mut MaybeUninit<Self>`).
-    #[inline]
-    pub fn as_uninit(&mut self) -> &mut MaybeUninit<T> {
-        // SAFETY: `slot` is a unique live pointer into the hive buffer (or a
-        // freshly leaked `Box<MaybeUninit<T>>`); the `&mut self` receiver
-        // guarantees no other `&mut` to the same `MaybeUninit<T>` exists.
-        unsafe { self.slot.as_mut() }
-    }
-
     /// Move `value` into the slot and return the stable initialized pointer.
     /// Consumes the token (its `Drop` does not run).
     #[inline]
     pub fn write(self, value: T) -> NonNull<T> {
-        let mut this = ManuallyDrop::new(self);
-        NonNull::from(this.as_uninit().write(value))
+        let this = ManuallyDrop::new(self);
+        let p = this.slot.cast::<T>();
+        // SAFETY: `slot` is a unique claimed reservation; nothing reads through
+        // it before this write. Writing through the raw ptr (not `&mut`) keeps
+        // the `UnsafeCell` tag alive for callers holding sibling slot pointers.
+        unsafe { p.as_ptr().write(value) };
+        p
     }
 
-    /// Caller has fully initialized the slot via [`as_uninit`](Self::as_uninit)
-    /// (or by writing through [`addr`](Self::addr)). Consumes the token.
+    /// Caller has fully initialized the slot by writing through
+    /// [`addr`](Self::addr). Consumes the token.
     ///
     /// # Safety
     /// Every field of `T` must be initialized, including padding-adjacent
@@ -427,15 +460,12 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
 
 impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
     fn drop(&mut self) {
-        if self.owner & 1 == 0 {
+        if !self.owner.is_null() {
             // Inline hive slot: unset the `used` bit and re-poison. Do NOT
             // `drop_in_place` — the slot was never `.write()`n.
-            let hive = self.owner as *mut HiveArray<T, CAPACITY>;
-            // SAFETY: `owner` was set from `core::ptr::from_mut(self)` in
-            // `HiveArray::claim`; the hive is a field of a long-lived owner
-            // that has not been moved (structural back-pointer guarantee).
-            // No `&mut HiveArray` is live across this drop — `claim()`'s
-            // borrow was released when the raw pointer was captured.
+            let hive = self.owner;
+            // SAFETY: `owner` was set from `from_ref(self)` in `HiveArray::claim`
+            // and the hive outlives `'h` (PhantomData lifetime).
             unsafe {
                 let index = (*hive)
                     .index_of(self.slot.as_ptr().cast::<T>())
@@ -454,15 +484,63 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
     }
 }
 
-// PORT NOTE: In Zig this was the nested type `HiveArray(T, capacity).Fallback`.
-// Rust cannot nest a generic struct that captures outer generics, so it lives at
-// module scope with the same parameters. The Zig field
-// `hive: if (capacity > 0) Self else void` is always materialized here; the
-// `CAPACITY > 0` checks below preserve the original gating.
-// PERF(port): zero-capacity case carried a zero-size hive in Zig — profile in Phase B.
+/// Single-owner handle to an initialized [`HiveArray`] slot. `Box<T>`-shaped:
+/// `Drop` returns the slot to the pool, [`into_inner`](Self::into_inner)
+/// extracts the value. Single-owner (no `Clone`), so [`DerefMut`] is sound.
+///
+/// For pools whose tokens cross an opaque round-trip as a slot *index* (e.g.
+/// the c-ares callback context in `dns_jsc`), store
+/// [`HiveArray::index_of`] and recover via [`HiveArray::box_at`].
+pub struct HiveBox<'a, T, const CAPACITY: usize> {
+    slot: NonNull<T>,
+    owner: &'a HiveArray<T, CAPACITY>,
+}
+
+impl<'a, T, const CAPACITY: usize> HiveBox<'a, T, CAPACITY> {
+    /// Extract the value, freeing the slot.
+    #[inline]
+    pub fn into_inner(self) -> T {
+        let this = ManuallyDrop::new(self);
+        // SAFETY: `slot` is a fully-initialized `T` exclusively owned by this box.
+        let value = unsafe { core::ptr::read(this.slot.as_ptr()) };
+        // SAFETY: `this` is being consumed — no other token for this slot exists.
+        unsafe { this.owner.put_raw(this.slot.as_ptr()) };
+        value
+    }
+}
+
+impl<T, const CAPACITY: usize> Deref for HiveBox<'_, T, CAPACITY> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        // SAFETY: `slot` is a fully-initialized, exclusively-owned `T`.
+        unsafe { self.slot.as_ref() }
+    }
+}
+
+impl<T, const CAPACITY: usize> core::ops::DerefMut for HiveBox<'_, T, CAPACITY> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: `slot` is a fully-initialized, exclusively-owned `T`; no
+        // `Clone` impl, so this is the only `&mut` access path.
+        unsafe { self.slot.as_mut() }
+    }
+}
+
+impl<T, const CAPACITY: usize> Drop for HiveBox<'_, T, CAPACITY> {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `slot` is a fully-initialized `T` owned by this box; `put`
+        // drops it in place and frees the slot.
+        unsafe { self.owner.put(self.slot.as_ptr()) };
+    }
+}
+
+// Rust cannot nest a generic struct that captures outer generics, so this lives
+// at module scope with the same parameters as `HiveArray`. The hive is always
+// materialized; the `CAPACITY > 0` checks below gate its use.
 pub struct Fallback<T, const CAPACITY: usize> {
     pub hive: HiveArray<T, CAPACITY>,
-    // PORT NOTE: `std.mem.Allocator param` dropped — global mimalloc.
 }
 
 impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
@@ -500,7 +578,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     /// for `MaybeUninit`).
     ///
     /// The returned allocation is leaked — callers stash it in a per-thread
-    /// static for the process lifetime (Zig: `threadlocal var pool`).
+    /// static for the process lifetime.
     #[inline]
     pub fn new_boxed() -> NonNull<Self> {
         let mut boxed = Box::<Self>::new_uninit();
@@ -513,52 +591,17 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         NonNull::from(Box::leak(unsafe { boxed.assume_init() }))
     }
 
-    /// See [`HiveArray::get`] — same UB hazards, plus the heap path leaks a
-    /// `Box<MaybeUninit<T>>` if the caller early-returns before `ptr::write`.
-    #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
-    pub fn get(&mut self) -> *mut T {
-        // Forget the token so its `Drop` does not release the slot — legacy
-        // callers expect the slot to remain claimed until their later `put()`.
-        ManuallyDrop::new(self.claim()).addr().as_ptr()
-    }
-
-    #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
-    pub fn get_and_see_if_new(&mut self, new: &mut bool) -> *mut T {
-        if CAPACITY > 0 {
-            #[allow(deprecated)]
-            if let Some(value) = self.hive.get() {
-                *new = false;
-                return value;
-            }
-        }
-
-        bun_core::heap::into_raw(Box::<T>::new_uninit()).cast::<T>()
-    }
-
-    #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
-    pub fn try_get(&mut self) -> *mut T {
-        ManuallyDrop::new(self.claim()).addr().as_ptr()
-    }
-
     /// One-shot claim + write. Preferred entry point — no uninit window.
     /// Infallible: spills to a heap `Box<T>` when the inline hive is full.
     #[inline]
-    pub fn get_init(&mut self, value: T) -> NonNull<T> {
+    pub fn get_init(&self, value: T) -> NonNull<T> {
         self.claim().write(value)
-    }
-
-    /// See [`HiveArray::emplace`]. Infallible (heap fallback).
-    #[inline]
-    pub fn emplace(&mut self, init: impl FnOnce(NonNull<T>) -> T) -> NonNull<T> {
-        let slot = self.claim();
-        let addr = slot.addr();
-        slot.write(init(addr))
     }
 
     /// See [`HiveArray::claim`]. Infallible: when the inline hive is full,
     /// the returned token owns a freshly-allocated heap slot (tagged so its
     /// `Drop` deallocates without running `T::drop`).
-    pub fn claim(&mut self) -> HiveSlot<'_, T, CAPACITY> {
+    pub fn claim(&self) -> HiveSlot<'_, T, CAPACITY> {
         if CAPACITY > 0 {
             if let Some(slot) = self.hive.claim() {
                 return slot;
@@ -567,53 +610,20 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         let slot = NonNull::from(Box::leak(Box::<T>::new_uninit()));
         HiveSlot {
             slot,
-            // Low bit 1 ⇒ heap slot. The hive pointer is not needed on the
-            // release path (dealloc is `Box::from_raw(slot)`).
-            owner: 1,
+            // Null ⇒ heap slot. The hive pointer is not needed on the release
+            // path (dealloc is `Box::from_raw(slot)`).
+            owner: core::ptr::null(),
             _marker: PhantomData,
         }
-    }
-
-    /// Recycle a slot **without** running `T::drop`. Counterpart to
-    /// [`HiveArray::put_raw`] for the heap-fallback path.
-    ///
-    /// # Safety
-    /// `value` must have been obtained from this `Fallback` (via `get_init` /
-    /// `emplace` / `claim().write()` / the deprecated `get` family) and not
-    /// yet returned. The contained `T` is **not** dropped — caller must have
-    /// already moved out / destructured anything with drop glue, or `T` must
-    /// be POD.
-    pub unsafe fn put_raw(&mut self, value: *mut T) {
-        if CAPACITY > 0 {
-            if self.hive.put_raw(value) {
-                return;
-            }
-        }
-        // SAFETY: caller contract — `value` is a heap slot from `claim()` /
-        // `get()`; it was allocated as `Box<MaybeUninit<T>>` (same layout as
-        // `Box<T>`). Reclaiming as `MaybeUninit<T>` deallocates without
-        // running `T::drop`.
-        drop(unsafe { Box::from_raw(value.cast::<MaybeUninit<T>>()) });
-    }
-
-    pub fn r#in(&self, value: *const T) -> bool {
-        if CAPACITY > 0 {
-            if self.hive.r#in(value) {
-                return true;
-            }
-        }
-
-        false
     }
 
     /// Return a slot to the pool, dropping the contained `T`.
     ///
     /// # Safety
     /// `value` must point to a fully-initialized `T` previously obtained from
-    /// [`get`](Self::get) / [`get_and_see_if_new`](Self::get_and_see_if_new) /
-    /// [`try_get`](Self::try_get) on this `Fallback` and subsequently written
-    /// by the caller.
-    pub unsafe fn put(&mut self, value: *mut T) {
+    /// [`get_init`](Self::get_init) / [`claim`](Self::claim) on this `Fallback`
+    /// and subsequently written by the caller.
+    pub unsafe fn put(&self, value: *mut T) {
         if CAPACITY > 0 {
             // SAFETY: caller contract — `value` is fully initialized.
             if unsafe { self.hive.put(value) } {
@@ -621,10 +631,9 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
             }
         }
 
-        // SAFETY: `value` was produced by `heap::into_raw(Box::<T>::new_uninit())`
-        // in `get_impl`/`get_and_see_if_new`/`try_get` above (it is not in the
-        // hive), and the caller has since fully initialized it. `destroy`
-        // reconstructs the `Box<T>` and runs `T::drop`.
+        // SAFETY: `value` was produced by the heap-fallback path of `claim()` /
+        // `get()` (it is not in the hive), and the caller has since fully
+        // initialized it. `destroy` reconstructs the `Box<T>` and runs `T::drop`.
         unsafe { bun_core::heap::destroy(value) };
     }
 }
@@ -633,41 +642,40 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
 // HiveRef
 // ──────────────────────────────────────────────────────────────────────────
 //
-// PORT NOTE: ground truth is `bun.HiveRef` in src/bun.zig. It lives here (not
-// in the `bun` crate) because every consumer names it through
+// Lives here (not in the `bun` crate) because every consumer names it through
 // `bun_collections::HiveRef`, and its only collaborator is `Fallback` above.
 //
-// Zig defines `const HiveAllocator = HiveArray(@This(), capacity).Fallback`
-// inside the returned struct; Rust spells the self-referential pool type out
-// as `Fallback<HiveRef<T, CAPACITY>, CAPACITY>`. CAPACITY is `usize` (widened
-// from Zig's `u16`) to line up with `HiveArray`/`Fallback`'s const generic.
+// The self-referential pool type is spelled out as
+// `Fallback<HiveRef<T, CAPACITY>, CAPACITY>`. CAPACITY is `usize` to line up
+// with `HiveArray`/`Fallback`'s const generic.
 
 /// Intrusive ref-counted slot allocated from a `HiveArray::Fallback` pool.
 /// `pool` is a BACKREF (LIFETIMES.tsv class) — the pool strictly outlives
 /// every `HiveRef` it hands out, so a raw pointer is the honest mapping.
+///
+/// Prefer [`HiveRefHandle`] in new code; the raw `init`/`ref_`/`unref` family
+/// remains for FFI ingress points that hold the slot as a `*mut HiveRef`.
 #[repr(C)]
 pub struct HiveRef<T, const CAPACITY: usize> {
-    pub ref_count: u32,
-    pub pool: *mut Fallback<HiveRef<T, CAPACITY>, CAPACITY>,
+    pub(crate) ref_count: Cell<u32>,
+    pub pool: *const Fallback<HiveRef<T, CAPACITY>, CAPACITY>,
     pub value: T,
 }
 
-/// Convenience alias mirroring Zig's nested `const HiveAllocator`.
-pub type HiveAllocator<T, const CAPACITY: usize> = Fallback<HiveRef<T, CAPACITY>, CAPACITY>;
-
 impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
-    /// Zig: `pub fn init(value, allocator) !*@This()`.
+    /// Allocate a slot from `pool` (heap fallback when full) and initialize it
+    /// with `value` at refcount 1.
     ///
     /// # Safety
     /// `pool` must be valid for the entire lifetime of the returned
     /// `HiveRef` (i.e. until its `ref_count` drops to zero and it is `put`
     /// back). Callers hold the pool in a long-lived owner (e.g. `VirtualMachine`).
-    pub unsafe fn init(value: T, pool: *mut Fallback<Self, CAPACITY>) -> *mut Self {
+    pub(crate) unsafe fn init(value: T, pool: *const Fallback<Self, CAPACITY>) -> *mut Self {
         // SAFETY: caller contract — `pool` is dereferenceable.
         unsafe {
             (*pool)
                 .get_init(HiveRef {
-                    ref_count: 1,
+                    ref_count: Cell::new(1),
                     pool,
                     value,
                 })
@@ -675,121 +683,518 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
         }
     }
 
-    pub fn ref_(&mut self) -> &mut Self {
-        self.ref_count += 1;
+    #[inline]
+    pub(crate) fn ref_(&self) -> &Self {
+        self.ref_count.set(self.ref_count.get() + 1);
         self
     }
 
-    /// Zig: `pub fn unref(this) ?*@This()` — returns `null` when the count hit
-    /// zero and the slot was returned to the pool.
-    pub fn unref(&mut self) -> Option<&mut Self> {
-        let ref_count = self.ref_count;
-        self.ref_count = ref_count - 1;
-        if ref_count == 1 {
-            let pool = self.pool;
-            // SAFETY: `self` was produced by `init` above, so `pool` is the
-            // pool that owns this slot and is still live (caller contract on
-            // `init`). Zig's `if @hasDecl(T, "deinit") this.value.deinit()` maps
-            // to `T::drop`, which `Fallback::put` now runs (it drops the whole
-            // `HiveRef` in place before recycling/freeing the slot).
-            unsafe {
-                (*pool).put(std::ptr::from_mut::<Self>(self));
+    /// Returns `None` when the count hit zero and the slot was returned to
+    /// the pool.
+    ///
+    /// # Safety
+    /// `this` must point at a live `HiveRef` produced by [`init`](Self::init).
+    /// On `None` the slot has been recycled — do not use `this` afterward.
+    pub(crate) unsafe fn unref(this: *mut Self) -> Option<*mut Self> {
+        // SAFETY: caller contract — `this` is a live `HiveRef` slot, and
+        // `(*this).pool` outlives every slot it hands out (`init` contract).
+        // `Fallback::put` runs `T::drop` (drops the whole `HiveRef` in place).
+        unsafe {
+            let ref_count = (*this).ref_count.get();
+            (*this).ref_count.set(ref_count - 1);
+            if ref_count == 1 {
+                let pool = (*this).pool;
+                (*pool).put(this);
+                return None;
             }
-            return None;
         }
-        Some(self)
+        Some(this)
+    }
+}
+
+/// Owning handle to a refcounted [`HiveRef`] pool slot. `Clone` increments,
+/// `Drop` decrements and recycles when the count hits zero. Cross FFI with
+/// [`as_ptr`](Self::as_ptr) / [`from_raw`](Self::from_raw), like `Rc`/`Box`.
+pub struct HiveRefHandle<T, const CAP: usize> {
+    ptr: NonNull<HiveRef<T, CAP>>,
+}
+
+impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
+    /// The one place the type-level invariant is asserted: a handle exists
+    /// ⇒ `ref_count >= 1` ⇒ the slot is live and initialized. `Deref`/`Clone`
+    /// route through here so they're plain safe code.
+    #[inline]
+    fn slot(&self) -> &HiveRef<T, CAP> {
+        // SAFETY: type invariant (above).
+        unsafe { self.ptr.as_ref() }
+    }
+
+    /// Allocate a slot from `pool` with refcount 1.
+    ///
+    /// # Safety
+    /// `pool` must outlive every handle/raw pointer derived from it.
+    pub unsafe fn new(value: T, pool: *const Fallback<HiveRef<T, CAP>, CAP>) -> Self {
+        // SAFETY: caller contract — `pool` is dereferenceable + outlives the slot.
+        let ptr = unsafe { HiveRef::init(value, pool) };
+        Self {
+            ptr: NonNull::new(ptr).expect("Fallback::get_init returned null"),
+        }
+    }
+
+    /// Reclaim ownership of a `+1` ref previously leaked as a raw pointer
+    /// (e.g. via [`as_ptr`](Self::as_ptr) + `mem::forget`).
+    ///
+    /// # Safety
+    /// `ptr` must be a live slot whose `+1` has not already been released.
+    #[inline]
+    pub unsafe fn from_raw(ptr: *mut HiveRef<T, CAP>) -> Self {
+        Self {
+            ptr: NonNull::new(ptr).expect("HiveRefHandle::from_raw(null)"),
+        }
+    }
+
+    /// Raw pointer for FFI/intrusive use. Does not affect the refcount.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut HiveRef<T, CAP> {
+        self.ptr.as_ptr()
+    }
+}
+
+impl<T, const CAP: usize> Deref for HiveRefHandle<T, CAP> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.slot().value
+    }
+}
+
+impl<T, const CAP: usize> Clone for HiveRefHandle<T, CAP> {
+    #[inline]
+    fn clone(&self) -> Self {
+        self.slot().ref_();
+        Self { ptr: self.ptr }
+    }
+}
+
+impl<T, const CAP: usize> Drop for HiveRefHandle<T, CAP> {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: type invariant — `ptr` is live; `unref` recycles on count==0.
+        unsafe { HiveRef::unref(self.ptr.as_ptr()) };
     }
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn hive_array() {
-        const SIZE: usize = 64;
-
-        // Choose an integer with a weird alignment
-        // PORT NOTE: Zig used `u127`; Rust has no arbitrary-width ints. `u128` is the closest.
-        type Int = u128;
-
-        let mut a = HiveArray::<Int, SIZE>::init();
-
-        {
-            let b = a.get().unwrap();
-            // SAFETY: `b` points into `a.buffer` and was just unpoisoned by `get()`.
-            unsafe { *b = 0 };
-            assert!(a.get().unwrap() != b);
-            assert_eq!(a.index_of(b), Some(0));
-            // SAFETY: `b` is a fully-initialized hive slot.
-            assert!(unsafe { a.put(b) });
-            assert!(a.get().unwrap() == b);
-            let c = a.get().unwrap();
-            // SAFETY: `c` points into `a.buffer` and was just unpoisoned by `get()`.
-            unsafe { *c = 123 };
-            let mut d: Int = 12345;
-            // SAFETY: `&mut d` is foreign — `put` returns `false` and drops nothing.
-            assert!(unsafe { a.put(&mut d) } == false);
-            assert!(a.r#in(&d) == false);
-        }
-
-        a.used = IntegerBitSet::init_empty();
-        {
-            for i in 0..SIZE {
-                let b = a.get().unwrap();
-                // SAFETY: `b` points into `a.buffer` and was just unpoisoned by `get()`.
-                unsafe { *b = 0 };
-                assert_eq!(a.index_of(b), Some(u32::try_from(i).expect("int cast")));
-                // SAFETY: `b` is a fully-initialized hive slot.
-                assert!(unsafe { a.put(b) });
-                assert!(a.get().unwrap() == b);
-            }
-            for _ in 0..SIZE {
-                assert!(a.get().is_none());
-            }
+    /// Drop-counting payload. Each test that needs it owns its own `Cell` so
+    /// tests stay independent (`AtomicU32` static would leak counts across
+    /// tests run in the same process).
+    struct Tracked<'c> {
+        v: u64,
+        drops: &'c core::cell::Cell<u32>,
+    }
+    impl Drop for Tracked<'_> {
+        fn drop(&mut self) {
+            self.drops.set(self.drops.get() + 1);
         }
     }
 
     #[test]
     fn hive_slot_drop_releases_without_dtor() {
-        use core::sync::atomic::{AtomicU32, Ordering};
-        static DROPS: AtomicU32 = AtomicU32::new(0);
-        struct D(#[allow(dead_code)] u64);
-        impl Drop for D {
-            fn drop(&mut self) {
-                DROPS.fetch_add(1, Ordering::Relaxed);
-            }
-        }
+        let drops = core::cell::Cell::new(0u32);
+        let mk = |v| Tracked { v, drops: &drops };
 
-        let mut a = HiveArray::<D, 4>::init();
-        // Dropped token releases the slot without running D::drop.
+        let a = HiveArray::<Tracked, 4>::init();
+        // Dropped token releases the slot without running Drop.
         drop(a.claim().unwrap());
         assert!(!a.used.is_set(0));
-        assert_eq!(DROPS.load(Ordering::Relaxed), 0);
+        assert_eq!(drops.get(), 0);
 
         // write() commits and put() drops.
-        let p = a.get_init(D(7)).unwrap();
+        let p = a.get_init(mk(7)).unwrap();
         assert!(a.used.is_set(0));
-        assert_eq!(DROPS.load(Ordering::Relaxed), 0);
+        assert_eq!(drops.get(), 0);
         // SAFETY: `p` is a fully-initialized hive slot.
         unsafe { a.put(p.as_ptr()) };
-        assert_eq!(DROPS.load(Ordering::Relaxed), 1);
+        assert_eq!(drops.get(), 1);
 
         // put_raw() does not drop.
-        let p = a.get_init(D(8)).unwrap();
-        assert!(a.put_raw(p.as_ptr()));
-        assert_eq!(DROPS.load(Ordering::Relaxed), 1);
+        let p = a.get_init(mk(8)).unwrap();
+        // SAFETY: `p` is the only token for its slot.
+        assert!(unsafe { a.put_raw(p.as_ptr()) });
+        assert_eq!(drops.get(), 1);
 
-        // Fallback heap path: dropped token deallocates without D::drop.
-        let mut f = Fallback::<D, 0>::init();
+        // Fallback heap path: dropped token deallocates without Drop.
+        let f = Fallback::<Tracked, 0>::init();
         drop(f.claim());
-        assert_eq!(DROPS.load(Ordering::Relaxed), 1);
-        let p = f.get_init(D(9));
+        assert_eq!(drops.get(), 1);
+        let p = f.get_init(mk(9));
         // SAFETY: heap slot from this Fallback.
         unsafe { f.put(p.as_ptr()) };
-        assert_eq!(DROPS.load(Ordering::Relaxed), 2);
+        assert_eq!(drops.get(), 2);
+
+        // Dropping the pool itself drops every still-occupied slot.
+        a.get_init(mk(10)).unwrap();
+        a.get_init(mk(11)).unwrap();
+        assert_eq!(drops.get(), 2);
+        drop(a);
+        assert_eq!(drops.get(), 4);
+    }
+
+    #[test]
+    fn slot_write_matches_addr() {
+        let a = HiveArray::<[u32; 2], 4>::init();
+
+        // write() returns the same address as addr().
+        let slot = a.claim().unwrap();
+        let pre = slot.addr().as_ptr();
+        let p = slot.write([30, 40]);
+        assert_eq!(pre, p.as_ptr());
+        // SAFETY: slot is initialized.
+        unsafe {
+            assert_eq!(*p.as_ptr(), [30, 40]);
+        }
+        // SAFETY: `p` is the only token for its slot.
+        assert!(unsafe { a.put_raw(p.as_ptr()) });
+    }
+
+    #[test]
+    fn at_returns_claimed_slot() {
+        let a = HiveArray::<u64, 4>::init();
+        let p0 = a.get_init(100).unwrap();
+        let p1 = a.get_init(200).unwrap();
+        assert_eq!(a.at(0), p0.as_ptr());
+        assert_eq!(a.at(1), p1.as_ptr());
+        assert_eq!(a.ptr_at(0), p0.as_ptr());
+        assert_eq!(a.ptr_at(1), p1.as_ptr());
+        // SAFETY: both slots are initialized.
+        unsafe {
+            assert_eq!(*a.at(0), 100);
+            assert_eq!(*a.at(1), 200);
+        }
+        // SAFETY: only token for its slot.
+        assert!(unsafe { a.put_raw(p0.as_ptr()) });
+        // SAFETY: only token for its slot.
+        assert!(unsafe { a.put_raw(p1.as_ptr()) });
+    }
+
+    #[test]
+    fn fallback_inline_then_heap() {
+        const CAP: usize = 2;
+        let drops = core::cell::Cell::new(0u32);
+        let mk = |v| Tracked { v, drops: &drops };
+
+        let f = Fallback::<Tracked, CAP>::init();
+
+        // Two inline slots, then two heap slots.
+        let inline0 = f.get_init(mk(0));
+        let inline1 = f.get_init(mk(1));
+        let heap0 = f.get_init(mk(2));
+        let heap1 = f.get_init(mk(3));
+
+        assert!(f.hive.index_of(inline0.as_ptr()).is_some());
+        assert!(f.hive.index_of(inline1.as_ptr()).is_some());
+        assert!(f.hive.index_of(heap0.as_ptr()).is_none());
+        assert!(f.hive.index_of(heap1.as_ptr()).is_none());
+        // SAFETY: all four are initialized.
+        unsafe {
+            assert_eq!((*inline0.as_ptr()).v, 0);
+            assert_eq!((*inline1.as_ptr()).v, 1);
+            assert_eq!((*heap0.as_ptr()).v, 2);
+            assert_eq!((*heap1.as_ptr()).v, 3);
+        }
+
+        // Return one inline, one heap — interleaved with new claims.
+        // SAFETY: `inline0` and `heap0` are initialized slots from `f`.
+        unsafe {
+            f.put(inline0.as_ptr());
+            f.put(heap0.as_ptr());
+        }
+        assert_eq!(drops.get(), 2);
+
+        // The freed inline slot is reused; the freed heap slot is gone.
+        let reuse = f.get_init(mk(4));
+        assert_eq!(reuse.as_ptr(), inline0.as_ptr());
+
+        // SAFETY: remaining live slots.
+        unsafe {
+            f.put(inline1.as_ptr());
+            f.put(heap1.as_ptr());
+            f.put(reuse.as_ptr());
+        }
+        assert_eq!(drops.get(), 5);
+    }
+
+    #[test]
+    fn fallback_claim_drop_inline_and_heap() {
+        // Inline token: dropping releases the bit.
+        let f = Fallback::<u64, 1>::init();
+        drop(f.claim());
+        assert!(!f.hive.used.is_set(0));
+
+        // Heap token (CAP=0 forces it): dropping deallocates without touching
+        // the hive — its `owner` is null. Pin the inline slot first so the
+        // bit-stays-set assertion is meaningful for the CAP>0 case too.
+        let f = Fallback::<u64, 1>::init();
+        let inline = f.get_init(1);
+        assert!(f.hive.used.is_set(0));
+        drop(f.claim());
+        assert!(f.hive.used.is_set(0));
+        // SAFETY: `inline` is a live initialized slot from `f`.
+        unsafe { f.put(inline.as_ptr()) };
+        assert!(!f.hive.used.is_set(0));
+    }
+
+    #[test]
+    fn fallback_new_boxed_and_init_in_place() {
+        const CAP: usize = 4;
+
+        let boxed = Fallback::<u64, CAP>::new_boxed();
+        // SAFETY: `new_boxed` returns a valid heap allocation.
+        unsafe {
+            let f = &*boxed.as_ptr();
+            for i in 0..CAP {
+                let p = f.get_init(i as u64 * 10);
+                assert!(f.hive.index_of(p.as_ptr()).is_some());
+                assert_eq!(*p.as_ptr(), i as u64 * 10);
+            }
+            // 5th claim spills to heap.
+            let p = f.get_init(999);
+            assert!(f.hive.index_of(p.as_ptr()).is_none());
+            f.put(p.as_ptr());
+            // `new_boxed` is leaked by design; reclaim for the test.
+            drop(Box::from_raw(boxed.as_ptr()));
+        }
+    }
+
+    #[test]
+    fn hive_ref_lifecycle() {
+        let drops = core::cell::Cell::new(0u32);
+
+        const CAP: usize = 2;
+        type Pool<'c> = Fallback<HiveRef<Tracked<'c>, CAP>, CAP>;
+        let pool: Pool = Fallback::init();
+        let pool_ptr: *const Pool = &pool;
+
+        // Inline allocation: ref to 2, unref to 1, unref to 0 → returned.
+        // SAFETY: `pool` outlives every HiveRef created from `pool_ptr`.
+        let r = unsafe {
+            HiveRef::init(
+                Tracked {
+                    v: 1,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
+        // SAFETY: `r` is live (ref_count == 1) until the final unref returns None.
+        unsafe {
+            assert_eq!((*r).ref_count.get(), 1);
+            (*r).ref_();
+            assert_eq!((*r).ref_count.get(), 2);
+            assert!(HiveRef::unref(r).is_some());
+            assert_eq!((*r).ref_count.get(), 1);
+            assert!(HiveRef::unref(r).is_none());
+        }
+        assert_eq!(drops.get(), 1);
+
+        // Heap allocation: fill the hive first, then init another.
+        // SAFETY: same pool contract.
+        let inline0 = unsafe {
+            HiveRef::init(
+                Tracked {
+                    v: 2,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
+        let inline1 = unsafe {
+            HiveRef::init(
+                Tracked {
+                    v: 3,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
+        let heap = unsafe {
+            HiveRef::init(
+                Tracked {
+                    v: 4,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
+        assert!(pool.hive.index_of(inline0).is_some());
+        assert!(pool.hive.index_of(inline1).is_some());
+        assert!(pool.hive.index_of(heap).is_none());
+        // SAFETY: all three are live.
+        unsafe {
+            assert!(HiveRef::unref(heap).is_none());
+            assert!(HiveRef::unref(inline1).is_none());
+            assert!(HiveRef::unref(inline0).is_none());
+        }
+        assert_eq!(drops.get(), 4);
+    }
+
+    #[test]
+    fn hive_ref_handle_lifecycle() {
+        let drops = core::cell::Cell::new(0u32);
+
+        const CAP: usize = 1;
+        type Pool<'c> = Fallback<HiveRef<Tracked<'c>, CAP>, CAP>;
+        let pool: Pool = Fallback::init();
+        let pool_ptr: *const Pool = &pool;
+
+        // Drop releases the slot when the count hits zero.
+        // SAFETY: `pool` outlives every handle.
+        let h = unsafe {
+            HiveRefHandle::new(
+                Tracked {
+                    v: 1,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
+        assert_eq!(h.v, 1);
+        let h2 = h.clone();
+        assert_eq!(h2.v, 1);
+        drop(h);
+        assert_eq!(drops.get(), 0);
+        drop(h2);
+        assert_eq!(drops.get(), 1);
+
+        // Heap fallback path (CAP=1, second handle spills).
+        // SAFETY: `pool` outlives every handle.
+        let inline = unsafe {
+            HiveRefHandle::new(
+                Tracked {
+                    v: 3,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
+        let heap = unsafe {
+            HiveRefHandle::new(
+                Tracked {
+                    v: 4,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
+        assert!(pool.hive.index_of(inline.as_ptr()).is_some());
+        assert!(pool.hive.index_of(heap.as_ptr()).is_none());
+        drop(heap);
+        drop(inline);
+        assert_eq!(drops.get(), 3);
+    }
+
+    #[test]
+    fn hive_bitset_iteration() {
+        let a = HiveArray::<u8, 8>::init();
+        assert_eq!(a.used.find_first_set(), None);
+        assert_eq!(a.used.find_first_unset(), Some(0));
+
+        // Claim slots 0..3, then free 0 and 2 so the set is {1, 3}.
+        let s0 = a.get_init(0).unwrap();
+        let _s1 = a.get_init(1).unwrap();
+        let s2 = a.get_init(2).unwrap();
+        let _s3 = a.get_init(3).unwrap();
+        // SAFETY: only token for its slot.
+        assert!(unsafe { a.put_raw(s0.as_ptr()) });
+        // SAFETY: only token for its slot.
+        assert!(unsafe { a.put_raw(s2.as_ptr()) });
+
+        assert_eq!(a.used.find_first_set(), Some(1));
+        assert_eq!(a.used.find_first_unset(), Some(0));
+
+        let mut it = a.used.iter_set();
+        assert_eq!(it.next(), Some(1));
+        assert_eq!(it.next(), Some(3));
+        assert_eq!(it.next(), None);
+
+        // The explicit-param form is the same as iter_set().
+        let mut it = a.used.iterator::<true, true>();
+        assert_eq!(it.next(), Some(1));
+        assert_eq!(it.next(), Some(3));
+        assert_eq!(it.next(), None);
+    }
+
+    #[test]
+    fn init_in_place_zeroes_only_bitset() {
+        let mut a: MaybeUninit<HiveArray<u64, 4>> = MaybeUninit::uninit();
+        // SAFETY: stack allocation, properly aligned, valid for writes.
+        unsafe {
+            HiveArray::init_in_place(a.as_mut_ptr());
+            let a = &*a.as_ptr();
+            assert_eq!(a.used.find_first_set(), None);
+            let p = a.get_init(7).unwrap();
+            assert_eq!(*p.as_ptr(), 7);
+            // `p` is the only token for its slot; already inside the outer
+            // `unsafe` block.
+            assert!(a.put_raw(p.as_ptr()));
+        }
+    }
+
+    #[test]
+    fn hive_box_lifecycle() {
+        let drops = core::cell::Cell::new(0u32);
+        let mk = |v| Tracked { v, drops: &drops };
+
+        let pool = HiveArray::<Tracked, 4>::init();
+        fn box_for<'p, 'c>(
+            pool: &'p HiveArray<Tracked<'c>, 4>,
+            p: NonNull<Tracked<'c>>,
+        ) -> (usize, HiveBox<'p, Tracked<'c>, 4>) {
+            let i = pool.index_of(p.as_ptr()).unwrap() as usize;
+            // SAFETY: `p` was just returned by `get_init`; no other access path.
+            (i, unsafe { pool.box_at(i) }.unwrap())
+        }
+
+        // box_at → Deref/DerefMut → Drop returns the slot, drops T.
+        {
+            let (i, mut b) = box_for(&pool, pool.get_init(mk(1)).unwrap());
+            assert_eq!(b.v, 1);
+            b.v = 11;
+            assert_eq!(b.v, 11);
+            assert!(pool.used.is_set(i));
+        }
+        assert_eq!(drops.get(), 1);
+        assert!(!pool.used.is_set(0));
+
+        // box_at → into_inner extracts T without running its Drop.
+        let (i, b) = box_for(&pool, pool.get_init(mk(2)).unwrap());
+        let val = b.into_inner();
+        assert_eq!(val.v, 2);
+        assert_eq!(drops.get(), 1);
+        assert!(!pool.used.is_set(i));
+        drop(val);
+        assert_eq!(drops.get(), 2);
+
+        // Claim → store index → recover via box_at — the dns.rs pattern.
+        let p0 = pool.get_init(mk(10)).unwrap();
+        let p1 = pool.get_init(mk(20)).unwrap();
+        let (i0, i1) = (
+            pool.index_of(p0.as_ptr()).unwrap() as usize,
+            pool.index_of(p1.as_ptr()).unwrap() as usize,
+        );
+        // SAFETY: `i0`/`i1` were claimed above; no other access path.
+        let v1 = unsafe { pool.box_at(i1) }.unwrap().into_inner();
+        let v0 = unsafe { pool.box_at(i0) }.unwrap().into_inner();
+        assert_eq!(v0.v, 10);
+        assert_eq!(v1.v, 20);
+        assert!(!pool.used.is_set(i0));
+        assert!(!pool.used.is_set(i1));
+        // Stale index: bit was unset by `into_inner()`, second recovery is `None`.
+        // SAFETY: stale/OOB indices are caught at runtime — `None`, not UB.
+        assert!(unsafe { pool.box_at(i0) }.is_none());
+        assert!(unsafe { pool.box_at(999) }.is_none());
     }
 }
-
-// ported from: src/collections/hive_array.zig

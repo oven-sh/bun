@@ -19,15 +19,17 @@ class DOMWrapperWorld;
 // #include "WorkerThreadType.h"
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
-#include <wtf/WeakHashSet.h>
 #include <wtf/RefPtr.h>
-#include "JSVMClientDataClient.h"
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
 namespace Zig {
 class GlobalObject;
+}
+
+namespace Bun {
+class StrongRootBlock;
 }
 
 namespace WebCore {
@@ -73,7 +75,6 @@ private:
 private:
     std::unique_ptr<ExtendedDOMIsoSubspaces> m_subspaces;
     JSC::IsoSubspace m_domConstructorSpace;
-    JSC::IsoSubspace m_domBuiltinConstructorSpace;
     JSC::IsoSubspace m_domNamespaceObjectSpace;
 
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
@@ -107,20 +108,27 @@ public:
 
     ExtendedDOMClientIsoSubspaces& clientSubspaces() { return *m_clientSubspaces.get(); }
 
-    Vector<JSC::IsoSubspace*>& outputConstraintSpaces() { return m_outputConstraintSpaces; }
-
-    JSC::GCClient::IsoSubspace& domBuiltinConstructorSpace() { return m_domBuiltinConstructorSpace; }
-
-    WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers();
-
-    template<typename Func> void forEachOutputConstraintSpace(const Func& func)
-    {
-        for (auto* space : m_outputConstraintSpaces)
-            func(*space);
-    }
+    // Constructed eagerly so the concurrent GC marker
+    // (Zig::GlobalObject::visitChildrenImpl) never races the mutator on a
+    // lazy std::optional::emplace(). The ctor only calls
+    // LazyProperty::initLater ~90 times (stores a tagged function pointer),
+    // so there is no startup cost worth deferring.
+    WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
 
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
+
+    // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
+    // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted
+    // by a SimpleMarkingConstraint registered in JSVMClientData::create(), so
+    // no HandleSet node is needed and no GlobalObject owns them (ShadowRealm /
+    // node:vm / `bun test --isolate` globals share one list).
+    Bun::StrongRootBlock* m_strongRootBlockHead { nullptr };
+    Bun::StrongRootBlock* m_strongRootBlockFree { nullptr };
+    // Last block acquire() found room in; always on the active list (cleared by
+    // release() if unlinked), so it is already rooted via m_strongRootBlockHead.
+    Bun::StrongRootBlock* m_strongRootBlockCursor { nullptr };
+    JSC::Structure* m_strongRootBlockStructure { nullptr };
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
@@ -130,26 +138,36 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
-    void addClient(JSVMClientDataClient& client) { m_clients.add(client); }
-
 private:
     bool isWebCoreJSClientData() const final { return true; }
+
+    // Frees a per-VM `JSHeapData` but leaves the process-wide `useGlobalGC`
+    // singleton alone (it is shared by every VM). On the default `!useGlobalGC`
+    // path `ensureHeapData` allocates a fresh `JSHeapData` per VM, so without
+    // freeing it every terminated worker leaks its `JSHeapData` plus the
+    // FastMalloc-backed `IsoSubspace`s it embeds.
+    struct JSHeapDataDeleter {
+        void operator()(JSHeapData*) const;
+    };
 
     BunBuiltinNames m_builtinNames;
     std::unique_ptr<JSBuiltinFunctions> m_builtinFunctions;
 
-    JSHeapData* m_heapData;
+    // Owns the per-VM `JSHeapData`. Declared *before* the client `IsoSubspace`
+    // members below so it is destroyed *after* them (members destruct in
+    // reverse declaration order): each client `GCClient::IsoSubspace` holds a
+    // `LocalAllocator` whose `~LocalAllocator` unlinks itself from a
+    // `BlockDirectory` that lives inside the server-side `JSHeapData`, so the
+    // `JSHeapData` must outlive them.
+    std::unique_ptr<JSHeapData, JSHeapDataDeleter> m_heapData;
 
     RefPtr<WebCore::DOMWrapperWorld> m_normalWorld;
     JSC::GCClient::IsoSubspace m_domConstructorSpace;
-    JSC::GCClient::IsoSubspace m_domBuiltinConstructorSpace;
     JSC::GCClient::IsoSubspace m_domNamespaceObjectSpace;
 
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
-    Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 
-    std::optional<WebCore::HTTPHeaderIdentifiers> m_httpHeaderIdentifiers;
-    WeakHashSet<JSVMClientDataClient> m_clients;
+    WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
 };
 
 } // namespace WebCore
@@ -203,15 +221,6 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient
     setClient(clientSubspaces, WTF::move(uniqueClientSubspace));
     return clientSpace;
 }
-
-// template<typename T, UseCustomHeapCellType useCustomHeapCellType, typename GetClient, typename SetClient, typename GetServer, typename SetServer>
-// ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient getClient, SetClient setClient, GetServer getServer, SetServer setServer, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
-// {
-//     static NeverDestroyed<JSC::IsoSubspacePerVM> perVM([](JSC::Heap& heap) {
-//         return ISO_SUBSPACE_PARAMETERS(heap.destructibleObjectHeapCellType, T);
-//     });
-//     return &perVM.get().clientIsoSubspaceforVM(vm);
-// }
 
 static JSVMClientData* clientData(JSC::VM& vm)
 {

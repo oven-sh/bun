@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { compileFunction, createContext, runInContext, runInNewContext, runInThisContext, Script } from "node:vm";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import {
+  compileFunction,
+  constants,
+  createContext,
+  runInContext,
+  runInNewContext,
+  runInThisContext,
+  Script,
+} from "node:vm";
 
 function capture(_: any, _1?: any) {}
 
@@ -299,6 +308,159 @@ describe("Script", () => {
       message: "Class constructor Script cannot be invoked without 'new'",
     });
   });
+
+  test("can specify displayErrors", () => {
+    const src = 'throw new Error("boom")';
+    // displayErrors: false — no source-line/caret decoration on the stack.
+    try {
+      new Script(src, { filename: "t.vm" }).runInThisContext({ displayErrors: false });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.message).toBe("boom");
+      expect(e.stack).not.toMatch(/^t\.vm:1\n/);
+    }
+    // displayErrors: true (default) — stack is decorated with the source line.
+    try {
+      new Script(src, { filename: "t.vm" }).runInThisContext({ displayErrors: true });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.stack).toMatch(/^t\.vm:1\nthrow new Error/);
+    }
+    // Same for runInContext.
+    try {
+      new Script(src, { filename: "t.vm" }).runInContext(createContext({}), { displayErrors: false });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.stack).not.toMatch(/^t\.vm:1\n/);
+    }
+  });
+  test("throws SyntaxError at construction like Node", () => {
+    // Node's vm.Script parses eagerly; the REPL depends on this.
+    expect(() => new Script("function {")).toThrow(SyntaxError);
+    expect(() => new Script("const x = ")).toThrow(SyntaxError);
+  });
+  test("compile-time SyntaxError has arrow-decorated stack (Node DecorateErrorStack)", () => {
+    // Node prepends `<url>:<line>\n<source>\n^\n\n` to compile-time SyntaxErrors
+    // from `new vm.Script`, unconditionally (independent of displayErrors).
+    for (const opts of [undefined, { displayErrors: true }, { displayErrors: false }]) {
+      let err: any;
+      try {
+        new Script("%%", opts);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
+    }
+
+    // Custom filename + lineOffset: reported line is offset-adjusted, source
+    // line and caret still come from the physical position.
+    let err: any;
+    try {
+      new Script("1;\n%%", { filename: "foo.js", lineOffset: 5 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["foo.js:7", "%%", "^", ""]);
+
+    // Negative lineOffset: Node renders a signed line, still with source + caret.
+    // JSC clamps a negative provider start line to zero, so the offset is
+    // re-applied to the physical line when building the header.
+    err = undefined;
+    try {
+      new Script("1;\n%%", { lineOffset: -5 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:-3", "%%", "^", ""]);
+
+    // columnOffset on line 1 is subtracted from the caret; on later lines it
+    // is not (Node applies it only to the first physical line).
+    err = undefined;
+    try {
+      new Script("   %%", { columnOffset: 10 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "   %%", "   ^", ""]);
+
+    err = undefined;
+    try {
+      new Script("1;\n   %%", { columnOffset: 10 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:2", "   %%", "   ^", ""]);
+  });
+
+  test("vm.compileFunction compile-time SyntaxError is arrow-decorated like new Script", () => {
+    // Node decorates both compile paths, but compileFunction defaults filename to
+    // "" where new Script defaults to "evalmachine.<anonymous>". An explicitly
+    // empty filename is honored by both and renders as ":<line>".
+    const header = (fn: () => unknown) => {
+      let err: any;
+      try {
+        fn();
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SyntaxError);
+      return err.stack.split("\n").slice(0, 4);
+    };
+
+    expect(header(() => compileFunction("%%"))).toEqual([":1", "%%", "^", ""]);
+    expect(header(() => compileFunction("%%", [], {}))).toEqual([":1", "%%", "^", ""]);
+    expect(header(() => compileFunction("%%", [], { filename: "" }))).toEqual([":1", "%%", "^", ""]);
+    expect(header(() => compileFunction("%%", [], { filename: "foo.js" }))).toEqual(["foo.js:1", "%%", "^", ""]);
+    expect(header(() => compileFunction("1;\n%%", [], { filename: "f.js", lineOffset: 5 }))).toEqual([
+      "f.js:7",
+      "%%",
+      "^",
+      "",
+    ]);
+    expect(header(() => compileFunction("1;\n%%", [], { lineOffset: -5 }))).toEqual([":-3", "%%", "^", ""]);
+
+    // An explicitly empty filename is not the same as an absent one.
+    expect(header(() => new Script("%%", { filename: "" }))).toEqual([":1", "%%", "^", ""]);
+
+    // The string-options form counts as "provided" too, "" included.
+    expect(header(() => new Script("%%", "myfile.js"))).toEqual(["myfile.js:1", "%%", "^", ""]);
+    expect(header(() => new Script("%%", ""))).toEqual([":1", "%%", "^", ""]);
+  });
+
+  test("a throwing Error.prepareStackTrace does not escape the compile-time SyntaxError", () => {
+    // Building the error materializes its stack, running a user
+    // prepareStackTrace; if that throws, the SyntaxError must still be what is
+    // thrown (node does the same) and the arrow header must survive.
+    const prev = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => {
+      throw new Error("boom-from-prepareStackTrace");
+    };
+    try {
+      let err: any;
+      try {
+        new Script("%%");
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe("Unexpected token '%'");
+      expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
+
+      // Same eager-materialization path via vm.compileFunction.
+      let fnErr: any;
+      try {
+        compileFunction("%%");
+      } catch (e) {
+        fnErr = e;
+      }
+      expect(fnErr).toBeInstanceOf(SyntaxError);
+      expect(fnErr.message).toBe("Unexpected token '%'");
+      expect(fnErr.stack.split("\n").slice(0, 4)).toEqual([":1", "%%", "^", ""]);
+    } finally {
+      Error.prepareStackTrace = prev;
+    }
+  });
 });
 
 type TestRunInContextArg =
@@ -515,9 +677,6 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   test.todo("can specify columnOffset", () => {
     //
   });
-  test.todo("can specify displayErrors", () => {
-    //
-  });
   test.todo("can specify timeout", () => {
     //
   });
@@ -689,15 +848,12 @@ resp.text().then((a) => {
 });
 
 test("can't use export syntax in vm.Script", () => {
-  expect(() => {
-    const script = new Script("export default {};");
-    script.runInThisContext();
-  }).toThrow({ name: "SyntaxError", message: "Unexpected keyword 'export'" });
-
-  expect(() => {
-    const script = new Script("export default {};");
-    script.createCachedData();
-  }).toThrow({ message: "createCachedData failed" });
+  // vm.Script now parses eagerly (like Node), so the SyntaxError surfaces at
+  // construction rather than at runInThisContext()/createCachedData().
+  expect(() => new Script("export default {};")).toThrow({
+    name: "SyntaxError",
+    message: "Unexpected keyword 'export'",
+  });
 });
 
 test("rejects invalid bytecode", () => {
@@ -856,6 +1012,130 @@ describe("codeGeneration options", () => {
   });
 });
 
+describe("context options with throwing getters", () => {
+  // Without the fix, reading these options with a pending exception aborted
+  // the process, so run the matrix in a subprocess.
+  test.concurrent("the getter's exception propagates to the caller", async () => {
+    // Each entry point tests the context-option keys it actually reads:
+    // createContext takes codeGeneration, Script#runInNewContext takes
+    // contextCodeGeneration, and vm.runInNewContext goes through both.
+    // A dotted key puts the throwing getter on the nested object.
+    const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
+    const contextKeys = (...codeGenerationKeyNames: string[]) => [
+      "name",
+      "origin",
+      ...codeGenerationKeyNames.flatMap(codeGenerationKeys),
+      "importModuleDynamically",
+      "microtaskMode",
+    ];
+    const matrix = {
+      createContext: contextKeys("codeGeneration"),
+      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
+      scriptRunInNewContext: contextKeys("contextCodeGeneration"),
+    };
+    const code = `
+      const vm = require("node:vm");
+      const matrix = ${JSON.stringify(matrix)};
+      const entryPoints = {
+        createContext: opts => vm.createContext({}, opts),
+        runInNewContext: opts => vm.runInNewContext("1", {}, opts),
+        scriptRunInNewContext: opts => new vm.Script("1").runInNewContext({}, opts),
+      };
+      for (const [entry, keys] of Object.entries(matrix)) {
+        for (const key of keys) {
+          const opts = {};
+          const path = key.split(".");
+          let target = opts;
+          for (const part of path.slice(0, -1)) target = target[part] = {};
+          Object.defineProperty(target, path.at(-1), {
+            get() { throw new Error("getter:" + key); },
+            enumerable: true,
+          });
+          try {
+            entryPoints[entry](opts);
+            console.log(entry, key, "did not throw");
+          } catch (e) {
+            console.log(entry, key, e.message);
+          }
+        }
+      }
+      console.log("survived");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected =
+      Object.entries(matrix)
+        .flatMap(([entry, keys]) => keys.map(key => `${entry} ${key} getter:${key}`))
+        .join("\n") + "\nsurvived\n";
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("DONT_CONTEXTIFY", () => {
+  test("globalThis prototype chain stays inside the sandbox realm", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const sandboxObjectPrototype = runInContext("Object.prototype", ctx);
+
+    expect(sandboxObjectPrototype).not.toBe(Object.prototype);
+    expect(Object.getPrototypeOf(ctx)).not.toBe(Object.prototype);
+
+    // The full prototype chain of the sandbox's globalThis must stay inside the
+    // sandbox realm and terminate at the sandbox's own Object.prototype.
+    const chain: object[] = [];
+    for (let proto = Object.getPrototypeOf(ctx); proto !== null; proto = Object.getPrototypeOf(proto)) {
+      chain.push(proto);
+    }
+    expect(chain).not.toContain(Object.prototype);
+    expect(chain.at(-1)).toBe(sandboxObjectPrototype);
+
+    // globalThis.constructor.constructor must resolve to the sandbox's Function,
+    // so code it creates runs in the sandbox realm where host globals are absent.
+    expect(runInContext(`globalThis.constructor.constructor("return typeof Bun")()`, ctx)).toBe("undefined");
+    expect(runInContext(`globalThis.constructor.constructor("return typeof process")()`, ctx)).toBe("undefined");
+    expect(runInContext(`globalThis.constructor.constructor`, ctx)).toBe(runInContext(`Function`, ctx));
+    expect(runInContext(`globalThis.constructor.constructor`, ctx)).not.toBe(Function);
+
+    // Script#runInNewContext takes the same code path.
+    expect(
+      new Script(`globalThis.constructor.constructor("return typeof Bun")()`).runInNewContext(
+        constants.DONT_CONTEXTIFY,
+      ),
+    ).toBe("undefined");
+  });
+
+  test("writing to Object.getPrototypeOf(globalThis) does not leak to the host realm", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    try {
+      runInContext(`Object.getPrototypeOf(globalThis).__vmDontContextifyLeakCheck = true`, ctx);
+      expect(({} as any).__vmDontContextifyLeakCheck).toBeUndefined();
+      expect((Object.prototype as any).__vmDontContextifyLeakCheck).toBeUndefined();
+      // The write lands somewhere inside the sandbox realm, so the sandbox's
+      // globalThis still sees it through its own prototype chain.
+      expect(runInContext(`globalThis.__vmDontContextifyLeakCheck`, ctx)).toBe(true);
+    } finally {
+      delete (Object.prototype as any).__vmDontContextifyLeakCheck;
+    }
+  });
+
+  test("basic usage still works", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    expect(runInContext("globalThis", ctx)).toBe(ctx);
+    expect(typeof ctx.Array).toBe("function");
+
+    runInContext("globalThis.fromInside = 123", ctx);
+    expect(ctx.fromInside).toBe(123);
+
+    ctx.fromOutside = 456;
+    expect(runInContext("fromOutside", ctx)).toBe(456);
+  });
+});
+
 test("Loader is not defined in vm context", () => {
   // Test with empty context - internal Loader should not leak through
   const emptyContext = createContext({});
@@ -871,4 +1151,336 @@ test("Loader is not defined in vm context", () => {
   expect(runInContext("Object.hasOwn(globalThis, 'Loader');", customContext)).toBe(true);
   // Ensure internal JSC Loader properties are not leaking through
   expect(runInContext("typeof Loader.registry;", customContext)).toBe("undefined");
+});
+
+test("node:vm native Module prototype methods reject non-module receivers", async () => {
+  // The native NodeVMModule prototype (reachable via the kNative own-symbol on a
+  // vm.SourceTextModule instance) must validate its receiver. Calling its methods
+  // with a plain object as `this` must throw a TypeError instead of reinterpreting
+  // the object's inline property storage as native module fields.
+  const fixture = `
+    const vm = require("node:vm");
+    const mod = new vm.SourceTextModule('import "./dep.js"; export const a = 1;');
+    const kNative = Object.getOwnPropertySymbols(mod).find(s => s.description === "kNative");
+    const native = mod[kNative];
+    const proto = Object.getPrototypeOf(native);
+    const fake = { p1: 1n, p2: 0x41414141n };
+
+    const results = [];
+    for (const name of ["getStatus", "getStatusCode", "getModuleRequests", "createModuleRecord", "getError"]) {
+      if (typeof proto[name] !== "function") {
+        results.push(name + ": missing");
+        continue;
+      }
+      try {
+        const value = proto[name].call(fake);
+        results.push(name + ": returned " + String(value));
+      } catch (e) {
+        results.push(name + ": " + (e instanceof TypeError ? "TypeError" : "unexpected " + e));
+      }
+    }
+    const identifierGetter = Object.getOwnPropertyDescriptor(proto, "identifier")?.get;
+    if (typeof identifierGetter !== "function") {
+      results.push("identifier: missing");
+    } else {
+      try {
+        const value = identifierGetter.call(fake);
+        results.push("identifier: returned " + String(value));
+      } catch (e) {
+        results.push("identifier: " + (e instanceof TypeError ? "TypeError" : "unexpected " + e));
+      }
+    }
+
+    // The legitimate receiver still works through the same native entry points.
+    results.push("status: " + proto.getStatus.call(native));
+    results.push("requests: " + JSON.stringify(proto.getModuleRequests.call(native).map(r => r[0])));
+    console.log(results.join("\\n"));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "getStatus: TypeError
+    getStatusCode: TypeError
+    getModuleRequests: TypeError
+    createModuleRecord: TypeError
+    getError: TypeError
+    identifier: TypeError
+    status: unlinked
+    requests: [\"./dep.js\"]"
+  `);
+  expect(exitCode).toBe(0);
+});
+
+test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNatives array", async () => {
+  // The native link(specifiers, moduleNatives, scriptFetcher) entry point validates
+  // that the two arguments are arrays but must also validate every element of
+  // moduleNatives. A plain object whose inline property storage holds caller-chosen
+  // doubles must produce a clean TypeError instead of being reinterpreted as a
+  // native Module and having those doubles read back as internal pointers.
+  const fixture = `
+    const vm = require("node:vm");
+
+    const mod = new vm.SourceTextModule('import "x";');
+    const kNative = Object.getOwnPropertySymbols(mod).find(s => s.description === "kNative");
+    const native = mod[kNative];
+    native.createModuleRecord();
+
+    const results = [];
+    try {
+      native.link(["x"], [{ a: 1.1, b: 2.2, c: 3.3, d: 4.4 }], 0);
+      results.push("link(plain object): returned");
+    } catch (e) {
+      results.push("link(plain object): " + (e instanceof TypeError ? "TypeError " + e.code : "unexpected " + e));
+    }
+    results.push("status after rejected link: " + native.getStatus());
+
+    // A real native module in the same slot still links.
+    const dep = new vm.SourceTextModule("export const x = 1;");
+    const depNative = dep[kNative];
+    depNative.createModuleRecord();
+    native.link(["x"], [depNative], 0);
+    results.push("status after valid link: " + native.getStatus());
+    console.log(results.join("\\n"));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "link(plain object): TypeError ERR_INVALID_THIS
+    status after rejected link: unlinked
+    status after valid link: unlinked"
+  `);
+  expect(exitCode).toBe(0);
+});
+
+test("node:vm SourceTextModule.link() rejects holey and mismatched argument arrays", async () => {
+  // Holes in the argument arrays surface as empty JSValues from getDirectIndex,
+  // which pass isCell() with a null cell — link() must reject them (and a
+  // specifiers/moduleNatives length mismatch) instead of crashing.
+  const fixture = `
+    const vm = require("node:vm");
+    const mod = new vm.SourceTextModule('import { z } from "x"; export const w = z;');
+    const kNative = Object.getOwnPropertySymbols(mod).find(s => s.description === "kNative");
+    const native = mod[kNative];
+    native.createModuleRecord();
+
+    const results = [];
+    const attempt = (label, specifiers, moduleNatives) => {
+      try {
+        native.link(specifiers, moduleNatives, 0);
+        results.push(label + ": returned");
+      } catch (e) {
+        results.push(label + ": " + (e instanceof TypeError ? "TypeError" : e.constructor.name) + " " + e.code);
+      }
+    };
+
+    const dep = new vm.SourceTextModule("export const z = 1;");
+    const depNative = dep[kNative];
+    depNative.createModuleRecord();
+
+    attempt("holey both", new Array(1), new Array(1));
+    attempt("holey specifiers", new Array(1), [depNative]);
+    attempt("holey moduleNatives", ["x"], new Array(1));
+    attempt("length mismatch", ["x"], []);
+    attempt("non-string specifier", [42], [depNative]);
+    results.push("status: " + native.getStatus());
+    attempt("valid", ["x"], [depNative]);
+    results.push("status: " + native.getStatus());
+    console.log(results.join("\\n"));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "holey both: TypeError ERR_INVALID_ARG_TYPE
+    holey specifiers: TypeError ERR_INVALID_ARG_TYPE
+    holey moduleNatives: TypeError ERR_INVALID_THIS
+    length mismatch: TypeError ERR_INVALID_ARG_VALUE
+    non-string specifier: TypeError ERR_INVALID_ARG_TYPE
+    status: unlinked
+    valid: returned
+    status: unlinked"
+  `);
+  expect(exitCode).toBe(0);
+});
+
+describe("node:vm SourceTextModule cyclic graph linking", () => {
+  // Building a cyclic SourceTextModule graph and linking + evaluating each
+  // module from inside the linker callback (instead of linking the whole graph
+  // first and evaluating once) used to segfault: instantiate() runs JSC's
+  // whole-graph record->link(), which walks into a dependency whose own link()
+  // has not run yet (its loadedModules() is empty), dereferencing an end()
+  // iterator. Bun must instead throw a catchable ERR_VM_MODULE_LINK_FAILURE,
+  // matching Node. See https://github.com/oven-sh/bun/issues/31623.
+  test("link + evaluate inside the linker throws instead of crashing", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const ctx = vm.createContext({ globalThis });
+      const sources = {
+        a: 'import { b } from "b"; export const a = "A"; export const ab = () => b;',
+        b: 'import { a } from "a"; export const b = "B"; export const ba = () => a;',
+      };
+      const built = new Map();
+      async function ensure(id) {
+        const existing = built.get(id);
+        if (existing) return existing;
+        const m = new vm.SourceTextModule(sources[id], { context: ctx, identifier: id });
+        built.set(id, m);
+        await m.link(async spec => await ensure(spec));
+        await m.evaluate();
+        return m;
+      }
+      try {
+        const root = await ensure("a");
+        console.log("UNEXPECTED_OK " + Object.keys(root.namespace).join(","));
+      } catch (e) {
+        console.log("CAUGHT " + e.code + " " + e.message);
+      }
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("CAUGHT ERR_VM_MODULE_LINK_FAILURE request for 'b' is not in cache");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a self-importing module links + evaluates without crashing", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const ctx = vm.createContext({ globalThis });
+      const sources = { self: 'import {} from "self"; export const x = 1;' };
+      const built = new Map();
+      async function ensure(id) {
+        const existing = built.get(id);
+        if (existing) return existing;
+        const m = new vm.SourceTextModule(sources[id], { context: ctx, identifier: id });
+        built.set(id, m);
+        await m.link(async spec => await ensure(spec));
+        await m.evaluate();
+        return m;
+      }
+      const root = await ensure("self");
+      console.log("OK " + Object.keys(root.namespace).join(","));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK x");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the canonical link-whole-graph-then-evaluate pattern still works", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const ctx = vm.createContext({ globalThis });
+      const sources = {
+        a: 'import { b } from "b"; export const a = "A"; export const ab = () => b;',
+        b: 'import { a } from "a"; export const b = "B"; export const ba = () => a;',
+      };
+      const built = new Map();
+      function get(id) {
+        let m = built.get(id);
+        if (m) return m;
+        m = new vm.SourceTextModule(sources[id], { context: ctx, identifier: id });
+        built.set(id, m);
+        return m;
+      }
+      const root = get("a");
+      await root.link(spec => get(spec));
+      await root.evaluate();
+      const nsA = root.namespace;
+      const nsB = built.get("b").namespace;
+      console.log("ab=" + nsA.ab() + " ba=" + nsB.ba());
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ab=B ba=A");
+    expect(exitCode).toBe(0);
+  });
+});
+
+test("node:vm Object.defineProperty on the context global when the sandbox is an uncacheable dictionary holding an accessor for a built-in", async () => {
+  // Regression: NodeVMGlobalObject::defineOwnProperty used a single PropertySlot
+  // for both the global-object lookup and the sandbox lookup. When the first
+  // lookup fills the slot as cacheable (e.g. Array is a lazy CustomGetterSetter
+  // on a non-dictionary global) and the sandbox has transitioned to an
+  // uncacheable dictionary with an accessor for the same name, the second lookup
+  // would hit setGetterSlot, which asserts the slot is still CachingDisallowed.
+  // Debug builds aborted; this test asserts the Node-matching behaviour so
+  // release lanes still exercise the path.
+  const fixture = `
+    const vm = require("node:vm");
+    const sandbox = {};
+    for (let i = 0; i < 200; i++) { sandbox["k" + i] = i; delete sandbox["k" + i]; }
+    Object.defineProperty(sandbox, "Array", { get: () => Array, configurable: true });
+    vm.createContext(sandbox);
+    const result = vm.runInContext(
+      'Object.defineProperty(this, "Array", { value: 1, configurable: true, writable: true }); Array',
+      sandbox,
+    );
+    console.log(JSON.stringify({ result, sandboxArray: sandbox.Array }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
+  expect(exitCode).toBe(0);
 });

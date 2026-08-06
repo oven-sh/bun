@@ -1,20 +1,17 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use bun_core::ZigString;
 
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // toSatisfy bypasses get_value (no .resolves/.rejects handling), so it cannot use
     // the full `matcher_prelude`; only the post_match guard mechanism unifies.
     let _guard = this.post_match_guard(global);
 
     let this_value = frame.this();
-    let arguments_ = frame.arguments_old::<1>();
-    let arguments = arguments_.slice();
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toSatisfy() requires 1 argument")));
@@ -52,35 +49,30 @@ pub fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> 
         return Ok(JSValue::UNDEFINED);
     }
 
-    // PORT NOTE: `defer formatter.deinit()` dropped — Formatter impls Drop.
+    // Formatter impls Drop.
     let mut formatter = super::make_formatter(global);
 
     if not {
-        // PERF(port): was `comptime getSignature(...)` — profile in Phase B (const-eval signature)
         let signature = get_signature("toSatisfy", "<green>expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!("\n\nExpected: not <green>{}<r>\n", predicate.to_fmt(&mut formatter)),
+            "\n\nExpected: not <green>{}<r>\n", predicate.to_fmt(&mut formatter),
         );
     }
 
-    // PERF(port): was `comptime getSignature(...)` — profile in Phase B (const-eval signature)
     let signature = get_signature("toSatisfy", "<green>expected<r>", false);
 
-    // PORT NOTE: reshaped for borrowck — Zig held two `*Formatter` aliases via `toFmt`;
-    // Rust `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
+    // `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
     // received value (matches the toBeGreaterThan.rs pattern).
     let mut formatter2 = super::make_formatter(global);
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>\n",
-            predicate.to_fmt(&mut formatter),
-            value.to_fmt(&mut formatter2),
-        ),
+        "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>\n",
+        predicate.to_fmt(&mut formatter),
+        value.to_fmt(&mut formatter2),
     )
 }
-
-// ported from: src/test_runner/expect/toSatisfy.zig

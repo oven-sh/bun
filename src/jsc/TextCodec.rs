@@ -3,7 +3,6 @@ use core::ptr::NonNull;
 use crate::mark_binding;
 use bun_core::String as BunString;
 
-// TODO(port): move to <jsc>_sys
 unsafe extern "C" {
     fn Bun__createTextCodec(
         encoding_name: *const u8,
@@ -21,12 +20,6 @@ unsafe extern "C" {
     // safe: `TextCodec` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
     // to a non-null `*mut` and C++ mutating codec state is interior to the cell.
     safe fn Bun__stripBOMFromTextCodec(codec: &mut TextCodec);
-    fn Bun__isEncodingSupported(encoding_name: *const u8, encoding_name_len: usize) -> bool;
-    fn Bun__getCanonicalEncodingName(
-        encoding_name: *const u8,
-        encoding_name_len: usize,
-        out_len: *mut usize,
-    ) -> Option<NonNull<u8>>;
 }
 
 bun_opaque::opaque_ffi! {
@@ -46,7 +39,7 @@ impl TextCodec {
         unsafe { Bun__createTextCodec(encoding.as_ptr(), encoding.len()) }
     }
 
-    // PORT NOTE: FFI-owned opaque; constructed/destroyed across FFI, so explicit
+    // FFI-owned opaque; constructed/destroyed across FFI, so explicit
     // destroy instead of `impl Drop` (cannot own a `TextCodec` by value).
     pub unsafe fn destroy(this: *mut TextCodec) {
         mark_binding!();
@@ -77,24 +70,4 @@ impl TextCodec {
         mark_binding!();
         Bun__stripBOMFromTextCodec(self)
     }
-
-    pub fn is_supported(encoding: &[u8]) -> bool {
-        mark_binding!();
-        // SAFETY: encoding.ptr is valid for encoding.len bytes.
-        unsafe { Bun__isEncodingSupported(encoding.as_ptr(), encoding.len()) }
-    }
-
-    pub fn get_canonical_encoding_name(encoding: &[u8]) -> Option<&'static [u8]> {
-        mark_binding!();
-        let mut len: usize = 0;
-        // SAFETY: encoding.ptr is valid for encoding.len bytes; `len` is a valid out-pointer.
-        let name = unsafe {
-            Bun__getCanonicalEncodingName(encoding.as_ptr(), encoding.len(), &raw mut len)
-        }?;
-        // SAFETY: C++ returns a pointer into static encoding-name table data, valid for `len` bytes
-        // and for the lifetime of the program.
-        Some(unsafe { bun_core::ffi::slice(name.as_ptr(), len) })
-    }
 }
-
-// ported from: src/jsc/TextCodec.zig

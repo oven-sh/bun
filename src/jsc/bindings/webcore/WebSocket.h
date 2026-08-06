@@ -60,10 +60,10 @@ namespace WebCore {
 
 class Blob;
 
-// Move-only owning handle for the Zig heap-allocated SSLConfig returned by
+// Move-only owning handle for the natively heap-allocated SSLConfig returned by
 // Bun__WebSocket__parseSSLConfig. The SSLConfig holds duped cert/key/CA
 // strings, so every exception / early-return path between parsing and the
-// Zig upgrade client taking ownership must free it. Wrapping the raw `void*`
+// upgrade client taking ownership must free it. Wrapping the raw `void*`
 // in this RAII type lets normal C++ destruction handle all of those paths
 // without ad-hoc scope guards or manual frees at each call site.
 class WebSocketSSLConfigPtr {
@@ -91,7 +91,7 @@ public:
 
     explicit operator bool() const { return m_ptr != nullptr; }
 
-    // Transfer ownership out to the Zig upgrade client; after this the
+    // Transfer ownership out to the upgrade client; after this the
     // destructor is a no-op.
     void* release() { return std::exchange(m_ptr, nullptr); }
 
@@ -117,7 +117,6 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized);
     // With proxy support
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
@@ -153,9 +152,6 @@ public:
         ProxyTLS // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
     };
 
-    ExceptionOr<void> connect(const String& url);
-    ExceptionOr<void> connect(const String& url, const String& protocol);
-    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols);
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
     // Internal connect with proxy config (used by create() with proxy support)
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, std::optional<struct ProxyConfig>&&);
@@ -198,14 +194,21 @@ public:
     using RefCounted::ref;
     void didConnect();
     void disablePendingActivity();
+    void didStartClosingHandshake();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
     void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
     void didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
-    void didReceiveData(const char* data, size_t length);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
+    struct HandshakeRawHeader {
+        const uint8_t* name_ptr;
+        size_t name_len;
+        const uint8_t* value_ptr;
+        size_t value_len;
+    };
+    void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
 
     void updateHasPendingActivity();
     bool hasPendingActivity() const
@@ -225,11 +228,6 @@ public:
     void setOfferPerMessageDeflate(bool offer)
     {
         m_offerPerMessageDeflate = offer;
-    }
-
-    bool offerPerMessageDeflate() const
-    {
-        return m_offerPerMessageDeflate;
     }
 
     // C++-only callback mode. When set, didConnect/didReceiveMessage/
@@ -301,7 +299,6 @@ private:
     std::atomic<bool> m_hasPendingActivity { true };
 
     explicit WebSocket(ScriptExecutionContext&);
-    explicit WebSocket(ScriptExecutionContext&, const String& url);
 
     EventTargetInterface eventTargetInterface() const final;
 
@@ -309,8 +306,6 @@ private:
     void derefEventTarget() final { deref(); }
 
     void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
-    void didUpdateBufferedAmount(unsigned bufferedAmount);
-    void didStartClosingHandshake();
     void failConnectingWebSocket();
 
     void sendWebSocketString(const String& message, const Opcode opcode);
@@ -344,14 +339,11 @@ private:
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
     size_t m_pendingActivityCount { 0 };
 
-    // TLS options (Zig heap SSLConfig — ownership is released to the Zig
+    // TLS options (native heap SSLConfig — ownership is released to the
     // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
     WebSocketSSLConfigPtr m_sslConfig;
 
-    bool m_dispatchedErrorEvent { false };
-
     NativeCallbacks m_native;
-    // RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
 };
 
 } // namespace WebCore

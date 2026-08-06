@@ -1,15 +1,16 @@
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum OfflineMode {
+    #[default]
     Online,
     Latest,
     Offline,
 }
 
-pub static PREFER: phf::Map<&'static [u8], OfflineMode> = phf::phf_map! {
-    b"offline" => OfflineMode::Offline,
-    b"latest" => OfflineMode::Latest,
-    b"online" => OfflineMode::Online,
-};
-
-// ported from: src/options_types/OfflineMode.zig
+bun_core::comptime_string_map! {
+    pub static PREFER: OfflineMode = {
+        b"offline" => OfflineMode::Offline,
+        b"latest" => OfflineMode::Latest,
+        b"online" => OfflineMode::Online,
+    };
+}

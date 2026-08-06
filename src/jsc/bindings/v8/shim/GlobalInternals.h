@@ -1,6 +1,8 @@
 #pragma once
 
 #include "BunClientData.h"
+#include <wtf/HashMap.h>
+#include <wtf/Vector.h>
 
 #include "../V8Isolate.h"
 #include "Oddball.h"
@@ -12,6 +14,7 @@ class HandleScope;
 namespace shim {
 
 class HandleScopeBuffer;
+struct Handle;
 
 class GlobalInternals : public JSC::JSCell {
 public:
@@ -61,7 +64,32 @@ public:
 
     HandleScope* currentHandleScope() const { return m_currentHandleScope; }
 
+    // Escape-slot reservations for live EscapableHandleScopes, keyed by the
+    // scope's stack address. The slot is reserved at scope construction (so it
+    // sits below any handles created inside the scope and survives
+    // HandleScope::DeleteExtensions) and consumed by EscapeSlot(). Entries are
+    // purged when their owning buffer clears (scope close) — a scope destroyed
+    // by V8's inline destructor without calling Escape() has no other hook —
+    // and a reused stack address simply overwrites the stale entry.
+    struct EscapeReservation {
+        Handle* handle { nullptr };
+        HandleScopeBuffer* buffer { nullptr };
+    };
+    WTF::HashMap<void*, EscapeReservation>& escapeReservations() { return m_escapeReservations; }
+    void purgeEscapeReservations(HandleScopeBuffer* buffer)
+    {
+        m_escapeReservations.removeIf([buffer](auto& entry) { return entry.value.buffer == buffer; });
+    }
+
     void setCurrentHandleScope(HandleScope* handleScope) { m_currentHandleScope = handleScope; }
+
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcPrologueCallbacks() { return m_gcPrologueCallbacks; }
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcEpilogueCallbacks() { return m_gcEpilogueCallbacks; }
+    WTF::Vector<std::pair<NearHeapLimitCallback, void*>>& nearHeapLimitCallbacks() { return m_nearHeapLimitCallbacks; }
+
+    // MakeWeak/ClearWeak bookkeeping: global-handle slot (in globalHandles()) to
+    // the parameter passed to MakeWeak.
+    WTF::HashMap<uintptr_t*, void*>& weakHandleParameters() { return m_weakHandleParameters; }
 
     Isolate* isolate() { return &m_isolate; }
 
@@ -78,7 +106,13 @@ private:
     JSC::LazyClassStructure m_functionTemplateStructure;
     JSC::LazyClassStructure m_v8FunctionStructure;
     HandleScope* m_currentHandleScope;
+    WTF::HashMap<void*, EscapeReservation> m_escapeReservations;
     JSC::LazyProperty<GlobalInternals, HandleScopeBuffer> m_globalHandles;
+
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcPrologueCallbacks;
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcEpilogueCallbacks;
+    WTF::Vector<std::pair<NearHeapLimitCallback, void*>> m_nearHeapLimitCallbacks;
+    WTF::HashMap<uintptr_t*, void*> m_weakHandleParameters;
 
     Oddball m_undefinedValue;
     Oddball m_nullValue;

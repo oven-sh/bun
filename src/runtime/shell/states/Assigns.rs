@@ -2,10 +2,9 @@
 //! no effect on the environment of the shell, so we can skip them.
 
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
-use crate::shell::io::IO;
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::states::base::Base;
-use crate::shell::states::expansion::{Expansion, ExpansionOpts};
+use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 use crate::shell::{EnvStr, ExitCode};
 
@@ -13,16 +12,14 @@ use crate::shell::{EnvStr, ExitCode};
 pub enum AssignCtx {
     Cmd,
     Shell,
-    Exported,
 }
 
 pub struct Assigns {
-    pub base: Base,
+    pub(crate) base: Base,
     /// Points into the AST arena, which outlives every state node — `RawSlice`
     /// invariant.
     pub node: bun_ptr::RawSlice<ast::Assign>,
-    pub io: IO,
-    pub state: AssignsState,
+    pub(crate) state: AssignsState,
     pub ctx: AssignCtx,
 }
 
@@ -37,29 +34,27 @@ pub enum AssignsState {
 }
 
 impl Assigns {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &[ast::Assign],
         parent: NodeId,
         ctx: AssignCtx,
-        io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Assigns(Assigns {
-            base: Base::new(StateKind::Assign, parent, shell),
+            base: Base::new(parent, shell),
             // AST arena outlives every state node — `RawSlice` invariant.
             node: bun_ptr::RawSlice::new(node),
-            io,
             state: AssignsState::Idle,
             ctx,
         }))
     }
 
-    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         loop {
             let (shell, node) = {
                 let me = interp.as_assigns(this);
@@ -77,18 +72,7 @@ impl Assigns {
                         continue;
                     }
                     let atom: *const ast::Atom = &raw const assigns[idx as usize].value;
-                    let io = interp.as_assigns(this).io.clone();
-                    let child = Expansion::init(
-                        interp,
-                        shell,
-                        atom,
-                        this,
-                        io,
-                        ExpansionOpts {
-                            for_spawn: false,
-                            single: false,
-                        },
-                    );
+                    let child = Expansion::init(interp, shell, atom, this);
                     return Expansion::start(interp, child);
                 }
                 AssignsState::Done => {
@@ -99,7 +83,7 @@ impl Assigns {
         }
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -127,8 +111,7 @@ impl Assigns {
         let label = node.slice()[*idx as usize].label;
         *idx += 1;
 
-        // Join multi-word expansions with a single space (Spec: Assigns.zig
-        // childDone). `ExpansionOut` stores all words contiguously in `buf`
+        // Join multi-word expansions with a single space. `ExpansionOut` stores all words contiguously in `buf`
         // with `bounds` marking inter-word offsets, so the merged value is
         // `buf` with a space inserted at each boundary.
         let value: Vec<u8> = if out.bounds.is_empty() {
@@ -145,7 +128,7 @@ impl Assigns {
             merged
         };
 
-        let value_ref = EnvStr::init_ref_counted(&value);
+        let value_ref = EnvStr::init_ref_counted(value.into_boxed_slice());
         interp.as_assigns_mut(this).base.shell_mut().assign_var(
             EnvStr::init_slice(label),
             value_ref,
@@ -156,10 +139,8 @@ impl Assigns {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Assigns {} deinit", this);
         interp.as_assigns_mut(this).base.end_scope();
     }
 }
-
-// ported from: src/shell/states/Assigns.zig

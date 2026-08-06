@@ -6,7 +6,6 @@ use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
-use bun_core::output;
 use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 
 use super::s3_file as S3File;
@@ -31,14 +30,14 @@ macro_rules! pfmt {
 // `bun_s3_signing::S3Credentials` exposes `guessRegion` / `guessBucket` as
 // FREE fns and the JS-options parser lives in
 // `runtime/webcore/s3/credentials_jsc.rs`. Surface them as associated fns via
-// an extension trait so call sites keep their Zig shape
+// an extension trait so call sites can use the associated-fn shape
 // (`S3Credentials.guessRegion(...)` / `.getCredentialsWithOptions(...)`).
-pub trait S3CredentialsExt {
+pub(crate) trait S3CredentialsExt {
     fn guess_region(endpoint: &[u8]) -> &[u8];
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
     #[allow(clippy::too_many_arguments)]
     fn get_credentials_with_options(
-        // PORT NOTE: takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
+        // Takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
         // has a private `ref_count` field and no `Clone`, so callers holding a borrow
         // (e.g. `&IntrusiveRc<S3Credentials>` deref) cannot produce an owned copy. The
         // real impl in `s3/credentials_jsc.rs` deep-copies internally.
@@ -91,7 +90,7 @@ fn opt_js(v: JSValue) -> Option<JSValue> {
     }
 }
 
-pub fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(
+pub(crate) fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(
     credentials: &S3Credentials,
     options: MultiPartUploadOptions,
     acl: Option<ACL>,
@@ -105,7 +104,6 @@ where
     writer.write_str("\n")?;
 
     {
-        // Zig: `formatter.indent += 1; defer formatter.indent -|= 1;`.
         // `IndentScope` shadows the borrow and restores indent on `Drop`, so a
         // `?` early-return below still leaves the formatter at its original
         // depth (observable when `print_as` throws and the caller continues
@@ -122,10 +120,11 @@ where
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>endpoint<d>:<r> \"", ENABLE_ANSI_COLORS))?;
-        write!(
+        bun_core::write_pretty!(
             writer,
-            "{}",
-            output::pretty_fmt_args("<r><b>{}<r>\"", ENABLE_ANSI_COLORS, (BStr::new(endpoint),))
+            ENABLE_ANSI_COLORS,
+            "<r><b>{s}<r>\"",
+            BStr::new(endpoint),
         )?;
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
@@ -137,10 +136,11 @@ where
         };
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>region<d>:<r> \"", ENABLE_ANSI_COLORS))?;
-        write!(
+        bun_core::write_pretty!(
             writer,
-            "{}",
-            output::pretty_fmt_args("<r><b>{}<r>\"", ENABLE_ANSI_COLORS, (BStr::new(region),))
+            ENABLE_ANSI_COLORS,
+            "<r><b>{s}<r>\"",
+            BStr::new(region),
         )?;
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
@@ -181,15 +181,12 @@ where
 
         if let Some(acl_value) = acl {
             formatter.write_indent(writer)?;
-            writer.write_str(pfmt!("<r>acl<d>:<r> ", ENABLE_ANSI_COLORS))?;
-            write!(
+            writer.write_str(pfmt!("<r>acl<d>:<r> \"", ENABLE_ANSI_COLORS))?;
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                output::pretty_fmt_args(
-                    "<r><b>{}<r>\"",
-                    ENABLE_ANSI_COLORS,
-                    (BStr::new(acl_value.to_string()),),
-                )
+                ENABLE_ANSI_COLORS,
+                "<r><b>{s}<r>\"",
+                BStr::new(acl_value.to_string()),
             )?;
             formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
 
@@ -241,11 +238,11 @@ where
 
 #[bun_jsc::JsClass]
 pub struct S3Client {
-    pub credentials: bun_ptr::IntrusiveRc<S3Credentials>,
-    pub options: MultiPartUploadOptions,
-    pub acl: Option<ACL>,
-    pub storage_class: Option<StorageClass>,
-    pub request_payer: bool,
+    pub(crate) credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    pub(crate) options: MultiPartUploadOptions,
+    pub(crate) acl: Option<ACL>,
+    pub(crate) storage_class: Option<StorageClass>,
+    pub(crate) request_payer: bool,
 }
 
 impl Drop for S3Client {
@@ -253,20 +250,22 @@ impl Drop for S3Client {
         // `IntrusiveRc<T>` is `bun_ptr::RefPtr<T>`, which has no `Drop` impl
         // of its own (only `ScopedRef<T>` does), so the +1 taken by
         // `aws_options.credentials.dupe()` in `constructor` must be released
-        // explicitly. Mirrors Zig `S3Client.deinit`: `this.credentials.deref()`.
+        // explicitly.
         self.credentials.deref();
     }
 }
 
 impl S3Client {
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]`
+    // No `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]`
     // derive on the struct emits `S3ClientClass__construct` which calls
     // `<S3Client>::constructor` directly.
-    pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Self>> {
-        let arguments = callframe.arguments_old::<1>();
+    pub(crate) fn constructor(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<Box<Self>> {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (set during init). `get_s3_credentials` takes `&mut self`
         // only to lazily memoize — single-threaded JS event-loop discipline applies.
@@ -296,7 +295,7 @@ impl S3Client {
         }))
     }
 
-    pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,
         writer: &mut W,
@@ -315,14 +314,11 @@ impl S3Client {
                 &self.credentials.bucket
             };
         if !bucket_name.is_empty() {
-            write!(
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                output::pretty_fmt_args(
-                    " (<green>\"{}\"<r>)<r> {{",
-                    ENABLE_ANSI_COLORS,
-                    (BStr::new(bucket_name),),
-                )
+                ENABLE_ANSI_COLORS,
+                " (<green>\"{s}\"<r>)<r> {{",
+                BStr::new(bucket_name),
             )?;
         } else {
             writer.write_str(" {")?;
@@ -342,11 +338,14 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn file(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
+    pub(crate) fn file(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -359,8 +358,8 @@ impl S3Client {
             }
         };
         let options = args.next_eat();
-        // Zig: `Blob.new(try ...)` — heap-promote and mark `ref_count = 1` so
-        // the JSS3File wrapper's `finalize` knows to `bun.destroy(blob)`.
+        // `Blob::new` heap-promotes and marks `ref_count = 1` so
+        // the JSS3File wrapper's `finalize` knows to free the blob.
         let blob = crate::webcore::blob::Blob::new(
             S3File::construct_s3_file_with_s3_credentials_and_options(
                 global,
@@ -373,7 +372,7 @@ impl S3Client {
                 ptr.request_payer,
             )?,
         );
-        // Zig: `blob.toJS(globalThis)` — runs `calculateEstimatedByteSize()`
+        // `to_js` runs `calculateEstimatedByteSize()`
         // before wrapping the heap Blob in a JSS3File so JSC sees the correct
         // GC pressure. Route through `BlobExt::to_js` (the `&mut self` method
         // that owns the heap pointer), same as `S3File::construct_internal_js`.
@@ -383,15 +382,14 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn presign(
+    pub(crate) fn presign(
         ptr: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -426,11 +424,14 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn exists(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
+    pub(crate) fn exists(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -449,7 +450,7 @@ impl S3Client {
         };
         let options = args.next_eat();
         // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
-        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
             global,
             path,
             options,
@@ -459,15 +460,18 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        S3File::S3BlobStatTask::exists(global, &mut blob)
+        S3File::S3BlobStatTask::exists(global, &blob)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn size(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
+    pub(crate) fn size(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -500,11 +504,14 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn stat(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
+    pub(crate) fn stat(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -523,7 +530,7 @@ impl S3Client {
         };
         let options = args.next_eat();
         // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
-        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
             global,
             path,
             options,
@@ -533,15 +540,18 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        S3File::S3BlobStatTask::stat(global, &mut blob)
+        S3File::S3BlobStatTask::stat(global, &blob)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn write(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
+    pub(crate) fn write(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -573,11 +583,9 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        // PORT NOTE: reshaped for borrowck — Zig copied `blob` into `blob_internal`
-        // by value while `defer blob.detach()` was still armed on the original.
-        // Here we move into `PathOrBlob` directly; cleanup of the moved-out
-        // value is handled by `Drop`.
-        let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(blob);
+        // Move into `PathOrBlob` directly; cleanup of the moved-out value is
+        // handled by `Drop`.
+        let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(Box::new(blob));
         crate::webcore::blob::write_file_internal(
             global,
             &mut blob_internal,
@@ -591,7 +599,7 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn list_objects(
+    pub(crate) fn list_objects(
         ptr: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -613,7 +621,6 @@ impl S3Client {
             ptr.request_payer,
         )?;
 
-        // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
         let store = blob.store.get().as_ref().unwrap();
         store
             .data
@@ -622,11 +629,14 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn unlink(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
+    pub(crate) fn unlink(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -650,7 +660,6 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        // Zig: `blob.store.?.data.s3.unlink(blob.store.?, globalThis, options)`.
         let store = blob.store.get().as_ref().unwrap();
         store.data.as_s3().unlink(store, global, options)
     }
@@ -661,31 +670,42 @@ impl S3Client {
     // so they must be associated fns (no `#[bun_jsc::host_fn]` needed — the
     // codegen layer already handles the `host_fn_result` wrapping).
 
-    pub fn static_write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_write(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         S3File::write(global, callframe)
     }
 
-    pub fn static_presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_presign(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         S3File::presign(global, callframe)
     }
 
-    pub fn static_exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_exists(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         S3File::exists(global, callframe)
     }
 
-    pub fn static_size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         S3File::size(global, callframe)
     }
 
-    pub fn static_unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_unlink(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         S3File::unlink(global, callframe)
     }
 
-    pub fn static_file(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
+    pub(crate) fn static_file(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
 
         let Some(path) = PathLike::from_js(global, &mut args)? else {
             return Err(global.throw_invalid_arguments(format_args!("Expected file path string")));
@@ -694,11 +714,11 @@ impl S3Client {
         S3File::construct_internal_js(global, path, args.next_eat())
     }
 
-    pub fn static_stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         S3File::stat(global, callframe)
     }
 
-    pub fn static_list_objects(
+    pub(crate) fn static_list_objects(
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -722,10 +742,9 @@ impl S3Client {
             global,
             PathLike::default(),
             options,
-            existing_credentials,
+            &existing_credentials,
         )?;
 
-        // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
         let store = blob.store.get().as_ref().unwrap();
         store
             .data
@@ -737,5 +756,3 @@ impl S3Client {
 // `FormatTag` / `JSType` are the ConsoleObject formatter enums
 // (`.Double`, `.NumberObject`), re-exported at the `bun_jsc` crate root.
 use bun_jsc::{FormatTag, JSType};
-
-// ported from: src/runtime/webcore/S3Client.zig

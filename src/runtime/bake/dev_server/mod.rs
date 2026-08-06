@@ -1,65 +1,37 @@
 //! Instance of the development server. Attaches to an instance of `Bun.serve`,
 //! controlling bundler, routing, and hot module reloading.
 //!
-//! B-2 keystone L: struct + lifecycle un-gated. The 4.8 kL of request
-//! handling, hot-update tracing, and `finalize_bundle` remain in the gated
-//! Phase-A draft `../DevServer.rs` (preserved on disk via ``).
-//! What is real here:
-//!   - `DevServer` struct with all LIFETIMES.tsv-classified fields
+//! Request handling, hot-update tracing, and `finalize_bundle` live in
+//! `../DevServer.rs` (`dev_server_body`). This file holds:
+//!   - the `DevServer` struct definition
 //!   - leaf enums/newtypes (`FileKind`, `ChunkKind`, `Magic`, `MessageId`, …)
 //!   - submodule struct types (`Assets`, `RouteBundle`, `SourceMapStore`, …)
 //!   - `bun_bundler::dispatch::DevServerVTable` wiring (`DEV_SERVER_VTABLE`)
-//!   - `is_file_cached` (the one vtable slot whose body has no jsc/BundleV2 dep)
+//!   - `is_file_cached`
 
 #![allow(clippy::module_inception)]
-#![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 
 use core::sync::atomic::Ordering;
-
-use core::ptr::NonNull;
 
 use bun_collections::{HashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_sys::FdExt as _;
 
-use super::framework_router::{self, OpaqueFileId};
 use super::jsc;
 use super::{Graph, Side};
-use crate::server::StaticRoute;
 
-// ─── gated Phase-A submodule drafts (full bodies preserved) ──────────────────
-// Each draft is a faithful port of the `.zig` sibling but depends on
-// `bun_jsc` method surface and/or `bun_bundler::BundleV2` field access.
-// Assets body draft dissolved into `assets.rs`.
-#[path = "../DevServer/DirectoryWatchStore.rs"]
-pub(crate) mod directory_watch_store_body;
-#[path = "../DevServer/ErrorReportRequest.rs"]
-pub(crate) mod error_report_request_body;
-#[path = "../DevServer/HmrSocket.rs"]
-pub(crate) mod hmr_socket_body;
-// HotReloadEvent body draft dissolved into this file (see struct + impl below).
-#[path = "../DevServer/IncrementalGraph.rs"]
-pub(crate) mod incremental_graph_body;
-// PackedMap body draft dissolved into `packed_map.rs`.
-#[path = "../DevServer/RouteBundle.rs"]
-pub(crate) mod route_bundle_body;
-// SerializedFailure body draft dissolved into `serialized_failure.rs`.
-// SourceMapStore body draft dissolved into `source_map_store.rs`.
-#[path = "../DevServer/memory_cost.rs"]
-pub(crate) mod memory_cost_body;
-#[path = "../DevServer/WatcherAtomics.rs"]
-pub(crate) mod watcher_atomics_body;
+// ─── submodules ──────────────────────────────────────────────────────────────
+pub(crate) mod error_report_request;
+pub(crate) mod hmr_socket;
+mod js_escape;
+pub(crate) mod memory_cost;
 
 // NOTE: the `DevServer` scoped-log static (`ScopedLogger`) is declared in
 // `dev_server_body` (`bun_output::declare_scope!(DevServer, visible)`) and
 // re-exported via the `pub use` block below alongside the `struct DevServer`
 // type. Declaring it again here would collide in the value namespace.
 
-pub const INTERNAL_PREFIX: &str = "/_bun";
-pub const ASSET_PREFIX: &str = "/_bun/asset";
-pub const CLIENT_PREFIX: &str = "/_bun/client";
-
-/// `bun.jsc.Debugger.DevServerId`.
-pub type DebuggerId = jsc::DebuggerId;
+pub(crate) const ASSET_PREFIX: &str = "/_bun/asset";
+pub(crate) const CLIENT_PREFIX: &str = "/_bun/client";
 
 // LAYERING: the 4.8 kL of method bodies live in `../DevServer.rs` (mounted as
 // `super::dev_server_body`). The struct definitions are owned there so impl
@@ -82,12 +54,6 @@ pub enum FileKind {
     Asset = 2,
     Css = 3,
 }
-impl FileKind {
-    #[inline]
-    pub fn has_inline_js_code_chunk(self) -> bool {
-        matches!(self, FileKind::Js | FileKind::Asset)
-    }
-}
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -104,7 +70,7 @@ pub enum TraceImportGoal {
 }
 
 /// `DevServer.ConsoleLog.Kind` — `enum(u8) { log = 'l', err = 'e' }`.
-/// Discriminants MUST match Zig: `kind as u8` is sent across FFI to
+/// Discriminants MUST NOT change: `kind as u8` is sent across FFI to
 /// `InspectorBunFrontendDevServerAgent__notifyConsoleLog`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -114,7 +80,8 @@ pub enum ConsoleLogKind {
 }
 
 /// `DevServer.MessageId` — first byte of every server→client HMR frame.
-/// Discriminants MUST match `DevServer.zig` exactly (HMR wire protocol).
+/// Discriminants are the HMR wire protocol and MUST match the client
+/// (`generated.ts`).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum MessageId {
@@ -131,13 +98,14 @@ pub enum MessageId {
 }
 impl MessageId {
     #[inline]
-    pub fn char(self) -> u8 {
+    pub(crate) fn char(self) -> u8 {
         self as u8
     }
 }
 
 /// `DevServer.IncomingMessageId` — first byte of every client→server HMR frame.
-/// Discriminants MUST match `DevServer.zig` exactly (HMR wire protocol).
+/// Discriminants are the HMR wire protocol and MUST match the client
+/// (`generated.ts`).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum IncomingMessageId {
@@ -149,7 +117,8 @@ pub enum IncomingMessageId {
     UnrefSourceMap = b'u',
 }
 
-/// `DevServer.HmrTopic`. Discriminants MUST match `DevServer.zig` exactly.
+/// `DevServer.HmrTopic`. Discriminants are the HMR wire protocol and MUST
+/// match the client.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum HmrTopic {
@@ -163,10 +132,10 @@ pub enum HmrTopic {
 
 impl HmrTopic {
     /// `HmrTopic.max_count` — `@typeInfo(HmrTopic).@"enum".fields.len`.
-    pub const MAX_COUNT: usize = 6;
+    pub(crate) const MAX_COUNT: usize = 6;
 
-    /// All variants in declaration order — Zig: `std.enums.values(HmrTopic)`.
-    pub const ALL: &[HmrTopic] = &[
+    /// All variants in declaration order.
+    pub(crate) const ALL: &[HmrTopic] = &[
         HmrTopic::HotUpdate,
         HmrTopic::Errors,
         HmrTopic::BrowserError,
@@ -178,7 +147,7 @@ impl HmrTopic {
     /// Maps the wire-byte discriminant back to the variant (`@enumFromInt`
     /// with range-check). `None` for unknown bytes.
     #[inline]
-    pub fn from_u8(ch: u8) -> Option<HmrTopic> {
+    pub(crate) fn from_u8(ch: u8) -> Option<HmrTopic> {
         match ch {
             b'h' => Some(HmrTopic::HotUpdate),
             b'e' => Some(HmrTopic::Errors),
@@ -190,9 +159,17 @@ impl HmrTopic {
         }
     }
 
+    /// uWS topic name for this HMR channel. The leading `0xFF` byte cannot
+    /// occur in WTF-8, so no topic string passed to `ServerWebSocket`
+    /// `subscribe()`/`publish()` or `Server.publish()` can ever name it.
+    #[inline]
+    pub(crate) fn uws_topic(self) -> [u8; 2] {
+        [0xFF, self as u8]
+    }
+
     /// Maps a topic to its packed `HmrTopicBits` flag.
     #[inline]
-    pub fn as_bit(self) -> crate::bake::dev_server_body::HmrTopicBits {
+    pub(crate) fn as_bit(self) -> crate::bake::dev_server_body::HmrTopicBits {
         use crate::bake::dev_server_body::HmrTopicBits;
         match self {
             HmrTopic::HotUpdate => HmrTopicBits::HOT_UPDATE,
@@ -214,18 +191,18 @@ pub use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
 // IncrementalResult / GraphTraceState
 // ──────────────────────────────────────────────────────────────────────────
 pub struct IncrementalResult {
-    pub framework_routes_affected: Vec<RouteIndexAndRecurseFlag>,
-    pub html_routes_soft_affected: Vec<route_bundle::Index>,
-    pub html_routes_hard_affected: Vec<route_bundle::Index>,
-    pub had_adjusted_edges: bool,
-    pub client_components_added: Vec<incremental_graph::ServerFileIndex>,
-    pub client_components_removed: Vec<incremental_graph::ServerFileIndex>,
-    pub failures_removed: Vec<SerializedFailure>,
-    pub client_components_affected: Vec<incremental_graph::ServerFileIndex>,
-    pub failures_added: Vec<SerializedFailure>,
+    pub(crate) framework_routes_affected: Vec<RouteIndexAndRecurseFlag>,
+    pub(crate) html_routes_soft_affected: Vec<route_bundle::Index>,
+    pub(crate) html_routes_hard_affected: Vec<route_bundle::Index>,
+    pub(crate) had_adjusted_edges: bool,
+    pub(crate) client_components_added: Vec<incremental_graph::ServerFileIndex>,
+    pub(crate) client_components_removed: Vec<incremental_graph::ServerFileIndex>,
+    pub(crate) failures_removed: Vec<SerializedFailure>,
+    pub(crate) client_components_affected: Vec<incremental_graph::ServerFileIndex>,
+    pub(crate) failures_added: Vec<SerializedFailure>,
 }
 impl IncrementalResult {
-    pub const EMPTY: IncrementalResult = IncrementalResult {
+    pub(crate) const EMPTY: IncrementalResult = IncrementalResult {
         framework_routes_affected: Vec::new(),
         html_routes_soft_affected: Vec::new(),
         html_routes_hard_affected: Vec::new(),
@@ -237,9 +214,9 @@ impl IncrementalResult {
         client_components_affected: Vec::new(),
     };
 
-    /// DevServer.zig:3528 `IncrementalResult.reset` — `clearRetainingCapacity()`
-    /// on each list, asserts `failures_removed` was already drained, and
-    /// intentionally leaves `had_adjusted_edges` untouched.
+    /// Clears each list retaining capacity, asserts `failures_removed` was
+    /// already drained, and intentionally leaves `had_adjusted_edges`
+    /// untouched.
     pub fn reset(&mut self) {
         self.framework_routes_affected.clear();
         self.html_routes_soft_affected.clear();
@@ -255,24 +232,24 @@ impl IncrementalResult {
 }
 
 pub struct GraphTraceState {
-    pub client_bits: DynamicBitSet,
-    pub server_bits: DynamicBitSet,
+    pub(crate) client_bits: DynamicBitSet,
+    pub(crate) server_bits: DynamicBitSet,
 }
 impl GraphTraceState {
     #[inline]
-    pub fn bits(&mut self, side: Side) -> &mut DynamicBitSet {
+    pub(crate) fn bits(&mut self, side: Side) -> &mut DynamicBitSet {
         match side {
             Side::Client => &mut self.client_bits,
             Side::Server => &mut self.server_bits,
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.server_bits.unmanaged.set_all(false);
         self.client_bits.unmanaged.set_all(false);
     }
 
-    pub fn resize(&mut self, side: Side, new_size: usize) -> Result<(), bun_core::Error> {
+    pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
         let b = match side {
             Side::Client => &mut self.client_bits,
             Side::Server => &mut self.server_bits,
@@ -283,7 +260,7 @@ impl GraphTraceState {
         Ok(())
     }
 
-    pub fn clear_and_free(&mut self) {
+    pub(crate) fn clear_and_free(&mut self) {
         self.client_bits
             .resize(0, false)
             .expect("freeing memory can not fail");
@@ -293,13 +270,11 @@ impl GraphTraceState {
     }
 }
 
-pub use super::dev_server_body::init;
+pub(crate) use super::dev_server_body::init;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Submodule types (struct shapes un-gated; method bodies stay in drafts)
-// ──────────────────────────────────────────────────────────────────────────
 pub mod assets;
 pub mod incremental_graph;
+pub mod inspector_agent;
 mod lifecycle;
 pub mod packed_map;
 pub mod route_bundle;
@@ -308,20 +283,18 @@ pub mod source_map_store;
 
 pub use assets::Assets;
 pub use incremental_graph::IncrementalGraph;
-pub use packed_map::PackedMap;
 pub use route_bundle::RouteBundle;
 pub use serialized_failure::SerializedFailure;
 pub use source_map_store::SourceMapStore;
 
-/// Local stand-in for the unported `bun_uws::ResponseLike` trait — Zig's
-/// `resp: anytype` modeled as a generic bound. Method shapes mirror
-/// `bun_uws_sys::Response<SSL>` so the `R`-generic bodies type-check.
-// TODO(port): replace with `bun_uws::ResponseLike` once it lands upstream.
+/// Local response trait — the response type is a generic bound.
+/// Method shapes mirror `bun_uws_sys::Response<SSL>` so the `R`-generic
+/// bodies type-check. `bun_uws` exposes no equivalent trait; if it ever
+/// grows one, this can be replaced by it.
 pub trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
     fn end(&mut self, data: &[u8], close_connection: bool);
     fn as_any_response(&mut self) -> bun_uws::AnyResponse;
-    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress>;
     fn upgrade<D>(
         &mut self,
         data: D,
@@ -346,17 +319,6 @@ impl ResponseLike for bun_uws::AnyResponse {
     fn as_any_response(&mut self) -> bun_uws::AnyResponse {
         *self
     }
-    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
-        // `bun_uws_sys::SocketAddress<'static>` borrows the socket's IP buffer;
-        // re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
-        (*self)
-            .get_remote_socket_info()
-            .map(|a| bun_uws::SocketAddress {
-                ip: a.ip.to_vec().into_boxed_slice(),
-                port: a.port,
-                is_ipv6: a.is_ipv6,
-            })
-    }
     fn upgrade<D>(
         &mut self,
         data: D,
@@ -377,55 +339,57 @@ impl ResponseLike for bun_uws::AnyResponse {
 }
 
 /// `DevServer.HmrSocket` — per-WebSocket state. Method bodies (open/close/
-/// message handlers) live in `hmr_socket_body` (`../DevServer/HmrSocket.rs`).
+/// message handlers) live in [`hmr_socket`].
 pub struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
-    pub dev: bun_ptr::BackRef<DevServer>,
-    pub underlying: Option<bun_uws::AnyWebSocket>,
-    pub subscriptions: super::dev_server_body::HmrTopicBits,
-    /// Allows actions which inspect or mutate sensitive DevServer state.
-    pub is_from_localhost: bool,
+    pub(crate) dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
+    pub(crate) underlying: Option<bun_uws::AnyWebSocket>,
+    pub(crate) subscriptions: super::dev_server_body::HmrTopicBits,
     /// By telling DevServer the active route, this enables receiving detailed
     /// `hot_update` events for when the route is updated.
-    pub active_route: route_bundle::IndexOptional,
+    pub(crate) active_route: route_bundle::IndexOptional,
     /// Source-map keys this socket has been sent; used to ref-count entries
     /// in `SourceMapStore` so they survive until the socket disconnects.
-    pub referenced_source_maps: HashMap<source_map_store::Key, ()>,
-    pub inspector_connection_id: i32,
+    pub(crate) referenced_source_maps: HashMap<source_map_store::Key, ()>,
+    pub(crate) inspector_connection_id: i32,
 }
 
 impl HmrSocket {
     /// `subscriptions` is a packed `HmrTopicBits` value; test the bit for a
     /// given topic.
     #[inline]
-    pub fn is_subscribed(&self, topic: HmrTopic) -> bool {
+    pub(crate) fn is_subscribed(&self, topic: HmrTopic) -> bool {
         self.subscriptions.contains(topic.as_bit())
     }
 }
 
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
-// PORT NOTE: Zig's `_: u0 align(std.atomic.cache_line) = 0` first-field trick gives the whole
-// struct cache-line alignment so each inline `WatcherAtomics.events: [3]` element occupies its
-// own cache line, avoiding false sharing on `contention_indicator` between watcher and dev-server
-// threads. 128 matches `std.atomic.cache_line` on x86_64/aarch64 (Bun's tier-1 targets) and
-// absorbs Intel adjacent-line prefetch.
+// Note: cache-line alignment makes each inline `WatcherAtomics.events: [3]`
+// element occupy its own cache line, avoiding false sharing on
+// `contention_indicator` between watcher and dev-server threads. 128 matches
+// the cache line on x86_64/aarch64 (Bun's tier-1 targets) and absorbs Intel
+// adjacent-line prefetch.
 #[repr(align(128))]
 pub struct HotReloadEvent {
-    /// BACKREF (LIFETIMES.tsv): inline element of `WatcherAtomics.events: [3]`.
-    /// `*mut` (not `*const`) because `run` mutates the owning DevServer; Zig
-    /// declares `owner: *DevServer`.
-    pub owner: *mut DevServer,
-    pub concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
-    pub files: StringArrayHashMap<()>,
-    pub dirs: StringArrayHashMap<()>,
-    /// NUL-joined absolute paths (`ArrayListUnmanaged(u8)` in Zig).
-    pub extra_files: Vec<u8>,
-    pub timer: std::time::Instant,
+    /// BACKREF (LIFETIMES.tsv): element of `WatcherAtomics.events: [3]`.
+    /// Nulled by `Drop for DevServer` when an event is still queued; `run`
+    /// checks for null before dereferencing.
+    pub(crate) owner: *mut DevServer,
+    /// BACKREF to the owning `Box<WatcherAtomics>`; `run` reclaims it when
+    /// `owner` has been nulled.
+    pub(crate) atomics: *mut WatcherAtomics,
+    pub(crate) concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
+    pub(crate) files: StringArrayHashMap<()>,
+    pub(crate) dirs: StringArrayHashMap<()>,
+    /// NUL-joined absolute paths.
+    pub(crate) extra_files: Vec<u8>,
+    pub(crate) timer: std::time::Instant,
     /// 1 if referenced, 0 if unreferenced; see `WatcherAtomics`.
-    pub contention_indicator: core::sync::atomic::AtomicU32,
     #[cfg(debug_assertions)]
-    pub debug_mutex: bun_threading::Mutex,
+    pub(crate) contention_indicator: core::sync::atomic::AtomicU32,
+    #[cfg(debug_assertions)]
+    pub(crate) debug_mutex: bun_threading::Mutex,
 }
 
 impl bun_event_loop::Taskable for HotReloadEvent {
@@ -433,42 +397,44 @@ impl bun_event_loop::Taskable for HotReloadEvent {
 }
 
 impl HotReloadEvent {
-    pub fn init_empty(owner: *mut DevServer) -> HotReloadEvent {
+    pub(crate) fn init_empty(owner: *mut DevServer) -> HotReloadEvent {
         HotReloadEvent {
             owner,
+            atomics: core::ptr::null_mut(),
             concurrent_task: Default::default(),
             files: Default::default(),
             dirs: Default::default(),
             extra_files: Vec::new(),
             timer: std::time::Instant::now(),
+            #[cfg(debug_assertions)]
             contention_indicator: core::sync::atomic::AtomicU32::new(0),
             #[cfg(debug_assertions)]
             debug_mutex: bun_threading::Mutex::default(),
         }
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         (self.files.count() + self.dirs.count()) == 0
     }
 
     /// Debug-asserts that the owning [`DevServer`]'s watcher thread-lock is
-    /// held. Centralises the back-ref deref so the four call sites in
-    /// `watcher_acquire_event` / `watcher_release_and_submit_event` (both the
-    /// `WatcherAtomics` impl here and the duplicate in
-    /// `DevServer/WatcherAtomics.rs`) stay safe.
+    /// held. Centralises the back-ref deref so the call sites in
+    /// `watcher_acquire_event` / `watcher_release_and_submit_event` stay safe.
     #[inline]
-    pub fn assert_watcher_thread_locked(&self) {
-        // SAFETY: BACKREF — `owner` is the DevServer whose
-        // `watcher_atomics.events` array contains `self`; DevServer outlives
-        // every HotReloadEvent it holds. Raw place projection (no `&DevServer`
-        // intermediate) so this does not alias any live `&mut HotReloadEvent`.
-        // `bun_watcher` is field-disjoint from `watcher_atomics`.
+    pub(crate) fn assert_watcher_thread_locked(&self) {
+        // SAFETY: BACKREF — `owner` is the live DevServer whose `watcher_atomics`
+        // holds this event; only reached from the watcher thread while
+        // `Watcher.mutex` is held, so `owner` has not been nulled. Raw place
+        // projection so this does not alias any live `&mut HotReloadEvent`.
         unsafe { (*self.owner).bun_watcher.thread_lock.assert_locked() };
     }
 
-    /// `HotReloadEvent.processFileList` — HotReloadEvent.zig:78.
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`.
-    pub fn process_file_list(&mut self, dev: &mut DevServer, entry_points: &mut EntryPointList) {
+    pub(crate) fn process_file_list(
+        &mut self,
+        dev: &mut DevServer,
+        entry_points: &mut EntryPointList,
+    ) {
         // RAII: `ThreadLockGuard` stores a raw `*const ThreadLock` and unlocks on
         // drop, so it does not hold a borrow of `dev` for the scope.
         let _g = dev.graph_safety_lock.guard();
@@ -490,14 +456,12 @@ impl HotReloadEvent {
 
                 // if a directory watch exists for resolution failures, check those now.
                 if let Some(watcher_index) = dev.directory_watchers.watches.get_index(changed_dir) {
-                    // PORT NOTE: reshaped for borrowck — Zig held `entry` ref while mutating
-                    // `dev.directory_watchers.dependencies` and `self.files` in the loop body.
                     let mut new_chain: Option<u32> = None;
                     let mut it: Option<u32> =
                         Some(dev.directory_watchers.watches.values()[watcher_index].first_dep);
 
                     while let Some(index) = it {
-                        // PORT NOTE: reshaped for borrowck — re-index per iteration instead of
+                        // Note: reshaped for borrowck — re-index per iteration instead of
                         // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
                         let (source_file_path, specifier, next) = {
                             let dep = &dev.directory_watchers.dependencies[index as usize];
@@ -523,7 +487,7 @@ impl HotReloadEvent {
                             // this resolution result is not preserved as passing it
                             // into BundleV2 is too complicated. the resolution is
                             // cached, anyways.
-                            // PORT NOTE: inlined `append_file` body for disjoint borrow
+                            // Note: inlined `append_file` body for disjoint borrow
                             // (`self.dirs.keys()` is held immutably across this loop).
                             bun_core::handle_oom(self.files.get_or_put(source_file_path.slice()));
                             dev.directory_watchers.free_dependency_index(index);
@@ -546,7 +510,7 @@ impl HotReloadEvent {
         }
 
         let mut rest_extra: &[u8] = &self.extra_files;
-        while let Some(str_idx) = bun_core::index_of_char(rest_extra, 0) {
+        while let Some(str_idx) = bun_core::strings::index_of_char_usize(rest_extra, 0) {
             bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
             rest_extra = &rest_extra[str_idx as usize + 1..];
         }
@@ -555,7 +519,6 @@ impl HotReloadEvent {
         }
 
         let changed_file_paths = self.files.keys();
-        // PORT NOTE: Zig used `inline for` over a 2-tuple; written out as two calls.
         bun_core::handle_oom(
             dev.server_graph
                 .invalidate(changed_file_paths, entry_points),
@@ -566,18 +529,18 @@ impl HotReloadEvent {
         );
 
         if entry_points.set.count() == 0 {
-            bun_core::Output::debug_warn(format_args!("nothing to bundle"));
+            bun_core::debug_warn!("nothing to bundle");
             if !changed_file_paths.is_empty() {
-                bun_core::Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "modified files: {}",
                     bun_core::fmt::fmt_slice(changed_file_paths, ", ")
-                ));
+                );
             }
             if self.dirs.count() > 0 {
-                bun_core::Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "modified dirs: {}",
                     bun_core::fmt::fmt_slice(self.dirs.keys(), ", ")
-                ));
+                );
             }
 
             dev.publish(
@@ -608,13 +571,14 @@ impl HotReloadEvent {
         self.extra_files.clear();
     }
 
-    /// `HotReloadEvent.appendFile` — HotReloadEvent.zig:55.
-    pub fn append_file(&mut self, file_path: &[u8]) {
+    /// Records a changed file path in the pending hot-reload event (deduplicated).
+    pub(crate) fn append_file(&mut self, file_path: &[u8]) {
         bun_core::handle_oom(self.files.get_or_put(file_path));
     }
 
-    /// `HotReloadEvent.appendDir` — HotReloadEvent.zig:58.
-    pub fn append_dir(&mut self, dir_path: &[u8], maybe_sub_path: Option<&[u8]>) {
+    /// Records a changed directory (and, when present, the changed entry
+    /// within it) in the pending hot-reload event (deduplicated).
+    pub(crate) fn append_dir(&mut self, dir_path: &[u8], maybe_sub_path: Option<&[u8]>) {
         if dir_path.is_empty() {
             return;
         }
@@ -628,7 +592,6 @@ impl HotReloadEvent {
         }
 
         let ends_with_sep = bun_paths::Platform::AUTO.is_separator(dir_path[dir_path.len() - 1]);
-        // PERF(port): was ensureUnusedCapacity + appendSliceAssumeCapacity — profile in Phase B
         self.extra_files.extend_from_slice(if ends_with_sep {
             &dir_path[0..dir_path.len() - 1]
         } else {
@@ -639,25 +602,31 @@ impl HotReloadEvent {
         self.extra_files.push(0);
     }
 
-    /// `HotReloadEvent.run` — HotReloadEvent.zig:173. Main-thread side of the
-    /// watcher → DevServer hand-off.
+    /// Main-thread side of the watcher → DevServer hand-off.
     ///
-    /// Takes a raw `*mut` because `first` is an inline element of
-    /// `(*first.owner).watcher_atomics.events[_]`; holding a `&mut HotReloadEvent`
+    /// Takes a raw `*mut` because `first` lives in the heap
+    /// `(*(*first).atomics).events[_]`; holding a `&mut HotReloadEvent`
     /// parameter while also materialising `&mut DevServer` would create two
     /// aliasing unique borrows. All event accesses go through the raw pointer
     /// and `&mut DevServer` is re-borrowed per use, scoped to not overlap any
     /// live `&mut *current`.
     ///
     /// # Safety
-    /// `first` must point at a live `HotReloadEvent` owned by
-    /// `(*first).owner.watcher_atomics.events`, and this fn must run on the
-    /// DevServer thread (sole mutator of `*owner` outside `watcher_atomics`).
-    pub unsafe fn run(first: *mut HotReloadEvent) {
-        // SAFETY: caller contract — `first` is live; `owner` is a BACKREF to the
-        // DevServer that owns the WatcherAtomics array containing this event;
-        // DevServer outlives all HotReloadEvents it holds.
+    /// `first` points into `(*(*first).atomics).events` of a live heap
+    /// `WatcherAtomics`. `(*first).owner` is either the live owning
+    /// `DevServer` or null (set by `Drop for DevServer` while this event was
+    /// still queued). Must run on the DevServer thread.
+    pub(crate) unsafe fn run(first: *mut HotReloadEvent) {
+        // SAFETY: caller contract — `first` is a live slot in a heap
+        // `WatcherAtomics`; `owner` is either the live DevServer or null.
         let dev: *mut DevServer = unsafe { (*first).owner };
+        if dev.is_null() {
+            // SAFETY: `atomics` was set in `WatcherAtomics::init` to the
+            // `heap::into_raw` pointer; DevServer released its reference so
+            // this is the unique owner.
+            unsafe { bun_core::heap::destroy((*first).atomics) };
+            return;
+        }
         // SAFETY: see above; `magic` read is non-aliasing.
         debug_assert!(unsafe { (*dev).magic } == Magic::Valid);
         bun_core::scoped_log!(DevServer, "HMR Task start");
@@ -669,6 +638,8 @@ impl HotReloadEvent {
         {
             // SAFETY: `first` is live and exclusively owned by this thread.
             debug_assert!(unsafe { (*first).debug_mutex.try_lock() });
+            // SAFETY: `first` is live (caller contract); atomic load needs no
+            // exclusivity and does not alias any `&mut` borrow.
             debug_assert!(unsafe { (*first).contention_indicator.load(Ordering::SeqCst) } == 0);
         }
 
@@ -680,7 +651,6 @@ impl HotReloadEvent {
             return;
         }
 
-        // PERF(port): was stack-fallback allocator (4096 bytes) — profile in Phase B
         let mut entry_points = EntryPointList::default();
 
         // SAFETY: `first` is live; `&mut *dev` re-borrowed for the call only.
@@ -692,7 +662,7 @@ impl HotReloadEvent {
         // `WatcherAtomics::watcher_acquire_event` before submission.
         let timer = unsafe { (*first).timer };
 
-        // PORT NOTE: raw-ptr loop because `recycle_event_from_dev_server` returns
+        // Note: raw-ptr loop because `recycle_event_from_dev_server` returns
         // a pointer into `dev.watcher_atomics.events`; re-borrow each iteration
         // to avoid aliasing UB.
         let mut current: *mut HotReloadEvent = first;
@@ -703,9 +673,10 @@ impl HotReloadEvent {
             unsafe { (*current).process_file_list(&mut *dev, &mut entry_points) };
             // SAFETY: `dev` is valid; recycle traffics in raw `*mut HotReloadEvent`.
             match unsafe {
-                (*dev)
-                    .watcher_atomics
-                    .recycle_event_from_dev_server(current)
+                WatcherAtomics::recycle_event_from_dev_server(
+                    (*dev).watcher_atomics.as_ptr(),
+                    current,
+                )
             } {
                 Some(next) => {
                     current = next;
@@ -741,7 +712,6 @@ impl HotReloadEvent {
         }
 
         if let Err(_err) = dev_ref.start_async_bundle(entry_points, true, timer) {
-            // PORT NOTE: Zig `bun.handleErrorReturnTrace` has no Rust equivalent.
             return;
         }
     }
@@ -750,99 +720,115 @@ impl HotReloadEvent {
 /// `DevServer.WatcherAtomics` — three pre-allocated `HotReloadEvent`s
 /// rotated between the watcher thread and the main thread.
 pub struct WatcherAtomics {
-    pub events: [HotReloadEvent; 3],
-    /// `next_event: std.atomic.Value(NextEvent)` — encodes the `NextEvent`
-    /// `enum(u8) { 0..3 = event index, .waiting, .done }`.
-    // TODO(port): Zig had `align(std.atomic.cache_line)` on this field; Rust cannot align
-    // individual fields — wrap in a `#[repr(align(128))]` newtype in Phase B if false sharing
-    // shows up in profiles.
-    pub next_event: core::sync::atomic::AtomicU8,
+    pub(crate) events: [HotReloadEvent; 3],
+    /// Atomically encodes a `NextEvent`: values 0..3 are an index into
+    /// `events`, plus the `WAITING`/`DONE` sentinels.
+    // Rust cannot align individual fields, so this field is not cache-line
+    // aligned. Wrap in a `#[repr(align(128))]` newtype (init site:
+    // lifecycle.rs) if false sharing ever shows up in profiles.
+    pub(crate) next_event: core::sync::atomic::AtomicU8,
     /// Watcher-thread-only; index into `events` currently being processed.
-    pub current_event: Option<u8>,
+    pub(crate) current_event: Option<u8>,
     /// Watcher-thread-only; index into `events` queued behind `current_event`.
-    pub pending_event: Option<u8>,
+    pub(crate) pending_event: Option<u8>,
     // Debug fields to ensure methods are being called in the right order.
     #[cfg(debug_assertions)]
-    pub dbg_watcher_event: Option<*mut HotReloadEvent>,
+    pub(crate) dbg_watcher_event: Option<*mut HotReloadEvent>,
     #[cfg(debug_assertions)]
-    pub dbg_server_event: Option<*mut HotReloadEvent>,
+    pub(crate) dbg_server_event: Option<*mut HotReloadEvent>,
 }
 
 /// Stored in `WatcherAtomics::next_event` (an `AtomicU8`). Modeled as a
-/// transparent newtype rather than a `#[repr(u8)] enum` because Zig used an
-/// open enum (`_`) where any other value is an index into the `events` array,
-/// and Rust enums cannot hold unlisted discriminants.
+/// transparent newtype rather than a `#[repr(u8)] enum` because any value
+/// other than the named constants is an index into the `events` array, and
+/// Rust enums cannot hold unlisted discriminants.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct NextEvent(pub u8);
+pub struct NextEvent(pub(crate) u8);
 
 impl NextEvent {
     /// An event is running, and no next event is pending.
-    pub const WAITING: NextEvent = NextEvent(u8::MAX - 1);
+    pub(crate) const WAITING: NextEvent = NextEvent(u8::MAX - 1);
     /// No event is running.
-    pub const DONE: NextEvent = NextEvent(u8::MAX);
+    pub(crate) const DONE: NextEvent = NextEvent(u8::MAX);
     // Any other value represents an index into the `events` array.
 }
 
+// These take `this: *mut Self` (not `&mut self`) so the returned
+// `*mut HotReloadEvent` and the `concurrent_task` node linked into the event
+// loop's queue are derived from the allocation's `heap::into_raw` pointer
+// rather than from a `&mut WatcherAtomics` reborrow. The queued pointers must
+// stay valid after `Drop for DevServer` writes through the same allocation.
 impl WatcherAtomics {
     /// Called by DevServer after it receives a task callback. If this returns
     /// another event, that event should be passed again to this function, and
     /// so on, until this function returns `None`.
     ///
     /// Runs on dev server thread.
-    pub fn recycle_event_from_dev_server(
-        &mut self,
+    ///
+    /// # Safety
+    /// `this` is the heap `WatcherAtomics` owned by `DevServer`; `old_event`
+    /// is a slot in `(*this).events` previously submitted to the dev server
+    /// thread and now exclusively owned by the caller for reset.
+    pub(crate) unsafe fn recycle_event_from_dev_server(
+        this: *mut Self,
         old_event: *mut HotReloadEvent,
     ) -> Option<*mut HotReloadEvent> {
-        // SAFETY: `old_event` was previously submitted to the dev server thread and is now
-        // exclusively owned by it for reset.
-        unsafe { (*old_event).reset() };
+        // SAFETY: caller contract — `this` and `old_event` are live; every
+        // `(*this)` / `(*old_event)` below is a field access on those.
+        unsafe {
+            (*old_event).reset();
 
-        #[cfg(debug_assertions)]
-        {
-            // Not atomic because watcher won't modify this value while an event is running.
-            let dbg_event = self.dbg_server_event;
-            self.dbg_server_event = None;
-            debug_assert!(
-                dbg_event == Some(old_event),
-                "recycleEventFromDevServer: old_event: expected {:?}, got {:p}",
-                dbg_event,
-                old_event,
-            );
-        }
-
-        let event: *mut HotReloadEvent = loop {
-            let next = NextEvent(self.next_event.swap(NextEvent::WAITING.0, Ordering::AcqRel));
-            match next {
-                NextEvent::WAITING => {
-                    // Success order is not AcqRel because the swap above performed an Acquire load.
-                    // Failure order is Relaxed because we're going to perform an Acquire load
-                    // in the next loop iteration.
-                    if self
-                        .next_event
-                        .compare_exchange_weak(
-                            NextEvent::WAITING.0,
-                            NextEvent::DONE.0,
-                            Ordering::Release,
-                            Ordering::Relaxed,
-                        )
-                        .is_err()
-                    {
-                        continue; // another event may have been added
-                    }
-                    return None; // done running events
-                }
-                NextEvent::DONE => unreachable!(),
-                _ => break &raw mut self.events[next.0 as usize],
+            #[cfg(debug_assertions)]
+            {
+                // Not atomic because watcher won't modify this value while an event is running.
+                let dbg_event = (*this).dbg_server_event;
+                (*this).dbg_server_event = None;
+                debug_assert!(
+                    dbg_event == Some(old_event),
+                    "recycleEventFromDevServer: old_event: expected {:?}, got {:p}",
+                    dbg_event,
+                    old_event,
+                );
             }
-        };
 
-        #[cfg(debug_assertions)]
-        {
-            // Not atomic because watcher won't modify this value while an event is running.
-            self.dbg_server_event = Some(event);
+            let event: *mut HotReloadEvent = loop {
+                let next = NextEvent(
+                    (*this)
+                        .next_event
+                        .swap(NextEvent::WAITING.0, Ordering::AcqRel),
+                );
+                match next {
+                    NextEvent::WAITING => {
+                        // Success order is not AcqRel because the swap above performed an Acquire load.
+                        // Failure order is Relaxed because we're going to perform an Acquire load
+                        // in the next loop iteration.
+                        if (*this)
+                            .next_event
+                            .compare_exchange_weak(
+                                NextEvent::WAITING.0,
+                                NextEvent::DONE.0,
+                                Ordering::Release,
+                                Ordering::Relaxed,
+                            )
+                            .is_err()
+                        {
+                            continue; // another event may have been added
+                        }
+                        return None; // done running events
+                    }
+                    NextEvent::DONE => unreachable!(),
+                    _ => break &raw mut (*this).events[next.0 as usize],
+                }
+            };
+
+            #[cfg(debug_assertions)]
+            {
+                // Not atomic because watcher won't modify this value while an event is running.
+                (*this).dbg_server_event = Some(event);
+            }
+            Some(event)
         }
-        Some(event)
     }
 
     /// Atomically get a `*mut HotReloadEvent` that is not in use by the
@@ -850,159 +836,186 @@ impl WatcherAtomics {
     /// filled with files.
     ///
     /// Called from watcher thread.
-    pub fn watcher_acquire_event(&mut self) -> *mut HotReloadEvent {
-        let mut available = [true; 3];
-        if let Some(i) = self.current_event {
-            available[i as usize] = false;
-        }
-        if let Some(i) = self.pending_event {
-            available[i as usize] = false;
-        }
-
-        let index = 'find: {
-            for (i, &is_available) in available.iter().enumerate() {
-                if is_available {
-                    break 'find i;
-                }
+    ///
+    /// # Safety
+    /// `this` is the heap `WatcherAtomics` owned by `DevServer`; the watcher
+    /// thread holds `Watcher.mutex`.
+    pub(crate) unsafe fn watcher_acquire_event(this: *mut Self) -> *mut HotReloadEvent {
+        // SAFETY: caller contract — `this` is live; every `(*this)` / `(*ev)`
+        // below is a field access on the heap `WatcherAtomics` allocation.
+        unsafe {
+            let mut available = [true; 3];
+            if let Some(i) = (*this).current_event {
+                available[i as usize] = false;
             }
-            unreachable!()
-        };
-        let ev: *mut HotReloadEvent = &raw mut self.events[index];
+            if let Some(i) = (*this).pending_event {
+                available[i as usize] = false;
+            }
 
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(
-                self.dbg_watcher_event.is_none(),
-                "must call `watcherReleaseEvent` before calling `watcherAcquireEvent` again",
-            );
-            self.dbg_watcher_event = Some(ev);
+            let index = 'find: {
+                for (i, &is_available) in available.iter().enumerate() {
+                    if is_available {
+                        break 'find i;
+                    }
+                }
+                unreachable!()
+            };
+            let ev: *mut HotReloadEvent = &raw mut (*this).events[index];
+
+            #[cfg(debug_assertions)]
+            {
+                debug_assert!(
+                    (*this).dbg_watcher_event.is_none(),
+                    "must call `watcherReleaseEvent` before calling `watcherAcquireEvent` again",
+                );
+                (*this).dbg_watcher_event = Some(ev);
+            }
+
+            // `ev` points into `(*this).events[index]`, which the watcher thread
+            // has exclusive access to (neither `current_event` nor `pending_event`).
+            let ev_ref = &mut *ev;
+
+            // Initialize the timer if it is empty.
+            if ev_ref.is_empty() {
+                // Monotonic start time; elapsed is computed at the read site.
+                ev_ref.timer = std::time::Instant::now();
+            }
+
+            ev_ref.assert_watcher_thread_locked();
+
+            #[cfg(debug_assertions)]
+            debug_assert!(ev_ref.debug_mutex.try_lock());
+
+            ev
         }
-
-        // SAFETY: `ev` points into `self.events[index]`, which the watcher thread has exclusive
-        // access to (it is neither `current_event` nor `pending_event`).
-        let ev_ref = unsafe { &mut *ev };
-
-        // Initialize the timer if it is empty.
-        if ev_ref.is_empty() {
-            // PORT NOTE: Zig's `std.time.Timer.start()` records a monotonic start time;
-            // we capture `Instant::now()` here and compute elapsed at the read site.
-            ev_ref.timer = std::time::Instant::now();
-        }
-
-        ev_ref.assert_watcher_thread_locked();
-
-        #[cfg(debug_assertions)]
-        debug_assert!(ev_ref.debug_mutex.try_lock());
-
-        ev
     }
 
     /// Release the pointer from `watcher_acquire_event`, submitting the event
     /// if it contains new files.
     ///
     /// Called from watcher thread.
-    pub fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
-        // SAFETY: `ev` was returned by `watcher_acquire_event` and points into `self.events`;
-        // the watcher thread has exclusive access until it is submitted below.
-        let ev_ref = unsafe { &mut *ev };
+    ///
+    /// # Safety
+    /// `this` is the heap `WatcherAtomics` owned by `DevServer`; `ev` is the
+    /// pointer returned by the matching `watcher_acquire_event` call, and the
+    /// watcher thread still holds exclusive access to it.
+    // `&(...)` is deliberate — sidesteps dangerous_implicit_autorefs.
+    #[allow(clippy::needless_borrow)]
+    pub(crate) unsafe fn watcher_release_and_submit_event(
+        this: *mut Self,
+        ev: *mut HotReloadEvent,
+    ) {
+        // SAFETY: caller contract — `this` and `ev` are live slots in the heap
+        // `WatcherAtomics`; every `(*this)` / `(*ev)` below is a field access
+        // on that allocation. `(*ev).owner` is the live DevServer (watcher
+        // thread holds `Watcher.mutex`).
+        unsafe {
+            (*ev).assert_watcher_thread_locked();
 
-        ev_ref.assert_watcher_thread_locked();
-
-        #[cfg(debug_assertions)]
-        {
-            let Some(dbg_event) = self.dbg_watcher_event else {
-                panic!("must call `watcherAcquireEvent` before `watcherReleaseAndSubmitEvent`");
-            };
-            debug_assert!(
-                dbg_event == ev,
-                "watcherReleaseAndSubmitEvent: event is not from last `watcherAcquireEvent` call \
-                 (expected {:p}, got {:p})",
-                dbg_event,
-                ev,
-            );
-            self.dbg_watcher_event = None;
-        }
-
-        #[cfg(debug_assertions)]
-        {
-            // PORT NOTE: Zig asserted `ev.timer` was not the 0xAA debug-undefined
-            // fill pattern. Rust has no such fill (uninitialized memory is never
-            // observed through a typed place), so the byte-scan is dropped — it
-            // could not fire and reading struct padding is itself UB.
-            ev_ref.debug_mutex.unlock();
-        }
-
-        if ev_ref.is_empty() {
-            return;
-        }
-        // There are files to be processed.
-
-        // SAFETY: `ev` points into `self.events`; both are within the same allocation.
-        let ev_index: u8 =
-            u8::try_from(unsafe { ev.offset_from(self.events.as_ptr().cast_mut()) }).unwrap();
-        let old_next = NextEvent(self.next_event.swap(ev_index, Ordering::AcqRel));
-        match old_next {
-            NextEvent::DONE => {
-                // Dev server is done running events. We need to schedule the event directly.
-                self.current_event = Some(ev_index);
-                self.pending_event = None;
-                // Relaxed because the dev server is not running events right now.
-                // (could technically be made non-atomic)
-                self.next_event
-                    .store(NextEvent::WAITING.0, Ordering::Relaxed);
-                #[cfg(debug_assertions)]
-                {
-                    debug_assert!(
-                        self.dbg_server_event.is_none(),
-                        "no event should be running right now",
-                    );
-                    // Not atomic because the dev server is not running events right now.
-                    self.dbg_server_event = Some(ev);
-                }
-                ev_ref.concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask {
-                    task: bun_event_loop::Task::init(ev),
-                    ..Default::default()
+            #[cfg(debug_assertions)]
+            {
+                let Some(dbg_event) = (*this).dbg_watcher_event else {
+                    panic!("must call `watcherAcquireEvent` before `watcherReleaseAndSubmitEvent`");
                 };
-                // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe
-                // Deref); `event_loop` points at a sibling field of `VirtualMachine`.
-                unsafe {
-                    (*(&(*ev_ref.owner).vm).event_loop)
-                        .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
-                }
-            }
-
-            NextEvent::WAITING => {
-                if self.pending_event.is_some() {
-                    // `pending_event` is running, which means we're done with `current_event`.
-                    self.current_event = self.pending_event;
-                } // else, no pending event yet, but not done with `current_event`.
-                self.pending_event = Some(ev_index);
-            }
-
-            _ => {
-                // This is an index into the `events` array.
-                let old_index: u8 = old_next.0;
                 debug_assert!(
-                    self.pending_event == Some(old_index),
-                    "watcherReleaseAndSubmitEvent: expected `pending_event` to be {}; got {:?}",
-                    old_index,
-                    self.pending_event,
+                    dbg_event == ev,
+                    "watcherReleaseAndSubmitEvent: event is not from last \
+                     `watcherAcquireEvent` call (expected {:p}, got {:p})",
+                    dbg_event,
+                    ev,
                 );
-                // The old pending event hadn't been run yet, so we can replace it with `ev`.
-                self.pending_event = Some(ev_index);
+                (*this).dbg_watcher_event = None;
+            }
+
+            #[cfg(debug_assertions)]
+            {
+                (*ev).debug_mutex.unlock();
+            }
+
+            if (*ev).is_empty() {
+                return;
+            }
+            // There are files to be processed.
+
+            let ev_index: u8 =
+                u8::try_from(ev.offset_from((&raw const (*this).events).cast::<HotReloadEvent>()))
+                    .unwrap();
+            let old_next = NextEvent((*this).next_event.swap(ev_index, Ordering::AcqRel));
+            match old_next {
+                NextEvent::DONE => {
+                    // Dev server is done running events. We need to schedule the event directly.
+                    (*this).current_event = Some(ev_index);
+                    (*this).pending_event = None;
+                    // Relaxed because the dev server is not running events right now.
+                    // (could technically be made non-atomic)
+                    (*this)
+                        .next_event
+                        .store(NextEvent::WAITING.0, Ordering::Relaxed);
+                    #[cfg(debug_assertions)]
+                    {
+                        debug_assert!(
+                            (*this).dbg_server_event.is_none(),
+                            "no event should be running right now",
+                        );
+                        // Not atomic because the dev server is not running events right now.
+                        (*this).dbg_server_event = Some(ev);
+                    }
+                    (*ev).concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask {
+                        task: bun_event_loop::Task::init(ev),
+                        ..Default::default()
+                    };
+                    // `vm` is a `BackRef` (safe Deref); `event_loop` points at a
+                    // sibling field of `VirtualMachine`. The queued node pointer
+                    // is derived from `ev` (allocation-root provenance) so it
+                    // stays valid across `Drop for DevServer`'s writes.
+                    (*(&(*(*ev).owner).vm).event_loop).enqueue_task_concurrent(
+                        core::ptr::NonNull::new_unchecked(&raw mut (*ev).concurrent_task),
+                    );
+                }
+
+                NextEvent::WAITING => {
+                    if (*this).pending_event.is_some() {
+                        // `pending_event` is running, which means we're done with `current_event`.
+                        (*this).current_event = (*this).pending_event;
+                    } // else, no pending event yet, but not done with `current_event`.
+                    (*this).pending_event = Some(ev_index);
+                }
+
+                _ => {
+                    // This is an index into the `events` array.
+                    let old_index: u8 = old_next.0;
+                    debug_assert!(
+                        (*this).pending_event == Some(old_index),
+                        "watcherReleaseAndSubmitEvent: expected `pending_event` to be {}; got {:?}",
+                        old_index,
+                        (*this).pending_event,
+                    );
+                    // The old pending event hadn't been run yet, so we can replace it with `ev`.
+                    (*this).pending_event = Some(ev_index);
+                }
             }
         }
     }
 }
 
 /// `DevServer.DirectoryWatchStore` — sparse map of directories under watch
-/// for resolution-failure recovery. Full body gated in `DirectoryWatchStore.rs`.
+/// for resolution-failure recovery.
+///
+/// When a file fails to import a relative path, directory watchers are added
+/// so that when a matching file is created, the dependencies can be rebuilt.
+/// This handles HMR cases where a user writes an import before creating the
+/// file, or moves files around. Not thread-safe.
+///
+/// Known gap: when the importing file fixes its resolution (the failing
+/// import is removed or renamed), nothing walks this store to release the
+/// now-unneeded watcher; it stays until the directory changes or the file
+/// is evicted from the incremental graph.
 #[derive(Default)]
 pub struct DirectoryWatchStore {
-    pub watches: StringArrayHashMap<directory_watch_store::Entry>,
-    pub dependencies: Vec<directory_watch_store::Dep>,
+    pub(crate) watches: StringArrayHashMap<directory_watch_store::Entry>,
+    pub(crate) dependencies: Vec<directory_watch_store::Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
-    pub dependencies_free_list: Vec<u32>,
+    pub(crate) dependencies_free_list: Vec<u32>,
 }
 impl DirectoryWatchStore {
     /// Intrusive backref: recover `*mut DevServer`.
@@ -1033,8 +1046,8 @@ impl DirectoryWatchStore {
         unsafe { &mut (*self.owner()).bun_watcher }
     }
 
-    /// `DirectoryWatchStore.freeDependencyIndex` — DirectoryWatchStore.zig.
-    pub fn free_dependency_index(&mut self, index: u32) {
+    /// Returns a dependency slot to the free list so it can be reused.
+    pub(crate) fn free_dependency_index(&mut self, index: u32) {
         // Zero out the slot so DevServer.deinit/memoryCost — which iterate
         // `dependencies` without consulting the free list — do not touch the
         // freed allocation or stale borrowed pointers.
@@ -1046,9 +1059,8 @@ impl DirectoryWatchStore {
         }
     }
 
-    /// `DirectoryWatchStore.freeEntry` — DirectoryWatchStore.zig:206.
     /// Expects dependency list to be already freed.
-    pub fn free_entry(&mut self, entry_index: usize) {
+    pub(crate) fn free_entry(&mut self, entry_index: usize) {
         let entry = self.watches.values()[entry_index];
 
         bun_core::scoped_log!(
@@ -1058,14 +1070,14 @@ impl DirectoryWatchStore {
             entry.dir
         );
 
-        self.dev_bun_watcher().remove_at_index(
+        self.dev_bun_watcher().remove_at_index::<true>(
             bun_watcher::WatchItemKind::File,
             entry.watch_index,
             0,
             &[],
         );
 
-        // Zig: alloc.free(store.watches.keys()[entry_index]) — Box key drops on swap_remove_at.
+        // The Box key drops on swap_remove_at.
         let _ = self.watches.swap_remove_at(entry_index);
 
         if entry.dir_fd_owned {
@@ -1085,12 +1097,12 @@ pub mod directory_watch_store {
     #[derive(Copy, Clone)]
     pub struct Entry {
         /// The directory handle the watch is placed on.
-        pub dir: bun_sys::Fd,
-        pub dir_fd_owned: bool,
+        pub(crate) dir: bun_sys::Fd,
+        pub(crate) dir_fd_owned: bool,
         /// `Dep.Index` — head of the singly-linked dep chain for this dir.
-        pub first_dep: u32,
+        pub(crate) first_dep: u32,
         /// To pass to `Watcher.remove`.
-        pub watch_index: u16,
+        pub(crate) watch_index: u16,
     }
     impl Default for Entry {
         fn default() -> Self {
@@ -1104,15 +1116,14 @@ pub mod directory_watch_store {
     }
     /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
     pub struct Dep {
-        pub next: Option<u32>,
+        pub(crate) next: Option<u32>,
         /// The file used. BORROWED slice into `IncrementalGraph.bundled_files`
-        /// key storage; compared by *pointer identity* (Zig:
-        /// `dep.source_file_path.ptr == file_path.ptr`). The graph calls
+        /// key storage; compared by *pointer identity*. The graph calls
         /// `removeDependenciesForFile` before freeing the key, so the slice
         /// outlives every read — `RawSlice` invariant.
-        pub source_file_path: bun_ptr::RawSlice<u8>,
+        pub(crate) source_file_path: bun_ptr::RawSlice<u8>,
         /// The specifier that failed. Allocated memory.
-        pub specifier: Box<[u8]>,
+        pub(crate) specifier: Box<[u8]>,
     }
     impl Default for Dep {
         fn default() -> Self {
@@ -1141,22 +1152,22 @@ bun_bundler::link_impl_DevServerHandle! {
         finalize_bundle(bv2, result) => {
             // `bv2` borrows the three `Transpiler`s stored inline in `DevServer`
             // (stable heap address); the `'static` is a stand-in for the
-            // DevServer-self lifetime — see `CurrentBundle.bv2` PORT NOTE.
+            // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.
             super::dev_server_body::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
-                .map_err(Into::into)
+                .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
         },
         handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
             (*this)
-                .handle_parse_task_failure(err, graph, abs_path, &*log, &mut *bv2)
+                .handle_parse_task_failure(&err.into(), graph, abs_path, &*log, &mut *bv2)
                 .map_err(Into::into)
         },
         put_or_overwrite_asset(path, contents, content_hash) => {
             // `path` was erased from `&bun_resolver::fs::Path<'_>` at the
             // `DevServerHandle::put_or_overwrite_asset_erased` call site. Re-wrap
-            // bytes as an owned blob (Zig spec transferred ownership).
+            // bytes as an owned blob (ownership is transferred).
             let path = &*path.cast::<bun_resolver::fs::Path<'_>>();
             let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
-            (*this).put_or_overwrite_asset(path, blob, content_hash)
+            (*this).put_or_overwrite_asset(path, blob, content_hash).map_err(Into::into)
         },
         track_resolution_failure(import_source, specifier, renderer, loader) => {
             (*this)
@@ -1193,8 +1204,7 @@ bun_bundler::link_impl_DevServerHandle! {
             Ok(())
         },
         register_barrel_export(barrel_path, alias) => {
-            // Zig `persistBarrelExport` (barrel_imports.zig:540) does
-            // `getOrPut(...) catch return` — silently drop on alloc failure.
+            // Silently drop on alloc failure.
             let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path) else {
                 return;
             };
@@ -1204,13 +1214,13 @@ bun_bundler::link_impl_DevServerHandle! {
 }
 
 impl DevServer {
-    /// Length of `configuration_hash_key` — Zig: `[16]u8`.
-    pub const CONFIGURATION_HASH_KEY_LEN: usize = 16;
+    /// Length of `configuration_hash_key`.
+    pub(crate) const CONFIGURATION_HASH_KEY_LEN: usize = 16;
 
     /// Construct the erased handle the bundler stores in
     /// `Transpiler.options.dev_server` / `LinkerContext.dev_server`.
     #[inline]
-    pub fn bundler_handle(&mut self) -> bun_bundler::dispatch::DevServerHandle {
+    pub(crate) fn bundler_handle(&mut self) -> bun_bundler::dispatch::DevServerHandle {
         // SAFETY: `self` is the single per-process DevServer; outlives all dispatch.
         unsafe {
             bun_bundler::dispatch::DevServerHandle::new(
@@ -1221,7 +1231,7 @@ impl DevServer {
     }
 }
 
-/// `DirectoryWatchStore.insert` error set — DirectoryWatchStore.zig:101.
+/// `DirectoryWatchStore::insert` error set.
 #[derive(thiserror::Error, Debug)]
 enum DirectoryWatchInsertError {
     #[error("Ignore")]
@@ -1232,8 +1242,9 @@ enum DirectoryWatchInsertError {
 bun_core::oom_from_alloc!(DirectoryWatchInsertError);
 
 impl DirectoryWatchStore {
-    /// `DirectoryWatchStore.trackResolutionFailure` — DirectoryWatchStore.zig:28.
-    pub fn track_resolution_failure(
+    /// Registers a directory watch so that a failed import resolution is
+    /// retried when the containing directory changes.
+    pub(crate) fn track_resolution_failure(
         &mut self,
         import_source: &[u8],
         specifier: &[u8],
@@ -1284,11 +1295,17 @@ impl DirectoryWatchStore {
         let _g = unsafe { (*dev).graph_safety_lock.guard() };
         let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
             Graph::Client => {
+                // SAFETY: `dev` is the live DevServer owning this store;
+                // `client_graph` is disjoint from `directory_watchers` so this
+                // `&mut` does not alias `&mut self`. `graph_safety_lock` is held.
                 unsafe { &mut (*dev).client_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
             }
             Graph::Server | Graph::Ssr => {
+                // SAFETY: `dev` is the live DevServer owning this store;
+                // `server_graph` is disjoint from `directory_watchers` so this
+                // `&mut` does not alias `&mut self`. `graph_safety_lock` is held.
                 unsafe { &mut (*dev).server_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
@@ -1302,7 +1319,6 @@ impl DirectoryWatchStore {
         }
     }
 
-    /// `DirectoryWatchStore.insert` — DirectoryWatchStore.zig:101.
     /// `dir_name_to_watch` is cloned; `file_path` must outlive the watch;
     /// `specifier` is cloned.
     fn insert(
@@ -1313,8 +1329,8 @@ impl DirectoryWatchStore {
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
-        // PORT NOTE: take a raw pointer so the &mut self borrow from owner() does
-        // not overlap subsequent self.* field accesses (Zig has no borrowck here).
+        // Note: take a raw pointer so the &mut self borrow from owner() does
+        // not overlap subsequent self.* field accesses.
         let dev: *mut DevServer = self.owner();
 
         bun_core::scoped_log!(
@@ -1326,11 +1342,10 @@ impl DirectoryWatchStore {
         );
 
         if self.dependencies_free_list.is_empty() {
-            // PERF(port): was ensureUnusedCapacity — profile in Phase B
             self.dependencies.reserve(1);
         }
 
-        // PORT NOTE: reshaped for borrowck — capture gop scalars before
+        // Note: reshaped for borrowck — capture gop scalars before
         // calling self methods that need &mut self.
         let gop = self.watches.get_or_put(
             bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
@@ -1360,7 +1375,7 @@ impl DirectoryWatchStore {
             return Ok(());
         }
 
-        // PORT NOTE: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
+        // Note: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
         // map via raw ptr so it doesn't conflict with `&mut self` below.
         let watches_ptr: *mut StringArrayHashMap<directory_watch_store::Entry> =
             &raw mut self.watches;
@@ -1389,7 +1404,7 @@ impl DirectoryWatchStore {
             if let Some(fd) = cache_fd {
                 (fd, false)
             } else {
-                // std.posix.toPosixPath — build a NUL-terminated path buffer.
+                // Build a NUL-terminated path buffer.
                 if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
                     return Err(DirectoryWatchInsertError::Ignore); // NameTooLong
                 }
@@ -1423,18 +1438,18 @@ impl DirectoryWatchStore {
             }
         });
 
-        let dir_name: Box<[u8]> = Box::<[u8]>::from(dir_name_to_watch);
-        // errdefer free(dir_name) — handled by Drop.
-
-        // PORT NOTE: Zig sets `key_ptr` to a sub-slice of `dir_name` (trailing
-        // slash trimmed) sharing its allocation. `StringArrayHashMap` already
-        // boxed the trimmed key on insert above, so the reassignment is a
-        // no-op here; `dir_name` is kept solely for `add_directory`/`get_hash`.
-
-        let watch_index = match self.dev_bun_watcher().add_directory::<false>(
+        // `add_directory::<true>` so the `WatchItem` owns its path: the watcher
+        // retains the path until eviction runs (deferred onto `evict_list` and
+        // drained later in `flush_evictions`), but `dir_name_to_watch` is a
+        // transient `dirname()` view of a thread-local path buffer. A borrowed
+        // (`::<false>`) `Cow` would dangle once `insert` returns — well before
+        // the watcher reads it on a file event. Owning the copy also lets the
+        // map keep its own boxed key independently, so no extra intermediate
+        // `Box` is needed here.
+        let watch_index = match self.dev_bun_watcher().add_directory::<true>(
             fd,
-            &dir_name,
-            bun_watcher::Watcher::get_hash(&dir_name),
+            dir_name_to_watch,
+            bun_watcher::Watcher::get_hash(dir_name_to_watch),
         ) {
             Err(_) => return Err(DirectoryWatchInsertError::Ignore),
             Ok(id) => id,
@@ -1455,7 +1470,6 @@ impl DirectoryWatchStore {
             first_dep: dep,
             watch_index,
         };
-        let _ = dir_name; // keep alive past add_directory; dropped here
         Ok(())
     }
 
@@ -1467,18 +1481,16 @@ impl DirectoryWatchStore {
             index
         } else {
             let index = u32::try_from(self.dependencies.len()).expect("int cast");
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
             self.dependencies.push(dep);
             index
         }
     }
 
-    /// `DirectoryWatchStore.removeDependenciesForFile` — DirectoryWatchStore.zig:233.
     /// Removes all dependencies whose `source_file_path` is the exact slice
     /// `file_path`, compared by *pointer identity* since the slice is shared
     /// with `IncrementalGraph.bundled_files`. Called before IncrementalGraph
     /// frees a file's key string so no `Dep` is left holding a dangling pointer.
-    pub fn remove_dependencies_for_file(&mut self, file_path: &[u8]) {
+    pub(crate) fn remove_dependencies_for_file(&mut self, file_path: &[u8]) {
         if self.watches.count() == 0 {
             return;
         }
@@ -1493,7 +1505,7 @@ impl DirectoryWatchStore {
         let mut watch_index = self.watches.count();
         while watch_index > 0 {
             watch_index -= 1;
-            // PORT NOTE: reshaped for borrowck — cannot hold &mut entry across
+            // Note: reshaped for borrowck — cannot hold &mut entry across
             // self.free_dependency_index(); walk by index and re-borrow.
             let mut new_chain: Option<u32> = None;
             let mut it: Option<u32> = Some(self.watches.values()[watch_index].first_dep);
@@ -1501,7 +1513,7 @@ impl DirectoryWatchStore {
                 let dep_next = self.dependencies[index as usize].next;
                 let dep_path = self.dependencies[index as usize].source_file_path;
                 it = dep_next;
-                // Pointer-identity comparison (Zig: `dep.source_file_path.ptr == file_path.ptr`).
+                // Pointer-identity comparison.
                 if dep_path.slice().as_ptr() == file_path.as_ptr() {
                     self.free_dependency_index(index);
                 } else {

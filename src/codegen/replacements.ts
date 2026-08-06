@@ -106,16 +106,6 @@ export const enums = {
   ],
 };
 
-// These identifiers have typedef but not present at runtime (converted with replacements)
-// If they are present in the bundle after runtime, we warn at the user.
-// TODO: implement this check.
-export const warnOnIdentifiersNotPresentAtRuntime = [
-  //
-  "OutOfMemoryError",
-  "notImplementedIssue",
-  "notImplementedIssueFn",
-];
-
 // These are passed to --define to the bundler
 const debug = process.argv[2] === "--debug=ON";
 export const define: Record<string, string> = {
@@ -165,8 +155,8 @@ export interface ReplacementRule {
 export const function_replacements = [
   "$debug",
   "$assert",
-  "$zig",
-  "$newZigFunction",
+  "$rust",
+  "$newRustFunction",
   "$cpp",
   "$newCppFunction",
   "$isPromiseFulfilled",
@@ -222,8 +212,8 @@ export function applyReplacements(src: string, length: number) {
         rest2,
         true,
       ];
-    } else if (["zig", "cpp", "newZigFunction", "newCppFunction"].includes(name)) {
-      const kind = name.includes("ig") ? "zig" : "cpp";
+    } else if (["rust", "cpp", "newRustFunction", "newCppFunction"].includes(name)) {
+      const kind = name.includes("ust") ? "rust" : "cpp";
       const is_create_fn = name.startsWith("new");
 
       const inner = sliceSourceCode(rest, true);
@@ -256,34 +246,16 @@ export function applyReplacements(src: string, length: number) {
       const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : null);
 
       return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
-    } else if (name === "isPromiseFulfilled") {
+    } else if (name === "isPromiseFulfilled" || name === "isPromiseRejected" || name === "isPromisePending") {
       const inner = sliceSourceCode(rest, true);
+      // JSC::JSPromise::Status: Pending = 0, Fulfilled = 1, Rejected = 2.
+      const status = name === "isPromisePending" ? 0 : name === "isPromiseFulfilled" ? 1 : 2;
       let args;
       if (debug) {
         // use a property on @lazy as a temporary holder for the expression. only in debug!
-        args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStateFulfilled))`;
+        args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),__intrinsic__peekPromiseStatus(__intrinsic__lazy.temp) === (__intrinsic__lazy.temp = undefined, ${status}))`;
       } else {
-        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateFulfilled)`;
-      }
-      return [slice.slice(0, match.index) + args, inner.rest, true];
-    } else if (name === "isPromiseRejected") {
-      const inner = sliceSourceCode(rest, true);
-      let args;
-      if (debug) {
-        // use a property on @lazy as a temporary holder for the expression. only in debug!
-        args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStateRejected))`;
-      } else {
-        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateRejected)`;
-      }
-      return [slice.slice(0, match.index) + args, inner.rest, true];
-    } else if (name === "isPromisePending") {
-      const inner = sliceSourceCode(rest, true);
-      let args;
-      if (debug) {
-        // use a property on @lazy as a temporary holder for the expression. only in debug!
-        args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStatePending))`;
-      } else {
-        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStatePending)`;
+        args = `(__intrinsic__peekPromiseStatus${inner.result} === ${status})`;
       }
       return [slice.slice(0, match.index) + args, inner.rest, true];
     } else if (name === "bindgenFn") {

@@ -1,16 +1,23 @@
-import { bunEnv, bunExe, isASAN, isCI, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
+import { AsyncLocalStorage } from "node:async_hooks";
+import dc from "node:diagnostics_channel";
 import fs from "node:fs";
 import http2 from "node:http2";
+import https from "node:https";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PerformanceObserver } from "node:perf_hooks";
 import tls from "node:tls";
-import { Duplex } from "stream";
+import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
-const ASAN_MULTIPLIER = isASAN ? 3 : 1;
+// bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
+// there; the 10k-request maxSessionMemory stress test takes ~105s under
+// debug+ASAN vs ~2s release, so scale for either.
+const ASAN_MULTIPLIER = isDebug ? 15 : isASAN ? 3 : 1;
 
 function invalidArgTypeHelper(input) {
   if (input === null) return " Received null";
@@ -573,8 +580,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             await doHttp2Request(HTTPS_SERVER, HTTPS_SERVER, { ":path": "/", "test-header": "A".repeat(90000) });
             expect("unreachable").toBe(true);
           } catch (err) {
-            expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
-            expect(err.message).toBe("Stream closed with error code NGHTTP2_COMPRESSION_ERROR");
+            // Verified against node v26.3.0: a header block the encoder cannot emit fails the
+            // session with COMPRESSION_ERROR (9), it does not just reset the stream.
+            expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(err.message).toBe("Session closed with error code 9");
           }
         });
         it("should be destroyed after close", async () => {
@@ -747,20 +756,39 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(req.aborted).toBeTrue(); // will be true in this case
         });
 
+        it("signal validation matches node: non-signal objects throw, duck-typed { aborted } is accepted", async () => {
+          const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
+          client.on("error", () => {});
+          try {
+            // node's validateAbortSignal accepts any object with an 'aborted'
+            // property ('aborted' in signal), so a duck-typed { aborted: true }
+            // takes the pre-aborted fast path instead of throwing...
+            const { promise, resolve, reject } = Promise.withResolvers();
+            const req = client.request({ ":path": "/" }, { signal: { aborted: true } });
+            req.on("error", err => (err.name === "AbortError" ? resolve() : reject(err)));
+            await promise;
+            // ...while objects without 'aborted' (and non-objects) throw
+            // ERR_INVALID_ARG_TYPE synchronously, before the fast path.
+            expect(() => client.request({ ":path": "/" }, { signal: {} })).toThrow(
+              expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+            );
+            expect(() => client.request({ ":path": "/" }, { signal: 42 })).toThrow(
+              expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+            );
+          } finally {
+            client.close();
+          }
+        });
+
         it("state should work", async () => {
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
           const req = client.request({ ":path": "/", "test-header": "test-value" });
           {
-            const state = req.state;
-            expect(typeof state).toBe("object");
-            expect(typeof state.state).toBe("number");
-            expect(typeof state.weight).toBe("number");
-            expect(typeof state.sumDependencyWeight).toBe("number");
-            expect(typeof state.localClose).toBe("number");
-            expect(typeof state.remoteClose).toBe("number");
-            expect(typeof state.localWindowSize).toBe("number");
+            // Like node, the stream has no id (and an empty state object) until the session
+            // finishes connecting; the populated shape is asserted from the 'response' handler.
+            expect(req.state).toEqual({});
           }
           // Test Session State.
           {
@@ -777,8 +805,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect(typeof state.inflateDynamicTableSize).toBe("number");
           }
           let response_headers = null;
+          let response_state = null;
           req.on("response", (headers, flags) => {
             response_headers = headers;
+            response_state = req.state;
           });
           req.resume();
           req.on("end", () => {
@@ -787,6 +817,16 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           });
           await promise;
           expect(response_headers[":status"]).toBe(200);
+          {
+            const state = response_state;
+            expect(typeof state).toBe("object");
+            expect(typeof state.state).toBe("number");
+            expect(typeof state.weight).toBe("number");
+            expect(typeof state.sumDependencyWeight).toBe("number");
+            expect(typeof state.localClose).toBe("number");
+            expect(typeof state.remoteClose).toBe("number");
+            expect(typeof state.localWindowSize).toBe("number");
+          }
         });
         it("settings and properties should work", async () => {
           const assertSettings = settings => {
@@ -821,15 +861,19 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect(client.destroyed).toBeFalse();
             expect(client.originSet.length).toBe(1);
             expect(client.pendingSettingsAck).toBeTrue();
-            assertSettings(client.localSettings);
-            expect(client.remoteSettings).toBeNull();
+            // node: while `connecting || destroyed` both getters return a fresh empty object; the
+            // first SETTINGS ACK populates localSettings, the peer's first SETTINGS frame populates
+            // remoteSettings.
+            expect(client.localSettings).toEqual({});
+            expect(client.remoteSettings).toEqual({});
             const headers = { ":path": "/" };
             const req = client.request(headers);
             expect(req.closed).toBeFalse();
             expect(req.destroyed).toBeFalse();
-            // we always asign a stream id to the request
-            expect(req.pending).toBeFalse();
-            expect(typeof req.id).toBe("number");
+            // node: the stream stays pending (no id) until the session finishes connecting; the
+            // HEADERS frame is submitted on 'connect'.
+            expect(req.pending).toBeTrue();
+            expect(req.id).toBeUndefined();
             expect(req.session).toBeDefined();
             expect(req.sentHeaders).toEqual({
               ":authority": `localhost:${serverAddress.port}`,
@@ -861,7 +905,9 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect(client.alpnProtocol).toBe("h2");
             expect(client.pendingSettingsAck).toBeFalse();
             expect(client.destroyed).toBeTrue();
-            expect(client.closed).toBeTrue();
+            // node: destroy() does NOT set `closed` - only close() does (verified on
+            // node v26.3.0 against a connected session).
+            expect(client.closed).toBeFalse();
             expect(req.closed).toBeTrue();
             expect(req.destroyed).toBeTrue();
             expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
@@ -891,10 +937,11 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(typeof result.duration).toBe("number");
           expect(result.payload).toBeInstanceOf(Buffer);
           expect(result.payload.byteLength).toBe(8);
-          expect(received_ping).toBeInstanceOf(Buffer);
-          expect(received_ping.byteLength).toBe(8);
-          expect(received_ping).toEqual(result.payload);
-          expect(received_ping).toEqual(Buffer.from("12345678"));
+          expect(result.payload).toEqual(Buffer.from("12345678"));
+          // node emits 'ping' only for peer-initiated pings, never for the ACK of our
+          // own ping (verified against node v26.3.0) - the ack already resolved above,
+          // so the absence here is settled, not racy.
+          expect(received_ping).toBeUndefined();
         });
         it("ping without events should work", async () => {
           const { promise, resolve, reject } = Promise.withResolvers();
@@ -918,23 +965,23 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(typeof result.duration).toBe("number");
           expect(result.payload).toBeInstanceOf(Buffer);
           expect(result.payload.byteLength).toBe(8);
-          expect(received_ping).toBeInstanceOf(Buffer);
-          expect(received_ping.byteLength).toBe(8);
-          expect(received_ping).toEqual(result.payload);
+          // See above: no 'ping' event for ACKs of our own pings (node parity).
+          expect(received_ping).toBeUndefined();
         });
         it("ping with wrong payload length events should error", async () => {
+          // Node v26.3.0: ping() throws ERR_HTTP2_PING_LENGTH synchronously for a non-8-byte
+          // payload (lib/internal/http2/core.js:1462) — it never reaches the callback.
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
           client.on("connect", () => {
-            client.ping(Buffer.from("oops"), (err, duration, payload) => {
-              if (err) {
-                resolve(err);
-              } else {
-                reject("unreachable");
-              }
-              client.close();
-            });
+            try {
+              client.ping(Buffer.from("oops"), () => reject("unreachable"));
+              reject("did not throw");
+            } catch (err) {
+              resolve(err);
+            }
+            client.close();
           });
           const result = await promise;
           expect(result).toBeDefined();
@@ -960,17 +1007,28 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(result.code).toBe("ERR_INVALID_ARG_TYPE");
         });
         it("stream event should work", async () => {
+          // node: a client session emits 'stream' only for peer-initiated (push) streams,
+          // never for its own requests (verified on node v26.3.0). Assert the request
+          // stream directly and that no spurious session 'stream' event fires.
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
-          client.on("stream", stream => {
-            resolve(stream);
+          let sessionStreamEvents = 0;
+          client.on("stream", () => {
+            sessionStreamEvents++;
+          });
+          const req = client.request({ ":path": "/" });
+          req.on("error", reject);
+          req.on("response", () => {
+            resolve(req);
             client.close();
           });
-          client.request({ ":path": "/" }).end();
+          req.resume();
+          req.end();
           const stream = await promise;
           expect(stream).toBeDefined();
           expect(stream.id).toBe(1);
+          expect(sessionStreamEvents).toBe(0);
         });
 
         it("wantTrailers should work", async () => {
@@ -1142,12 +1200,61 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             client.on("error", resolve);
             client.on("connect", () => {
               const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
               req.end();
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
+          } finally {
+            server.close();
+          }
+        });
+        it("client tolerates a late RST_STREAM for a stream it already closed and evicted", async () => {
+          // RFC 9113 §5.1 (nghttp2 session_detect_idle_stream): a stream this client started and
+          // closed is closed, not idle, even once its state is evicted — a late peer RST_STREAM
+          // for it must be ignored, never answered with GOAWAY(PROTOCOL_ERROR).
+          const { promise: rawSocket, resolve: onRawSocket } = Promise.withResolvers();
+          const server = net.createServer(socket => {
+            socket.on("error", () => {});
+            socket.on("data", () => {});
+            // Server preface: our (empty) SETTINGS plus an ACK of the client's.
+            socket.write(new http2utils.SettingsFrame(false).data);
+            socket.write(new http2utils.SettingsFrame(true).data);
+            onRawSocket(socket);
+          });
+          await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+          const rstFrame = (id, code) => {
+            const payload = Buffer.alloc(4);
+            payload.writeUInt32BE(code, 0);
+            return Buffer.concat([new http2utils.Frame(4, 3, 0, id).data, payload]);
+          };
+          try {
+            const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+            const sessionErrors = [];
+            client.on("error", err => sessionErrors.push(err));
+            const req = client.request({ ":path": "/" });
+            req.on("error", () => {});
+            const closed = new Promise(resolve => req.on("close", resolve));
+            const socket = await rawSocket;
+            // Close the client's only stream, then wait until the client has fully processed it.
+            socket.write(rstFrame(1, http2.constants.NGHTTP2_CANCEL));
+            await closed;
+            // Late frame for the evicted stream, then a PING the session must still answer.
+            const pinged = new Promise((resolve, reject) => {
+              client.once("ping", resolve);
+              client.once("error", reject);
+              client.once("close", () => reject(new Error("session closed before the ping arrived")));
+            });
+            socket.write(rstFrame(1, http2.constants.NGHTTP2_NO_ERROR));
+            socket.write(Buffer.concat([new http2utils.Frame(8, 6, 0, 0).data, Buffer.alloc(8, 7)]));
+            await pinged;
+            expect(sessionErrors).toEqual([]);
+            expect(client.destroyed).toBe(false);
+            client.destroy();
           } finally {
             server.close();
           }
@@ -1172,13 +1279,16 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             client.on("error", resolve);
             client.on("connect", () => {
               const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
               req.end();
               allowWrite();
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1203,13 +1313,16 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             client.on("error", resolve);
             client.on("connect", () => {
               const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
               req.end();
               allowWrite();
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1234,13 +1347,16 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             client.on("error", resolve);
             client.on("connect", () => {
               const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
               req.end();
               allowWrite();
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1266,13 +1382,16 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             client.on("error", resolve);
             client.on("connect", () => {
               const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
               req.end();
               allowWrite();
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1307,13 +1426,197 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             client.on("error", resolve);
             client.on("connect", () => {
               const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
               req.end();
               allowWrite();
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
+          } finally {
+            server.close();
+          }
+        });
+
+        it("reassembles a header block split mid-instruction across HEADERS + CONTINUATION", async () => {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const block = http2utils.kFakeResponseHeaders;
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            const settings = new http2utils.SettingsFrame(true);
+            socket.write(settings.data);
+            await waitToWrite;
+
+            // Split the HPACK block 2 bytes into the cache-control literal so
+            // neither fragment is independently decodable.
+            const headersFrame = new http2utils.HeadersFrame(1, block.subarray(0, 7), 0, /* EOH */ false, false);
+            socket.write(headersFrame.data);
+            const continuationFrame = new http2utils.ContinuationFrame(1, block.subarray(7), 0, false);
+            socket.write(continuationFrame.data);
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          const client = http2.connect(url);
+          try {
+            const { promise, resolve, reject } = Promise.withResolvers();
+            client.on("error", reject);
+            let sawTrailers = false;
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", reject);
+              req.on("trailers", () => {
+                sawTrailers = true;
+              });
+              req.on("response", headers => {
+                queueMicrotask(() => resolve(headers));
+              });
+              req.end();
+              allowWrite();
+            });
+            const headers = await promise;
+            expect(headers[":status"]).toBe(302);
+            expect(headers["cache-control"]).toBe("private");
+            expect(headers["date"]).toBe("Mon, 21 Oct 2013 20:13:21 GMT");
+            expect(headers["location"]).toBe("https://www.example.com");
+            expect(sawTrailers).toBe(false);
+          } finally {
+            client.destroy();
+            server.close();
+          }
+        });
+
+        it("treats an HPACK decode error in a complete header block as COMPRESSION_ERROR", async () => {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const block = http2utils.kFakeResponseHeaders;
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            const settings = new http2utils.SettingsFrame(true);
+            socket.write(settings.data);
+            await waitToWrite;
+
+            // END_HEADERS is set, so this truncated block is "complete" and
+            // must fail HPACK decoding as a connection error.
+            const headersFrame = new http2utils.HeadersFrame(1, block.subarray(0, 7), 0, /* EOH */ true, false);
+            socket.write(headersFrame.data);
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              req.on("response", headers => resolve({ response: headers }));
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
+          } finally {
+            server.close();
+          }
+        });
+
+        it("rejects a non-CONTINUATION frame while a header block is being reassembled", async () => {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const block = http2utils.kFakeResponseHeaders;
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            const settings = new http2utils.SettingsFrame(true);
+            socket.write(settings.data);
+            await waitToWrite;
+
+            // RFC 9113 4.3: only CONTINUATION frames for the same stream may
+            // follow a HEADERS frame without END_HEADERS.
+            const headersFrame = new http2utils.HeadersFrame(1, block.subarray(0, 7), 0, /* EOH */ false, false);
+            socket.write(headersFrame.data);
+            socket.write(new http2utils.PingFrame(false).data);
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            // If the interleaved PING is accepted the session pings back and no
+            // error ever fires; surface that as a failure instead of hanging.
+            client.on("ping", () => resolve({ ping: true }));
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              req.on("response", headers => resolve({ response: headers }));
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
+          } finally {
+            server.close();
+          }
+        });
+
+        it("rejects a header block whose compressed size exceeds maxHeaderListSize", async () => {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            const settings = new http2utils.SettingsFrame(true);
+            socket.write(settings.data);
+            await waitToWrite;
+
+            // 5 x 16384 = 81920 compressed bytes > the default 65535
+            // maxHeaderListSize; the connection must be torn down before the
+            // block is ever decoded.
+            const chunk = Buffer.alloc(16384, 0x41);
+            socket.write(Buffer.concat([new http2utils.HeadersFrame(1, chunk, 0, /* EOH */ false, false).data]));
+            for (let i = 0; i < 4; i++) {
+              // raw CONTINUATION frame without END_HEADERS
+              socket.write(Buffer.concat([new http2utils.Frame(chunk.byteLength, 9, 0, 1).data, chunk]));
+            }
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              req.on("response", headers => resolve({ response: headers }));
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1340,13 +1643,16 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             client.on("error", resolve);
             client.on("connect", () => {
               const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
               req.end();
               allowWrite();
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1355,6 +1661,99 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
     });
   }
 }
+
+// A stream's events run in the async context captured when request() was called (Node's
+// Http2Stream is an async resource), even when that context is empty and the session's
+// own socket callbacks carry the connect-time store.
+it("client stream events observe the request-time async context, not the session's", async () => {
+  const als = new AsyncLocalStorage();
+  const server = http2.createServer();
+  let client;
+  try {
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const { promise: connected, resolve: onConnect, reject } = Promise.withResolvers();
+    client = als.run({ id: "connect" }, () => http2.connect(`http://localhost:${server.address().port}`));
+    client.on("error", reject);
+    client.on("connect", onConnect);
+    await connected;
+    // The await above resumed the test's own (empty) async context: this request
+    // captures an empty snapshot while the socket's callbacks carry { id: "connect" }.
+    const stores = [];
+    const { promise: closed, resolve: onClose, reject: onStreamError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/" });
+    req.on("response", () => stores.push(als.getStore()));
+    req.on("data", () => stores.push(als.getStore()));
+    req.on("end", () => stores.push(als.getStore()));
+    req.on("close", onClose);
+    req.on("error", onStreamError);
+    req.end();
+    await closed;
+    expect(stores.length).toBeGreaterThanOrEqual(3);
+    expect(stores).toEqual(new Array(stores.length).fill(undefined));
+  } finally {
+    client?.close?.();
+    server.close();
+  }
+});
+
+// Like Node, session.destroy(err) tears open streams down synchronously from the caller's
+// stack: their 'error'/'close' run in the destroy() caller's async context (not the
+// request()-time one), while the session's own 'error'/'close' keep the connect-time context.
+it("client session.destroy() emits open streams' error/close in the caller's async context", async () => {
+  const als = new AsyncLocalStorage();
+  const CONNECT = { id: "connect" };
+  const REQUEST = { id: "request" };
+  const DESTROY = { id: "destroy" };
+  const server = http2.createServer();
+  let client;
+  try {
+    const { promise: streamsOpened, resolve: onStreamsOpened } = Promise.withResolvers();
+    let openStreams = 0;
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (++openStreams === 2) onStreamsOpened();
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const { promise: connected, resolve: onConnect } = Promise.withResolvers();
+    client = als.run(CONNECT, () => http2.connect(`http://localhost:${server.address().port}`));
+    client.on("connect", onConnect);
+    const sessionEvents = { error: null, close: null };
+    const { promise: sessionClosed, resolve: onSessionClose } = Promise.withResolvers();
+    client.on("error", () => (sessionEvents.error = als.getStore()));
+    client.on("close", () => {
+      sessionEvents.close = als.getStore();
+      onSessionClose();
+    });
+    await connected;
+    const streamEvents = [];
+    als.run(REQUEST, () => {
+      for (let i = 0; i < 2; i++) {
+        const req = client.request({ ":path": `/${i}` });
+        req.on("error", () => streamEvents.push({ i, event: "error", store: als.getStore() }));
+        req.on("close", () => streamEvents.push({ i, event: "close", store: als.getStore() }));
+      }
+    });
+    await streamsOpened;
+    als.run(DESTROY, () => client.destroy(new Error("boom")));
+    await sessionClosed;
+    // Emission order across the two streams is not the contract; the context each ran in is.
+    streamEvents.sort((a, b) => a.i - b.i || a.event.localeCompare(b.event));
+    expect(streamEvents).toEqual([
+      { i: 0, event: "close", store: DESTROY },
+      { i: 0, event: "error", store: DESTROY },
+      { i: 1, event: "close", store: DESTROY },
+      { i: 1, event: "error", store: DESTROY },
+    ]);
+    expect(sessionEvents).toEqual({ error: CONNECT, close: CONNECT });
+  } finally {
+    client?.destroy?.();
+    server.close();
+  }
+});
 
 it("sensitive headers should work", async () => {
   const server = http2.createServer();
@@ -1419,7 +1818,7 @@ it("http2 session.goaway() validates input types", async done => {
 
           // Test opaqueData argument
           expect(() => session.goaway(0, 0, input)).toThrow(
-            'The "opaqueData" argument must be of type Buffer, ' + `TypedArray, or DataView.${received}`,
+            'The "opaqueData" argument must be an instance of Buffer, ' + `TypedArray, or DataView.${received}`,
           );
         }
 
@@ -1457,7 +1856,7 @@ it("http2 stream.close() validates input types and ranges", async () => {
       // Test out of range values
       [-1, 2 ** 32].forEach(code => {
         expect(() => stream.close(code)).toThrow(
-          `The value of "code" is out of range. It must be >= 0 and <= 4294967295. Received ${code}`,
+          `The value of "code" is out of range. It must be >= 0 && <= 4294967295. Received ${code}`,
         );
       });
 
@@ -1530,6 +1929,233 @@ it("http2 session.goaway() sends custom data", async done => {
   });
 });
 
+it("http2 session.goaway() opaqueData survives re-entrant buffer detach over a JS Duplex", async () => {
+  // The cork-flush path re-enters JS (onWrite → Duplex _write) when the transport is a JS
+  // stream. If that JS detaches the opaqueData ArrayBuffer mid-write, the GOAWAY payload must
+  // still be the bytes the caller passed, not whatever later occupies that heap block.
+  const fixture = `
+    const http2 = require("node:http2");
+    const { Duplex } = require("node:stream");
+    const N = 64 * 1024;
+    const GOAWAY_WIRE_SIZE = 9 + 8 + N;
+    let opaque = new Uint8Array(N).fill(0x41);
+    const spray = [], received = [];
+    let armed = false, fired = false, total = 0, onComplete;
+    const duplex = new Duplex({
+      read() {},
+      write(chunk, enc, cb) {
+        if (armed) {
+          received.push(Buffer.from(chunk));
+          total += chunk.length;
+          if (!fired && chunk.length >= 16384) {
+            fired = true;
+            opaque.buffer.transfer(0);
+            opaque = null;
+            Bun.gc(true);
+            for (let i = 0; i < 16; i++) spray.push(new Uint8Array(N).fill(0x5a));
+          }
+          if (total >= GOAWAY_WIRE_SIZE && onComplete) onComplete();
+        }
+        cb();
+      },
+    });
+    const session = http2.connect("http://127.0.0.1:1", { createConnection: () => duplex });
+    session.on("error", () => {});
+    await new Promise(r => session.once("connect", r));
+    await new Promise(r => setImmediate(r));
+    armed = true;
+    const complete = new Promise(r => (onComplete = r));
+    session.goaway(0, 0, opaque);
+    if (total < GOAWAY_WIRE_SIZE) await complete;
+    const all = Buffer.concat(received);
+    let off = 0;
+    while (off + 9 <= all.length && all[off + 3] !== 7) off += 9 + all.readUIntBE(off, 3);
+    const len = all.readUIntBE(off, 3);
+    const payload = all.subarray(off + 17, off + 9 + len);
+    let ok = 0;
+    for (const b of payload) if (b === 0x41) ok++;
+    console.log(JSON.stringify({ fired, declared: payload.length, ok }));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout.trim());
+  expect(result).toEqual({ fired: true, declared: 64 * 1024, ok: 64 * 1024 });
+  expect(exitCode).toBe(0);
+}, 15_000);
+
+it("http2 padded DATA write survives a re-entrant stream write from a JS Duplex _write", async () => {
+  // With padding enabled, a single-frame DATA write that crosses the 16 KiB cork boundary
+  // flushes the cork into the JS transport mid-frame (onWrite → Duplex _write). A transport
+  // that writes to another padded stream from inside its _write re-enters the same padded
+  // send path while the outer frame is still being assembled. That must neither abort the
+  // process nor clobber the outer frame's bytes: every payload byte of all three writes has
+  // to reach the transport (same totals as node).
+  const fixture = `
+    const http2 = require("node:http2");
+    const { Duplex } = require("node:stream");
+    // fill: 13000 -> 9+13256 corked; outer: 12000 -> 9+12256, crosses the cork boundary;
+    // side: 3000 -> 9+3256, written from inside the transport _write during that flush.
+    const EXPECTED_WIRE = 9 + 13256 + 9 + 12256 + 9 + 3256;
+    let side, armed = false, reentered = false, total = 0, onComplete;
+    const counts = { 0x41: 0, 0x42: 0, 0x43: 0 };
+    const fail = what => err => {
+      console.error(what, err);
+      process.exit(1);
+    };
+    const duplex = new Duplex({
+      read() {},
+      write(chunk, enc, cb) {
+        if (armed) {
+          for (const b of chunk) if (b in counts) counts[b]++;
+          total += chunk.length;
+          // The first chunk carrying outer's payload is the mid-frame cork flush.
+          if (!reentered && chunk.includes(0x41)) {
+            reentered = true;
+            side.write(Buffer.alloc(3000, 0x42));
+          }
+          if (total >= EXPECTED_WIRE && onComplete) onComplete();
+        }
+        cb();
+      },
+    });
+    const session = http2.connect("http://127.0.0.1:1", {
+      createConnection: () => duplex,
+      paddingStrategy: http2.constants.PADDING_STRATEGY_MAX,
+    });
+    session.on("error", fail("session error"));
+    await new Promise(r => session.once("connect", r));
+    const frame = (type, flags) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
+    // server preface by hand: empty SETTINGS, then the ACK for the client's SETTINGS
+    duplex.push(Buffer.concat([frame(4, 0), frame(4, 1)]));
+    await new Promise(r => setImmediate(r));
+    side = session.request({ ":method": "POST", ":path": "/side" }, { endStream: false });
+    const outer = session.request({ ":method": "POST", ":path": "/outer" }, { endStream: false });
+    const fill = session.request({ ":method": "POST", ":path": "/fill" }, { endStream: false });
+    for (const s of [side, outer, fill]) s.on("error", fail("stream error"));
+    // The three HEADERS frames leave the cork in this tick's deferred auto-flush, which runs
+    // before the loop reaches the next immediate.
+    await new Promise(r => setImmediate(r));
+    const complete = new Promise(r => (onComplete = r));
+    fill.write(Buffer.alloc(13000, 0x43));
+    armed = true;
+    outer.write(Buffer.alloc(12000, 0x41));
+    if (total < EXPECTED_WIRE) await complete;
+    console.log(JSON.stringify({ reentered, total, A: counts[0x41], B: counts[0x42], C: counts[0x43] }));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ reentered: true, total: 28795, A: 12000, B: 3000, C: 13000 });
+  expect(exitCode).toBe(0);
+});
+
+it("http2 server sends protocol-error GOAWAY on stream 0", async () => {
+  // RFC 9113 section 6.8: GOAWAY frames MUST be sent with a stream identifier
+  // of 0 in the frame header; the last processed stream id lives in the
+  // payload. Trigger a connection-level protocol violation (a PING addressed
+  // to stream 1) from a raw socket and inspect the GOAWAY frame the server
+  // writes back.
+  const server = http2.createServer();
+  server.on("error", () => {});
+  server.on("session", session => session.on("error", () => {}));
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const chunks = [];
+    const { promise: closed, resolve: onClose } = Promise.withResolvers();
+    const socket = net.connect(server.address().port, "127.0.0.1", () => {
+      socket.write(http2utils.kClientMagic);
+      socket.write(new http2utils.SettingsFrame().data);
+      // PING frame (type 0x6) addressed to stream 1 is a connection error.
+      socket.write(Buffer.concat([new http2utils.Frame(8, 0x6, 0, 1).data, Buffer.alloc(8)]));
+    });
+    socket.on("error", () => {});
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("close", onClose);
+    await closed;
+
+    const data = Buffer.concat(chunks);
+    let offset = 0;
+    let goaway = null;
+    while (offset + 9 <= data.length) {
+      const length = data.readUIntBE(offset, 3);
+      const type = data.readUInt8(offset + 3);
+      if (type === 0x07) {
+        goaway = data.subarray(offset, offset + 9 + length);
+        break;
+      }
+      offset += 9 + length;
+    }
+
+    expect(goaway).not.toBeNull();
+    // Frame header stream identifier must be 0 (the connection stream).
+    expect(goaway.readUInt32BE(5) & 0x7fffffff).toBe(0);
+    // Payload: last-stream-id (no stream was ever opened) followed by the
+    // error code, which must still be PROTOCOL_ERROR.
+    expect(goaway.readUInt32BE(9) & 0x7fffffff).toBe(0);
+    expect(goaway.readUInt32BE(13)).toBe(http2.constants.NGHTTP2_PROTOCOL_ERROR);
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 client receives 'goaway' when the server rejects a stream", async () => {
+  // When the server rejects a stream and gives up on the session, the GOAWAY
+  // it sends must be readable by a conforming client: the client should emit
+  // 'goaway' with the server's error code instead of treating the frame
+  // itself as a protocol error.
+  const server = http2.createServer({ maxSessionRejectedStreams: 0, settings: { maxHeaderListSize: 100 } });
+  server.on("error", () => {});
+  server.on("session", session => session.on("error", () => {}));
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const { promise: goawayReceived, resolve: onGoaway } = Promise.withResolvers();
+    const { promise: clientClosed, resolve: onClientClose } = Promise.withResolvers();
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    let sessionError = null;
+    client.on("error", err => {
+      sessionError = err;
+    });
+    client.on("close", onClientClose);
+    client.on("goaway", (code, lastStreamID, opaqueData) => {
+      onGoaway({ code, lastStreamID, opaqueData });
+    });
+
+    // The header block exceeds the server's maxHeaderListSize, so the server
+    // rejects the stream; with maxSessionRejectedStreams: 0 it answers with a
+    // GOAWAY carrying NGHTTP2_ENHANCE_YOUR_CALM.
+    const req = client.request({ ":path": "/", "x-filler": Buffer.alloc(256, "a").toString() });
+    req.on("error", () => {});
+    req.end();
+
+    const { code } = await goawayReceived;
+    expect(code).toBe(http2.constants.NGHTTP2_ENHANCE_YOUR_CALM);
+
+    await clientClosed;
+    // Like Node, a non-NO_ERROR GOAWAY destroys the session with
+    // ERR_HTTP2_SESSION_ERROR (verified against Node 26: a server-sent
+    // ENHANCE_YOUR_CALM goaway yields exactly this error on the client).
+    expect(sessionError?.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(sessionError?.message).toBe("Session closed with error code 11");
+  } finally {
+    server.close();
+  }
+});
+
 it(
   "http2 server with minimal maxSessionMemory handles multiple requests",
   async () => {
@@ -1589,14 +2215,14 @@ it("http2.createServer validates input options", () => {
 
   invalidOptions.forEach(invalidOption => {
     expect(() => http2.createServer(invalidOption)).toThrow(
-      'The "options" argument must be of type Object.' + invalidArgTypeHelper(invalidOption),
+      'The "options" argument must be of type object.' + invalidArgTypeHelper(invalidOption),
     );
   });
 
   // Test invalid options.settings passed to createServer
   invalidOptions.forEach(invalidSettingsOption => {
     expect(() => http2.createServer({ settings: invalidSettingsOption })).toThrow(
-      'The "options.settings" property must be of type Object.' + invalidArgTypeHelper(invalidSettingsOption),
+      'The "options.settings" property must be of type object.' + invalidArgTypeHelper(invalidSettingsOption),
     );
   });
 
@@ -1801,7 +2427,7 @@ it("http2 request.close() validates input and manages stream state", async done 
 
       // Test out of range code
       expect(() => req.close(2 ** 32)).toThrow(
-        'The value of "code" is out of range. It must be ' + ">= 0 and <= 4294967295. Received 4294967296",
+        'The value of "code" is out of range. It must be ' + ">= 0 && <= 4294967295. Received 4294967296",
       );
       expect(req.closed).toBe(false);
 
@@ -1978,4 +2604,1995 @@ it("http2 request.destroy() with error", async () => {
       });
     });
   });
+});
+
+it("http2 client.request() rejects header names longer than 4096 bytes with a catchable error", async () => {
+  // A header name longer than the 4096-byte HPACK name buffer must surface as a
+  // thrown ERR_INVALID_HTTP_TOKEN, not terminate the process. Run in a
+  // subprocess so a crash shows up as a failed assertion instead of taking down
+  // the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", () => {});
+        client.on("connect", () => {
+          try {
+            client.request({ ":path": "/", [Buffer.alloc(5000, "x").toString()]: "1" });
+            console.log("NO_ERROR");
+          } catch (err) {
+            console.log("CODE:" + err.code);
+            console.log("NAME:" + err.name);
+          }
+          // A legitimate request on the same session still succeeds afterwards.
+          const req = client.request({ ":path": "/" });
+          req.on("response", headers => {
+            console.log("STATUS:" + headers[":status"]);
+          });
+          req.resume();
+          req.on("close", () => {
+            client.close();
+            server.close();
+          });
+          req.end();
+        });
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toContain("CODE:ERR_INVALID_HTTP_TOKEN");
+  expect(stdout).toContain("NAME:TypeError");
+  expect(stdout).not.toContain("NO_ERROR");
+  expect(stdout).toContain("STATUS:200");
+  expect(exitCode).toBe(0);
+});
+
+it("http2 client.request() propagates a throwing header-value toString() instead of masking it", async () => {
+  // Node calls `${value}` and lets the user's exception escape; it must not be
+  // replaced with ERR_HTTP2_INVALID_HEADER_VALUE.
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", () => {});
+  await new Promise(resolve => client.once("connect", resolve));
+
+  try {
+    const boom = msg => ({
+      toString() {
+        throw new RangeError(msg);
+      },
+    });
+    const describeThrow = fn => {
+      try {
+        fn();
+        return { name: "<none>", code: "<none>", message: "<none>" };
+      } catch (e) {
+        return { name: e.constructor.name, code: e.code, message: e.message };
+      }
+    };
+
+    expect([
+      describeThrow(() => client.request({ ":path": "/", "x-a": boom("scalar") })),
+      describeThrow(() => client.request({ ":path": "/", "x-a": "ok", "x-b": boom("second") })),
+      describeThrow(() => client.request({ ":path": "/", "x-a": [boom("array0")] })),
+      describeThrow(() => client.request({ ":path": "/", "x-a": ["ok", boom("array1")] })),
+      describeThrow(() =>
+        client.request({ ":path": "/", "x-a": boom("sensitive"), [http2.sensitiveHeaders]: ["x-a"] }),
+      ),
+    ]).toEqual([
+      { name: "RangeError", code: undefined, message: "scalar" },
+      { name: "RangeError", code: undefined, message: "second" },
+      { name: "RangeError", code: undefined, message: "array0" },
+      { name: "RangeError", code: undefined, message: "array1" },
+      { name: "RangeError", code: undefined, message: "sensitive" },
+    ]);
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+it("http2 server resets streams whose request headers contain CR, LF, or NUL octets", async () => {
+  // RFC 9113 Section 8.2.1: a request carrying a field value with NUL, CR, or
+  // LF is malformed and must be answered with a stream error, not delivered
+  // to the application. HPACK strings are length-prefixed, so a peer can put
+  // raw CR/LF into a header value; if that reaches req.headers it gets
+  // re-serialized into any HTTP/1.1 upstream request the application makes.
+  const deliveredValues = [];
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    deliveredValues.push(headers["x-injected"]);
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, "127.0.0.1", onListening);
+  await listening;
+  const port = server.address().port;
+
+  // HPACK string literal: 7-bit length prefix, no Huffman coding.
+  const literal = str => {
+    const bytes = Buffer.from(str, "latin1");
+    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+  };
+  const headerBlock = Buffer.concat([
+    Buffer.from([0x82]), // :method: GET   (static table index 2)
+    Buffer.from([0x86]), // :scheme: http  (static table index 6)
+    Buffer.from([0x84]), // :path: /       (static table index 4)
+    Buffer.from([0x01]), // :authority     (literal without indexing, name index 1)
+    literal("localhost"),
+    Buffer.from([0x00]), // literal header field without indexing, new name
+    literal("x-injected"),
+    literal("a\r\nx-forwarded-for: 127.0.0.1"),
+  ]);
+
+  const frames = [];
+  const { promise: exchanged, resolve: onExchanged, reject: onSocketError } = Promise.withResolvers();
+  const socket = net.connect(port, "127.0.0.1", () => {
+    socket.write(http2utils.kClientMagic);
+    socket.write(new http2utils.SettingsFrame(false).data);
+    // HEADERS frame on stream 1 with END_HEADERS | END_STREAM.
+    socket.write(new http2utils.HeadersFrame(1, headerBlock, 0, true, true).data);
+    // PING acts as a barrier: by the time its ACK (or a GOAWAY) arrives the
+    // server has fully processed the HEADERS frame above.
+    socket.write(new http2utils.PingFrame(false).data);
+  });
+  socket.on("error", onSocketError);
+  let received = Buffer.alloc(0);
+  socket.on("data", chunk => {
+    received = Buffer.concat([received, chunk]);
+    while (received.length >= 9) {
+      const length = received.readUIntBE(0, 3);
+      if (received.length < 9 + length) break;
+      const frame = {
+        type: received[3],
+        flags: received[4],
+        streamId: received.readUInt32BE(5) & 0x7fffffff,
+        payload: Buffer.from(received.subarray(9, 9 + length)),
+      };
+      received = received.subarray(9 + length);
+      frames.push(frame);
+      if ((frame.type === 6 && (frame.flags & 1) !== 0) || frame.type === 7) {
+        onExchanged();
+        return;
+      }
+    }
+  });
+  socket.on("close", () => onExchanged());
+
+  let client;
+  try {
+    try {
+      await exchanged;
+      // The malformed request never reaches the application.
+      expect(deliveredValues).toEqual([]);
+      // The stream is reset with PROTOCOL_ERROR instead of being answered.
+      const rst = frames.find(f => f.type === 3 && f.streamId === 1);
+      expect(rst).toBeDefined();
+      expect(rst.payload.readUInt32BE(0)).toBe(http2.constants.NGHTTP2_PROTOCOL_ERROR);
+      expect(frames.find(f => f.type === 1 && f.streamId === 1)).toBeUndefined();
+    } finally {
+      socket.destroy();
+    }
+
+    // A request whose header values contain no forbidden octets still reaches
+    // the application and gets a response.
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", () => {});
+    const { promise: responded, resolve: onResponse, reject: onError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/", "x-injected": "clean" });
+    req.on("response", onResponse);
+    req.on("error", onError);
+    req.resume();
+    req.end();
+    const headers = await responded;
+    expect(headers[":status"]).toBe(200);
+    expect(deliveredValues).toEqual(["clean"]);
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+it("http2 server rejects requests carrying connection-specific or repeated pseudo-headers", async () => {
+  // RFC 9113 Section 8.2.2: connection-specific fields (transfer-encoding,
+  // connection, keep-alive, ...) make an HTTP/2 request malformed, and
+  // Section 8.3.1 forbids repeating pseudo-header fields. Either must be
+  // answered with a stream error instead of being handed to the application,
+  // otherwise a proxy that copies req.headers re-serializes them into an
+  // HTTP/1.1 upstream request.
+  const deliveredRequests = [];
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    deliveredRequests.push(headers);
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, "127.0.0.1", onListening);
+  await listening;
+  const port = server.address().port;
+
+  // HPACK string literal: 7-bit length prefix, no Huffman coding.
+  const literal = str => {
+    const bytes = Buffer.from(str, "latin1");
+    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+  };
+  const malformedHeaderBlocks = {
+    "transfer-encoding header": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET   (static table index 2)
+      Buffer.from([0x86]), // :scheme: http  (static table index 6)
+      Buffer.from([0x84]), // :path: /       (static table index 4)
+      Buffer.from([0x01]), // :authority     (literal without indexing, name index 1)
+      literal("localhost"),
+      Buffer.from([0x00]), // literal header field without indexing, new name
+      literal("transfer-encoding"),
+      literal("chunked"),
+    ]),
+    "connection: keep-alive header": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+      Buffer.from([0x00]), // literal header field without indexing, new name
+      literal("connection"),
+      literal("keep-alive"),
+    ]),
+    "repeated :path pseudo-header": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x84]), // :path: /   (repeated)
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+    ]),
+  };
+
+  async function exchange(headerBlock) {
+    const frames = [];
+    const { promise: exchanged, resolve: onExchanged, reject: onSocketError } = Promise.withResolvers();
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(http2utils.kClientMagic);
+      socket.write(new http2utils.SettingsFrame(false).data);
+      // HEADERS frame on stream 1 with END_HEADERS | END_STREAM.
+      socket.write(new http2utils.HeadersFrame(1, headerBlock, 0, true, true).data);
+      // PING acts as a barrier: by the time its ACK (or a GOAWAY) arrives the
+      // server has fully processed the HEADERS frame above.
+      socket.write(new http2utils.PingFrame(false).data);
+    });
+    socket.on("error", onSocketError);
+    let received = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      received = Buffer.concat([received, chunk]);
+      while (received.length >= 9) {
+        const length = received.readUIntBE(0, 3);
+        if (received.length < 9 + length) break;
+        const frame = {
+          type: received[3],
+          flags: received[4],
+          streamId: received.readUInt32BE(5) & 0x7fffffff,
+          payload: Buffer.from(received.subarray(9, 9 + length)),
+        };
+        received = received.subarray(9 + length);
+        frames.push(frame);
+        if ((frame.type === 6 && (frame.flags & 1) !== 0) || frame.type === 7) {
+          onExchanged();
+          return;
+        }
+      }
+    });
+    socket.on("close", () => onExchanged());
+    try {
+      await exchanged;
+    } finally {
+      socket.destroy();
+    }
+    return frames;
+  }
+
+  let client;
+  try {
+    for (const [caseName, headerBlock] of Object.entries(malformedHeaderBlocks)) {
+      const frames = await exchange(headerBlock);
+      // The malformed request never reaches the application.
+      expect({ caseName, delivered: deliveredRequests.length }).toEqual({ caseName, delivered: 0 });
+      // The stream is reset with PROTOCOL_ERROR instead of being answered.
+      const rst = frames.find(f => f.type === 3 && f.streamId === 1);
+      expect({ caseName, rstCode: rst?.payload?.readUInt32BE(0) }).toEqual({
+        caseName,
+        rstCode: http2.constants.NGHTTP2_PROTOCOL_ERROR,
+      });
+      expect(frames.find(f => f.type === 1 && f.streamId === 1)).toBeUndefined();
+    }
+
+    // A request without connection-specific or repeated headers still reaches
+    // the application and gets a response.
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", () => {});
+    const { promise: responded, resolve: onResponse, reject: onError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/", "x-clean": "yes" });
+    req.on("response", onResponse);
+    req.on("error", onError);
+    req.resume();
+    req.end();
+    const headers = await responded;
+    expect(headers[":status"]).toBe(200);
+    expect(deliveredRequests.length).toBe(1);
+    expect(deliveredRequests[0]["x-clean"]).toBe("yes");
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+it("http2 client survives session teardown from a socket write while flushing queued DATA frames", async () => {
+  // A flow-control-limited DATA frame sits in the native outbound queue until
+  // the peer reopens the window. The flush that follows writes to the JS
+  // socket (options.createConnection), and an application may tear the whole
+  // session down from inside that write -- e.g. an error handler reacting to a
+  // failed write. The teardown drops every queued frame, so the in-progress
+  // flush must not keep using the frame it was sending. Run in a subprocess so
+  // a crash shows up as a failed assertion instead of taking down the runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+
+      function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        header.writeUInt32BE(streamId, 5);
+        return Buffer.concat([header, payload]);
+      }
+      function windowUpdate(streamId, increment) {
+        const payload = Buffer.alloc(4);
+        payload.writeUInt32BE(increment, 0);
+        return frame(8, 0, streamId, payload);
+      }
+
+      let armed = false;
+      let tornDown = false;
+
+      const socket = new Duplex({
+        writableHighWaterMark: 4 * 1024 * 1024,
+        read() {},
+        write(chunk, encoding, callback) {
+          // Once the WINDOW_UPDATE has been delivered, the first DATA frame
+          // header for stream 1 is the flush of the queued DATA frame.
+          // Destroy the whole session from inside that write.
+          if (
+            armed &&
+            !tornDown &&
+            chunk.length >= 9 &&
+            chunk[3] === 0x00 &&
+            chunk.readUIntBE(0, 3) > 0 &&
+            (chunk.readUInt32BE(5) & 0x7fffffff) === 1
+          ) {
+            tornDown = true;
+            client.destroy();
+            setImmediate(() => {
+              console.log("TEARDOWN_DURING_FLUSH_OK");
+              process.exit(0);
+            });
+          }
+          callback();
+        },
+      });
+
+      const client = http2.connect("http://localhost", { createConnection: () => socket });
+      client.on("error", () => {});
+      client.on("connect", () => {
+        // Server preface: empty SETTINGS plus an ACK of the client's SETTINGS.
+        socket.push(Buffer.concat([frame(4, 0, 0), frame(4, 1, 0)]));
+      });
+      client.once("remoteSettings", () => {
+        const req = client.request({ ":method": "POST", ":path": "/" });
+        req.on("error", () => {});
+        // 65535 bytes fit in the initial flow-control window and go out right
+        // away; the remaining 32 KiB is queued natively until the window reopens.
+        req.write(Buffer.alloc(65535 + 32768, "a"));
+        console.log("DATA_QUEUED");
+        armed = true;
+        // Reopen the connection-level and stream-level windows so the queued
+        // DATA frames are flushed.
+        socket.push(Buffer.concat([windowUpdate(0, 1048576), windowUpdate(1, 1048576)]));
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("DATA_QUEUED");
+  expect(stdout).toContain("TEARDOWN_DURING_FLUSH_OK");
+  expect(exitCode).toBe(0);
+});
+
+it("http2 client keeps parsing a socket chunk whose ArrayBuffer is transferred by a frame event handler", async () => {
+  // With a user-supplied connection (options.createConnection), the exact
+  // Buffer handed to the socket "data" listener is fed to the native HTTP/2
+  // frame parser, and per-frame events (like "ping") fire synchronously while
+  // the parser is still iterating over that chunk. If a handler transfers the
+  // chunk's ArrayBuffer mid-parse, the remaining frames must still be parsed
+  // from the original contents rather than from memory the application now
+  // owns and overwrites. Run in a subprocess so a crash shows up as a failed
+  // assertion instead of taking down the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+
+      function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        header.writeUInt32BE(streamId, 5);
+        return Buffer.concat([header, payload]);
+      }
+
+      const socket = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          callback();
+        },
+      });
+
+      const client = http2.connect("http://localhost", { createConnection: () => socket });
+      client.on("error", () => {});
+
+      // Two PING frames in a single chunk backed by its own ArrayBuffer. The
+      // first ping's handler transfers that ArrayBuffer mid-parse; the second
+      // ping must still surface its original payload.
+      const ping1 = frame(6, 0, 0, Buffer.alloc(8, "A"));
+      const ping2 = frame(6, 0, 0, Buffer.alloc(8, "B"));
+      const chunkArrayBuffer = new ArrayBuffer(ping1.length + ping2.length);
+      const pingChunk = Buffer.from(chunkArrayBuffer);
+      ping1.copy(pingChunk, 0);
+      ping2.copy(pingChunk, ping1.length);
+
+      const pings = [];
+      client.on("ping", payload => {
+        pings.push(Buffer.from(payload).toString("hex"));
+        if (pings.length === 1) {
+          try {
+            const moved = chunkArrayBuffer.transfer();
+            new Uint8Array(moved).fill(0xff);
+          } catch {
+            // The runtime may refuse to detach a buffer it is still reading from.
+          }
+          setImmediate(() => {
+            console.log("PINGS:" + JSON.stringify(pings));
+            process.exit(0);
+          });
+        }
+      });
+
+      client.on("connect", () => {
+        // Server preface (empty SETTINGS) in its own, separate chunk.
+        socket.push(frame(4, 0, 0));
+      });
+      client.once("remoteSettings", () => {
+        socket.push(pingChunk);
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain('PINGS:["4141414141414141","4242424242424242"]');
+  expect(exitCode).toBe(0);
+});
+
+describe.concurrent(
+  "http2 DATA payload survives its ArrayBuffer being detached/resized by transport JS mid-send",
+  () => {
+    // When the transport under an Http2Session is user JS (a createConnection Duplex, or a
+    // TLSSocket upgraded from a JS Duplex), that JS runs synchronously while the native side is
+    // still sending a stream.write() payload it borrowed from the caller's ArrayBuffer, and can
+    // transfer() or resize(0) that buffer. Whatever then reaches the peer must still be the
+    // caller's bytes, not recycled heap, and nothing may crash. Each case runs in a subprocess
+    // so a crash surfaces as a failed assertion; the oracle is the DATA bytes on the wire.
+    const prelude = /* js */ `
+    const http2 = require("node:http2");
+    const { Duplex } = require("node:stream");
+    const die = where => e => { console.error(where, e); process.exit(1); };
+    function payload(size, resizable) {
+      const u8 = resizable ? new Uint8Array(new ArrayBuffer(size, { maxByteLength: size })) : new Uint8Array(size);
+      for (let i = 0; i < size; i++) u8[i] = 0x41 + (i % 23);
+      return u8;
+    }
+    // Detach (or shrink) src.buffer and refill the freed block with 0x5a so a stale read shows.
+    const spray = [];
+    function yank(holder, mode) {
+      const size = holder.src.byteLength;
+      if (mode === "resize0") return holder.src.buffer.resize(0);
+      holder.src.buffer.transfer(0);
+      holder.src = null;
+      Bun.gc(true);
+      for (let i = 0; i < 64; i++) spray.push(new Uint8Array(size).fill(0x5a));
+    }
+    function frame(type, flags, streamId, body = Buffer.alloc(0)) {
+      const header = Buffer.alloc(9);
+      header.writeUIntBE(body.length, 0, 3);
+      header[3] = type;
+      header[4] = flags;
+      header.writeUInt32BE(streamId, 5);
+      return Buffer.concat([header, body]);
+    }
+    function windowUpdate(streamId, increment) {
+      const body = Buffer.alloc(4);
+      body.writeUInt32BE(increment, 0);
+      return frame(8, 0, streamId, body);
+    }
+    // A JS transport that records complete outbound frames and resolves waiters once the
+    // DATA bytes seen reach a target. onWrite runs inside the Duplex write, i.e. mid-send.
+    function wireDuplex(onWrite = () => {}) {
+      const PREFACE = Buffer.from("PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n");
+      let pending = Buffer.alloc(0), dataBytes = 0, headersLen = -1, prefaceSeen = false;
+      const data = [], waiters = [];
+      const settle = () => {
+        for (const w of waiters.splice(0)) (dataBytes >= w.n ? w.resolve() : waiters.push(w));
+      };
+      const duplex = new Duplex({
+        read() {},
+        write(chunk, enc, cb) {
+          onWrite(chunk);
+          pending = Buffer.concat([pending, chunk]);
+          if (!prefaceSeen && pending.length >= PREFACE.length) {
+            if (!pending.subarray(0, PREFACE.length).equals(PREFACE)) die("wireDuplex")("first bytes are not the HTTP/2 client preface");
+            prefaceSeen = true;
+            pending = pending.subarray(PREFACE.length);
+          }
+          while (prefaceSeen && pending.length >= 9) {
+            const len = pending.readUIntBE(0, 3);
+            if (pending.length < 9 + len) break;
+            const type = pending[3];
+            if (type === 1 && headersLen < 0) headersLen = len;
+            if (type === 0) { data.push(Buffer.from(pending.subarray(9, 9 + len))); dataBytes += len; }
+            pending = pending.subarray(9 + len);
+          }
+          settle();
+          cb();
+        },
+      });
+      duplex.dataSeen = n => new Promise(resolve => { waiters.push({ n, resolve }); settle(); });
+      duplex.data = () => Buffer.concat(data);
+      duplex.headersLen = () => headersLen;
+      return duplex;
+    }
+    async function connect(duplex) {
+      const session = http2.connect("http://localhost:1", { createConnection: () => duplex });
+      session.on("error", die("session error"));
+      await new Promise(r => session.once("connect", r));
+      await new Promise(r => setImmediate(r));
+      return session;
+    }
+    function foreign(got, snap) {
+      let n = 0;
+      for (let i = 0; i < got.length; i++) if (got[i] !== snap[i]) n++;
+      return n + Math.abs(snap.length - got.length);
+    }
+  `;
+
+    async function run(body, env = bunEnv) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", prelude + body],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout.trim());
+    }
+
+    // A single-frame write (<= 16374 bytes) corked behind HEADERS straddles the 16 KiB cork;
+    // the mid-write cork flush is what runs the Duplex.
+    it.each(["transfer", "resize0"])("single DATA frame straddling the cork flush (%s)", async mode => {
+      const result = await run(/* js */ `
+      const holder = { src: payload(16374, ${mode === "resize0"}) };
+      const snap = Buffer.from(holder.src);
+      let armed = false, fired = 0;
+      const duplex = wireDuplex(() => { if (armed && !fired++) yank(holder, ${JSON.stringify(mode)}); });
+      const session = await connect(duplex);
+      const req = session.request(
+        { ":method": "POST", ":path": "/", "x-pad": Buffer.alloc(15000, "p").toString() },
+        { endStream: false },
+      );
+      req.on("error", die("stream error"));
+      armed = true;
+      req.write(holder.src);
+      await duplex.dataSeen(16374);
+      console.log(JSON.stringify({ fired: fired > 0, foreign: foreign(duplex.data(), snap) }));
+      process.exit(0);
+    `);
+      expect(result).toEqual({ fired: true, foreign: 0 });
+    });
+
+    // HEADERS sized so the cork sits within 8 bytes of full: the 9-byte DATA frame header is
+    // what straddles, so the Duplex runs before the payload itself is written at all. The
+    // header value uses a character HPACK will not huffman-encode, so the block length tracks
+    // N byte for byte; the sweep keeps the case on target if the fixed overhead ever shifts.
+    it("DATA frame header straddling the cork flush", async () => {
+      const result = await run(/* js */ `
+      const results = [];
+      for (let n = 16344; n <= 16352; n++) {
+        const holder = { src: payload(8000, false) };
+        const snap = Buffer.from(holder.src);
+        let armed = false, fired = 0;
+        const duplex = wireDuplex(() => { if (armed && !fired++) yank(holder, "transfer"); });
+        const session = await connect(duplex);
+        const req = session.request(
+          { ":method": "POST", ":path": "/", "x-pad": Buffer.alloc(n, "\\\\").toString() },
+          { endStream: false },
+        );
+        req.on("error", die("stream error"));
+        armed = true;
+        req.write(holder.src);
+        await duplex.dataSeen(8000);
+        const corkOffset = 9 + duplex.headersLen();
+        results.push({ inWindow: corkOffset >= 16376 && corkOffset <= 16383, fired: fired > 0, foreign: foreign(duplex.data(), snap) });
+      }
+      console.log(JSON.stringify({
+        hitWindow: results.some(r => r.inWindow),
+        allFired: results.every(r => r.fired),
+        foreign: results.reduce((a, r) => a + r.foreign, 0),
+      }));
+      process.exit(0);
+    `);
+      expect(result).toEqual({ hitWindow: true, allFired: true, foreign: 0 });
+    });
+
+    // A write larger than the peer's window: the in-window part is batched and flushed (running
+    // the Duplex) and only then is the remainder queued until WINDOW_UPDATE arrives.
+    it("flow-control-limited tail queued after a flush", async () => {
+      const result = await run(/* js */ `
+      const SZ = 65535 + 32768;
+      const holder = { src: payload(SZ, false) };
+      const snap = Buffer.from(holder.src);
+      let armed = false, fired = 0;
+      const duplex = wireDuplex(() => { if (armed && !fired++) yank(holder, "transfer"); });
+      const session = http2.connect("http://localhost:1", { createConnection: () => duplex });
+      session.on("error", die("session error"));
+      session.on("connect", () => duplex.push(Buffer.concat([frame(4, 0, 0), frame(4, 1, 0)])));
+      await new Promise(r => session.once("remoteSettings", r));
+      const req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+      req.on("error", die("stream error"));
+      await new Promise(r => setImmediate(r));
+      armed = true;
+      req.write(holder.src);
+      await duplex.dataSeen(65535);
+      duplex.push(Buffer.concat([windowUpdate(0, 1 << 20), windowUpdate(1, 1 << 20)]));
+      await duplex.dataSeen(SZ);
+      console.log(JSON.stringify({ fired: fired > 0, foreign: foreign(duplex.data(), snap) }));
+      process.exit(0);
+    `);
+      expect(result).toEqual({ fired: true, foreign: 0 });
+    });
+
+    // Two sessions share the thread's cork slot. B's write first flushes A's corked HEADERS
+    // through A's Duplex, and it is A's transport JS that detaches B's payload.
+    it("another session's transport JS running on cork handover", async () => {
+      const result = await run(/* js */ `
+      const holder = { src: payload(8000, false) };
+      const snap = Buffer.from(holder.src);
+      let armed = false, fired = 0;
+      const duplexA = wireDuplex(() => { if (armed && !fired++) yank(holder, "transfer"); });
+      const duplexB = wireDuplex();
+      const [sessionA, sessionB] = await Promise.all([connect(duplexA), connect(duplexB)]);
+      const reqB = sessionB.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+      reqB.on("error", die("stream B error"));
+      await new Promise(r => setImmediate(r));
+      // Same tick: A corks its HEADERS, then B writes.
+      const reqA = sessionA.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+      reqA.on("error", die("stream A error"));
+      armed = true;
+      reqB.write(holder.src);
+      await duplexB.dataSeen(8000);
+      console.log(JSON.stringify({ fired: fired > 0, foreign: foreign(duplexB.data(), snap) }));
+      process.exit(0);
+    `);
+      expect(result).toEqual({ fired: true, foreign: 0 });
+    });
+
+    // Same handover, but B is a native TCP connection to a local h2c server: B's own writes
+    // never run JS, so the only JS that can touch B's payload mid-send is A's Duplex being
+    // flushed when B takes the cork slot. Oracle: the request body the server receives.
+    it.each(["transfer", "resize0"])(
+      "another session's transport JS running on cork handover, native writer (%s)",
+      async mode => {
+        const result = await run(/* js */ `
+      const server = http2.createServer();
+      server.on("error", die("server error"));
+      const streamOpened = Promise.withResolvers();
+      const body = new Promise(resolve => {
+        server.on("stream", stream => {
+          streamOpened.resolve();
+          const chunks = [];
+          stream.on("data", c => chunks.push(c));
+          stream.on("end", () => {
+            stream.respond({ ":status": 200 });
+            stream.end();
+            resolve(Buffer.concat(chunks));
+          });
+        });
+      });
+      await new Promise(r => server.listen(0, "127.0.0.1", r));
+      const holder = { src: payload(8000, ${mode === "resize0"}) };
+      const snap = Buffer.from(holder.src);
+      let armed = false, fired = 0;
+      const duplexA = wireDuplex(() => { if (armed && !fired++) yank(holder, ${JSON.stringify(mode)}); });
+      const sessionA = await connect(duplexA);
+      const sessionB = http2.connect("http://127.0.0.1:" + server.address().port);
+      sessionB.on("error", die("session B error"));
+      const reqB = sessionB.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+      reqB.on("error", die("stream B error"));
+      reqB.on("response", () => {});
+      await streamOpened.promise;
+      // Same tick: A corks its HEADERS, then B writes.
+      const reqA = sessionA.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+      reqA.on("error", die("stream A error"));
+      armed = true;
+      reqB.write(holder.src);
+      const firedDuringWrite = fired > 0;
+      reqB.end();
+      const got = await body;
+      console.log(JSON.stringify({ native: !!sessionB.socket._handle, firedDuringWrite, foreign: foreign(got, snap) }));
+      process.exit(0);
+    `);
+        expect(result).toEqual({ native: true, firedDuringWrite: true, foreign: 0 });
+      },
+    );
+
+    // The session's socket is a native TLSSocket, but one upgraded from a JS Duplex
+    // (tls.connect({ socket })), so every TLS record is written through that Duplex's JS.
+    // Oracle: the request body a real secure server receives.
+    it.each(["straddle", "tail"])("TLSSocket over a JS Duplex against a real server (%s)", async face => {
+      const result = await run(
+        /* js */ `
+      const net = require("node:net");
+      const tls = require("node:tls");
+      const SZ = ${face === "tail" ? 65535 + 32768 : 16374};
+      const holder = { src: payload(SZ, false) };
+      const snap = Buffer.from(holder.src);
+      let armed = false, fired = 0;
+      const server = http2.createSecureServer(JSON.parse(process.env.TLS_CERT_JSON));
+      server.on("error", die("server error"));
+      const body = new Promise(resolve => {
+        server.on("stream", stream => {
+          const chunks = [];
+          stream.on("data", c => chunks.push(c));
+          stream.on("end", () => {
+            stream.respond({ ":status": 200 });
+            stream.end();
+            resolve(Buffer.concat(chunks));
+          });
+        });
+      });
+      await new Promise(r => server.listen(0, r));
+      const raw = net.connect(server.address().port, "127.0.0.1");
+      raw.on("error", die("raw socket error"));
+      await new Promise(r => raw.once("connect", r));
+      const proxy = new Duplex({
+        read() {},
+        write(chunk, enc, cb) {
+          if (armed && !fired++) yank(holder, "transfer");
+          raw.write(chunk, cb);
+        },
+        final(cb) { raw.end(); cb(); },
+      });
+      raw.on("data", d => proxy.push(d));
+      raw.on("end", () => proxy.push(null));
+      const socket = tls.connect({ socket: proxy, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+      await new Promise(r => socket.once("secureConnect", r));
+      const session = http2.connect("https://localhost:" + server.address().port, { createConnection: () => socket });
+      session.on("error", die("session error"));
+      await new Promise(r => session.once("remoteSettings", r));
+      const headers = { ":method": "POST", ":path": "/" };
+      if (${face === "straddle"}) headers["x-pad"] = Buffer.alloc(15000, "p").toString();
+      const req = session.request(headers, { endStream: false });
+      req.on("error", die("stream error"));
+      req.on("response", () => {});
+      armed = true;
+      req.end(holder.src);
+      const got = await body;
+      console.log(JSON.stringify({ native: !!socket._handle, fired: fired > 0, foreign: foreign(got, snap) }));
+      process.exit(0);
+    `,
+        { ...bunEnv, TLS_CERT_JSON: JSON.stringify(TLS_CERT) },
+      );
+      expect(result).toEqual({ native: true, fired: true, foreign: 0 });
+    });
+  },
+);
+
+it("http2 server splits an oversized PUSH_PROMISE header block into CONTINUATION frames", async () => {
+  // RFC 9113 6.6/6.10: a PUSH_PROMISE whose header block exceeds the peer's max frame size
+  // must be continued in CONTINUATION frames rather than rejected. 40KB of "a" encodes to
+  // ~25KB (Huffman) - comfortably above the default 16384-byte frame limit.
+  const bigValue = Buffer.alloc(40000, "a").toString();
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.pushStream({ ":path": "/pushed", "x-big": bigValue }, (err, push) => {
+      if (err) {
+        stream.destroy(err);
+        return;
+      }
+      push.respond({ ":status": 200 });
+      push.end("pushed");
+    });
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    const { promise: pushedHeaders, resolve: onPush, reject: onError } = Promise.withResolvers();
+    client.on("stream", (pushStream, headers) => {
+      pushStream.on("error", onError);
+      pushStream.resume();
+      onPush(headers);
+    });
+    const req = client.request({ ":path": "/" });
+    req.on("error", onError);
+    req.resume();
+
+    const headers = await pushedHeaders;
+    expect(headers[":path"]).toBe("/pushed");
+    expect(headers["x-big"]).toBe(bigValue);
+    client.close();
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 pushStream reports header values containing CR, LF, or NUL through the callback", async () => {
+  const results = [];
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    const values = ["a\rb", "a\nb", "a\0b"];
+    let pending = values.length;
+    for (const value of values) {
+      stream.pushStream({ ":path": "/pushed", "x-custom": value }, err => {
+        results.push({ name: err?.constructor?.name, code: err?.code, message: err?.message });
+        if (--pending === 0) {
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        }
+      });
+    }
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    const pushes = [];
+    client.on("stream", pushed => {
+      pushes.push(pushed);
+      pushed.on("error", () => {});
+      pushed.resume();
+    });
+    const { promise: body, resolve: onBody, reject: onError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/" });
+    req.on("error", onError);
+    req.setEncoding("utf8");
+    let received = "";
+    req.on("data", chunk => (received += chunk));
+    req.on("end", () => onBody(received));
+
+    expect(await body).toBe("ok");
+    const expected = {
+      name: "TypeError",
+      code: "ERR_HTTP2_INVALID_HEADER_VALUE",
+      message: 'Invalid value for header "x-custom"',
+    };
+    expect(results).toEqual([expected, expected, expected]);
+    expect(pushes.length).toBe(0);
+    client.close();
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 pushStream failure reports only via callback, never via stream 'error'", async () => {
+  // node creates the ServerHttp2Stream only after pushPromise succeeds, so a validation
+  // failure never reaches a stream 'error' event. bun must create the stream first, but the
+  // teardown must stay silent: the callback is the sole error channel. The diagnostics_channel
+  // publish is the only way user code can observe the pushed stream before the callback, so use
+  // it to attach a listener and prove nothing is emitted.
+  const pushedStreams = [];
+  const onCreated = ({ stream, headers }) => {
+    if (headers[":path"] !== "/pushed") return;
+    stream.on("error", err => pushedStreams.push({ event: "error", code: err?.code }));
+    stream.on("close", () => pushedStreams.push({ event: "close", destroyed: stream.destroyed }));
+  };
+  dc.subscribe("http2.server.stream.created", onCreated);
+
+  const server = http2.createServer();
+  const { promise: callbackResult, resolve: onCallback } = Promise.withResolvers();
+  server.on("stream", stream => {
+    stream.pushStream({ ":path": "/pushed", "x-bad": "a\nb" }, (err, pushed) => {
+      onCallback({ code: err?.code, pushed });
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    const { promise: done, resolve: onEnd, reject: onError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/" });
+    req.on("error", onError);
+    req.resume();
+    req.on("end", onEnd);
+    await done;
+
+    const result = await callbackResult;
+    expect(result).toEqual({ code: "ERR_HTTP2_INVALID_HEADER_VALUE", pushed: undefined });
+    // Let any scheduled 'error'/'close' emissions from destroy() run.
+    await new Promise(resolve => setImmediate(resolve));
+    expect(pushedStreams).toEqual([{ event: "close", destroyed: true }]);
+    client.close();
+  } finally {
+    dc.unsubscribe("http2.server.stream.created", onCreated);
+    server.close();
+  }
+});
+
+it("http2 option range error messages use the options. prefix", () => {
+  for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
+    let error;
+    try {
+      http2.createServer({ [opt]: -1 });
+    } catch (e) {
+      error = e;
+    }
+    expect(error?.code).toBe("ERR_OUT_OF_RANGE");
+    expect(error?.message).toContain(`"options.${opt}"`);
+  }
+});
+
+it("getPackedSettings caps initialWindowSize at 2**31-1", () => {
+  // The cap itself is valid.
+  http2.getPackedSettings({ initialWindowSize: 2 ** 31 - 1 });
+
+  let error;
+  try {
+    http2.getPackedSettings({ initialWindowSize: 2 ** 31 });
+  } catch (e) {
+    error = e;
+  }
+  expect(error?.code).toBe("ERR_HTTP2_INVALID_SETTING_VALUE");
+  expect(error?.message).toBe('Invalid value for setting "initialWindowSize": 2147483648');
+
+  error = undefined;
+  try {
+    http2.getUnpackedSettings(Buffer.from([0x00, 0x04, 0xff, 0xff, 0xff, 0xff]), { validate: true });
+  } catch (e) {
+    error = e;
+  }
+  expect(error?.code).toBe("ERR_HTTP2_INVALID_SETTING_VALUE");
+});
+
+it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFile reject them", async () => {
+  // respond() accepts the node v26 raw [name1, value1, ...] headers form (verified
+  // on node v26.3.0: status/x-foo land on the wire); respondWithFD/respondWithFile
+  // still reject arrays with ERR_INVALID_ARG_TYPE.
+  const errors = [];
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    for (const invoke of [
+      () => stream.respondWithFD(0, ["x-foo", "bar"]),
+      () => stream.respondWithFile(import.meta.path, ["x-foo", "bar"]),
+    ]) {
+      try {
+        invoke();
+        errors.push(null);
+      } catch (e) {
+        errors.push(e);
+      }
+    }
+    stream.respond([":status", "200", "x-raw", "yes"]);
+    stream.end("ok");
+  });
+
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+  const client = http2.connect(`http://localhost:${port}`);
+  client.on("error", () => {});
+
+  try {
+    const req = client.request({ ":path": "/" });
+    const response = await new Promise((resolve, reject) => {
+      req.on("error", reject);
+      req.on("response", resolve);
+      req.end();
+    });
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    await new Promise(resolve => req.on("end", resolve));
+
+    expect(errors).toHaveLength(2);
+    for (const err of errors) {
+      expect(err).not.toBeNull();
+      expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+    }
+    expect(response[":status"]).toBe(200);
+    expect(response["x-raw"]).toBe("yes");
+    expect(body).toBe("ok");
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
+  // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
+  // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.
+  // The error may surface synchronously or on the returned stream.
+  function captureRequestError(session) {
+    try {
+      const req = session.request({ ":path": "/" });
+      return new Promise(resolve => req.on("error", resolve));
+    } catch (e) {
+      return Promise.resolve(e);
+    }
+  }
+
+  const server = http2.createServer();
+  let endHangingStream;
+  server.on("stream", (stream, headers) => {
+    stream.respond({ ":status": 200 });
+    if (headers[":path"] === "/hang") {
+      endHangingStream = () => stream.end("done");
+    } else {
+      stream.end("ok");
+    }
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+
+  try {
+    // Closed session (graceful close with a stream still in flight).
+    const client = http2.connect(`http://localhost:${port}`);
+    client.on("error", () => {});
+    await new Promise(resolve => client.on("connect", resolve));
+    const inflight = client.request({ ":path": "/hang" });
+    inflight.on("error", () => {});
+    inflight.resume();
+    await new Promise(resolve => inflight.on("response", resolve));
+    client.close();
+    expect(client.closed).toBe(true);
+    expect(client.destroyed).toBe(false);
+
+    const goawayError = await captureRequestError(client);
+    expect(goawayError.code).toBe("ERR_HTTP2_GOAWAY_SESSION");
+    expect(goawayError.message).toBe("New streams cannot be created after receiving a GOAWAY");
+
+    endHangingStream();
+    await new Promise(resolve => inflight.on("close", resolve));
+
+    // Destroyed session.
+    const client2 = http2.connect(`http://localhost:${port}`);
+    client2.on("error", () => {});
+    await new Promise(resolve => client2.on("connect", resolve));
+    client2.destroy();
+
+    const destroyedError = await captureRequestError(client2);
+    expect(destroyedError.code).toBe("ERR_HTTP2_INVALID_SESSION");
+    expect(destroyedError.message).toBe("The session has been destroyed");
+  } finally {
+    server.close();
+  }
+});
+
+function requestOverHttp1(port, headers) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const request = https.request(
+    {
+      host: "localhost",
+      port,
+      path: "/",
+      agent: false,
+      ca: TLS_CERT.cert,
+      headers: { connection: "close", ...headers },
+    },
+    async response => {
+      try {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", chunk => (body += chunk));
+        await new Promise(done => response.on("end", done));
+        resolve({
+          statusCode: response.statusCode,
+          statusMessage: response.statusMessage,
+          headers: response.headers,
+          body,
+        });
+      } catch (err) {
+        reject(err);
+      }
+    },
+  );
+  request.on("error", reject);
+  request.end();
+  return promise;
+}
+
+it("http2 allowHTTP1 fallback serializes every application response header as its own name/value line", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.writeHead(202, "Accepted", {
+      "content-type": "application/json; charset=utf-8",
+      "x-custom-token": "abcdef123456",
+    });
+    res.end('{"ok":true}');
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const response = await requestOverHttp1(server.address().port);
+    expect({
+      statusCode: response.statusCode,
+      statusMessage: response.statusMessage,
+      contentType: response.headers["content-type"],
+      token: response.headers["x-custom-token"],
+      body: response.body,
+    }).toEqual({
+      statusCode: 202,
+      statusMessage: "Accepted",
+      contentType: "application/json; charset=utf-8",
+      token: "abcdef123456",
+      body: '{"ok":true}',
+    });
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback rejects a statusMessage containing CR or LF", async () => {
+  const thrownCodes = [];
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.statusMessage = "Split\r\nx-extra: injected";
+    try {
+      res.end("nope");
+    } catch (err) {
+      thrownCodes.push(err.code);
+      res.statusMessage = "All Good";
+      res.end("body");
+    }
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const response = await requestOverHttp1(server.address().port);
+    expect(response.headers["x-extra"]).toBeUndefined();
+    expect(response.statusMessage).toBe("All Good");
+    expect(response.body).toBe("body");
+    expect(thrownCodes).toEqual(["ERR_INVALID_CHAR"]);
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback rejects an out-of-range statusCode", async () => {
+  const thrownCodes = [];
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.statusCode = 99;
+    try {
+      res.end("nope");
+    } catch (err) {
+      thrownCodes.push(err.code);
+      res.statusCode = 200;
+      res.end("body");
+    }
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const response = await requestOverHttp1(server.address().port);
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe("body");
+    expect(thrownCodes).toEqual(["ERR_HTTP_INVALID_STATUS_CODE"]);
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback frames a HEAD response like plain HTTP/1 (no Content-Length, no Transfer-Encoding)", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.writeHead(200, { "x-method": req.method });
+    res.end();
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("HEAD / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+    );
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(raw).toEndWith("\r\n\r\n");
+    expect(raw.toLowerCase()).toContain("\r\nx-method: head\r\n");
+    expect(raw.toLowerCase()).not.toContain("content-length");
+    expect(raw.toLowerCase()).not.toContain("transfer-encoding");
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback writes a close-delimited body raw and ends the connection", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.removeHeader("content-length");
+    res.removeHeader("transfer-encoding");
+    res.write("part1");
+    res.end("part2");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(raw.toLowerCase()).not.toContain("content-length");
+    expect(raw.toLowerCase()).not.toContain("transfer-encoding");
+    // The advertised connection state must match the close-delimited transport.
+    expect(raw.slice(0, raw.indexOf("\r\n\r\n") + 4).toLowerCase()).toContain("\r\nconnection: close\r\n");
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("part1part2");
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback writes no terminating chunk after a keep-alive HEAD with a user-set Transfer-Encoding: chunked", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    if (req.method === "HEAD") {
+      res.setHeader("Transfer-Encoding", "chunked");
+      res.end();
+      return;
+    }
+    res.end("body2");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("HEAD / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    const chunks = [];
+    let sentSecond = false;
+    socket.on("error", reject);
+    socket.on("data", chunk => {
+      chunks.push(chunk);
+      if (!sentSecond && Buffer.concat(chunks).includes("\r\n\r\n")) {
+        // The HEAD head arrived; reuse the connection for a second request.
+        sentSecond = true;
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      }
+    });
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    const afterHead = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+    // A HEAD response has no body and no terminating chunk: the next bytes on
+    // the connection must be the second response's status line.
+    expect(afterHead).toStartWith("HTTP/1.1 200 ");
+    expect(raw).not.toContain("0\r\n\r\n");
+    expect(afterHead.slice(afterHead.indexOf("\r\n\r\n") + 4)).toBe("body2");
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited response when the user removed it", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.removeHeader("content-length");
+    res.removeHeader("transfer-encoding");
+    res.removeHeader("connection");
+    res.end("body");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    // Node writes no Connection (and no Keep-Alive) header here at all.
+    expect(raw.toLowerCase()).not.toContain("connection:");
+    expect(raw.toLowerCase()).not.toContain("keep-alive");
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("body");
+  } finally {
+    server.close();
+  }
+});
+
+// close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
+// waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
+// ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().
+it("close() completes when the peer never ACKs an outstanding SETTINGS", async () => {
+  // Raw-socket h2 server: preface handshake + ACK the initial SETTINGS, then
+  // ignore any further SETTINGS frames (never ACK the second one).
+  const server = net.createServer(socket => {
+    let buf = Buffer.alloc(0);
+    let ackedInitial = false;
+    socket.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!ackedInitial && buf.length >= 24) {
+        // Send server SETTINGS + ACK the client's initial SETTINGS.
+        socket.write(Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0])); // empty SETTINGS
+        socket.write(Buffer.from([0, 0, 0, 4, 1, 0, 0, 0, 0])); // SETTINGS ACK
+        ackedInitial = true;
+      }
+      // Never ACK any subsequent SETTINGS.
+    });
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  await new Promise(resolve => client.once("localSettings", resolve));
+  client.settings({ enablePush: false }); // second SETTINGS the server will never ACK
+  expect(client.pendingSettingsAck).toBeTrue();
+  const closed = new Promise(resolve => client.on("close", resolve));
+  client.close();
+  await closed; // hangs before this fix
+  server.close();
+});
+
+// A pull-mode consumer (pause() then on('readable')/read()) must reopen the receive
+// window via _read(): the 'resume' event never fires on that path, so without _read()
+// clearing the paused gate the peer stalls at the initial ~64KB stream window.
+it("Http2Stream pull-mode read() after pause() replenishes the receive window", async () => {
+  const PAYLOAD = 200_000; // > 65535 initial stream window
+  const server = http2.createServer();
+  const { promise, resolve, reject } = Promise.withResolvers();
+  server.on("stream", stream => {
+    // Server-side stream already has an id, so pause() reaches setStreamReading().
+    stream.pause();
+    let received = 0;
+    stream.on("readable", () => {
+      let c;
+      while ((c = stream.read()) !== null) received += c.length;
+    });
+    stream.on("end", () => {
+      stream.respond({ ":status": 200 });
+      stream.end();
+      resolve(received);
+    });
+    stream.on("error", reject);
+  });
+  await new Promise(r => server.listen(0, r));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    client.on("error", reject);
+    const req = client.request({ ":path": "/", ":method": "POST" });
+    req.on("error", reject);
+    req.end(Buffer.alloc(PAYLOAD, "x"));
+    const received = await promise;
+    expect(received).toBe(PAYLOAD);
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+// The outbound cork buffer is thread-local across every Http2Session. Interleaving
+// respond()/write() across two sessions used to let the second session's corked
+// HEADERS be prepended to the first session's multi-frame DATA batch and sent to
+// the wrong peer: one client saw a foreign HEADERS frame, the other never saw its
+// own (test/js/web/fetch/fetch-backpressure.test.ts went intermittently red on
+// Windows CI once #32488 widened the interleaving window).
+it("http2 server sends each session's frames to its own peer under interleaved respond()/write()", async () => {
+  const BIG = Buffer.alloc(64 * 1024, 65);
+  const N = 10;
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
+  const streams = [];
+  const bothStreams = Promise.withResolvers();
+  server.on("error", bothStreams.reject);
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    streams.push(stream);
+    if (streams.length === 2) bothStreams.resolve();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const results = Promise.all(
+      [0, 1].map(
+        i =>
+          new Promise(resolve => {
+            let total = 0;
+            let status;
+            const fail = e => {
+              bothStreams.reject(e);
+              resolve({ i, status, total, err: String(e) });
+            };
+            const client = http2.connect(`https://127.0.0.1:${server.address().port}`, TLS_OPTIONS);
+            client.on("error", fail);
+            const req = client.request({ ":path": "/" });
+            req.on("response", h => (status = h[":status"]));
+            req.on("data", c => (total += c.length));
+            req.on("end", () => {
+              client.close();
+              resolve({ i, status, total });
+            });
+            req.on("error", fail);
+            req.end();
+          }),
+      ),
+    );
+    await bothStreams.promise;
+    // A.respond() corks A's HEADERS; B.respond() force-uncorks A (to A's socket)
+    // then corks B's HEADERS. A.write(64KB) takes the multi-frame DATA path,
+    // which drains the thread-local cork: without the ownership check it pulls
+    // B's HEADERS into A's batch.
+    streams[0].respond({ ":status": 200 });
+    streams[1].respond({ ":status": 200 });
+    for (let k = 0; k < N; k++) {
+      streams[0].write(BIG);
+      streams[1].write(BIG);
+    }
+    streams[0].end();
+    streams[1].end();
+    expect(await results).toEqual([
+      { i: 0, status: 200, total: BIG.length * N },
+      { i: 1, status: 200, total: BIG.length * N },
+    ]);
+  } finally {
+    server.close();
+  }
+});
+
+it("fails the whole session when an outbound header block cannot be encoded", async () => {
+  // A header block the HPACK encoder cannot emit is a COMPRESSION_ERROR (9) against the
+  // session in node, so the session and the in-flight request both see
+  // ERR_HTTP2_SESSION_ERROR rather than a per-stream error.
+  const server = http2.createServer();
+  try {
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://localhost:${port}`, { maxSendHeaderBlockLength: 100000 });
+    const sessionError = new Promise(resolve => client.on("error", resolve));
+    const requestError = new Promise(resolve => {
+      const req = client.request({ "test-header": Buffer.alloc(90000, "A").toString() });
+      req.on("error", resolve);
+      req.end();
+    });
+
+    const [sessionErr, reqErr] = await Promise.all([sessionError, requestError]);
+    expect(sessionErr.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(sessionErr.message).toBe("Session closed with error code 9");
+    expect(reqErr.code).toBe("ERR_HTTP2_SESSION_ERROR");
+  } finally {
+    server.close();
+  }
+});
+
+it("delivers a session error from the event loop, not inside the call that detected it", async () => {
+  // node surfaces session errors from the event loop, so the submit call that tripped one
+  // still returns and its stream stays usable for the rest of the tick.
+  const server = http2.createServer({ maxSendHeaderBlockLength: 100000 });
+  try {
+    const observed = {};
+    const sessionError = new Promise(resolve => server.on("sessionError", resolve));
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.additionalHeaders({ "test-header": Buffer.alloc(90000, "A").toString() });
+      observed.destroyedAfterSubmit = stream.destroyed;
+      stream.respond();
+      stream.end();
+      observed.submitsReturned = true;
+    });
+
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://localhost:${port}`);
+    client.on("error", () => {});
+    const req = client.request();
+    req.on("error", () => {});
+    req.end();
+
+    const err = await sessionError;
+    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(err.message).toBe("Session closed with error code 9");
+    expect(observed.destroyedAfterSubmit).toBe(false);
+    expect(observed.submitsReturned).toBe(true);
+    client.destroy();
+  } finally {
+    server.close();
+  }
+});
+
+it("delivers the reserved push stream and fails the session when its headers cannot be encoded", async () => {
+  // Verified against node v26.3.0: pushStream's callback still receives the reserved
+  // stream (so the caller can attach handlers), and the session then dies with
+  // COMPRESSION_ERROR (9); the callback never sees an error, the pushed stream's
+  // 'error' listener receives the session error.
+  const server = http2.createServer({ maxSendHeaderBlockLength: 100000 });
+  try {
+    const sessionError = new Promise(resolve => server.on("sessionError", resolve));
+    const pushCallback = Promise.withResolvers();
+    const pushStreamError = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.pushStream({ ":path": "/pushed", "x-big": Buffer.alloc(90000, "A").toString() }, (err, push) => {
+        pushCallback.resolve(err ?? null);
+        if (push) {
+          push.on("error", pushStreamError.resolve);
+          push.on("close", () => pushStreamError.reject(new Error("pushed stream closed without an error")));
+        } else {
+          pushStreamError.reject(new Error("callback received no pushed stream"));
+        }
+      });
+      stream.respond();
+      stream.end("x");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://localhost:${port}`);
+    client.on("error", () => {});
+    const req = client.request();
+    req.on("error", () => {});
+    req.resume();
+    req.end();
+
+    const [cbErr, err, pushErr] = await Promise.all([pushCallback.promise, sessionError, pushStreamError.promise]);
+    expect(cbErr).toBeNull();
+    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(err.message).toBe("Session closed with error code 9");
+    expect(pushErr.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(pushErr.message).toBe("Session closed with error code 9");
+    client.destroy();
+  } finally {
+    server.close();
+  }
+});
+
+it("PerformanceObserver receives http2 session and stream entries", async () => {
+  const entries = [];
+  // Two streams (client+server) + two sessions (client+server): resolve once
+  // the observer has delivered at least four entries instead of sleeping.
+  const observed = Promise.withResolvers();
+  const observer = new PerformanceObserver(list => {
+    for (const entry of list.getEntries()) entries.push(entry);
+    if (entries.length >= 4) observed.resolve();
+  });
+  observer.observe({ type: "http2" });
+  const server = http2.createServer();
+  try {
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://localhost:${port}`);
+    client.on("error", observed.reject);
+    const req = client.request({ ":path": "/" });
+    req.on("error", observed.reject);
+    req.resume();
+    await new Promise((resolve, reject) => {
+      req.on("end", resolve);
+      req.on("error", reject);
+    });
+    await new Promise(resolve => {
+      client.on("close", resolve);
+      client.close();
+    });
+    await observed.promise;
+
+    const sessions = entries.filter(e => e.name === "Http2Session");
+    const streams = entries.filter(e => e.name === "Http2Stream");
+    expect(sessions.length).toBeGreaterThanOrEqual(2);
+    expect(streams.length).toBeGreaterThanOrEqual(2);
+    const clientSession = sessions.find(e => e.detail.type === "client");
+    expect(clientSession.entryType).toBe("http2");
+    expect(clientSession.detail.streamCount).toBe(1);
+    expect(clientSession.detail.framesReceived).toBeGreaterThanOrEqual(4);
+    expect(typeof clientSession.detail.framesSent).toBe("number");
+    expect(typeof clientSession.detail.streamAverageDuration).toBe("number");
+    const streamEntry = streams[0];
+    expect(typeof streamEntry.detail.bytesRead).toBe("number");
+    expect(typeof streamEntry.detail.bytesWritten).toBe("number");
+    expect(typeof streamEntry.detail.timeToFirstHeader).toBe("number");
+  } finally {
+    observer.disconnect();
+    server.close();
+  }
+});
+
+it("packs END_STREAM onto the DATA frame produced by end(chunk)", async () => {
+  // node sends one DATA frame with END_STREAM for stream.end(data); bun used to append a
+  // separate empty END_STREAM frame after it. Counted through the client's own
+  // perf_hooks frame stats (which exclude the GOAWAY, as node's do).
+  const server = http2.createServer();
+  try {
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("OK");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+
+    const received = Promise.withResolvers();
+    const observer = new PerformanceObserver((list, obs) => {
+      for (const entry of list.getEntries()) {
+        if (entry.name !== "Http2Session" || entry.detail.type !== "client") continue;
+        obs.disconnect();
+        received.resolve(entry.detail.framesReceived);
+        return;
+      }
+    });
+    observer.observe({ type: "http2" });
+
+    const client = http2.connect(`http://localhost:${port}`);
+    client.on("error", received.reject);
+    const req = client.request({ ":path": "/" });
+    req.on("error", received.reject);
+    req.resume();
+    req.on("end", () => client.close());
+    req.end();
+
+    // SETTINGS + SETTINGS ack + HEADERS + one DATA carrying END_STREAM.
+    expect(await received.promise).toBe(4);
+  } finally {
+    server.close();
+  }
+});
+
+it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () => {
+  // _write carries END_STREAM on the final chunk; when the peer's END_STREAM has already
+  // arrived that transitions the native stream to CLOSED and re-enters streamEnd(7) before
+  // Writable.end() has set kEnding. The mid-finish guard must defer destroy on 'finish'.
+  const server = http2.createServer();
+  try {
+    const serverFinish = Promise.withResolvers();
+    server.on("stream", async stream => {
+      stream.on("error", serverFinish.reject);
+      stream.respond({ ":status": 200 });
+      for await (const _ of stream);
+      stream.on("finish", () => serverFinish.resolve(true));
+      stream.on("close", () => serverFinish.resolve(false));
+      stream.end("ok");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", serverFinish.reject);
+    const req = client.request({ ":method": "POST", ":path": "/" });
+    req.on("error", serverFinish.reject);
+    req.resume();
+    req.end("body");
+    expect(await serverFinish.promise).toBe(true);
+    client.close();
+  } finally {
+    server.close();
+  }
+});
+
+it("client connects over a user Duplex that already has a 'data' listener", async () => {
+  // A 'data' listener attached before connect() puts the stream in flowing mode, so the
+  // peer's first frames can arrive before the connect callback has run. The preface must
+  // survive that: it used to be dropped, silently stalling the session.
+  const [clientSide, serverSide] = duplexPair();
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  server.emit("connection", serverSide);
+
+  clientSide.on("data", () => {});
+  const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+
+  const req = client.request({ ":path": "/" });
+  let status = 0;
+  let body = "";
+  req.setEncoding("utf8");
+  req.on("response", headers => {
+    status = headers[":status"];
+  });
+  req.on("data", chunk => (body += chunk));
+  await new Promise((resolve, reject) => {
+    req.on("end", resolve);
+    req.on("error", reject);
+    client.on("error", reject);
+  });
+  expect(status).toBe(200);
+  expect(body).toBe("ok");
+  client.close();
+  server.close();
+});
+
+// node's Http2Session.remoteSettings/localSettings getters return `{}` while the session is
+// connecting or destroyed and a cached Settings object once the handle is live, so
+// `session.remoteSettings.maxConcurrentStreams` is always a safe read. Bun previously returned
+// `null` in the connect()-to-first-SETTINGS window, throwing TypeError on property access.
+it("remoteSettings/localSettings are never null before the peer's SETTINGS arrives", async () => {
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  const { promise: serverSessionPromise, resolve: resolveServerSession } = Promise.withResolvers();
+  server.on("session", resolveServerSession);
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  let client;
+  try {
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`, {
+      settings: { enablePush: false, initialWindowSize: 99999 },
+    });
+    const { promise: donePromise, resolve: resolveDone, reject: rejectDone } = Promise.withResolvers();
+    const { promise: remotePromise, resolve: resolveRemote, reject: rejectRemote } = Promise.withResolvers();
+    const { promise: localPromise, resolve: resolveLocal, reject: rejectLocal } = Promise.withResolvers();
+    client.on("error", err => {
+      rejectRemote(err);
+      rejectLocal(err);
+      rejectDone(err);
+    });
+    client.once("remoteSettings", resolveRemote);
+    client.once("localSettings", resolveLocal);
+
+    // Synchronously after connect(): node returns a fresh {} each read; bun used to return null.
+    expect(client.remoteSettings).toEqual({});
+    expect(client.localSettings).toEqual({});
+    // The documented use (deciding how many requests to pipeline) must not throw.
+    expect(client.remoteSettings.maxConcurrentStreams).toBeUndefined();
+
+    const remote = await remotePromise;
+    expect(typeof remote.maxConcurrentStreams).toBe("number");
+    // After the peer's SETTINGS arrives the getter reports it and caches the object identity.
+    expect(client.remoteSettings).toBe(remote);
+    expect(client.remoteSettings).toBe(client.remoteSettings);
+
+    const local = await localPromise;
+    // localSettings reflects the ACKed values (the constructor's submitted settings), not pre-ACK.
+    expect(local.enablePush).toBe(false);
+    expect(local.initialWindowSize).toBe(99999);
+    expect(client.localSettings).toBe(local);
+
+    // Server side: the incoming socket is already connected, so the getter falls through to the
+    // protocol defaults immediately (never `{}` on the server path).
+    const serverSession = await serverSessionPromise;
+    expect(typeof serverSession.remoteSettings).toBe("object");
+    expect(serverSession.remoteSettings).not.toBeNull();
+    expect(typeof serverSession.remoteSettings.maxConcurrentStreams).toBe("number");
+    expect(typeof serverSession.localSettings).toBe("object");
+    expect(serverSession.localSettings).not.toBeNull();
+
+    client.on("close", resolveDone);
+    client.destroy();
+    await donePromise;
+    // After destroy both getters go back to {}.
+    expect(client.remoteSettings).toEqual({});
+    expect(client.localSettings).toEqual({});
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+describe("frames issued from inside a user-supplied Duplex transport's _write", () => {
+  // A transport wrapper that sends a frame of its own from its _write (a keepalive ping, a
+  // settings update, a goaway, another request) must see that frame sequenced AFTER the unit
+  // whose bytes it is currently being handed: never spliced between a frame's header and payload,
+  // never between a HEADERS frame and its CONTINUATIONs, and no byte may be handed to it twice.
+  // The session used to flush its 16 KiB cork mid-frame (re-entering _write) and cork the frame's
+  // remainder behind whatever the nested call serialized, so the nested frame landed inside the
+  // DATA payload and the body's tail spilled past the declared length (peer framing desync).
+  const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const FRAME = { DATA: 0, HEADERS: 1, SETTINGS: 4, PUSH_PROMISE: 5, PING: 6, GOAWAY: 7, CONTINUATION: 9 };
+  const END_HEADERS = 0x4;
+  function parseFrames(buf) {
+    let i = buf.subarray(0, PREFACE.length).equals(PREFACE) ? PREFACE.length : 0;
+    const frames = [];
+    while (i + 9 <= buf.length) {
+      const len = buf.readUIntBE(i, 3);
+      const end = i + 9 + len;
+      if (end > buf.length) break;
+      frames.push({
+        type: buf[i + 3],
+        flags: buf[i + 4],
+        len,
+        streamId: buf.readUInt32BE(i + 5) & 0x7fffffff,
+        payload: buf.subarray(i + 9, end),
+      });
+      i = end;
+    }
+    // RFC 9113 4.3: from a HEADERS/PUSH_PROMISE without END_HEADERS to the CONTINUATION that
+    // carries it, no other frame may appear on the connection.
+    let headerBlocksContiguous = true;
+    for (let k = 0; k < frames.length; k++) {
+      const f = frames[k];
+      if ([FRAME.HEADERS, FRAME.PUSH_PROMISE, FRAME.CONTINUATION].includes(f.type) && !(f.flags & END_HEADERS)) {
+        const next = frames[k + 1];
+        if (next && !(next.type === FRAME.CONTINUATION && next.streamId === f.streamId)) headerBlocksContiguous = false;
+      }
+    }
+    return { frames, complete: i === buf.length, headerBlocksContiguous };
+  }
+  const nestedBody = Buffer.alloc(40000, 0x42);
+  const nested = {
+    ping: { type: FRAME.PING, issue: sess => sess.ping(Buffer.from("NESTPING"), () => {}) },
+    settings: { type: FRAME.SETTINGS, issue: sess => sess.settings({ enablePush: false }) },
+    goaway: { type: FRAME.GOAWAY, issue: sess => sess.goaway(0, 0, Buffer.from("NESTGOAWAY")) },
+    request: {
+      type: FRAME.HEADERS,
+      issue: sess => sess.request({ ":method": "GET", ":path": "/nested" }, { endStream: true }).on("error", () => {}),
+    },
+    // A request whose body spans several DATA frames (the batched multi-frame send path).
+    data: {
+      type: FRAME.HEADERS,
+      issue: sess => {
+        const r = sess.request({ ":method": "POST", ":path": "/nested" }, { endStream: false });
+        r.on("error", () => {});
+        r.end(nestedBody);
+      },
+    },
+  };
+  // outer "data": the nested call fires while the 16374-byte body's DATA frame overflows the cork
+  // behind the corked ~11 KiB HEADERS. outer "continuation": it fires while a header block larger
+  // than one frame (HEADERS + CONTINUATION) is being handed to the transport.
+  const cases = [];
+  for (const kind of Object.keys(nested)) {
+    cases.push(
+      [kind, "data", false],
+      [kind, "data", true],
+      [kind, "continuation", false],
+      [kind, "continuation", true],
+    );
+  }
+
+  it.each(cases)(
+    "nested %s() issued during the outer %s write (transport backpressured: %p)",
+    async (kind, outer, backpressured) => {
+      const chunks = [];
+      let armed = false;
+      let issued = false;
+      let sess;
+      const transport = new Duplex({
+        // A 1-byte highWaterMark makes every socket.write() report backpressure, which routes the
+        // session's follow-up bytes through its native pending buffer instead of straight to JS.
+        writableHighWaterMark: backpressured ? 1 : undefined,
+        read() {},
+        write(chunk, enc, cb) {
+          chunks.push(Buffer.from(chunk));
+          if (armed && !issued) {
+            issued = true;
+            nested[kind].issue(sess);
+          }
+          cb();
+        },
+      });
+
+      sess = http2.connect("http://localhost:1", { createConnection: () => transport });
+      sess.on("error", () => {});
+      try {
+        await new Promise(resolve => sess.once("connect", resolve));
+
+        const body = Buffer.alloc(16374, 0x41);
+        // 15000 'p's HPACK-encode to ~11 KiB (one HEADERS frame); 30000 to ~22 KiB, which needs a
+        // CONTINUATION frame after a full 16384-byte HEADERS frame.
+        const pad = Buffer.alloc(outer === "continuation" ? 30000 : 15000, 0x70).toString();
+        if (outer === "continuation") armed = true;
+        const req = sess.request({ ":method": "POST", ":path": "/", "x-pad": pad }, { endStream: false });
+        req.on("error", () => {});
+        armed = true;
+        req.write(body);
+
+        // Wait (by condition, not time) until the outer frames and the nested frames are all out.
+        const done = parsed => {
+          if (!parsed.complete) return false;
+          const di = parsed.frames.findIndex(f => f.type === FRAME.DATA && f.streamId === 1);
+          if (di === -1) return false;
+          if (!parsed.frames.some(f => f.type === nested[kind].type && (f.type !== FRAME.HEADERS || f.streamId === 3)))
+            return false;
+          if (kind === "data") {
+            const got = parsed.frames
+              .filter(f => f.type === FRAME.DATA && f.streamId === 3)
+              .reduce((n, f) => n + f.len, 0);
+            if (got < nestedBody.length) return false;
+          }
+          return true;
+        };
+        let parsed;
+        for (let tick = 0; tick < 400; tick++) {
+          await new Promise(resolve => setImmediate(resolve));
+          parsed = parseFrames(Buffer.concat(chunks));
+          if (done(parsed)) break;
+        }
+
+        expect(issued).toBe(true);
+        // Every byte the transport received belongs to exactly one complete frame, and header
+        // blocks are never interleaved with other frames.
+        expect(parsed.complete).toBe(true);
+        expect(parsed.headerBlocksContiguous).toBe(true);
+        // One connection preface + SETTINGS (a second one mid-stream would not even parse), one
+        // request header block on stream 1, one DATA frame carrying exactly the body.
+        expect(parsed.frames.filter(f => f.type === FRAME.SETTINGS).length).toBe(kind === "settings" ? 2 : 1);
+        expect(parsed.frames.filter(f => f.type === FRAME.HEADERS && f.streamId === 1).length).toBe(1);
+        expect(parsed.frames.some(f => f.type === FRAME.CONTINUATION && f.streamId === 1)).toBe(
+          outer === "continuation",
+        );
+        const dataFrames = parsed.frames.filter(f => f.type === FRAME.DATA && f.streamId === 1);
+        expect(dataFrames.length).toBe(1);
+        expect(dataFrames[0].payload.equals(body)).toBe(true);
+        // The nested frames are well-formed frames of their own, after the unit they were issued
+        // from: the stream-1 header block, and (when issued during the body write) its DATA frame.
+        const blockEnd = parsed.frames.findIndex(
+          f => [FRAME.HEADERS, FRAME.CONTINUATION].includes(f.type) && f.streamId === 1 && f.flags & END_HEADERS,
+        );
+        expect(blockEnd).toBeGreaterThanOrEqual(0);
+        const issuedAfter = outer === "continuation" ? blockEnd : parsed.frames.indexOf(dataFrames[0]);
+        const after = parsed.frames.slice(issuedAfter + 1);
+        const before = parsed.frames.slice(0, issuedAfter + 1);
+        expect(before.filter(f => f.streamId === 3).length).toBe(0);
+        if (kind === "request" || kind === "data") {
+          expect(after.filter(f => f.type === FRAME.HEADERS && f.streamId === 3).length).toBe(1);
+        } else {
+          expect(before.slice(1).filter(f => f.type === nested[kind].type).length).toBe(0);
+          expect(after.filter(f => f.type === nested[kind].type).length).toBe(1);
+        }
+        if (kind === "data") {
+          const nestedData = Buffer.concat(
+            after.filter(f => f.type === FRAME.DATA && f.streamId === 3).map(f => f.payload),
+          );
+          expect(nestedData.equals(nestedBody)).toBe(true);
+        }
+      } finally {
+        sess.destroy();
+      }
+    },
+  );
 });

@@ -1,11 +1,9 @@
 //! Single cross-platform `KeepAlive`.
 //!
-//! Zig keeps two copies (`posix_event_loop.zig:5-114` /
-//! `windows_event_loop.zig:3-113`); the Rust ports were faithful duplicates.
-//! 9 of 14 methods were byte-identical; the 5 that diverge keep their
-//! per-platform behaviour via `#[cfg]` arms inline below — no caller-visible
-//! contract changes (all external users go through `bun_io::KeepAlive` and
-//! only touch the identical-signature methods).
+//! The few methods that diverge per platform keep their behaviour via
+//! `#[cfg]` arms inline below — no caller-visible contract changes (all
+//! external users go through `bun_io::KeepAlive` and only touch the
+//! identical-signature methods).
 
 use crate::EventLoopCtx;
 use crate::posix_event_loop::js_vm_ctx;
@@ -35,46 +33,6 @@ impl KeepAlive {
     pub fn disable(&mut self) {
         self.unref(js_vm_ctx());
         self.status = Status::Done;
-    }
-
-    /// Only intended to be used from EventLoop.Pollable
-    #[cfg(not(windows))]
-    pub fn deactivate(&mut self, loop_: &mut crate::Loop) {
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Inactive;
-        loop_.sub_active(1);
-    }
-    /// Only intended to be used from EventLoop.Pollable
-    #[cfg(windows)]
-    pub fn deactivate(&mut self, loop_: &mut crate::Loop) {
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Inactive;
-        loop_.dec();
-    }
-
-    /// Only intended to be used from EventLoop.Pollable
-    #[cfg(not(windows))]
-    pub fn activate(&mut self, loop_: &mut crate::Loop) {
-        if self.status != Status::Inactive {
-            return;
-        }
-        self.status = Status::Active;
-        loop_.add_active(1);
-    }
-    /// Only intended to be used from EventLoop.Pollable
-    #[cfg(windows)]
-    pub fn activate(&mut self, loop_: &mut crate::Loop) {
-        // Zig `windows_event_loop.zig` guards on `!= .active` (vs posix
-        // `!= .inactive`); preserved verbatim.
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Active;
-        loop_.inc();
     }
 
     pub fn init() -> KeepAlive {
@@ -115,20 +73,6 @@ impl KeepAlive {
         event_loop_ctx.loop_dec();
     }
 
-    /// From another thread, prevent a poll from keeping the process alive on the next tick.
-    pub fn unref_on_next_tick_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Inactive;
-        // TODO(port): vm.pending_unref_counter must be Atomic; Zig uses @atomicRmw .Add .monotonic
-        #[cfg(not(windows))]
-        vm.increment_pending_unref_counter();
-        // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        #[cfg(windows)]
-        vm.loop_dec();
-    }
-
     /// Allow a poll to keep the process alive.
     pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.status != Status::Inactive {
@@ -140,9 +84,8 @@ impl KeepAlive {
 
     /// Allow a poll to keep the process alive.
     ///
-    /// Raw-identifier alias of [`KeepAlive::ref_`] matching the Zig method name
-    /// `ref` exactly (per PORTING.md "same fn names" rule). Downstream ports
-    /// call both spellings; this keeps them source-compatible.
+    /// Raw-identifier alias of [`KeepAlive::ref_`]. Callers use both
+    /// spellings; this keeps them source-compatible.
     #[inline]
     pub fn r#ref(&mut self, event_loop_ctx: EventLoopCtx) {
         self.ref_(event_loop_ctx)

@@ -116,17 +116,12 @@ bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgu
     if (!scriptExecutionContext())
         return false;
 
-    emit(eventType, arguments);
-    return true;
+    return emit(eventType, arguments);
 }
 
 bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     return fireEventListeners(eventType, arguments);
-}
-
-void EventEmitter::uncaughtExceptionInEventHandler()
-{
 }
 
 Vector<Identifier> EventEmitter::getEventNames()
@@ -286,10 +281,6 @@ const SimpleEventListenerVector& EventEmitter::eventListeners(const Identifier& 
     auto* listenerVector = data ? data->eventListenerMap.find(eventType) : nullptr;
     static NeverDestroyed<SimpleEventListenerVector> emptyVector;
     return listenerVector ? *listenerVector : emptyVector.get();
-}
-
-void EventEmitter::invalidateEventListenerRegions()
-{
 }
 
 } // namespace WebCore

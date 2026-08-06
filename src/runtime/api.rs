@@ -1,6 +1,6 @@
 //! "api" in this context means "the Bun APIs", as in "the exposed JS APIs"
 
-// ─── server / socket / ffi (un-gated, opaque surface) ────────────────────────
+// ─── server / socket / ffi ───────────────────────────────────────────────────
 pub use crate::server;
 pub use crate::server::AnyRequestContext;
 pub use crate::server::AnyServer;
@@ -21,8 +21,6 @@ pub use crate::socket::NewSocket;
 pub use crate::socket::SocketAddress;
 pub use crate::socket::TCPSocket;
 pub use crate::socket::TLSSocket;
-// PORT NOTE: dropped `comptime { _ = @import("./socket/uws_jsc.zig"); }` force-reference;
-// Rust links `us_socket_buffered_js_write` via `pub` export in crate::socket::uws_jsc.
 pub use crate::socket::udp_socket::UDPSocket;
 
 pub use crate::ffi::FFI;
@@ -33,7 +31,6 @@ pub use crate::napi;
 pub use crate::node;
 
 // ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
-// Zig: `pub const {Build,Resolve}Message = @import("../jsc/{Build,Resolve}Message.zig").…;`
 // Canonical defs live in `bun_jsc` (with `#[bun_jsc::JsClass]` derives wiring
 // the C++ `${T}__create`/`__fromJS`/`__finalize` symbols). `bun_runtime` already
 // depends on `bun_jsc`, so this is a plain downstream re-export — no cycle.
@@ -72,8 +69,6 @@ pub mod js_transpiler;
 pub mod json5_object;
 #[path = "api/JSONCObject.rs"]
 pub mod jsonc_object;
-#[path = "api/lolhtml_jsc.rs"]
-pub mod lolhtml_jsc;
 #[path = "api/MarkdownObject.rs"]
 pub mod markdown_object;
 #[path = "api/NativePromiseContext.rs"]
@@ -94,17 +89,11 @@ pub mod yaml_object;
 // inline `mod bun { }` below is a re-export façade only — module bodies are
 // declared flat to avoid the non-mod-rs nested-path resolution rules.
 
-// process.rs — Process struct + posix_spawn/uv_spawn machinery. §Dispatch
-// vtable applied for ProcessExitHandler; structs + non-JSC methods un-gated.
-// spawn_process_{posix,windows} bodies + waiter-thread dispatch loop + sync
-// mod remain re-gated inside the file (depend on sibling `spawn` posix_spawn
-// wrappers and bun_io FilePoll method surface).
+// Process struct + posix_spawn/uv_spawn machinery.
 #[path = "api/bun/process.rs"]
 pub mod bun_process;
 
-// posix_spawn(2) wrappers + Stdio enum. `bun_sys::posix` surface is now wide
-// enough for the `bun_spawn` half; libc-backed `PosixSpawn*` wrappers are
-// cfg-gated to macOS inside the file. `stdio` submod stays re-gated within.
+// posix_spawn(2) wrappers + Stdio enum.
 #[path = "api/bun/spawn.rs"]
 pub mod bun_spawn;
 
@@ -122,10 +111,13 @@ pub mod js_bun_spawn_bindings;
 pub mod bun_terminal_body;
 
 // H2FrameParser — ~338 jsc refs (Strong, JsRef, host_fn getters, AbortSignal).
+// From-scratch node:http2 engine rewrite (will replace h2_frame_parser.rs).
+#[path = "api/bun/h2/mod.rs"]
+pub mod h2;
+
 #[path = "api/bun/h2_frame_parser.rs"]
 pub mod h2_frame_parser_body;
 
-// SSL siblings — gated (boringssl_sys bindgen surface).
 #[path = "api/bun/SSLContextCache.rs"]
 pub mod bun_ssl_context_cache;
 
@@ -142,7 +134,6 @@ pub mod bun {
     pub use super::bun_ssl_context_cache as ssl_context_cache;
     pub use super::bun_subprocess as subprocess;
     pub use super::bun_x509 as x509;
-    pub use process::StdioKind as SubprocessStdioKind;
     pub use process::{
         Dup2, Exited, ExtraPipe, PidFdType, PidT, Poller, PosixSpawnOptions, PosixSpawnResult,
         PosixStdio, Process, ProcessExit, ProcessExitHandler, ProcessExitKind, Rusage,
@@ -151,14 +142,11 @@ pub mod bun {
     pub use spawn::posix_spawn;
 
     pub mod terminal {
-        /// Re-export the full struct now that `bun_terminal_body` is un-gated;
-        /// downstream callers (`Subprocess.terminal`, spawn bindings) hold the
-        /// concrete type directly — no opaque-ZST cast layer.
         pub use crate::api::bun_terminal_body::Terminal;
         // `Terminal.PtyResult`, `Winsize`, `OpenPtyFn`, `CreatePtyError` —
         // pure FFI handles with no JSC. Canonical defs live in
         // `api/bun/Terminal.rs`; re-exported here so callers can name them via
-        // `api::Terminal::*` exactly as in the Zig (`Terminal.PtyResult` etc.).
+        // `api::Terminal::*` (`Terminal.PtyResult` etc.).
         pub use crate::api::bun_terminal_body::{
             CreatePtyError, OpenPtyFn, OpenPtyTermios, PtyResult, Winsize,
         };
@@ -166,29 +154,18 @@ pub mod bun {
     pub use terminal::Terminal;
 
     pub mod h2_frame_parser {
-        pub use crate::api::h2_frame_parser_body::ErrorCode;
-        /// Re-export the full struct now that `h2_frame_parser_body` is
-        /// un-gated; `socket::NativeCallbacks::H2(IntrusiveRc<H2FrameParser>)`
-        /// and the `set_native_socket` attach path now share one concrete
-        /// type — no opaque-ZST cast layer. The body provides the real
-        /// `RefCounted` impl + `on_native_{read,writable,close}` bodies.
         pub use crate::api::h2_frame_parser_body::H2FrameParser;
-        // js2native thunks (`$zig(h2_frame_parser.zig, …)` in generated_js2native.rs).
-        pub use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
-        pub use crate::api::h2_frame_parser_body::js_assert_settings;
-        pub use crate::api::h2_frame_parser_body::js_get_packed_settings;
-        pub use crate::api::h2_frame_parser_body::js_get_unpacked_settings;
+        // js2native thunks (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
+        pub(crate) use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
+        pub(crate) use crate::api::h2_frame_parser_body::js_assert_settings;
     }
     pub use h2_frame_parser::H2FrameParser;
 }
-pub use bun::process::Process as SpawnProcess;
 
-// ─── un-gated re-exports (targets compile) ───────────────────────────────────
 pub use crate::image as Image;
 pub use crate::shell as Shell;
 pub use crate::timer as Timer;
 
-// ─── un-gated re-exports (opaque structs / pure helpers compiling) ───────────
 pub use crate::api::archive as Archive;
 pub use crate::api::bun::h2_frame_parser::H2FrameParser;
 pub use crate::api::bun::secure_context as SecureContext;
@@ -207,14 +184,13 @@ pub use crate::api::js_bundler::JSBundler;
 pub use crate::api::js_bundler::OutputKind;
 pub use crate::api::js_transpiler as JSTranspiler;
 pub use crate::api::json5_object as JSON5Object;
-pub use crate::api::jsonc_object as JSONCObject;
 pub use crate::api::markdown_object as MarkdownObject;
 pub use crate::api::native_promise_context as NativePromiseContext;
 pub use crate::api::toml_object as TOMLObject;
 pub use crate::api::unsafe_object as UnsafeObject;
 pub use crate::api::yaml_object as YAMLObject;
 // `dns_jsc/mod.rs` IS the public surface (Resolver, Order, RecordType, internal::*);
-// the full Phase-A `dns.rs` draft is mounted privately as `dns_body` inside it.
+// the full `dns.rs` body is mounted privately as `dns_body` inside it.
 pub use crate::dns_jsc as dns;
 pub use crate::node::net::block_list as BlockList;
 pub use crate::node::zlib::native_brotli as NativeBrotli;
@@ -225,7 +201,6 @@ pub use bun_sql_jsc::mysql as MySQL;
 pub use bun_sql_jsc::postgres as Postgres;
 
 pub use crate::webview::chrome_process as ChromeProcess;
-pub use crate::webview::host_process as WebViewHostProcess;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML}.parse ───────────────────
 //
@@ -236,10 +211,7 @@ pub use crate::webview::host_process as WebViewHostProcess;
 // and hands `(&arena, &mut log, &source)` to a per-format closure that does the
 // format-specific parse, error match (StackOverflow / OOM / SyntaxError vs
 // log.to_js), and tail conversion.
-//
-// Zig has no shared helper (four open-coded copies); this is net-new cleanup of
-// a faithfully-ported duplication.
-pub(crate) fn with_text_format_source<R>(
+fn with_text_format_source<R>(
     global: &bun_jsc::JSGlobalObject,
     frame: &bun_jsc::CallFrame,
     path: &'static [u8],
@@ -249,9 +221,8 @@ pub(crate) fn with_text_format_source<R>(
 ) -> bun_jsc::JsResult<R> {
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-    // PERF(port): was ArenaAllocator bulk-free feeding the parser + AST stores.
     let arena = bun_alloc::Arena::new();
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
 
     let input_value = frame.argument(0);
@@ -279,10 +250,89 @@ pub(crate) fn with_text_format_source<R>(
         _str_hold.slice()
     };
 
+    // Every parser reached from here records source positions as an `i32`
+    // (`ast::Loc` via `usize2loc` for JSONC/TOML, JSON5's token locs, YAML's
+    // `Pos`), so an input those offsets cannot represent panics inside the
+    // lexer instead of reporting an error. Reject it before parsing.
+    if bytes.len() > i32::MAX as usize {
+        return Err(global.throw_range_error(
+            bytes.len() as i64,
+            bun_jsc::RangeErrorOptions {
+                field_name: b"input.byteLength",
+                max: i64::from(i32::MAX),
+                ..Default::default()
+            },
+        ));
+    }
+
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string(path, bytes);
 
     f(&arena, &mut log, &source)
 }
 
-// ported from: src/runtime/api.zig
+// ─── shared Expr → JS conversion for the text-format parsers ─────────────────
+
+fn estring_to_js(
+    str: &bun_ast::E::EString,
+    global: &bun_jsc::JSGlobalObject,
+) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+    use bun_jsc::StringJsc as _;
+    // NOTE: the text-format parsers never build ropes, so the simple
+    // slice → JS path is sufficient.
+    if str.is_utf16 {
+        let zig = bun_core::ZigString::init_utf16(str.slice16());
+        let bun_s = bun_core::String::init(zig);
+        bun_s.to_js(global)
+    } else {
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.slice8())
+    }
+}
+
+fn expr_to_js(
+    expr: bun_ast::Expr,
+    global: &bun_jsc::JSGlobalObject,
+) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+    expr_to_js_with_check(expr, global, bun_core::StackCheck::init())
+}
+
+fn expr_to_js_with_check(
+    expr: bun_ast::Expr,
+    global: &bun_jsc::JSGlobalObject,
+    stack_check: bun_core::StackCheck,
+) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+    use bun_ast::expr::Data as ExprData;
+    use bun_collections::VecExt as _;
+    use bun_jsc::JSValue;
+
+    if !stack_check.is_safe_to_recurse() {
+        return Err(global.throw_stack_overflow());
+    }
+    match expr.data {
+        ExprData::ENull(_) => Ok(JSValue::NULL),
+        ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
+        ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
+        ExprData::EString(str) => estring_to_js(str.get(), global),
+        ExprData::EArray(arr) => {
+            JSValue::create_array_from_iter(global, arr.slice().iter(), |item| {
+                expr_to_js_with_check(*item, global, stack_check)
+            })
+        }
+        ExprData::EObject(obj) => {
+            let js_obj = JSValue::create_empty_object(global, obj.properties.len_u32() as usize);
+            for prop in obj.properties.slice() {
+                let key_expr = prop.key.expect("infallible: prop has key");
+                let value = expr_to_js_with_check(
+                    prop.value.expect("infallible: prop has value"),
+                    global,
+                    stack_check,
+                )?;
+                let key_js = expr_to_js_with_check(key_expr, global, stack_check)?;
+                let key_str = bun_core::OwnedString::new(key_js.to_bun_string(global)?);
+                js_obj.put_may_be_index(global, &key_str, value)?;
+            }
+            Ok(js_obj)
+        }
+        _ => Ok(JSValue::UNDEFINED),
+    }
+}

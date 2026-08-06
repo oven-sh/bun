@@ -1,10 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use super::Expect;
+use super::throw;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_be_empty_object(
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
+pub(crate) fn to_be_empty_object(
     this: &Expect,
     global: &JSGlobalObject,
     call_frame: &CallFrame,
@@ -26,19 +26,20 @@ pub fn to_be_empty_object(
 
     if not {
         let signature = Expect::get_signature("toBeEmptyObject", "", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!("\n\nReceived: <red>{}<r>\n", received),
+            "\n\nReceived: <red>{}<r>\n", received,
         );
     }
 
     let signature = Expect::get_signature("toBeEmptyObject", "", false);
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!("\n\nReceived: <red>{}<r>\n", received),
+        "\n\nReceived: <red>{}<r>\n", received,
     )
 }
 
-// ported from: src/test_runner/expect/toBeEmptyObject.zig

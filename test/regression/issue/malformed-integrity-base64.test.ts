@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("malformed integrity base64 in lockfile should be handled gracefully", async () => {
-  const dir = tempDirWithFiles("malformed-integrity-test", {
+  await using dir = tempDir("malformed-integrity-test", {
     "package.json": JSON.stringify({
       name: "test-malformed-integrity",
       version: "1.0.0",
@@ -58,6 +58,8 @@ test("malformed integrity base64 in lockfile should be handled gracefully", asyn
 
      lodash@4.17.21 done"
   `);
-  expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`""`);
+  const err = normalizeBunSnapshot(stderr.toString(), dir);
+  expect(err).toContain("warn: Unsupported or malformed integrity hash; ignoring");
+  expect(err).not.toContain("error:");
   expect(exitCode).toMatchInlineSnapshot(`0`);
 });

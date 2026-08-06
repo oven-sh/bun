@@ -1,9 +1,9 @@
-//! CSS selector parser — ported from `src/css/selectors/parser.zig`.
+//! CSS selector parser.
 //! Originally derived from servo/lightningcss selector parsing.
 
 use core::fmt;
 
-use bun_alloc::Arena as Bump;
+use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_core::strings;
 use bun_css as css;
 use bun_css::css_values::ident::{CustomIdent, Ident};
@@ -16,44 +16,37 @@ use bun_wyhash::Wyhash;
 
 use super::impl_;
 
-use super::builder as selector_builder;
 use super::builder::SelectorBuilder;
-
-pub use bun_css::Printer as PrinterRe; // re-export parity (Printer/PrintErr were `pub const` aliases)
 
 /// `css::Result<T>` — the CSS parser result type (`Ok(T)` / `Err(css::ParseError)`).
 type CResult<T> = css::Result<T>;
 
-// TODO(port): arena lifetimes. The Zig code threads `parser.arena` / `input.arena()`
-// (a bump arena) through every allocation. Phase A uses `Vec`/`Box` and a `Str` alias for
-// source-borrowed byte slices; Phase B should re-thread `'bump` and switch to
-// `bun_alloc::ArenaVec<'bump, T>` / `&'bump [u8]` per PORTING.md §Allocators (AST crates).
-// PERF(port): was arena bulk-free — profile in Phase B.
+// Arena lifetimes: this module uses `Vec`/`Box` and a `Str`
+// alias for source-borrowed byte slices until the crate-wide `'bump` re-threading
+// (`bun_alloc::ArenaVec<'bump, T>` / `&'bump [u8]` per PORTING.md §Allocators
+// (AST crates)) lands.
 //
 // NOTE: `Str` is `&'static [u8]` here (not `crate::Str = *const [u8]`) to match
 // `crate::Token`'s payload shape (`Token::Ident(&'static [u8])` etc.) — every
-// `Str` in this module originates from a token slice. The `'static` is the
-// Phase-A placeholder for the tokenizer source lifetime; it widens to `&'bump
+// `Str` in this module originates from a token slice. The `'static` is a
+// placeholder for the tokenizer source lifetime; it widens to `&'bump
 // [u8]` once `Parser<'bump>` threads the arena lifetime.
 type Str = &'static [u8]; // arena-backed `[]const u8` source slice
 
 // ─── Protocol traits ─────────────────────────────────────────────────────────
-// Zig's `implementEql` / `implementHash` / `implementDeepClone` are comptime
-// field/variant reflection over `@typeInfo(T)` — in Rust this is the body of
+// `eql` / `hash` / `deep_clone` are field/variant reflection, provided by
 // `#[derive(CssEql, CssHash, DeepClone)]` (`bun_css_derive`). Non-generic
 // grammar types below carry the derive directly; the `<Impl: SelectorImpl>`-
 // generic types hand-write bodies (the derive's `where Impl: CssEql` bound is
 // useless — equality recurses on `Impl::Assoc`, not `Impl`).
 //
-// `deep_clone` on the grammar types intentionally drops the `&Arena` parameter:
-// the selector AST is global-alloc (`Vec`/`Box`/`SmallList`) in Phase A, and
-// the only arena-borrowed payloads are `Str` / `Ident.v` (`*const [u8]`)
-// which are identity-copied (matches generics.zig "const strings" fast-path).
+// `deep_clone` on the grammar types drops the `&Arena` parameter: `GenericSelector.components`
+// is `Vec<_, ArenaPtr>` and clones into the *source* allocator (intra-arena only).
 use css::generics::{CssEql, CssHash};
 
 /// Drain a `SmallList<T, N>` into a `Box<[T]>`. `SmallList` has no `into_vec`;
 /// this bitwise-moves each element out and `set_len(0)`s the source so its
-/// `Drop` doesn't double-free. Mirrors Zig `toOwnedSlice`.
+/// `Drop` doesn't double-free.
 fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
     let len = sl.len() as usize;
     let mut v: Vec<T> = Vec::with_capacity(len);
@@ -70,13 +63,11 @@ fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
 }
 
 /// Allocate an ASCII-lowercased copy of `name` in the parse-session bump arena.
-/// Zig used `parser.arena().alloc(u8, n)` (the bump arena owns the buffer
-/// for the parse session and frees it on arena reset). Returns a raw arena
+/// Returns a raw arena
 /// pointer (`*const [u8]`) — `Ident.v`'s field type — so we don't fabricate a
 /// `'static` lifetime (PORTING.md §Forbidden: never `Box::leak` to satisfy
-/// `&'static`). Phase B re-threads `&'bump Bump` and widens `Ident.v` to
+/// `&'static`). Re-threading `&'bump Bump` would widen `Ident.v` to
 /// `&'bump [u8]`.
-// PERF(port): was arena alloc — profile in Phase B.
 #[inline]
 fn arena_lowercase(bump: &Bump, name: &[u8]) -> *const [u8] {
     let buf = bump.alloc_slice_fill_copy(name.len(), 0u8);
@@ -114,40 +105,24 @@ pub type Component = GenericComponent<impl_::Selectors>;
 pub type Selector = GenericSelector<impl_::Selectors>;
 pub type SelectorList = GenericSelectorList<impl_::Selectors>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ToCssCtx {
-    Lightning,
-    Servo,
-}
-
 /// The definition of whitespace per CSS Selectors Level 3 § 4.
-pub const SELECTOR_WHITESPACE: &[u8] = &[b' ', b'\t', b'\n', b'\r', 0x0C];
+pub(crate) const SELECTOR_WHITESPACE: &[u8] = &[b' ', b'\t', b'\n', b'\r', 0x0C];
 
-/// Compile-time check that `T` satisfies the `SelectorImpl` trait shape.
-/// In Rust this is expressed as a trait bound; this fn is kept for diff parity.
-pub fn valid_selector_impl<T: SelectorImpl>() {
-    // Zig used `_ = T.SelectorImpl.X;` to force decl resolution; in Rust the trait
-    // bound `T: SelectorImpl` is the check.
-}
-
-/// The `SelectorImpl` shape (Zig validated via `ValidSelectorImpl`). Phase B: this trait
-/// lives in `bun_css::selector::impl_` and is implemented by `impl_::Selectors`.
-// PORT NOTE: `PartialEq + Clone` bounds dropped — the concrete assoc types
+/// The `SelectorImpl` shape. Implemented
+/// by `impl_::Selectors` in `bun_css::selector::impl_`.
+// `PartialEq + Clone` bounds dropped — the concrete assoc types
 // (`values::ident::{Ident,IdentOrRef}`, `*const [u8]`) implement structural
 // equality via the `CssEql` protocol (`generics::implement_eql`), not
 // `core::cmp::PartialEq`. Every `eql`/`deep_clone`/`hash` callsite in this
 // module forwards through `css::implement_*` which bound on `CssEql`/
 // `DeepClone`/`CssHash`, so the std bounds were never load-bearing.
 pub trait SelectorImpl: Sized {
-    type ExtraMatchingData;
     type AttrValue: Clone;
     type Identifier: Clone;
     type LocalIdentifier: Clone;
     type LocalName: Clone;
     type NamespaceUrl: Clone;
     type NamespacePrefix: Clone;
-    type BorrowedNamespaceUrl;
-    type BorrowedLocalName;
     type NonTSPseudoClass: Clone;
     type VendorPrefix: Clone;
     type PseudoElement: Clone;
@@ -155,9 +130,8 @@ pub trait SelectorImpl: Sized {
 
 /// Constrained `SelectorImpl` with the concrete assoc-type bundle Bun uses.
 ///
-/// PORT NOTE: in Zig the `parse_*` functions were `comptime Impl: type` generics
-/// but every body assumed the concrete `selector.impl.Selectors` shapes (it was
-/// the only instantiation). Rust can't see through the open `Impl::LocalName`
+/// Every `parse_*` body assumes the concrete `selector.impl.Selectors` shapes
+/// (the only instantiation). Rust can't see through the open `Impl::LocalName`
 /// to `Ident`, so the parse functions bound on this sub-trait instead — the
 /// associated-type equality clauses make `Impl::LocalName == Ident` etc.
 /// visible to the body without monomorphizing the signature.
@@ -185,8 +159,8 @@ pub mod attrs {
 
     #[derive(Clone)]
     pub struct NamespaceUrl<Impl: SelectorImpl> {
-        pub prefix: Impl::NamespacePrefix,
-        pub url: Impl::NamespaceUrl,
+        pub(crate) prefix: Impl::NamespacePrefix,
+        pub(crate) url: Impl::NamespaceUrl,
     }
 
     impl<Impl: BunSelectorImpl> NamespaceUrl<Impl> {
@@ -194,14 +168,14 @@ pub mod attrs {
             // `BunSelectorImpl` fixes `NamespacePrefix = Ident`, `NamespaceUrl = Str`.
             self.prefix.eql(&rhs.prefix) && strings::eql(self.url, rhs.url)
         }
-        pub fn deep_clone(&self) -> Self {
+        pub(crate) fn deep_clone(&self) -> Self {
             // `NamespaceUrl = &'static [u8]` (arena-backed) — identity copy.
             Self {
-                prefix: self.prefix.clone(),
+                prefix: self.prefix,
                 url: self.url,
             }
         }
-        pub fn hash(&self, hasher: &mut Wyhash) {
+        pub(crate) fn hash(&self, hasher: &mut Wyhash) {
             self.prefix.hash(hasher);
             hasher.update(self.url);
         }
@@ -209,11 +183,11 @@ pub mod attrs {
 
     #[derive(Clone)]
     pub struct AttrSelectorWithOptionalNamespace<Impl: SelectorImpl> {
-        pub namespace: Option<NamespaceConstraint<NamespaceUrl<Impl>>>,
-        pub local_name: Impl::LocalName,
-        pub local_name_lower: Impl::LocalName,
-        pub operation: ParsedAttrSelectorOperation<Impl::AttrValue>,
-        pub never_matches: bool,
+        pub(crate) namespace: Option<NamespaceConstraint<NamespaceUrl<Impl>>>,
+        pub(crate) local_name: Impl::LocalName,
+        pub(crate) local_name_lower: Impl::LocalName,
+        pub(crate) operation: ParsedAttrSelectorOperation<Impl::AttrValue>,
+        pub(crate) never_matches: bool,
     }
 
     impl<Impl: BunSelectorImpl> AttrSelectorWithOptionalNamespace<Impl> {
@@ -262,23 +236,23 @@ pub mod attrs {
                 (Some(a), Some(b)) => a.eql(b),
                 _ => return false,
             }
-            .then(|| ())
+            .then_some(())
             .is_some()
                 && self.local_name.eql(&rhs.local_name)
                 && self.local_name_lower.eql(&rhs.local_name_lower)
                 && self.operation.eql(&rhs.operation)
                 && self.never_matches == rhs.never_matches
         }
-        pub fn deep_clone(&self) -> Self {
+        pub(crate) fn deep_clone(&self) -> Self {
             Self {
                 namespace: self.namespace.as_ref().map(|n| n.deep_clone()),
-                local_name: self.local_name.clone(),
-                local_name_lower: self.local_name_lower.clone(),
+                local_name: self.local_name,
+                local_name_lower: self.local_name_lower,
                 operation: self.operation.deep_clone(),
                 never_matches: self.never_matches,
             }
         }
-        pub fn hash(&self, hasher: &mut Wyhash) {
+        pub(crate) fn hash(&self, hasher: &mut Wyhash) {
             if let Some(ns) = &self.namespace {
                 ns.hash(hasher);
             }
@@ -304,7 +278,7 @@ pub mod attrs {
                 _ => false,
             }
         }
-        pub fn hash(&self, hasher: &mut Wyhash) {
+        pub(crate) fn hash(&self, hasher: &mut Wyhash) {
             match self {
                 Self::Any => hasher.update(&0u32.to_ne_bytes()),
                 Self::Specific(n) => {
@@ -313,7 +287,7 @@ pub mod attrs {
                 }
             }
         }
-        pub fn deep_clone(&self) -> Self {
+        pub(crate) fn deep_clone(&self) -> Self {
             match self {
                 Self::Any => Self::Any,
                 Self::Specific(n) => Self::Specific(n.deep_clone()),
@@ -321,7 +295,7 @@ pub mod attrs {
         }
     }
 
-    #[derive(Clone, PartialEq)]
+    #[derive(Clone, PartialEq, Eq)]
     pub enum ParsedAttrSelectorOperation<AttrValue> {
         Exists,
         WithValue {
@@ -331,10 +305,10 @@ pub mod attrs {
         },
     }
 
-    // PORT NOTE: implemented for the concrete `AttrValue = css::CSSString`
+    // Implemented for the concrete `AttrValue = css::CSSString`
     // (= `*const [u8]`) only — the sole `BunSelectorImpl` instantiation.
     impl ParsedAttrSelectorOperation<css::CSSString> {
-        pub fn deep_clone(&self) -> Self {
+        pub(crate) fn deep_clone(&self) -> Self {
             self.clone()
         }
         pub fn eql(&self, rhs: &Self) -> bool {
@@ -360,7 +334,7 @@ pub mod attrs {
                 _ => false,
             }
         }
-        pub fn hash(&self, hasher: &mut Wyhash) {
+        pub(crate) fn hash(&self, hasher: &mut Wyhash) {
             match self {
                 Self::Exists => hasher.update(&0u32.to_ne_bytes()),
                 Self::WithValue {
@@ -389,7 +363,7 @@ pub mod attrs {
     }
 
     impl AttrSelectorOperator {
-        pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
             // https://drafts.csswg.org/cssom/#serializing-selectors
             // See "attribute selector".
             dest.write_str(match self {
@@ -401,16 +375,6 @@ pub mod attrs {
                 Self::Suffix => "$=",
             })
         }
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-    pub enum AttrSelectorOperation {
-        Equal,
-        Includes,
-        DashMatch,
-        Prefix,
-        Substring,
-        Suffix,
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, Hash, CssEql, CssHash, css::generics::DeepClone)]
@@ -432,21 +396,21 @@ pub mod attrs {
 
 #[derive(Clone, Copy, Default)]
 pub struct Specificity {
-    pub id_selectors: u32,
-    pub class_like_selectors: u32,
-    pub element_selectors: u32,
+    pub(crate) id_selectors: u32,
+    pub(crate) class_like_selectors: u32,
+    pub(crate) element_selectors: u32,
 }
 
 impl Specificity {
     const MAX_10BIT: u32 = (1 << 10) - 1;
 
-    pub fn to_u32(self) -> u32 {
+    pub(crate) fn to_u32(self) -> u32 {
         (self.id_selectors.min(Self::MAX_10BIT) << 20)
             | (self.class_like_selectors.min(Self::MAX_10BIT) << 10)
             | self.element_selectors.min(Self::MAX_10BIT)
     }
 
-    pub fn from_u32(value: u32) -> Specificity {
+    pub(crate) fn from_u32(value: u32) -> Specificity {
         debug_assert!(value <= (Self::MAX_10BIT << 20 | Self::MAX_10BIT << 10 | Self::MAX_10BIT));
         Specificity {
             id_selectors: value >> 20,
@@ -455,14 +419,14 @@ impl Specificity {
         }
     }
 
-    pub fn add(&mut self, rhs: Specificity) {
+    pub(crate) fn add(&mut self, rhs: Specificity) {
         self.id_selectors += rhs.id_selectors;
         self.element_selectors += rhs.element_selectors;
         self.class_like_selectors += rhs.class_like_selectors;
     }
 }
 
-pub fn compute_specificity<Impl: BunSelectorImpl>(iter: &[GenericComponent<Impl>]) -> u32 {
+pub(crate) fn compute_specificity<Impl: BunSelectorImpl>(iter: &[GenericComponent<Impl>]) -> u32 {
     let spec = compute_complex_selector_specificity::<Impl>(iter);
     spec.to_u32()
 }
@@ -562,7 +526,10 @@ fn compute_simple_selector_specificity<Impl: BunSelectorImpl>(
             // Does not affect specificity
         }
         C::Nesting => {
-            // TODO
+            // No specificity contribution here. Whether `&` should
+            // contribute specificity at this point is unresolved;
+            // nesting substitution happens at print time, after
+            // specificity is computed.
         }
     }
 }
@@ -587,9 +554,7 @@ fn parse_selector<Impl: BunSelectorImpl>(
         input.reset(&parser_state);
     }
 
-    // PERF: allocations here
-    // PERF(port): was arena-backed SelectorBuilder — profile in Phase B
-    let mut builder = SelectorBuilder::<Impl>::default();
+    let mut builder = SelectorBuilder::<Impl>::init_in(ArenaPtr::new(input.arena()));
 
     'outer_loop: loop {
         // Parse a sequence of simple selectors.
@@ -628,7 +593,7 @@ fn parse_selector<Impl: BunSelectorImpl>(
                     any_whitespace = true;
                     continue;
                 }
-                // PORT NOTE: `Token::Delim` carries `u32` codepoint; cast to
+                // `Token::Delim` carries `u32` codepoint; cast to
                 // `u8` for ASCII match (all CSS combinator delims are ASCII).
                 Token::Delim(d) => match u8::try_from(*d).ok() {
                     Some(b'>') => {
@@ -740,10 +705,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
         empty = false;
     }
 
-    if let Ok(_) = parse_type_selector::<Impl>(parser, input, *state, builder) {
-        // Note: Zig `.asValue()` here means "if Ok"; the bool result is unused.
-        // TODO(port): the Zig only sets `empty = false` on Ok(true|false) — but
-        // `asValue()` returns Some on .result regardless of bool value, so this matches.
+    if parse_type_selector::<Impl>(parser, input, *state, builder)? {
         empty = false;
     }
 
@@ -881,30 +843,21 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
         selector
             .components
             .push(GenericComponent::Combinator(wombo_combo));
-        // PERF(port): was assume_capacity (catch unreachable on arena)
         selector.components.push(scope);
     }
 
     Ok(selector)
 }
 
-/// Compile-time validation of the `SelectorParser` shape. In Rust the methods are
-/// inherent on `SelectorParser`; this is a no-op kept for diff parity.
-pub fn valid_selector_parser<T>() {
-    // Zig: `_ = T.SelectorParser.parseSlotted;` etc. — structural duck-typing check.
-    // In Rust these are inherent methods on `SelectorParser`; nothing to validate at runtime.
-}
-
 /// The [:dir()](https://drafts.csswg.org/selectors-4/#the-dir-pseudo) pseudo class.
-// Re-export of the canonical `{ltr, rtl}` enum from `properties::text` — both Zig
-// specs (selectors/parser.zig:700, properties/text.zig:251) define the same
-// `DefineEnumProperty` shape, so the Rust port shares one definition. The
+// Re-export of the canonical `{ltr, rtl}` enum from `properties::text` — the
+// selector and property grammars share one definition. The
 // `#[derive(DefineEnumProperty)]` on the canonical provides `parse`/`to_css`/
 // `as_str`; `CssEql`/`CssHash`/`DeepClone` come from `generics::inherent_bridge`.
 pub use css::css_properties::text::Direction;
 
 /// A pseudo class.
-// PORT NOTE: `PartialEq` derive dropped — `Local`/`Global` carry
+// `PartialEq` derive dropped — `Local`/`Global` carry
 // `Box<Selector>` and `CustomFunction` carries `TokenList`, neither of which
 // implements `PartialEq`. Equality goes through `eql()` (CssEql protocol).
 #[derive(Clone, CssEql, CssHash)]
@@ -914,7 +867,6 @@ pub enum PseudoClass {
     Lang {
         /// A list of language codes.
         languages: Vec<Str>,
-        // PERF(port): was arena ArrayList — profile in Phase B
     },
     /// The [:dir()](https://drafts.csswg.org/selectors-4/#the-dir-pseudo) pseudo class.
     Dir {
@@ -1061,7 +1013,7 @@ pub enum PseudoClass {
 }
 
 impl PseudoClass {
-    pub fn is_equivalent(&self, other: &PseudoClass) -> bool {
+    pub(crate) fn is_equivalent(&self, other: &PseudoClass) -> bool {
         use PseudoClass as P;
         if matches!(self, P::Fullscreen(_)) && matches!(other, P::Fullscreen(_)) {
             return true;
@@ -1085,12 +1037,9 @@ impl PseudoClass {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // PERF(alloc): I don't like making these little allocations
-        // PORT NOTE: Zig builds a fresh `Printer` over an allocating writer,
-        // calls `serialize::serializePseudoClass`, then writes the buffer to
-        // `dest`. The buffered indirection only matters for length-dependent
-        // minification decisions made by callers (none here), so write
-        // directly to `dest` until `Printer::new_buffered` lands.
+        // A buffered intermediate `Printer` would only matter for
+        // length-dependent minification decisions made by callers (none
+        // here), so write directly to `dest`.
         serialize::serialize_pseudo_class(self, dest, None)
     }
 
@@ -1098,11 +1047,11 @@ impl PseudoClass {
     // `Box<Selector>` arms recurse via the `CssEql for GenericSelector` impl
     // below). `deep_clone` is `Clone` — the selector AST is global-alloc and
     // every borrowed payload (`Str`, `Ident.v`) is an arena-static identity copy.
-    pub fn deep_clone(&self) -> Self {
+    pub(crate) fn deep_clone(&self) -> Self {
         self.clone()
     }
 
-    pub fn get_prefix(&self) -> css::VendorPrefix {
+    pub(crate) fn get_prefix(&self) -> css::VendorPrefix {
         use PseudoClass as P;
         match self {
             P::Fullscreen(p)
@@ -1115,7 +1064,10 @@ impl PseudoClass {
         }
     }
 
-    pub fn get_necessary_prefixes(&mut self, targets: css::targets::Targets) -> css::VendorPrefix {
+    pub(crate) fn get_necessary_prefixes(
+        &mut self,
+        targets: &css::targets::Targets,
+    ) -> css::VendorPrefix {
         use PseudoClass as P;
         use css::prefixes::Feature as F;
         let (p, feature): (&mut css::VendorPrefix, F) = match self {
@@ -1131,7 +1083,7 @@ impl PseudoClass {
         *p
     }
 
-    pub fn is_user_action_state(&self) -> bool {
+    pub(crate) fn is_user_action_state(&self) -> bool {
         use PseudoClass as P;
         matches!(
             self,
@@ -1139,11 +1091,11 @@ impl PseudoClass {
         )
     }
 
-    pub fn is_valid_before_webkit_scrollbar(&self) -> bool {
+    pub(crate) fn is_valid_before_webkit_scrollbar(&self) -> bool {
         !matches!(self, PseudoClass::WebkitScrollbar(_))
     }
 
-    pub fn is_valid_after_webkit_scrollbar(&self) -> bool {
+    pub(crate) fn is_valid_after_webkit_scrollbar(&self) -> bool {
         use PseudoClass as P;
         matches!(
             self,
@@ -1200,8 +1152,8 @@ pub enum WebKitScrollbarPseudoElement {
 
 impl WebKitScrollbarPseudoElement {
     #[inline]
-    pub fn eql(&self, rhs: &Self) -> bool {
-        *self == *rhs
+    pub fn eql(self, rhs: Self) -> bool {
+        self == rhs
     }
     // hash — via `#[derive(CssHash)]`.
 }
@@ -1211,31 +1163,23 @@ impl WebKitScrollbarPseudoElement {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub struct SelectorParser<'a> {
-    pub is_nesting_allowed: bool,
-    pub options: &'a ParserOptions<'a>,
-    // `arena: Allocator` dropped — arena threaded via `input.arena()` in Zig.
-    // PERF(port): was arena bulk-free — Phase B re-threads `&'bump Bump`.
+    pub(crate) is_nesting_allowed: bool,
+    pub(crate) options: &'a ParserOptions<'a>,
+    // PERF: re-thread `&'bump Bump` here to restore arena allocation.
 }
 
-// Zig: `pub const Impl = impl_.Selectors;` lived inside the struct for
-// `ValidSelectorParser`'s comptime decl-probe. Rust inherent associated types
-// are unstable (rust#8995); the equivalent contract is the `BunSelectorImpl`
-// blanket impl above, so expose the alias at module scope instead.
-pub type SelectorParserImpl = impl_::Selectors;
+// Rust inherent associated types are unstable (rust#8995); the equivalent
+// contract is the `BunSelectorImpl` blanket impl above, so expose the alias
+// at module scope instead.
 
 impl<'a> SelectorParser<'a> {
-    pub fn new_local_identifier(
+    pub(crate) fn new_local_identifier(
         &mut self,
         input: &mut CssParser,
         tag: css::CssRefTag,
         raw: Str,
         loc: usize,
     ) -> <impl_::Selectors as SelectorImpl>::LocalIdentifier {
-        // blocked_on: `Parser::add_symbol_for_name` (gated in css_parser.rs on
-        // ArrayHashMap::entry + SymbolList::push). The CSS-modules branch
-        // returns the symbol-table ref; until that un-gates, fall through to
-        // the ident arm so non-modules parsing is correct.
-
         if input.flags.css_modules() {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
                 input.add_symbol_for_name(
@@ -1254,29 +1198,30 @@ impl<'a> SelectorParser<'a> {
         })
     }
 
-    pub fn namespace_for_prefix(&mut self, prefix: Ident) -> Option<Str> {
+    pub(crate) fn namespace_for_prefix(&mut self, prefix: Ident) -> Option<Str> {
         let _ = self;
         // SAFETY: `Ident.v` borrows the parser arena which outlives the parse
-        // session (Phase-A `'static` placeholder).
+        // session (`'static` is a placeholder for the arena lifetime).
         Some(unsafe { crate::arena_str(prefix.v) })
     }
 
-    pub fn parse_functional_pseudo_element(
+    pub(crate) fn parse_functional_pseudo_element(
         &mut self,
         name: Str,
         input: &mut CssParser,
     ) -> CResult<PseudoElement> {
-        // Spec parity: parser.zig:1054 uses `ComptimeEnumMap.get(name)` which is
-        // CASE-SENSITIVE (`ComptimeStringMap.get`, not `getAnyCase`/`getASCIIICaseInsensitive`).
-        // `::CUE(..)` / `::View-Transition-Group(..)` therefore fall through to
-        // `CustomFunction` in the spec — match that here by looking up `name`
-        // verbatim with no case folding.
+        // This lookup is intentionally CASE-SENSITIVE: `::CUE(..)` /
+        // `::View-Transition-Group(..)` fall through to `CustomFunction`,
+        // so look up `name` verbatim with no case folding.
         //
-        // PERF(port): 6 entries with near-unique lengths (3/10/19/19/21/26) —
+        // PERF: 6 entries with near-unique lengths (3/10/19/19/21/26) —
         // a length-gated `match` rejects the overwhelmingly-common miss path
         // (unknown `::-webkit-foo(...)` etc.) on a single `usize` compare,
-        // versus phf's hash + 2 table loads + slice compare. Only len==19 has
-        // two candidates, disambiguated by one full slice compare each.
+        // versus a hash lookup's hash + table load + slice compare. Only
+        // len==19 has two candidates, disambiguated by one full slice compare
+        // each. Stays a hand-rolled `match` (not `comptime_string_map!`)
+        // because each arm parses `input` differently rather than yielding a
+        // constant.
         match name.len() {
             3 if name == b"cue" => {
                 return Ok(PseudoElement::CueFunction {
@@ -1315,39 +1260,19 @@ impl<'a> SelectorParser<'a> {
         }
         if !strings::starts_with(name, b"-") {
             self.options.warn(
-                input.new_custom_error(
+                &input.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name)
                         .into_default_parser_error(),
                 ),
             );
         }
 
-        // blocked_on: properties::custom (TokenList::parse_raw / TokenOrValue) un-gate.
-        // The stub `properties::custom::TokenList` is a unit struct with no `.v`
-        // field and no `parse_raw`; consume the function args as opaque tokens
-        // until the real `custom.rs` un-gates.
-
-        {
-            let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-            TokenList::parse_raw(input, &mut args, self.options, 0)?;
-            return Ok(PseudoElement::CustomFunction {
-                name,
-                arguments: TokenList { v: args },
-            });
-        }
-        {
-            // Spec (parser.zig:1088-1094) calls `TokenList.parseRaw(input, ...)`
-            // which consumes the function-argument tokens. Until
-            // `TokenList::parse_raw` un-gates, drain the nested block so the
-            // caller's `parse_nested_block` → `expect_exhausted` passes and the
-            // selector grammar accepts the same inputs as the spec.
-            // TODO(port): un-gate `TokenList::parse_raw` and store the args.
-            while input.next().is_ok() {}
-            Ok(PseudoElement::CustomFunction {
-                name,
-                arguments: TokenList::default(),
-            })
-        }
+        let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
+        TokenList::parse_raw(input, &mut args, self.options, 0)?;
+        Ok(PseudoElement::CustomFunction {
+            name,
+            arguments: TokenList { v: args },
+        })
     }
 
     fn parse_is_and_where(&self) -> bool {
@@ -1364,21 +1289,18 @@ impl<'a> SelectorParser<'a> {
         }}
     }
 
-    pub fn parse_non_ts_pseudo_class(
+    pub(crate) fn parse_non_ts_pseudo_class(
         &mut self,
         loc: css::SourceLocation,
         name: Str,
     ) -> CResult<PseudoClass> {
         // @compileError(css.todo_stuff.match_ignore_ascii_case);
         let pseudo_class: PseudoClass = 'pseudo_class: {
-            // TODO(port): phf custom hasher — Zig used `ComptimeStringMap.getAnyCase`
-            // (ASCII case-insensitive). Phase B: generate a case-folded phf or use a
-            // `match` over the lowercased name.
             if let Some(pseudo) = lookup_non_ts_pseudo_class(name) {
                 break 'pseudo_class pseudo;
             }
             if strings::starts_with_char(name, b'_') {
-                self.options.warn(loc.new_custom_error(
+                self.options.warn(&loc.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
                 ));
             } else if (self.options.css_modules.is_some()
@@ -1395,18 +1317,18 @@ impl<'a> SelectorParser<'a> {
         Ok(pseudo_class)
     }
 
-    pub fn parse_host(&mut self) -> bool {
+    pub(crate) fn parse_host(&mut self) -> bool {
         true
     }
 
-    pub fn parse_non_ts_functional_pseudo_class(
+    pub(crate) fn parse_non_ts_functional_pseudo_class(
         &mut self,
         name: Str,
         parser: &mut CssParser,
     ) -> CResult<PseudoClass> {
         let pseudo_class = crate::match_ignore_ascii_case! { name, {
             b"lang" => {
-                // PORT NOTE: `expect_ident_or_string` returns `&'_ [u8]`
+                // `expect_ident_or_string` returns `&'_ [u8]`
                 // (lifetime-tied to `&mut self`), which can't satisfy
                 // `parse_comma_separated`'s HRTB. Clone the token to extract
                 // the underlying `&'static [u8]` payload directly.
@@ -1432,7 +1354,7 @@ impl<'a> SelectorParser<'a> {
             _ => {
                 if !strings::starts_with_char(name, b'-') {
                     self.options.warn(
-                        parser.new_custom_error(
+                        &parser.new_custom_error(
                             SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name)
                                 .into_default_parser_error(),
                         ),
@@ -1450,27 +1372,29 @@ impl<'a> SelectorParser<'a> {
         Ok(pseudo_class)
     }
 
-    pub fn is_nesting_allowed(&self) -> bool {
+    pub(crate) fn is_nesting_allowed(&self) -> bool {
         self.is_nesting_allowed
     }
 
-    pub fn deep_combinator_enabled(&self) -> bool {
+    pub(crate) fn deep_combinator_enabled(&self) -> bool {
         self.options
             .flags
             .contains(css::ParserFlags::DEEP_SELECTOR_COMBINATOR)
     }
 
-    pub fn default_namespace(&self) -> Option<<impl_::Selectors as SelectorImpl>::NamespaceUrl> {
+    pub(crate) fn default_namespace(
+        &self,
+    ) -> Option<<impl_::Selectors as SelectorImpl>::NamespaceUrl> {
         let _ = self;
         None
     }
 
-    pub fn parse_part(&self) -> bool {
+    pub(crate) fn parse_part(&self) -> bool {
         let _ = self;
         true
     }
 
-    pub fn parse_slotted(&self) -> bool {
+    pub(crate) fn parse_slotted(&self) -> bool {
         let _ = self;
         true
     }
@@ -1481,15 +1405,14 @@ impl<'a> SelectorParser<'a> {
         ParseErrorRecovery::IgnoreInvalidSelector
     }
 
-    pub fn parse_pseudo_element(
+    pub(crate) fn parse_pseudo_element(
         &mut self,
         loc: css::SourceLocation,
         name: Str,
     ) -> CResult<PseudoElement> {
-        // TODO(port): phf custom hasher — Zig used `ComptimeStringMap.getCaseInsensitiveWithEql`.
         let pseudo_element = lookup_pseudo_element(name).unwrap_or_else(|| {
             if !strings::starts_with_char(name, b'-') {
-                self.options.warn(loc.new_custom_error(
+                self.options.warn(&loc.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
                 ));
             }
@@ -1501,7 +1424,6 @@ impl<'a> SelectorParser<'a> {
 }
 
 /// Case-insensitive lookup table for `parse_non_ts_pseudo_class`.
-/// Mirrors the `ComptimeStringMap` at parser.zig:1120.
 fn lookup_non_ts_pseudo_class(name: &[u8]) -> Option<PseudoClass> {
     use PseudoClass as P;
     use WebKitScrollbarPseudoClass as WS;
@@ -1591,7 +1513,6 @@ fn lookup_non_ts_pseudo_class(name: &[u8]) -> Option<PseudoClass> {
 }
 
 /// Case-insensitive lookup table for `parse_pseudo_element`.
-/// Mirrors the `ComptimeStringMap` at parser.zig:1333.
 fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
     use PseudoElement as PE;
     use WebKitScrollbarPseudoElement as WS;
@@ -1633,7 +1554,7 @@ fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
 
 pub struct GenericSelectorList<Impl: SelectorImpl> {
     // PERF: make this equivalent to SmallVec<[Selector; 1]>
-    pub v: SmallList<GenericSelector<Impl>, 1>,
+    pub(crate) v: SmallList<GenericSelector<Impl>, 1>,
 }
 
 impl<Impl: SelectorImpl> Default for GenericSelectorList<Impl> {
@@ -1651,7 +1572,7 @@ impl<Impl: SelectorImpl> Default for GenericSelector<Impl> {
                 specificity: 0,
                 flags: SelectorFlags::empty(),
             },
-            components: Vec::new(),
+            components: Vec::new_in(ArenaPtr::global()),
         }
     }
 }
@@ -1661,38 +1582,13 @@ impl<Impl: SelectorImpl> GenericSelectorList<Impl> {
     /// `:has()`/`:not()`/`:nth-*(.. of ..)` which store `Box<[Selector]>` to
     /// keep `Component` small. See `small_list_into_box`.
     #[inline]
-    pub fn into_boxed_selectors(self) -> Box<[GenericSelector<Impl>]> {
+    pub(crate) fn into_boxed_selectors(self) -> Box<[GenericSelector<Impl>]> {
         small_list_into_box(self.v)
     }
 }
 
-/// `DebugFmt` wrapper — implements `Display` over a borrowed list (debug builds only).
-pub struct SelectorListDebugFmt<'a, Impl: SelectorImpl>(pub &'a GenericSelectorList<Impl>);
-
-impl<'a, Impl: BunSelectorImpl> fmt::Display for SelectorListDebugFmt<'a, Impl> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !cfg!(debug_assertions) {
-            return Ok(());
-        }
-        write!(f, "SelectorList[\n")?;
-        let last = (self.0.v.len() as usize).saturating_sub(1);
-        for (i, sel) in self.0.v.slice().iter().enumerate() {
-            if i != last {
-                write!(f, " {}\n", sel.debug())?;
-            } else {
-                write!(f, " {},\n", sel.debug())?;
-            }
-        }
-        write!(f, "]\n")
-    }
-}
-
 impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
-    pub fn debug(&self) -> SelectorListDebugFmt<'_, Impl> {
-        SelectorListDebugFmt(self)
-    }
-
-    pub fn any_has_pseudo_element(&self) -> bool {
+    pub(crate) fn any_has_pseudo_element(&self) -> bool {
         for sel in self.v.slice() {
             if sel.has_pseudo_element() {
                 return true;
@@ -1701,7 +1597,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         false
     }
 
-    pub fn specifities_all_equal(&self) -> bool {
+    pub(crate) fn specifities_all_equal(&self) -> bool {
         if self.v.len() == 0 {
             return true;
         }
@@ -1753,7 +1649,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         )
     }
 
-    pub fn parse_relative(
+    pub(crate) fn parse_relative(
         parser: &mut SelectorParser,
         input: &mut CssParser,
         error_recovery: ParseErrorRecovery,
@@ -1769,7 +1665,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         )
     }
 
-    pub fn parse_with_state(
+    pub(crate) fn parse_with_state(
         parser: &mut SelectorParser,
         input: &mut CssParser,
         state: &mut SelectorParsingState,
@@ -1777,13 +1673,11 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         nesting_requirement: NestingRequirement,
     ) -> CResult<Self> {
         let original_state = *state;
-        // TODO: Think about deinitialization in error cases
         let mut values: SmallList<GenericSelector<Impl>, 1> = SmallList::default();
 
         loop {
-            // PORT NOTE: reshaped for borrowck — Zig used a `Closure` struct capturing
-            // `&mut state` and `&mut parser`; Rust captures a local `saw_nesting` flag
-            // and applies it to `state` after the closure returns (no raw `*mut`).
+            // For borrowck, the closure captures a local `saw_nesting` flag
+            // and applies it to `state` after it returns (no raw `*mut`).
             let mut saw_nesting = false;
             let selector =
                 input.parse_until_before(css::Delimiters::COMMA, |input2: &mut CssParser| {
@@ -1807,7 +1701,6 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
             match selector {
                 Ok(sel) => {
                     values.append(sel);
-                    // PERF(port): was arena append — profile in Phase B
                 }
                 Err(e) => match recovery {
                     ParseErrorRecovery::DiscardList => return Err(e),
@@ -1815,22 +1708,20 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
                 },
             }
 
-            loop {
-                if let Ok(tok) = input.next() {
-                    if matches!(tok, Token::Comma) {
-                        break;
-                    }
-                    // Shouldn't have got a selector if getting here.
-                    debug_assert!(!was_ok);
+            if let Ok(tok) = input.next() {
+                if matches!(tok, Token::Comma) {
+                    continue;
                 }
-                return Ok(Self { v: values });
+                // Shouldn't have got a selector if getting here.
+                debug_assert!(!was_ok);
             }
+            return Ok(Self { v: values });
         }
     }
 
-    // TODO: this looks exactly the same as `parse_with_state()` except it uses
-    // `parse_relative_selector()` instead of `parse_selector()`
-    pub fn parse_relative_with_state(
+    // Same shape as `parse_with_state()` but parses each item with
+    // `parse_relative_selector()` instead of `parse_selector()`.
+    pub(crate) fn parse_relative_with_state(
         parser: &mut SelectorParser,
         input: &mut CssParser,
         state: &mut SelectorParsingState,
@@ -1838,11 +1729,10 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         nesting_requirement: NestingRequirement,
     ) -> CResult<Self> {
         let original_state = *state;
-        // TODO: Think about deinitialization in error cases
         let mut values: SmallList<GenericSelector<Impl>, 1> = SmallList::default();
 
         loop {
-            // PORT NOTE: reshaped for borrowck — capture a local flag instead of a
+            // Reshaped for borrowck — capture a local flag instead of a
             // raw `*mut SelectorParsingState`, then fold into `state` after return.
             let mut saw_nesting = false;
             let selector =
@@ -1874,26 +1764,24 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
                 },
             }
 
-            loop {
-                if let Ok(tok) = input.next() {
-                    if matches!(tok, Token::Comma) {
-                        break;
-                    }
-                    // Shouldn't have got a selector if getting here.
-                    debug_assert!(!was_ok);
+            if let Ok(tok) = input.next() {
+                if matches!(tok, Token::Comma) {
+                    continue;
                 }
-                return Ok(Self { v: values });
+                // Shouldn't have got a selector if getting here.
+                debug_assert!(!was_ok);
             }
+            return Ok(Self { v: values });
         }
     }
 
-    pub fn from_selector(selector: GenericSelector<Impl>) -> Self {
+    pub(crate) fn from_selector(selector: GenericSelector<Impl>) -> Self {
         let mut result = Self::default();
         result.v.append(selector);
         result
     }
 
-    pub fn deep_clone(&self) -> Self {
+    pub(crate) fn deep_clone(&self) -> Self {
         let mut v = SmallList::<GenericSelector<Impl>, 1>::init_capacity(self.v.len());
         for sel in self.v.slice() {
             v.append(sel.deep_clone());
@@ -1905,7 +1793,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         eql_selector_slice(self.v.slice(), rhs.v.slice())
     }
 
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         hash_selector_slice(self.v.slice(), hasher);
     }
 }
@@ -1944,31 +1832,11 @@ impl<Impl: BunSelectorImpl> CssHash for GenericSelectorList<Impl> {
 /// handle it in to_css to make it invisible to serialization.
 #[derive(Clone)]
 pub struct GenericSelector<Impl: SelectorImpl> {
-    pub specificity_and_flags: SpecificityAndFlags,
-    pub components: Vec<GenericComponent<Impl>>,
-    // PERF(port): was arena ArrayList — profile in Phase B
-}
-
-pub struct SelectorDebugFmt<'a, Impl: SelectorImpl>(pub &'a GenericSelector<Impl>);
-
-impl<'a, Impl: SelectorImpl> fmt::Display for SelectorDebugFmt<'a, Impl> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !cfg!(debug_assertions) {
-            return Ok(());
-        }
-        // TODO(port): the Zig builds a fresh `Printer` and calls
-        // `tocss_servo::to_css_selector` into a buffer, then writes the buffer.
-        // blocked_on: `Printer::new_buffered` + `SymbolMap::default` (debug-
-        // only path; serialization body lives in `selector::tocss_servo`).
-        write!(f, "Selector(<{} components>)", self.0.components.len())
-    }
+    pub(crate) specificity_and_flags: SpecificityAndFlags,
+    pub(crate) components: Vec<GenericComponent<Impl>, ArenaPtr>,
 }
 
 impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
-    pub fn debug(&self) -> SelectorDebugFmt<'_, Impl> {
-        SelectorDebugFmt(self)
-    }
-
     /// Parse a selector, without any pseudo-element.
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
@@ -1982,7 +1850,7 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         unreachable!("use serializer::serialize_selector()");
     }
 
-    pub fn append(&mut self, component: GenericComponent<Impl>) {
+    pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
         let index = 'index: {
             for (i, comp) in self.components.iter().enumerate() {
                 match comp {
@@ -1997,10 +1865,13 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         self.components.insert(index, component);
     }
 
-    pub fn deep_clone(&self) -> Self {
+    pub(crate) fn deep_clone(&self) -> Self {
+        let alloc = *self.components.allocator();
+        let mut components = Vec::with_capacity_in(self.components.len(), alloc);
+        components.extend(self.components.iter().map(|c| c.deep_clone()));
         Self {
             specificity_and_flags: self.specificity_and_flags,
-            components: self.components.iter().map(|c| c.deep_clone()).collect(),
+            components,
         }
     }
 
@@ -2014,7 +1885,7 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
                 .all(|(a, b)| a.eql(b))
     }
 
-    pub fn has_combinator(&self) -> bool {
+    pub(crate) fn has_combinator(&self) -> bool {
         for c in &self.components {
             if let GenericComponent::Combinator(comb) = c {
                 if comb.is_tree_combinator() {
@@ -2025,17 +1896,21 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         false
     }
 
-    pub fn has_pseudo_element(&self) -> bool {
+    pub(crate) fn has_pseudo_element(&self) -> bool {
         self.specificity_and_flags.has_pseudo_element()
     }
 
     /// Returns count of simple selectors and combinators in the Selector.
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.components.len()
     }
 
-    pub fn from_component(component: GenericComponent<Impl>) -> Self {
-        let mut builder = SelectorBuilder::<Impl>::default();
+    pub(crate) fn from_component(component: GenericComponent<Impl>) -> Self {
+        Self::from_component_in(component, ArenaPtr::global())
+    }
+
+    pub(crate) fn from_component_in(component: GenericComponent<Impl>, alloc: ArenaPtr) -> Self {
+        let mut builder = SelectorBuilder::<Impl>::init_in(alloc);
         if let Some(combinator) = component.as_combinator() {
             builder.push_combinator(combinator);
         } else {
@@ -2048,7 +1923,7 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         }
     }
 
-    pub fn specificity(&self) -> u32 {
+    pub(crate) fn specificity(&self) -> u32 {
         self.specificity_and_flags.specificity
     }
 
@@ -2060,7 +1935,7 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         Self::parse(&mut selector_parser, input)
     }
 
-    pub fn iter_raw_match_order(&self) -> RawMatchOrderIterator<'_, Impl> {
+    pub(crate) fn iter_raw_match_order(&self) -> RawMatchOrderIterator<'_, Impl> {
         RawMatchOrderIterator {
             slice: &self.components,
             i: 0,
@@ -2070,14 +1945,17 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     /// Returns an iterator over the sequence of simple selectors and
     /// combinators, in parse order (from left to right), starting from
     /// `offset`.
-    pub fn iter_raw_parse_order_from(&self, offset: usize) -> RawParseOrderFromIter<'_, Impl> {
+    pub(crate) fn iter_raw_parse_order_from(
+        &self,
+        offset: usize,
+    ) -> RawParseOrderFromIter<'_, Impl> {
         RawParseOrderFromIter {
             slice: &self.components[0..self.components.len() - offset],
             i: 0,
         }
     }
 
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         self.specificity_and_flags.hash(hasher);
         for c in &self.components {
             c.hash(hasher);
@@ -2238,20 +2116,15 @@ pub enum GenericComponent<Impl: SelectorImpl> {
 }
 
 impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
-    /// If css modules is enabled these will be locally scoped
-    pub fn is_locally_scoped(&self) -> bool {
-        matches!(self, Self::Id(_) | Self::Class(_))
-    }
-
-    pub fn as_class(&self) -> Option<&Impl::LocalIdentifier> {
+    pub(crate) fn as_class(&self) -> Option<&Impl::LocalIdentifier> {
         match self {
             Self::Class(v) => Some(v),
             _ => None,
         }
     }
 
-    pub fn deep_clone(&self) -> Self {
-        // PORT NOTE: hand-written variant-walk (Zig `implementDeepClone`).
+    pub(crate) fn deep_clone(&self) -> Self {
+        // Hand-written variant-walk.
         // Every borrowed payload (`Str`, `Ident.v`, `IdentOrRef`) is an
         // arena-static identity copy; owning containers (`Vec`/`Box`) recurse.
         use GenericComponent as C;
@@ -2261,19 +2134,19 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
             C::ExplicitNoNamespace => C::ExplicitNoNamespace,
             C::DefaultNamespace(u) => C::DefaultNamespace(*u),
             C::Namespace { prefix, url } => C::Namespace {
-                prefix: prefix.clone(),
+                prefix: *prefix,
                 url: *url,
             },
             C::ExplicitUniversalType => C::ExplicitUniversalType,
             C::LocalName(ln) => C::LocalName(ln.deep_clone()),
-            C::Id(i) => C::Id(i.clone()),
-            C::Class(i) => C::Class(i.clone()),
+            C::Id(i) => C::Id(*i),
+            C::Class(i) => C::Class(*i),
             C::AttributeInNoNamespaceExists {
                 local_name,
                 local_name_lower,
             } => C::AttributeInNoNamespaceExists {
-                local_name: local_name.clone(),
-                local_name_lower: local_name_lower.clone(),
+                local_name: *local_name,
+                local_name_lower: *local_name_lower,
             },
             C::AttributeInNoNamespace {
                 local_name,
@@ -2282,9 +2155,9 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
                 case_sensitivity,
                 never_matches,
             } => C::AttributeInNoNamespace {
-                local_name: local_name.clone(),
+                local_name: *local_name,
                 operator: *operator,
-                value: value.clone(),
+                value: *value,
                 case_sensitivity: *case_sensitivity,
                 never_matches: *never_matches,
             },
@@ -2305,7 +2178,7 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
                 vendor_prefix,
                 selectors,
             } => C::Any {
-                vendor_prefix: vendor_prefix.clone(),
+                vendor_prefix: *vendor_prefix,
                 selectors: deep_clone_selector_slice(selectors),
             },
             C::Has(s) => C::Has(deep_clone_selector_slice(s)),
@@ -2403,7 +2276,7 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
         }
     }
 
-    pub fn as_combinator(&self) -> Option<Combinator> {
+    pub(crate) fn as_combinator(&self) -> Option<Combinator> {
         if let Self::Combinator(c) = self {
             Some(*c)
         } else {
@@ -2411,15 +2284,18 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
         }
     }
 
-    pub fn convert_helper_is(s: Box<[GenericSelector<Impl>]>) -> Self {
+    pub(crate) fn convert_helper_is(s: Box<[GenericSelector<Impl>]>) -> Self {
         Self::Is(s)
     }
 
-    pub fn convert_helper_where(s: Box<[GenericSelector<Impl>]>) -> Self {
+    pub(crate) fn convert_helper_where(s: Box<[GenericSelector<Impl>]>) -> Self {
         Self::Where(s)
     }
 
-    pub fn convert_helper_any(s: Box<[GenericSelector<Impl>]>, prefix: Impl::VendorPrefix) -> Self {
+    pub(crate) fn convert_helper_any(
+        s: Box<[GenericSelector<Impl>]>,
+        prefix: Impl::VendorPrefix,
+    ) -> Self {
         Self::Any {
             vendor_prefix: prefix,
             selectors: s,
@@ -2427,7 +2303,7 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     }
 
     /// Returns true if this is a combinator.
-    pub fn is_combinator(&self) -> bool {
+    pub(crate) fn is_combinator(&self) -> bool {
         matches!(self, Self::Combinator(_))
     }
 
@@ -2438,13 +2314,13 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
         unreachable!("use serializer::serialize_component()");
     }
 
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         use GenericComponent as C;
-        // Zig `implementHash`: `bun.writeAnyToHasher(@intFromEnum(this))` then payload.
+        // Hash a variant tag, then the payload.
         // SAFETY: `GenericComponent` is `#[repr(Rust)]`; reading the discriminant
         // via `core::mem::discriminant` is stable but not byte-hashable. Use a
-        // per-arm tag instead (CSS hashing is in-process dedup only — self-
-        // consistency, not Zig-byte-identity, is the contract).
+        // per-arm tag instead (CSS hashing is in-process dedup only —
+        // self-consistency is the contract).
         macro_rules! tag {
             ($n:expr) => {
                 hasher.update(&($n as u32).to_ne_bytes())
@@ -2585,14 +2461,41 @@ impl<Impl: BunSelectorImpl> CssHash for GenericComponent<Impl> {
 
 impl<Impl: BunSelectorImpl> fmt::Display for GenericComponent<Impl> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): Zig matches on a few variants and falls through to `@tagName`.
-        // Rust enums need `strum::IntoStaticStr` for the tag name; Phase B.
+        // A few variants get detail, the rest print
+        // their tag name. `BunSelectorImpl`
+        // pins `PseudoElement`/`LocalIdentifier` to the concrete types, whose
+        // `Display` impls handle the payloads.
         match self {
             Self::LocalName(ln) => write!(f, "local_name={}", bstr::BStr::new(ln.name.v())),
             Self::Combinator(c) => write!(f, "combinator='{}'", c),
-            Self::PseudoElement(_) => write!(f, "pseudo_element=<..>"),
-            Self::Class(_) => write!(f, "class=<..>"),
-            _ => write!(f, "<component>"),
+            Self::PseudoElement(pe) => write!(f, "pseudo_element={}", pe),
+            Self::Class(c) => write!(f, "class={}", c),
+            Self::ExplicitAnyNamespace => f.write_str("explicit_any_namespace"),
+            Self::ExplicitNoNamespace => f.write_str("explicit_no_namespace"),
+            Self::DefaultNamespace(_) => f.write_str("default_namespace"),
+            Self::Namespace { .. } => f.write_str("namespace"),
+            Self::ExplicitUniversalType => f.write_str("explicit_universal_type"),
+            Self::Id(_) => f.write_str("id"),
+            Self::AttributeInNoNamespaceExists { .. } => {
+                f.write_str("attribute_in_no_namespace_exists")
+            }
+            Self::AttributeInNoNamespace { .. } => f.write_str("attribute_in_no_namespace"),
+            Self::AttributeOther(_) => f.write_str("attribute_other"),
+            Self::Negation(_) => f.write_str("negation"),
+            Self::Root => f.write_str("root"),
+            Self::Empty => f.write_str("empty"),
+            Self::Scope => f.write_str("scope"),
+            Self::Nth(_) => f.write_str("nth"),
+            Self::NthOf(_) => f.write_str("nth_of"),
+            Self::NonTsPseudoClass(_) => f.write_str("non_ts_pseudo_class"),
+            Self::Slotted(_) => f.write_str("slotted"),
+            Self::Part(_) => f.write_str("part"),
+            Self::Host(_) => f.write_str("host"),
+            Self::Where(_) => f.write_str("where"),
+            Self::Is(_) => f.write_str("is"),
+            Self::Any { .. } => f.write_str("any"),
+            Self::Has(_) => f.write_str("has"),
+            Self::Nesting => f.write_str("nesting"),
         }
     }
 }
@@ -2607,14 +2510,14 @@ impl<Impl: BunSelectorImpl> fmt::Display for GenericComponent<Impl> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct NthSelectorData {
     pub ty: NthType,
-    pub is_function: bool,
-    pub a: i32,
-    pub b: i32,
+    pub(crate) is_function: bool,
+    pub(crate) a: i32,
+    pub(crate) b: i32,
 }
 
 impl NthSelectorData {
     /// Returns selector data for :only-{child,of-type}
-    pub fn only(of_type: bool) -> NthSelectorData {
+    pub(crate) fn only(of_type: bool) -> NthSelectorData {
         NthSelectorData {
             ty: if of_type {
                 NthType::OnlyOfType
@@ -2628,7 +2531,7 @@ impl NthSelectorData {
     }
 
     /// Returns selector data for :first-{child,of-type}
-    pub fn first(of_type: bool) -> NthSelectorData {
+    pub(crate) fn first(of_type: bool) -> NthSelectorData {
         NthSelectorData {
             ty: if of_type {
                 NthType::OfType
@@ -2642,7 +2545,7 @@ impl NthSelectorData {
     }
 
     /// Returns selector data for :last-{child,of-type}
-    pub fn last(of_type: bool) -> NthSelectorData {
+    pub(crate) fn last(of_type: bool) -> NthSelectorData {
         NthSelectorData {
             ty: if of_type {
                 NthType::LastOfType
@@ -2655,7 +2558,11 @@ impl NthSelectorData {
         }
     }
 
-    pub fn write_start(&self, dest: &mut Printer, is_function: bool) -> Result<(), PrintErr> {
+    pub(crate) fn write_start(
+        &self,
+        dest: &mut Printer,
+        is_function: bool,
+    ) -> Result<(), PrintErr> {
         dest.write_str(match self.ty {
             NthType::Child => {
                 if is_function {
@@ -2692,7 +2599,7 @@ impl NthSelectorData {
         })
     }
 
-    pub fn is_function_(&self) -> bool {
+    pub(crate) fn is_function_(&self) -> bool {
         self.a != 0 || self.b != 1
     }
 
@@ -2700,7 +2607,7 @@ impl NthSelectorData {
         if num >= 0 { "+" } else { "" }
     }
 
-    pub fn write_affine(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn write_affine(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // PERF: this could be made faster
         if self.a == 0 && self.b == 0 {
             dest.write_char(b'0')
@@ -2728,16 +2635,11 @@ impl NthSelectorData {
         }
     }
 
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         hasher.update(&(self.ty as u32).to_ne_bytes());
         hasher.update(&[self.is_function as u8]);
         hasher.update(&self.a.to_ne_bytes());
         hasher.update(&self.b.to_ne_bytes());
-    }
-
-    #[inline]
-    pub fn deep_clone(&self) -> Self {
-        *self
     }
 }
 
@@ -2746,25 +2648,25 @@ impl NthSelectorData {
 /// https://www.w3.org/TR/selectors-4/#nth-child-pseudo
 #[derive(Clone)]
 pub struct NthOfSelectorData<Impl: SelectorImpl> {
-    pub data: NthSelectorData,
-    pub selectors: Box<[GenericSelector<Impl>]>,
+    pub(crate) data: NthSelectorData,
+    pub(crate) selectors: Box<[GenericSelector<Impl>]>,
 }
 
 impl<Impl: BunSelectorImpl> NthOfSelectorData<Impl> {
     pub fn eql(&self, rhs: &Self) -> bool {
         self.data.eql(&rhs.data) && eql_selector_slice(&self.selectors, &rhs.selectors)
     }
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         self.data.hash(hasher);
         hash_selector_slice(&self.selectors, hasher);
     }
-    pub fn deep_clone(&self) -> Self {
+    pub(crate) fn deep_clone(&self) -> Self {
         Self {
             data: self.data,
             selectors: deep_clone_selector_slice(&self.selectors),
         }
     }
-    pub fn nth_data(&self) -> NthSelectorData {
+    pub(crate) fn nth_data(&self) -> NthSelectorData {
         self.data
     }
 }
@@ -2823,36 +2725,36 @@ bitflags::bitflags! {
 
 impl SelectorParsingState {
     /// Whether we are after any of the pseudo-like things.
-    pub fn after_any_pseudo(self) -> bool {
+    pub(crate) fn after_any_pseudo(self) -> bool {
         self.intersects(Self::AFTER_PART | Self::AFTER_SLOTTED | Self::AFTER_PSEUDO_ELEMENT)
     }
 
-    pub fn allows_pseudos(self) -> bool {
+    pub(crate) fn allows_pseudos(self) -> bool {
         !self.contains(Self::AFTER_PSEUDO_ELEMENT) && !self.contains(Self::DISALLOW_PSEUDOS)
     }
 
-    pub fn allows_part(self) -> bool {
+    pub(crate) fn allows_part(self) -> bool {
         !self.contains(Self::DISALLOW_PSEUDOS) && !self.after_any_pseudo()
     }
 
-    pub fn allows_slotted(self) -> bool {
+    pub(crate) fn allows_slotted(self) -> bool {
         self.allows_part()
     }
 
-    pub fn allows_tree_structural_pseudo_classes(self) -> bool {
+    pub(crate) fn allows_tree_structural_pseudo_classes(self) -> bool {
         !self.after_any_pseudo()
     }
 
-    pub fn allows_non_functional_pseudo_classes(self) -> bool {
+    pub(crate) fn allows_non_functional_pseudo_classes(self) -> bool {
         !self.contains(Self::AFTER_SLOTTED)
             && !self.contains(Self::AFTER_NON_STATEFUL_PSEUDO_ELEMENT)
     }
 
-    pub fn allows_combinators(self) -> bool {
+    pub(crate) fn allows_combinators(self) -> bool {
         !self.contains(Self::DISALLOW_COMBINATORS)
     }
 
-    pub fn allows_custom_functional_pseudo_classes(self) -> bool {
+    pub(crate) fn allows_custom_functional_pseudo_classes(self) -> bool {
         !self.after_any_pseudo()
     }
 }
@@ -2863,21 +2765,18 @@ impl SelectorParsingState {
 pub struct SpecificityAndFlags {
     /// There are two free bits here, since we use ten bits for each specificity
     /// kind (id, class, element).
-    pub specificity: u32,
+    pub(crate) specificity: u32,
     /// There's padding after this field due to the size of the flags.
-    pub flags: SelectorFlags,
+    pub(crate) flags: SelectorFlags,
 }
 
 impl SpecificityAndFlags {
-    pub fn has_pseudo_element(&self) -> bool {
+    pub(crate) fn has_pseudo_element(self) -> bool {
         self.flags.contains(SelectorFlags::HAS_PSEUDO)
     }
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(self, hasher: &mut Wyhash) {
         hasher.update(&self.specificity.to_ne_bytes());
         hasher.update(&[self.flags.bits()]);
-    }
-    pub fn deep_clone(&self) -> Self {
-        *self
     }
 }
 
@@ -2947,11 +2846,11 @@ impl Combinator {
     /// Do not call this! Use `serializer::serialize_combinator()` or
     /// `tocss_servo::to_css_combinator()` instead.
     #[deprecated = "use serializer::serialize_combinator()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, _dest: &mut Printer) -> Result<(), PrintErr> {
         unreachable!("use serializer::serialize_combinator()");
     }
 
-    pub fn is_tree_combinator(&self) -> bool {
+    pub(crate) fn is_tree_combinator(self) -> bool {
         matches!(
             self,
             Self::Child | Self::Descendant | Self::NextSibling | Self::LaterSibling
@@ -2997,13 +2896,13 @@ pub enum SelectorParseErrorKind {
 }
 
 impl SelectorParseErrorKind {
-    pub fn into_default_parser_error(self) -> css::ParserError {
+    pub(crate) fn into_default_parser_error(self) -> css::ParserError {
         css::ParserError::selector_error(self.into_selector_error())
     }
 
-    pub fn into_selector_error(self) -> css::SelectorError {
-        // PORT NOTE: `error.rs::SelectorError` variants are snake_case
-        // (`#[allow(non_camel_case_types)]` Zig-tagName parity).
+    pub(crate) fn into_selector_error(self) -> css::SelectorError {
+        // `error.rs::SelectorError` variants are snake_case
+        // (`#[allow(non_camel_case_types)]`).
         use SelectorParseErrorKind as K;
         use css::SelectorError as S;
         match self {
@@ -3053,7 +2952,7 @@ impl css::IntoParserError for SelectorParseErrorKind {
     }
 }
 
-pub enum SimpleSelectorParseResult<Impl: SelectorImpl> {
+pub(crate) enum SimpleSelectorParseResult<Impl: SelectorImpl> {
     SimpleSelector(GenericComponent<Impl>),
     PseudoElement(Impl::PseudoElement),
     SlottedPseudo(GenericSelector<Impl>),
@@ -3062,7 +2961,7 @@ pub enum SimpleSelectorParseResult<Impl: SelectorImpl> {
 }
 
 /// A pseudo element.
-// PORT NOTE: see PseudoClass — `PartialEq` derive dropped (Box<Selector>/TokenList).
+// See PseudoClass — `PartialEq` derive dropped (Box<Selector>/TokenList).
 #[derive(Clone, CssEql, CssHash)]
 pub enum PseudoElement {
     /// The [::after](https://drafts.csswg.org/css-pseudo-4/#selectordef-after) pseudo element.
@@ -3136,7 +3035,7 @@ pub enum PseudoElement {
 }
 
 impl PseudoElement {
-    pub fn is_equivalent(&self, other: &PseudoElement) -> bool {
+    pub(crate) fn is_equivalent(&self, other: &PseudoElement) -> bool {
         use PseudoElement as PE;
         if matches!(self, PE::Selection(_)) && matches!(other, PE::Selection(_)) {
             return true;
@@ -3154,11 +3053,14 @@ impl PseudoElement {
     }
 
     // eql / hash — provided by `#[derive(CssEql, CssHash)]`.
-    pub fn deep_clone(&self) -> Self {
+    pub(crate) fn deep_clone(&self) -> Self {
         self.clone()
     }
 
-    pub fn get_necessary_prefixes(&mut self, targets: css::targets::Targets) -> css::VendorPrefix {
+    pub(crate) fn get_necessary_prefixes(
+        &mut self,
+        targets: &css::targets::Targets,
+    ) -> css::VendorPrefix {
         use PseudoElement as PE;
         use css::prefixes::Feature as F;
         let (p, feature): (&mut css::VendorPrefix, F) = match self {
@@ -3172,7 +3074,7 @@ impl PseudoElement {
         *p
     }
 
-    pub fn get_prefix(&self) -> css::VendorPrefix {
+    pub(crate) fn get_prefix(&self) -> css::VendorPrefix {
         use PseudoElement as PE;
         match self {
             PE::Selection(p) | PE::Placeholder(p) | PE::Backdrop(p) | PE::FileSelectorButton(p) => {
@@ -3182,7 +3084,7 @@ impl PseudoElement {
         }
     }
 
-    pub fn valid_after_slotted(&self) -> bool {
+    pub(crate) fn valid_after_slotted(&self) -> bool {
         use PseudoElement as PE;
         matches!(
             self,
@@ -3190,24 +3092,24 @@ impl PseudoElement {
         )
     }
 
-    pub fn is_unknown(&self) -> bool {
+    pub(crate) fn is_unknown(&self) -> bool {
         matches!(
             self,
             PseudoElement::Custom { .. } | PseudoElement::CustomFunction { .. }
         )
     }
 
-    pub fn accepts_state_pseudo_classes(&self) -> bool {
+    pub(crate) fn accepts_state_pseudo_classes(&self) -> bool {
         let _ = self;
         // Be lienient.
         true
     }
 
-    pub fn is_webkit_scrollbar(&self) -> bool {
+    pub(crate) fn is_webkit_scrollbar(&self) -> bool {
         matches!(self, PseudoElement::WebkitScrollbar(_))
     }
 
-    pub fn is_view_transition(&self) -> bool {
+    pub(crate) fn is_view_transition(&self) -> bool {
         use PseudoElement as PE;
         matches!(
             self,
@@ -3219,17 +3121,37 @@ impl PseudoElement {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // PERF(alloc): I don't like making small allocations here for the string.
-        // PORT NOTE: see PseudoClass::to_css — write directly until
-        // `Printer::new_buffered` lands.
+        // See PseudoClass::to_css — write directly to `dest`; no caller makes
+        // length-dependent minification decisions here.
         serialize::serialize_pseudo_element(self, dest, None)
     }
 }
 
 impl fmt::Display for PseudoElement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): @tagName — needs strum::IntoStaticStr; Phase B.
-        write!(f, "<pseudo_element>")
+        f.write_str(match self {
+            Self::After => "after",
+            Self::Before => "before",
+            Self::FirstLine => "first_line",
+            Self::FirstLetter => "first_letter",
+            Self::Selection(_) => "selection",
+            Self::Placeholder(_) => "placeholder",
+            Self::Marker => "marker",
+            Self::Backdrop(_) => "backdrop",
+            Self::FileSelectorButton(_) => "file_selector_button",
+            Self::WebkitScrollbar(_) => "webkit_scrollbar",
+            Self::Cue => "cue",
+            Self::CueRegion => "cue_region",
+            Self::CueFunction { .. } => "cue_function",
+            Self::CueRegionFunction { .. } => "cue_region_function",
+            Self::ViewTransition => "view_transition",
+            Self::ViewTransitionGroup { .. } => "view_transition_group",
+            Self::ViewTransitionImagePair { .. } => "view_transition_image_pair",
+            Self::ViewTransitionOld { .. } => "view_transition_old",
+            Self::ViewTransitionNew { .. } => "view_transition_new",
+            Self::Custom { .. } => "custom",
+            Self::CustomFunction { .. } => "custom_function",
+        })
     }
 }
 
@@ -3247,19 +3169,7 @@ pub enum NthType {
 }
 
 impl NthType {
-    pub fn is_only(self) -> bool {
-        self == NthType::OnlyChild || self == NthType::OnlyOfType
-    }
-
-    pub fn is_of_type(self) -> bool {
-        self == NthType::OfType || self == NthType::LastOfType || self == NthType::OnlyOfType
-    }
-
-    pub fn is_from_end(self) -> bool {
-        self == NthType::LastChild || self == NthType::LastOfType || self == NthType::LastCol
-    }
-
-    pub fn allows_of_selector(self) -> bool {
+    pub(crate) fn allows_of_selector(self) -> bool {
         self == NthType::Child || self == NthType::LastChild
     }
 }
@@ -3271,7 +3181,7 @@ impl NthType {
 /// * `Err(())`: Invalid selector, abort
 /// * `Ok(false)`: Not a type selector, could be something else. `input` was not consumed.
 /// * `Ok(true)`: Length 0 (`*|*`), 1 (`*|E` or `ns|*`) or 2 (`|E` or `ns|E`)
-pub fn parse_type_selector<Impl: BunSelectorImpl>(
+pub(crate) fn parse_type_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: SelectorParsingState,
@@ -3343,7 +3253,6 @@ pub fn parse_type_selector<Impl: BunSelectorImpl>(
         sink.push_simple_selector(GenericComponent::LocalName(LocalName {
             lower_name: {
                 // PERF: check if it's already lowercase
-                // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
                 Ident {
                     v: arena_lowercase(input.arena(), name),
                 }
@@ -3364,7 +3273,7 @@ pub fn parse_type_selector<Impl: BunSelectorImpl>(
 /// * `Err(())`: Invalid selector, abort
 /// * `Ok(None)`: Not a simple selector, could be something else. `input` was not consumed.
 /// * `Ok(Some(_))`: Parsed a simple selector or pseudo-element
-pub fn parse_one_simple_selector<Impl: BunSelectorImpl>(
+pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
@@ -3445,17 +3354,16 @@ pub fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                         let names = input.parse_nested_block(
                             |input2: &mut CssParser| -> CResult<Box<[Impl::Identifier]>> {
                                 // todo_stuff.think_about_mem_mgmt
-                                // PERF(port): was arena ArrayList with capacity 1 — profile in Phase B
                                 let mut result: Vec<Impl::Identifier> = Vec::with_capacity(1);
 
-                                result.push(Impl::Identifier::from(Ident {
+                                result.push(Ident {
                                     v: input2.expect_ident()?,
-                                }));
+                                });
 
                                 while !input2.is_exhausted() {
-                                    result.push(Impl::Identifier::from(Ident {
+                                    result.push(Ident {
                                         v: input2.expect_ident()?,
-                                    }));
+                                    });
                                 }
 
                                 Ok(result.into_boxed_slice())
@@ -3482,8 +3390,6 @@ pub fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                     input.parse_nested_block(|i: &mut CssParser| {
                         parser.parse_functional_pseudo_element(name, i)
                     })?
-                    // TODO(port): `Impl::PseudoElement` is `PseudoElement` for the concrete
-                    // `impl_::Selectors`; the generic path needs a `From`/trait bound in Phase B.
                 } else {
                     parser.parse_pseudo_element(location, name)?
                 };
@@ -3543,7 +3449,7 @@ pub fn parse_one_simple_selector<Impl: BunSelectorImpl>(
     Ok(None)
 }
 
-pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
+pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
 ) -> CResult<GenericComponent<Impl>> {
@@ -3589,27 +3495,24 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
             Ok(v) => v.clone(),
             Err(_) => {
                 // [foo]
-                // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
                 let local_name_lower: *const [u8] = arena_lowercase(input.arena(), local_name);
                 if let Some(ns) = namespace {
                     let x = attrs::AttrSelectorWithOptionalNamespace::<Impl> {
                         namespace: Some(ns),
-                        local_name: Ident { v: local_name }.into(),
+                        local_name: Ident { v: local_name },
                         local_name_lower: Ident {
                             v: local_name_lower,
-                        }
-                        .into(),
+                        },
                         never_matches: false,
                         operation: attrs::ParsedAttrSelectorOperation::Exists,
                     };
                     return Ok(GenericComponent::AttributeOther(Box::new(x)));
                 } else {
                     return Ok(GenericComponent::AttributeInNoNamespaceExists {
-                        local_name: Ident { v: local_name }.into(),
+                        local_name: Ident { v: local_name },
                         local_name_lower: Ident {
                             v: local_name_lower,
-                        }
-                        .into(),
+                        },
                     });
                 }
             }
@@ -3638,7 +3541,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
         ));
     };
 
-    // PORT NOTE: `expect_ident_or_string` returns `&'_ [u8]` (lifetime-tied to
+    // `expect_ident_or_string` returns `&'_ [u8]` (lifetime-tied to
     // `&mut *input`); `parse_attribute_flags(input)` below needs `input` again.
     // Clone the token so the borrow is released before we re-borrow.
     let value_str: Str = {
@@ -3677,7 +3580,6 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
         };
         if let Some(first_uppercase) = first_uppercase {
             let str_ = &local_name[first_uppercase..];
-            // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
             let lowered: *const [u8] = arena_lowercase(input.arena(), str_);
             break 'brk (Ident { v: lowered }, false);
         } else {
@@ -3709,7 +3611,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
         )))
     } else {
         Ok(GenericComponent::AttributeInNoNamespace {
-            local_name: Ident { v: local_name }.into(),
+            local_name: Ident { v: local_name },
             operator,
             value,
             case_sensitivity,
@@ -3721,7 +3623,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
 /// Returns whether the name corresponds to a CSS2 pseudo-element that
 /// can be specified with the single colon syntax (in addition to the
 /// double-colon syntax, which can be used for all pseudo-elements).
-pub fn is_css2_pseudo_element(name: &[u8]) -> bool {
+pub(crate) fn is_css2_pseudo_element(name: &[u8]) -> bool {
     // ** Do not add to this list! **
     crate::match_ignore_ascii_case! { name, {
         b"before" | b"after" | b"first-line" | b"first-letter" => true,
@@ -3730,7 +3632,7 @@ pub fn is_css2_pseudo_element(name: &[u8]) -> bool {
 }
 
 /// Parses one compound selector suitable for nested stuff like :-moz-any, etc.
-pub fn parse_inner_compound_selector<Impl: BunSelectorImpl>(
+pub(crate) fn parse_inner_compound_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
@@ -3748,7 +3650,7 @@ pub fn parse_inner_compound_selector<Impl: BunSelectorImpl>(
     Ok(result)
 }
 
-pub fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
+pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     name: Str,
@@ -3795,12 +3697,10 @@ pub fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
 
     let result = parser.parse_non_ts_functional_pseudo_class(name, input)?;
 
-    Ok(GenericComponent::NonTsPseudoClass(result.into()))
-    // TODO(port): `Impl::NonTSPseudoClass` is `PseudoClass` for the concrete impl;
-    // generic path needs a `From` bound in Phase B.
+    Ok(GenericComponent::NonTsPseudoClass(result))
 }
 
-pub fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
+pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     location: css::SourceLocation,
     name: Str,
@@ -3859,10 +3759,10 @@ pub fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
         ));
     }
 
-    Ok(GenericComponent::NonTsPseudoClass(pseudo_class.into()))
+    Ok(GenericComponent::NonTsPseudoClass(pseudo_class))
 }
 
-pub fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
+pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: SelectorParsingState,
@@ -3899,11 +3799,14 @@ pub fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
         s
     };
 
+    // The of-list is a <complex-real-selector-list>, which is not forgiving: one
+    // invalid selector invalidates the whole pseudo-class. Forgiving recovery would
+    // leave the list empty, which has no valid serialization (`:nth-child(2n of )`).
     let selectors = GenericSelectorList::<Impl>::parse_with_state(
         parser,
         input,
         &mut child_state,
-        ParseErrorRecovery::IgnoreInvalidSelector,
+        ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
 
@@ -3915,7 +3818,7 @@ pub fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
 
 /// `func` must take `Box<[GenericSelector<Impl>]>` (plus any captured extras) and
 /// return a `GenericComponent<Impl>`.
-pub fn parse_is_or_where<Impl: BunSelectorImpl, F>(
+pub(crate) fn parse_is_or_where<Impl: BunSelectorImpl, F>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
@@ -3950,24 +3853,26 @@ where
 
     let selector_slice = inner.into_boxed_selectors();
 
-    // PORT NOTE: Zig threaded extra `args_` through an ArgsTuple to `func`; in Rust
-    // the closure captures extras directly (e.g. `prefix` for `:any()`).
+    // The closure captures extra args directly (e.g. `prefix` for `:any()`).
     let result = func(selector_slice);
 
     Ok(result)
 }
 
-pub fn parse_has<Impl: BunSelectorImpl>(
+pub(crate) fn parse_has<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
     let mut child_state = *state;
+    // Since https://github.com/w3c/csswg-drafts/issues/7676, :has() takes a
+    // <relative-selector-list>, which is not forgiving. Forgiving recovery would
+    // leave the list empty, which has no valid serialization (`:has()`).
     let inner = GenericSelectorList::<Impl>::parse_relative_with_state(
         parser,
         input,
         &mut child_state,
-        parser.is_and_where_error_recovery(),
+        ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
 
@@ -3979,7 +3884,7 @@ pub fn parse_has<Impl: BunSelectorImpl>(
 
 /// Level 3: Parse **one** simple_selector.  (Though we might insert a second
 /// implied "<defaultns>|*" type selector.)
-pub fn parse_negation<Impl: BunSelectorImpl>(
+pub(crate) fn parse_negation<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
@@ -4003,12 +3908,12 @@ pub fn parse_negation<Impl: BunSelectorImpl>(
     Ok(GenericComponent::Negation(list.into_boxed_selectors()))
 }
 
-pub enum OptionalQName<Impl: SelectorImpl> {
+pub(crate) enum OptionalQName<Impl: SelectorImpl> {
     Some(QNamePrefix<Impl>, Option<Str>),
     None(Token),
 }
 
-pub enum QNamePrefix<Impl: SelectorImpl> {
+pub(crate) enum QNamePrefix<Impl: SelectorImpl> {
     ImplicitNoNamespace,                          // `foo` in attr selectors
     ImplicitAnyNamespace,                         // `foo` in type selectors, without a default ns
     ImplicitDefaultNamespace(Impl::NamespaceUrl), // `foo` in type selectors, with a default ns
@@ -4021,7 +3926,7 @@ pub enum QNamePrefix<Impl: SelectorImpl> {
 /// * `Ok(None(token))`: Not a simple selector, could be something else. `input` was not consumed,
 ///                      but the token is still returned.
 /// * `Ok(Some(namespace, local_name))`: `None` for the local name means a `*` universal selector
-pub fn parse_qualified_name<Impl: BunSelectorImpl>(
+pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     in_attr_selector: bool,
@@ -4045,10 +3950,9 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
                 false
             };
             if n {
-                let prefix: Impl::NamespacePrefix = Ident { v: value }.into();
-                let result: Option<Impl::NamespaceUrl> = parser
-                    .namespace_for_prefix(Ident { v: value })
-                    .map(Into::into);
+                let prefix: Impl::NamespacePrefix = Ident { v: value };
+                let result: Option<Impl::NamespaceUrl> =
+                    parser.namespace_for_prefix(Ident { v: value });
                 let url: Impl::NamespaceUrl = match result {
                     Some(url) => url,
                     None => {
@@ -4090,18 +3994,14 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
                         );
                     }
                 }
-                // PORT NOTE: reshaped for borrowck — clone token before reset.
-                let result_cloned = result.map(|t| t.clone());
+                // Reshaped for borrowck — clone token before reset.
+                let result_cloned = result.cloned();
                 input.reset(&after_star);
                 if in_attr_selector {
-                    match result_cloned {
-                        Ok(t) => {
-                            return Err(after_star
-                                .source_location()
-                                .new_custom_error(SelectorParseErrorKind::ExpectedBarInAttr(t)));
-                        }
-                        Err(e) => return Err(e),
-                    }
+                    let t = result_cloned?;
+                    return Err(after_star
+                        .source_location()
+                        .new_custom_error(SelectorParseErrorKind::ExpectedBarInAttr(t)));
                 } else {
                     return Ok(parse_qualified_name_default_namespace_helper::<Impl>(
                         parser, None,
@@ -4144,7 +4044,9 @@ fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
     let t = input.next_including_whitespace()?.clone();
     match &t {
         Token::Ident(local_name) => return Ok(OptionalQName::Some(namespace, Some(*local_name))),
-        Token::Delim(c) if *c == b'*' as u32 => {
+        // `*` is only a valid local name outside of attribute selectors;
+        // `[ns|*]` must fall through to the `InvalidQualNameInAttr` error below.
+        Token::Delim(c) if *c == b'*' as u32 && !in_attr_selector => {
             return Ok(OptionalQName::Some(namespace, None));
         }
         _ => {}
@@ -4159,7 +4061,7 @@ fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
 #[derive(Clone, PartialEq)]
 pub struct LocalName<Impl: SelectorImpl> {
     pub name: Impl::LocalName,
-    pub lower_name: Impl::LocalName,
+    pub(crate) lower_name: Impl::LocalName,
 }
 
 impl<Impl: BunSelectorImpl> LocalName<Impl> {
@@ -4169,14 +4071,14 @@ impl<Impl: BunSelectorImpl> LocalName<Impl> {
     pub fn eql(&self, rhs: &Self) -> bool {
         self.name.eql(&rhs.name) && self.lower_name.eql(&rhs.lower_name)
     }
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         self.name.hash(hasher);
         self.lower_name.hash(hasher);
     }
-    pub fn deep_clone(&self) -> Self {
+    pub(crate) fn deep_clone(&self) -> Self {
         Self {
-            name: self.name.clone(),
-            lower_name: self.lower_name.clone(),
+            name: self.name,
+            lower_name: self.lower_name,
         }
     }
 }
@@ -4193,7 +4095,7 @@ pub enum AttributeFlags {
 }
 
 impl AttributeFlags {
-    pub fn to_case_sensitivity(
+    pub(crate) fn to_case_sensitivity(
         self,
         local_name: &[u8],
         have_namespace: bool,
@@ -4205,7 +4107,7 @@ impl AttributeFlags {
             }
             AttributeFlags::CaseSensitivityDependsOnName => {
                 // <https://html.spec.whatwg.org/multipage/#selectors>
-                if !have_namespace && is_html_case_insensitive_attribute(local_name) {
+                if !have_namespace && HTML_CASE_INSENSITIVE_ATTRIBUTES.contains(local_name) {
                     return attrs::ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument;
                 }
                 attrs::ParsedCaseSensitivity::CaseSensitive
@@ -4214,86 +4116,64 @@ impl AttributeFlags {
     }
 }
 
-/// HTML attributes whose value is matched ASCII-case-insensitively when no
-/// explicit `s`/`i` flag is given on the attribute selector.
-/// <https://html.spec.whatwg.org/multipage/#selectors>
-///
-/// PERF(port): Zig used `ComptimeEnumMap.has` (zero-cost membership at
-/// comptime). The Phase-A port lowered that to a `phf::Set`, which on every
-/// `[attr=val]` selector pays a 32-bit FNV-ish hash over the name plus a
-/// bounds check, indirect load, and full key compare — measurable in CSS
-/// bundling profiles where the dominant inputs (`class`, `href`, `data-*`,
-/// `aria-*`) are *misses*. A 2-level open-coded dispatch (length →
-/// first-byte → exact bytes) rejects those misses in ≤2 scalar compares and
-/// resolves hits in ≤3 short slice compares; the 46-entry table is small
-/// enough that LLVM unrolls each leaf into a single word/SIMD compare.
-#[inline]
-fn is_html_case_insensitive_attribute(name: &[u8]) -> bool {
-    // 46 entries, lengths 3..=14. Buckets at len 5/7/8 are dense (11/7/8
-    // entries) so a flat `matches!` per length would degrade to a linear
-    // scan there; the inner first-byte gate keeps every leaf at ≤3 candidates.
-    match name.len() {
-        3 => match name[0] {
-            b'd' => name == b"dir",
-            b'r' => matches!(name, b"rel" | b"rev"),
-            _ => false,
-        },
-        4 => match name[0] {
-            b'a' => name == b"axis",
-            b'f' => name == b"face",
-            b'l' => matches!(name, b"lang" | b"link"),
-            b't' => matches!(name, b"text" | b"type"),
-            _ => false,
-        },
-        5 => match name[0] {
-            b'a' => matches!(name, b"align" | b"alink"),
-            b'c' => matches!(name, b"clear" | b"color"),
-            b'd' => name == b"defer",
-            b'f' => name == b"frame",
-            b'm' => name == b"media",
-            b'r' => name == b"rules",
-            b's' => matches!(name, b"scope" | b"shape"),
-            b'v' => name == b"vlink",
-            _ => false,
-        },
-        6 => match name[0] {
-            b'a' => name == b"accept",
-            b'm' => name == b"method",
-            b'n' => matches!(name, b"nohref" | b"nowrap"),
-            b't' => name == b"target",
-            b'v' => name == b"valign",
-            _ => false,
-        },
-        7 => match name[0] {
-            b'b' => name == b"bgcolor",
-            b'c' => matches!(name, b"charset" | b"checked" | b"compact"),
-            b'd' => name == b"declare",
-            b'e' => name == b"enctype",
-            b'n' => name == b"noshade",
-            _ => false,
-        },
-        8 => match name[0] {
-            // All 8 entries have distinct first bytes — single compare each.
-            b'c' => name == b"codetype",
-            b'd' => name == b"disabled",
-            b'h' => name == b"hreflang",
-            b'l' => name == b"language",
-            b'm' => name == b"multiple",
-            b'n' => name == b"noresize",
-            b'r' => name == b"readonly",
-            b's' => name == b"selected",
-            _ => false,
-        },
-        9 => match name[0] {
-            b'd' => name == b"direction",
-            b's' => name == b"scrolling",
-            b'v' => name == b"valuetype",
-            _ => false,
-        },
-        10 => name == b"http_equiv",
-        14 => name == b"accept_charset",
-        _ => false,
-    }
+bun_core::comptime_string_set! {
+    /// HTML attributes whose value is matched ASCII-case-insensitively when no
+    /// explicit `s`/`i` flag is given on the attribute selector.
+    /// <https://html.spec.whatwg.org/multipage/#selectors>
+    ///
+    /// PERF: probed on every `[attr=val]` selector, where the dominant inputs
+    /// (`class`, `href`, `data-*`, `aria-*`) are *misses*. The generated
+    /// length dispatch plus constant-length compare trees rejects those
+    /// without hashing; LLVM lowers each leaf to word loads compared against
+    /// immediates.
+    static HTML_CASE_INSENSITIVE_ATTRIBUTES = {
+        b"dir",
+        b"rel",
+        b"rev",
+        b"axis",
+        b"face",
+        b"lang",
+        b"link",
+        b"text",
+        b"type",
+        b"align",
+        b"alink",
+        b"clear",
+        b"color",
+        b"defer",
+        b"frame",
+        b"media",
+        b"rules",
+        b"scope",
+        b"shape",
+        b"vlink",
+        b"accept",
+        b"method",
+        b"nohref",
+        b"nowrap",
+        b"target",
+        b"valign",
+        b"bgcolor",
+        b"charset",
+        b"checked",
+        b"compact",
+        b"declare",
+        b"enctype",
+        b"noshade",
+        b"codetype",
+        b"disabled",
+        b"hreflang",
+        b"language",
+        b"multiple",
+        b"noresize",
+        b"readonly",
+        b"selected",
+        b"direction",
+        b"scrolling",
+        b"valuetype",
+        b"http_equiv",
+        b"accept_charset",
+    };
 }
 
 /// A [view transition part name](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#typedef-pt-name-selector).
@@ -4309,7 +4189,7 @@ pub enum ViewTransitionPartName {
 
 impl ViewTransitionPartName {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // PORT NOTE: `CustomIdentFns::to_css` is ``-gated on
+        // `CustomIdentFns::to_css` is CSS-modules-gated via
         // `Printer::{css_module,write_ident}`; inline the
         // `write_ident(v, false)` body (CSS-modules custom-ident scoping is a
         // serializer concern, not a grammar concern — the gated impl just
@@ -4348,7 +4228,7 @@ impl ViewTransitionPartName {
         }
     }
 
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         match self {
             Self::All => hasher.update(&0u32.to_ne_bytes()),
             Self::Name(n) => {
@@ -4361,13 +4241,9 @@ impl ViewTransitionPartName {
             }
         }
     }
-
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
 }
 
-pub fn parse_attribute_flags(input: &mut CssParser) -> CResult<AttributeFlags> {
+pub(crate) fn parse_attribute_flags(input: &mut CssParser) -> CResult<AttributeFlags> {
     let location = input.current_source_location();
     let token = match input.next() {
         Ok(v) => v.clone(),
@@ -4394,5 +4270,3 @@ pub fn parse_attribute_flags(input: &mut CssParser) -> CResult<AttributeFlags> {
 }
 
 crate::css_eql_partialeq!(NthSelectorData, SpecificityAndFlags, Combinator);
-
-// ported from: src/css/selectors/parser.zig

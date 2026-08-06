@@ -936,3 +936,31 @@ devTest("server module that fails to print becomes a per-file error", {
     await dev.fetch("/").equals("value: 1");
   },
 });
+// Nested `:fullscreen` rules fan out into one copy of the body per vendor
+// prefix at every nesting level, tripping the CSS printer's expansion guard.
+// The failed chunk used to be registered as an empty stylesheet with no error.
+devTest("stylesheet that fails to print becomes a per-file error instead of an empty stylesheet", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["amp.css"],
+      body: "hello",
+    }),
+    "amp.css":
+      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+      "\ncolor: red;\n" +
+      Buffer.alloc(30, "}").toString() +
+      "\n.visible { color: blue; }\n",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["amp.css: error: Failed to generate CSS for this file (PrintError)"],
+    });
+
+    // The dev server must survive the failed bundle and recover once the
+    // file becomes printable.
+    await c.expectReload(async () => {
+      await dev.write("amp.css", ".visible { color: blue; }\n", { dedent: false, errors: null });
+    });
+    await c.style(".visible").color.expect.toBe("#00f");
+  },
+});

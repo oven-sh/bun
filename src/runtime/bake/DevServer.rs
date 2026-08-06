@@ -4094,6 +4094,45 @@ pub(super) fn finalize_bundle(
 
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
 
+        // A CSS chunk that failed to print must not be served as an empty
+        // stylesheet. Attach the failure to the chunk's entry point (the file
+        // `receive_chunk` would register, so a successful rebuild clears it),
+        // naming the failing file in the message when it is known.
+        if let Some((err, err_source_index)) =
+            chunk
+                .compile_results_for_chunk
+                .iter()
+                .find_map(|compile_result| match compile_result {
+                    bundler::CompileResult::Css {
+                        result: Err(err),
+                        source_index,
+                        ..
+                    } => Some((err, *source_index)),
+                    _ => None,
+                })
+        {
+            let entry_source = &ctx.sources[index.get() as usize];
+            let err_source = if err_source_index != bun_ast::Index::INVALID.get() {
+                &ctx.sources[err_source_index as usize]
+            } else {
+                entry_source
+            };
+            let mut log = Log::init();
+            log.add_error_fmt(
+                Some(err_source),
+                bun_ast::Loc::EMPTY,
+                format_args!("Failed to generate CSS for this file ({})", err.name()),
+            );
+            dev.client_graph.insert_failure(
+                incremental_graph::InsertFailureKey::AbsPath(
+                    entry_source.path.key_for_incremental_graph(),
+                ),
+                &log,
+                false,
+            )?;
+            continue;
+        }
+
         // Note: `IntermediateOutput::code` takes `&mut self` (a field of
         // `*chunk`) plus `chunk: &Chunk` and `chunks: &[Chunk]`; borrowck still
         // rejects the overlap (`&mut chunk.intermediate_output` aliases the
@@ -4284,6 +4323,19 @@ pub(super) fn finalize_bundle(
         )?;
     }
     for chunk in css_chunks_mut.iter() {
+        // Pass 1 skipped failed chunks, so their entry has no resolved file index.
+        if chunk
+            .compile_results_for_chunk
+            .iter()
+            .any(|compile_result| {
+                matches!(
+                    compile_result,
+                    bundler::CompileResult::Css { result: Err(_), .. }
+                )
+            })
+        {
+            continue;
+        }
         let entry_index = bun_ast::Index::init(chunk.entry_point.source_index());
         dev.client_graph.process_chunk_dependencies(
             &mut ctx,

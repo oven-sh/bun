@@ -112,7 +112,8 @@ it("should reject missing package", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err).toContain(`error: Could not find package.json for "file:${add_path}" dependency`);
+  // the relative folder path is normalized to posix separators on every platform
+  expect(err).toContain(`error: Could not find package.json for "file:${add_path.replace(/\\/g, "/")}" dependency`);
   expect(err).toContain("failed to resolve");
 
   const out = await stdout.text();

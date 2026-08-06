@@ -2786,10 +2786,75 @@ for (let withOverridenBufferWrite of [false, true]) {
       });
 
       it("transcode", () => {
-        expect(typeof BufferModule.transcode).toBe("undefined");
+        expect(typeof BufferModule.transcode).toBe("function");
 
-        // This is a masqueradesAsUndefined function
-        expect(() => BufferModule.transcode()).toThrow("Not implemented");
+        // Unmappable code points are replaced with '?' (issue #24235).
+        expect(BufferModule.transcode(Buffer.from("€"), "utf8", "ascii").toString("ascii")).toBe("?");
+
+        // Vectors from Node's test/parallel/test-icu-transcode.js.
+        const orig = Buffer.from("těst ☕", "utf8");
+        expect([...BufferModule.transcode(orig, "utf8", "latin1")]).toEqual([0x74, 0x3f, 0x73, 0x74, 0x20, 0x3f]);
+        expect([...BufferModule.transcode(orig, "utf8", "ascii")]).toEqual([0x74, 0x3f, 0x73, 0x74, 0x20, 0x3f]);
+        const ucs2 = [0x74, 0x00, 0x1b, 0x01, 0x73, 0x00, 0x74, 0x00, 0x20, 0x00, 0x15, 0x26];
+        expect([...BufferModule.transcode(orig, "utf8", "ucs2")]).toEqual(ucs2);
+
+        // ucs2 -> utf8 round trips back to the original.
+        expect(BufferModule.transcode(Buffer.from(ucs2), "ucs2", "utf8").toString()).toBe(orig.toString());
+
+        // ascii/latin1 -> utf16le.
+        expect(BufferModule.transcode(Buffer.from("hi", "ascii"), "ascii", "utf16le")).toEqual(
+          Buffer.from("hi", "utf16le"),
+        );
+        expect(BufferModule.transcode(Buffer.from("hä", "latin1"), "latin1", "utf16le")).toEqual(
+          Buffer.from("hä", "utf16le"),
+        );
+
+        // A plain Uint8Array is accepted as the source.
+        const u8 = new Uint8Array([...Buffer.from("hä", "latin1")]);
+        expect(BufferModule.transcode(u8, "latin1", "utf16le")).toEqual(Buffer.from("hä", "utf16le"));
+
+        // Empty input short-circuits to an empty Buffer before the encodings are
+        // ever parsed, so even invalid encoding names are accepted here.
+        const empty = BufferModule.transcode(Buffer.alloc(0), "not-an-encoding", "also-not-an-encoding");
+        expect(empty.length).toBe(0);
+        expect(Buffer.isBuffer(empty)).toBe(true);
+
+        // An odd-length ucs2 source has no complete code units, so ucs2->utf8
+        // yields an empty Buffer rather than throwing.
+        const oddUcs2 = BufferModule.transcode(Buffer.from([0x61]), "ucs2", "utf8");
+        expect(oddUcs2.length).toBe(0);
+        expect(Buffer.isBuffer(oddUcs2)).toBe(true);
+
+        // A detached source throws instead of reading freed backing storage.
+        const detached = new Uint8Array(8);
+        structuredClone(detached.buffer, { transfer: [detached.buffer] });
+        const onDetached = () => BufferModule.transcode(detached, "utf8", "ascii");
+        expect(onDetached).toThrowWithCode(Error, "ERR_INVALID_STATE");
+
+        // Non-Uint8Array source throws ERR_INVALID_ARG_TYPE.
+        const onInvalidSource = () => BufferModule.transcode(null, "utf8", "ascii");
+        expect(onInvalidSource).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+        expect(onInvalidSource).toThrow(
+          'The "source" argument must be an instance of Buffer or Uint8Array. Received null',
+        );
+
+        // Unsupported/unknown encodings throw the ICU illegal-argument error.
+        for (const args of [
+          [Buffer.from("a"), "b", "utf8"],
+          [Buffer.from("a"), "utf8", "b"],
+          [Buffer.from("a"), "hex", "utf8"],
+        ]) {
+          let err;
+          try {
+            BufferModule.transcode(...args);
+          } catch (e) {
+            err = e;
+          }
+          expect(err).toBeInstanceOf(Error);
+          expect(err.message).toBe("Unable to transcode Buffer [U_ILLEGAL_ARGUMENT_ERROR]");
+          expect(err.code).toBe("U_ILLEGAL_ARGUMENT_ERROR");
+          expect(err.errno).toBe(1);
+        }
       });
 
       it("Buffer.from (Node.js test/test-buffer-from.js)", () => {

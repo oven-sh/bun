@@ -335,6 +335,21 @@ describe("mock()", () => {
     const fn = jest.fn(baddie);
     expect(typeof fn.name).toBe("string");
   });
+  if (isBun) {
+    // bun exposes the live results array, so a full-length array makes the
+    // internal push throw; the call must surface that error, not continue
+    // with it pending.
+    test("throws cleanly when recording the result fails", () => {
+      let called = false;
+      const fn = jest.fn(() => {
+        called = true;
+        return 42;
+      });
+      fn.mock.results.length = 2 ** 32 - 1;
+      expect(() => fn(1)).toThrow(RangeError);
+      expect(called).toBe(false);
+    });
+  }
   test(".length works", () => {
     const fn = jest.fn(function hey(a, b, c) {
       return this;

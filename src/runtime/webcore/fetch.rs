@@ -486,12 +486,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // kept as raw `*mut Request` because the body re-borrows it
     // multiple times across long-lived option/init reads.
     //
-    // `as_` (ClassInfo cast), not `as_direct` (pristine-Structure cast): per
-    // the fetch spec a Request input is read through its internal state, even
-    // when it is a subclass instance or has own properties added. With
-    // `as_direct`, any Structure transition sent the Request down the
-    // RequestInit-dictionary arm below, re-reading url/method/headers/body
-    // through JS-visible getters.
+    // `as_`, not `as_direct`: a subclassed Request, or one with own properties
+    // added, must still be read through its internal state per the fetch spec,
+    // and `as_direct` rejects any transitioned Structure.
     let request: Option<*mut Request> = first_arg.as_::<Request>();
     // Helper macro: short-lived `&mut Request` reborrow of the optional pointer.
     macro_rules! request_mut {

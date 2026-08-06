@@ -754,10 +754,28 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
             fetch: () => new Response(Bun.file("big.bin")),
           });
           const c = net.connect(server.port, "127.0.0.1");
-          let received = 0;
+          // Parse the response framing so the assertion is on body bytes, not
+          // raw socket bytes (headers must not mask a truncated body).
+          let head = "";
+          let headDone = false;
+          let contentLength = -1;
+          let bodyBytes = 0;
           let sawClose = false;
           const firstData = Promise.withResolvers();
-          c.on("data", d => { received += d.length; firstData.resolve(); });
+          c.on("data", d => {
+            if (!headDone) {
+              head += d.toString("latin1");
+              const he = head.indexOf("\\r\\n\\r\\n");
+              if (he !== -1) {
+                headDone = true;
+                contentLength = +(/\\r\\ncontent-length: *(\\d+)/i.exec(head.slice(0, he))?.[1] ?? -1);
+                bodyBytes = head.length - he - 4;
+              }
+            } else {
+              bodyBytes += d.length;
+            }
+            firstData.resolve();
+          });
           c.on("close", () => (sawClose = true));
           c.on("error", () => {});
           await new Promise((resolve, reject) => { c.on("connect", resolve); c.on("error", reject); });
@@ -776,8 +794,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           // budget, so only the drain can close it).
           while (!sawClose) await new Promise(r => setImmediate(r));
           await stopped;
-          const gotWholeBody = received >= SIZE;
-          console.log(JSON.stringify({ resolvedEarly, gotWholeBody, resolved }));
+          console.log(JSON.stringify({ resolvedEarly, contentLength, bodyBytes, resolved }));
         `,
       ],
       env: bunEnv,
@@ -788,7 +805,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, gotWholeBody: true, resolved: true },
+      out: { resolvedEarly: false, contentLength: 16 * 1024 * 1024, bodyBytes: 16 * 1024 * 1024, resolved: true },
       exitCode: 0,
     });
   });
@@ -957,9 +974,9 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           // One real TLS keep-alive connection: handshake completes, count=1.
           const c = tls.connect({ port, host: "127.0.0.1", ca: serverTls.cert, rejectUnauthorized: false });
           let buf = "";
-          let sawClose = false;
+          const closed = Promise.withResolvers();
           c.on("data", d => (buf += d));
-          c.on("close", () => (sawClose = true));
+          c.on("close", () => closed.resolve());
           c.on("error", () => {});
           await new Promise((resolve, reject) => {
             c.on("secureConnect", resolve);
@@ -989,15 +1006,15 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           await new Promise(r => setImmediate(r));
           const resolvedEarly = resolved;
           // The held response completes, reaches the client, and the drain
-          // closes the connection; the promise must resolve on its own.
+          // closes the connection (server-initiated; the client never hangs
+          // up); the promise must resolve on its own. The runner timeout is
+          // the stall bound for both awaits.
           release.resolve();
-          await Promise.race([stopped, new Promise(r => setTimeout(r, 2000))]);
+          await stopped;
+          // Reaching the log below proves the server-initiated close arrived.
+          await closed.promise;
           const gotResponse = buf.includes("\\r\\nok");
-          // The drain's close is server-initiated; poll briefly since the
-          // client's 'close' races the promise resolution.
-          const until = Date.now() + 2000;
-          while (!sawClose && Date.now() < until) await new Promise(r => setImmediate(r));
-          console.log(JSON.stringify({ resolvedEarly, resolved, gotResponse, sawClose }));
+          console.log(JSON.stringify({ resolvedEarly, resolved, gotResponse }));
           process.exit(0);
         `,
       ],
@@ -1008,7 +1025,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, resolved: true, gotResponse: true, sawClose: true },
+      out: { resolvedEarly: false, resolved: true, gotResponse: true },
       exitCode: 0,
     });
   });

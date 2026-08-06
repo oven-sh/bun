@@ -1346,6 +1346,12 @@ extern "C"
    * cork() wrapper's own post-uncork gate. */
   void uws_res_close_if_done_and_marked(int ssl, uws_res_r res)
   {
+    /* A callback upstream of this gate may already have closed the socket;
+     * onClose destructs the ext block, so bail before touching it. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

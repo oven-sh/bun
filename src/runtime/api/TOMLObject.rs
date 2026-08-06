@@ -70,7 +70,11 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 
     let unwrapped = value.unwrap_boxed_primitive(global)?;
-    if !unwrapped.is_object() || unwrapped.is_array() || unwrapped.is_date() {
+    if !unwrapped.is_object()
+        || unwrapped.is_array()
+        || unwrapped.is_date()
+        || temporal_object_type(unwrapped).is_some()
+    {
         return Err(global.throw(format_args!(
             "TOML.stringify expects an object at the top level (a TOML document is a table)"
         )));
@@ -116,6 +120,9 @@ const MAX_SAFE_INTEGER_F: f64 = 9007199254740991.0;
 enum Layout {
     /// `key = value` on the current table's line block.
     Keyval,
+    /// `key = value` whose value is a Temporal object; carries the
+    /// classification so emission does not re-ask.
+    TemporalKeyval(TemporalObjectType),
     /// `[path.key]` section.
     Table,
     /// `[[path.key]]` section per element.
@@ -176,13 +183,21 @@ impl Stringifier {
             }
             while let Some(item) = iter.next()? {
                 let item = item.unwrap_boxed_primitive(global)?;
-                if !item.is_object() || item.is_array() || item.is_date() || item.is_function() {
+                if !item.is_object()
+                    || item.is_array()
+                    || item.is_date()
+                    || item.is_function()
+                    || temporal_object_type(item).is_some()
+                {
                     return Ok(Layout::Keyval);
                 }
             }
             return Ok(Layout::ArrayOfTables);
         }
         if value.is_object() && !value.is_date() {
+            if let Some(temporal_type) = temporal_object_type(value) {
+                return Ok(Layout::TemporalKeyval(temporal_type));
+            }
             return Ok(Layout::Table);
         }
         Ok(Layout::Keyval)
@@ -217,17 +232,20 @@ impl Stringifier {
             if value.is_null() {
                 return Err(self.err_null_value(global, &prop_name));
             }
-            if let Layout::Keyval = self.layout_of(global, value)? {
-                if header_pending {
-                    header_pending = false;
-                    self.append_header(false);
-                }
-                self.append_key_segment(&prop_name);
-                self.builder.append_latin1(b" = ");
-                self.stringify_inline_value(global, value)?;
-                self.builder.append_lchar(b'\n');
-                self.wrote = true;
+            let known_temporal = match self.layout_of(global, value)? {
+                Layout::Keyval => None,
+                Layout::TemporalKeyval(temporal_type) => Some(temporal_type),
+                Layout::Table | Layout::ArrayOfTables | Layout::Skip => continue,
+            };
+            if header_pending {
+                header_pending = false;
+                self.append_header(false);
             }
+            self.append_key_segment(&prop_name);
+            self.builder.append_latin1(b" = ");
+            self.stringify_inline_value(global, value, known_temporal)?;
+            self.builder.append_lchar(b'\n');
+            self.wrote = true;
         }
 
         // Pass 2: sections. Values are re-read; an array-of-tables element
@@ -237,7 +255,7 @@ impl Stringifier {
         while let Some(prop_name) = iter.next()? {
             let value = iter.value.unwrap_boxed_primitive(global)?;
             match self.layout_of(global, value)? {
-                Layout::Keyval | Layout::Skip => {}
+                Layout::Keyval | Layout::TemporalKeyval(_) | Layout::Skip => {}
                 Layout::Table => {
                     header_pending = false;
                     self.mark_visiting(global, value)?;
@@ -257,6 +275,7 @@ impl Stringifier {
                             || item.is_array()
                             || item.is_date()
                             || item.is_function()
+                            || temporal_object_type(item).is_some()
                         {
                             self.path.pop();
                             return Err(self.err_changed(global));
@@ -281,11 +300,13 @@ impl Stringifier {
     }
 
     /// One value on the right-hand side of `=` (or inside an inline
-    /// array/table). `value` is already unboxed.
+    /// array/table). `value` is already unboxed; `known_temporal` is the
+    /// classification `layout_of` already computed for it, if any.
     fn stringify_inline_value(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
+        known_temporal: Option<TemporalObjectType>,
     ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
@@ -321,6 +342,10 @@ impl Stringifier {
             return self.append_datetime(global, value);
         }
 
+        if let Some(temporal_type) = known_temporal.or_else(|| temporal_object_type(value)) {
+            return self.append_temporal(global, value, temporal_type);
+        }
+
         if value.is_array() {
             self.mark_visiting(global, value)?;
             self.builder.append_lchar(b'[');
@@ -335,7 +360,7 @@ impl Stringifier {
                 if item.is_null() || item.is_undefined() || item.is_symbol() || item.is_function() {
                     return Err(self.err_in_array(global, item));
                 }
-                self.stringify_inline_value(global, item)?;
+                self.stringify_inline_value(global, item, None)?;
             }
             self.builder.append_lchar(b']');
             self.visiting.remove(&value);
@@ -367,7 +392,7 @@ impl Stringifier {
             first = false;
             self.append_key_segment(&prop_name);
             self.builder.append_latin1(b" = ");
-            self.stringify_inline_value(global, prop_value)?;
+            self.stringify_inline_value(global, prop_value, None)?;
         }
         self.builder
             .append_latin1(if first { b"{}" } else { b" }" });
@@ -469,7 +494,60 @@ impl Stringifier {
                 ))
                 .into());
         }
-        self.builder.append_latin1(iso);
+        // `toISOString` always prints three fraction digits; trim trailing
+        // zeros (and a bare `.`) so `Date` and `Temporal.Instant` spell the
+        // same instant identically.
+        debug_assert!(iso.len() == 24 && iso[19] == b'.' && iso[23] == b'Z');
+        let mut end = 23;
+        while end > 20 && iso[end - 1] == b'0' {
+            end -= 1;
+        }
+        if end == 20 {
+            end = 19;
+        }
+        self.builder.append_latin1(&iso[..end]);
+        self.builder.append_lchar(b'Z');
+        Ok(())
+    }
+
+    /// A Temporal object as the TOML date/time literal of its type;
+    /// `PlainYearMonth`/`PlainMonthDay`/`Duration` have no TOML form and throw.
+    fn append_temporal(
+        &mut self,
+        global: &JSGlobalObject,
+        value: JSValue,
+        temporal_type: TemporalObjectType,
+    ) -> StringifyResult<()> {
+        if !temporal_type.has_toml_form() {
+            return Err(global
+                .throw(format_args!(
+                    "TOML.stringify cannot serialize {} (it has no TOML representation)",
+                    temporal_type.name()
+                ))
+                .into());
+        }
+        let mut buf = [0u8; 64];
+        // SAFETY: `buf` is a live stack buffer for the duration of the call.
+        let len = unsafe {
+            jsc::cpp::Bun__Temporal__toTOMLDateTime(
+                global,
+                value,
+                temporal_type as u8,
+                buf.as_mut_ptr(),
+                buf.len(),
+            )
+        }?;
+        // The expanded-year form (leading `+`/`-`) has a 6-digit year, which
+        // TOML's 4-digit `date-fullyear` cannot carry.
+        if len < 1 || !buf[0].is_ascii_digit() {
+            return Err(global
+                .throw(format_args!(
+                    "TOML.stringify cannot serialize a {} outside years 0000-9999",
+                    temporal_type.name()
+                ))
+                .into());
+        }
+        self.builder.append_latin1(&buf[..len as usize]);
         Ok(())
     }
 
@@ -506,6 +584,65 @@ impl Stringifier {
                 "TOML.stringify cannot serialize a value that changed during serialization"
             ))
             .into()
+    }
+}
+
+/// Mirror of the `Bun__JSValue__temporalObjectType` discriminants (0, not a
+/// Temporal object, maps to `None` in `temporal_object_type`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum TemporalObjectType {
+    Instant = 1,
+    PlainDateTime = 2,
+    PlainDate = 3,
+    PlainTime = 4,
+    ZonedDateTime = 5,
+    PlainYearMonth = 6,
+    PlainMonthDay = 7,
+    Duration = 8,
+}
+
+impl TemporalObjectType {
+    /// Whether TOML has a date/time literal for this type.
+    fn has_toml_form(self) -> bool {
+        match self {
+            TemporalObjectType::Instant
+            | TemporalObjectType::PlainDateTime
+            | TemporalObjectType::PlainDate
+            | TemporalObjectType::PlainTime
+            | TemporalObjectType::ZonedDateTime => true,
+            TemporalObjectType::PlainYearMonth
+            | TemporalObjectType::PlainMonthDay
+            | TemporalObjectType::Duration => false,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            TemporalObjectType::Instant => "Temporal.Instant",
+            TemporalObjectType::PlainDateTime => "Temporal.PlainDateTime",
+            TemporalObjectType::PlainDate => "Temporal.PlainDate",
+            TemporalObjectType::PlainTime => "Temporal.PlainTime",
+            TemporalObjectType::ZonedDateTime => "Temporal.ZonedDateTime",
+            TemporalObjectType::PlainYearMonth => "Temporal.PlainYearMonth",
+            TemporalObjectType::PlainMonthDay => "Temporal.PlainMonthDay",
+            TemporalObjectType::Duration => "Temporal.Duration",
+        }
+    }
+}
+
+fn temporal_object_type(value: JSValue) -> Option<TemporalObjectType> {
+    match jsc::cpp::Bun__JSValue__temporalObjectType(value) {
+        0 => None,
+        1 => Some(TemporalObjectType::Instant),
+        2 => Some(TemporalObjectType::PlainDateTime),
+        3 => Some(TemporalObjectType::PlainDate),
+        4 => Some(TemporalObjectType::PlainTime),
+        5 => Some(TemporalObjectType::ZonedDateTime),
+        6 => Some(TemporalObjectType::PlainYearMonth),
+        7 => Some(TemporalObjectType::PlainMonthDay),
+        8 => Some(TemporalObjectType::Duration),
+        _ => unreachable!("Bun__JSValue__temporalObjectType returns 0-8"),
     }
 }
 

@@ -121,6 +121,22 @@ describe("unix socket paths with interior NUL bytes are rejected", () => {
     expect(result.code).toBe("EINVAL");
   });
 
+  test("http.createServer().listen", async () => {
+    // Routes through Bun.serve, not net.Server, so it is a separate entry point.
+    const server = http.createServer(() => {});
+    try {
+      const result: any = await new Promise(resolve => {
+        server.on("error", e => resolve(e));
+        server.listen(D + "/h\0x", () => resolve("listening"));
+      });
+      expect(result).not.toBe("listening");
+      expect(result?.message).toContain('"unix" must not contain null bytes');
+    } finally {
+      server.close();
+    }
+    expect(fs.readdirSync(D)).not.toContain("h");
+  });
+
   test("trailing NUL is rejected too", () => {
     expect(() => Bun.listen({ unix: D + "/t\0", socket: { data() {} } })).toThrow('"unix" must not contain null bytes');
     expect(fs.readdirSync(D)).not.toContain("t");

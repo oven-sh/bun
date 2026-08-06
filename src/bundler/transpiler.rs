@@ -1776,7 +1776,8 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Yaml
             | options::Loader::Json
             | options::Loader::Jsonc
-            | options::Loader::Json5 => {
+            | options::Loader::Json5
+            | options::Loader::Xml => {
                 return parse_data_loader(
                     source,
                     loader,
@@ -1871,7 +1872,17 @@ fn parse_data_loader<'a>(
                 Err(_) => return None,
             }
         }
-        // SAFETY: outer match arm guarantees one of the five.
+        options::Loader::Xml => {
+            let options = bun_parsers::xml::Options {
+                compact: true,
+                encoding: bun_parsers::xml::InputEncoding::File,
+            };
+            match bun_parsers::xml::XML::parse(source, log, arena, options) {
+                Ok(e) => e,
+                Err(_) => return None,
+            }
+        }
+        // SAFETY: outer match arm guarantees one of the six.
         _ => unsafe { core::hint::unreachable_unchecked() },
     };
     let mut expr = value_expr;
@@ -2849,6 +2860,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Toml
             | options::Loader::Yaml
             | options::Loader::Json5
+            | options::Loader::Xml
             | options::Loader::Text
             | options::Loader::Md => {
                 // borrowck — `parse` consumes `&mut self`, so capture

@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN } from "harness";
+import path from "node:path";
 
 // https://github.com/oven-sh/bun/issues/15853
 // The default-on/opt-out subprocess tests live in
@@ -86,3 +88,60 @@ describe("Temporal core operations", () => {
     expect(() => structuredClone(Temporal.Instant.from("2024-06-15T00:00Z"))).toThrow(DOMException);
   });
 });
+
+// Non-ISO calendar arithmetic opens ICU UCalendar templates that
+// TemporalCore::withCalendar caches for the process lifetime. The cache entry
+// owning them lives in bmalloc memory LeakSanitizer cannot scan, so without
+// the matching test/leaksan.supp entry LSan nondeterministically reports them
+// as direct leaks at exit (whether a stale stack pointer still reaches the
+// UCalendar decides each run). Pins the suppression: a calendar-heavy
+// workload must exit leak-clean under the repo suppression file.
+test.skipIf(!isASAN)(
+  "non-ISO calendar arithmetic is leak-clean under LeakSanitizer",
+  async () => {
+    // The workload runs in a timer callback: a top-level (module) stack puts
+    // JSC::JSModuleLoader::evaluateNonVirtual in every allocation stack, which
+    // the suppression file already covers wholesale. bun:test callbacks run
+    // via JSValue::call with no module-loader frame (how CI hit this); a timer
+    // callback has the same shape.
+    const code = `
+      setTimeout(() => {
+        const calendars = ["hebrew", "chinese", "indian", "persian", "coptic", "buddhist", "japanese", "roc"];
+        for (const calendar of calendars) {
+          const date = Temporal.PlainDate.from("2024-06-15[u-ca=" + calendar + "]");
+          if (typeof (date.year + date.month + date.day) !== "number" || !date.monthCode) throw new Error(calendar);
+          Temporal.PlainYearMonth.from("2024-06-15[u-ca=" + calendar + "]").toString();
+          Temporal.PlainMonthDay.from("2024-06-15[u-ca=" + calendar + "]").toString();
+        }
+        // Scrub the stack so no stale pointer to an ICU object survives for
+        // LSan's conservative scan; staying clean is on the suppression alone.
+        (function burn(n) { return n > 0 ? burn(n - 1) : JSON.parse(JSON.stringify({ n })); })(2000);
+        console.log("OK");
+      }, 0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: {
+        ...bunEnv,
+        // An order of magnitude slower on debug builds, and unrelated to leaks.
+        BUN_JSC_validateExceptionChecks: undefined,
+        BUN_JSC_dumpSimulatedThrows: undefined,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1",
+        LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${path.join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // LSan writes its leak report to stderr and SIGABRTs; stdout holds the
+    // workload's OK line either way, so assert exitCode/signal explicitly.
+    expect({ stdout, stderr, signal: proc.signalCode, exitCode }).toEqual({
+      stdout: "OK\n",
+      stderr: expect.not.stringContaining("LeakSanitizer"),
+      signal: null,
+      exitCode: 0,
+    });
+  },
+  20_000,
+);

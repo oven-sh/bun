@@ -136,3 +136,12 @@ leak:napi_internal_enqueue_finalizer
 # region, so the libc-allocated UCalendar it holds is reported as a direct
 # leak even though it is reachable and bounded.
 leak:TemporalCore::withTimeZone
+# test/js/web/temporal/temporal.test.ts
+# TemporalCore::withCalendar is withTimeZone's calendar twin: up to 8 open
+# UCalendars in a process-lifetime LazyNeverDestroyed TinyLRUCache, one per
+# non-ISO calendar ID (ISO arithmetic never opens one); LRU eviction
+# ucal_closes them. The CalendarCacheEntry that owns each UCalendar is
+# WTF_MAKE_TZONE_ALLOCATED (bmalloc), which LSAN does not scan as a root
+# region, so the libc-allocated UCalendar (and the ICU TimeZone inside it)
+# is reported as a direct leak even though it is reachable and bounded.
+leak:TemporalCore::withCalendar

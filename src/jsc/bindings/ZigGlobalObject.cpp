@@ -270,6 +270,8 @@ static consteval unsigned getWebKitBytecodeCacheVersion()
 }
 #undef WEBKIT_BYTECODE_CACHE_HASH_KEY
 
+extern "C" bool Bun__heapImageMode();
+extern "C" bool Bun__heapImageActive();
 extern "C" unsigned getJSCBytecodeCacheVersion()
 {
     return getWebKitBytecodeCacheVersion();
@@ -301,7 +303,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
         // allow_user_segv_handler=1, so we don't force it off here.
         JSC::initialize([&] {
-            if (const char* a = getenv("BUN_IMAGE_JIT_ADDR")) JSC::Options::jitMemoryReservationAddress() = strtoull(a, nullptr, 0); // heap-image experiment: keep the JIT pool out of kernel-placed VA
+            if (const char* a = getenv("BUN_IMAGE_JIT_ADDR")) JSC::Options::jitMemoryReservationAddress() = strtoull(a, nullptr, 0);
+            else if (Bun__heapImageMode()) JSC::Options::jitMemoryReservationAddress() = 0x3c0000000ull; // heap images: JIT pool at a fixed VA
+            if (Bun__heapImageActive()) { JSC::Options::useBaselineJIT() = false; JSC::Options::useFTLJIT() = false; } // building or restored from a heap image: LLInt+DFG (measured: less memory per turn, less CPU); BUN_JSC_* below can override
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;

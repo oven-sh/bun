@@ -129,6 +129,11 @@ bool _mi_os_commit(mi_subproc_t* subproc, void* addr, size_t size, bool* is_zero
 #define MI_HINT_AREA  ((uintptr_t)4 << 40)  // upto (2+4) 6TiB  (since before win8 there is "only" 8TiB available to processes)
 #define MI_HINT_MAX   ((uintptr_t)30 << 40) // wrap after 30TiB (area after 32TiB is used for huge OS pages)
 
+// Host is a `bun build --compile` executable? (BUN_COMPILED = the embedded-module section header; size != 0 only in compiled outputs.)
+// Those get deterministic address hints from the first allocation so a heap image can be built from / mapped into them without any env.
+struct mi_bun_blob_header_s { uint64_t size; };
+extern struct mi_bun_blob_header_s BUN_COMPILED __attribute__((weak));
+#define bun_heap_image_mode ((&BUN_COMPILED != NULL) ? (BUN_COMPILED.size != 0) : 0)
 static mi_decl_cache_align _Atomic(uintptr_t) aligned_base; // = 0  (hint bump pointer; file scope so mi_os_hint_floor can move it)
 
 // Heap image restore: make sure every hinted OS allocation from now on lands at or above `floor` (the image occupies the area below).
@@ -142,13 +147,15 @@ void* _mi_os_get_aligned_hint(size_t try_alignment, size_t size)
 {
 
   // todo: perhaps only do alignment hints if THP is enabled?
-  static int deterministic_all = -1;
-  if (deterministic_all < 0) {
-    const char* e = getenv("MIMALLOC_DETERMINISTIC_HINT"); deterministic_all = (e && *e == '1') ? 1 : 0;
+  // Deterministic hinting: on when the executable is image-capable (link-time flag in the host binary) or requested via env.
+  static int deterministic_env = -1;
+  if (deterministic_env < 0) {
+    const char* e = getenv("MIMALLOC_DETERMINISTIC_HINT"); deterministic_env = (e && *e == '1') ? 1 : 0;
     // MIMALLOC_HINT_FLOOR=0x...: start hinted OS allocations at/above this address (a heap image will be mapped below it)
     const char* fl = getenv("MIMALLOC_HINT_FLOOR"); if (fl && *fl) { unsigned long long v = strtoull(fl, NULL, 0); if (v) mi_os_hint_floor((void*)(uintptr_t)v); }
   }
   // deterministic mode: every OS allocation gets a bump-pointer hint in the hint area (so nothing lands at kernel-chosen addresses)
+  const int deterministic_all = deterministic_env || bun_heap_image_mode;
   if (!deterministic_all && (try_alignment <= mi_os_mem_config.alloc_granularity || try_alignment > MI_HINT_ALIGN)) return NULL;
   if (deterministic_all && try_alignment > MI_HINT_ALIGN) return NULL;
   if (mi_os_mem_config.virtual_address_bits < 46) return NULL;  // < 64TiB virtual address space
@@ -162,8 +169,7 @@ void* _mi_os_get_aligned_hint(size_t try_alignment, size_t size)
   if (hint == 0 || hint > MI_HINT_MAX) {   // wrap or initialize
     uintptr_t init = MI_HINT_BASE;
     // Experiment: MIMALLOC_DETERMINISTIC_HINT=1 disables hint randomization (heap-image determinism tests).
-    static int deterministic = -1;
-    if (deterministic < 0) { const char* e = getenv("MIMALLOC_DETERMINISTIC_HINT"); deterministic = (e && *e == '1') ? 1 : 0; }
+    const int deterministic = deterministic_all;
     #if (MI_SECURE>=1 || defined(NDEBUG))  // security: randomize start of aligned allocations unless in debug mode
     if (!deterministic) {
     mi_theap_t* const theap = _mi_theap_default();     // don't use `mi_theap_get_default()` as that can cause allocation recursively (issue #1267)

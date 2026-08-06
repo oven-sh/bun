@@ -157,8 +157,18 @@ extern "C" struct mach_header_64 _mh_execute_header;
 // Images (building or restoring one) need the executable at its link-time address. If dyld slid us, replace this process
 // with an unslid copy of ourselves (macOS private posix_spawn flag) — same argv/env, no external launcher needed.
 // The allocator / JIT placement and JSC tiering options an image depends on; applied (via the re-exec env) whenever an image is built or used.
+struct BlobHeaderView { uint64_t size; };
+extern "C" BlobHeaderView BUN_COMPILED;
+extern "C" bool Bun__isCompiledExecutable() { return BUN_COMPILED.size != 0; }
+extern "C" bool Bun__heapImageMode() { return BUN_COMPILED.size != 0 || getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"); }
+static bool s_imageActive = false; // set once this process is building an image or has restored one (decided in Bun__imageMaybeRestore, before VM init)
+extern "C" bool Bun__heapImageActive() { return s_imageActive; }
+
 static void setImageEnvDefaults()
 {
+    bool building = getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT");
+    if (Bun__isCompiledExecutable() && !building)
+        return; // compiled executables configure the allocator/JIT/tiers from BUN_COMPILED before main: nothing to pass through the environment
     setenv("MIMALLOC_DETERMINISTIC_HINT", "1", 0);
     // Builder and restorer must not share heap addresses for their *own* early allocations: builders (whose heap becomes the image) allocate
     // from 2.5TiB up, so a restoring process's ordinary early heap (mimalloc default 2TiB base) never sits where image regions get mapped.
@@ -168,7 +178,8 @@ static void setImageEnvDefaults()
     setenv("BUN_JSC_useBaselineJIT", "0", 0);
     setenv("BUN_JSC_useFTLJIT", "0", 0);
 }
-static bool imageEnvIsSet() { bool building = getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"); return getenv("MIMALLOC_DETERMINISTIC_HINT") && getenv("BUN_IMAGE_JIT_ADDR") && (!building || getenv("MIMALLOC_HINT_FLOOR")); }
+extern "C" bool Bun__isCompiledExecutable();
+static bool imageEnvIsSet() { bool building = getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"); if (Bun__isCompiledExecutable() && !building) return true; /* compiled executables configure allocator/JIT from BUN_COMPILED before main */ return getenv("MIMALLOC_DETERMINISTIC_HINT") && getenv("BUN_IMAGE_JIT_ADDR") && (!building || getenv("MIMALLOC_HINT_FLOOR")); }
 
 static void reexecWithoutASLRIfSlid()
 {
@@ -269,8 +280,9 @@ extern "C" void Bun__imageMaybeRestore()
     char path[4200] = "";
     if (const char* in = getenv("BUN_IMAGE_IN")) snprintf(path, sizeof path, "%s", in);
     else if (!getenv("BUN_IMAGE_OUT") && !getenv("CLAUDE_CODE_SNAPSHOT_OUT")) findSiblingImage(path, sizeof path) || (path[0] = 0);
+    s_imageActive = path[0] || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT");
     if (path[0])
-        imageRestoreAndRun(path);
+        imageRestoreAndRun(path); // returns only if the image was declined (then we boot normally, still with image-compatible options so a rebuild can snapshot)
 }
 extern "C" void Bun__imageSetBuilding(bool);
 extern "C" void mi_prof_reinit_lock(void);
@@ -1198,6 +1210,10 @@ extern "C" void Bun__imageContinueEventLoop();
 extern "C" void uws_adopt_loop_for_current_thread(struct us_loop_t*);
 void _mi_scavenger_forked_child(void); // C++-mangled (mimalloc is built as C++ here)
 extern "C" void Bun__imageAdoptMainThreadVM();
+// "Image-capable" = a `bun build --compile` executable (BUN_COMPILED, the __BUN/.bun section header, has a non-zero size in those and is
+// readable before main by anything statically linked) or explicitly requested via env. Drives deterministic allocator hints, the fixed JIT
+// pool address and (when an image is actually built/used) the LLInt+DFG tier defaults — so a compiled app needs no environment for images.
+
 extern "C" char** environ;
 
 #if OS(LINUX)
@@ -1738,10 +1754,11 @@ static void imageRestoreAndRun(const char* path)
         }
         if (hdr.reserved[0]) mi_theap_freeze((mi_theap_t*)hdr.reserved[0]);
         mi_arenas_seal_existing(); // every arena that exists now is image memory: nobody (any thread) allocates into its free space again
+        { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x300000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); if (top) mi_os_hint_floor((void*)(top + (1ull << 30))); } // the overlay brought the builder's hint pointer; make sure fresh memory goes above everything imaged
         mi_arena_id_t freshArena = 0; mi_heap_t* fresh = nullptr;
         if (!getenv("BUN_IMAGE_NOFRESHARENA") && mi_reserve_os_memory_ex(1ull << 30, false, false, true, &freshArena) == 0) fresh = mi_heap_new_in_arena(freshArena); // post-restore memory never interleaves with (or dirties the bitmaps of) image arenas
         mi_theap_set_default(mi_heap_theap(fresh ? fresh : mi_heap_new()));
-        { void* probe = mi_malloc(64); if (WTF::isInImageImmortalRange(probe)) { fprintf(stderr, "[image] fresh heap overlaps the immortal-refcount range; disabling it\n"); WTF::g_imageImmortalRangeSpan = 0; } mi_free(probe); }
+        { void* probe = mi_malloc(64); if (verbose) fprintf(stderr, "[image] fresh heap: arena reserved=%d probe=%p\n", (int)(fresh != nullptr), probe); if (WTF::isInImageImmortalRange(probe)) { fprintf(stderr, "[image] fresh heap overlaps the immortal-refcount range; disabling it\n"); WTF::g_imageImmortalRangeSpan = 0; } mi_free(probe); }
     }
 #if BUN_HEAPIMAGE_TOOLING
     if (getenv("BUN_IMAGE_TRAP")) imageTrapArm();

@@ -1787,6 +1787,10 @@ pub extern "C" fn Bun__imageSetBuilding(on: bool) {
     bun_core::image::set_building(on);
 }
 
+unsafe extern "C" {
+    fn Bun__Process__reloadEnvAfterImageRestore(global: *mut bun_jsc::JSGlobalObject);
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__imageAdoptMainThreadVM() {
     let vm_ptr = bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr();
@@ -1794,6 +1798,16 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
     bun_core::image::did_restore();
     bun_threading::work_pool::WorkPool::did_restore_from_image();
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
+    {
+        // SAFETY: main-thread VM; the env loader is the builder's — replace its process-derived entries with this process's environment.
+        let vm = unsafe { &mut *vm_ptr };
+        // SAFETY: `transpiler.env` is the process-lifetime loader; nothing else touches it during restore adoption.
+        if let Some(env) = unsafe { vm.transpiler.env.as_mut() } {
+            let _ = env.reload_process_after_image_restore();
+        }
+        // SAFETY: FFI; rebuilds the JS `process.env` object from the (now current) loader map.
+        unsafe { Bun__Process__reloadEnvAfterImageRestore(vm.global) };
+    }
     {
         // SAFETY: main-thread VM.
         let vm = unsafe { &mut *vm_ptr };

@@ -376,8 +376,7 @@ describe("Bun.Terminal", () => {
           proc.stdout.text(),
           proc.stderr.text(),
           proc.exited,
-        ]);
-        clearTimeout(watchdog);
+        ]).finally(() => clearTimeout(watchdog));
 
         expect(setRawModeDeadlocked).toBe(false);
         expect(stdout).toBe("RETURNED\n");

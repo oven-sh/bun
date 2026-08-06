@@ -4081,6 +4081,7 @@ http1ServerPipeline.advanceResponsePipeline = advanceResponsePipeline;
 http1ServerPipeline.abortQueuedPipelinedResponses = abortQueuedPipelinedResponses;
 http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
+http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
 
 export default {
   Server,

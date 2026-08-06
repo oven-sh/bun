@@ -111,6 +111,7 @@ const http1ServerPipeline: {
   abortQueuedPipelinedResponses?: (socket: unknown) => void;
   maybePauseFallbackReads?: (socket: unknown) => void;
   resumeFallbackReadsOnDrain?: (socket: unknown) => void;
+  kMustCloseConnection?: symbol;
 } = {};
 
 export const enum ClientRequestEmitState {

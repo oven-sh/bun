@@ -4249,6 +4249,46 @@ it("connectionListener aborts queued pipelined responses when the connection die
   clientSide.destroy();
 });
 
+it("connectionListener ends the connection after a Connection: close response instead of advancing", async () => {
+  // Node's resOnFinish _last branch: a response that advertised Connection:
+  // close must be the connection's final response (RFC 9112 9.6); the queued
+  // pipelined response behind it is aborted by the close path, never sent.
+  const closedEvents: string[] = [];
+  const { promise: done, resolve: onDone } = Promise.withResolvers<void>();
+  let pending = 3;
+  const tick = (tag: string) => {
+    closedEvents.push(tag);
+    if (--pending === 0) onDone();
+  };
+  const server = createServer((req, res) => {
+    if (req.url === "/a") {
+      res.setHeader("Connection", "close");
+      res.end("closing");
+      return;
+    }
+    req.on("close", () => tick("reqB"));
+    res.on("close", () => tick("resB"));
+    res.end("should-never-be-sent");
+  });
+  const [clientSide, serverSide] = duplexPair();
+  server.emit("connection", serverSide);
+  let received = "";
+  clientSide.on("data", d => (received += d));
+  clientSide.on("end", () => {
+    tick("clientEnd");
+    // A well-behaved client answers the FIN, fully closing the connection.
+    clientSide.end();
+  });
+  clientSide.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+  await done;
+  expect(received).toContain("Connection: close");
+  expect(received).toContain("closing");
+  expect(received).not.toContain("should-never-be-sent");
+  expect(closedEvents.sort()).toEqual(["clientEnd", "reqB", "resB"]);
+  clientSide.destroy();
+  serverSide.destroy();
+});
+
 it("connectionListener resets the connection when a queued pipelined response is destroyed", async () => {
   // Deliberate divergence from Node v26, which assigns the destroyed message
   // and wedges the connection until requestTimeout: an HTTP/1.1 connection

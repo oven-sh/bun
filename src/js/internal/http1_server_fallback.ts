@@ -244,6 +244,7 @@ function connectionListenerHTTP1(server, socket, options) {
     abortQueuedPipelinedResponses,
     maybePauseFallbackReads,
     resumeFallbackReadsOnDrain,
+    kMustCloseConnection,
   } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
 
@@ -346,11 +347,21 @@ function connectionListenerHTTP1(server, socket, options) {
     } else {
       res.assignSocket(socket);
     }
-    // node's resOnFinish: release the socket once the response completes so
-    // the next keep-alive request's response can attach, then hand it to the
-    // next queued pipelined response (replaying whatever it buffered).
+    // node's resOnFinish: release the socket once the response completes,
+    // then either end the connection (a response that advertised Connection:
+    // close must not be followed by another one - the close path aborts the
+    // queued responses) or hand the socket to the next queued pipelined
+    // response, replaying whatever it buffered.
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
+      if (this[kMustCloseConnection]) {
+        if (typeof socket.destroySoon === "function") {
+          socket.destroySoon();
+        } else if (!socket.writableEnded) {
+          socket.end();
+        }
+        return;
+      }
       advanceResponsePipeline(server, socket);
     });
 

@@ -89,6 +89,8 @@
 #include <JavaScriptCore/Completion.h>
 #include <zstd.h>
 #include <dlfcn.h>
+#include <hwy/targets.h>
+#include "wtf/SIMDUTF.h"
 #ifndef BUN_HEAPIMAGE_TOOLING
 #define BUN_HEAPIMAGE_TOOLING 1 // attribution/diagnostic commands (dirtymap, censuses, traps); the image product path must build with this off
 #endif
@@ -177,6 +179,21 @@ extern "C" struct mach_header_64 _mh_execute_header;
 extern "C" int bun_is_compiled_executable(void);
 extern "C" bool Bun__isCompiledExecutable() { return bun_is_compiled_executable(); }
 extern "C" bool Bun__heapImageMode() { return bun_is_compiled_executable() || getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"); }
+// Restore epoch, readable by any statically linked C/C++ (vendored libraries included): 0 in the process that boots normally or builds
+// an image, N after the Nth restore. A lazily-initialised static that caches process/OS/CPU state keys its once-token on this
+// (`if (token != bun_image_epoch + 1) { init(); token = bun_image_epoch + 1; }`) instead of a plain bool.
+extern "C" uint32_t bun_image_epoch; // defined (exported, unmangled) in bun_core::image; std::atomic<u32> layout == uint32_t
+
+namespace bssl { void OPENSSL_cpuid_setup(); }
+// CPU-dispatch latches in vendored code chose an implementation on the build machine. The header's feature-superset check makes those
+// choices valid here; re-probing lets a more capable CPU pick its best paths.
+static void imageReprobeCPUDispatch()
+{
+    hwy::GetChosenTarget().DeInit(); // next HWY_DYNAMIC_DISPATCH re-detects
+    simdutf::get_active_implementation() = simdutf::get_available_implementations().detect_best_supported();
+    bssl::OPENSSL_cpuid_setup(); // refills OPENSSL_ia32cap_P / OPENSSL_armcap_P
+}
+
 static bool s_imageActive = false; // set once this process is building an image or has restored one (decided in Bun__imageMaybeRestore, before VM init)
 extern "C" bool Bun__heapImageActive() { return s_imageActive; }
 
@@ -1908,6 +1925,8 @@ static void imageRestoreAndRun(const char* path)
     uws_adopt_loop_for_current_thread((struct us_loop_t*)hdr.reserved[8 - 1]); // main thread's uWS::Loop TLS -> the image's loop object (else uws_get_loop() would make a second loop)
     us_loop_reinit_for_image(uws_get_loop());
     { const char* d = getenv("BUN_MEMDEBUG"); s_dir = (d && *d) ? strdup(d) : nullptr; } // tooling dir belongs to this process, not the builder
+    __atomic_add_fetch(&bun_image_epoch, 1, __ATOMIC_ACQ_REL);
+    imageReprobeCPUDispatch();
     Bun__imageAdoptMainThreadVM();
     vm->refreshStackBoundsAfterImageRestore(); // before any JSLock/sanitizeStack: the VM still holds the builder's stack addresses (asserts once the stack lands elsewhere, i.e. with ASLR)
     { JSC::JSLockHolder lock(*vm); vm->didRestoreFromImage();

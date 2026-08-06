@@ -1,20 +1,22 @@
 //! Heap-image (snapshot) process state: are we building an image, and which restore epoch are we in.
 use core::sync::atomic::{AtomicU32, Ordering};
 
-static EPOCH: AtomicU32 = AtomicU32::new(0);
+// One epoch for the whole process (Rust, C++ and vendored C): the exported `bun_image_epoch` symbol, defined here.
+#[unsafe(no_mangle)]
+pub static bun_image_epoch: AtomicU32 = AtomicU32::new(0);
 static BUILDING: AtomicU32 = AtomicU32::new(0);
 
 /// 0 in a normally booted process; bumped each time this process resumed from an image.
 #[inline]
 pub fn epoch() -> u32 {
-    EPOCH.load(Ordering::Acquire)
+    bun_image_epoch.load(Ordering::Acquire)
 }
 #[inline]
 pub fn restored() -> bool {
     epoch() != 0
 }
+/// Called once per restore (the C++ restore sequence has already bumped `bun_image_epoch`).
 pub fn did_restore() {
-    EPOCH.fetch_add(1, Ordering::AcqRel);
     BUILDING.store(0, Ordering::Release);
 }
 /// True while this process is producing an image: OS resources created now will not exist when the image runs.

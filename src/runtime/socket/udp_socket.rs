@@ -1575,8 +1575,7 @@ impl UDPSocket {
     ) -> JsResult<bool> {
         let _ = self;
         let str = bun_core::OwnedString::new(address_val.to_bun_string(global_this)?);
-        // Check the original string: the slice_z conversion below absorbs one
-        // trailing NUL, so "1.2.3.4\0" would otherwise pass as "1.2.3.4".
+        // Checked pre-slice_z: that conversion absorbs one trailing NUL.
         if str.to_utf8_without_ref().slice().contains(&0) {
             return Ok(false);
         }
@@ -2274,8 +2273,7 @@ pub(crate) fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> Js
     {
         let fd = dgram_owned_fd_arg(global, frame.argument(0))?;
         let address = bun_core::OwnedString::new(frame.argument(1).to_bun_string(global)?);
-        // Check the original string: the slice_z conversion absorbs one
-        // trailing NUL, so "1.2.3.4\0" would otherwise pass as "1.2.3.4".
+        // Checked pre-slice_z: that conversion absorbs one trailing NUL.
         if address.to_utf8_without_ref().slice().contains(&0) {
             return Err(global.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::bind2)

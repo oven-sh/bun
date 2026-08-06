@@ -46,8 +46,7 @@ mod sys {
 
 pub fn is_ip_address(input: &[u8]) -> bool {
     let mut buf = [0u8; 512];
-    // An embedded NUL would truncate at the C parser below, classifying
-    // "127.0.0.1\0junk" as the IP "127.0.0.1". No IP literal contains a NUL.
+    // The C parser below stops at the first NUL; no IP literal contains one.
     if input.len() >= buf.len() || input.contains(&0) {
         return false;
     }

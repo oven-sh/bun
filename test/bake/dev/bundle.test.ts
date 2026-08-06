@@ -1182,3 +1182,36 @@ devTest("stylesheets imported through a failed js file stay active", {
     await c.style(".b").color.expect.toBe("green");
   },
 });
+// A parse-failed css root keeps its CssRoot content through insert_failure,
+// so an edge-adjusting retrace neither recurses into its css children (debug
+// assert) nor drops its slot from the route's css list.
+devTest("css parse error with an edge adjustment keeps the dev server alive", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      scripts: ["index.ts"],
+      body: "hello",
+    }),
+    "index.ts": `import.meta.hot.accept();\n`,
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css": `.fine { color: red; }\n`,
+    "b.css": `.b { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".fine").color.expect.toBe("red");
+    {
+      await using _batch = await dev.batchChanges({
+        errors: ["main.css:5:1: error: Unexpected end of input"],
+      });
+      await dev.write("main.css", `@import "./child.css";\nbody {\n color: red;\n background-color\n}\n`, {
+        dedent: false,
+      });
+      await dev.write("index.ts", `import.meta.hot.accept();\nimport "./b.css";\n`, { dedent: false });
+    }
+    await c.style(".fine").color.expect.toBe("red");
+    await c.style(".b").color.expect.toBe("green");
+    await dev.write("main.css", `@import "./child.css";\nbody { margin: 0; }\n`, { dedent: false });
+    await c.style(".fine").color.expect.toBe("red");
+  },
+});

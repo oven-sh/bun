@@ -528,13 +528,33 @@ export function windowsEnv(
       return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {
+      // Node's EnvDefiner rejects anything but a fully-specified writable,
+      // enumerable, configurable data descriptor. Validate before touching
+      // envMapList or the real environment block.
+      if (!("value" in attributes)) {
+        if ("get" in attributes || "set" in attributes) {
+          throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+            "'process.env' does not accept an accessor(getter/setter) descriptor",
+          );
+        }
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+        );
+      }
+      if (attributes.writable !== true || attributes.enumerable !== true || attributes.configurable !== true) {
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+        );
+      }
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      const value = String(attributes.value);
+      if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      editWindowsEnvVar(k, value);
+      internalEnv[k] = value;
+      return true;
     },
     getOwnPropertyDescriptor(target, p) {
       if (typeof p === "string") {

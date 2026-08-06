@@ -232,12 +232,14 @@ impl<'a> BundleV2<'a> {
         self.graph.path_to_source_index_map(target)
     }
 
-    /// In server-components builds, register a non-JavaScript file's source
-    /// index in every graph's path map so client, server, and SSR imports of
-    /// the same stylesheet or asset resolve to one copy: per-graph copies emit
-    /// duplicate chunks that collide on the content-hashed output path. JS
-    /// stays per-graph because the target affects DCE; HTML stays per-graph
-    /// because server-side HTML imports become per-target manifest modules.
+    /// In bake builds, register a non-JavaScript file's source index in every
+    /// graph's path map so client, server, and SSR imports of the same
+    /// stylesheet or asset resolve to one copy: per-graph copies emit
+    /// duplicate chunks, and with `css_target()` forcing identical minify
+    /// output they collide on the content-hashed output path, so this gate
+    /// must match `css_target()`'s. JS stays per-graph because the target
+    /// affects DCE; HTML stays per-graph because server-side HTML imports
+    /// become per-target manifest modules.
     pub(crate) fn share_non_js_source_index_across_graphs(
         &mut self,
         target: options::Target,
@@ -245,7 +247,7 @@ impl<'a> BundleV2<'a> {
         path_text: &[u8],
         source_index: IndexInt,
     ) {
-        if !self.transpiler.options.server_components
+        if !self.transpiler.options.is_bake_build()
             || loader.is_javascript_like()
             || loader == options::Loader::Html
         {

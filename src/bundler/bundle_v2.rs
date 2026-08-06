@@ -1530,6 +1530,12 @@ pub mod bv2_impl {
                 unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
 
             ct.options.target = Target::Browser;
+            // The clone inherits the server target's SSR react-compiler mode;
+            // the browser graph must use client mode or the SSR pass inlines
+            // hooks and leaves dangling setter references in the client bundle.
+            if ct.options.react_compiler.is_ssr() {
+                ct.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
+            }
             ct.options.main_fields = Target::Browser
                 .default_main_fields()
                 .iter()

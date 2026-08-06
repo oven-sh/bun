@@ -132,5 +132,6 @@ public:
 };
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetTraceSigInt);
 
 } // namespace Bun

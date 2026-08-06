@@ -129,6 +129,7 @@ typedef int mode_t;
 #include <unistd.h> // setuid, getuid
 #endif
 
+#include <atomic>
 #include <cstring>
 extern "C" bool Bun__Node__ProcessNoDeprecation;
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
@@ -1444,6 +1445,68 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
     Bun__onPosixSignal(signalNumber);
 }
 
+#if !OS(WINDOWS)
+// util.setTraceSigInt: while enabled and no JS 'SIGINT' listener is installed,
+// SIGINT prints node's KEYBOARD_INTERRUPT line and the process still dies from
+// the signal (exit code 128 + SIGINT).
+static std::atomic<bool> s_traceSigintEnabled { false };
+
+// Disposition that was active before the trace handler took over, e.g. the
+// termios-restoring onExitSignal installed for TTYs (c-bindings.cpp). The
+// trace handler re-raises through it and disabling restores it, so the trace
+// stays transparent to whatever handler was there first.
+static struct sigaction s_previousSigintAction;
+
+static void traceSigintHandler(int)
+{
+    // Async-signal-safe only: write(2), sigaction(2), raise(3).
+    constexpr char message[] = "KEYBOARD_INTERRUPT: Script execution was interrupted by `SIGINT`\n";
+    ssize_t rc = write(STDERR_FILENO, message, sizeof(message) - 1);
+    (void)rc;
+    sigaction(SIGINT, &s_previousSigintAction, nullptr);
+    raise(SIGINT);
+}
+
+// s_previousSigintAction is written only when the caller passes it as
+// oldAction: on the first transition from "trace not installed" to
+// "trace installed". Re-arming after listener churn passes nullptr so the
+// saved disposition survives.
+static void installTraceSigintHandler(struct sigaction* oldAction)
+{
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = traceSigintHandler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_RESTART;
+    sigaction(SIGINT, &action, oldAction);
+}
+#endif
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetTraceSigInt, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if !OS(WINDOWS)
+    bool enable = callFrame->argument(0).toBoolean(globalObject);
+    s_traceSigintEnabled.store(enable, std::memory_order_relaxed);
+
+    struct sigaction current;
+    memset(&current, 0, sizeof(current));
+    sigaction(SIGINT, nullptr, &current);
+    if (enable) {
+        // A JS 'SIGINT' listener takes priority over the trace, matching node.
+        // Skipping a redundant enable keeps s_previousSigintAction pointing at
+        // the real previous disposition instead of the trace handler itself.
+        if (current.sa_handler != forwardSignal && current.sa_handler != traceSigintHandler)
+            installTraceSigintHandler(&s_previousSigintAction);
+    } else if (current.sa_handler == traceSigintHandler) {
+        sigaction(SIGINT, &s_previousSigintAction, nullptr);
+    }
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+#endif
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
 
@@ -1631,6 +1694,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
                             // Don't uninstall the old handler if it's not the one we installed.
                             signal(signalNumber, oldHandler);
+                        } else if (signalNumber == SIGINT && s_traceSigintEnabled.load(std::memory_order_relaxed)) {
+                            // Removing the last JS 'SIGINT' listener re-arms util.setTraceSigInt.
+                            installTraceSigintHandler(nullptr);
                         }
 #else
                         SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);

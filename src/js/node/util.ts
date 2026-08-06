@@ -546,6 +546,8 @@ function aborted(signal: AbortSignal, resource: object) {
   return promise;
 }
 
+const setTraceSigIntNative = $newCppFunction("BunProcess.cpp", "jsFunctionSetTraceSigInt", 1);
+
 function setTraceSigInt(enable) {
   // Node validates the argument before the worker check (lib/util.js), so a
   // bad type throws ERR_INVALID_ARG_TYPE even inside a worker.
@@ -554,9 +556,7 @@ function setTraceSigInt(enable) {
     // Matches node's ERR_WORKER_UNSUPPORTED_OPERATION('Calling util.setTraceSigInt').
     throw $ERR_WORKER_UNSUPPORTED_OPERATION("Calling util.setTraceSigInt is not supported in workers");
   }
-  // Node starts/stops a SIGINT watchdog that prints a stack trace when the
-  // process is interrupted; bun does not implement the watchdog yet, so this
-  // is accepted as a no-op on the main thread.
+  setTraceSigIntNative(enable);
 }
 
 cjs_exports = {

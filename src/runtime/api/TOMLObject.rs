@@ -191,10 +191,7 @@ impl Stringifier {
     /// Emits the body of one table: `key = value` lines first, then
     /// `[sub.table]` and `[[array.of.tables]]` sections (a keyval after a
     /// header would belong to that header, so the order is forced).
-    ///
-    /// With `own_header`, the table's `[path]` header is emitted lazily:
-    /// before the first keyval, or after an empty body. A sub-section
-    /// reached first makes it redundant (`[a.b]` alone implies `[a]`).
+    /// `own_header` defers `[path]`: a sub-section reached first implies it.
     fn stringify_table_body(
         &mut self,
         global: &JSGlobalObject,
@@ -265,8 +262,6 @@ impl Stringifier {
                             return Err(self.err_changed(global));
                         }
                         self.mark_visiting(global, item)?;
-                        // Element headers are unconditional: each one creates
-                        // the element.
                         self.append_header(true);
                         self.stringify_table_body(global, item, false)?;
                         self.visiting.remove(&item);

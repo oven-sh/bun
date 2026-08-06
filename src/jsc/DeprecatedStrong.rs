@@ -5,10 +5,7 @@ use core::ptr::NonNull;
 
 use crate::JSValue;
 
-// Drop is the release for the `init()` protect. In debug builds a heap
-// canary detects use-after-free of the handle itself.
-// (Audited 2026-06: the only user is test_runner/Collection.rs, which uses
-// `init` + Drop.)
+// Drop is the release for the `init()` protect.
 
 #[cfg(debug_assertions)]
 macro_rules! enable_safety {

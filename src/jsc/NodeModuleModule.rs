@@ -138,8 +138,6 @@ impl Default for CustomLoader {
     }
 }
 
-// Custom extension functions are held as Rust-side `Strong` roots
-// (`CustomLoader::Custom`) in `vm.commonjs_custom_extensions`.
 fn on_require_extension_modify(
     global: &JSGlobalObject,
     str: &[u8],

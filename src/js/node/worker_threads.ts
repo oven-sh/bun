@@ -753,23 +753,26 @@ function receiveMessageOnPort(port: MessagePort) {
 // TODO: parent port emulation is not complete
 function fakeParentPort() {
   const fake = Object.create(MessagePort.prototype);
-  Object.defineProperty(fake, "onmessage", {
-    get() {
-      return self.onmessage;
-    },
-    set(value) {
-      self.onmessage = value;
-    },
-  });
-
-  Object.defineProperty(fake, "onmessageerror", {
-    get() {
-      return self.onmessageerror;
-    },
-    set(value) {
-      self.onmessageerror = value;
-    },
-  });
+  function defineHandlerAttribute(name: string, event: string) {
+    let handler: any = null;
+    const wrapper = (e: Event) => {
+      if ($isCallable(handler)) handler.$call(fake, e);
+      else if ($isCallable(handler?.handleEvent)) handler.handleEvent.$call(handler, e);
+    };
+    Object.defineProperty(fake, name, {
+      get() {
+        return handler;
+      },
+      set(value) {
+        const next = $isCallable(value) || (value !== null && typeof value === "object") ? value : null;
+        if (handler === null && next !== null) self.addEventListener(event, wrapper);
+        else if (handler !== null && next === null) self.removeEventListener(event, wrapper);
+        handler = next;
+      },
+    });
+  }
+  defineHandlerAttribute("onmessage", "message");
+  defineHandlerAttribute("onmessageerror", "messageerror");
 
   const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
@@ -830,6 +833,10 @@ let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 // Gate on _isNodeWorker so a raw `new globalThis.Worker` that transitively loads
 // this module does NOT have process.abort/chdir/setuid replaced.
 if (!isMainThread && _isNodeWorker) {
+  // Node has no global onmessage; parentPort shares this event target, so keeping it double-delivers.
+  try {
+    delete (globalThis as any).onmessage;
+  } catch {}
   applyWorkerProcessOverrides();
 }
 function applyWorkerProcessOverrides() {

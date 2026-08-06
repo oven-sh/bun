@@ -356,8 +356,8 @@ if (typeof Bun === "object") {
     ResolveMessage,
     ErrorEvent,
     Worker,
-    onmessage,
-    onerror,
+    globalThis.onmessage,
+    globalThis.onerror,
   );
 }
 

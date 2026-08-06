@@ -1756,3 +1756,59 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/7816
+// Emscripten's pthread worker shim registers parentPort.on("message", ...) and
+// then assigns self.onmessage. In Node the global onmessage is not an event
+// handler accessor, so only the parentPort listener fires; Bun was delivering
+// the message to both, so the pthread 'load' handler ran twice and aborted.
+test("globalThis.onmessage is not an event handler accessor inside a node:worker_threads worker", async () => {
+  const worker = new Worker(
+    /* js */ `
+      const { parentPort } = require("worker_threads");
+      let count = 0;
+      const hadOnMessage = "onmessage" in globalThis;
+      Object.assign(global, { self: global });
+      parentPort.on("message", data => {
+        globalThis.onmessage({ data });
+      });
+      self.onmessage = e => {
+        count++;
+        if (e.data === "ping") {
+          setImmediate(() => parentPort.postMessage({ count, hadOnMessage }));
+        }
+      };
+      parentPort.postMessage("ready");
+    `,
+    { eval: true },
+  );
+  try {
+    await once(worker, "message"); // "ready"
+    worker.postMessage("ping");
+    const [result] = await once(worker, "message");
+    expect(result).toEqual({ count: 1, hadOnMessage: false });
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("parentPort.onmessage works inside a node:worker_threads worker", async () => {
+  const worker = new Worker(
+    /* js */ `
+      const { parentPort } = require("worker_threads");
+      parentPort.onmessage = e => {
+        parentPort.postMessage({ echoed: e.data, handlerIsSet: typeof parentPort.onmessage === "function" });
+      };
+      parentPort.postMessage("ready");
+    `,
+    { eval: true },
+  );
+  try {
+    await once(worker, "message"); // "ready"
+    worker.postMessage("hello");
+    const [result] = await once(worker, "message");
+    expect(result).toEqual({ echoed: "hello", handlerIsSet: true });
+  } finally {
+    await worker.terminate();
+  }
+});

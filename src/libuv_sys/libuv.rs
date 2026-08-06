@@ -22,13 +22,16 @@ use core::{fmt, mem, ptr};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Debug log scope (`bun.Output.scoped(.uv, .hidden)`). This crate is leaf
-// (no `bun_output` dep), so the macro compiles to nothing in release and to
-// an `eprintln!` gated by `BUN_DEBUG_uv` in debug.
+// (no `bun_output` dep): an `eprintln!` gated by `BUN_DEBUG_uv` in debug, a
+// constant-false branch in release — the arguments stay type-checked (and
+// count as used) in both, like `bun_core::scoped_log!`.
 // ──────────────────────────────────────────────────────────────────────────
 #[doc(hidden)]
-#[cfg(debug_assertions)]
 #[inline]
 pub fn __uv_log_enabled() -> bool {
+    if !cfg!(debug_assertions) {
+        return false;
+    }
     // `Output.scoped` reads the env var once at startup; `inc/dec` are on the
     // per-handle ref/unref hot path, so cache the lookup instead of paying a
     // GetEnvironmentVariableW syscall + alloc per tick.
@@ -39,8 +42,7 @@ pub fn __uv_log_enabled() -> bool {
 #[macro_export]
 macro_rules! __uv_log {
     ($($arg:tt)*) => {{
-        #[cfg(debug_assertions)]
-        if $crate::__uv_log_enabled() {
+        if ::core::cfg!(debug_assertions) && $crate::__uv_log_enabled() {
             ::std::eprintln!("[uv] {}", ::std::format_args!($($arg)*));
         }
     }};

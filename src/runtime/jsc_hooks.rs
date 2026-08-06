@@ -3386,13 +3386,7 @@ fn transpile_source_code_inner(
                 let watcher =
                     unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
                 if watcher
-                    .add_file::<true>(
-                        input_fd,
-                        path.text,
-                        hash,
-                        bun_sys::Fd::INVALID,
-                        None,
-                    )
+                    .add_file::<true>(input_fd, path.text, hash, bun_sys::Fd::INVALID, None)
                     .is_err()
                 {
                     // Close the fd we just opened on macOS;

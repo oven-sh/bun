@@ -815,7 +815,7 @@ impl FSEventsLoop {
         unsafe { (cf.run_loop_stop)(self.loop_.load(Ordering::Relaxed)) };
     }
 
-        fn shutdown(&'static self) {
+    fn shutdown(&'static self) {
         // SAFETY: `thread` is only touched here and in `init()`, always on the JS thread under `FSEVENTS_DEFAULT_LOOP_MUTEX`.
         let Some(thread) = (unsafe { (*self.thread.get()).take() }) else {
             return; // already shut down
@@ -870,7 +870,7 @@ pub type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {
-        fn init(
+    fn init(
         loop_: &'static FSEventsLoop,
         path: &[u8],
         recursive: bool,

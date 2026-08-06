@@ -80,9 +80,7 @@ impl ImportWatcher {
     #[inline]
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
-                w.add_file_by_path_slow(file_path)
-            }
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.add_file_by_path_slow(file_path),
             ImportWatcher::None => true,
         }
     }
@@ -99,14 +97,9 @@ impl ImportWatcher {
         package_json: Option<&'static bun_watcher::PackageJSON>,
     ) -> bun_sys::Result<()> {
         match self {
-            ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => watcher
-                .add_file::<COPY_FILE_PATH>(
-                    fd,
-                    file_path,
-                    hash,
-                    dir_fd,
-                    package_json,
-                ),
+            ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
+                watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
+            }
             ImportWatcher::None => Ok(()),
         }
     }

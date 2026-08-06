@@ -61,10 +61,17 @@ describe("API surface", () => {
     });
   });
 
-  test("query() with wrong this throws ERR_INVALID_THIS", async () => {
+  test("query() and request() with wrong this reject with ERR_INVALID_THIS", async () => {
     await expect(navigator.locks.query.call({})).rejects.toMatchObject({
       code: "ERR_INVALID_THIS",
     });
+    let callbackRan = false;
+    await expect(
+      navigator.locks.request.call({}, "wrong-this", () => {
+        callbackRan = true;
+      }),
+    ).rejects.toMatchObject({ code: "ERR_INVALID_THIS" });
+    expect(callbackRan).toBe(false);
   });
 });
 
@@ -545,6 +552,48 @@ describe("AbortSignal", () => {
       return "completed successfully";
     });
     expect(result).toBe("completed successfully");
+  });
+
+  test("a signal whose addEventListener throws does not leak the request", async () => {
+    // The request's Strong on the abort listener and the listener's captured
+    // ref on the request form a cycle; a failure while registering the
+    // listener must not leave that cycle armed.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { heapStats } = require("bun:jsc");
+        function poisonSignal() {
+          return {
+            aborted: false,
+            throwIfAborted() {},
+            get addEventListener() { throw new Error("add-boom"); },
+          };
+        }
+        let rejections = 0;
+        for (let i = 0; i < 2000; i++) {
+          try {
+            await navigator.locks.request("abort-leak", { signal: poisonSignal() }, () => {});
+          } catch {
+            rejections++;
+          }
+        }
+        await new Promise(r => setTimeout(r, 0));
+        Bun.gc(true);
+        Bun.gc(true);
+        const promises = heapStats().objectTypeCounts.Promise ?? 0;
+        console.log("rejections:", rejections);
+        console.log("promises:", promises < 1000 ? "collected" : "pinned: " + promises);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("rejections: 2000\npromises: collected\n");
+    expect(exitCode).toBe(0);
   });
 });
 

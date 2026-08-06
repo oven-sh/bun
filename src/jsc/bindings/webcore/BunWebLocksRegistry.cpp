@@ -201,9 +201,11 @@ int32_t BunWebLocksRegistry::request(Zig::GlobalObject* globalObject, uint64_t i
 
     int32_t immediateEvent = NoEvent;
     EventsByContext eventsByContext;
-    String ownedName = name.isolatedCopy();
     {
         Locker locker { m_lock };
+        // Destroyed before the unlock: the map keys copy-ref this impl, whose
+        // refcount is not atomic, so every deref must stay under m_lock.
+        String ownedName = name.isolatedCopy();
 
         if (steal) {
             // Steal bypasses the queue and the granting rules: every current

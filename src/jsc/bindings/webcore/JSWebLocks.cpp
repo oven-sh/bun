@@ -730,7 +730,6 @@ static void addAbortListener(Zig::GlobalObject* globalObject, ThrowScope& scope,
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     });
-    request.abortListener = JSC::Strong<JSObject> { vm, listener };
 
     JSValue addFunction = signal->get(globalObject, Identifier::fromString(vm, "addEventListener"_s));
     RETURN_IF_EXCEPTION(scope, );
@@ -746,6 +745,11 @@ static void addAbortListener(Zig::GlobalObject* globalObject, ThrowScope& scope,
     args.append(listener);
     args.append(listenerOptions);
     JSC::call(globalObject, addFunction, callData, signal, args);
+    RETURN_IF_EXCEPTION(scope, );
+    // Armed only after registration succeeded: this Strong forms a retain
+    // cycle with the Ref the listener captures, so arming it before a
+    // fallible call would leak the request if that call threw.
+    request.abortListener = JSC::Strong<JSObject> { vm, listener };
 }
 
 static void throwNotSupportedError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message)
@@ -860,6 +864,15 @@ JSC_DEFINE_HOST_FUNCTION(jsWebLockManagerRequest, (JSGlobalObject * lexicalGloba
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!dynamicDowncast<JSWebLockManager>(callFrame->thisValue())) [[unlikely]] {
+        // Async function semantics: reject instead of throwing.
+        Bun::ERR::INVALID_THIS(scope, globalObject, "LockManager"_s);
+        JSValue error = scope.exception()->value();
+        if (!scope.tryClearException())
+            return {};
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::rejectedPromise(globalObject, error)));
+    }
 
     // Node's request() is an async function: validation failures become
     // rejections, never synchronous throws.

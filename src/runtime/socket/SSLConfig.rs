@@ -297,10 +297,8 @@ fn handle_path(
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
-    // An embedded NUL would truncate the path at the C-string boundary
-    // (`access` below and the BoringSSL file loaders), silently loading the
-    // file named by the prefix instead of the configured path. Reject it,
-    // like the `Bun.file()` path guard (`Valid::path_null_bytes`).
+    // An interior NUL would truncate the path at the C-string boundary
+    // (`access` below, BoringSSL loaders), silently loading the prefix file.
     if bun_core::strings::index_of_char(name.as_bytes(), 0).is_some() {
         return Err(global
             .err(

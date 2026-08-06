@@ -1538,21 +1538,21 @@ describe("uid/gid", () => {
   });
 });
 
-// The allocator opts its own mappings out of transparent huge pages; it must
-// not do so with prctl(PR_SET_THP_DISABLE), which children inherit across
-// execve. Gate on PID 1 so an environment that disables THP itself skips.
+// The allocator opts its own mappings out of THP; it must not use
+// prctl(PR_SET_THP_DISABLE), which children inherit across execve. Gate on our
+// parent so an environment (or older bun) that disabled THP itself skips.
 function thpEnabled(status: string) {
   return status.match(/^THP_enabled:\s*(\d)/m)?.[1];
 }
-function initThp() {
+function parentThp() {
   if (!isLinux) return undefined;
   try {
-    return thpEnabled(readFileSync("/proc/1/status", "utf8"));
+    return thpEnabled(readFileSync(`/proc/${process.ppid}/status`, "utf8"));
   } catch {
     return undefined; // hidepid mount: cannot tell, skip
   }
 }
-it.if(initThp() === "1")("spawned children keep the system THP policy", async () => {
+it.if(parentThp() === "1")("spawned children keep the system THP policy", async () => {
   await using proc = spawn({ cmd: ["cat", "/proc/self/status"], stdout: "pipe", stderr: "inherit" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(thpEnabled(stdout)).toBe("1");

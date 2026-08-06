@@ -545,6 +545,32 @@ pub fn set_thread_name(name: &ZStr) {
     }
 }
 
+/// Opt the calling (non-main) thread's stack out of transparent huge pages.
+///
+/// Kernels before 6.7 don't mark `MAP_STACK` mappings `VM_NOHUGEPAGE`, so with
+/// `/sys/kernel/mm/transparent_hugepage/enabled = always` the first touch of a
+/// 2 MiB-aligned stretch of a ≥2 MiB stack faults in a whole huge page. The
+/// allocators opt their own mappings out (see `scripts/build/deps/mimalloc.ts`);
+/// thread stacks are the one large region they don't own. No-op elsewhere.
+pub fn disable_transparent_huge_pages_for_current_stack() {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    // SAFETY: `attr` is initialized by `pthread_getattr_np` before use and
+    // destroyed after; `MADV_NOHUGEPAGE` only sets a flag on our own stack's
+    // VMA and never discards contents.
+    unsafe {
+        let mut attr = core::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+        if libc::pthread_getattr_np(libc::pthread_self(), attr.as_mut_ptr()) != 0 {
+            return; // ENOMEM
+        }
+        let mut addr: *mut core::ffi::c_void = core::ptr::null_mut();
+        let mut size: libc::size_t = 0;
+        if libc::pthread_attr_getstack(attr.as_ptr(), &mut addr, &mut size) == 0 {
+            libc::madvise(addr, size, libc::MADV_NOHUGEPAGE);
+        }
+        libc::pthread_attr_destroy(attr.as_mut_ptr());
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Exit callbacks
 // ──────────────────────────────────────────────────────────────────────────

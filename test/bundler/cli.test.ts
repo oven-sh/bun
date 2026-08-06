@@ -517,3 +517,45 @@ describe("CLI argument error messages", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe.concurrent("modules too deeply nested to print", () => {
+  // A TOML dotted header builds an object nested arbitrarily deep without
+  // recursing in the parser, so the printer's recursion guard is the first
+  // thing to hit it. The build must fail instead of emitting truncated
+  // output with exit code 0.
+  const deepToml = "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n";
+
+  test("bun build fails instead of emitting a truncated bundle", async () => {
+    using dir = tempDir("build-deep-toml", { "deep.toml": deepToml });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "deep.toml"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Maximum call stack size exceeded while generating code for this file");
+    expect(stderr).toContain("deep.toml");
+    // No partial bundle: the printer used to bail mid-print and emit only
+    // the trailing export stub.
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun build --no-bundle fails instead of emitting empty output", async () => {
+    using dir = tempDir("build-deep-toml-nb", { "deep.toml": deepToml });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "deep.toml"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Maximum call stack size exceeded while generating code for "');
+    expect(stderr).toContain("deep.toml");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+});

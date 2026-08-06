@@ -549,6 +549,25 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toEqual(null);
   });
 
+  test.concurrent("fails instead of truncating when a module is too deeply nested to print", async () => {
+    // A TOML dotted header builds an object nested arbitrarily deep without
+    // recursing in the parser, so the printer's recursion guard is the first
+    // thing to hit it. The printed part used to be silently dropped, leaving
+    // a corrupt bundle and success: true.
+    using dir = tempDir("build-api-deep-toml", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+    });
+    const x = await buildNoThrow({
+      entrypoints: [join(String(dir), "deep.toml")],
+      outdir: join(String(dir), "out"),
+    });
+    expect(x.success).toBe(false);
+    expect(x.outputs).toHaveLength(0);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
+    expect(x.logs[0].name).toBe("BuildMessage");
+  });
+
   test.concurrent("warnings do not fail a build", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],

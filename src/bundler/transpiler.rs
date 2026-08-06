@@ -2773,6 +2773,7 @@ impl<'a> Transpiler<'a> {
             bun_ast::Stmt::data_store_reset();
             bun_ast::store_ast_alloc_heap::reset();
 
+            let errors_before = self.log().errors;
             let output_file = match self.build_with_resolve_result_eager(
                 &item,
                 import_path_format,
@@ -2780,7 +2781,28 @@ impl<'a> Transpiler<'a> {
                 None,
             ) {
                 Ok(Some(f)) => f,
-                Ok(None) | Err(_) => continue,
+                Ok(None) => continue,
+                Err(err) => {
+                    // An error that was not already reported (e.g. the
+                    // printer's recursion guard tripping on a deeply nested
+                    // AST) must still fail the build instead of silently
+                    // producing no output for this file.
+                    if self.log().errors == errors_before {
+                        let path: &[u8] = item.path_const().map(|p| p.text).unwrap_or(b"");
+                        let message: &str = match err {
+                            crate::Error::JsPrinter(js_printer::Error::StackOverflow) => {
+                                "Maximum call stack size exceeded while generating code for"
+                            }
+                            _ => "Failed to generate code for",
+                        };
+                        self.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!("{} \"{}\"", message, bstr::BStr::new(path)),
+                        );
+                    }
+                    continue;
+                }
             };
             self.output_files.push(output_file);
         }

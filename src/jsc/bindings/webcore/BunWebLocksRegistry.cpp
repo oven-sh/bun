@@ -98,8 +98,19 @@ bool BunWebLocksRegistry::deliverEvents(Zig::GlobalObject* selfGlobalObject, Scr
     Vector<Event> selfEvents = self ? eventsByContext.take(self) : Vector<Event>();
 
     for (auto& entry : eventsByContext) {
-        bool posted = ScriptExecutionContext::postTaskTo(entry.key, [events = WTF::move(entry.value)](ScriptExecutionContext& target) {
-            dispatchEventsToJS(defaultGlobalObject(target.jsGlobalObject()), events);
+        bool posted = ScriptExecutionContext::postTaskTo(entry.key, [events = WTF::move(entry.value), contextId = entry.key](ScriptExecutionContext&) {
+            // The task argument is always the thread's default context, but
+            // the addressed one can be a different global on that thread (a
+            // ShadowRealm's) whose own client holds these ids, so resolve the
+            // global from the identifier. A null lookup means the context died
+            // after the post; ~ScriptExecutionContext already purged its state.
+            auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
+            if (!context)
+                return;
+            auto* globalObject = dynamicDowncast<Zig::GlobalObject>(context->jsGlobalObject());
+            if (!globalObject)
+                return;
+            dispatchEventsToJS(globalObject, events);
         });
         if (!posted) {
             // The context is gone (or terminating): nothing will ever process
@@ -177,18 +188,22 @@ void BunWebLocksRegistry::processQueue(Zig::GlobalObject* selfGlobalObject)
     processingQueue = false;
 }
 
-uint64_t BunWebLocksRegistry::request(Zig::GlobalObject* globalObject, const String& name, bool exclusive, bool steal, bool ifAvailable, int32_t& immediateEvent)
+uint64_t BunWebLocksRegistry::allocateId()
 {
     s_hasBeenUsed.store(true, std::memory_order_release);
+    Locker locker { m_lock };
+    return m_nextId++;
+}
+
+int32_t BunWebLocksRegistry::request(Zig::GlobalObject* globalObject, uint64_t id, const String& name, bool exclusive, bool steal, bool ifAvailable)
+{
     auto self = globalObject->scriptExecutionContext()->identifier();
 
-    uint64_t id;
-    immediateEvent = NoEvent;
+    int32_t immediateEvent = NoEvent;
     EventsByContext eventsByContext;
     String ownedName = name.isolatedCopy();
     {
         Locker locker { m_lock };
-        id = m_nextId++;
 
         if (steal) {
             // Steal bypasses the queue and the granting rules: every current
@@ -212,15 +227,15 @@ uint64_t BunWebLocksRegistry::request(Zig::GlobalObject* globalObject, const Str
         }
     }
 
-    // Only steal-victim events can exist here; their ids predate this call
-    // and are registered. The caller runs processQueue() once it has
-    // registered the new id: a grant for it may already be pending if another
-    // thread released the name while this critical section was in flight.
+    // Only steal-victim events can exist here. The caller runs processQueue()
+    // after dispatching the returned event: a grant for this id may already be
+    // pending if another thread released the name while this critical section
+    // was in flight.
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     deliverEvents(globalObject, self, WTF::move(eventsByContext));
-    RETURN_IF_EXCEPTION(scope, id);
-    return id;
+    RETURN_IF_EXCEPTION(scope, immediateEvent);
+    return immediateEvent;
 }
 
 bool BunWebLocksRegistry::release(Zig::GlobalObject* globalObject, uint64_t id, const String& name)

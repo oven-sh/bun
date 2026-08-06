@@ -45,12 +45,17 @@ public:
     // Fast no-op unless the registry has ever been used.
     static void contextDestroyed(ScriptExecutionContextIdentifier);
 
-    // Decide a new request in one critical section. `immediateEvent` receives
-    // this request's own outcome (GrantedEvent for an immediate grant or a
-    // steal, MissEvent for an ifAvailable miss, NoEvent when it parked in the
-    // queue) for the caller to dispatch after it has registered the returned
-    // id; steal victims are notified on their own threads.
-    uint64_t request(Zig::GlobalObject*, const String& name, bool exclusive, bool steal, bool ifAvailable, int32_t& immediateEvent);
+    // Allocate the id for a new request. The caller must register the id in
+    // its WebLocksClient before calling request(): the commit can synchronously
+    // run user JS (a steal publishes its victims' dc end events), and that JS
+    // can re-enter with another steal targeting this very id.
+    uint64_t allocateId();
+
+    // Decide a new request in one critical section. Returns this request's own
+    // outcome (GrantedEvent for an immediate grant or a steal, MissEvent for
+    // an ifAvailable miss, NoEvent when it parked in the queue) for the caller
+    // to dispatch; steal victims are notified on their own threads.
+    int32_t request(Zig::GlobalObject*, uint64_t id, const String& name, bool exclusive, bool steal, bool ifAvailable);
 
     // Release a held lock, then grant whatever that unblocks. Returns false
     // if the lock was no longer held (it was stolen by another thread whose

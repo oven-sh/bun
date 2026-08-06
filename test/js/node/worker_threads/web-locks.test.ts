@@ -331,7 +331,7 @@ describe("basic behavior", () => {
     expect(resolveCount).toBe(100);
   });
 
-  test("AsyncLocalStorage context is preserved across the lock callback", async () => {
+  test("AsyncLocalStorage context is preserved across a synchronous grant", async () => {
     const als = new AsyncLocalStorage();
     const store = { id: "lock" };
     await als.run(store, () => {
@@ -339,6 +339,47 @@ describe("basic behavior", () => {
         expect(als.getStore()).toBe(store);
       });
     });
+  });
+
+  test("AsyncLocalStorage context for deferred and queued grants matches Node", async () => {
+    // Matches Node v26.3.0 in both async-context modes: a signal-deferred
+    // immediate grant runs the callback under the requester's store, while a
+    // queued grant's callback inherits the context active at grant dispatch,
+    // which is the releaser's store, not the requester's.
+    const als = new AsyncLocalStorage<{ id: string }>();
+    const seen: string[] = [];
+    const get = () => als.getStore()?.id ?? "none";
+
+    await als.run({ id: "requester1" }, () =>
+      navigator.locks.request("als-deferred", { signal: new AbortController().signal }, async () => {
+        seen.push(`immediate+signal:${get()}`);
+      }),
+    );
+
+    for (const [name, signal] of [
+      ["als-queued", undefined],
+      ["als-queued-signal", new AbortController().signal],
+    ] as const) {
+      const release = Promise.withResolvers<void>();
+      const holder = als.run({ id: `releaser:${name}` }, () =>
+        navigator.locks.request(name, async () => {
+          await release.promise;
+        }),
+      );
+      const waiter = als.run({ id: `requester:${name}` }, () =>
+        navigator.locks.request(name, signal ? { signal } : {}, async () => {
+          seen.push(`${name}:${get()}`);
+        }),
+      );
+      release.resolve();
+      await Promise.all([holder, waiter]);
+    }
+
+    expect(seen).toEqual([
+      "immediate+signal:requester1",
+      "als-queued:releaser:als-queued",
+      "als-queued-signal:releaser:als-queued-signal",
+    ]);
   });
 });
 
@@ -427,6 +468,51 @@ describe("steal", () => {
     expect(order[0]).toBe("stealer");
     expect(order).toContain("pending");
     expect(order).toContain("holder:AbortError");
+  });
+
+  test("a dc end subscriber stealing the same name re-entrantly rejects the outer steal", async () => {
+    // The victim's locks.request.end event fires while the outer steal is
+    // still being committed, so a subscriber stealing the same name from
+    // there targets the outer request itself. The outer request must reject
+    // with AbortError, and the registry must never report two exclusive
+    // holders for the name.
+    let reentered = false;
+    const innerRelease = Promise.withResolvers<void>();
+    let innerPromise: Promise<unknown> | undefined;
+    const onEnd = () => {
+      if (reentered) return;
+      reentered = true;
+      innerPromise = navigator.locks.request("steal-reenter", { steal: true }, async () => {
+        await innerRelease.promise;
+        return "inner";
+      });
+    };
+    dc.subscribe("locks.request.end", onEnd);
+    try {
+      const victim = navigator.locks
+        .request("steal-reenter", async () => {
+          await new Promise(() => {});
+        })
+        .catch(e => e.name);
+      const exclusiveCounts: number[] = [];
+      const outer = navigator.locks
+        .request("steal-reenter", { steal: true }, async () => {
+          const q = await navigator.locks.query();
+          exclusiveCounts.push(q.held.filter(h => h.name === "steal-reenter" && h.mode === "exclusive").length);
+          return "outer";
+        })
+        .catch(e => e.name);
+      expect(await outer).toBe("AbortError");
+      expect(await victim).toBe("AbortError");
+      // only the re-entrant stealer may hold the lock
+      const q = await navigator.locks.query();
+      expect(q.held.filter(h => h.name === "steal-reenter").map(h => h.mode)).toEqual(["exclusive"]);
+      expect(exclusiveCounts.every(n => n <= 1)).toBe(true);
+      innerRelease.resolve();
+      expect(await innerPromise).toBe("inner");
+    } finally {
+      dc.unsubscribe("locks.request.end", onEnd);
+    }
   });
 });
 
@@ -704,6 +790,32 @@ describe("process behavior", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("end-of-script\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("other realms", () => {
+  test("a contended request from a ShadowRealm is granted and released", async () => {
+    // The realm is a separate global (and script execution context) on the
+    // same thread, so its grant arrives as a posted task addressed to the
+    // realm's context, not the thread's default one.
+    const name = "shadow-realm-lock";
+    const release = Promise.withResolvers<void>();
+    const holder = navigator.locks.request(name, () => release.promise);
+
+    const granted = Promise.withResolvers<string>();
+    const realm = new ShadowRealm();
+    realm.evaluate(
+      `cb => { navigator.locks.request(${JSON.stringify(name)}, lock => { cb(lock.name + ":" + lock.mode); }); undefined; }`,
+    )(granted.resolve);
+
+    release.resolve();
+    await holder;
+    expect(await granted.promise).toBe(`${name}:exclusive`);
+
+    // the realm's callback returned undefined, so its lock released and the
+    // name must be grantable from the main realm again
+    const reacquired = await navigator.locks.request(name, { ifAvailable: true }, lock => lock !== null);
+    expect(reacquired).toBe(true);
   });
 });
 

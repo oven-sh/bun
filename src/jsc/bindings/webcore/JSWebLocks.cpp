@@ -817,22 +817,28 @@ static JSValue webLockManagerRequestImpl(Zig::GlobalObject* globalObject, ThrowS
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    int32_t immediateEvent = BunWebLocksRegistry::NoEvent;
-    uint64_t id = BunWebLocksRegistry::singleton().request(globalObject, name, options.exclusive, options.steal, options.ifAvailable, immediateEvent);
-    RETURN_IF_EXCEPTION(scope, {});
-
+    auto& registry = BunWebLocksRegistry::singleton();
+    uint64_t id = registry.allocateId();
     request->id = id;
     client.requests.set(id, request.copyRef());
+
+    // The commit below can synchronously run user JS (a steal publishes its
+    // victims' dc end events), and that JS can re-enter with another steal
+    // that takes this very lock, so the id must be registered first: the
+    // nested steal then finds this request and rejects it, and the granted
+    // dispatch below no-ops on the removed id.
+    int32_t immediateEvent = registry.request(globalObject, id, name, options.exclusive, options.steal, options.ifAvailable);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSPromise* promise = request->promise.get();
     if (immediateEvent != BunWebLocksRegistry::NoEvent) {
         dispatchWebLockEvent(globalObject, immediateEvent, id);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    // Now that the id is registered, grant anything that became grantable
-    // while the registry critical section was in flight (possibly this very
-    // request, if another thread released the name in that window).
-    BunWebLocksRegistry::singleton().processQueue(globalObject);
+    // Grant anything that became grantable while the registry critical
+    // section was in flight (possibly this very request, if another thread
+    // released the name in that window).
+    registry.processQueue(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return promise;
 }

@@ -1339,6 +1339,30 @@ extern "C"
       uwsRes->resetTimeout();
     }
   }
+  /* Completion gate for response-end paths that bypass internalEnd (the
+   * sendfile path): closes the socket when the connection is marked to close
+   * (Connection: close, peer FIN, close-when-idle), the response is complete,
+   * and every outgoing byte has been flushed. Corked responses are left to the
+   * cork() wrapper's own post-uncork gate. */
+  void uws_res_close_if_done_and_marked(int ssl, uws_res_r res)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      if (!uwsRes->AsyncSocket<true>::isCorked())
+      {
+        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
+      }
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      if (!uwsRes->AsyncSocket<false>::isCorked())
+      {
+        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
+      }
+    }
+  }
   void uws_res_reset_timeout(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

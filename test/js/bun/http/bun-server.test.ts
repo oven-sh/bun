@@ -733,6 +733,66 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
+  test("in-flight Bun.file (sendfile) response completes across stop(), then its connection is closed", async () => {
+    // The sendfile completion path (uws_res_end_sendfile) bypasses internalEnd
+    // and returns `false` to uWS's onWritable, so none of the parser-side
+    // shouldCloseConnection() gates run; the explicit gate after the stream's
+    // on_complete is what closes the drained connection here.
+    const dir = tempDirWithFiles("drain-sendfile", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const SIZE = 16 * 1024 * 1024;
+          await Bun.write("big.bin", Buffer.alloc(SIZE, "x"));
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 255,
+            fetch: () => new Response(Bun.file("big.bin")),
+          });
+          const c = net.connect(server.port, "127.0.0.1");
+          let received = 0;
+          let sawClose = false;
+          const firstData = Promise.withResolvers();
+          c.on("data", d => { received += d.length; firstData.resolve(); });
+          c.on("close", () => (sawClose = true));
+          c.on("error", () => {});
+          await new Promise((resolve, reject) => { c.on("connect", resolve); c.on("error", reject); });
+          c.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          // First bytes of the response have arrived; 16 MB cannot fit in the
+          // socket buffers, so the transfer is still in flight server-side.
+          await firstData.promise;
+          c.pause();
+          let resolved = false;
+          const stopped = server.stop(false).then(() => { resolved = true; });
+          await new Promise(r => setImmediate(r));
+          const resolvedEarly = resolved;
+          c.resume();
+          // The full body must arrive, then the server closes the connection
+          // (the client never hangs up; idleTimeout is far beyond the test
+          // budget, so only the drain can close it).
+          while (!sawClose) await new Promise(r => setImmediate(r));
+          await stopped;
+          const gotWholeBody = received >= SIZE;
+          console.log(JSON.stringify({ resolvedEarly, gotWholeBody, resolved }));
+        `,
+      ],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: { resolvedEarly: false, gotWholeBody: true, resolved: true },
+      exitCode: 0,
+    });
+  });
+
   test("closeIdleConnections() is a one-shot sweep that spares busy connections and keeps listening", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -933,7 +993,11 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           release.resolve();
           await Promise.race([stopped, new Promise(r => setTimeout(r, 2000))]);
           const gotResponse = buf.includes("\\r\\nok");
-          console.log(JSON.stringify({ resolvedEarly, resolved, gotResponse }));
+          // The drain's close is server-initiated; poll briefly since the
+          // client's 'close' races the promise resolution.
+          const until = Date.now() + 2000;
+          while (!sawClose && Date.now() < until) await new Promise(r => setImmediate(r));
+          console.log(JSON.stringify({ resolvedEarly, resolved, gotResponse, sawClose }));
           process.exit(0);
         `,
       ],
@@ -944,7 +1008,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, resolved: true, gotResponse: true },
+      out: { resolvedEarly: false, resolved: true, gotResponse: true, sawClose: true },
       exitCode: 0,
     });
   });

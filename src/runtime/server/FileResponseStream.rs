@@ -479,6 +479,13 @@ impl FileResponseStream {
         let resp = self.resp.get();
         resp.end_send_file(self.sendfile.get().offset, resp.should_close_connection());
         (self.on_complete.get())(self.ctx.get(), resp);
+        // `end_send_file` bypasses every shouldCloseConnection() gate: it does
+        // not go through internalEnd, and the onWritable gate is skipped
+        // because this frame returns `false` to it. Run the gate here — after
+        // `on_complete`, which must see a live socket — so Connection: close
+        // and the graceful-stop close-when-idle mark actually close. Only
+        // `finish()` runs after this, and it never touches `resp`.
+        resp.close_if_done_and_marked();
         self.finish();
     }
 

@@ -263,14 +263,4 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     return JSC::JSValue::encode(jsUndefined());
 }
 
-template<typename Visitor>
-void JSCommonJSExtensions::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    JSCommonJSExtensions* thisObject = uncheckedDowncast<JSCommonJSExtensions>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSCommonJSExtensions);
-
 } // namespace Bun

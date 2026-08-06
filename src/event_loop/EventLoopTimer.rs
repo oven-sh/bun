@@ -178,7 +178,6 @@ impl EventLoopTimer {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Tag {
-    TimerCallback,
     TimeoutObject,
     ImmediateObject,
     StatWatcherScheduler,
@@ -221,12 +220,6 @@ impl Tag {
     }
 }
 
-pub struct TimerCallback {
-    pub callback: fn(*mut TimerCallback),
-    // Opaque user ctx; ownership stays with whoever installs the callback.
-    pub event_loop_timer: EventLoopTimer,
-}
-
 /// Stamp out one `unsafe fn $method(*const EventLoopTimer) -> *mut Self` per
 /// `(method => field)` pair: each recovers the embedding owner from a pointer
 /// to the named intrusive [`EventLoopTimer`] slot (typed container_of).
@@ -266,8 +259,6 @@ macro_rules! impl_timer_owner {
         }
     };
 }
-
-crate::impl_timer_owner!(TimerCallback; from_timer_ptr => event_loop_timer);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Default)]

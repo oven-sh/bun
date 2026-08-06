@@ -50,9 +50,8 @@ const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
 
 // ─── erased upward types (CYCLEBREAK) ─────────────────────────────────────
 
-/// Opaque forward-decl of `bun_resolver::package_json::PackageJSON` (T5).
-/// Watcher only stores `Option<&PackageJSON>` and passes it through; never
-/// dereferenced here. Real layout lives in `bun_resolver`.
+/// Opaque forward-decl of `bun_resolver::package_json::PackageJSON`. Stored as
+/// `Option<&PackageJSON>` and passed through; never dereferenced here.
 // SAFETY: erased PackageJSON — only ever held by reference / raw ptr.
 #[repr(C)]
 pub struct PackageJSON {
@@ -66,10 +65,8 @@ pub struct PackageJSON {
 #[derive(Clone, Copy)]
 pub struct AnyResolveWatcher {
     pub(crate) context: *mut (),
-    // Safe fn-pointer: the callback has no caller-side preconditions — it
-    // receives exactly the `context` it was paired with at construction (a
-    // closure-style invariant upheld by this struct), and the body discharges
-    // its own type-recovery `unsafe` internally.
+    // Safe fn-pointer: callback always receives the paired `context`; the body
+    // discharges its own type-recovery `unsafe` internally.
     pub(crate) callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
 }
 
@@ -85,10 +82,8 @@ impl AnyResolveWatcher {
 // ideally, the constants above can be inlined
 pub(crate) type Platform = platform::Platform;
 
-/// `?[:0]u8` — name of a changed file inside a watched directory, borrowed
-/// from the platform's event buffer (inotify event names / kqueue udata).
-/// Ownership stays with the platform buffer for the duration of one
-/// `on_file_update` callback; the slot is cleared next cycle.
+/// Name of a changed file inside a watched directory, borrowed from the
+/// platform's event buffer for the duration of one `on_file_update` callback.
 pub type ChangedFilePath = Option<&'static ZStr>;
 
 // ─── Watcher ──────────────────────────────────────────────────────────────
@@ -105,12 +100,9 @@ pub struct Watcher {
     pub watchlist: WatchList,
     pub mutex: Mutex,
 
-    // Storing the `top_level_dir` slice directly avoids a forward-decl
-    // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
-    // allocator field dropped — global mimalloc (see §Allocators)
-    /// Whether `thread_main` is running. Written by the watcher thread, read
-    /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value
-    /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
+    /// Ownership discriminator: `true` → watcher thread frees in [`thread_main`];
+    /// `false` → caller frees. Set by `start()` pre-spawn; cleared under
+    /// `self.mutex` by [`thread_body`]'s `Err` arm to hand the allocation back.
     pub(crate) watchloop_handle: bun_core::AtomicCell<bool>,
     pub(crate) cwd: &'static [u8],
     pub(crate) thread: Option<std::thread::JoinHandle<()>>,
@@ -152,21 +144,8 @@ pub trait WatcherContext {
 }
 
 impl Watcher {
-    /// Initializes a watcher. Each watcher is tied to some context type, which
-    /// receives watch callbacks on the watcher thread. This function does not
-    /// actually start the watcher thread.
-    ///
-    /// ```ignore
-    /// let watcher = Watcher::init(instance_of_t, fs)?;
-    /// // on error: watcher.shutdown(false);
-    /// watcher.start()?;
-    ///
-    /// // To integrate a started watcher into module resolution:
-    /// transpiler.resolver.watcher = watcher.get_resolve_watcher();
-    ///
-    /// // To integrate a started watcher into bundle_v2:
-    /// bundle_v2.bun_watcher = watcher;
-    /// ```
+    /// Initializes a watcher tied to a context type that receives callbacks on
+    /// the watcher thread. Does not start the thread; call `start()` after.
     pub fn init<T: WatcherContext>(
         ctx: *mut T,
         top_level_dir: &'static [u8],
@@ -214,12 +193,9 @@ impl Watcher {
         Ok(this)
     }
 
-    /// Lock, check `running`, then dispatch a batch of `watch_events` /
-    /// `changed_filepaths` through the trace writer and `on_file_update`.
-    ///
-    /// The platform `watch_loop_cycle` fills `self.watch_events[..event_count]`
-    /// and `self.changed_filepaths[..changed_count]` and calls this instead of
-    /// open-coding the lock/trace/callback sequence.
+    /// Lock, check `running`, then dispatch `watch_events[..event_count]` /
+    /// `changed_filepaths[..changed_count]` through trace + `on_file_update`.
+    /// Called by platform `watch_loop_cycle` after filling those buffers.
     pub(crate) fn dispatch_file_updates(&mut self, event_count: usize, changed_count: usize) {
         let _guard = self.mutex.lock_guard();
         if !self.running.load() {
@@ -232,7 +208,7 @@ impl Watcher {
     }
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
-        debug_assert!(!self.watchloop_handle.load());
+        debug_assert!(self.thread.is_none());
         self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
@@ -266,12 +242,6 @@ impl Watcher {
         Ok(())
     }
 
-    // not `impl Drop` — takes a flag and conditionally hands
-    // ownership to the watcher thread (which frees self in thread_main).
-    // Per PORTING.md, `pub fn deinit` is never the public name; renamed to
-    // `shutdown` (not `close(self)` because ownership may transfer to the
-    // watcher thread instead of dropping here).
-    // TODO: ownership model — needs heap::take or an Arc to make this sound.
     /// # Safety
     /// `this` must be the unique heap pointer returned from `init()`; ownership
     /// transfers here on the no-thread path (the Box is reclaimed).
@@ -281,13 +251,17 @@ impl Watcher {
             // Shared access suffices (atomics + mutex + column reads); the borrow
             // ends before the free below.
             let me = unsafe { &*this };
+            // Read `watchloop_handle` under `self.mutex` so `thread_body()`'s
+            // `Err`-arm handback can't race the free below; `running = false`
+            // here ensures no callback to `ctx` begins after we return.
+            me.mutex.lock();
             if me.watchloop_handle.load() {
-                me.mutex.lock();
                 me.close_descriptors.store(close_descriptors);
                 me.running.store(false);
                 me.mutex.unlock();
                 false
             } else {
+                me.mutex.unlock();
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
@@ -310,18 +284,11 @@ impl Watcher {
     }
 
     /// # Safety
-    /// `this` must be the unique heap pointer returned from [`init`]. The
-    /// watcher thread takes ownership: after `watch_loop` exits, this function
-    /// reconstitutes the `Box<Watcher>` and drops it. Callers must not hold a
-    /// live `&`/`&mut` borrow of `*this` across the call (Stacked Borrows
-    /// forbids deallocating through a pointer while a reference to the same
-    /// allocation is protected — which is why this takes `*mut Self`, not
-    /// `&mut self`).
+    /// `this` must be the unique heap pointer from [`init`]; no `&`/`&mut`
+    /// borrow of `*this` may outlive this call (it reclaims the Box).
     unsafe fn thread_main(this: *mut Self) -> Result<(), crate::Error> {
-        // SAFETY: caller contract — `this` is a valid, exclusively-accessed heap
-        // allocation. The `&mut self` reborrow is scoped to this call and ends
-        // *before* we reclaim the Box below; deallocating while a `&mut self`
-        // argument is still protected is UB under Stacked Borrows / Tree Borrows.
+        // SAFETY: caller contract; the `&mut self` reborrow ends before the Box
+        // is reclaimed below (deallocating under a live borrow is UB).
         let owner_still_alive = unsafe { (*this).thread_body() };
 
         // Close trace file if open
@@ -339,51 +306,52 @@ impl Watcher {
     }
 
     fn thread_body(&mut self) -> bool {
-        self.watchloop_handle.store(true);
         self.thread_lock.lock();
         Output::Source::configure_named_thread(zstr!("File Watcher"));
 
         log!("Watcher started");
 
-        let owner_still_alive = match self.watch_loop() {
+        match self.watch_loop() {
             Err(err) => {
-                self.watchloop_handle.store(false);
                 self.platform.stop();
-                let running = self.running.load();
-                if running {
+                // Hold `self.mutex` so `shutdown()` observes the handback flip
+                // and can't return (dropping `ctx`) before `on_error` finishes.
+                let _guard = self.mutex.lock_guard();
+                if self.running.load() {
+                    // Owner is still alive — hand the allocation back; its
+                    // later `shutdown()` takes the else branch and frees.
+                    // Last access to `self` is `_guard`'s unlock on return.
+                    self.watchloop_handle.store(false);
                     (self.on_error)(self.ctx, err);
+                    return true;
                 }
-                running
             }
-            Ok(()) => false,
-        };
+            Ok(()) => {}
+        }
 
-        // deinit and close descriptors if needed
-        if self.close_descriptors.load() {
+        // Read `close_descriptors` under `self.mutex` (written there by
+        // `shutdown()`); the lock also orders the free after `shutdown()`'s
+        // critical section on the fast-exit path.
+        let close_descriptors = {
+            let _guard = self.mutex.lock_guard();
+            self.close_descriptors.load()
+        };
+        if close_descriptors {
             let fds = self.watchlist.items_fd();
             for &fd in fds {
                 let _ = bun_sys::close(fd);
             }
         }
-        owner_still_alive
+        false
     }
 
     pub fn flush_evictions(&mut self) {
         if self.evict_list_i == 0 {
             return;
         }
-        // The close+swap_remove below must be serialized against (a) the JS
-        // thread's `ImportWatcher::snapshot_fd_and_package_json` lookup and
-        // (b) the JS thread's `append_file_maybe_lock<true>` re-add — both of
-        // which take `self.mutex`. Otherwise there's a window between pass 1
-        // (`close(fd)`) and pass 2 (`swap_remove`) where the JS thread reads
-        // the still-present entry's now-closed fd → `EBADF reading "<path>"`.
-        //
-        // We do NOT lock here: the only callers are deferred from
-        // `WatcherContext::on_file_update`, which is itself invoked from
-        // `dispatch_file_updates` while `self.mutex` is already held.
-        // `bun_threading::Mutex` is non-recursive — re-locking here is
-        // `os_unfair_lock` SIGILL on darwin and self-deadlock on Linux/Windows.
+        // Caller must hold `self.mutex` (held via `dispatch_file_updates` →
+        // `on_file_update`); we don't re-lock because `bun_threading::Mutex` is
+        // non-recursive. Serializes close+swap_remove vs JS-thread fd reads.
         debug_assert!(
             self.mutex.is_held_by_current_thread(),
             "flush_evictions: caller must hold self.mutex (platform watcher holds it around on_file_update)",
@@ -432,10 +400,9 @@ impl Watcher {
             }
             self.watchlist.swap_remove(item as usize);
 
-            // swapRemove put a different entry at `item`, but its kqueue registration still
-            // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
-            // route to the right module; EV_ADD on an existing (ident, filter) replaces in
-            // place. See #29524.
+            // swap_remove moved an entry here but its kqueue udata still holds
+            // the pre-swap index; re-add to rewrite it (EV_ADD replaces in
+            // place). See #29524.
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             {
                 if (item as usize) < self.watchlist.len() {
@@ -460,18 +427,9 @@ impl Watcher {
         Ok(())
     }
 
-    /// Register a file descriptor with kqueue on macOS without validation.
-    ///
-    /// Preconditions (caller must ensure):
-    /// - `fd` is a valid, open file descriptor
-    /// - `watchlist_id` matches the entry's index in the watchlist
-    ///
-    /// Safe to call on an already-registered `fd`: `EV_ADD` on an existing
-    /// `(ident, filter)` replaces the registration in place, which `flush_evictions`
-    /// relies on to rewrite `udata` after `swap_remove`. Adding a
-    /// skip-if-registered guard here silently reintroduces #29524.
-    ///
-    /// Does not propagate kevent registration errors.
+    /// Register `fd` with kqueue. Caller ensures `fd` is valid and
+    /// `watchlist_id` matches its watchlist index. Re-adding replaces in place
+    /// (`flush_evictions` relies on this; a skip guard reintroduces #29524).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn add_file_descriptor_to_kqueue_without_checks(
         &mut self,
@@ -496,10 +454,6 @@ impl Watcher {
         // Store the index for fast filtering later
         event.udata = watchlist_id as _;
 
-        // This took a lot of work to figure out the right permutation
-        // Basically:
-        // - We register the event here.
-        // our while(true) loop above receives notification of changes to any of the events created here.
         let _ = bun_sys::kevent(self.platform.fd, &[event], &mut [], None);
     }
 
@@ -544,10 +498,8 @@ impl Watcher {
         self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
-            // inotify needs a trailing NUL. When
-            // CLONE_FILE_PATH is true the caller's `file_path` is NOT NUL-terminated,
-            // so we must copy into a NUL-terminated scratch buffer (mirrors the
-            // directory branch below) instead of pointing at the caller's slice.
+            // inotify needs a trailing NUL; when CLONE_FILE_PATH the caller's
+            // slice isn't NUL-terminated, so copy into a scratch buffer.
             let mut buf = bun_paths::path_buffer_pool::get();
             let slice: &ZStr = if CLONE_FILE_PATH {
                 buf[0..file_path.len()].copy_from_slice(file_path);
@@ -704,10 +656,8 @@ impl Watcher {
                 }
             }
         }
-        // Abort on OOM:
-        // `MultiArrayList::ensure_unused_capacity` returns `Err(AllocError)` on
-        // allocation failure (does NOT abort), so discarding it would let the
-        // following `append_assume_capacity` write past capacity.
+        // `ensure_unused_capacity` returns Err on OOM (no abort); discarding it
+        // would let `append_assume_capacity` write past capacity.
         self.watchlist
             .ensure_unused_capacity(1 + usize::from(parent_watch_item.is_none()))
             .unwrap_or_else(|_| bun_core::out_of_memory());
@@ -791,17 +741,9 @@ impl Watcher {
         self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
     }
 
-    /// Lazily watch a file by path (slow path).
-    ///
-    /// This function is used when a file needs to be watched but was not
-    /// encountered during the normal import graph traversal. On macOS, it
-    /// opens a file descriptor with O_EVTONLY to obtain an inode reference.
-    ///
-    /// Thread-safe: uses internal locking to prevent race conditions.
-    ///
-    /// Returns:
-    /// - true if the file is successfully added to the watchlist or already watched
-    /// - false if the file cannot be opened or added to the watchlist
+    /// Lazily watch a file not seen during import-graph traversal (opens
+    /// O_EVTONLY on macOS). Thread-safe. Returns `true` if added or already
+    /// watched, `false` if open/add fails.
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: Loader) -> bool {
         if file_path.is_empty() {
             return false;
@@ -941,10 +883,8 @@ impl Watcher {
 
     pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {
         fn wrap(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
-            // SAFETY: ctx was stored from *mut Watcher in get_resolve_watcher()
-            // and `AnyResolveWatcher::watch` only ever feeds back the paired
-            // `context`; the resolver holds it for the Watcher's lifetime. The
-            // `&mut Watcher` is scoped to this call.
+            // SAFETY: ctx is the *mut Watcher stored in get_resolve_watcher();
+            // the resolver holds it for the Watcher's lifetime.
             unsafe { (*ctx.cast::<Watcher>()).on_maybe_watch_directory(dir_path, dir_fd) }
         }
         AnyResolveWatcher {
@@ -1062,10 +1002,8 @@ pub enum WatchItemKind {
     Directory,
 }
 
-/// Typed SoA column accessors — thin safe wrappers over the reflection-backed
+/// Typed SoA column accessors — thin wrappers over
 /// `MultiArrayList::items::<"name", T>()` so callers don't repeat the type.
-/// Implemented locally so callers can write `watchlist.items_fd()` instead of
-/// the unsafe generic `Slice::items::<F>(field)`.
 pub trait WatchItemColumns {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>];
     fn items_hash(&self) -> &[u32];

@@ -43,6 +43,7 @@ enum class WebSocketErrorCode : int32_t {
     proxy_connection_refused = 35,
     proxy_tunnel_failed = 36,
     unexpected_rsv1 = 37,
+    invalid_extensions_header = 38,
 };
 
 }

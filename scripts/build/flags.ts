@@ -1030,14 +1030,6 @@ export const linkerFlags: Flag[] = [
     desc: "macOS cross-link: fold identical address-insignificant functions",
   },
   {
-    // -ld_new selects Apple's new linker — only meaningful (and only
-    // understood) when Apple's ld driver does the link. ld64.lld (the
-    // cross-link path) parses it as `-l d_new` and fails.
-    flag: "-Wl,-ld_new",
-    when: c => c.darwin && c.crossTarget === undefined,
-    desc: "Use new Apple linker (native darwin links only)",
-  },
-  {
     // Cross-link from a non-darwin host: same pattern as Android/FreeBSD —
     // target triple + explicit linker. -isysroot is added by the deployment-
     // target flag below; the clang driver forwards it to ld64.lld as

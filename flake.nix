@@ -12,7 +12,8 @@
   # };
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # nixpkgs-unstable, not nixos-unstable: the latter gates only on Linux tests, so darwin lags.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -37,7 +38,7 @@
         # Build tools and dependencies
         packages = [
           # Core build tools
-          pkgs.cmake # Expected: 3.30+ on nixos-unstable as of 2025-10
+          pkgs.cmake # Expected: 3.30+ on nixpkgs-unstable as of 2025-10
           pkgs.ninja
           pkgs.pkg-config
           pkgs.ccache
@@ -119,10 +120,9 @@
           pkgs.xorg.libxshmfence
           pkgs.gdk-pixbuf
         ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-          # macOS specific dependencies
-          pkgs.darwin.apple_sdk.frameworks.CoreFoundation
-          pkgs.darwin.apple_sdk.frameworks.CoreServices
-          pkgs.darwin.apple_sdk.frameworks.Security
+          # nixpkgs' apple-sdk omits these; WebKit includes <unicode/*> and bun includes <sqlite3.h>.
+          pkgs.darwin.ICU
+          pkgs.sqlite
         ];
 
       in

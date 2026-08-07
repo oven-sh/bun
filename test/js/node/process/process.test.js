@@ -31,7 +31,7 @@ it.skipIf(!isWindows)("a rejected process.env defineProperty leaves no phantom k
 });
 
 it.skipIf(!isWindows)(
-  "process.env defineProperty enumerates special-accessor keys and coerces accessor reads",
+  "process.env defineProperty enumerates special-accessor keys and rejects accessor descriptors",
   async () => {
     // HTTP_PROXY and friends exist on the underlying env object as DontEnum
     // CustomAccessors even when unset; the defineProperty trap must use the

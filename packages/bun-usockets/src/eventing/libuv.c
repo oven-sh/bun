@@ -173,6 +173,14 @@ static void close_cb_free_poll(uv_handle_t *h) {
   if (h->data) {
     us_free(h->data);
     us_free(h);
+  } else {
+    /* us_poll_stop ran but us_poll_free has not yet. This callback never runs
+     * again, and uv_is_closing() cannot tell a CLOSED handle from a CLOSING
+     * one, so mark the handle: a later us_poll_free must free both blocks
+     * itself instead of deferring to us. The mark cannot collide with a live
+     * poll, whose data is either 0 or the us_poll_t (a different
+     * allocation). */
+    h->data = h;
   }
 }
 
@@ -207,7 +215,16 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
    * simply change back the data to point to our structure so that we actually
    * do free it like we should. */
   if (uv_is_closing((uv_handle_t *)p->uv_p)) {
-    p->uv_p->data = p;
+    if (p->uv_p->data == (void *)p->uv_p) {
+      /* uv_is_closing() is also true for a handle that finished closing.
+       * close_cb_free_poll already ran (marking the handle; see above) and
+       * will never run again, so deferring to it would leak both blocks.
+       * libuv is done with the handle; free them here. */
+      us_free(p->uv_p);
+      us_free(p);
+    } else {
+      p->uv_p->data = p;
+    }
   } else {
     us_free(p->uv_p);
     us_free(p);

@@ -600,6 +600,12 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     do {
         rc = epoll_ctl(loop->fd, EPOLL_CTL_MOD, new_p->state.fd, &event);
     } while (IS_EINTR(rc));
+    if (rc != 0) {
+        /* A failed MOD leaves the kernel's data.ptr on the old poll, which the
+         * caller frees: crash now rather than use-after-free later (the
+         * eventfd failure in us_internal_create_async sets the precedent). */
+        BUN_PANIC("us_poll_resize: epoll_ctl failed to re-register the poll");
+    }
 #else
     /* Re-register each filter with new_p as udata (EV_ADD on an existing knote
      * updates udata in place), arming exactly the poll's current interest.
@@ -641,6 +647,20 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     do {
         ret = kevent64(loop->fd, change_list, change_length, change_list, change_length, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
+    /* A change that failed to apply leaves the kernel referencing the old
+     * poll, which the caller frees: crash now rather than use-after-free
+     * later. ENOENT is the trailing EV_DELETE of an absent filter, the one
+     * benign failure; on FreeBSD it surfaces as ret < 0 (the shim passes no
+     * eventlist) after every EV_ADD before it has already applied. */
+    if (ret < 0 && errno != ENOENT) {
+        BUN_PANIC("us_poll_resize: kevent failed to re-register the poll");
+    }
+    for (int i = 0; i < ret; i++) {
+        if ((change_list[i].flags & EV_ERROR) && change_list[i].data != 0 &&
+            change_list[i].data != ENOENT) {
+            BUN_PANIC("us_poll_resize: kevent failed to re-register the poll");
+        }
+    }
 #endif
     /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
     us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);

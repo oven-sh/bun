@@ -689,9 +689,14 @@ describe.concurrent("socket", () => {
     client.end(); // FIN; the server side stays half-open
 
     const socket = await ended;
-    // Let the post-end writable dispatch drop the poll to zero events before adopting.
-    await new Promise(resolve => setImmediate(resolve));
-    await new Promise(resolve => setImmediate(resolve));
+    // end() leaves the poll armed for WRITABLE only; the next writable
+    // dispatch finds nothing buffered and drops it to zero events. One
+    // event-loop turn suffices, and the state is stable once reached (nothing
+    // re-arms the poll without a JS-side write), so the extra turns are slack
+    // for scheduling differences, not a timing condition.
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
 
     socket.upgradeTLS({
       tls: { cert: tls.cert, key: tls.key },

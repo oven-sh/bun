@@ -886,7 +886,10 @@ impl Channel {
         const BUF_SIZE: usize = 46;
         let mut addr_buf = [0u8; BUF_SIZE];
         let addr_ptr: *const c_char = 'brk: {
-            if ip_addr.is_empty() || ip_addr.len() >= BUF_SIZE || bun_core::strings::contains_char(ip_addr, 0) {
+            if ip_addr.is_empty()
+                || ip_addr.len() >= BUF_SIZE
+                || bun_core::strings::contains_char(ip_addr, 0)
+            {
                 break 'brk ptr::null();
             }
             copy_nul_terminated(&mut addr_buf, ip_addr)

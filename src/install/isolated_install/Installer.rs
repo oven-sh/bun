@@ -908,14 +908,18 @@ impl Task {
                             // dependency would survive every reinstall.
                             // Delete to replace, like the hoisted linker's
                             // uninstall-before-install.
-                            let mut prev_build = AutoPath::init_top_level_dir();
-                            let top_level_len = prev_build.len();
-                            installer.append_store_path(&mut prev_build, self.entry_id);
-                            // Unextended = the project dir itself; never
-                            // delete that.
-                            assert!(prev_build.len() > top_level_len);
-                            if let Some(e) = Fd::cwd().delete_tree(prev_build.slice()).err() {
-                                return Ok(Yield::failure(TaskError::LinkPackage(e)));
+                            //
+                            // To be safe only delete inside the store: a Root
+                            // entry that is not a dependency on the root
+                            // package has the project dir as its store path.
+                            if pkg_res.tag == ResolutionTag::Folder
+                                || dep_id != invalid_dependency_id
+                            {
+                                let mut prev_build = AutoPath::init_top_level_dir();
+                                installer.append_store_path(&mut prev_build, self.entry_id);
+                                if let Some(e) = Fd::cwd().delete_tree(prev_build.slice()).err() {
+                                    return Ok(Yield::failure(TaskError::LinkPackage(e)));
+                                }
                             }
 
                             let mut backend = InstallMethod::Hardlink;

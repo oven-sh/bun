@@ -703,10 +703,25 @@ impl<'a> NamesIterator<'a> {
 pub struct PriorityQueueContext {
     pub(crate) dependencies: bun_ptr::BackRef<Vec<Dependency>>,
     pub(crate) string_buf: bun_ptr::BackRef<Vec<u8>>,
+    /// Dependency-id range of the tree owner package's own dependencies.
+    /// Bins from these link before bins from dependencies hoisted into the
+    /// tree from deeper in the graph, so a direct dependency wins a `.bin`
+    /// name conflict against a transitive one (same as pnpm and yarn).
+    pub(crate) direct_dependencies: crate::lockfile_real::DependencySlice,
 }
 
 impl PriorityQueueContext {
+    fn is_direct(&self, id: DependencyID) -> bool {
+        id >= self.direct_dependencies.off
+            && id - self.direct_dependencies.off < self.direct_dependencies.len
+    }
+
     fn less_than(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
+        match (self.is_direct(a), self.is_direct(b)) {
+            (true, false) => return core::cmp::Ordering::Less,
+            (false, true) => return core::cmp::Ordering::Greater,
+            _ => {}
+        }
         // `dependencies` / `string_buf` point at
         // `lockfile.buffers.{dependencies,string_bytes}`, which are kept alive
         // for the entire install (the `PackageInstaller` that owns this queue

@@ -398,12 +398,29 @@ pub(crate) fn install_hoisted_packages(
                 tree_ids_to_trees_the_id_depends_on,
                 completed_trees,
                 trees: 'trees: {
+                    let trees_slice = buf_trees.as_slice();
+                    let resolutions_buf = lockfile_ref.buffers.resolutions.as_slice();
+                    let pkg_parts = lockfile_ref.packages.slice();
+                    let pkg_dependency_slices = pkg_parts.items_dependencies();
                     let mut trees: Vec<TreeContext> = Vec::with_capacity(trees_count);
-                    for _i in 0..trees_count {
+                    for i in 0..trees_count {
+                        // The tree owner's own dependency-id range, so the bin
+                        // queue can order direct dependencies' bins before
+                        // hoisted transitive ones.
+                        let owner_pkg_id = match trees_slice[i].dependency_id {
+                            tree::ROOT_DEP_ID => 0,
+                            dep_id => resolutions_buf[dep_id as usize],
+                        };
+                        let direct_dependencies = if owner_pkg_id == crate::invalid_package_id {
+                            crate::lockfile::DependencySlice::default()
+                        } else {
+                            pkg_dependency_slices[owner_pkg_id as usize]
+                        };
                         trees.push(TreeContext {
                             binaries: bin::PriorityQueue::init(bin::PriorityQueueContext {
                                 dependencies: buf_deps,
                                 string_buf: buf_strings,
+                                direct_dependencies,
                             }),
                             pending_installs: Vec::new(),
                             install_count: 0,

@@ -3343,6 +3343,72 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/37152
+  it("should prefer direct dependency bins over hoisted transitive dependency bins", async () => {
+    await withContext(defaultOpts, async ctx => {
+      // `zoo` (direct) and `abc` (transitive via `wrapper`) both provide a `tsc`
+      // bin. `abc` sorts lexically before `zoo`, but the direct dependency must
+      // win the `.bin` entry.
+      const urls: string[] = [];
+      const manifests: Record<string, Record<string, object>> = {
+        zoo: { "7.0.0": { bin: { tsc: "index.js" } } },
+        wrapper: { "6.0.0": { bin: { tsc6: "index.js" }, dependencies: { abc: ">=0.0.1" } } },
+        abc: { "6.0.3": { bin: { tsc: "index.js", tsserver: "index.js" } } },
+      };
+      setContextHandler(ctx, async request => {
+        urls.push(request.url);
+        const path = new URL(request.url).pathname.replace(`/${ctx.id}/`, "").replaceAll("%2f", "/");
+        if (path.endsWith(".tgz")) {
+          // any tarball containing index.js works; bins come from the manifest
+          return new Response(file(join(import.meta.dir, "baz-0.0.3.tgz")));
+        }
+        const versions: Record<string, object> = {};
+        let latest = "";
+        for (const [version, fields] of Object.entries(manifests[path] ?? {})) {
+          versions[version] = {
+            name: path,
+            version,
+            dist: { tarball: `${ctx.registry_url}${path}-${version}.tgz` },
+            ...fields,
+          };
+          latest = version;
+        }
+        return new Response(JSON.stringify({ name: path, versions, "dist-tags": { latest } }));
+      });
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            zoo: "7.0.0",
+            wrapper: "6.0.0",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(out).toContain("3 packages installed");
+      expect(exitCode).toBe(0);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
+        "tsc",
+        "tsc6",
+        "tsserver",
+      ]);
+      expect(join(ctx.package_dir, "node_modules", ".bin", "tsc")).toBeValidBin(join("..", "zoo", "index.js"));
+      expect(join(ctx.package_dir, "node_modules", ".bin", "tsc6")).toBeValidBin(join("..", "wrapper", "index.js"));
+      expect(join(ctx.package_dir, "node_modules", ".bin", "tsserver")).toBeValidBin(join("..", "abc", "index.js"));
+    });
+  });
+
   it("should not apply overrides to package name of aliased package", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

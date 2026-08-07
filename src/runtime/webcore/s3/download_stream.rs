@@ -355,6 +355,43 @@ impl S3HttpDownloadStreamingTask {
         }
     }
 
+    /// `HTTPClientResultCallback::release_at_shutdown`: the exiting main
+    /// thread parked the HTTP thread, which will not call back; hand the
+    /// download back as failed/finished so its VM's wait ends and the JS
+    /// thread frees it.
+    ///
+    /// # Safety
+    /// `this` is the live task registered with the callback; HTTP thread parked.
+    pub(crate) unsafe fn release_at_shutdown(this: *mut ()) {
+        let this = this.cast::<Self>();
+        // SAFETY: fn contract — nothing else touches the task now (the JS
+        // thread is waiting in the HTTP shutdown).
+        unsafe {
+            let handle = (*this).loop_handle.clone();
+            let should_enqueue = {
+                let _guard = (*this).mutex.lock_guard();
+                let mut state = (*this).get_state();
+                state.set_has_more(false);
+                (*this).request_error = Some(bun_http::Error::Aborted);
+                state.set_request_error(1);
+                (*this).set_state(state);
+                (*this)
+                    .has_schedule_callback
+                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+            };
+            if should_enqueue {
+                let task = core::ptr::NonNull::from(
+                    (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
+                );
+                let bun_jsc::vm_handle::Posted::Queued = handle.post_task(task) else {
+                    unreachable!("VM handle closed with an S3 download outstanding on the HTTP thread");
+                };
+            }
+            handle.embedded_work_finished();
+        }
+    }
+
     /// VM teardown's stop phase (JS thread): abort the transport so the HTTP
     /// thread fails the request promptly and hands it back.
     ///

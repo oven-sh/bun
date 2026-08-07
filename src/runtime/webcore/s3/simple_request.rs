@@ -488,6 +488,29 @@ impl S3HttpSimpleTask {
         }
     }
 
+    /// `HTTPClientResultCallback::release_at_shutdown`: the exiting main
+    /// thread parked the HTTP thread, which will not call back; hand the
+    /// request back as failed so its VM's wait ends and the JS thread frees it.
+    ///
+    /// # Safety
+    /// `this` is the live task registered with the callback; HTTP thread parked.
+    pub(crate) unsafe fn release_at_shutdown(this: *mut ()) {
+        let this = this.cast::<Self>();
+        // SAFETY: fn contract — nothing else touches the task now.
+        unsafe {
+            (*this).result.fail = Some(bun_http::Error::Aborted);
+            (*this).result.has_more = false;
+            let handle = (*this).loop_handle.clone();
+            let queued = core::ptr::NonNull::from(
+                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
+            );
+            let bun_jsc::vm_handle::Posted::Queued = handle.post_task(queued) else {
+                unreachable!("VM handle closed with an S3 request outstanding on the HTTP thread");
+            };
+            handle.embedded_work_finished();
+        }
+    }
+
     /// VM teardown's stop phase (JS thread): abort the transport so the HTTP
     /// thread fails the request promptly and hands it back.
     ///
@@ -690,11 +713,12 @@ pub(crate) fn execute_simple_s3_request(
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
         body,
-        HTTPClientResultCallback::new::<S3HttpSimpleTask>(
+        HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(
             task_ptr,
             // SAFETY: `task_ptr` was just heap-allocated above and `async_http` is supplied by
             // the HTTP thread as a live pointer for the duration of the callback.
             S3HttpSimpleTask::http_callback,
+            S3HttpSimpleTask::release_at_shutdown,
         ),
         FetchRedirect::Follow,
         HttpOptions {

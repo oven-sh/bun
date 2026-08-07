@@ -803,10 +803,11 @@ describe("should not hang", () => {
   }
 });
 
-describe("unref() + .exited with nothing else ref'd (Windows)", () => {
-  // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
-  // body and never dequeue the IOCP exit packet, so these children busy-spun
-  // forever. us_loop_pump now forces one non-blocking iteration (POSIX parity).
+describe("top-level await on an unref'd subprocess exits 13 (Node parity)", () => {
+  // These used to only resolve because the entry loader busy-spun the uws loop.
+  // Node exits 13 (unsettled TLA) in all three shapes; Bun now does too. The
+  // original Windows IOCP-unref'd-handle concern (#34478) is still covered by
+  // the "should not hang" block above (non-TLA context).
   for (const [name, body] of [
     ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
     [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],
@@ -828,12 +829,13 @@ describe("unref() + .exited with nothing else ref'd (Windows)", () => {
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
+        timeout: 5_000,
       });
       const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-      expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
-        stdout: "resolved\n",
-        stderr: "",
-        exitCode: 0,
+      expect(stderr).toContain("Detected unsettled top-level await");
+      expect({ stdout, exitCode, signalCode: child.signalCode }).toEqual({
+        stdout: "",
+        exitCode: 13,
         signalCode: null,
       });
     });

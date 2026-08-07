@@ -1492,8 +1492,11 @@ impl Run {
             }
         }
 
+        let _entry_promise_protected;
         match vm.load_entry_point(entry) {
             Ok(promise) => {
+                // Root it (the stored raw ptr is not GC-visited on this path).
+                _entry_promise_protected = JSValue::from_cell(promise).protected();
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
@@ -1622,6 +1625,41 @@ impl Run {
             }
 
             vm.on_before_exit();
+
+            if vm.unhandled_error_counter == 0
+                && let Some(p) = vm.pending_internal_promise
+            {
+                // SAFETY: `p` is a live JSC heap cell rooted by
+                // `_entry_promise_protected` above.
+                let p = unsafe { &mut *p };
+                match p.status() {
+                    PromiseStatus::Pending => {
+                        pretty_errorln!(
+                            "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at {}",
+                            bstr::BStr::new(vm.main()),
+                        );
+                        Output::flush();
+                        if vm.exit_handler.exit_code == 0 {
+                            vm.exit_handler.exit_code = 13;
+                        }
+                    }
+                    PromiseStatus::Rejected
+                        if vm.pending_internal_promise_reported_at != vm.hot_reload_counter =>
+                    {
+                        vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                        // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
+                        let result = p.result(unsafe { &mut *vm.jsc_vm });
+                        let global = vm.global;
+                        // SAFETY: `global` valid for VM lifetime.
+                        let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
+                        p.set_handled();
+                        if !handled {
+                            exit_with_unhandled_note(vm);
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
 
         if log_has_msgs(vm) {

@@ -448,29 +448,37 @@ impl<'a> Task<'a> {
                     let dir = match dir {
                         Some(d) => d,
                         None => {
-                            if let Some(ssh) = Repository::try_ssh(url) {
-                                match Repository::download(
-                                    req.env,
-                                    &mut this.log,
-                                    // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                                    unsafe { &mut *manager }.get_cache_directory(),
-                                    this.id,
-                                    name,
-                                    ssh,
-                                    attempt,
-                                ) {
-                                    Ok(d) => d,
-                                    Err(err) => {
-                                        this.err = Some(err);
-                                        this.status = Status::Fail;
-                                        this.data = Data {
-                                            git_clone: ManuallyDrop::new(Fd::invalid()),
-                                        };
-                                        break 'body;
-                                    }
+                            // URLs neither `try_https` nor `try_ssh` recognize
+                            // (file://, git://) are ones git clones as written,
+                            // so fall back to the URL itself instead of
+                            // completing without a clone. `attempt > 1` means an
+                            // https clone of the verbatim URL already failed
+                            // (`try_https` returns http(s) URLs unchanged);
+                            // repeating it would be redundant, keep the failure.
+                            let fallback = match Repository::try_ssh(url) {
+                                Some(ssh) => ssh,
+                                None if attempt == 1 => url,
+                                None => break 'body,
+                            };
+                            match Repository::download(
+                                req.env,
+                                &mut this.log,
+                                // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
+                                unsafe { &mut *manager }.get_cache_directory(),
+                                this.id,
+                                name,
+                                fallback,
+                                attempt,
+                            ) {
+                                Ok(d) => d,
+                                Err(err) => {
+                                    this.err = Some(err);
+                                    this.status = Status::Fail;
+                                    this.data = Data {
+                                        git_clone: ManuallyDrop::new(Fd::invalid()),
+                                    };
+                                    break 'body;
                                 }
-                            } else {
-                                break 'body;
                             }
                         }
                     };

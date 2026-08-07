@@ -17,6 +17,7 @@ import {
   toHaveBins,
 } from "harness";
 import { join, resolve, sep } from "path";
+import { pathToFileURL } from "url";
 import {
   createTestContext,
   destroyTestContext,
@@ -842,6 +843,65 @@ describe.concurrent("bun-install", () => {
     expect(stderr).toContain("long-git-dep");
     expect(stdout).toContain("bun install v1.");
     expect(exitCode).toBe(1);
+  });
+
+  it.each([
+    ["", "2.0.0"],
+    ["#v1", "1.0.0"],
+  ])("installs a git dependency from a file:// URL (committish %j)", async (committish, expectedVersion) => {
+    using repoDir = tempDir("git-file-repo", {
+      "package.json": JSON.stringify({ name: "git-file-dep", version: "1.0.0" }),
+    });
+    const git = async (...args: string[]) => {
+      await using proc = spawn({
+        cmd: ["git", "-c", "user.email=bun@example.com", "-c", "user.name=bun", "-c", "commit.gpgsign=false", ...args],
+        cwd: String(repoDir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
+    };
+    await git("init", "-q");
+    await git("add", "-A");
+    await git("commit", "-q", "-m", "1.0.0");
+    await git("tag", "v1");
+    await write(join(String(repoDir), "package.json"), JSON.stringify({ name: "git-file-dep", version: "2.0.0" }));
+    await git("commit", "-q", "-a", "-m", "2.0.0");
+
+    using dir = tempDir("git-file-proj", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "git-file-dep": `git+${pathToFileURL(String(repoDir)).href}${committish}` },
+      }),
+    });
+
+    // First run clones the file:// URL; second run hits the cached bare repo
+    // and fetches from the file:// origin.
+    for (let run = 0; run < 2; run++) {
+      if (run === 1) {
+        await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+        await rm(join(String(dir), "bun.lock"), { force: true });
+      }
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Saved lockfile");
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+      expect(await file(join(String(dir), "node_modules", "git-file-dep", "package.json")).json()).toMatchObject({
+        name: "git-file-dep",
+        version: expectedVersion,
+      });
+    }
   });
 
   it("should handle empty string in dependencies", async () => {

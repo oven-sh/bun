@@ -280,8 +280,10 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         uint8_t writable : 1;
         uint8_t error    : 1;
         uint8_t eof      : 1;
+        uint8_t send_eof : 1;
+        uint8_t send_eof_err : 1;
         uint8_t skip     : 1;
-        uint8_t _pad     : 3;
+        uint8_t _pad     : 1;
     };
 
     _Static_assert(sizeof(struct kevent_flags) == 1, "kevent_flags must be 1 byte");
@@ -305,7 +307,15 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #endif
             .writable = (filter == EVFILT_WRITE),
             .error = !!(flags & EV_ERROR),
-            .eof = !!(flags & EV_EOF),
+            /* eof tracks the read side only; the write filter's EV_EOF
+             * (SS_CANTSENDMORE) is kept separate so the zero-event detector
+             * below can route it to the error path without fabricating a
+             * second read EOF. Dispatch still ORs them, preserving behavior
+             * for polls with events armed. */
+            .eof = (flags & EV_EOF) && filter != EVFILT_WRITE,
+            .send_eof = (filter == EVFILT_WRITE) && (flags & EV_EOF),
+            /* kevent(2): with EV_EOF set, fflags carries the socket error. */
+            .send_eof_err = (filter == EVFILT_WRITE) && (flags & EV_EOF) && loop->ready_polls[i].fflags != 0,
         };
 
         /* Look backward for a prior entry with the same poll to coalesce into.
@@ -317,6 +327,8 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 coalesced[j].writable |= bits.writable;
                 coalesced[j].error |= bits.error;
                 coalesced[j].eof |= bits.eof;
+                coalesced[j].send_eof |= bits.send_eof;
+                coalesced[j].send_eof_err |= bits.send_eof_err;
                 coalesced[i] = (struct kevent_flags){ .skip = 1 };
                 merged = 1;
                 break;
@@ -344,9 +356,32 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         int events = (bits.readable ? LIBUS_SOCKET_READABLE : 0)
                    | (bits.writable ? LIBUS_SOCKET_WRITABLE : 0);
 
-        events &= us_poll_events(poll);
-        if (events || bits.error || bits.eof) {
-            us_internal_dispatch_ready_poll(poll, bits.error, bits.eof, events);
+        int error = bits.error;
+        int eof = bits.eof | bits.send_eof;
+
+        const int wanted = us_poll_events(poll);
+        events &= wanted;
+
+        if (bits.send_eof && wanted == 0) {
+            /* This poll asked for no events, so its only kernel presence is
+             * the EV_CLEAR write knote kqueue_change keeps as a
+             * connection-death detector (a half-open socket past on_end whose
+             * writes drained, or a paused socket). EV_EOF there means
+             * SS_CANTSENDMORE: for a socket we did not shut down, the
+             * connection is dead (peer reset) - deliver it as the poll error
+             * epoll reports via its implicit EPOLLERR, not as eof, which
+             * would re-run on_end on a half-open socket. After our own
+             * shutdown EV_EOF merely echoes that shutdown; only a pending
+             * socket error (fflags) marks a dead peer. */
+            const int kind = us_internal_poll_type(poll);
+            if (kind == POLL_TYPE_SOCKET || (kind == POLL_TYPE_SOCKET_SHUT_DOWN && bits.send_eof_err)) {
+                error = 1;
+                eof = bits.eof;
+            }
+        }
+
+        if (events || error || eof) {
+            us_internal_dispatch_ready_poll(poll, error, eof, events);
         }
     }
 #endif
@@ -543,10 +578,18 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     }
 
     if(!is_readable && !is_writable) {
-        if(!(old_events & LIBUS_SOCKET_WRITABLE)) {
-            // if we are not reading or writing, we need to add writable to receive FIN
-            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, (uint64_t)(void*)user_data, 0, 0);
-        }
+        /* Polling neither direction must still see the connection die, the way a
+         * zero-event epoll registration still reports EPOLLHUP/EPOLLERR (see
+         * us_poll_start_rc). Keep an EV_CLEAR write knote armed: it fires once on
+         * arming (the socket is trivially writable; the dispatcher masks it out)
+         * and then only on write-side state changes, so an idle half-open or
+         * paused socket does not wake the loop, while a peer reset reports
+         * EV_EOF/fflags through it. EV_ONESHOT here got consumed by that first
+         * masked wakeup, leaving the fd with no knote at all: the reset was never
+         * seen and the socket leaked until process exit. Unconditional because
+         * EV_ADD must also convert a still-armed oneshot from prior WRITABLE
+         * interest. */
+        EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD | EV_CLEAR, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     } else if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
         /* Do they differ in writable? */
         EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD | EV_ONESHOT : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
@@ -660,6 +703,19 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         /* Set all removed events to null-polls in pending ready poll list */
         us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
     }
+#ifdef LIBUS_USE_KQUEUE
+    else if (events == 0) {
+        /* 0 -> 0 is not a no-op on kqueue for a socket: a writable dispatch
+         * consumed the EV_ONESHOT write knote (loop.c clears
+         * POLL_TYPE_POLLING_OUT to mirror that), so the fd may hold no knote
+         * at all. Re-register the EV_CLEAR detector (see kqueue_change) so a
+         * peer reset can still wake the socket. */
+        const int kind = us_internal_poll_type(p);
+        if (kind == POLL_TYPE_SOCKET || kind == POLL_TYPE_SOCKET_SHUT_DOWN) {
+            kqueue_change(loop->fd, p->state.fd, 0, 0, p);
+        }
+    }
+#endif
 }
 
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
@@ -672,9 +728,20 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
          rc = epoll_ctl(loop->fd, EPOLL_CTL_DEL, p->state.fd, &event);
     } while (IS_EINTR(rc));
 #else
-    if (old_events) {
-        kqueue_change(loop->fd, p->state.fd, old_events, new_events, NULL);
-    }
+    /* Delete both filters explicitly, whatever the tracked events say: a poll
+     * at 0 events still holds the EV_CLEAR detector knote (see kqueue_change),
+     * and kqueue_change's diff cannot express "delete everything" (its 0 -> 0
+     * transition arms the detector instead). This matters for detach paths
+     * (us_socket_detach) that stop the poll but keep the fd open: a leftover
+     * knote would keep the freed poll as udata. Deleting an absent filter just
+     * reports ENOENT through KEVENT_FLAG_ERROR_EVENTS, which we ignore. */
+    struct kevent64_s change_list[2];
+    EV_SET64(&change_list[0], p->state.fd, EVFILT_READ, EV_DELETE, 0, 0, 0, 0, 0);
+    EV_SET64(&change_list[1], p->state.fd, EVFILT_WRITE, EV_DELETE, 0, 0, 0, 0, 0);
+    int rc;
+    do {
+        rc = kevent64(loop->fd, change_list, 2, change_list, 2, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(rc));
 #endif
 
     /* Disable any instance of us in the pending ready poll list */

@@ -655,6 +655,54 @@ describe.concurrent("socket", () => {
     }
   });
 
+  // An allowHalfOpen socket that consumed the peer's FIN and drained its writes
+  // polls for no events at all. On Linux the fd stays registered in epoll, which
+  // reports EPOLLERR/EPOLLHUP even at zero interest, so a later RST still closes
+  // the socket. On macOS the kqueue write oneshot used to be consumed by the
+  // first writable wakeup, leaving the fd with no filter: the peer's reset was
+  // never delivered and the socket leaked until process exit (this test timed
+  // out). Windows (libuv) tracks this state separately and is skipped here.
+  it.skipIf(isWindows)("allowHalfOpen socket sees the peer reset after end + drain", async () => {
+    const { promise: ended, resolve: onEnd } = Promise.withResolvers<void>();
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<string>();
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open() {},
+        data() {},
+        end() {
+          onEnd();
+        },
+        close() {
+          onClosed("close");
+        },
+        error() {
+          onClosed("error");
+        },
+      },
+    });
+
+    const client = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+    client.on("error", () => {});
+    await new Promise<void>(resolve => client.once("connect", resolve));
+    client.end(); // FIN; the server side stays half-open
+
+    await ended;
+    // Let the server's post-end writable dispatch run so its poll drops to zero
+    // requested events (the state that used to lose the last kqueue filter)
+    // before the reset arrives.
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+
+    client.resetAndDestroy();
+
+    // Hangs forever on a deaf socket; the test timeout is the failure signal.
+    expect(await closed).toBeOneOf(["close", "error"]);
+  });
+
   it("upgradeTLS handles errors", async () => {
     using server = Bun.serve({
       port: 0,

@@ -33,12 +33,12 @@ class GetNameInfoReqWrap {}
 const pendingRequestWraps = new Map();
 
 function noteRequestStart(wrap) {
-  pendingRequestWraps.set(wrap, wrap.constructor.name);
+  pendingRequestWraps.$set(wrap, wrap.constructor.name);
   return wrap;
 }
 
 function noteRequestEnd(wrap) {
-  pendingRequestWraps.delete(wrap);
+  pendingRequestWraps.$delete(wrap);
 }
 
 function registerHandle(handle, kind, unrefFlag) {
@@ -91,9 +91,9 @@ function getActiveResourcesInfo() {
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
     resources.push("FSReqCallback");
   }
-  for (const kind of pendingRequestWraps.values()) {
+  pendingRequestWraps.$forEach(kind => {
     resources.push(kind);
-  }
+  });
   forEachActive(resources, true);
   for (let i = 0, n = getActiveTimeoutCount(); i < n; i++) {
     resources.push("Timeout");
@@ -111,9 +111,9 @@ function getActiveRequests() {
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
     requests.push(new FSReqCallback());
   }
-  for (const wrap of pendingRequestWraps.keys()) {
+  pendingRequestWraps.$forEach((_kind, wrap) => {
     requests.push(wrap);
-  }
+  });
   return requests;
 }
 

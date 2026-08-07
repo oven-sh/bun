@@ -1577,7 +1577,9 @@ it.skipIf(isWindows)("process.execArgv drops `--` after a flag whose value is on
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The inspector banner goes to stderr; the fixture's JSON is alone on stdout.
+  expect(stdout, stderr).not.toBe("");
   expect(JSON.parse(stdout)).toEqual({ execArgv: ["--inspect"], argv: [] });
   expect(exitCode).toBe(0);
 });
@@ -2411,6 +2413,9 @@ it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a server-sid
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A crashed child leaves stdout empty; surface its stderr instead of a bare
+  // JSON parse error.
+  expect(stdout.trim(), stderr).not.toBe("");
   // Everything in this fixture rides the unix transport: the listener, the
   // client, and the TLS wrap of the accepted connection. Nothing is TCP.
   const parsed = JSON.parse(stdout.trim());

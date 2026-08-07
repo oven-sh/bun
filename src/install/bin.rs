@@ -974,6 +974,8 @@ impl<'a> Linker<'a> {
             self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
             return false;
         }
+        // Detached like `abs_dest_buf_ptr` in `link`; same SAFETY invariant.
+        let abs_dest_buf_ptr: *mut u8 = self.abs_dest_buf.as_mut_ptr();
 
         let abs_target = {
             let package_dir = &self.abs_target_buf[..package_dir_len];
@@ -992,9 +994,9 @@ impl<'a> Linker<'a> {
             .copy_from_slice(destination_name);
         dest_off += destination_name.len();
         self.abs_dest_buf[dest_off] = 0;
-        // SAFETY: `link_bin_or_create_shim` does not read or write
-        // `abs_dest_buf`; the detached slice remains valid for the call.
-        let abs_dest = unsafe { ZStr::from_raw(self.abs_dest_buf.as_ptr(), dest_off) };
+        // SAFETY: abs_dest_buf[dest_off] == 0 written above; `link_bin_or_create_shim`
+        // does not read or write `abs_dest_buf`.
+        let abs_dest = unsafe { ZStr::from_raw(abs_dest_buf_ptr, dest_off) };
 
         self.link_bin_or_create_shim(
             abs_target,
@@ -2209,8 +2211,13 @@ fn resolve_installed_native_binlink_target(
     let node_modules_paths = [nested_node_modules, real_node_modules, root_node_modules];
     for dependency in optional_dependencies {
         for node_modules_path in &node_modules_paths {
-            let mut target_package_dir: AbsPath = AbsPath::from(node_modules_path.slice()).ok()?;
-            target_package_dir.append(&dependency.install_name).ok()?;
+            let mut target_package_dir: AbsPath = match AbsPath::from(node_modules_path.slice()) {
+                Ok(path) => path,
+                Err(_) => continue,
+            };
+            if target_package_dir.append(&dependency.install_name).is_err() {
+                continue;
+            }
             if platform_package_matches(target_package_dir.slice(), &dependency) {
                 return Some(InstalledNativeBinlinkTarget {
                     node_modules_path: AbsPath::from(node_modules_path.slice()).ok()?,
@@ -2231,7 +2238,9 @@ pub fn link_package_bin<'a>(
     destination_name: &[u8],
     executable_buf: &'a mut PathBuffer,
 ) -> Result<Option<&'a ZStr>, crate::Error> {
-    if normalized_bin_name(destination_scope) != destination_scope {
+    if normalized_bin_name(destination_scope) != destination_scope
+        || !crate::package_installer::alias_is_safe_install_target(package_name)
+    {
         return Ok(None);
     }
 

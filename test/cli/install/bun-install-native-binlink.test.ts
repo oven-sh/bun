@@ -172,7 +172,11 @@ describe.concurrent("native binlink optimization", () => {
         stderr: "pipe",
         env,
       });
-      const [installStderr, installExitCode] = await Promise.all([install.stderr.text(), install.exited]);
+      const [, installStderr, installExitCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
       expect(installStderr).not.toContain("error:");
       expect(installExitCode).toBe(0);
 
@@ -255,7 +259,11 @@ describe.concurrent("native binlink optimization", () => {
         stderr: "pipe",
         env,
       });
-      const [installStderr, installExitCode] = await Promise.all([install.stderr.text(), install.exited]);
+      const [, installStderr, installExitCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
       expect(installStderr).not.toContain("error:");
       expect(installExitCode).toBe(0);
 

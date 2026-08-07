@@ -458,9 +458,12 @@ impl BunxCommand {
                     pkg = BStr::new(package_name),
                 ),
             )
-            .expect("unreachable");
+            .map_err(|_| crate::Error::PathTooLong)?;
             total - cursor.len()
         };
+        if len >= subpath.len() {
+            return Err(crate::Error::PathTooLong);
+        }
         subpath[len] = 0;
         // SAFETY: subpath[len] == 0 written above
         let subpath_z = ZStr::from_buf(&subpath[..], len);
@@ -477,6 +480,9 @@ impl BunxCommand {
         if bin_name.is_some_and(|name| !Self::is_safe_bin_name(name)) {
             return Ok(PackageBinLookup::BinNotFound);
         }
+        if !bun_install::package_installer::alias_is_safe_install_target(package_name) {
+            return Ok(PackageBinLookup::PackageNotFound);
+        }
 
         let mut package_subpath = PathBuffer::uninit();
         let package_subpath_len = {
@@ -492,6 +498,9 @@ impl BunxCommand {
             .map_err(|_| crate::Error::PathTooLong)?;
             total - cursor.len()
         };
+        if package_subpath_len >= package_subpath.len() {
+            return Err(crate::Error::PathTooLong);
+        }
         package_subpath[package_subpath_len] = 0;
         let package_subpath_z = ZStr::from_buf(&package_subpath, package_subpath_len);
         let package_fd =
@@ -547,9 +556,12 @@ impl BunxCommand {
                     BStr::new(tempdir_name),
                     bun_paths::SEP as char,
                 )
-                .expect("unreachable");
+                .map_err(|_| crate::Error::PathTooLong)?;
                 total - cursor.len()
             };
+            if len >= subpath.len() {
+                return Err(crate::Error::PathTooLong);
+            }
             subpath[len] = 0;
             // SAFETY: subpath[len] == 0 written above
             let subpath_z = ZStr::from_buf(&subpath[..], len);
@@ -616,9 +628,12 @@ impl BunxCommand {
                 sep = bun_paths::SEP as char,
                 pkg = BStr::new(package_name),
             )
-            .expect("unreachable");
+            .map_err(|_| crate::Error::PathTooLong)?;
             total - cursor.len()
         };
+        if len >= subpath.len() {
+            return Err(crate::Error::PathTooLong);
+        }
         subpath[len] = 0;
         // SAFETY: subpath[len] == 0 written above
         let subpath_z = ZStr::from_buf(&subpath[..], len);
@@ -1143,6 +1158,9 @@ impl BunxCommand {
             )
             .map_err(|_| crate::Error::PathTooLong)?;
             let written = total - cursor.len();
+            if written >= cache_manifest_buf.len() {
+                return Err(crate::Error::PathTooLong);
+            }
             cache_manifest_buf[written] = 0;
             ZStr::from_buf(&cache_manifest_buf, written)
         };

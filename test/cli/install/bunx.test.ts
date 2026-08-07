@@ -78,9 +78,10 @@ async function withTestContext(
 function packageInvocationCommand(
   { useBunx, explicitPackage }: PackageInvocationCase,
   packageSpec: string,
+  binName: string,
 ): { cmd: string[]; argv0?: string } {
   const cmd = useBunx ? [bunExe()] : [bunExe(), "x"];
-  cmd.push(...(explicitPackage ? ["--package", packageSpec, "what-bin"] : [packageSpec]));
+  cmd.push(...(explicitPackage ? ["--package", packageSpec, binName] : [packageSpec]));
   return useBunx ? { cmd, argv0: isWindows ? "bunx.exe" : "bunx" } : { cmd };
 }
 
@@ -743,6 +744,8 @@ describe("package selection", () => {
 
         expect(urls.some(url => url.includes("/my-special-pkg"))).toBe(true);
         expect(err).toContain("Saved lockfile");
+        expect(out).toContain("different-bin from my-special-pkg");
+        expect(exited).toBe(0);
       });
     });
 
@@ -777,6 +780,9 @@ describe("package selection", () => {
         ]);
 
         expect(urls.some(url => url.includes("/actual-package"))).toBe(true);
+        expect(err).not.toContain("error:");
+        expect(out).toContain("tool from actual-package");
+        expect(exited).toBe(0);
       });
     });
 
@@ -811,6 +817,9 @@ describe("package selection", () => {
         ]);
 
         expect(urls.some(url => url.includes("/runner-pkg"))).toBe(true);
+        expect(err).not.toContain("error:");
+        expect(out).toContain("runner from runner-pkg");
+        expect(exited).toBe(0);
       });
     });
 
@@ -877,7 +886,8 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
         );
 
         // Make the binaries executable
-        await Bun.$`chmod +x ${packageDir}/bin/multi-tool.js ${packageDir}/bin/multi-tool-alt.js`;
+        chmodSync(join(packageDir, "bin", "multi-tool.js"), 0o755);
+        chmodSync(join(packageDir, "bin", "multi-tool-alt.js"), 0o755);
 
         // Create the tarball with package/ prefix. It goes to a temp dir the
         // registry is pointed at — writing it under import.meta.dir would
@@ -932,31 +942,34 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
     });
 
     describe.each(linkerCases)("with $linker linker", ({ linker }) => {
-      it.each(packageInvocationCases)("$invocation uses the named package's bin on naming collision", async invocationCase => {
-        await withTestContext({ linker }, async ctx => {
-          await installBinCollisionFixture(ctx);
-          const xDir = ctx.package_dir;
+      it.each(packageInvocationCases)(
+        "$invocation uses the named package's bin on naming collision",
+        async invocationCase => {
+          await withTestContext({ linker }, async ctx => {
+            await installBinCollisionFixture(ctx);
+            const xDir = ctx.package_dir;
 
-          const selected = spawn({
-            ...packageInvocationCommand(invocationCase, "z-old-what-bin"),
-            cwd: xDir,
-            stdout: "pipe",
-            stderr: "pipe",
-            env: { ...env, npm_config_registry: ctx.registry_url },
+            const selected = spawn({
+              ...packageInvocationCommand(invocationCase, "z-old-what-bin", "what-bin"),
+              cwd: xDir,
+              stdout: "pipe",
+              stderr: "pipe",
+              env: { ...env, npm_config_registry: ctx.registry_url },
+            });
+            const [selectedOut, selectedErr, selectedExitCode] = await Promise.all([
+              selected.stdout.text(),
+              selected.stderr.text(),
+              selected.exited,
+            ]);
+            expect({ selectedOut, selectedErr, selectedExitCode }).toEqual({
+              selectedOut: "",
+              selectedErr: "",
+              selectedExitCode: 0,
+            });
+            expect(await Bun.file(join(xDir, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
           });
-          const [selectedOut, selectedErr, selectedExitCode] = await Promise.all([
-            selected.stdout.text(),
-            selected.stderr.text(),
-            selected.exited,
-          ]);
-          expect({ selectedOut, selectedErr, selectedExitCode }).toEqual({
-            selectedOut: "",
-            selectedErr: "",
-            selectedExitCode: 0,
-          });
-          expect(await Bun.file(join(xDir, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
-        });
-      });
+        },
+      );
 
       it("an explicit package never falls back to another package's bin", async () => {
         await withTestContext({ linker }, async ctx => {
@@ -1029,7 +1042,7 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
           const xDir = ctx.package_dir;
           const packageSpec = `z-cold-${invocationCase.invocation.replaceAll(" ", "-")}@npm:what-bin@1.0.0`;
           const subprocess = spawn({
-            ...packageInvocationCommand(invocationCase, packageSpec),
+            ...packageInvocationCommand(invocationCase, packageSpec, "what-bin"),
             cwd: xDir,
             stdout: "pipe",
             stderr: "pipe",
@@ -1120,7 +1133,7 @@ describe("scoped packages should not match unrelated system binaries", () => {
       } else {
         const fakeBin = join(fakeBinDir, "install");
         await writeFile(fakeBin, `#!/bin/sh\necho "WRONG: ran a system binary from PATH"\n`);
-        await Bun.$`chmod +x ${fakeBin}`;
+        chmodSync(fakeBin, 0o755);
       }
 
       const urls: string[] = [];

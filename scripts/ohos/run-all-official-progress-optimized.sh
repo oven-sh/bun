@@ -642,10 +642,10 @@ while true; do
       : # 确实没新结果，但不要退出，继续等 watchdog 超时
     fi
   fi
-  # 动态超时：60m 固定值会在慢文件堆积时误杀仍合法运行的 worker
-  # （spawn.test WT=2400s + bunshell WT=1800s + 排队 = 超 3600s）。
-  # 改为：剩余 worker 的最大 WT × 2 + 10min 余量；无 worker 时用
-  # 分派时记录的全局最大 WT（_g_max_wt），兜底 3600s 防死锁。
+  # 动态超时：固定 3600s 会在慢文件堆积时误杀仍合法运行的 worker。
+  # 慢文件放末尾后，_wait_start 时剩余的全是慢文件（每个最长
+  # WT=TMOUT*4=1200s），5 并行处理 N 个慢文件需要 ceil(N/5)×max_wt。
+  # 超时 = ceil(剩余worker数/PARALLEL) × max_wt + 10min 余量。
   _max_wt=0
   for _wf in "$PDIR"/wt_*; do
     [ -f "$_wf" ] || continue
@@ -655,7 +655,12 @@ while true; do
   [ "$_g_max_wt" -gt "$_max_wt" ] 2>/dev/null && _max_wt=$_g_max_wt
   _wait_timeout=3600
   if [ "$_max_wt" -gt 0 ] 2>/dev/null; then
-    _wait_timeout=$((_max_wt * 2 + 600))
+    _remain_count=$(ls "$PDIR"/running_* 2>/dev/null | wc -l)
+    _remain_count=${_remain_count:-0}
+    _wait_timeout=$(( (_remain_count / PARALLEL + 1) * _max_wt + 600 ))
+    # 兜底：至少 2 倍单文件 WT + 余量
+    _min_wait=$((_max_wt * 2 + 600))
+    [ "$_wait_timeout" -lt "$_min_wait" ] 2>/dev/null && _wait_timeout=$_min_wait
   fi
   if [ $((SECONDS - _wait_start)) -gt "$_wait_timeout" ]; then
     echo "[WARN] worker cleanup: ${_wait_timeout}s timeout, killing remaining workers" >&2

@@ -2430,6 +2430,12 @@ console.log(<div {...obj} key="after" />);`),
           "// @jsxRuntime react-jsxdev\nexport default <div/>;",
           jsxDevRuntime,
         ],
+        [
+          "@jsxImportSource pragma",
+          dev,
+          "/** @jsxImportSource preact */\nexport default <div/>;",
+          [{ kind: "import-statement", path: "preact/jsx-dev-runtime" }],
+        ],
         ["no JSX", dev, "export const x = 1;", []],
       ])("%s", (_, opts, src, expected) => {
         const t = new Bun.Transpiler(opts);
@@ -2619,6 +2625,7 @@ console.log(<div {...obj} key="after" />);`),
       define: {
         "process.env.NODE_ENV": JSON.stringify("development"),
       },
+      autoImportJSX: false,
     });
     for (const [tag, expected] of [
       ["Foo-Bar", `"Foo-Bar"`],

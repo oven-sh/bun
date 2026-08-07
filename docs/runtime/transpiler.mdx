@@ -217,8 +217,10 @@ interface TranspilerOptions {
   // Default: false
   trimUnusedImports?: boolean,
 
-  // Whether to prepend the automatic JSX runtime import
-  // (`import { jsx } from "react/jsx-runtime"`) when JSX is used
+  // Whether to prepend the automatic JSX runtime import when JSX is used,
+  // e.g. `import { jsx } from "react/jsx-runtime"` in production or
+  // `import { jsxDEV } from "react/jsx-dev-runtime"` in development,
+  // resolved against the configured jsxImportSource
   // Default: true
   autoImportJSX?: boolean,
 

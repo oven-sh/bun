@@ -485,6 +485,12 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if let Some(import_source) = p.lexer.jsx_pragma.jsx_import_source() {
+            let text = import_source.text.slice();
+            p.options.jsx.classic_import_source = text.to_vec().into();
+            p.options.jsx.package_name = p.options.jsx.classic_import_source.clone();
+            p.options.jsx.set_import_source();
+        }
         if let Some(span) = p.lexer.jsx_pragma.jsx_runtime()
             && let Some(pair) = options::JSX::RUNTIME_MAP.get(span.text.slice())
         {

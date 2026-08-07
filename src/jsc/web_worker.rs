@@ -844,8 +844,7 @@ impl WebWorker {
 
         // SAFETY: `promise` is a live JSC heap cell.
         unsafe {
-            let status = (*promise).status();
-            if status == jsc::js_promise::Status::Rejected {
+            if (*promise).status() == jsc::js_promise::Status::Rejected {
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
@@ -856,26 +855,21 @@ impl WebWorker {
                     // would clobber a process.on('exit') change to process.exitCode.
                     return self.shutdown();
                 }
-            } else if status == jsc::js_promise::Status::Pending {
-                // Unsettled top-level await (loop drained, entry promise still
-                // pending): node exits the worker with code 13, but only if the
-                // user hasn't set a nonzero process.exitCode.
-                if vm.exit_handler.exit_code == 0 {
-                    vm.as_mut().exit_handler.exit_code = 13;
-                }
-                self.flush_logs(vm);
-                return self.shutdown();
-            } else {
-                let _ = (*promise).result(vm.jsc_vm());
             }
         }
+        // A still-pending entry promise is an unsettled top-level await: as in
+        // Node the worker counts as started once its module has been evaluated,
+        // and the await continues in the normal event loop below — messages,
+        // timers and I/O keep flowing meanwhile. Its outcome is examined again
+        // when the loop drains. Rooted so a settle-and-collect cannot free it.
+        let entry_promise = crate::Strong::create(JSValue::from_cell(promise.cast::<crate::JSCell>()), vm.global());
 
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
         // Pending -> Running: 'online' is posted to the parent and messages/tasks
         // that arrived while the entry point was loading are delivered. After the
         // entry point on purpose, so the parent observes 'online' only once the
-        // worker's top-level code has completed.
+        // worker's top-level code has been evaluated.
         WebWorker__workerGlobalScopeStarted(self.proxy, vm.global());
         self.set_status(Status::Running);
 
@@ -917,6 +911,38 @@ impl WebWorker {
             // TODO: is this able to allow the event loop to continue?
             vm.as_mut().on_before_exit();
         }
+
+        // The entry module's evaluation, revisited now that the loop has drained
+        // (or termination was requested): a top-level await that rejected while
+        // the loop ran is an uncaught error; one still pending is Node's exit 13
+        // (unless the user chose a nonzero exit code or asked to stop).
+        if !self.has_requested_terminate() {
+            // SAFETY: `promise` is rooted by `entry_promise`.
+            unsafe {
+                match (*promise).status() {
+                    jsc::js_promise::Status::Rejected => {
+                        // The rejection was routed through the VM's unhandled-
+                        // rejection tracking while the loop ran (the internal
+                        // promise has no user handler); report it as the entry's
+                        // uncaught error only if that has not already happened.
+                        if vm.unhandled_error_counter == 0 && vm.exit_handler.exit_code == 0 {
+                            let _ = vm.as_mut().uncaught_exception(
+                                vm.global(),
+                                (*promise).result(vm.jsc_vm()),
+                                true,
+                            );
+                        }
+                    }
+                    jsc::js_promise::Status::Pending => {
+                        if vm.exit_handler.exit_code == 0 {
+                            vm.as_mut().exit_handler.exit_code = 13;
+                        }
+                    }
+                    jsc::js_promise::Status::Fulfilled => {}
+                }
+            }
+        }
+        drop(entry_promise);
 
         self.flush_logs(vm);
         self.shutdown();

@@ -4635,14 +4635,21 @@ impl VirtualMachine {
     }
 
     /// Loads the worker entry point and waits for it, honoring termination requests.
+    /// Link and evaluate a worker's entry module. Returns once the module has
+    /// been *evaluated* — its promise may still be pending on a top-level await,
+    /// which then continues in the worker's normal event loop (Node's ordering:
+    /// the worker is started, and receives messages, from this point on).
     pub(crate) fn load_entry_point_for_web_worker(
         &mut self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        let promise = self.reload_entry_point(entry_path)?;
+        let _ = self.reload_entry_point(entry_path)?;
         self.event_loop_mut().perform_gc();
+        // Module loading and a TLA-free evaluation settle through tasks and
+        // microtasks the loader queued; run those, but do not wait on the loop
+        // for an await that needs outside events.
         self.event_loop_mut()
-            .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise));
+            .settle_promise_without_waiting(jsc::AnyPromise::Internal(self.pending_internal_promise.unwrap()));
         if let Some(worker) = self.worker_ref() {
             if worker.has_requested_terminate() {
                 return Err(crate::CrateError::WorkerTerminated);

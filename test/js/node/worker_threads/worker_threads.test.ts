@@ -639,11 +639,12 @@ describe("getHeapSnapshot", () => {
   // uncaught_exception return handled=true so spin() continues to
   // fireEarlyMessages (the call resolves with real data). Under `bun -e`
   // it rejects — see the test-worker-heapdump-failure.js vendored test for
-  // subprocess coverage. The two cases below take the shutdown() path
-  // directly so they exercise the m_pendingTasks abandon drain regardless.
+  // subprocess coverage. The case below takes the shutdown() path directly so
+  // it exercises the m_pendingTasks abandon drain regardless. (A worker with an
+  // unsettled top-level await is not such a case: like Node it counts as
+  // started once its module has been evaluated, so these calls resolve.)
   test.each([
     ["entry not found", undefined],
-    ["unsettled top-level await", "await new Promise(() => {})"],
   ])("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start (%s)", async (_, src) => {
     const worker =
       src === undefined ? new Worker("/nonexistent/__bun_worker_path__.js") : new Worker(src, { eval: true });
@@ -1882,3 +1883,25 @@ test("parentPort.onmessage = <not a function> lets the worker exit", async () =>
   w.postMessage(2);
   expect(await exited).toBe(0);
 });
+
+// #15408: a worker whose top-level await has not settled is started (Node) —
+// its parentPort listener registered before the await receives messages, and
+// the await keeps running in the normal event loop.
+test("parentPort messages are delivered while a top-level await is pending", async () => {
+  const w = new Worker(
+    `import { parentPort } from "worker_threads";
+     parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === "bye") process.exit(0); });
+     await new Promise(() => {});`,
+    { eval: true },
+  );
+  const replies: string[] = [];
+  w.on("message", m => {
+    replies.push(m);
+    if (m === "got hi") w.postMessage("bye");
+  });
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  w.postMessage("hi");
+  expect(await exited).toBe(0);
+  expect(replies).toEqual(["got hi", "got bye"]);
+});
+

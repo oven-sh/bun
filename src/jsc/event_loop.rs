@@ -1178,6 +1178,33 @@ impl EventLoop {
         self.tick();
     }
 
+    /// Run what is already runnable — queued tasks, concurrent completions that
+    /// have arrived, microtasks — until `promise` settles or nothing more can run
+    /// without waiting for outside events. Used to let a worker's entry module
+    /// finish loading/evaluating without blocking on a top-level await.
+    pub fn settle_promise_without_waiting(&mut self, promise: jsc::AnyPromise) {
+        let worker = self.vm_ref().worker_ref();
+        let mut idle_rounds = 0u8;
+        while promise.status() == PromiseStatus::Pending
+            && !worker.is_some_and(|w| w.has_requested_terminate())
+        {
+            let before = self.vm_ref().pending_internal_promise;
+            self.tick();
+            // `tick` ran tasks/microtasks; if the promise is still pending and the
+            // module loader made no progress (no new work became runnable), the
+            // await needs the loop — stop here.
+            if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
+                idle_rounds += 1;
+                if idle_rounds >= 2 {
+                    break;
+                }
+            } else {
+                idle_rounds = 0;
+            }
+            let _ = before;
+        }
+    }
+
     pub fn wait_for_promise_with_termination(&mut self, promise: jsc::AnyPromise) {
         // BACKREF — `WebWorker` is owned by C++ and outlives this VM (see
         // [`VirtualMachine::worker_ref`]); route through the safe accessor

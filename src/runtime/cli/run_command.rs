@@ -1805,6 +1805,20 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
         unsafe { Bun__VM__refreshStackBoundsAfterImageRestore(vm.jsc_vm) };
     }
     {
+        // The resolver/node:fs "top level dir" is the builder's cwd; re-read where this process runs.
+        // SAFETY: process-global FileSystem singleton; single-threaded at this point of restore.
+        let fs = bun_resolver::fs::FileSystem::instance();
+        let mut tmp = bun_paths::PathBuffer::uninit();
+        if let bun_sys::Result::Ok(cwd) = bun_sys::getcwd_z(&mut tmp) {
+            let n = cwd.as_bytes().len();
+            fs.top_level_dir_buf[..n].copy_from_slice(cwd.as_bytes());
+            // SAFETY: `top_level_dir_buf` lives in the process-lifetime FileSystem singleton.
+            let dir: &'static [u8] =
+                unsafe { ::core::slice::from_raw_parts(fs.top_level_dir_buf.as_ptr(), n) };
+            fs.set_top_level_dir(dir);
+        }
+    }
+    {
         // SAFETY: main-thread VM; the env loader is the builder's — replace its process-derived entries with this process's environment.
         let vm = unsafe { &mut *vm_ptr };
         // SAFETY: `transpiler.env` is the process-lifetime loader; nothing else touches it during restore adoption.

@@ -50,7 +50,6 @@ impl CurrentFile {
             return;
         }
         if crate::cli::test_command::is_node_test_child() {
-            // node:test run() children emit only the serialized event stream.
             self.has_printed_filename = true;
             return;
         }
@@ -532,9 +531,6 @@ pub(crate) fn js_file_generation(
     Ok(JSValue::from(generation))
 }
 
-/// Reached from node:test at module load in a run() child: registers this
-/// process so genuine uncaught errors route to the process listeners the shim
-/// installs (VirtualMachine::uncaught_exception / unhandled_rejection gates).
 pub(crate) fn js_node_test_register_child(
     _global: &JSGlobalObject,
     _callframe: &CallFrame,

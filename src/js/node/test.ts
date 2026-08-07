@@ -1,5 +1,4 @@
 // Hardcoded module "node:test" — port of lib/internal/test_runner/* (v26.3.0).
-// Top-level tests schedule through bun:test; subtests execute inline here.
 // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/test.js
 
 const { jest } = Bun;
@@ -37,8 +36,6 @@ const kTimeoutMax = 2 ** 31 - 1;
 const kBunTestDefaultTimeoutMs = 5_000;
 const kJoinSeparator = " > ";
 
-// run() — port of lib/internal/test_runner/{runner,tests_stream}.js. Files run
-// in child processes; kRunChildEnv makes the child stream one JSON event per line.
 // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/runner.js
 
 // node's own tests branch on NODE_TEST_CONTEXT to tell the parent from the
@@ -267,17 +264,12 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   const opts = validateRunOptions(options);
   const reporter = createTestsStream();
 
-  // A test file that calls run() on itself would otherwise fork (or, with
-  // isolation 'none', import) forever; node skips the files instead.
   if (runChildReporterEnabled || inProcessRunActive) {
     process.emitWarning("node:test run() is being called recursively within a test file. skipping running files.");
     reporter.endStream();
     return reporter;
   }
 
-  // Options whose semantics we cannot honor yet must fail loudly. Deliberate
-  // validated-but-accepted exceptions: testTagFilters, timeout, concurrency
-  // (upper-bound contract; files run serially), and forceExit (CLI owns exit).
   if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
@@ -287,8 +279,6 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
 
   if (opts.isolation === "none") {
-    // Set synchronously so an overlapping run() hits the recursion guard
-    // instead of sharing the queue and sink.
     inProcessRunActive = true;
     runFilesInProcess(opts, reporter);
   } else {
@@ -297,7 +287,6 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   return reporter;
 }
 
-// node's default discovery pattern (utils.js:71-77). Split into two globs:
 // Bun.Glob mis-parses `test/**/*` nested inside a brace group.
 const kDefaultRunPatterns = ["**/{test,test-*,*[._-]test}.{js,mjs,cjs}", "**/test/**/*.{js,mjs,cjs}"];
 
@@ -305,7 +294,6 @@ function discoverRunFiles(opts: ReturnType<typeof validateRunOptions>): string[]
   const path = require("node:path");
   const cwd = opts.cwd as string;
   const files = opts.files as string[] | undefined;
-  // An explicit files array wins even when empty: node runs nothing for [].
   if (files !== undefined) {
     function resolveFromCwd(file: string) {
       return path.resolve(cwd, file);
@@ -338,9 +326,6 @@ function makeRunCounts() {
     todo: 0,
     topLevel: 0,
     suites: 0,
-    // Not a node diagnostic counter; mirrors node's harness.success flip for a
-    // non-skip/non-todo failed suite (countCompletedTest in harness.js) so a
-    // suite-only failure still fails the run.
     failedSuites: 0,
   } as unknown as Record<string, number>;
 }
@@ -353,8 +338,6 @@ function runSucceeded(counts: Record<string, number>): boolean {
   return counts.failed === 0 && counts.cancelled === 0 && counts.failedSuites === 0;
 }
 
-// node's test:summary counts carry exactly these keys; failedSuites is
-// port-internal bookkeeping for runSucceeded and never crosses the stream.
 function publicRunCounts(counts: Record<string, number>) {
   const { tests, failed, passed, cancelled, skipped, todo, topLevel, suites } = counts;
   return { __proto__: null, tests, failed, passed, cancelled, skipped, todo, topLevel, suites };
@@ -371,14 +354,10 @@ function emitRunDiagnostics(reporter: TestsStream, counts: Record<string, number
   reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `duration_ms ${durationMs}` });
 }
 
-// Per-run bookkeeping for SIGINT/SIGTERM: kept as a closure local so two
-// overlapping run() calls cannot clobber each other's child/interrupt state.
 type RunInterruptState = {
   interrupted: boolean;
   childProc: { kill: () => void } | null;
   fileNode: Record<string, unknown> | null;
-  // Cumulative nesting-0 verdict number across every file in the run (node's
-  // runner renumbers pass/fail run-wide; test:complete keeps per-file numbers).
   verdictNumber: number;
 };
 
@@ -397,20 +376,12 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
   try {
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
-    // Explicit files keep their spelling: the per-file test is named by the
-    // path as passed (node's runner), while discovery yields absolute paths.
     const files = opts.files !== undefined ? (opts.files as string[]) : discoverRunFiles(opts);
     function onInterrupt() {
       state.interrupted = true;
       state.childProc?.kill();
     }
-    // node installs process signal handlers only under --test (harness.js
-    // gates on isTestRunner); a library run() honors just opts.signal, so the
-    // CLI eval driver owns SIGINT/SIGTERM and routes them through the signal.
     const signal = opts.signal as AbortSignal | undefined;
-    // Captured before the loop: node reports per-file testAborted for a signal
-    // already aborted at run() time, but a mid-run abort tears the stream down
-    // without them (FAIL_FAST contract: test-runner-error-reporter.js).
     const preAborted = signal?.aborted === true;
     if (preAborted) onInterrupt();
     signal?.addEventListener("abort", onInterrupt, { once: true });
@@ -423,15 +394,11 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     } finally {
       signal?.removeEventListener("abort", onInterrupt);
     }
-    // node reports each file the abort skipped as testAborted rather than
-    // silently dropping it (observed on v26.3.0: complete carries the ordinal
-    // and passed:false, the verdict counts as cancelled, success goes false).
     if (preAborted) {
       for (; nextFile < files.length; nextFile++) {
         reportAbortedFile(files[nextFile], opts, reporter, counts, state, nextFile + 1);
       }
     } else if (state.interrupted) {
-      // node reports the file-level tests that were still running.
       counts.failed++;
       reporter.emitMessage("test:interrupted", {
         __proto__: null,
@@ -478,8 +445,6 @@ function reportAbortedFile(
     column: 1,
     file: absolute,
   };
-  // node's shape for an abort-skipped file (v26.3.0): 'This operation was
-  // aborted' with failureType testAborted, counted as cancelled.
   const error = makeTestFailure("This operation was aborted", "testAborted");
   const details = { __proto__: null, duration_ms: 0, type: "test", error };
   reporter.emitMessage("test:enqueue", { __proto__: null, ...fileNode });
@@ -491,8 +456,6 @@ function reportAbortedFile(
     testNumber: ordinal,
     details: { ...details, passed: false },
   });
-  // node emits start between the completion and the verdict here (observed
-  // v26.3.0 sequence: enqueue, dequeue, complete, start, fail).
   reporter.emitMessage("test:start", { __proto__: null, ...fileNode });
   reporter.emitMessage("test:fail", {
     __proto__: null,
@@ -550,9 +513,6 @@ async function runOneFile(
       signal: opts.signal,
     });
   } catch (err) {
-    // Bun.spawn throws synchronously on e.g. a nonexistent cwd; report it as a
-    // file-level fail (like the isolation:'none' twin's import catch) rather
-    // than let runFiles' outer catch destroy the whole stream.
     const error = makeTestFailure((err as Error)?.message ?? String(err), "testCodeFailure");
     fileCounts.tests++;
     fileCounts.failed++;
@@ -587,8 +547,6 @@ async function runOneFile(
     }
   }
   const drainStderr = drainStderrText();
-  // Defuse: a throwing test:stderr listener rejects this while the stdout
-  // read is still suspended, before the finally's .catch attaches.
   drainStderr.catch(kDefaultFunction);
 
   try {
@@ -614,12 +572,7 @@ async function runOneFile(
       } catch {
         continue;
       }
-      // Child stdout is user-controlled: a test body can write the marker plus
-      // well-formed JSON that is not an event. Skip rather than let
-      // republishChildEvent throw and destroy the run stream.
       if (event?.data == null || typeof event.data !== "object") continue;
-      // node's parent swallows each child's root plan and emits one run-level
-      // plan at the end (runner.js #skipReporting + Test.postRun).
       if (event.type === "test:plan" && event.data.nesting === 0) continue;
       republishChildEvent(event, absolute, reporter, fileCounts, state);
     }
@@ -628,23 +581,15 @@ async function runOneFile(
     const exitCode = await proc.exited;
     state.childProc = null;
     if (state.interrupted) {
-      // The interrupted file's verdict is replaced by runFiles' test:interrupted
-      // report; suppress the synthesized failure and per-file summary so their
-      // fileCounts bumps are not merged without a matching event.
       addRunCounts(counts, fileCounts);
       return;
     }
     state.fileNode = null;
 
-    // Two failure shapes: the file died before reporting anything (top-level
-    // throw — node emits a file-level test:fail and no per-file summary), or its
-    // tests failed (covered by the children's events; completes `subtestsFailed`).
     const fileSucceeded = runSucceeded(fileCounts);
     const fileFailed = exitCode !== 0 && fileSucceeded;
     const subtestsFailed = !fileSucceeded;
     const fileDuration = roundDurationMs(performance.now() - fileStarted);
-    // Captured before the file-level increments below so it reflects only the
-    // child-reported count.
     const reportedChildren = fileCounts.tests + fileCounts.suites;
     let error: Error | undefined;
 
@@ -653,8 +598,6 @@ async function runOneFile(
       error = makeTestFailure(`${n} subtest${n === 1 ? "" : "s"} failed`, "subtestsFailed");
     }
 
-    // The per-file summary republishes the child's own; a zero-test child
-    // emits none (observed on node v26.3.0).
     if (!fileFailed && reportedChildren > 0) {
       reporter.emitMessage("test:summary", {
         __proto__: null,
@@ -670,15 +613,10 @@ async function runOneFile(
       fileCounts.topLevel++;
     }
 
-    // node emits the file node's completion before its verdict, and a failed
-    // completion carries the error too (observed on v26.3.0: the complete is
-    // emitted even when the child reported tests and only subtests failed).
     reporter.emitMessage("test:complete", {
       __proto__: null,
       ...fileNode,
       type: undefined,
-      // node models the file as a top-level test; its completion carries the
-      // file's ordinal in the run, not the file's own top-level count.
       testNumber: ordinal,
       details: {
         __proto__: null,
@@ -698,9 +636,6 @@ async function runOneFile(
         details: { __proto__: null, duration_ms: fileDuration, type: "test", error },
       });
     } else if (reportedChildren === 0) {
-      // node's FileTest.report(): a file that registers zero tests and exits 0
-      // is itself a passing test — start then pass, counted as tests=1/passed=1
-      // (observed on v26.3.0; the pass details carry no error or passed flag).
       fileCounts.tests++;
       fileCounts.passed++;
       fileCounts.topLevel++;
@@ -715,22 +650,15 @@ async function runOneFile(
     }
     addRunCounts(counts, fileCounts);
   } finally {
-    // A stream listener that throws into the republish loop must not leak the
-    // child (kill is a no-op once it exits); always settle the stderr drain.
     proc.kill();
     await drainStderr.catch(kDefaultFunction);
   }
 }
 
-// Unwraps serializeExtraValue's _bunTag envelope: primitives crossed bare,
-// every non-primitive came wrapped, so user data cannot occupy the envelope
-// shape and a user's own { nonFinite: 'NaN' } round-trips unchanged.
 function reviveSerializedValue(value: unknown) {
   if (value !== null && typeof value === "object") {
     const tag = (value as { _bunTag?: unknown })._bunTag;
     const v = (value as { v: unknown }).v;
-    // A hostile marker line can forge { _bunTag: 'bi', v: 'x' }; return the
-    // envelope as-is rather than let BigInt() throw and destroy the run stream.
     try {
       if (tag === "nf") return Number(v);
       if (tag === "bi") return BigInt(v as string);
@@ -743,7 +671,6 @@ function reviveSerializedValue(value: unknown) {
 }
 
 function rebuildError(serialized: any, depth = 0): Error {
-  // Child stdout is user-controlled: a hostile marker can send error:null.
   if (serialized === null || typeof serialized !== "object") return new Error(String(serialized));
   const { message, stack, name, code, failureType, cause } = serialized;
   const generatedMessage = reviveSerializedValue(serialized.generatedMessage);
@@ -753,11 +680,8 @@ function rebuildError(serialized: any, depth = 0): Error {
   const diff = reviveSerializedValue(serialized.diff);
   const error = new Error(message) as Record<string, unknown> & Error;
   error.stack = stack;
-  // v8-deserialized errors keep name non-enumerable (an AssertionError cause
-  // inspects as `AssertionError: msg`, not as a props entry).
   if (name !== undefined && name !== "Error")
     Object.defineProperty(error, "name", { value: name, writable: true, configurable: true });
-  // Enumerable-property order mirrors node's AssertionError inspect.
   if (generatedMessage !== undefined) error.generatedMessage = generatedMessage;
   if (code !== undefined) error.code = code;
   if (actual !== undefined) error.actual = actual;
@@ -780,17 +704,11 @@ function republishChildEvent(
   const { type, data } = event;
   Object.setPrototypeOf(data, null);
   data.file = file;
-  // Child stdout is user-controlled: a forged nesting/duration_ms would crash
-  // the reporter's .repeat()/jsToYaml. Clamp once here so the reporter port
-  // stays byte-faithful to upstream.
   const rawNesting = data.nesting;
   data.nesting = typeof rawNesting === "number" && rawNesting >= 0 && rawNesting <= 256 ? rawNesting | 0 : 0;
   const isVerdict = type === "test:pass" || type === "test:fail";
   if (isVerdict || type === "test:complete") {
     const isSuite = data.type === "suite";
-    // node's parent renumbers nesting-0 verdicts cumulatively across every
-    // file in the run (runner.js); test:complete keeps the child's own
-    // per-file number, so peek the per-file count (don't increment) there.
     if (data.nesting === 0) {
       if (isVerdict) {
         counts.topLevel++;
@@ -800,16 +718,12 @@ function republishChildEvent(
       }
     }
     if (isVerdict) {
-      // node counts a suite in `suites` and stops there: a skipped or todo
-      // suite never lands in skipped/todo/passed/tests (countCompletedTest).
       if (isSuite) {
         counts.suites++;
         if (type === "test:fail" && data.skip === undefined && data.todo === undefined) counts.failedSuites++;
       } else {
         counts.tests++;
         const failureType = data.error?.failureType;
-        // node's kCanceledTests (runner.js): these failure kinds count as
-        // cancelled, not failed.
         const wasCancelled =
           failureType === "testTimeoutFailure" || failureType === "cancelledByParent" || failureType === "testAborted";
         if (data.skip !== undefined) counts.skipped++;
@@ -843,23 +757,13 @@ function republishChildEvent(
 // cannot reroute this process (matches the Rust is_node_test_child() gate).
 const runChildReporterEnabled = process.env[kRunChildEnv] === kRunChildEnvValue;
 
-// Registers this process as a run() child with the native runner, so genuine
-// uncaught errors route to the process listeners installed below (spawned
-// grandchildren inherit the env var but never register in-process).
 const registerRunChild = $newRustFunction("jest.rs", "jsNodeTestRegisterChild", 0);
 
 if (runChildReporterEnabled) {
-  // The attribution listeners themselves install lazily with the first test
-  // (executeTestNode); an uncaught before that takes the fatal path, like a
-  // node test file that dies while loading.
   registerRunChild();
-  // node's child emits its root-level plan when the file finishes; the file
-  // boundary in bun:test is process exit.
   process.on("exit", emitRunChildPlanOnExit);
 }
 
-// In standalone mode the same events feed an in-process TestsStream instead
-// of the parent's stdout pipe.
 let standaloneSink: ((type: string, data: unknown) => void) | null = null;
 
 function emitRunChildEvent(type: string, data: unknown) {
@@ -867,11 +771,7 @@ function emitRunChildEvent(type: string, data: unknown) {
     standaloneSink(type, data);
     return;
   }
-  // The protocol-on-stdout write is only valid when a run() parent is parsing
-  // it. In pure standalone mode the sink may still be null during collection
-  // (describe bodies run before beforeExit sets it); drop rather than leak.
   if (!runChildReporterEnabled) return;
-  // In-process sinks receive the real error object; only the pipe flattens it.
   const record = data as { error?: unknown } | null;
   const wire =
     record !== null && typeof record === "object" && Error.isError(record.error)
@@ -889,16 +789,10 @@ function emitRunChildPlanOnExit() {
   }
 }
 
-// True when the run-child event synthesis should be active — either a run()
-// child streaming to its parent, or standalone / in-process run() reporting
-// via the sink (mirrors inStandaloneMode's inProcessRunActive check).
 function runEventsEnabled(): boolean {
   return runChildReporterEnabled || standaloneActive || inProcessRunActive;
 }
 
-// t.diagnostic(): routes through the reporter stream when a transport exists.
-// A SuiteContext.diagnostic() inside a describe body runs during collection,
-// before runStandalone sets the sink; fall through to console.log there.
 function emitContextDiagnostic(node: TestNode, message: unknown) {
   const text = typeof message === "string" ? message : require("node:util").inspect(message);
   if (runChildReporterEnabled || standaloneSink !== null) {
@@ -913,14 +807,10 @@ function emitContextDiagnostic(node: TestNode, message: unknown) {
   }
 }
 
-// node computes durations from hrtime bigints, which carry at most 6 decimal
-// digits as milliseconds; raw performance.now() deltas have float noise.
 function roundDurationMs(ms: number): number {
   return Math.round(ms * 1e6) / 1e6;
 }
 
-// node wraps every user failure in ERR_TEST_FAILURE carrying `failureType` and
-// the original error as `cause` (errors.js E('ERR_TEST_FAILURE')).
 function wrapTestError(error: unknown): Error {
   if (Error.isError(error)) {
     if ((error as { code?: string }).code === "ERR_TEST_FAILURE") {
@@ -931,11 +821,9 @@ function wrapTestError(error: unknown): Error {
     (wrapper as { code?: string }).code = "ERR_TEST_FAILURE";
     (wrapper as { failureType?: string }).failureType = "testCodeFailure";
     (wrapper as { cause?: unknown }).cause = error;
-    // node's wrapper hides its internal frames; reporters use the cause's stack.
     wrapper.stack = `Error [ERR_TEST_FAILURE]: ${wrapper.message}`;
     return wrapper;
   }
-  // node: msg = error?.message ?? error, inspected when not a string.
   const msg = (error as { message?: unknown })?.message ?? error;
   const wrapper = new Error(typeof msg === "string" ? msg : require("node:util").inspect(msg));
   (wrapper as { code?: string }).code = "ERR_TEST_FAILURE";
@@ -952,20 +840,13 @@ function nestingOf(node: TestNode) {
   return depth;
 }
 
-// An Error cause recurses into serializeRunError; a non-Error one crosses the
-// pipe via the same _bunTag envelope as extras, with a nonError discriminant
-// so rebuildError knows to unwrap rather than recurse.
 function serializeRunCause(cause: unknown, depth: number) {
   if (Error.isError(cause)) return serializeRunError(cause, depth);
   return { __proto__: null, nonError: true, ...serializeExtraValue(cause) };
 }
 
-// Pass actual/expected by value when JSON can carry them (node's v8 serializer
-// preserves them), else degrade to the inspected string. Always wrapped in
-// _bunTag so the parent never confuses user data with a non-finite tag.
 function serializeExtraValue(value: unknown) {
   const t = typeof value;
-  // JSON emits null for non-finite numbers; tag so the parent revives.
   if (t === "number" && !Number.isFinite(value)) return { __proto__: null, _bunTag: "nf", v: String(value) };
   if (t === "bigint") return { __proto__: null, _bunTag: "bi", v: String(value) };
   if (t !== "symbol" && t !== "function") {
@@ -993,9 +874,6 @@ function serializeRunError(error: unknown, depth = 0) {
       name: error.name,
       cause: cause !== undefined && depth < 8 ? serializeRunCause(cause, depth + 1) : undefined,
     };
-    // JSON-safe primitives cross the pipe as-is; anything else goes through
-    // the _bunTag envelope so the reviver can distinguish serializer tags
-    // from user data (node uses the v8 serializer which needs no such tag).
     for (const key of kSerializedErrorExtras) {
       const value = (error as Record<string, unknown>)[key];
       const t = typeof value;
@@ -1038,14 +916,9 @@ function reportDirectiveOnlyNode(node: TestNode, mode: "skip" | "todo") {
   }
   reportStartChain(node);
   emitRunChildEvent("test:pass", data);
-  // Directive-only nodes never execute, so completion bookkeeping for the
-  // enclosing suite happens here.
   noteRunChildDone(node.parent, false);
 }
 
-// True when any enclosing suite is marked skipped with a falsy-but-defined
-// value ({ skip: '' }): its callback ran and declared children, which node
-// cancels instead of running.
 function hasSkippedAncestorSuite(node: TestNode): boolean {
   for (let cur = node.parent; cur !== undefined && cur.parent !== undefined; cur = cur.parent) {
     if (cur.isSuite && cur.skipped) return true;
@@ -1057,16 +930,12 @@ function makeCancelledByParentError() {
   return makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
 }
 
-// Reports a declared-but-never-run child of a skipped suite (cancelledByParent).
 // Recurses so every leaf emits cancelledByParent like node's postRun()/#cancel():
 // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/test.js
 function reportCancelledNode(node: TestNode) {
   if (!runEventsEnabled()) return;
   reportQueueChain(node);
   if (node.isSuite) {
-    // node's postRun() is post-order (children first), like maybeCompleteSuite.
-    // Set suiteReported before recursing so children's noteRunChildDone
-    // short-circuits at maybeCompleteSuite instead of re-emitting this suite.
     node.suiteReported = true;
     for (const child of node.standaloneChildren ?? []) {
       reportCancelledNode(child.node);
@@ -1097,9 +966,6 @@ function reportCancelledNode(node: TestNode) {
   noteRunChildDone(node.parent, true);
 }
 
-// A file that failed to import under run({isolation:'none'}) reports as a
-// failing top-level test at its queue position (node's root.createSubtest);
-// routed through the sink so republishChildEvent numbers and counts it.
 function reportFailedImportNode(node: TestNode, error: unknown) {
   reportQueueChain(node);
   const data = {
@@ -1120,21 +986,15 @@ function reportFailedImportNode(node: TestNode, error: unknown) {
   noteRunChildDone(node.parent, true);
 }
 
-// node wraps a failure thrown by a before/after hook in a fresh
-// ERR_TEST_FAILURE with the fixed message `failed running <kind> hook`
-// (failureType hookFailed); the thrown error is kept on cause.
 function wrapHookError(error: unknown, kind: HookKind): Error {
   const wrapper = new Error(`failed running ${kind} hook`);
   (wrapper as { code?: string }).code = "ERR_TEST_FAILURE";
   (wrapper as { failureType?: string }).failureType = "hookFailed";
   (wrapper as { cause?: unknown }).cause = error;
-  // node's wrapper hides its internal frames; reporters use the cause's stack.
   wrapper.stack = `Error [ERR_TEST_FAILURE]: ${wrapper.message}`;
   return wrapper;
 }
 
-// True when any enclosing suite's before() failed in run-child mode: node
-// cancels the declared children instead of running them.
 function hasHookFailedAncestorSuite(node: TestNode): boolean {
   for (let cur = node.parent; cur !== undefined; cur = cur.parent) {
     if (cur.hookSetupFailed) return true;
@@ -1142,8 +1002,6 @@ function hasHookFailedAncestorSuite(node: TestNode): boolean {
   return false;
 }
 
-// node's todo directive is inherited: a test inside a todo suite reports (and
-// counts) as todo, and its failure cannot fail the run.
 function hasTodoAncestor(node: TestNode): boolean {
   for (let cur = node.parent; cur !== undefined; cur = cur.parent) {
     if (cur.todoFlag) return true;
@@ -1167,9 +1025,6 @@ function nextTestNumberFor(node: TestNode): number {
   return parent !== undefined ? ++parent.reportedCount : 0;
 }
 
-// node's per-test flush order: enqueue, dequeue, complete, (subtest plan),
-// ancestor starts, own start, verdict — so the queue and start phases are
-// separate to let `complete` sit between them.
 function reportQueueChain(node: TestNode) {
   if (!runEventsEnabled()) return;
   const chain: TestNode[] = [];
@@ -1216,12 +1071,8 @@ function reportStartChain(node: TestNode) {
   }
 }
 
-// A collection suite has no completion callback of its own: it finishes when
-// its describe callback has settled (all children registered) AND its last
-// registered child has reported.
 function noteRunChildDone(parent: TestNode | undefined, failed: boolean) {
   if (!runEventsEnabled()) return;
-  // The root node is not a suite node in node's stream.
   while (parent !== undefined && parent.parent !== undefined) {
     parent.childrenDone++;
     if (failed) parent.childrenFailed++;
@@ -1231,34 +1082,22 @@ function noteRunChildDone(parent: TestNode | undefined, failed: boolean) {
   }
 }
 
-// Emits the suite's own completion event once it is truly finished. Returns
-// whether the suite completed (so the caller can bubble to its parent).
 function maybeCompleteSuite(suite: TestNode): boolean {
   if (!suite.isSuite || !suite.collectionSettled || suite.suiteReported) return false;
   if (suite.childrenDone < suite.childrenCount) return false;
   suite.suiteReported = true;
-  // A todo suite's advisory results never fail it (or the run) in node.
   const isTodo = suite.todoFlag || hasTodoAncestor(suite);
   if (isTodo) suite.childrenFailed = 0;
-  // A skipped suite passes with its directive regardless of cancelled children
-  // (node's Suite.run: if (this.skipped) { this.#cancel(); this.pass(); }).
   if (suite.skipped) suite.childrenFailed = 0;
-  // A suite under a failed before() reports cancelledByParent with zero
-  // duration, like its tests (node's Suite#cancel); write the failure back so
-  // the parent's accounting sees it even when the suite has no children.
   const cancelledByHookFailure = !isTodo && hasHookFailedAncestorSuite(suite);
   if (cancelledByHookFailure && suite.childrenFailed === 0) suite.childrenFailed = 1;
   let suiteFailed = suite.childrenFailed > 0;
   const failedCount = suite.childrenFailed;
-  // node's Suite.pass(): an expectFailure suite with no error still fails
-  // ('test was expected to fail but passed'); a failing one keeps its error.
   const { expectFailure } = suite;
   const xfail = expectFailure ? (expectFailure.label ?? true) : undefined;
   let forcedError: Error | undefined;
   if (expectFailure && !suiteFailed && !isTodo) {
     suiteFailed = true;
-    // Callers re-derive the bubble-up bit from childrenFailed; write it back
-    // (mirroring the isTodo zeroing above) so the parent sees this as failed.
     suite.childrenFailed = 1;
     forcedError = makeTestFailure("test was expected to fail but passed", "expectedFailure");
   }
@@ -1285,9 +1124,6 @@ function maybeCompleteSuite(suite: TestNode): boolean {
             : makeTestFailure(`${failedCount} subtest${failedCount > 1 ? "s" : ""} failed`, "subtestsFailed")))
         : undefined,
   };
-  // node's order around a finishing suite: its completion, the plan covering
-  // its children, then its own verdict. The chain calls are no-ops when a
-  // child already walked up, but an empty suite has no child to do so.
   reportQueueChain(suite);
   emitRunChildEvent("test:complete", { ...data, passed: !suiteFailed });
   emitRunChildEvent("test:plan", {
@@ -1300,7 +1136,6 @@ function maybeCompleteSuite(suite: TestNode): boolean {
   return true;
 }
 
-// Called when a suite's describe callback has finished registering children.
 function noteSuiteCollectionSettled(suite: TestNode) {
   if (!runEventsEnabled()) return;
   suite.collectionSettled = true;
@@ -1309,9 +1144,6 @@ function noteSuiteCollectionSettled(suite: TestNode) {
   }
 }
 
-// Registers a child with its enclosing suite for run()-child suite accounting.
-// Checks inStandaloneMode() directly: at the first standalone registration
-// standaloneActive has not latched yet (standaloneRegister runs after this).
 function noteRunChildRegistered(parent: TestNode) {
   if (!runChildReporterEnabled && !inStandaloneMode()) return;
   if (parent.parent !== undefined) parent.childrenCount++;
@@ -1343,14 +1175,12 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
     error: node.passed ? undefined : wrapTestError(node.error),
   };
   emitRunChildEvent("test:complete", { ...data, passed: node.passed });
-  // A test that ran subtests reports the plan covering them.
   const { reportedCount } = node;
   if (reportedCount > 0) {
     emitRunChildEvent("test:plan", { __proto__: null, nesting: nestingOf(node) + 1, count: reportedCount });
   }
   reportStartChain(node);
   emitRunChildEvent(node.passed ? "test:pass" : "test:fail", data);
-  // A failing todo child does not fail its suite (node counts it as todo).
   noteRunChildDone(node.parent, !node.passed && !skipped && !todoEffective);
 }
 
@@ -1411,9 +1241,6 @@ class MockFunctionContext {
   }
 
   restore() {
-    // node: a method mock reinstalls the original descriptor but the context
-    // keeps its implementation; a bare fn mock reverts to the original. Queued
-    // once-impls survive, and restore() stays re-runnable for reset().
     if (this.#restore !== undefined) {
       this.#restore();
     } else {
@@ -1991,8 +1818,6 @@ function makeTestFailure(message: string, failureType?: string) {
   const error = new Error(message);
   (error as { code?: string }).code = "ERR_TEST_FAILURE";
   if (failureType !== undefined) (error as { failureType?: string }).failureType = failureType;
-  // node's ERR_TEST_FAILURE hides its internal frames (hideInternalStackFrames),
-  // so reporters print no stack for these wrappers.
   error.stack = `Error [ERR_TEST_FAILURE]: ${message}`;
   return error;
 }
@@ -2063,8 +1888,6 @@ class TestPlan {
     return new Promise(planWaitExecutor);
   }
 
-  // An uncaughtException attributed to the awaiting test must reject a
-  // pending wait, or the test would hang on a plan that can no longer be met.
   failPending(err: Error) {
     const pending = this.#pending;
     if (pending === undefined) return false;
@@ -2168,16 +1991,11 @@ class TestNode {
   mockTracker: MockTracker | null = null;
   skipped = false;
   todoFlag = false;
-  // Set by both {only: true} and the .only spelling, so pruneToOnly sees
-  // node's two equivalent spellings the same way (it.only === it({only:true})).
   onlyFlag = false;
-  // The skip/todo reason string ({ skip: 'reason' }, t.skip('reason')).
   directiveMessage: string | null = null;
   abortController: AbortController | undefined;
   expectFailure: ExpectFailure = false;
   started = false;
-  // run()-child suite accounting: a collection suite completes when its last
-  // registered child reports, at which point its own suite event is emitted.
   childrenCount = 0;
   childrenDone = 0;
   childrenFailed = 0;
@@ -2187,11 +2005,8 @@ class TestNode {
   startReported = false;
   startedAtMs = 0;
   hookSetupFailed = false;
-  // node numbers each reported child 1..n within its parent.
   reportedCount = 0;
-  // Stable per-instance id carried on every per-test event.
   runTestId = 0;
-  // Standalone mode: children collected at declaration, run on beforeExit.
   standaloneChildren: StandaloneEntry[] | undefined;
   finished = false;
   passed = false;
@@ -2224,7 +2039,6 @@ class TestNode {
     // being collected); nested tests inherit their parent's file.
     this.filePath =
       parent !== undefined && parent.parent !== undefined ? parent.filePath : (currentImportFile ?? Bun.main);
-    // node: any non-undefined, non-false value is a directive, including ''.
     const { skip, todo } = options;
     this.skipped = skip !== undefined && skip !== false;
     this.todoFlag = (todo !== undefined && todo !== false) || (parent?.todoFlag ?? false);
@@ -2301,9 +2115,6 @@ function getRootNode(): TestNode {
     // by a mock's restore) see an up-to-date root and don't reset again.
     rootNode = new TestNode(kRootName, undefined, kDefaultOptions, true, false);
     if (oldRoot !== undefined) {
-      // Node scopes these per process: drop the previous file's module-level
-      // mocks and assert.register() additions with its root. The root's own
-      // mockTracker (via a file-level `t.mock`) is distinct from the `mock` export.
       oldRoot.mockTracker?.reset();
       mock.reset();
       customAssertions = { __proto__: null } as unknown as Record<string, Function>;
@@ -2329,7 +2140,6 @@ class TestContext {
   }
 
   get signal(): AbortSignal {
-    // Owned by the node so a timeout can abort it (node's #cancel()).
     const node = this.#node;
     node.abortController ??= new AbortController();
     return node.abortController.signal;
@@ -2765,7 +2575,6 @@ function invokeWithDoneCallback(fn: Function, arg: unknown) {
       if (err) reject(err);
       else resolve();
     }
-    // Node invokes test/hook callbacks with `this` bound to the context.
     const result = fn.$call(arg, arg, done);
     returned = true;
     if ($isPromise(result)) {
@@ -2787,7 +2596,6 @@ function invokeWithDoneCallback(fn: Function, arg: unknown) {
 
 // Node passes a `done` callback when a test or hook function declares exactly
 // two parameters; completion is then done()'s call, not the returned value.
-// Node invokes describe callbacks with `this` bound to the SuiteContext.
 function invokeSuiteFn(fn: Function, ctx: unknown) {
   return fn.$call(ctx, ctx);
 }
@@ -2896,7 +2704,6 @@ async function runHook(hook: Hook, owner: TestNode, arg: unknown, kind: HookKind
     }
   } catch (err) {
     // node wraps every hook failure once at the layer that ran it (Test#runHook):
-    // ERR_TEST_FAILURE, failureType hookFailed, thrown value on cause.
     // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/test.js
     throw wrapHookError(err ?? makeTestFailure("hook failed"), kind);
   }
@@ -2942,9 +2749,6 @@ async function runOwnBeforeHooks(node: TestNode) {
   }
 }
 
-// Tests currently executing in this process (innermost last), plus an
-// AsyncLocalStorage tying async work to the test whose body created it —
-// node's harness attributes process errors via async context.
 type ExecutionEntry = { node: TestNode; fail: (err: Error) => void };
 const executionStack: ExecutionEntry[] = [];
 let processErrorAttributionInstalled = false;
@@ -2961,8 +2765,6 @@ function attributeProcessError(err: unknown, failureType: string): void {
   const store = testContextStorage?.getStore();
   let entry: ExecutionEntry | undefined;
   if (store !== undefined && store.finished) {
-    // Another test's late async activity: node reports this at root level and
-    // fails the run without blaming the currently running test.
     console.error((err as Error)?.stack ?? err);
     process.exitCode = 1;
     return;
@@ -2973,8 +2775,6 @@ function attributeProcessError(err: unknown, failureType: string): void {
     }
     entry = executionStack.find(matchesStore);
   }
-  // No tracked context (bun's ALS does not cover promise-rejection sweeps or
-  // every native source): fall back to the innermost running test.
   entry ??= executionStack[executionStack.length - 1];
   if (entry !== undefined) {
     if (!entry.node.finished) {
@@ -2983,13 +2783,10 @@ function attributeProcessError(err: unknown, failureType: string): void {
       entry.fail(wrapper as Error);
       return;
     }
-    // Entry's body is done (afterEach/after window): report at root level and
-    // fail the run, but keep running so reporters flush and later tests report.
     console.error((err as Error)?.stack ?? err);
     process.exitCode = 1;
     return;
   }
-  // No active test: node's fatal path — print and exit 1 (kGenericUserError).
   console.error((err as Error)?.stack ?? err);
   process.exit(1);
 }
@@ -3009,9 +2806,6 @@ function installProcessErrorAttribution() {
   process.on("unhandledRejection", attributeUnhandled);
 }
 
-// Listeners latch for the process; remove them when an in-process run hands
-// control back to a caller whose own uncaughtException handling must not be
-// swallowed (the listener's presence alone suppresses the default print+exit).
 function uninstallProcessErrorAttribution() {
   if (!processErrorAttributionInstalled) return;
   processErrorAttributionInstalled = false;
@@ -3024,16 +2818,11 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // body, pending subtests, the plan check, inherited afterEach hooks, and the
   // test's own after hooks. Returns the failure (if any) instead of throwing.
   if (runEventsEnabled() && hasHookFailedAncestorSuite(node)) {
-    // A failed before() cancels the suite's declared children (node's
-    // cancelledByParent), mirroring runStandaloneEntry's setupFailed path.
     reportCancelledNode(node);
     return undefined;
   }
   node.started = true;
   const started = runEventsEnabled() ? performance.now() : 0;
-  // Stamp enclosing suites' start the first time a descendant begins so
-  // maybeCompleteSuite's duration covers the first child (the run-child path
-  // has no suite-level execution hook; standalone stamps earlier).
   if (started > 0) {
     for (let cur = node.parent; cur !== undefined && cur.parent !== undefined; cur = cur.parent) {
       if (cur.startedAtMs > 0) break;
@@ -3052,9 +2841,6 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     node.plan = new TestPlan(planOption);
   }
 
-  // While this test (hooks included) runs, an uncaughtException/unhandledRejection
-  // belongs to it (node fails the test instead of crashing the process). The
-  // interrupt promise unblocks a body that can no longer settle.
   let execEntry: ExecutionEntry | undefined;
   let interrupt: { promise: Promise<never>; reject: (err: Error) => void } | undefined;
   if (runEventsEnabled()) {
@@ -3086,8 +2872,6 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     failure = err;
   }
 
-  // Picked up after a beforeEach body settled: attributeProcessError stored
-  // a detached error on node.hookFailure via execEntry.fail.
   failure ??= node.hookFailure;
 
   if (failure === undefined) {
@@ -3103,16 +2887,12 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
         return runWithNode(node, invokeBodyFn);
       }
       async function runBody() {
-        // The body runs inside the test's async context so late async work
-        // (timers, ticks) is attributed to this test, like node.
         await (execEntry !== undefined ? getTestContextStorage().run(node, invoke) : invoke());
         // Wait for inline subtests created during the body (awaited or not),
         // including ones scheduled while earlier subtests were running.
         await drainSubtestChain(node);
       }
 
-      // Races the body/plan against the test timeout AND external interrupts
-      // (attributed uncaught errors that must unblock a pending await).
       function raceExternal(p: unknown) {
         const racers: unknown[] = [];
         if (stop !== undefined) racers.push(stop.promise);
@@ -3157,7 +2937,6 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       node.plan?.cancel();
     }
 
-    // An error attributed while the body was in flight fails the test.
     failure ??= node.hookFailure;
 
     const { failedSubtests, firstSubtestError } = node;
@@ -3173,15 +2952,12 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     }
   }
 
-  // node cancels (rather than fails) a timed-out test and aborts t.signal.
   if ((failure as { failureType?: string } | undefined)?.failureType === "testTimeoutFailure") {
     (node.abortController ??= new AbortController()).abort();
   }
 
   const bodyFailure = failure;
   failure = applyExpectFailure(node, failure);
-  // Node's Test.fail() re-checks expectFailure on a later hook error, so an
-  // accepted-xfail test stays passing even when its after/afterEach throws.
   const acceptedXfail = bodyFailure !== undefined && failure === undefined;
 
   // Node sets passed/error before running afterEach/after so hooks can
@@ -3309,9 +3085,6 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
       parent.failedSubtests++;
       parent.firstSubtestError ??= suite.firstSubtestError;
     }
-    // Align accounting with what actually reported and settle, so the suite's
-    // test:complete/plan/verdict match the enqueue/dequeue/start its first
-    // child already emitted walking up.
     if (runEventsEnabled()) {
       suite.childrenCount = suite.reportedCount;
       suite.childrenDone = suite.reportedCount;
@@ -3331,8 +3104,6 @@ function bunTest() {
   return jest(Bun.main);
 }
 
-// Standalone mode — `bun file.js` on a file that uses node:test. Mirrors
-// node's lazyBootstrapRoot + beforeExit drain since there is no native runner.
 // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/harness.js
 type StandaloneEntry = {
   node: TestNode;
@@ -3340,8 +3111,6 @@ type StandaloneEntry = {
   isSuite: boolean;
   mode?: "skip";
   build?: Promise<unknown>;
-  // Set for a run({isolation:'none'}) file that threw at import; reports as a
-  // failing top-level test at its queue position, like node's createSubtest.
   importError?: unknown;
 };
 
@@ -3349,11 +3118,7 @@ const kImportFailedFn: TestFn = function importFailedNoop() {};
 
 let standaloneActive = false;
 let standaloneScheduled = false;
-// True while run({ isolation: 'none' }) imports and executes files in-process:
-// registrations queue standalone-style even under `bun test`, and no
-// beforeExit pass is scheduled (the run loop drains the queue itself).
 let inProcessRunActive = false;
-// The file being imported (registration) / executed (events) by an in-process run.
 let currentImportFile: string | null = null;
 let activeRunFile: string | null = null;
 const standaloneQueue: StandaloneEntry[] = [];
@@ -3362,16 +3127,12 @@ function inStandaloneMode(): boolean {
   if (inProcessRunActive) return true;
   if (standaloneActive) return true;
   if (runChildReporterEnabled) return false;
-  // jsFileGeneration returns 0 without an active TestRunner (i.e. outside
-  // `bun test`). standaloneActive only latches on an actual registration, so
-  // probing here (e.g. from a preload) is side-effect free.
   return fileGeneration() === 0;
 }
 
 function standaloneRegister(entry: StandaloneEntry) {
   standaloneActive = true;
   if (inProcessRunActive) {
-    // The in-process run loop drains the queue; no beforeExit pass.
     standaloneScheduled = true;
   }
   const parent = entry.node.parent;
@@ -3386,16 +3147,11 @@ function standaloneRegister(entry: StandaloneEntry) {
   }
 }
 
-// Runs root before hooks, the queued entries, then root after hooks.
-// Returns the root hook failure (if any) so callers fail the run cleanly
-// instead of destroying the stream.
 async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
   let hookError: unknown;
-  // Node's root is a Test, not a Suite; hookArgFor() hands root a TestContext.
   const rootArg = hookArgFor(root);
   for (const hook of root.hooks.before) {
     try {
-      // Memoized: hooks that ran immediately (started root) are not re-run.
       await runBeforeHookOnce(hook, root, rootArg);
     } catch (err) {
       hookError = err;
@@ -3403,13 +3159,10 @@ async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
     }
   }
   if (hookError === undefined) {
-    // Entries can register more entries (rare); index loop tolerates growth.
     for (let i = 0; i < standaloneQueue.length; i++) {
       await runStandaloneEntry(standaloneQueue[i]);
     }
   } else {
-    // Node's root Test.postRun cancels each pending subtest; matches the
-    // suite-level setupFailed path in runStandaloneEntry.
     for (const entry of standaloneQueue) {
       const { node, importError } = entry;
       activeRunFile = node.filePath ?? null;
@@ -3428,9 +3181,6 @@ async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
   return hookError;
 }
 
-// Recursively awaits every suite's build promise so late-registered children
-// (from an async describe body that yielded past import) are in place before
-// pruning walks standaloneChildren. Rejections are handled at runStandaloneEntry.
 async function awaitSuiteBuilds(entries: StandaloneEntry[]): Promise<void> {
   for (const entry of entries) {
     const { build } = entry;
@@ -3456,13 +3206,9 @@ function standaloneQueueHasOnly(entries: StandaloneEntry[]): boolean {
   return entries.some(entryHasOnly);
 }
 
-// Keeps only-marked branches. An only suite keeps all children unless it has
-// only-marked descendants, in which case only those run (node's documented
-// rule); a plain suite with only-marked descendants keeps just those branches.
 function pruneToOnly(entries: StandaloneEntry[]): StandaloneEntry[] {
   const kept: StandaloneEntry[] = [];
   for (const entry of entries) {
-    // A failed import always reports (node creates it as a real root subtest).
     if (entry.importError !== undefined) {
       kept.push(entry);
       continue;
@@ -3494,8 +3240,6 @@ function tagsMatchFilters(tags: string[], filters: string[]): boolean {
   return false;
 }
 
-// Drops tests whose (inherited) tags miss every filter; a suite survives only
-// if any descendant does, and its child accounting shrinks to the survivors.
 function pruneStandaloneEntries(entries: StandaloneEntry[], filters: string[]): StandaloneEntry[] {
   const kept: StandaloneEntry[] = [];
   for (const entry of entries) {
@@ -3511,22 +3255,13 @@ function pruneStandaloneEntries(entries: StandaloneEntry[], filters: string[]): 
   return kept;
 }
 
-// run({ isolation: 'none' }): every file imports into this process (all
-// registrations first, like node), then one merged queue executes with shared
-// root hooks. Events flow through the same restructuring as process isolation.
 async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, reporter: TestsStream) {
   const started = performance.now();
   const counts = makeRunCounts();
-  // A standalone caller may already have queued its own tests; they belong to
-  // its beforeExit pass, not to this run. Saved here so the restore helper
-  // (function scope) can hand them back.
   const callerEntries = standaloneQueue.splice(0, standaloneQueue.length);
   const wasStandaloneActive = standaloneActive;
   const wasScheduled = standaloneScheduled;
   const hadAttribution = processErrorAttributionInstalled;
-  // The root node is a process singleton outside `bun test`; its per-run fields
-  // are snapshotted so a second run (or the caller's own beforeExit pass) starts
-  // clean and does not re-fire this run's root after() hooks.
   const callerRoot = getRootNode();
   const savedRootHooks = callerRoot.hooks;
   const savedRootReportedCount = callerRoot.reportedCount;
@@ -3543,16 +3278,10 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     const files = discoverRunFiles(opts);
     const numbering = { verdictNumber: 0 };
     standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts, numbering);
-    // node's in-process runner does not consult the run signal for scheduling
-    // (isolation 'none': abort leaves every file running to a normal verdict).
-    // Root is started so top-level before() hooks execute immediately, in order.
     callerRoot.started = true;
     try {
       for (const file of files) {
         if (file === Bun.main) {
-          // Importing the entry module from inside its own evaluation can
-          // never settle (the import awaits the very evaluation that is
-          // awaiting the run); node skips the file in this shape too.
           process.emitWarning(
             "node:test run() is being called recursively within a test file. skipping running files.",
           );
@@ -3562,9 +3291,6 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
         try {
           await import(file);
         } catch (err) {
-          // A file that fails to load is itself a failing test. Queued at its
-          // position among successfully-imported files (node's createSubtest)
-          // so declaration order holds; republishChildEvent numbers/counts it.
           const fileNode = new TestNode(file, callerRoot, kDefaultOptions, false, false);
           fileNode.filePath = file;
           standaloneQueue.push({
@@ -3579,9 +3305,6 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       currentImportFile = null;
     }
 
-    // Pruning walks standaloneChildren, which an async describe body may still
-    // be appending to; node awaits Suite.buildPromise before consulting them.
-    // Awaited unconditionally so a late it.only() is visible to the only-scan.
     await awaitSuiteBuilds(standaloneQueue);
     const filters = opts.testTagFilterExpressions as string[] | null;
     if (filters !== null && filters.length > 0) {
@@ -3590,8 +3313,6 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       standaloneQueue.push(...pruned);
     }
 
-    // node honors `only` in the shared process: when any registration carries
-    // it, everything outside the only-marked branches is dropped silently.
     if (standaloneQueueHasOnly(standaloneQueue)) {
       const pruned = pruneToOnly(standaloneQueue);
       standaloneQueue.length = 0;
@@ -3604,8 +3325,6 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       counts.failed++;
     }
     const durationMs = roundDurationMs(performance.now() - started);
-    // Emitted directly so it carries no data.file, matching runFiles and the
-    // adjacent run-level summary (the sink would stamp the stale activeRunFile).
     reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: counts.topLevel });
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.emitMessage("test:summary", {
@@ -3627,17 +3346,12 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     inProcessRunActive = false;
     standaloneSink = savedSink;
     activeRunFile = null;
-    // Give the caller its own tests and mode flags back so a standalone file
-    // that also calls run() still gets its beforeExit pass. Restores onto the
-    // SAME root the snapshot cleared (getRootNode() can return a fresh one).
     callerRoot.started = false;
     callerRoot.hooks = savedRootHooks;
     callerRoot.reportedCount = savedRootReportedCount;
     standaloneQueue.push(...callerEntries);
     standaloneActive = wasStandaloneActive || callerEntries.length > 0;
     standaloneScheduled = wasScheduled;
-    // Remove listeners this run installed so the caller's own (or the default)
-    // uncaughtException/unhandledRejection handling is not suppressed.
     if (!hadAttribution) uninstallProcessErrorAttribution();
   }
 }
@@ -3657,22 +3371,13 @@ async function runStandalone() {
   const counts = makeRunCounts();
   const startedAt = performance.now();
 
-  // The standalone sink feeds the same restructuring path the run() parent
-  // uses, so reporters see node's event shapes. Hoisted fn + bind, per the
-  // builtin convention for long-lived callbacks.
   standaloneSink = standaloneSinkImpl.bind(undefined, stream, counts, { verdictNumber: 0 });
 
-  // All pipes attach before any test emits: node awaits setupTestReporters()
-  // during bootstrap, otherwise a custom reporter's import() yields with an
-  // earlier pipe already flowing and it receives a truncated stream.
   const reporterFlush: Promise<void>[] = [];
   await attachStandaloneReporters(stream, reporterFlush);
   const reporterDone = Promise.all(reporterFlush);
   const root = getRootNode();
 
-  // node auto-honors .only in standalone mode (nodejs/node #54832); prune
-  // like the runFilesInProcess twin, awaiting builds first so a late it.only
-  // is visible to the scan.
   await awaitSuiteBuilds(standaloneQueue);
   if (standaloneQueueHasOnly(standaloneQueue)) {
     const pruned = pruneToOnly(standaloneQueue);
@@ -3691,8 +3396,6 @@ async function runStandalone() {
     counts.failed++;
   } finally {
     const durationMs = roundDurationMs(performance.now() - startedAt);
-    // Emitted directly so it carries no data.file, matching runFiles /
-    // runFilesInProcess and the adjacent run-level summary.
     stream.emitMessage("test:plan", { __proto__: null, nesting: 0, count: root.reportedCount });
     emitRunDiagnostics(stream, counts, durationMs);
     stream.emitMessage("test:summary", {
@@ -3706,8 +3409,6 @@ async function runStandalone() {
     standaloneSink = null;
     await reporterDone;
     if (!runSucceeded(counts)) process.exitCode = 1;
-    // node's harness calls process.exit() after postRun when the flag is set;
-    // mirrors the eval driver's handling for the --test path.
     if (process.execArgv.includes("--test-force-exit")) {
       process.exit(process.exitCode ?? 0);
     }
@@ -3732,32 +3433,23 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     return;
   }
   if (mode === "skip") {
-    // Never executes; its directive event is its completion.
     if (isSuite) node.suiteReported = true;
     reportDirectiveOnlyNode(node, "skip");
     return;
   }
   if (!isSuite) {
-    // executeTestNode reports the node's events itself.
     await executeTestNode(node, fn);
     return;
   }
   if (node.isSuite && node.skipped) {
-    // A skipped suite whose callback still ran (falsy-but-defined skip):
-    // node cancels the declared children without running them or the hooks.
     for (const child of node.standaloneChildren ?? []) {
       reportCancelledNode(child.node);
     }
     noteSuiteCollectionSettled(node);
     return;
   }
-  // Suites: the callback already ran at declaration; execute collected children
-  // in order. Node's Suite.start() records startTime before hooks/children run.
   node.startedAtMs = performance.now();
   const isTodoSuite = node.todoFlag || hasTodoAncestor(node);
-  // A failing build/before() cancels declared children (cancelledByParent)
-  // instead of running them against broken setup. A sync describe throw left
-  // node.error set with build undefined (addSuite's catch), so seed from that.
   let setupFailed = !isTodoSuite && node.error != null;
   const { build } = entry;
   if (build !== undefined) {
@@ -3776,7 +3468,6 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
       try {
         await runHook(hook, node, node.getSuiteCtx(), "before");
       } catch (err) {
-        // A todo suite's hook failure is advisory, like in the run() child.
         if (!isTodoSuite) {
           node.childrenFailed++;
           node.error ??= err;
@@ -3801,12 +3492,10 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     } catch (err) {
       if (!isTodoSuite) {
         node.childrenFailed++;
-        // First-wins (node's Test.fail()), matching runSuiteAfterHooks' twin.
         node.error ??= err;
       }
     }
   }
-  // Settle + complete + bubble to the parent in one step.
   noteSuiteCollectionSettled(node);
 }
 
@@ -3829,9 +3518,6 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
   } else if (names.length === 1 && destinationNames.length === 0) {
     destinationNames.push("stdout");
   } else if (names.length !== destinationNames.length) {
-    // node's parseCommandLine throws during lazyBootstrapRoot before any test
-    // runs; the eval-driver twin fatal()s. Returning would let the queue run
-    // with no reporter attached.
     console.error(
       $ERR_INVALID_ARG_VALUE(
         "--test-reporter",
@@ -3849,7 +3535,6 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
     const name = names[i];
     let reporter = Object.hasOwn(reporters, name) ? (reporters as Record<string, unknown>)[name] : undefined;
     if (reporter === undefined) {
-      // A custom reporter is a module specifier, like in node.
       try {
         const mod = await import(name.startsWith(".") ? path.resolve(process.cwd(), name) : name);
         reporter = mod.default ?? mod;
@@ -3859,7 +3544,6 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
         continue;
       }
     }
-    // node news any constructor-carrying function (utils.js getReportersMap).
     // The own-constructor identity check keeps bundled async generators (whose
     // shared prototype carries an AsyncGeneratorFunction constructor) as-is.
     if (
@@ -3875,8 +3559,6 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
       }
     }
     if (typeof reporter !== "function" && !(reporter && typeof (reporter as { pipe?: unknown }).pipe === "function")) {
-      // Validate upfront, like node: a plain object must not reach compose(),
-      // whose throw would surface as a mid-run unhandled rejection.
       console.error($ERR_INVALID_ARG_TYPE("Reporter", ["function", "stream"], reporter));
       process.exitCode = 1;
       continue;
@@ -3902,8 +3584,6 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
       composed.pipe(destination, { end: endDestination });
       if (endDestination) {
         destination.on("finish", resolvePromise);
-        // .pipe() does not back-propagate destination errors to composed;
-        // surface them like the composed-error path above.
         destination.on("error", surfaceReporterError);
       } else {
         composed.on("end", resolvePromise);
@@ -3914,9 +3594,6 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
 }
 
 function bunTestOptions(options: TestOptions) {
-  // executeTestNode enforces the node-style timeout itself (a tiny timeout with
-  // a sync body still passes like in Node); bun:test's watchdog measures the
-  // whole wrapper, so only tell it about timeouts past its 5s default.
   const { timeout } = options;
   if (timeout === Infinity) {
     // Node's "no timeout" must override bun:test's default (bun saturates it).
@@ -3942,15 +3619,9 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
   function onTopLevelSettled(failure: unknown, todoBefore: boolean, done: (error?: unknown) => void) {
-    // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting
-    // (Node counts these as skip/todo even when the body threw); a declared
-    // todo body's failure must reach bun:test's own todo accounting instead.
     if (node.skipped) {
       markCurrentResult(false, done);
     } else if ((node.todoFlag || hasTodoAncestor(node)) && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
-      // Under plain bun:test a describe.todo scope already handles its
-      // children's todo verdict, so only override when the todo state flipped
-      // at runtime; a run() child has no bun:test todo scope to consult.
       markCurrentResult(true, done);
     } else {
       done(failure);
@@ -3990,9 +3661,6 @@ function addTest(
       const child = new TestNode(name, runningNode, options, false, true);
       child.ownTags = ownTags;
       if (mode === "skip" || options.skip) {
-        // Report at execution turn (on the same chain as non-skip siblings)
-        // so the event stream keeps declaration order; the returned promise
-        // resolves after the directive lands, like a real subtest's.
         const chained = (runningNode.subtestChain = runningNode.subtestChain.then(
           reportDirectiveOnlyNode.bind(undefined, child, "skip"),
         ));
@@ -4010,8 +3678,6 @@ function addTest(
   node.ownTags = ownTags;
   if (mode === "only") node.onlyFlag = true;
 
-  // Node merges .todo()/.skip() into options and checks skip first; execution
-  // routes by truthiness (falsy-but-defined runs the body, only reports it).
   // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/test.js
   const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
@@ -4020,7 +3686,6 @@ function addTest(
     if (effectiveMode === "skip") {
       standaloneRegister({ node, fn, isSuite: false, mode: "skip" });
     } else {
-      // node runs todo bodies in standalone mode too.
       if (effectiveMode === "todo") node.todoFlag = true;
       standaloneRegister({ node, fn, isSuite: false });
     }
@@ -4032,8 +3697,6 @@ function addTest(
   const passOptions = bunTestOptions(options);
 
   if (hasSkippedAncestorSuite(node)) {
-    // Declared inside a skipped suite whose callback still ran: node cancels
-    // the child without running it, and the cancellation fails the run.
     function cancelledRunner(done: (error?: unknown) => void) {
       reportCancelledNode(node);
       done(makeCancelledByParentError());
@@ -4043,9 +3706,6 @@ function addTest(
   }
 
   if (effectiveMode === "todo" || effectiveMode === "skip") {
-    // Node runs a todo body (so `t.skip()` inside one can change the reported
-    // directive); bun:test only runs todo bodies under --todo, so a run() child
-    // registers them as ordinary tests and marks the result at the end.
     if (runChildReporterEnabled && effectiveMode === "todo") {
       // The test.todo() spelling carries the directive in `mode`, not in the
       // options, so the node has to be marked for the runner to report it.
@@ -4056,8 +3716,6 @@ function addTest(
       return Promise.resolve(undefined);
     }
     if (runChildReporterEnabled) {
-      // Report at the node's execution turn so the event stream keeps
-      // declaration order (node reports skipped tests with the queued ones).
       function directiveRunner(done: (error?: unknown) => void) {
         reportDirectiveOnlyNode(node, effectiveMode);
         markCurrentResult(false, done);
@@ -4088,9 +3746,6 @@ function addTest(
     test(name, runner);
   }
 
-  // Resolved eagerly: bun:test never invokes the runner for a test that
-  // `--test-name-pattern` filters out, so a deferred tied to it would hang an
-  // awaiting caller forever. Node resolves those too; timing is unobservable.
   return Promise.resolve(undefined);
 }
 
@@ -4112,8 +3767,6 @@ function addSuite(
     const suite = new TestNode(name, runningNode, options, true, true);
     suite.ownTags = ownTags;
     if (mode === "skip" || options.skip) {
-      // Report at execution turn so the event stream keeps declaration order;
-      // the returned promise resolves after the directive lands.
       const chained = (runningNode.subtestChain = runningNode.subtestChain.then(
         reportDirectiveOnlyNode.bind(undefined, suite, "skip"),
       ));
@@ -4121,9 +3774,6 @@ function addSuite(
     }
     const ownTodo = mode === "todo" || (options.todo !== undefined && options.todo !== false);
     if (ownTodo) suite.todoFlag = true;
-    // Children must run after the parent's prior subtests AND after the describe
-    // callback's returned promise settles (Node's Suite.run awaits buildPromise).
-    // The callback hasn't returned yet, so seed the chain through a gate.
     const gate = Promise.withResolvers<void>();
     function awaitSuiteGate() {
       return gate.promise;
@@ -4159,8 +3809,6 @@ function addSuite(
   if (mode === "only") suiteNode.onlyFlag = true;
   noteRunChildRegistered(parent);
 
-  // Node merges .todo()/.skip() into options and checks skip first; execution
-  // routes by truthiness (falsy-but-defined runs the body, only reports it).
   // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/test.js
   const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
@@ -4170,8 +3818,6 @@ function addSuite(
       return Promise.resolve(undefined);
     }
     if (effectiveMode === "todo") suiteNode.todoFlag = true;
-    // node runs describe callbacks at declaration; children collected during
-    // the callback land in suiteNode.standaloneChildren.
     let build: unknown;
     try {
       function buildSuiteNodeFn() {
@@ -4185,8 +3831,6 @@ function addSuite(
     const entry: StandaloneEntry = { node: suiteNode, fn, isSuite: true };
     if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
       const pending = build as Promise<unknown>;
-      // Attach a handler now so a rejection before the queue runs it is not
-      // reported as unhandled.
       pending.catch(kDefaultFunction);
       entry.build = pending;
     }
@@ -4202,17 +3846,11 @@ function addSuite(
     effectiveMode === "skip"
       ? kDefaultFunction
       : function wrappedSuiteBuilder() {
-          // A todo suite only reaches wrapped() in run-child mode; its failures
-          // are advisory and must not reach bun:test's describe-error path.
-          // todoFlag is read here because describe.todo sets it after building.
           const isTodoAdvisory = runChildReporterEnabled && (suiteNode.todoFlag || hasTodoAncestor(suiteNode));
           function buildWrappedSuiteFn() {
             return invokeSuiteFn(fn, suiteNode.getSuiteCtx());
           }
           function settleSuiteAfterHooks() {
-            // Settle from a bun:test afterAll so it fires at the suite's
-            // execution turn; the suite's own after() hooks run here so a
-            // post-await after() still runs before the verdict is emitted.
             if (!runEventsEnabled()) {
               noteSuiteCollectionSettled(suiteNode);
               return;
@@ -4227,8 +3865,6 @@ function addSuite(
                 Promise.resolve(undefined).then(done, done);
               }
               const hooks = suiteNode.hooks.after;
-              // An ancestor's before() already failed: node skips nested after
-              // hooks (the failing suite's OWN after runs from its own settle).
               if (hooks.length === 0 || hasHookFailedAncestorSuite(suiteNode)) {
                 settleAndDone();
                 return;
@@ -4249,9 +3885,6 @@ function addSuite(
               runSuiteAfterHooks().then(settleAndDone, settleAndDone);
             });
           }
-          // Records the body failure so maybeCompleteSuite emits the suite's
-          // testCodeFailure verdict; hookSetupFailed cancels declared children
-          // at execution turn. Caller registers the settle (settleSuiteAfterHooks).
           function recordSuiteBodyFailed(err: unknown) {
             suiteNode.childrenFailed++;
             suiteNode.error = err;
@@ -4268,17 +3901,12 @@ function addSuite(
           } catch (err) {
             recordSuiteBodyFailed(err);
             if (isTodoAdvisory || runChildReporterEnabled) {
-              // Swallowed from bun:test (whose describe-error path would fail
-              // the whole file); it sees the body as successful and runs the
-              // deferred settle at the suite's execution turn.
               settleSuiteAfterHooks();
               return undefined;
             }
             noteSuiteCollectionSettled(suiteNode);
             throw err;
           }
-          // Register the settle before awaiting so it lands inside this
-          // describe's scope even when the async body rejects later.
           settleSuiteAfterHooks();
           if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {
             return (built as Promise<unknown>).then(undefined, onWrappedSuiteFailed);
@@ -4291,14 +3919,10 @@ function addSuite(
   let register: Function = describe;
   if (effectiveMode === "skip") register = describe.skip;
   else if (effectiveMode === "todo") {
-    // node runs a todo suite's children and reports each as todo; bun:test's
-    // describe.todo never executes them, so a run() child registers a plain
-    // describe and relies on todoFlag for the inherited directive.
     suiteNode.todoFlag = true;
     if (!runChildReporterEnabled) register = describe.todo;
   }
   if (effectiveMode === "skip" && runChildReporterEnabled) {
-    // Report at execution turn so the event stream keeps declaration order.
     suiteNode.suiteReported = true;
     const { test } = bunTest();
     function directiveRunner(done: (error?: unknown) => void) {
@@ -4369,9 +3993,6 @@ function hookArgFor(node: TestNode) {
 function before(arg0: unknown, arg1: unknown) {
   const hook = createHook(arg0, arg1);
   const owner = hookOwner();
-  // Standalone root check precedes isRunning(): the in-process runner marks the
-  // root started and node runs a root before() SYNCHRONOUSLY then, whereas
-  // scheduleImmediateBeforeHook would defer it past the rest of the import.
   if (inStandaloneMode() && owner.parent === undefined) {
     owner.hooks.before.push(hook);
     if (owner.started && !owner.finished) {
@@ -4390,18 +4011,10 @@ function before(arg0: unknown, arg1: unknown) {
     owner.hooks.before.push(hook);
     return;
   }
-  // A nested describe under a {skip: ''} ancestor still reaches here (addSuite
-  // registers it as a plain describe so its body runs), but node cancels the
-  // whole subtree without running hooks.
   if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
   const { beforeAll } = bunTest();
   function runBeforeAllHook(done: (error?: unknown) => void) {
-    // node bails on the first before-hook error (Suite.run) and cancels the
-    // whole subtree without running nested hooks; checked at execution time
-    // because hookSetupFailed is set by onHookFailed after collection.
     if (runChildReporterEnabled && (owner.hookSetupFailed || hasHookFailedAncestorSuite(owner))) {
-      // Settle asynchronously like every other done path: bun:test's native
-      // hook driver is not re-entered synchronously from its own callback.
       Promise.resolve(undefined).then(done, done);
       return;
     }
@@ -4409,16 +4022,11 @@ function before(arg0: unknown, arg1: unknown) {
       done();
     }
     function onHookFailed(err: unknown) {
-      // A todo suite's results are advisory in node: its failing before hook
-      // must not fail the run (its children still report, as todo).
       if (runChildReporterEnabled && (owner.todoFlag || hasTodoAncestor(owner))) {
         done();
         return;
       }
       if (runChildReporterEnabled && owner.parent !== undefined) {
-        // node attributes the failure to the suite (hookFailed) and cancels
-        // its children; swallow it from bun:test so the verdict comes from
-        // the suite's own test:fail, like the standalone twin.
         owner.childrenFailed++;
         owner.error ??= err as Error;
         owner.hookSetupFailed = true;
@@ -4444,9 +4052,6 @@ function after(arg0: unknown, arg1: unknown) {
     return;
   }
   if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
-  // In run-child mode a collection suite's after() hooks are run by its
-  // settleSuite afterAll, not as separate bun:test afterAlls — so a post-await
-  // after() still runs before the suite's verdict is emitted.
   if (runChildReporterEnabled && owner.isSuite && owner.parent !== undefined) {
     owner.hooks.after.push(hook);
     return;

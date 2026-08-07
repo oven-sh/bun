@@ -569,8 +569,6 @@ impl BunTestRoot {
 
     pub(crate) fn on_before_print(&self) {
         if is_node_test_child() {
-            // node:test run() children emit only the serialized event stream;
-            // the lazy file header and dot flush are reporter output.
             return;
         }
         if let Some(active_file) = &self.active_file {
@@ -1319,9 +1317,6 @@ impl BunTest {
         if handle_status == HandleUncaughtExceptionResult::HideError {
             return; // do not print error, it was already consumed
         }
-        // A run() child carries test-attributed errors in its event stream;
-        // only those prints are suppressed. Between-tests errors still print
-        // and count, else the child exits 0 and the parent reports a pass.
         if is_node_test_child()
             && !matches!(
                 handle_status,

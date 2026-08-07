@@ -2997,9 +2997,6 @@ impl RunCommand {
         }
 
         if !ctx.runtime_options.eval.script.is_empty() {
-            // node -e 'process.argv' a b -> ['node', 'a', 'b']; also reached by
-            // `node --test <file>` which boots the eval driver. exec_eval
-            // merges positionals into passthrough and builds the [eval] entry.
             return Self::exec_eval(ctx);
         }
 

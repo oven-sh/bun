@@ -552,9 +552,6 @@ test.concurrent("run(): an uncaught exception during a pending body fails that t
     stdout: "pipe",
     stderr: "pipe",
   });
-  // The shim must fail the test as soon as the error is attributed, not wait
-  // for a timeout rescue. Debug+ASAN pays ~3s per nested spawn, so size the
-  // hang guard to clear two spawns there while staying tight on release.
   const hangGuard = isDebug || isASAN ? 20_000 : 4_000;
   const exited = await Promise.race([proc.exited, Bun.sleep(hangGuard).then(() => "timeout" as const)]);
   if (exited === "timeout") proc.kill();
@@ -652,8 +649,6 @@ test.concurrent.each([
   ["process", ""],
   ["none", ", isolation: 'none'"],
 ] as const)("run() with %s isolation reports suite hook failures like node", async (_label, isolationArg) => {
-  // node: a failing after() fails the suite with hookFailed; a failing
-  // before() additionally cancels the declared children (cancelledByParent).
   using dir = tempDir("node-test-hook-failures", {
     "afterfail.test.mjs": `
       import { describe, it, after } from 'node:test';
@@ -708,10 +703,6 @@ test.concurrent.each([
 ] as const)(
   "run() with %s isolation cancels a nested suite under a failed before() like node",
   async (_label, isolationArg) => {
-    // node's Suite#cancel recurses into declared descendants without running
-    // their hooks: the nested suite reports cancelledByParent with duration 0,
-    // its before()/after() never run, and only the failing suite's OWN after
-    // runs (for cleanup).
     using dir = tempDir("node-test-nested-hook-cancel", {
       "f.test.mjs": `
       import { describe, it, before, after } from 'node:test';
@@ -761,12 +752,6 @@ test.concurrent.each([
 );
 
 test.concurrent("run(): verdict numbering, file ordinals, causes, and summary keys match node", async () => {
-  // Every expected value below is the verbatim output of the same driver under
-  // real node v26.3.0: nesting-0 pass/fail verdicts renumber cumulatively
-  // across files while test:complete keeps per-file numbers, file completions
-  // carry the file's ordinal, a primitive `cause` crosses the process boundary
-  // by value, a rebuilt AssertionError keeps `name` non-enumerable, and the
-  // summary counts carry node's exact key set.
   using dir = tempDir("node-test-run-fidelity", {
     "one.test.mjs": `
       import { test } from 'node:test';
@@ -840,9 +825,6 @@ test.concurrent.each([
   ["process", ""],
   ["none", ", isolation: 'none'"],
 ] as const)("run() with %s isolation reports a throwing describe body like node", async (_label, isolationArg) => {
-  // node attributes a throwing (or rejecting) describe callback to the suite
-  // as testCodeFailure and cancels the children it declared before throwing;
-  // the file itself does not fail.
   using dir = tempDir("node-test-suite-body-throw", {
     "sync.test.mjs": `
       import { describe, test } from 'node:test';
@@ -895,8 +877,6 @@ test.concurrent.each([
   ["process", ""],
   ["none", ", isolation: 'none'"],
 ] as const)("run() with %s isolation wraps hook failures with node's fixed message", async (_label, isolationArg) => {
-  // node's hook wrapper: ERR_TEST_FAILURE with the fixed message
-  // `failed running <kind> hook`; the thrown error stays on cause.
   using dir = tempDir("node-test-hook-wrapper-msg", {
     "f.test.mjs": `
       import { describe, it, after } from 'node:test';
@@ -948,8 +928,6 @@ test.concurrent("junit reporter escapes attribute quotes exactly like node", asy
     stderr: "pipe",
   });
   const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // node v26.3.0 escapes the quote before its & pass, so a literal quote
-  // double-escapes to &amp;quot; while \n's &#10; survives the lookahead.
   expect(stdout).toContain('name="line1&#10;line2 &amp;quot;q&amp;quot; &amp; &lt;angle>"');
 });
 
@@ -957,8 +935,6 @@ test.concurrent.each([
   ["process", ""],
   ["none", ", isolation: 'none'"],
 ] as const)("run() with %s isolation stops at the first failing before() like node", async (_label, isolationArg) => {
-  // node's Suite.run bails on the first before-hook error: the suite's later
-  // before() hooks never run, but its OWN after() still does (cleanup).
   using dir = tempDir("node-test-multi-before", {
     "f.test.mjs": `
       import { describe, it, before, after } from 'node:test';
@@ -1027,9 +1003,6 @@ test.concurrent.each([
 ] as const)(
   "run({isolation:'none'}): a failed import reports at its declaration position %s",
   async (_label, orderLiteral, expected) => {
-    // node reports a load failure as a root subtest at its position among the
-    // other files, so [good, bad] keeps declaration order instead of emitting
-    // bad's fail first, and both share one cumulative verdict counter.
     using dir = tempDir("node-test-inprocess-numbering", {
       "bad.test.mjs": `throw new Error('load boom');`,
       "good.test.mjs": `
@@ -1085,10 +1058,6 @@ test.concurrent.each([
     `,
   ],
 ] as const)("run({isolation:'none'}): opts.signal does not stop %s entries", async (_label, fixture) => {
-  // node's in-process runner never consults the run signal for scheduling
-  // (v26.3.0, side-effect verified): aborting from inside the first test
-  // still runs the second to a normal passing verdict and the run succeeds.
-  // Ctrl+C under --test-isolation=none is the CLI driver's prompt exit.
   using dir = tempDir("node-test-inprocess-signal", {
     "f.test.mjs": fixture,
     "driver.mjs": `
@@ -1127,8 +1096,6 @@ test.concurrent.each([
 });
 
 test.concurrent("run(): a zero-test file reports a file-level pass like node", async () => {
-  // node's FileTest.report(): a file that registers no tests and exits 0 is
-  // itself a passing test (tests=1/passed=1) and emits no per-file summary.
   using dir = tempDir("node-test-zero-test-file", {
     "empty.test.mjs": `// intentionally registers no tests`,
     "driver.mjs": `
@@ -1163,11 +1130,6 @@ test.concurrent("run(): a zero-test file reports a file-level pass like node", a
 });
 
 test.concurrent("run(): causes JSON cannot encode do not drop the event line", async () => {
-  // node's v8 serializer carries BigInt and cyclic causes across the process
-  // boundary; our JSON pipe re-tags BigInt (restored as a real bigint) and
-  // degrades cycles to their inspected string. Before the envelope handled
-  // these, JSON.stringify threw and the whole test:fail line vanished,
-  // leaving a file-level failure with undercounted tests.
   using dir = tempDir("node-test-unencodable-cause", {
     "f.test.mjs": `
       import { test } from 'node:test';
@@ -1212,8 +1174,6 @@ test.concurrent("run(): causes JSON cannot encode do not drop the event line", a
 });
 
 test.concurrent("run(): object actual/expected cross the pipe by value", async () => {
-  // node's v8 serializer hands the parent real objects for deepStrictEqual's
-  // actual/expected; JSON-safe objects pass by value over our pipe too.
   using dir = tempDir("node-test-object-extras", {
     "f.test.mjs": `
       import { test } from 'node:test';
@@ -1253,9 +1213,6 @@ test.concurrent.each([
 ] as const)(
   "run() with %s isolation keeps declaration order when a later describe body throws",
   async (_label, isolationArg) => {
-    // node runs siblings in declaration order: the earlier test's verdict
-    // (testNumber 1) precedes the throwing suite's (testNumber 2). Settling
-    // the failed suite at collection time used to emit its events first.
     using dir = tempDir("node-test-throw-order", {
       "f.test.mjs": `
       import { test, describe } from 'node:test';
@@ -1290,8 +1247,6 @@ test.concurrent.each([
 );
 
 test.concurrent("run(): a child inheriting --bail emits no reporter chrome", async () => {
-  // bun test's bail notice is default-reporter output; a run() child must
-  // carry only the serialized event stream (plus genuine user stderr).
   using dir = tempDir("node-test-bail-chrome", {
     "f.test.mjs": `
       import { test } from 'node:test';
@@ -1328,10 +1283,6 @@ test.concurrent("run(): a child inheriting --bail emits no reporter chrome", asy
 });
 
 test.concurrent("run({isolation:'none'}): the run signal is not consulted for scheduling", async () => {
-  // node's in-process runner ignores the signal entirely (v26.3.0, verified
-  // with side effects): a pre-aborted signal still runs every file body to a
-  // normal passing verdict and the summary succeeds. Only process isolation
-  // reports testAborted for skipped files.
   using dir = tempDir("node-test-none-signal", {
     "f.test.mjs": `
       import { test } from 'node:test';
@@ -1399,15 +1350,11 @@ test.concurrent("run({isolation:'none'}): a suite's duration spans all of its ch
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const { suiteDuration } = JSON.parse(stdout.trim() || "null");
-  // node reports the full span (>=200ms for two 100ms tests); a clock started
-  // at the first child's completion sees only the second test (~100ms).
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   expect(suiteDuration).toBeGreaterThan(180);
 });
 
 test.concurrent("run({isolation:'none'}): .only inside describe.only narrows to the inner test", async () => {
-  // node's rule: an only suite runs all its tests unless it has only-marked
-  // descendants, in which case only those run.
   using dir = tempDir("node-test-nested-only", {
     "f.test.mjs": `
       import { describe, it } from 'node:test';
@@ -1447,9 +1394,6 @@ test.concurrent("run({isolation:'none'}): .only inside describe.only narrows to 
 });
 
 test.concurrent.skipIf(isWindows)("--test runs the named file when bun is invoked as node", async () => {
-  // exec_as_if_node's eval branch must merge positionals into passthrough so
-  // the eval driver sees the file in process.argv; without that it silently
-  // falls back to default-glob discovery in cwd.
   using dir = tempDir("node-test-as-node", {
     "a.test.mjs": `
       import { test } from 'node:test';

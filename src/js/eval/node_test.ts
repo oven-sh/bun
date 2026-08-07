@@ -1,6 +1,3 @@
-// `bun --test` — Node.js test-runner CLI mode, booted through the eval path
-// (cli/Arguments.rs). Positionals arrive in process.argv as glob patterns; the
-// `--test-*` flags are read from process.execArgv like node's runner main.
 import { createWriteStream } from "node:fs";
 import { resolve, sep } from "node:path";
 import { PassThrough } from "node:stream";
@@ -10,9 +7,6 @@ import { debuglog } from "node:util";
 
 const debug = debuglog("test_runner");
 
-// ---------------------------------------------------------------------------
-// Flag parsing (node's own parser already validated shape; this reads values).
-// ---------------------------------------------------------------------------
 const kBooleanFlags = new Set([
   "--test",
   "--test-only",
@@ -95,8 +89,6 @@ function createTestFileList(patterns: string[], cwd: string): string[] {
   const results = new Set<string>();
   for (const pattern of patterns) {
     if (!kGlobMagic.test(pattern)) {
-      // A literal path: a file is taken as-is, a directory is searched with
-      // the default pattern (node's Glob resolves literals the same way).
       const absolute = resolve(cwd, pattern);
       let stat;
       try {
@@ -118,7 +110,6 @@ function createTestFileList(patterns: string[], cwd: string): string[] {
       continue;
     }
     for (const match of new Bun.Glob(pattern).scanSync({ cwd, onlyFiles: true })) {
-      // node's Glob excludes any path containing a node_modules segment.
       if (hasNodeModulesSegment(match)) continue;
       results.add(resolve(cwd, match));
     }
@@ -136,9 +127,6 @@ function hasNodeModulesSegment(match: string) {
   return match.split(sep).includes("node_modules") || match.split("/").includes("node_modules");
 }
 
-// ---------------------------------------------------------------------------
-// Reporter setup — node's parseCommandLine + setup (internal/test_runner/utils.js).
-// ---------------------------------------------------------------------------
 const kBuiltinReporters = {
   __proto__: null,
   dot: reporters.dot,
@@ -151,15 +139,11 @@ const kBuiltinReporters = {
 async function resolveReporter(name: string) {
   let reporter: unknown = kBuiltinReporters[name];
   if (reporter === undefined) {
-    // Custom reporter: a module specifier, resolved like node resolves it.
     const specifier = name.startsWith(".") ? resolve(process.cwd(), name) : name;
     let mod;
     try {
       mod = await import(specifier);
     } catch (err) {
-      // Rewrap only a resolve failure: bun's ResolveMessage hides `code` from
-      // inspection, and the reporter tests look for ERR_MODULE_NOT_FOUND in
-      // stderr like node's. An evaluation-time throw keeps its original stack.
       if ((err as { name?: string })?.name === "ResolveMessage") {
         const error = new Error((err as Error)?.message ?? String(err));
         (error as { code?: string }).code = (err as { code?: string })?.code ?? "ERR_MODULE_NOT_FOUND";
@@ -169,7 +153,6 @@ async function resolveReporter(name: string) {
     }
     reporter = mod.default ?? mod;
   }
-  // node news any constructor-carrying function (utils.js getReportersMap).
   // The own-constructor identity check keeps bundled async generators (whose
   // shared prototype carries an AsyncGeneratorFunction constructor) as-is.
   if (
@@ -194,9 +177,6 @@ function destinationFor(dest: string) {
   return createWriteStream(resolve(process.cwd(), dest));
 }
 
-// Wires one reporter over its own copy of the event stream, node-style:
-// compose(source, reporter).pipe(destination) (internal/test_runner/utils.js).
-// Returns a promise that settles when the reporter has flushed everything.
 function attachReporter(reporter, source, destination): Promise<void> {
   const { compose } = require("node:stream");
   const endDestination = destination !== process.stdout && destination !== process.stderr;
@@ -215,9 +195,6 @@ function attachReporter(reporter, source, destination): Promise<void> {
   return new Promise(reporterExecutor);
 }
 
-// ---------------------------------------------------------------------------
-// Main.
-// ---------------------------------------------------------------------------
 async function main() {
   const cwd = process.cwd();
   const patterns = process.argv.slice(1);
@@ -268,8 +245,6 @@ async function main() {
 
   const runOptions: Record<string, unknown> = { __proto__: null, files, cwd };
 
-  // node: concurrency defaults to true under process isolation, and
-  // isolation:'none' forces 1 regardless of --test-concurrency (runner.js).
   const isolation = getFlag("--test-isolation") ?? getFlag("--experimental-test-isolation");
   const concurrencyFlag = getFlag("--test-concurrency");
   if (isolation === "none") {
@@ -283,13 +258,9 @@ async function main() {
   const timeout = getFlag("--test-timeout");
   runOptions.timeout = timeout !== undefined ? Number(timeout) : Infinity;
 
-  // Always present so the debuglog line keys carry a trailing comma, which
-  // node's own tests match on (`/timeout: Infinity,/`).
   runOptions.only = hasFlag("--test-only");
   runOptions.forceExit = hasFlag("--test-force-exit");
 
-  // run() validates these but does not yet apply them to its child processes;
-  // failing loudly beats silently running every test.
   if (getFlagList("--test-name-pattern").length > 0) {
     fatal(new Error("--test-name-pattern is not yet implemented in Bun's node:test CLI mode"));
   }
@@ -302,8 +273,6 @@ async function main() {
   const tagFilters = getFlagList("--experimental-test-tag-filter");
   if (tagFilters.length > 0) runOptions.testTagFilters = tagFilters;
 
-  // Options this mode cannot honor yet fail loudly instead of silently
-  // dropping the behavior the caller asked for (same policy as run()).
   if (hasFlag("--experimental-test-coverage")) runOptions.coverage = true;
   if (hasFlag("--test-randomize") || getFlag("--test-random-seed") !== undefined) {
     fatal(new Error("--test-randomize is not yet implemented in Bun's node:test CLI mode"));
@@ -314,34 +283,22 @@ async function main() {
 
   debug("run options: %o", runOptions);
 
-  // Resolve every reporter before run() spawns anything (node awaits
-  // setupTestReporters() at bootstrap): a later failed import would orphan a
-  // child, and an earlier pipe would start the Readable flowing too soon.
   let resolved: unknown[];
   try {
     resolved = await Promise.all(reporterNames.map(resolveReporter));
   } catch (err) {
-    // node's main is ESM: a reporter that can't be set up leaves the
-    // top-level await unfinished, which exits with code 7. inspect() keeps
-    // the error's `code` visible, like node's fatal printer.
     console.error(require("node:util").inspect(err));
     process.exit(7);
   }
 
-  // runFiles honors opts.signal; aborting it kills the current child before a
-  // mid-stream reporter error triggers process.exit(7).
   const abortController = new AbortController();
   runOptions.signal = abortController.signal;
 
   // node's harness installs process signal handlers only under --test
-  // (isTestRunner), so the CLI driver — not library run() — owns them here.
   // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/harness.js
   function onRunnerSignal() {
     abortController.abort();
     if (runOptions.isolation === "none") {
-      // node's in-process runner ignores the run signal for scheduling, but
-      // its --test harness still exits promptly on SIGINT (observed v26.3.0:
-      // exit code 1 within milliseconds).
       process.exit(1);
     }
   }
@@ -352,8 +309,6 @@ async function main() {
   try {
     stream = run(runOptions);
   } catch (err) {
-    // Soft exit: a pending process.emitWarning (e.g. the experimental tags
-    // warning from option validation) still flushes on the next tick.
     console.error(err);
     process.exitCode = 1;
     return;
@@ -368,9 +323,6 @@ async function main() {
   const reporterPromises: Promise<void>[] = [];
   for (let i = 0; i < resolved.length; i++) {
     const destination = destinationFor(destinationNames[i]);
-    // Each reporter gets its own copy of the stream: a Readable broadcasts to
-    // every piped destination, and object-mode PassThroughs keep the
-    // per-reporter iteration independent.
     const copy = new PassThrough({ objectMode: true });
     stream.pipe(copy);
     reporterPromises.push(attachReporter(resolved[i], copy, destination));
@@ -388,9 +340,6 @@ async function main() {
     process.off("SIGTERM", onRunnerSignal);
   }
 
-  // Write only on failure so an earlier process.exitCode = 1 (e.g. a late
-  // uncaught attributed at attributeProcessError's finished-test branch, or a
-  // reporter-destination error) is not stomped back to 0.
   if (!success) process.exitCode = 1;
   if (hasFlag("--test-force-exit")) {
     process.exit(process.exitCode ?? 0);

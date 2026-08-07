@@ -348,7 +348,6 @@ const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!(
         "--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)"
     ),
-    // Node.js `--test` runner mode, hidden like the node trace flags above.
     // Value-taking ones must be declared (else the value parses as the
     // entrypoint); kept out of RUNTIME_PARAMS_ to avoid TEST_PARAMS's `-t`.
     parse_param!("--test"),
@@ -1238,9 +1237,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         } else if matches!(cmd, CommandTag::AutoCommand | CommandTag::RunAsNodeCommand)
             && args.flag(b"--test")
         {
-            // Cmd gate first: only AUTO/RUN declare `--test`, and args.flag
-            // asserts the name exists. `bun run --test` is not a supported
-            // spelling (exec_auto_or_run's eval gate is AutoCommand-only).
             ctx.runtime_options.eval.script =
                 bun_core::runtime_embed_file!(Codegen, "eval/node_test.ts")
                     .as_bytes()

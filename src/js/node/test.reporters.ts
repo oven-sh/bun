@@ -14,9 +14,6 @@ const kTodoDirective = "TO" + "DO";
 const colors = require("internal/util/colors");
 colors.refresh();
 
-// ---------------------------------------------------------------------------
-// internal/test_runner/reporter/utils.js
-// ---------------------------------------------------------------------------
 const reporterUnicodeSymbolMap = {
   __proto__: null,
   "test:fail": "✖ ",
@@ -102,9 +99,6 @@ function formatTestReport(type: string, data, showErrorDetails = true, prefix = 
   return `${prefix}${indentation}${color}${symbol}${title}${colors.white}${err}`;
 }
 
-// ---------------------------------------------------------------------------
-// dot
-// ---------------------------------------------------------------------------
 async function* dot(source) {
   let count = 0;
   let columns = getLineLength();
@@ -136,9 +130,6 @@ function getLineLength() {
   return Math.max(process.stdout.columns ?? 20, 20);
 }
 
-// ---------------------------------------------------------------------------
-// tap
-// ---------------------------------------------------------------------------
 const kDefaultIndent = "    ";
 const kFrameStartRegExp = /^ {4}at /;
 const kLineBreakRegExp = /\n|\r\n/;
@@ -154,8 +145,6 @@ function tapIndent(nesting: number) {
 }
 
 function tapEscape(input: string) {
-  // Escape the escape character first so the control-char replacements below
-  // don't get their own backslash doubled (node's tap.js order).
   let result = input.replaceAll("\\", "\\\\");
   result = result.replaceAll("#", "\\#");
   result = result.replaceAll("\b", "\\b");
@@ -253,8 +242,6 @@ function jsToYaml(indentation: string, name, value, seen?: Set<unknown>) {
     let errOperator = operator;
     let errIsAssertion = isAssertionLike(value);
 
-    // If the ERR_TEST_FAILURE came from an error provided by user code,
-    // then try to unwrap the original error message and stack.
     if (code === "ERR_TEST_FAILURE" && kUnwrapErrors.has(failureType)) {
       errStack = cause?.stack ?? errStack;
       errCode = cause?.code ?? errCode;
@@ -366,9 +353,6 @@ async function* tap(source) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// spec
-// ---------------------------------------------------------------------------
 class SpecReporter extends Transform {
   #stack: any[] = [];
   #failedTests: any[] = [];
@@ -391,8 +375,6 @@ class SpecReporter extends Transform {
     for (let i = 0; i < this.#failedTests.length; i++) {
       const test = this.#failedTests[i];
       const formattedErr = formatTestReport("test:fail", test);
-      // bun's synthesized events don't carry declaration positions yet; node
-      // always has them, so only diverge when they're absent.
       const { file, line } = test;
       if (file && line != null) {
         const relPath = relative(this.#cwd, file);
@@ -409,18 +391,14 @@ class SpecReporter extends Transform {
   }
 
   #handleTestReportEvent(type: string, data) {
-    this.#stack.shift(); // The matching `test:start` event.
+    this.#stack.shift();
     let prefix = "";
     while (this.#stack.length) {
-      // Report all the parent `test:start` events.
       const parent = this.#stack.pop();
       const msg = parent.data;
       prefix += `${indent(msg.nesting)}${reporterUnicodeSymbolMap["arrow:right"]}${msg.name}\n`;
     }
     const indentation = indent(data.nesting);
-    // node suppresses inline error details for suite lines whose children
-    // already rendered (via a #reported/hasChildren check); this port keeps
-    // inline details off unconditionally and reports errors in the summary.
     return `${formatTestReport(type, data, false, prefix, indentation)}\n`;
   }
 
@@ -444,7 +422,6 @@ class SpecReporter extends Transform {
         return `${diagnosticColor}${indent(data.nesting)}${reporterUnicodeSymbolMap[type]}${data.message}${colors.white}\n`;
       }
       case "test:summary":
-        // Only the root summary (no file) reports the failing-tests block.
         if (data.file === undefined) {
           return this.#formatFailedTestResults();
         }
@@ -483,9 +460,6 @@ class SpecReporter extends Transform {
   }
 }
 
-// ---------------------------------------------------------------------------
-// junit
-// ---------------------------------------------------------------------------
 function escapeAttribute(s = "") {
   // Quotes are escaped before the & pass, so a literal quote emits as
   // &amp;quot; (escapeContent's lookahead spares only numeric refs like the
@@ -648,9 +622,6 @@ async function* junit(source) {
   yield "</testsuites>\n";
 }
 
-// ---------------------------------------------------------------------------
-// lcov
-// ---------------------------------------------------------------------------
 class LcovReporter extends Transform {
   constructor(options) {
     super({ ...options, writableObjectMode: true, __proto__: null });
@@ -677,8 +648,6 @@ class LcovReporter extends Transform {
   }
 }
 
-// node exports spec/lcov as plain functions that ReflectConstruct their class
-// (lib/test/reporters.js), so both `new spec()` and stream compose() work.
 function spec(...args: unknown[]) {
   return Reflect.construct(SpecReporter, args);
 }

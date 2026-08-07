@@ -919,8 +919,6 @@ fn should_drain_event_loop() -> bool {
     is_node_test_child() || env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
-/// A node:test run() child emits only its serialized event stream, so
-/// reporter output is suppressed (verdicts and exit codes unaffected).
 /// Matches node:test's exact value so a foreign env var can't silence us.
 pub(crate) fn is_node_test_child() -> bool {
     env_var::NODE_TEST_CONTEXT
@@ -1521,9 +1519,6 @@ impl CommandLineReporter {
 
                 if this.summary().fail == this.jest.bail {
                     this.print_summary();
-                    // A node:test run() child emits only the serialized event
-                    // stream; the bail notice is reporter chrome like the
-                    // summary print above (which self-gates).
                     if !is_node_test_child() {
                         pretty_error!(
                             "\nBailed out after {} failure{}<r>\n",

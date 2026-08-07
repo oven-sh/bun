@@ -377,8 +377,7 @@ impl EncodedPattern {
                     }
                     // A required catch-all ([...name]) must capture at least
                     // one segment; only [[...name]] matches zero segments.
-                    return matches!(part, Part::CatchAllOptional(_))
-                        || param_num > params_before;
+                    return matches!(part, Part::CatchAllOptional(_)) || param_num > params_before;
                 }
                 Part::Group(_) => continue,
             }

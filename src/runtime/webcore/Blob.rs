@@ -3976,13 +3976,12 @@ impl FormDataContext<'_> {
                 // Borrowed from the blob, which the `DOMFormData` keeps alive
                 // past `joiner.done()`.
                 let blob_ct = blob.content_type_slice();
-                let content_type: &[u8] = if !blob_ct.is_empty()
-                    && !blob_ct.iter().any(|&b| matches!(b, b'\r' | b'\n'))
-                {
-                    blob_ct
-                } else {
-                    b"application/octet-stream"
-                };
+                let content_type: &[u8] =
+                    if !blob_ct.is_empty() && !strings::contains_any(blob_ct, b"\r\n") {
+                        blob_ct
+                    } else {
+                        b"application/octet-stream"
+                    };
                 joiner.push_static(b"Content-Type: ");
                 // SAFETY: either a `'static` literal or borrowed from the entry's Blob,
                 // which the `DOMFormData` keeps alive past `joiner.done()` in

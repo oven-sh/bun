@@ -48,8 +48,9 @@ fn dump_stack_hook(trace: Option<&StoredTrace>, ret_addr: usize) {
 /// subslice so the result stays `&'static str`.
 /// `"a::b::Foo<c::Bar>"` → `"Foo<c::Bar>"`.
 fn type_base_name(name: &'static str) -> &'static str {
-    let end = name.find('<').unwrap_or(name.len());
-    match name[..end].rfind("::") {
+    let bytes = name.as_bytes();
+    let end = bun_core::strings::index_of_char_usize(bytes, b'<').unwrap_or(bytes.len());
+    match bun_core::strings::last_index_of(&bytes[..end], b"::") {
         Some(i) => &name[i + 2..],
         None => name,
     }

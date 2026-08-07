@@ -104,6 +104,9 @@ impl Response {
     pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
         c::uws_h3_res_end_sendfile(self, write_offset, close_connection)
     }
+    /// H3 streams tear down through the QUIC engine; the TCP close-when-idle
+    /// gate has no equivalent here.
+    pub(crate) fn close_if_done_and_marked(&mut self) {}
     pub(crate) fn write(&mut self, data: &[u8]) -> WriteResult {
         let mut len: usize = data.len();
         // SAFETY: self is a live FFI handle; data ptr valid for read; len out-ptr is a valid local

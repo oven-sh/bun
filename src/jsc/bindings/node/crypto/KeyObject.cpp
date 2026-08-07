@@ -32,8 +32,6 @@
 #include "BunString.h"
 #include "BunProcess.h"
 
-extern "C" bool Bun__Node__ProcessNoDeprecation;
-
 namespace Bun {
 
 using namespace Bun;
@@ -46,7 +44,7 @@ using namespace WebCore;
 static void emitCryptoKeyDeprecationWarning(JSGlobalObject* globalObject)
 {
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    if (zigGlobalObject->hasWarnedCryptoKeyDeprecation || Bun__Node__ProcessNoDeprecation)
+    if (zigGlobalObject->hasWarnedCryptoKeyDeprecation)
         return;
     zigGlobalObject->hasWarnedCryptoKeyDeprecation = true;
     auto& vm = globalObject->vm();

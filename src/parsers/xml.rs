@@ -2786,7 +2786,8 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
             Tape::str(trimmed)
         } else {
             if !trimmed.is_empty() {
-                self.tape.push_prop(U::bytes(U::KEY_TEXT), Tape::str(trimmed), frame.loc);
+                self.tape
+                    .push_prop(U::bytes(U::KEY_TEXT), Tape::str(trimmed), frame.loc);
             }
             E::JsonValue::Object(self.tape.object_from(frame.props_mark as usize, frame.loc))
         };

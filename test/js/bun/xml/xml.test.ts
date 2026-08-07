@@ -224,7 +224,9 @@ describe("well-formedness", () => {
     expect(syntaxError("<a>x\uD83Dy\uDE00</a>").message).toContain("U+D83D");
     expect(syntaxError(`<!DOCTYPE a [<!ENTITY e "\uDC00">]><a/>`).message).toContain("U+DC00");
     expect(syntaxError("<a>ok</a>\uD800").message).toContain("U+D800");
-    expect(XML.parse("<a \u{1F600}='\u{1F600}'>\uD83D\uDE00</a>")).toEqual({ a: { "@\u{1F600}": "\u{1F600}", "#text": "\u{1F600}" } });
+    expect(XML.parse("<a \u{1F600}='\u{1F600}'>\uD83D\uDE00</a>")).toEqual({
+      a: { "@\u{1F600}": "\u{1F600}", "#text": "\u{1F600}" },
+    });
   });
 
   test("character references must name a Char", () => {

@@ -378,7 +378,13 @@ mod tests {
                 assert!(ci.contains(&(lone_lead as u32)), "lead, cut {cut}: {ci:?}");
                 assert!(ci.contains(&(lone_trail as u32)), "trail, cut {cut}");
                 assert!(ci.contains(&(last as u32)), "final lead, cut {cut}");
-                assert_eq!(ci.iter().filter(|&&p| (units[p as usize] & 0xF800) == 0xD800).count(), 3, "cut {cut}: {ci:?}");
+                assert_eq!(
+                    ci.iter()
+                        .filter(|&&p| (units[p as usize] & 0xF800) == 0xD800)
+                        .count(),
+                    3,
+                    "cut {cut}: {ci:?}"
+                );
             }
         }
         assert!(!ci.contains(&(doc.iter().position(|&u| u == 0xFF1D).unwrap() as u32)));

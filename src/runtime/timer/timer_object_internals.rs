@@ -11,6 +11,7 @@
 use bun_core::{Timespec, TimespecMockMode};
 
 use crate::jsc::JsCell;
+use crate::jsc::event_loop::EventLoop;
 use crate::jsc::{
     Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus,
     generated::{JSImmediate, JSTimeout},
@@ -430,6 +431,13 @@ impl TimerObjectInternals {
         {
             return true;
         }
+        // A callback that threw leaves its microtasks un-drained (Node marks the
+        // callback scope failed and skips the checkpoint). `tick_immediate_tasks`
+        // runs both at the end of the batch instead.
+        if !exception_thrown {
+            // SAFETY: `vm` is live; `event_loop()` yields the live per-thread loop.
+            unsafe { EventLoop::handle_rejected_promises_after_tick((*vm).event_loop()) };
+        }
 
         exception_thrown
     }
@@ -686,6 +694,9 @@ impl TimerObjectInternals {
 
         // SAFETY: `vm` is live; see `enter()` note above.
         unsafe { (*(*vm).event_loop()).exit() };
+        // SAFETY: `vm` is live; `event_loop()` yields the live per-thread loop.
+        // `exit` above already drained this callback's microtasks.
+        unsafe { EventLoop::handle_rejected_promises_after_tick((*vm).event_loop()) };
     }
 
     /// A `setTimeout` whose

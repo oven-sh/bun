@@ -655,6 +655,292 @@ describe.concurrent("socket", () => {
     }
   });
 
+  // An allowHalfOpen socket that consumed the peer's FIN and drained its writes
+  // polls for no events at all. On Linux the fd stays registered in epoll, which
+  // reports EPOLLERR/EPOLLHUP even at zero interest, so a later RST still closes
+  // the socket. On macOS the kqueue write oneshot used to be consumed by the
+  // first writable wakeup, leaving the fd with no filter: the peer's reset was
+  // never delivered and the socket leaked until process exit (this test timed
+  // out). Windows (libuv) tracks this state separately and is skipped here.
+  it.skipIf(isWindows)("allowHalfOpen socket sees the peer reset after end + drain", async () => {
+    const { promise: ended, resolve: onEnd } = Promise.withResolvers<void>();
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<string>();
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open() {},
+        data() {},
+        end() {
+          onEnd();
+        },
+        close() {
+          onClosed("close");
+        },
+        error() {
+          onClosed("error");
+        },
+      },
+    });
+
+    const client = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+    // Post-connect teardown errors must not become uncaught exceptions.
+    client.on("error", () => {});
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once("connect", resolve);
+        client.once("error", reject);
+      });
+      client.end(); // FIN; the server side stays half-open
+
+      await ended;
+      // Let the server's post-end writable dispatch run so its poll drops to zero
+      // requested events (the state that used to lose the last kqueue filter)
+      // before the reset arrives.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+
+      client.resetAndDestroy();
+
+      // Hangs forever on a deaf socket; the test timeout is the failure signal.
+      expect(await closed).toBeOneOf(["close", "error"]);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // The zero-event state must distinguish a dead connection from a graceful
+  // unix-domain disconnect: a unix peer's close() makes our write side
+  // unusable with no socket error, which epoll reports as a mere EPOLLHUP
+  // (and not at all at zero interest before both directions are shut). A
+  // paused unix socket with data still queued in the kernel must stay open
+  // through that disconnect so resume() can deliver the data and the real
+  // end-of-stream, instead of being torn down with a fabricated ECONNRESET.
+  it.skipIf(isWindows)("paused unix socket keeps data from a peer that closed gracefully", async () => {
+    const { promise: opened, resolve: onOpen } = Promise.withResolvers<Socket<undefined>>();
+    const { promise: gotData, resolve: onData, reject: onDataLost } = Promise.withResolvers<string>();
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<string>();
+    let teardown: string | null = null;
+
+    using dir = tempDir("unix-paused-close", {});
+    const sock = join(String(dir), "s.sock");
+
+    using server = Bun.listen({
+      unix: sock,
+      socket: {
+        open(socket) {
+          socket.pause();
+          onOpen(socket);
+        },
+        data(_socket, buffer) {
+          onData(buffer.toString());
+        },
+        end() {},
+        close() {
+          teardown ??= "close";
+          // No-op on the expected path (data already resolved); an early
+          // teardown fails the data await with the cause instead of hanging.
+          onDataLost(new Error("server socket closed before the queued data was delivered"));
+          onClosed(teardown);
+        },
+        error() {
+          teardown ??= "error";
+          onDataLost(new Error("server socket errored before the queued data was delivered"));
+          onClosed(teardown);
+        },
+      },
+    });
+
+    const client = net.connect({ path: sock });
+    client.on("error", () => {});
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once("connect", resolve);
+        client.once("error", reject);
+      });
+      const socket = await opened;
+      // Let the pause's writable dispatch drop the poll to zero events.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+
+      await new Promise<void>((resolve, reject) => client.write("hello", err => (err ? reject(err) : resolve())));
+      client.destroy(); // graceful full close; unix sockets have no RST
+
+      // Give a misrouted detector event plenty of turns to close the socket.
+      for (let i = 0; i < 10; i++) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      expect(teardown).toBeNull();
+
+      // resume() re-arms reading: the buffered bytes arrive, then the
+      // end-of-stream closes the (not half-open) socket cleanly.
+      socket.resume();
+      expect(await gotData).toBe("hello");
+      expect(await closed).toBe("close");
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // A paused socket reaches the same zero-event state (pause arms WRITABLE,
+  // whose dispatch drops the poll to no events). A peer reset must still
+  // close it: Linux delivers EPOLLERR at zero interest; kqueue needs the
+  // detector knote and its fflags error routing.
+  it.skipIf(isWindows)("paused socket sees the peer reset", async () => {
+    const { promise: opened, resolve: onOpen } = Promise.withResolvers<Socket<undefined>>();
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<string>();
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.pause();
+          onOpen(socket);
+        },
+        data() {},
+        end() {},
+        close() {
+          onClosed("close");
+        },
+        error() {
+          onClosed("error");
+        },
+      },
+    });
+
+    const client = net.connect({ port: server.port, host: "127.0.0.1" });
+    client.on("error", () => {});
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once("connect", resolve);
+        client.once("error", reject);
+      });
+      await opened;
+      // Let the pause's writable dispatch drop the poll to zero events.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+
+      client.resetAndDestroy();
+
+      // Hangs forever on a deaf socket; the test timeout is the failure signal.
+      expect(await closed).toBeOneOf(["close", "error"]);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // Replying to the peer's FIN with our own shutdown (what node:net's end()
+  // does) leaves the socket shut down at zero poll events, and the write-side
+  // shutdown echo is then its only close signal (the read knote went away
+  // with the consumed FIN). It must be delivered as the clean close, the way
+  // epoll's EPOLLHUP closes the same both-directions-shut state.
+  it.skipIf(isWindows)("allowHalfOpen socket closes cleanly after both sides shut down", async () => {
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<string>();
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open() {},
+        data() {},
+        end(socket) {
+          // The canonical reply to the peer's FIN: finish our side too.
+          // shutdown() half-closes natively; end() would close outright at
+          // the JS layer and never depend on the kernel's close signal.
+          socket.shutdown();
+        },
+        close() {
+          onClosed("close");
+        },
+        error() {
+          onClosed("error");
+        },
+      },
+    });
+
+    const client = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+    client.on("error", () => {});
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once("connect", resolve);
+        client.once("error", reject);
+      });
+      client.end();
+
+      // Hangs forever if the shutdown echo is suppressed at zero events.
+      expect(await closed).toBe("close");
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // The reverse ordering: half-close while paused, then resume reading. The
+  // detector knote survives the 0 -> READABLE transition, so the stale
+  // shutdown echo is delivered while the socket legitimately reads; it must
+  // not clean-close the socket before the peer's reply and FIN arrive.
+  it.skipIf(isWindows)("half-closed paused socket still hears the peer after resume", async () => {
+    const { promise: opened, resolve: onOpen } = Promise.withResolvers<Socket<undefined>>();
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<string>();
+    let received = "";
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open(socket) {
+          socket.pause();
+          onOpen(socket);
+        },
+        data(_socket, buffer) {
+          received += buffer.toString();
+        },
+        end() {},
+        close() {
+          onClosed("close");
+        },
+        error() {
+          onClosed("error");
+        },
+      },
+    });
+
+    // A raw half-open client: it must keep writing after the server's FIN
+    // arrives (node:net's client tears its stream down there).
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: { open() {}, data() {}, end() {}, close() {}, error() {} },
+    });
+    try {
+      const socket = await opened;
+      // Let the pause's writable dispatch drop the poll to zero events and
+      // arm the detector.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+
+      socket.shutdown(); // half-close while paused; the shutdown echo is now queued
+      socket.resume(); // re-arms reading; the detector knote survives
+
+      // The peer answers in two chunks. A stale echo closing the socket
+      // early loses part or all of the reply.
+      client.write("part1");
+      await new Promise(resolve => setImmediate(resolve));
+      client.write("part2");
+      client.end();
+
+      expect(await closed).toBe("close");
+      expect(received).toBe("part1part2");
+    } finally {
+      client.terminate();
+    }
+  });
+
   it("upgradeTLS handles errors", async () => {
     using server = Bun.serve({
       port: 0,

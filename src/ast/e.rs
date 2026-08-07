@@ -999,6 +999,14 @@ impl JsonTape {
         }
     }
 
+    /// Pre-size the row buffers (a growth step copies the whole tape).
+    pub fn reserve(&mut self, props: usize, items: usize) {
+        self.props.reserve(props);
+        self.prop_value_locs.reserve(props);
+        self.items.reserve(items);
+        self.item_locs.reserve(items);
+    }
+
     /// The tape allocation's own pointer, for [`ObjectJSON::new`] /
     /// [`ArrayJSON::new`].
     ///
@@ -1035,21 +1043,34 @@ impl JsonTape {
 
     /// Copy decoded string bytes into the tape; chunks never move once handed out.
     pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
+        self.alloc_str_join(bytes, b"")
+    }
+
+    /// [`alloc_str`](Self::alloc_str) of the concatenation `a ++ b`.
+    pub fn alloc_str_join(&mut self, a: &[u8], b: &[u8]) -> Str {
+        let len = a.len() + b.len();
         let fits = self
             .str_chunks
             .last()
-            .is_some_and(|c| c.len() - self.str_used >= bytes.len());
+            .is_some_and(|c| c.len() - self.str_used >= len);
         if !fits {
-            let cap = bytes.len().max(Self::STR_CHUNK);
+            let cap = len.max(Self::STR_CHUNK);
             let mut chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
             chunk.resize(cap, 0);
             self.str_chunks.push(chunk);
             self.str_used = 0;
         }
         let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
-        let out = &mut chunk[self.str_used..self.str_used + bytes.len()];
-        out.copy_from_slice(bytes);
-        self.str_used += bytes.len();
+        let out = &mut chunk[self.str_used..self.str_used + len];
+        if len <= 32 {
+            for (o, &c) in out.iter_mut().zip(a.iter().chain(b)) {
+                *o = c;
+            }
+        } else {
+            out[..a.len()].copy_from_slice(a);
+            out[a.len()..].copy_from_slice(b);
+        }
+        self.str_used += len;
         Str::new(out)
     }
 

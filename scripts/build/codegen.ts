@@ -42,6 +42,7 @@ import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { generateJsonByteClass } from "./jsonByteClass.ts";
+import { generateXmlByteClass } from "./xmlByteClass.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 
@@ -290,6 +291,10 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   o.all.push(jsonByteClass.h, jsonByteClass.rs);
   o.rustInputs.push(jsonByteClass.rs);
   o.cppHeaders.push(jsonByteClass.h);
+  const xmlByteClass = generateXmlByteClass(cfg);
+  o.all.push(xmlByteClass.h, xmlByteClass.rs);
+  o.rustInputs.push(xmlByteClass.rs);
+  o.cppHeaders.push(xmlByteClass.h);
 
   emitBunError(ctx);
   emitStringMaps(ctx);

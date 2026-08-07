@@ -9,8 +9,10 @@
 //! tree `{ name, attributes, children }`. `stringify` accepts either shape
 //! and always emits well-formed XML or throws.
 
+use bun_ast::ToJSError;
 use bun_collections::HashMap;
 use bun_core::{OwnedString, String as BunString};
+use bun_js_parser_jsc::ExprJsc;
 use bun_core::{StackCheck, strings};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::xml::{self, XML};
@@ -82,7 +84,14 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 }
             };
 
-            super::expr_to_js(root, global)
+            match root.to_js(global) {
+                Ok(v) => Ok(v),
+                Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
+                Err(ToJSError::JSError) => Err(JsError::Thrown),
+                Err(ToJSError::JSTerminated) => Err(JsError::Terminated),
+                // Rows hold only strings, objects and arrays.
+                Err(_) => unreachable!(),
+            }
         },
     )
 }

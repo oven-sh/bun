@@ -847,7 +847,7 @@ pub mod parse_worker {
                 let _trace = perf::trace("Bundler.ParseXML");
                 let mut temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
-                    let root: Expr = bun_parsers::xml::XML::parse(
+                    let rows: Expr = bun_parsers::xml::XML::parse(
                         source,
                         &mut temp_log,
                         bump,
@@ -856,6 +856,8 @@ pub mod parse_worker {
                             encoding: bun_parsers::xml::InputEncoding::File,
                         },
                     )?;
+                    let root =
+                        bun_parsers::json::materialize(&rows, source, &mut temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,

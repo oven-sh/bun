@@ -1267,23 +1267,20 @@ mod _async_tasks {
             let success = this.result.is_ok();
             let promise_value = js.promise.value();
             let promise = js.promise.get();
-            let result =
-                match &mut this.result {
-                    Err(err) => match err.to_js_with_async_stack(global_object, promise) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            return Ok(promise
-                                .reject(global_object, Err(e))?);
-                        }
-                    },
-                    Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            return Ok(promise
-                                .reject(global_object, Err(e))?);
-                        }
-                    },
-                };
+            let result = match &mut this.result {
+                Err(err) => match err.to_js_with_async_stack(global_object, promise) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Ok(promise.reject(global_object, Err(e))?);
+                    }
+                },
+                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Ok(promise.reject(global_object, Err(e))?);
+                    }
+                },
+            };
             promise_value.ensure_still_alive();
 
             if Self::HAVE_ABORT_SIGNAL {
@@ -1719,8 +1716,7 @@ mod _async_tasks {
                     Err(e) => {
                         // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
                         // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }
-                            .reject(global_object, Err(e));
+                        return unsafe { &mut *promise }.reject(global_object, Err(e));
                     }
                 },
                 Ok(res) => match FsReturn::fs_to_js(res, global_object) {
@@ -1728,8 +1724,7 @@ mod _async_tasks {
                     Err(e) => {
                         // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
                         // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }
-                            .reject(global_object, Err(e));
+                        return unsafe { &mut *promise }.reject(global_object, Err(e));
                     }
                 },
             };
@@ -2207,9 +2202,7 @@ mod _async_tasks {
                 match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(
-                            promise.reject(global_object, Err(e))?
-                        );
+                        return Ok(promise.reject(global_object, Err(e))?);
                     }
                 }
             } else {
@@ -2226,9 +2219,7 @@ mod _async_tasks {
                 match res.to_js(global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(
-                            promise.reject(global_object, Err(e))?
-                        );
+                        return Ok(promise.reject(global_object, Err(e))?);
                     }
                 }
             };

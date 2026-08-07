@@ -48,7 +48,6 @@ impl Taskable for S3HttpDownloadStreamingTask {
     const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
 }
 
-
 impl S3HttpDownloadStreamingTask {
     pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)

@@ -906,7 +906,7 @@ impl TransformTask {
         promise: &mut JSPromise,
         global: &JSGlobalObject,
     ) -> Result<(), bun_jsc::JsTerminated> {
-promise.settle(global, self.output_code.transfer_to_js(global))
+        promise.settle(global, self.output_code.transfer_to_js(global))
     }
 }
 

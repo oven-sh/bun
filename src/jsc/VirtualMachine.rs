@@ -4425,7 +4425,10 @@ impl VirtualMachine {
     ) -> JsResult<()> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // A `data:` specifier is the module, not a path: no length limit.
-        if IS_A_FILE_PATH && specifier.length() > MAX_LEN && !specifier.has_prefix_comptime(b"data:") {
+        if IS_A_FILE_PATH
+            && specifier.length() > MAX_LEN
+            && !specifier.has_prefix_comptime(b"data:")
+        {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
             let import_kind = mode.import_kind();

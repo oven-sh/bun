@@ -3087,8 +3087,7 @@ JSC::JSObject* GlobalObject::navigatorObject()
 JSC::JSFunction* GlobalObject::utilInspectFunction()
 {
     if (!m_utilInspectFunction.isInitialized()) [[unlikely]] {
-        // Load node:util here, where failure can propagate; the LazyProperty
-        // initializer must not fail, and its requireId becomes a cache hit.
+        // LazyProperty initializers must not fail; load node:util here where a throw can propagate.
         auto& vm = JSC::getVM(this);
         auto scope = DECLARE_THROW_SCOPE(vm);
         internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::NodeUtil);

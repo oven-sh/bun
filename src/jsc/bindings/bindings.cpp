@@ -5558,15 +5558,16 @@ restart:
                 }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-                // getNonIndexPropertySlot stays correct when a static lazy property
-                // reify runs JS that transitions this object's structure mid-walk.
+                // getNonIndexPropertySlot tolerates structure transitions from lazy property reification.
                 bool hasProperty;
                 if (std::optional<uint32_t> index = parseIndex(property))
                     hasProperty = object->getPropertySlot(globalObject, index.value(), slot);
                 else
                     hasProperty = object->getNonIndexPropertySlot(globalObject, property, slot);
-                // Ignore exceptions from "Get" proxy traps and static property reification.
+                // Ignore exceptions from "Get" proxy traps and static property reification,
+                // but stop enumerating on a termination exception, which stays pending.
                 CLEAR_IF_EXCEPTION(scope);
+                RETURN_IF_EXCEPTION(scope, void());
                 if (!hasProperty)
                     continue;
 
@@ -5734,7 +5735,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
             hasProperty = object->getPropertySlot(globalObject, index.value(), slot);
         else
             hasProperty = object->getNonIndexPropertySlot(globalObject, property, slot);
+        // A termination exception survives tryClearException; stop enumerating.
         (void)scope.tryClearException();
+        RETURN_IF_EXCEPTION(scope, void());
         if (!hasProperty) {
             continue;
         }

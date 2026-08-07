@@ -70,6 +70,32 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("plugin/LoadXmlLoader", {
+    files: {
+      "/index.ts": /* ts */ `
+        import doc from "./data.magic";
+        import feed from "./feed.xml";
+        console.log(JSON.stringify([doc, feed]));
+      `,
+      "/data.magic": `<config env="test"><name>app</name></config>`,
+      "/feed.xml": `<feed><entry>1</entry><entry>2</entry></feed>`,
+    },
+    plugins(builder) {
+      builder.onLoad({ filter: /\.magic$/ }, async args => ({
+        contents: await Bun.file(args.path).text(),
+        loader: "xml",
+      }));
+      // .xml files report their default loader and can rely on it implicitly.
+      builder.onLoad({ filter: /\.xml$/ }, async args => {
+        if (args.loader !== "xml") throw new Error("expected args.loader to be xml, got " + args.loader);
+        return { contents: await Bun.file(args.path).text() };
+      });
+    },
+    run: {
+      stdout: '[{"config":{"@env":"test","name":"app"}},{"feed":{"entry":["1","2"]}}]',
+    },
+  });
+
   // Load Plugin Errors
   itBundled("plugin/LoadThrow", {
     files: loadFixture,

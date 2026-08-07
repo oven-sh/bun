@@ -555,7 +555,7 @@ fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usi
             as usize;
     let decoded = &out[..decoded_len];
 
-    if decoded.iter().filter(|&&b| b == b'/').count() != raw_slashes {
+    if strings::count_char(decoded, b'/') != raw_slashes {
         return None;
     }
     if decoded_len == 0 {

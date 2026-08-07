@@ -1256,6 +1256,9 @@ dependencies = [
 [[package]]
 name = "bun_lsquic_sys"
 version = "0.0.0"
+dependencies = [
+ "bun_core",
+]
 
 [[package]]
 name = "bun_md"
@@ -2008,11 +2011,11 @@ dependencies = [
  "const_format",
  "enum-map",
  "enumset",
- "libc",
- "memchr",
- "ohos_sign",
- "rustix",
- "scopeguard",
+  "libc",
+  "memchr",
+  "ohos_sign",
+  "rustix",
+  "scopeguard",
  "strum",
  "thiserror",
 ]

@@ -796,7 +796,7 @@ impl CompileC {
             // Check standard C compiler environment variables for include paths.
             // These are used by systems like NixOS where standard FHS paths don't exist.
             if let Some(c_include_path) = env_var::C_INCLUDE_PATH.get() {
-                for path in c_include_path.split(|b| *b == b':') {
+                for path in bun_core::strings::split(c_include_path, b":") {
                     if !path.is_empty() {
                         let path_z = ZBox::from_bytes(path);
                         if state.add_sys_include_path(&path_z).is_err() {
@@ -812,7 +812,7 @@ impl CompileC {
 
             // Check standard C compiler environment variable for library paths.
             if let Some(library_path) = env_var::LIBRARY_PATH.get() {
-                for path in library_path.split(|b| *b == b':') {
+                for path in bun_core::strings::split(library_path, b":") {
                     if !path.is_empty() {
                         let path_z = ZBox::from_bytes(path);
                         if state.add_library_path(&path_z).is_err() {

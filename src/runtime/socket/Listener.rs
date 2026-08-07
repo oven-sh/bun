@@ -1627,7 +1627,7 @@ fn connect_finish<const IS_SSL: bool>(
         };
         {
             let this = socket;
-            let _ = NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
+            NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
             // Balance the unconditional `socket_ref.ref_()` above.
             NewSocket::deref(&this);
         }

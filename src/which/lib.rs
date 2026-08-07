@@ -69,7 +69,7 @@ pub fn which_for_spawn<'a>(
 ) -> Option<&'a ZStr> {
     #[cfg(windows)]
     {
-        let has_sep = bin.iter().any(|&b| b == b'/' || b == b'\\');
+        let has_sep = strings::contains_any(bin, b"/\\");
         // The NoDefaultCurrentDirectoryInExePath env var is Windows' standard
         // binary-planting opt-out; libuv gates its cwd search on it via
         // NeedCurrentDirectoryForExePathW (libuv/libuv#3895), so spawn must too.
@@ -166,7 +166,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         }
 
         let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) { cwd_trimmed } else { b"" };
-        for segment in path.split(|b| *b == DELIMITER).filter(|s| !s.is_empty()) {
+        for segment in strings::tokenize(path, &[DELIMITER]) {
             // execvp resolves relative $PATH entries after the child's chdir.
             let cwd_prefix: &[u8] = if is_absolute(segment) {
                 b""
@@ -235,12 +235,7 @@ pub fn is_batch_file(path: &[u8]) -> bool {
 /// escape characters in unquoted positions. None of these can be escaped for
 /// `cmd.exe`, so callers must reject the spawn instead.
 pub fn batch_arg_has_cmd_metachars(arg: &[u8]) -> bool {
-    arg.iter().any(|&c| {
-        matches!(
-            c,
-            b'"' | b'%' | b'&' | b'|' | b'<' | b'>' | b'^' | b'\r' | b'\n'
-        )
-    })
+    strings::contains_any(arg, b"\"%&|<>^\r\n")
 }
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by which_win)
@@ -379,7 +374,7 @@ pub(crate) fn which_win<'a>(
     }
 
     // iterate over system path delimiter
-    for segment_part in path.split(|b| *b == b';').filter(|s| !s.is_empty()) {
+    for segment_part in strings::tokenize(path, b";") {
         // NLL/Polonius limitation — re-borrowing `buf` across loop iterations
         // when returning a reference tied to its lifetime.
         // SAFETY: on None the borrow ends; on Some we return immediately.

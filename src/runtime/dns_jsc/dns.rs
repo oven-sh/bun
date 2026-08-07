@@ -5083,7 +5083,7 @@ impl Resolver {
         // stack before null-terminating it. Reject anything that cannot fit so we never
         // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
         // is 1025, so this never rejects a name that could have resolved.
-        if name.len() >= MAX_PATH_BYTES || name.contains(&0) {
+        if name.len() >= MAX_PATH_BYTES || strings::contains_char(name, 0) {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
             error_to_deferred(

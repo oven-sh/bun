@@ -1814,6 +1814,7 @@ describe.concurrent("node:repl completion", () => {
       expect({ matched: m !== null, stderr }).toEqual({ matched: true, stderr: "" });
       const completions = JSON.parse(m![1]);
       expect(completions).toContain("node:test");
+      expect(completions).toContain("node:quic");
       expect(completions).toContain("node:fs");
       expect(completions).not.toContain("node:undici");
       expect(completions).not.toContain("node:ws");

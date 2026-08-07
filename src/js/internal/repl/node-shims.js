@@ -114,8 +114,8 @@ const BuiltinModule = {
   getSchemeOnlyModuleNames() {
     // Bare names; completion.js prefixes them with "node:" itself. Derived
     // from the `node:`-prefixed builtinModules entries (e.g. node:sqlite);
-    // `test` resolves as node:test but is missing from builtinModules.
-    const names = ["test"];
+    // `test` and `quic` resolve under node: but are missing from builtinModules.
+    const names = ["test", "quic"];
     // Indexed, not for..of: user code can delete Array.prototype[Symbol.iterator].
     const modules = Module.builtinModules;
     for (let i = 0; i < modules.length; i++) {

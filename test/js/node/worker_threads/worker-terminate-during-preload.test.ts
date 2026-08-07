@@ -28,7 +28,11 @@ test(
       async function timeToOnline() {
         const t0 = Bun.nanoseconds();
         const w = new Worker("", { eval: true, preload });
-        await new Promise((res, rej) => { w.once("online", res); w.once("error", rej); });
+        await new Promise((res, rej) => {
+          w.once("online", res);
+          w.once("error", rej);
+          w.once("exit", code => rej(new Error("worker exited before 'online' with code " + code)));
+        });
         const dt = Bun.nanoseconds() - t0;
         await w.terminate();
         return dt;

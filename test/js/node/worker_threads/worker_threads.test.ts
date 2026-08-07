@@ -39,9 +39,6 @@ test("support eval in worker", async () => {
 });
 
 test("online fires before the entry point finishes", async () => {
-  // node reports 'online' once the thread has bootstrapped, BEFORE user code
-  // (lib/internal/worker.js), so a worker whose top-level never returns still
-  // goes online. Blocking in Atomics.wait keeps the entry point unsettled.
   const sab = new SharedArrayBuffer(4);
   const signal = new Int32Array(sab);
   const worker = new Worker(
@@ -49,8 +46,6 @@ test("online fires before the entry point finishes", async () => {
      Atomics.wait(new Int32Array(workerData), 0, 0);`,
     { eval: true, workerData: sab },
   );
-  // Registered before the awaits: if 'online' never fires the worker is parked
-  // in Atomics.wait, and the thread would outlive the test.
   try {
     await once(worker, "online");
     Atomics.store(signal, 0, 1);

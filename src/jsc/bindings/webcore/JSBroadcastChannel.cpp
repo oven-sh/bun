@@ -387,7 +387,6 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_refBody(JS
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     impl.jsRef(lexicalGlobalObject);
-    // node's ref() returns the channel so it chains (lib/internal/worker/io.js).
     RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis));
 }
 

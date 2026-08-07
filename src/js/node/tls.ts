@@ -1683,9 +1683,6 @@ function cacheDefaultCACertificates() {
     ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
   }
 
-  // --use-system-ca / --no-use-system-ca are per-thread and explicit; only when
-  // neither was given does NODE_USE_SYSTEM_CA decide. node lets the env var win
-  // under --use-bundled-ca but not under --no-use-system-ca.
   const useSystemCA = getUseSystemCA();
   if (useSystemCA === true || (useSystemCA === undefined && process.env.NODE_USE_SYSTEM_CA === "1")) {
     const system = cacheSystemCACertificates();

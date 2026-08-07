@@ -459,9 +459,6 @@ void Worker::rejectAllCrossVMRequests(JSC::JSGlobalObject* globalObject)
 
 // ---- Worker-thread entry points ---------------------------------------------
 
-// Posted before the entry point runs, matching node's 'online', so a worker whose
-// top-level never returns still reports online. Deliberately leaves m_state alone:
-// Pending queues in postTaskToWorkerGlobalScope, it does not reject.
 void Worker::dispatchOnlineEvent()
 {
     postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext&) {
@@ -534,9 +531,6 @@ void Worker::dispatchErrorWithMessage(WTF::String message, WTF::String code)
                          code = code.isolatedCopy()](ScriptExecutionContext& context) {
         ErrorEvent::Init init;
         init.message = message;
-        // The worker's value would not clone (Bun's ResolveMessage is not even an
-        // Error), so the parent rebuilds one from the text; hand `code` over on a
-        // carrier object or it is lost, unlike every other coded worker error.
         if (!code.isNull()) {
             auto* globalObject = context.globalObject();
             auto& vm = JSC::getVM(globalObject);
@@ -551,8 +545,6 @@ void Worker::dispatchErrorWithMessage(WTF::String message, WTF::String code)
     });
 }
 
-// A string `code` off an error-ish value, or null. Reading it can run JS (a
-// getter/proxy), so it is done under a top scope and any throw drops the code.
 String Worker::errorCodeOf(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -589,8 +581,6 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     if (!serialized && !scope.exception()) {
         if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(value)) {
             errorInstance->putDirect(vm, vm.propertyNames->stack, JSC::jsUndefined(), JSC::PropertyAttribute::DontEnum | 0);
-            // putDirect bypasses the ErrorInstance property overrides, so tell it
-            // not to re-materialize `stack` (and re-run prepareStackTrace) below.
             errorInstance->setStackPropertyAlreadyMaterialized();
             CLEAR_IF_EXCEPTION(scope);
             serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);

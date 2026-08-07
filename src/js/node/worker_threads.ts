@@ -99,9 +99,6 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
-// Resolved at module load, as node does (lib/internal/worker.js): resolving it
-// lazily inside the constructor would build the channel out of whatever
-// Map/Object user code had tampered with by then.
 const workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
 const { tickInitHooks, newAsyncId } = require("internal/async_hooks_tick");
 
@@ -134,8 +131,6 @@ function injectFakeEmitter(Class) {
 
   function wrapped(run, listener) {
     return function (event) {
-      // node invokes emitter listeners with the emitter as `this`; an
-      // addEventListener handler's `this` is already the target, so forward it.
       return listener.$call(this, run(event));
     };
   }
@@ -941,8 +936,6 @@ class Worker extends EventEmitter {
   #stdin;
   #stdout;
   #stderr;
-  // Mirrors ref()/unref() for the async_hooks WORKER resource's hasRef();
-  // undefined once the thread has exited, as node's handle reads back.
   #hasRef: boolean | undefined = true;
 
   // this is used by terminate();
@@ -959,7 +952,6 @@ class Worker extends EventEmitter {
     // option accesses below don't throw on `new Worker(file, null)`.
     options ??= {};
 
-    // Bun's WebWorker honours { ref: false }; hasRef() should agree with it.
     if ((options as any).ref === false) this.#hasRef = false;
 
     this.#name = normalizeWorkerName(options.name);
@@ -1104,16 +1096,12 @@ class Worker extends EventEmitter {
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
-    // node's AsyncWrap emits the WORKER init synchronously when the handle is
-    // constructed mid-constructor, before the dc publish at the end.
     this.#emitAsyncHooksInit();
     if (workerThreadsChannel.hasSubscribers) {
       workerThreadsChannel.publish({ worker: this });
     }
   }
 
-  // node's WORKER resource is the C++ handle: hasRef() follows ref()/unref() and reads undefined
-  // once the handle is gone. Extends the TickObject init array to WORKER; only hasRef() is exposed.
   #emitAsyncHooksInit() {
     const count = tickInitHooks.length;
     if (count === 0) return;
@@ -1132,9 +1120,6 @@ class Worker extends EventEmitter {
       try {
         snapshot[i](asyncId, "WORKER", 0, resource);
       } catch (err) {
-        // node: a throwing init hook is fatal (fatalError: print + exit 1),
-        // never surfaced to the `new Worker` caller — which here has already
-        // spawned the thread. console is user-mutable, so shield the print.
         try {
           console.error(typeof err?.stack === "string" ? err.stack : err);
         } catch {}
@@ -1155,8 +1140,6 @@ class Worker extends EventEmitter {
     // stdio ports are not touched here (node's ref()/unref() only touch the
     // handle and the public port); their ref state tracks in-flight I/O.
     this.#worker.ref();
-    // node's ref()/unref() no-op once the handle is gone, leaving hasRef()
-    // undefined rather than resurrecting it.
     if (!this.#exited) this.#hasRef = true;
   }
 
@@ -1191,8 +1174,6 @@ class Worker extends EventEmitter {
   }
 
   #eventLoopUtilization(utilization1, utilization2) {
-    // null covers both "thread gone" and "loop has not turned" — node reports
-    // all-zero for each.
     return internalEventLoopUtilization(this.#worker.eventLoopUtilizationInternal(), utilization1, utilization2);
   }
 
@@ -1343,9 +1324,6 @@ class Worker extends EventEmitter {
     this.#stdinPort?.close();
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
-    // node's WORKER handle is gone once the thread has exited, so its
-    // hasRef() reads back undefined. 'exit' listeners ran synchronously above
-    // and still saw the live value.
     this.#hasRef = undefined;
   }
 
@@ -1355,8 +1333,6 @@ class Worker extends EventEmitter {
     // if not the message is the actual error
     const message = event.message;
     if (message !== "") {
-      // The value didn't clone, so rebuild from the text — but keep the `code`
-      // the native side carried over, which is all that survived of it.
       const code = error?.code;
       error = new Error(message, { cause: event });
       if (typeof code === "string") error.code = code;

@@ -147,9 +147,6 @@ describe.concurrent("--cpu-prof", () => {
     const exitCode = await proc.exited;
 
     const profiles = readdirSync(String(dir)).filter(f => f.endsWith(".cpuprofile"));
-    // Every thread writes the one named path, last wins, so there is a single
-    // file. node v26.3.0 does the same: with a worker, --cpu-prof-name yields 1
-    // file where the default name yields 2 — it only thread-stamps the default.
     expect(profiles).toEqual([customName]);
     expect(exitCode).toBe(0);
   });

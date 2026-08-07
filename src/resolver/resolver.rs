@@ -248,6 +248,7 @@ use ::bun_core::{FeatureFlags, Generation};
 use bun_ast::Msg;
 use bun_collections::BoundedArray;
 use bun_dotenv::env_loader as DotEnv;
+use bun_hash::XxHash64Streaming;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 use bun_perf::system_timer::Timer;
 use bun_ptr::Interned;
@@ -286,23 +287,316 @@ use bun_ast::SideEffects;
 // `mem::forget` for this — process-lifetime storage must go through
 // `LazyLock`. These append-only arenas are that storage; the `Box<T>` heap
 // address is stable across `Vec` growth, so handing out `&'static T` is sound.
+//
+// Every `bust_dir_cache` + recompute re-parses the directory's package.json /
+// tsconfig.json (failed bare-specifier resolves retry through a bust; watchers
+// bust per change event), so the interners below reuse the existing entry for
+// unchanged inputs and the arenas only grow when file contents change.
 
-/// Intern a parsed `PackageJSON` into the process-lifetime DirInfo arena.
-/// Returns `NonNull` (not `&'static`) so mut-provenance survives to write
-/// sites — handing out `&T` here and casting back to `*mut T` would be UB
-/// under Stacked Borrows.
-fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
-    // `Box` is load-bearing: returns `NonNull<PackageJSON>` derived from the
-    // box interior, treated as `'static`; unboxing would dangle on `Vec` realloc.
+/// Resolver state beyond the file bytes that shapes what `PackageJSON::parse`
+/// produces; an interned copy is only reused for an identical shape.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PackageJsonParseShape {
+    /// `ALLOW_DEPENDENCIES` in `parse_package_json` (populates `dependencies`).
+    allow_dependencies: bool,
+    /// `Resolver.care_about_scripts` (populates `scripts` / `config`).
+    include_scripts: bool,
+    /// The auto-installer changes dependency-version parsing and id inference.
+    has_auto_installer: bool,
+    /// Only fields listed in `opts.main_fields` are captured. Hashed, not
+    /// borrowed: opts are per-resolver and may be freed first.
+    main_fields_hash: u64,
+}
+
+/// Order-sensitive, length-prefixed content hash of `opts.main_fields`.
+fn main_fields_hash(fields: &[Box<[u8]>]) -> u64 {
+    let mut hasher = XxHash64Streaming::new(0);
+    for field in fields {
+        hasher.update(&(field.len() as u64).to_le_bytes());
+        hasher.update(field);
+    }
+    hasher.digest()
+}
+
+/// The outcome of the last parse for a (path, shape) pair: either the
+/// interned struct, or the bytes of a file that read fine but produced no
+/// `PackageJSON` (invalid JSON, non-object root). Recording failures too is
+/// what lets a bust over an unchanged-but-broken file skip the re-parse.
+enum InternedPackageJsonState {
+    /// Arena slot; `NonNull` (not `&'static`) so mut-provenance from intern
+    /// time survives to the `package_manager_package_id` write sites.
+    Parsed(core::ptr::NonNull<PackageJSON>),
+    Unparseable(Box<[u8]>),
+}
+
+struct InternedPackageJson {
+    shape: PackageJsonParseShape,
+    state: InternedPackageJsonState,
+}
+
+// SAFETY: the `Parsed` pointer targets an append-only arena slot; it crosses
+// threads exactly like the `&'static PackageJSON` refs the DirInfo cache
+// already hands out.
+unsafe impl Send for InternedPackageJson {}
+
+#[derive(Default)]
+struct PackageJsonInterner {
+    /// Never shrinks: replaced entries may still be referenced by un-busted
+    /// DirInfos. `Box` keeps handed-out pointers stable across `Vec` realloc.
     #[expect(clippy::vec_box)]
-    static ARENA: std::sync::LazyLock<bun_threading::Guarded<Vec<Box<PackageJSON>>>> =
-        std::sync::LazyLock::new(Default::default);
-    let mut guard = ARENA.lock();
-    guard.push(Box::new(pkg));
-    // SAFETY: ARENA is `'static` (LazyLock); entries are never removed; the
-    // `Box<PackageJSON>` heap address is stable across `Vec` reallocation.
-    // Derive from `&mut **last` so the returned pointer carries mut-provenance.
-    core::ptr::NonNull::from(&mut **guard.last_mut().unwrap())
+    arena: Vec<Box<PackageJSON>>,
+    /// Keys are `dirname_store` slices (`'static`); one slot per parse shape.
+    by_path: bun_collections::StringHashMap<Vec<InternedPackageJson>>,
+}
+
+static PACKAGE_JSON_INTERNER: std::sync::LazyLock<bun_threading::Guarded<PackageJsonInterner>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Number of `PackageJSON::parse_with_contents` runs. Read via
+/// `bun:internal-for-testing` by leak regression tests (together with
+/// [`package_json_arena_len`]) to assert busts skip re-parses.
+static PACKAGE_JSON_PARSE_COUNT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Arena length; read via `bun:internal-for-testing` by leak regression tests.
+pub fn package_json_arena_len() -> usize {
+    PACKAGE_JSON_INTERNER.lock().arena.len()
+}
+
+pub fn package_json_parse_count() -> usize {
+    PACKAGE_JSON_PARSE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Point the (path, shape) slot at `state`, replacing any previous record.
+fn set_package_json_slot(
+    interner: &mut PackageJsonInterner,
+    path: &'static [u8],
+    shape: PackageJsonParseShape,
+    state: InternedPackageJsonState,
+) {
+    match interner.by_path.get_mut(path) {
+        Some(slots) => match slots.iter_mut().find(|slot| slot.shape == shape) {
+            Some(slot) => slot.state = state,
+            None => slots.push(InternedPackageJson { shape, state }),
+        },
+        None => interner
+            .by_path
+            .put_static_key(path, vec![InternedPackageJson { shape, state }])
+            .expect("unreachable"),
+    }
+}
+
+/// Intern `pkg`, reusing the existing allocation when path, bytes, and shape
+/// match. Returns `NonNull` (not `&'static`) so mut-provenance survives to
+/// write sites — a `&T`-to-`*mut T` cast would be UB under Stacked Borrows.
+fn intern_package_json(
+    pkg: PackageJSON,
+    shape: PackageJsonParseShape,
+) -> core::ptr::NonNull<PackageJSON> {
+    // The path was interned into `dirname_store`, so it is genuinely `'static`.
+    let path: &'static [u8] = pkg.source.path.text;
+    let mut guard = PACKAGE_JSON_INTERNER.lock();
+    let interner = &mut *guard;
+
+    if let Some(InternedPackageJson {
+        state: InternedPackageJsonState::Parsed(ptr),
+        ..
+    }) = interner
+        .by_path
+        .get_mut(path)
+        .and_then(|slots| slots.iter_mut().find(|slot| slot.shape == shape))
+    {
+        let mut cached_ptr = *ptr;
+        // SAFETY: ARENA — arena slots are never freed or moved.
+        let cached: &PackageJSON = unsafe { cached_ptr.as_ref() };
+        if strings::eql(&cached.source_contents, &pkg.source_contents) {
+            // Reuse; the fresh parse drops. Carry over a resolved package id,
+            // but never clear one written by `enqueue_dependency_to_resolve`.
+            let fresh_id = pkg.package_manager_package_id;
+            if fresh_id != Install::INVALID_PACKAGE_ID
+                && cached.package_manager_package_id != fresh_id
+            {
+                // SAFETY: the pointer carries mut-provenance from intern time;
+                // same single-writer contract as the write in
+                // `enqueue_dependency_to_resolve`.
+                unsafe { cached_ptr.as_mut() }.package_manager_package_id = fresh_id;
+            }
+            return cached_ptr;
+        }
+    }
+
+    // New path, new bytes, or a previously unparseable file: intern the fresh
+    // parse and repoint the slot. A replaced copy stays in the arena —
+    // un-busted DirInfos may still reference it.
+    interner.arena.push(Box::new(pkg));
+    // SAFETY: entries are never removed; the box interior is stable across
+    // `Vec` realloc. Derive from `&mut **last` so the returned pointer
+    // carries mut-provenance.
+    let ptr = core::ptr::NonNull::from(&mut **interner.arena.last_mut().unwrap());
+    set_package_json_slot(interner, path, shape, InternedPackageJsonState::Parsed(ptr));
+    ptr
+}
+
+/// Record that `path` read fine but produced no `PackageJSON`, so the next
+/// bust over identical bytes can skip the re-parse.
+fn intern_unparseable_package_json(
+    path: &'static [u8],
+    shape: PackageJsonParseShape,
+    contents: Box<[u8]>,
+) {
+    let mut guard = PACKAGE_JSON_INTERNER.lock();
+    set_package_json_slot(
+        &mut guard,
+        path,
+        shape,
+        InternedPackageJsonState::Unparseable(contents),
+    );
+}
+
+/// One file the tsconfig merge visited; `contents: None` = unreadable (e.g. a
+/// missing `extends` parent). The reuse check re-reads these, so any change,
+/// appearance, or disappearance in the chain forces a re-merge.
+#[derive(Clone, PartialEq, Eq)]
+struct TsconfigChainLink {
+    path: Box<[u8]>,
+    contents: Option<Box<[u8]>>,
+}
+
+struct InternedTsconfig {
+    /// Every file that fed the merge, root first, in walk order.
+    chain: Vec<TsconfigChainLink>,
+    /// `TsconfigInterner::arena` slot, or `None` when the chain produced no
+    /// config (the root read fine but its JSONC failed to parse); recording
+    /// that outcome lets a bust over unchanged bytes skip the re-parse.
+    ptr: Option<core::ptr::NonNull<TSConfigJSON>>,
+}
+
+// SAFETY: same contract as `InternedPackageJson` — append-only arena slot
+// under the same `Guarded` static.
+unsafe impl Send for InternedTsconfig {}
+
+#[derive(Default)]
+struct TsconfigInterner {
+    /// Never shrinks; see `PackageJsonInterner::arena`.
+    #[expect(clippy::vec_box)]
+    arena: Vec<Box<TSConfigJSON>>,
+    /// Keyed by root tsconfig/jsconfig path (owned copies — the lookup path
+    /// lives in a threadlocal buffer).
+    by_path: bun_collections::StringHashMap<InternedTsconfig>,
+}
+
+static TSCONFIG_INTERNER: std::sync::LazyLock<bun_threading::Guarded<TsconfigInterner>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Number of `parse_tsconfig` runs; see [`package_json_parse_count`].
+static TSCONFIG_PARSE_COUNT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Arena length; read via `bun:internal-for-testing` by leak regression tests.
+pub fn tsconfig_arena_len() -> usize {
+    TSCONFIG_INTERNER.lock().arena.len()
+}
+
+pub fn tsconfig_parse_count() -> usize {
+    TSCONFIG_PARSE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Intern the merge for `root_path` (`None` = the chain produced no config),
+/// reusing the existing allocation when the chain matches. A `Some` pointer
+/// came from `heap::into_raw`; on reuse it is destroyed here.
+fn intern_tsconfig(
+    root_path: &[u8],
+    chain: Vec<TsconfigChainLink>,
+    merged: Option<*mut TSConfigJSON>,
+) -> Option<core::ptr::NonNull<TSConfigJSON>> {
+    let mut guard = TSCONFIG_INTERNER.lock();
+    let interner = &mut *guard;
+
+    if let Some(slot) = interner.by_path.get_mut(root_path) {
+        if slot.chain == chain && slot.ptr.is_some() == merged.is_some() {
+            if let Some(merged) = merged {
+                // SAFETY: `merged` came from `heap::into_raw` in the caller's
+                // merge walk and is uniquely owned here.
+                TSConfigJSON::destroy(unsafe { bun_core::heap::take(merged) });
+            }
+            return slot.ptr;
+        }
+    }
+
+    // New path or changed chain: intern the new outcome and repoint the slot;
+    // a replaced merge stays in the arena (un-busted DirInfos may still
+    // reference it).
+    let ptr = merged.map(|merged| {
+        // SAFETY: as above — reclaim the caller's allocation.
+        interner.arena.push(unsafe { bun_core::heap::take(merged) });
+        // SAFETY: see `intern_package_json` — stable box interior,
+        // mut-provenance via `&mut **last`.
+        core::ptr::NonNull::from(&mut **interner.arena.last_mut().unwrap())
+    });
+    match interner.by_path.get_mut(root_path) {
+        Some(slot) => *slot = InternedTsconfig { chain, ptr },
+        None => interner
+            .by_path
+            .put(root_path, InternedTsconfig { chain, ptr })
+            .expect("unreachable"),
+    }
+    ptr
+}
+
+/// Reuse outcome for `parse_package_json`'s fast path.
+enum PackageJsonReuse {
+    /// No usable record; parse.
+    Miss,
+    /// Unchanged bytes: the previous outcome stands (`None` = known
+    /// unparseable).
+    Hit(Option<core::ptr::NonNull<PackageJSON>>),
+}
+
+/// Fast path for `parse_package_json`: when the (path, shape) slot's recorded
+/// bytes equal `contents`, the previous outcome stands and the parse is
+/// skipped (see `PackageJSON::read_for_parse`).
+fn reuse_interned_package_json(
+    package_json_path: &[u8],
+    shape: PackageJsonParseShape,
+    contents: &[u8],
+    package_id: Option<Install::PackageID>,
+) -> PackageJsonReuse {
+    let mut guard = PACKAGE_JSON_INTERNER.lock();
+    let Some(slot) = guard
+        .by_path
+        .get_mut(package_json_path)
+        .and_then(|slots| slots.iter_mut().find(|slot| slot.shape == shape))
+    else {
+        return PackageJsonReuse::Miss;
+    };
+    match &slot.state {
+        InternedPackageJsonState::Parsed(ptr) => {
+            let mut cached_ptr = *ptr;
+            // SAFETY: ARENA — arena slots are never freed or moved.
+            let cached: &PackageJSON = unsafe { cached_ptr.as_ref() };
+            if !strings::eql(&cached.source_contents, contents) {
+                return PackageJsonReuse::Miss;
+            }
+            // Apply the caller-provided lockfile id as the parse would have,
+            // but never clear an id written by `enqueue_dependency_to_resolve`.
+            if let Some(id) = package_id {
+                if id != Install::INVALID_PACKAGE_ID && cached.package_manager_package_id != id {
+                    // SAFETY: the pointer carries mut-provenance from intern
+                    // time; same single-writer contract as the write in
+                    // `enqueue_dependency_to_resolve`.
+                    unsafe { cached_ptr.as_mut() }.package_manager_package_id = id;
+                }
+            }
+            PackageJsonReuse::Hit(Some(cached_ptr))
+        }
+        InternedPackageJsonState::Unparseable(recorded) => {
+            if strings::eql(recorded, contents) {
+                PackageJsonReuse::Hit(None)
+            } else {
+                PackageJsonReuse::Miss
+            }
+        }
+    }
 }
 
 // `bun_core::declare_scope!` emits the per-scope `static ScopedLogger`; the
@@ -3909,11 +4203,72 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// Reuse the interned outcome for `root_path` when its recorded extends
+    /// chain is unchanged on disk. Outer `None` means the caller must
+    /// re-parse; the inner value is the recorded merge (`None` = the chain
+    /// produced no config last time).
+    fn reuse_interned_tsconfig(
+        &mut self,
+        root_path: &[u8],
+    ) -> Option<Option<core::ptr::NonNull<TSConfigJSON>>> {
+        let chain: Vec<TsconfigChainLink> = {
+            let guard = TSCONFIG_INTERNER.lock();
+            // Clone the (small) record so files aren't read under the lock.
+            guard.by_path.get(root_path)?.chain.clone()
+        };
+        for link in &chain {
+            match (
+                self.read_file_for_tsconfig_reuse(&link.path),
+                &link.contents,
+            ) {
+                // Still unreadable (e.g. the extends parent is still missing).
+                (None, None) => {}
+                (Some(bytes), Some(recorded)) if strings::eql(&bytes, recorded) => {}
+                _ => return None,
+            }
+        }
+        // Re-check under the lock: another thread may have re-interned this
+        // path while the files were being read.
+        let guard = TSCONFIG_INTERNER.lock();
+        let slot = guard.by_path.get(root_path)?;
+        (slot.chain == chain).then_some(slot.ptr)
+    }
+
+    /// Read `path` for the tsconfig reuse check. `None` on any error — the
+    /// caller falls through to the parse path, which owns error reporting.
+    fn read_file_for_tsconfig_reuse(&mut self, path: &[u8]) -> Option<Vec<u8>> {
+        let mut entry = self
+            .caches
+            .fs
+            .read_file_with_allocator(
+                // SAFETY: process-global `FileSystem` singleton (see `fs()` NOTE); narrow `&mut`
+                // for this call only — `self.caches` is a field of `self` (disjoint allocation).
+                unsafe { &mut *self.fs() },
+                path,
+                FD::INVALID,
+                false,
+                None,
+                None,
+            )
+            .ok()?;
+        let contents = core::mem::take(&mut entry.contents);
+        let _ = entry.close_fd();
+        Some(match contents {
+            crate::cache::Contents::Owned(v) => v,
+            crate::cache::Contents::Empty => Vec::new(),
+            other => other.as_slice().to_vec(),
+        })
+    }
+
+    /// On a successful read, also returns the raw file bytes (even when the
+    /// JSONC fails to parse) so `dir_info_uncached` can record the
+    /// extends-chain contents that `intern_tsconfig` dedupes on.
     pub(crate) fn parse_tsconfig(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
-    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
+    ) -> crate::CrateResult<(Option<Box<TSConfigJSON>>, Box<[u8]>)> {
+        TSCONFIG_PARSE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
@@ -3961,7 +4316,7 @@ impl<'a> Resolver<'a> {
             match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
             {
                 Some(r) => r,
-                None => return Ok(None),
+                None => return Ok((None, Box::from(&source.contents[..]))),
             };
 
         if result.has_base_url() {
@@ -3991,7 +4346,7 @@ impl<'a> Resolver<'a> {
         // NOTE: return the `Box` so the caller (`dir_info_uncached`) takes
         // ownership — intermediate configs in an extends-chain are dropped via
         // `heap::take`, the final one is interned into the DirInfo cache.
-        Ok(Some(result))
+        Ok((Some(result), Box::from(&source.contents[..])))
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
@@ -4010,37 +4365,63 @@ impl<'a> Resolver<'a> {
         package_id: Option<Install::PackageID>,
     ) -> crate::CrateResult<Option<core::ptr::NonNull<PackageJSON>>> {
         use crate::package_json::{IncludeDependencies, IncludeScripts};
+        let shape = PackageJsonParseShape {
+            allow_dependencies: ALLOW_DEPENDENCIES,
+            include_scripts: self.care_about_scripts,
+            has_auto_installer: self.package_manager.is_some(),
+            main_fields_hash: main_fields_hash(&self.opts.main_fields),
+        };
+        let Some((package_json_path, contents)) =
+            PackageJSON::read_for_parse(self, file, dirname_fd)
+        else {
+            return Ok(None);
+        };
+        match reuse_interned_package_json(package_json_path, shape, &contents, package_id) {
+            PackageJsonReuse::Hit(outcome) => return Ok(outcome),
+            PackageJsonReuse::Miss => {}
+        }
+
+        PACKAGE_JSON_PARSE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         // NOTE: `IncludeDependencies` is a
-        // const generic on `PackageJSON::parse`, `IncludeScripts` is runtime (it only
-        // gates one branch).
+        // const generic on `PackageJSON::parse_with_contents`, `IncludeScripts`
+        // is runtime (it only gates one branch).
         let include_scripts = if self.care_about_scripts {
             IncludeScripts::IncludeScripts
         } else {
             IncludeScripts::IgnoreScripts
         };
         let pkg = if ALLOW_DEPENDENCIES {
-            PackageJSON::parse::<{ IncludeDependencies::Local }>(
+            PackageJSON::parse_with_contents::<{ IncludeDependencies::Local }>(
                 self,
-                file,
-                dirname_fd,
+                package_json_path,
+                contents,
                 package_id,
                 include_scripts,
             )
         } else {
-            PackageJSON::parse::<{ IncludeDependencies::None }>(
+            PackageJSON::parse_with_contents::<{ IncludeDependencies::None }>(
                 self,
-                file,
-                dirname_fd,
+                package_json_path,
+                contents,
                 package_id,
                 include_scripts,
             )
         };
-        let Some(pkg) = pkg else { return Ok(None) };
+        let pkg = match pkg {
+            Ok(pkg) => pkg,
+            Err(contents) => {
+                // The file read fine but produced no `PackageJSON`; record the
+                // bytes so the next bust over an unchanged file skips the
+                // re-parse too.
+                intern_unparseable_package_json(package_json_path, shape, contents);
+                return Ok(None);
+            }
+        };
 
         // NOTE: the DirInfo cache holds `&'static` refs. PORTING.md
         // §Forbidden bars `Box::leak`; intern into the process-lifetime arena
         // owned alongside the DirInfo singleton instead.
-        Ok(Some(intern_package_json(pkg)))
+        Ok(Some(intern_package_json(pkg, shape)))
     }
 
     fn dir_info_cached(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
@@ -6364,151 +6745,187 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
-                let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
-                    tsconfigpath,
-                    if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                        fd
-                    } else {
-                        FD::ZERO
-                    },
-                ) {
-                    Ok(v) => v.map(bun_core::heap::into_raw),
-                    Err(err) => {
-                        let pretty = tsconfigpath;
-                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            let _ = self.log_mut().add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "Cannot find tsconfig file {}",
-                                    bun_core::fmt::quote(pretty)
-                                ),
-                            );
-                        } else if err != crate::Error::ParseErrorAlreadyLogged
-                            && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
-                        {
-                            let _ = self.log_mut().add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "Cannot read file {}: {}",
-                                    bun_core::fmt::quote(pretty),
-                                    bstr::BStr::new(err.name())
-                                ),
-                            );
+                // Reuse the interned outcome when the recorded extends chain
+                // is byte-identical on disk; see `PackageJSON::read_for_parse`
+                // for why skipping the parse matters.
+                if let Some(cached) = self.reuse_interned_tsconfig(tsconfigpath) {
+                    info.tsconfig_json = cached;
+                } else {
+                    // Every file the merge below reads, in walk order.
+                    let mut chain: Vec<TsconfigChainLink> = Vec::new();
+                    let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
+                        tsconfigpath,
+                        if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                            fd
+                        } else {
+                            FD::ZERO
+                        },
+                    ) {
+                        Ok((config, contents)) => {
+                            chain.push(TsconfigChainLink {
+                                path: Box::from(tsconfigpath),
+                                contents: Some(contents),
+                            });
+                            config.map(bun_core::heap::into_raw)
                         }
-                        None
-                    }
-                };
-                // NOTE: assigning info.tsconfig_json here and then freeing that
-                // allocation in the merge loop below before reassigning would
-                // leave a briefly-dangling reference
-                // (Option<&'static TSConfigJSON>, dir_info.rs) — UB.
-                // Defer the assignment to after the merge —
-                // it is always overwritten when parsed_tsconfig.is_some(), and DirInfo defaults
-                // tsconfig_json to None otherwise.
-                if let Some(tsconfig_json) = parsed_tsconfig {
-                    let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> =
-                        BoundedArray::default();
-                    parent_configs.append(tsconfig_json)?;
-                    // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
-                    // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
-                    // this extends-chain walk and freed via heap::take below. Hold as
-                    // `BackRef` (pointee outlives holder) so the loop body reads via safe
-                    // `Deref` instead of three open-coded raw-ptr derefs.
-                    let mut current = bun_ptr::BackRef::from(
-                        core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"),
-                    );
-                    while !current.extends.is_empty() {
-                        let ts_dir_name = Dirname::dirname(&current.abs_path);
-                        let abs_path = ResolvePath::join_abs_string_buf(
-                            ts_dir_name,
-                            bufs!(tsconfig_path_abs),
-                            &[ts_dir_name, &current.extends],
-                            bun_paths::Platform::AUTO,
+                        Err(err) => {
+                            let pretty = tsconfigpath;
+                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                                let _ = self.log_mut().add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "Cannot find tsconfig file {}",
+                                        bun_core::fmt::quote(pretty)
+                                    ),
+                                );
+                            } else if err != crate::Error::ParseErrorAlreadyLogged
+                                && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
+                            {
+                                let _ = self.log_mut().add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "Cannot read file {}: {}",
+                                        bun_core::fmt::quote(pretty),
+                                        bstr::BStr::new(err.name())
+                                    ),
+                                );
+                            }
+                            None
+                        }
+                    };
+                    // NOTE: assigning info.tsconfig_json here and then freeing that
+                    // allocation in the merge loop below before reassigning would
+                    // leave a briefly-dangling reference
+                    // (Option<&'static TSConfigJSON>, dir_info.rs) — UB.
+                    // Defer the assignment to after the merge —
+                    // it is always overwritten when parsed_tsconfig.is_some(), and DirInfo defaults
+                    // tsconfig_json to None otherwise.
+                    if let Some(tsconfig_json) = parsed_tsconfig {
+                        let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> =
+                            BoundedArray::default();
+                        parent_configs.append(tsconfig_json)?;
+                        // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
+                        // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
+                        // this extends-chain walk and freed via heap::take below. Hold as
+                        // `BackRef` (pointee outlives holder) so the loop body reads via safe
+                        // `Deref` instead of three open-coded raw-ptr derefs.
+                        let mut current = bun_ptr::BackRef::from(
+                            core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"),
                         );
-                        let parent_config_maybe: Option<*mut TSConfigJSON> =
-                            match self.parse_tsconfig(abs_path, FD::INVALID) {
-                                Ok(v) => v.map(bun_core::heap::into_raw),
-                                Err(err) => {
-                                    let _ = self.log_mut().add_debug_fmt(
-                                        None,
-                                        bun_ast::Loc::EMPTY,
-                                        format_args!(
-                                            "{} loading tsconfig.json extends {}",
-                                            bstr::BStr::new(err.name()),
-                                            bun_core::fmt::quote(abs_path)
-                                        ),
-                                    );
-                                    break;
-                                }
-                            };
-                        if let Some(parent_config) = parent_config_maybe {
-                            parent_configs.append(parent_config)?;
-                            current = bun_ptr::BackRef::from(
-                                core::ptr::NonNull::new(parent_config).expect("heap alloc"),
+                        while !current.extends.is_empty() {
+                            let ts_dir_name = Dirname::dirname(&current.abs_path);
+                            let abs_path = ResolvePath::join_abs_string_buf(
+                                ts_dir_name,
+                                bufs!(tsconfig_path_abs),
+                                &[ts_dir_name, &current.extends],
+                                bun_paths::Platform::AUTO,
                             );
-                        } else {
-                            break;
+                            let parent_config_maybe: Option<*mut TSConfigJSON> =
+                                match self.parse_tsconfig(abs_path, FD::INVALID) {
+                                    Ok((config, contents)) => {
+                                        chain.push(TsconfigChainLink {
+                                            path: Box::from(abs_path),
+                                            contents: Some(contents),
+                                        });
+                                        config.map(bun_core::heap::into_raw)
+                                    }
+                                    Err(err) => {
+                                        // `contents: None` so the reuse check
+                                        // re-merges once this parent appears.
+                                        chain.push(TsconfigChainLink {
+                                            path: Box::from(abs_path),
+                                            contents: None,
+                                        });
+                                        let _ = self.log_mut().add_debug_fmt(
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            format_args!(
+                                                "{} loading tsconfig.json extends {}",
+                                                bstr::BStr::new(err.name()),
+                                                bun_core::fmt::quote(abs_path)
+                                            ),
+                                        );
+                                        break;
+                                    }
+                                };
+                            if let Some(parent_config) = parent_config_maybe {
+                                parent_configs.append(parent_config)?;
+                                current = bun_ptr::BackRef::from(
+                                    core::ptr::NonNull::new(parent_config).expect("heap alloc"),
+                                );
+                            } else {
+                                break;
+                            }
                         }
+
+                        let merged_config = parent_configs.pop().unwrap();
+                        // starting from the base config (end of the list)
+                        // successively apply the inheritable attributes to the next config
+                        while let Some(parent_config_ptr) = parent_configs.pop() {
+                            // SAFETY: see loop-wide note above.
+                            let parent_config = unsafe { &mut *parent_config_ptr };
+                            // SAFETY: see loop-wide note above.
+                            let mc = unsafe { &mut *merged_config };
+                            mc.emit_decorator_metadata =
+                                mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
+                            if let Some(v) = parent_config.use_define_for_class_fields {
+                                mc.use_define_for_class_fields = Some(v);
+                            }
+                            if !parent_config.base_url.is_empty() {
+                                mc.base_url = core::mem::take(&mut parent_config.base_url);
+                            }
+                            mc.jsx = parent_config.merge_jsx(mc.jsx.clone());
+                            mc.jsx_flags.insert_all(parent_config.jsx_flags);
+
+                            if let Some(value) = parent_config.preserve_imports_not_used_as_values {
+                                mc.preserve_imports_not_used_as_values = Some(value);
+                            }
+
+                            // TypeScript replaces paths across extends (child overrides parent
+                            // entirely), so when a more-specific config defines paths, replace
+                            // rather than merge. base_url_for_paths is set whenever the paths
+                            // key is present in the JSON (even if empty), so it discriminates
+                            // "not defined" from "defined as {}" — the latter clears inherited
+                            // paths per TypeScript semantics.
+                            if !parent_config.base_url_for_paths.is_empty() {
+                                // The previous merged_config.paths is being replaced;
+                                // dropping the map frees the values automatically, so the
+                                // PathsMap from the deeper config doesn't leak.
+                                mc.paths = core::mem::take(&mut parent_config.paths);
+                                mc.base_url_for_paths =
+                                    core::mem::take(&mut parent_config.base_url_for_paths);
+                            } else {
+                                // paths were not moved to merged_config, so they're still owned
+                                // by parent_config. base_url_for_paths.len == 0 implies the map
+                                // is empty (it's only set when the `paths` key is present in the
+                                // JSON), so this is a no-op but documents the ownership.
+                                // (Drop handles parent_config.paths.)
+                            }
+                            // Every scalar/reference we need has been copied into merged_config
+                            // (strings live in dirname_store or default_allocator and outlive the
+                            // struct). The heap-allocated TSConfigJSON itself is no longer needed;
+                            // without this, every intermediate config in an extends chain leaks on
+                            // each dirInfoUncached() call, which is especially bad under HMR where
+                            // bustDirCache triggers a re-parse of the whole chain on every reload.
+                            // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
+                            TSConfigJSON::destroy(unsafe {
+                                bun_core::heap::take(parent_config_ptr)
+                            });
+                        }
+                        // Interned into the process-lifetime arena (deduped against
+                        // the previous merge for this path); outlives the resolver.
+                        info.tsconfig_json =
+                            intern_tsconfig(tsconfigpath, chain, Some(merged_config));
+                    } else if !chain.is_empty() {
+                        // The root read fine but produced no config; record
+                        // that outcome so the next bust over unchanged bytes
+                        // skips the re-parse. (An unreadable root leaves the
+                        // chain empty and keeps its per-recompute error
+                        // reporting.)
+                        info.tsconfig_json = intern_tsconfig(tsconfigpath, chain, None);
                     }
-
-                    let merged_config = parent_configs.pop().unwrap();
-                    // starting from the base config (end of the list)
-                    // successively apply the inheritable attributes to the next config
-                    while let Some(parent_config_ptr) = parent_configs.pop() {
-                        // SAFETY: see loop-wide note above.
-                        let parent_config = unsafe { &mut *parent_config_ptr };
-                        // SAFETY: see loop-wide note above.
-                        let mc = unsafe { &mut *merged_config };
-                        mc.emit_decorator_metadata =
-                            mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
-                        if let Some(v) = parent_config.use_define_for_class_fields {
-                            mc.use_define_for_class_fields = Some(v);
-                        }
-                        if !parent_config.base_url.is_empty() {
-                            mc.base_url = core::mem::take(&mut parent_config.base_url);
-                        }
-                        mc.jsx = parent_config.merge_jsx(mc.jsx.clone());
-                        mc.jsx_flags.insert_all(parent_config.jsx_flags);
-
-                        if let Some(value) = parent_config.preserve_imports_not_used_as_values {
-                            mc.preserve_imports_not_used_as_values = Some(value);
-                        }
-
-                        // TypeScript replaces paths across extends (child overrides parent
-                        // entirely), so when a more-specific config defines paths, replace
-                        // rather than merge. base_url_for_paths is set whenever the paths
-                        // key is present in the JSON (even if empty), so it discriminates
-                        // "not defined" from "defined as {}" — the latter clears inherited
-                        // paths per TypeScript semantics.
-                        if !parent_config.base_url_for_paths.is_empty() {
-                            // The previous merged_config.paths is being replaced;
-                            // dropping the map frees the values automatically, so the
-                            // PathsMap from the deeper config doesn't leak.
-                            mc.paths = core::mem::take(&mut parent_config.paths);
-                            mc.base_url_for_paths =
-                                core::mem::take(&mut parent_config.base_url_for_paths);
-                        } else {
-                            // paths were not moved to merged_config, so they're still owned
-                            // by parent_config. base_url_for_paths.len == 0 implies the map
-                            // is empty (it's only set when the `paths` key is present in the
-                            // JSON), so this is a no-op but documents the ownership.
-                            // (Drop handles parent_config.paths.)
-                        }
-                        // Every scalar/reference we need has been copied into merged_config
-                        // (strings live in dirname_store or default_allocator and outlive the
-                        // struct). The heap-allocated TSConfigJSON itself is no longer needed;
-                        // without this, every intermediate config in an extends chain leaks on
-                        // each dirInfoUncached() call, which is especially bad under HMR where
-                        // bustDirCache triggers a re-parse of the whole chain on every reload.
-                        // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
-                        TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
-                    }
-                    // `merged_config` is a leaked Box (heap::alloc) interned into DirInfo; outlives the resolver.
-                    info.tsconfig_json = Some(
-                        core::ptr::NonNull::new(merged_config).expect("heap::alloc is non-null"),
-                    );
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json();
             }

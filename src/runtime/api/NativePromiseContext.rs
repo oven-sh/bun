@@ -57,10 +57,14 @@ pub enum Tag {
     HTTPSServerH3RequestContext,
     DebugHTTPSServerH3RequestContext,
     HTMLRewriterSuspension,
+    /// Task-only tag (never a context cell): frees a `RewriterPipe` whose
+    /// last claim was released from a GC destructor; see
+    /// `RewriterPipe::release_pump_claim`.
+    HTMLRewriterPipeFree,
 }
 
 impl Tag {
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -72,6 +76,7 @@ impl Tag {
             4 => Tag::HTTPSServerH3RequestContext,
             5 => Tag::DebugHTTPSServerH3RequestContext,
             6 => Tag::HTMLRewriterSuspension,
+            7 => Tag::HTMLRewriterPipeFree,
             _ => unreachable!(),
         }
     }
@@ -184,7 +189,7 @@ impl Taskable for DeferredDerefTask {
 impl DeferredDerefTask {
     const TAG_MASK: usize = 0b111;
 
-    fn schedule(ctx: *mut c_void, tag: Tag) {
+    pub(crate) fn schedule(ctx: *mut c_void, tag: Tag) {
         // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
         // thread-local VM is alive for the duration of this call.
         let vm = VirtualMachine::get();
@@ -235,9 +240,10 @@ impl DeferredDerefTask {
                     let back = bun_ptr::BackRef::from(NonNull::new_unchecked(
                         ctx.cast::<html_rewriter::RewriterPipe>(),
                     ));
-                    if html_rewriter::RewriterPipe::abandon_suspension(back) {
-                        drop(Box::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()));
-                    }
+                    html_rewriter::RewriterPipe::abandon_suspension(back);
+                }
+                Tag::HTMLRewriterPipeFree => {
+                    bun_core::heap::destroy(ctx.cast::<html_rewriter::RewriterPipe>());
                 }
             }
         }

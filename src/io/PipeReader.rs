@@ -2027,7 +2027,18 @@ impl WindowsBufferedReader {
     pub fn close_impl<const CALL_DONE: bool>(&mut self) {
         if let Some(source) = self.source.take() {
             match source {
-                Source::SyncFile(file) | Source::File(file) => {
+                Source::SyncFile(mut file) | Source::File(mut file) => {
+                    // An in-flight read op's `iov` targets `_buffer`'s spare
+                    // capacity, and `uv_cancel` cannot stop an op already
+                    // running on the threadpool: move the allocation into the
+                    // File box so the op writes into live memory. It is freed
+                    // when the callback reclaims the box.
+                    if matches!(
+                        file.state,
+                        crate::source::FileState::Operating | crate::source::FileState::Canceling
+                    ) {
+                        file.orphaned_buffer = mem::take(&mut self._buffer);
+                    }
                     // Hand the Box off to libuv: detach() leaves either an
                     // in-flight uv_fs_read (on_file_read) or a scheduled
                     // uv_fs_close (on_close_complete) pending; the callback
@@ -2083,6 +2094,23 @@ impl WindowsBufferedReader {
         }
     }
 
+    /// If a threadpool file op is still in flight, transfer fd-close duty to
+    /// the File source: `complete()` honors `close_after_operation` once the
+    /// op's callback fires, and `on_close_complete` then reclaims the box.
+    /// Returns false when idle; the caller then still owns closing the fd.
+    pub fn close_fd_after_pending_op(&mut self) -> bool {
+        if let Some(Source::File(file) | Source::SyncFile(file)) = self.source.as_mut() {
+            if matches!(
+                file.state,
+                crate::source::FileState::Operating | crate::source::FileState::Canceling
+            ) {
+                file.close_after_operation = true;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Close the reader and call the done callback.
     /// If a file operation is in progress, defers the done callback until
     /// the operation completes to ensure proper cleanup ordering.
@@ -2111,24 +2139,25 @@ impl WindowsBufferedReader {
     /// before Drop; both paths are idempotent over an already-taken source.
     pub fn deinit(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        self._buffer = Vec::new();
-        let Some(source) = self.source.take() else {
-            return;
-        };
-        if !source.is_closed() {
-            // closeImpl will take care of freeing the source.
-            // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
-            // linked into the loop's handle queue → UAF. Restore the source so
-            // close_impl can do the proper take + hand-off to libuv
-            // (into_raw + uv_close).
-            self.source = Some(source);
-            self.close_impl::<false>();
-        } else {
-            // Already closing/closed: a uv close callback may still be pending
-            // on this allocation; dropping the Box would free memory libuv
-            // still owns, so leak it instead.
-            core::mem::forget(source);
+        if let Some(source) = self.source.take() {
+            if !source.is_closed() {
+                // closeImpl will take care of freeing the source.
+                // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
+                // linked into the loop's handle queue → UAF. Restore the source so
+                // close_impl can do the proper take + hand-off to libuv
+                // (into_raw + uv_close).
+                self.source = Some(source);
+                self.close_impl::<false>();
+            } else {
+                // Already closing/closed: a uv close callback may still be pending
+                // on this allocation; dropping the Box would free memory libuv
+                // still owns, so leak it instead.
+                core::mem::forget(source);
+            }
         }
+        // After close_impl, which moves the allocation into the File box when
+        // an in-flight read op is still writing into it.
+        self._buffer = Vec::new();
     }
 
     #[cfg(windows)]

@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -1161,6 +1161,186 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
     closeSync(writerFd);
   }
 });
+
+// Aborting a FIFO file response while the server's read is parked on its poll
+// (pipe drained, no EOF) used to leak the stream: the in-flight read ref was
+// only released by the reader callbacks, which never fire once nothing will
+// ever write to the pipe again, and the armed FilePoll kept the event loop
+// referenced. The process then never exited. The client receiving the first
+// body chunk proves the server has drained the pipe and parked the read; the
+// abort must tear the stream down and let the process exit on its own.
+test.concurrent.skipIf(isWindows)(
+  "process exits after a FIFO file response is aborted while its read is parked",
+  async () => {
+    using dir = tempDir("serve-fifo-abort-exit", {
+      "fixture.ts": `
+import { openSync, writeSync } from "node:fs";
+
+const fifoPath = process.argv[2];
+// r+ so open() never blocks and the server's reads EAGAIN (no EOF) after
+// draining what we wrote. Deliberately never closed before exit: an explicit
+// close would deliver an EOF that releases the parked read through the
+// reader-done path and mask a leaked abort teardown.
+const writerFd = openSync(fifoPath, "r+");
+writeSync(writerFd, "first-chunk");
+
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch() {
+    return new Response(Bun.file(fifoPath));
+  },
+});
+
+const controller = new AbortController();
+const res = await fetch("http://127.0.0.1:" + server.port + "/", { signal: controller.signal });
+const reader = res.body.getReader();
+// The server writes the chunk and then parks its read on the poll in the same
+// synchronous read loop, so once this resolves the park has happened.
+await reader.read();
+controller.abort();
+
+server.stop(true);
+console.log("aborted");
+`,
+    });
+
+    const fifoPath = join(String(dir), "body.fifo");
+    mkfifo(fifoPath);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", fifoPath],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("aborted");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Completing a FIFO file response also used to keep the process alive: the
+// stream cleared the reader's CLOSE_HANDLE flag (it owns the fd itself), and
+// the reader's own teardown skips the FilePoll in that mode, so the poll's
+// event-loop active ref leaked even after the response finished at EOF.
+// Linux-only: macOS kqueue does not reliably wake an armed FIFO read filter
+// when the last writer closes (see the workaround note in io/pipes.rs), so
+// the late EOF there arrives via idleTimeout instead of the poll.
+test.concurrent.skipIf(!isLinux)("process exits after a FIFO file response completes at EOF", async () => {
+  using dir = tempDir("serve-fifo-eof-exit", {
+    "fixture.ts": `
+import { openSync, writeSync, closeSync } from "node:fs";
+
+const fifoPath = process.argv[2];
+const writerFd = openSync(fifoPath, "r+");
+writeSync(writerFd, "fifo-body");
+
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch() {
+    return new Response(Bun.file(fifoPath));
+  },
+});
+
+const res = await fetch("http://127.0.0.1:" + server.port + "/");
+const reader = res.body.getReader();
+// First chunk proves the server opened the pipe and drained what we wrote;
+// closing the last writer afterwards delivers EOF to the server's reader.
+const first = await reader.read();
+const body = Buffer.from(first.value).toString();
+closeSync(writerFd);
+// Drain to the end. How the server terminates the response body on a late
+// empty EOF is a separate concern; this test only cares that the process
+// exits, so a client-side framing error just ends the drain.
+try {
+  for (;;) {
+    const { done } = await reader.read();
+    if (done) break;
+  }
+} catch {}
+
+server.stop(true);
+console.log(body);
+`,
+  });
+
+  const fifoPath = join(String(dir), "body.fifo");
+  mkfifo(fifoPath);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts", fifoPath],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("fifo-body");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// Same abort-while-parked scenario through the static-route entry point
+// (FileRoute), which starts the file stream with its own callback set; it had
+// the identical process-keepalive leak as the fetch-handler path.
+test.concurrent.skipIf(isWindows)(
+  "process exits after a static-route FIFO response is aborted while its read is parked",
+  async () => {
+    using dir = tempDir("serve-fifo-route-abort-exit", {
+      "fixture.ts": `
+import { openSync, writeSync } from "node:fs";
+
+const fifoPath = process.argv[2];
+// Held open (and never closed before exit) so the server's parked read never
+// sees an EOF that could tear the stream down through the reader-done path.
+const writerFd = openSync(fifoPath, "r+");
+writeSync(writerFd, "first-chunk");
+
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  routes: {
+    "/f": new Response(Bun.file(fifoPath)),
+  },
+});
+
+const controller = new AbortController();
+const res = await fetch("http://127.0.0.1:" + server.port + "/f", { signal: controller.signal });
+const reader = res.body.getReader();
+await reader.read();
+controller.abort();
+
+server.stop(true);
+console.log("aborted");
+`,
+    });
+
+    const fifoPath = join(String(dir), "body.fifo");
+    mkfifo(fifoPath);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", fifoPath],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("aborted");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared

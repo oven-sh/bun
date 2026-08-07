@@ -567,6 +567,10 @@ impl FileResponseStream {
             resp.close_if_done_and_marked();
         }
 
+        // On abort the read can still be parked on a poll that will never
+        // fire; no reader callback is coming to adopt the in-flight read ref.
+        drop(self.take_read_ref());
+
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry
         // point that can reach here holds its own ref, so the free lands on
         // that guard's drop, not here.
@@ -622,12 +626,23 @@ bun_io::impl_buffered_reader_parent! {
 impl Drop for FileResponseStream {
     fn drop(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "deinit");
-        // `self.reader` (BufferedReader) is torn down by its own `Drop` as a
-        // field — closes the poll handle. `bun.destroy(this)` is owned by
-        // `heap::take` in `deref`, not here.
+        // `start()` cleared CLOSE_HANDLE, so the reader's own `Drop` skips the
+        // handle; `auto_close` below owns the fd.
+        #[cfg(unix)]
+        self.reader
+            .with_mut(|reader| reader.handle.release_poll_keep_fd());
         if self.auto_close.get() {
+            // uv_cancel cannot stop a read already running on the threadpool,
+            // and Closer::close is an async uv_fs_close on that same pool:
+            // with an op in flight, the detached File closes the fd instead,
+            // after the op completes.
             #[cfg(windows)]
-            Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
+            if !self
+                .reader
+                .with_mut(|reader| reader.close_fd_after_pending_op())
+            {
+                Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
+            }
             #[cfg(not(windows))]
             Closer::close(self.fd.get(), ());
         }

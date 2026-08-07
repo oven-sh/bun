@@ -68,6 +68,10 @@ pub struct File {
 
     /// When true, file will close itself when the current operation completes.
     pub(crate) close_after_operation: bool,
+
+    /// A detached reader's `_buffer`, moved here when an in-flight read op's
+    /// `iov` still targets it; freed when the box is reclaimed after the op.
+    pub(crate) orphaned_buffer: Vec<u8>,
 }
 
 #[repr(u8)]
@@ -94,6 +98,7 @@ impl Default for File {
             file: 0,
             state: FileState::Deinitialized,
             close_after_operation: false,
+            orphaned_buffer: Vec::new(),
         }
     }
 }

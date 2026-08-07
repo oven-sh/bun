@@ -762,9 +762,9 @@ impl StatWatcher {
     pub(crate) fn close(&self) {
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
         if let Some(handles) = crate::jsc_hooks::active_handles() {
-            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::StatWatcher(
-                NonNull::from(self),
-            ));
+            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::StatWatcher(NonNull::from(
+                self,
+            )));
         }
         if self.persistent.get() {
             self.persistent.set(false);

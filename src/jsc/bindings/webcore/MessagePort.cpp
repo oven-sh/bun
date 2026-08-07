@@ -41,7 +41,6 @@
 
 extern "C" void Bun__Process__emitWarning(Zig::GlobalObject*, JSC::EncodedJSValue warning, JSC::EncodedJSValue type, JSC::EncodedJSValue code, JSC::EncodedJSValue ctor);
 
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePort);

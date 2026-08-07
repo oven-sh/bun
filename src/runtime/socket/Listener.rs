@@ -844,7 +844,9 @@ impl Listener {
         }
         let listener = this.listener.replace(ListenerType::None);
         if let Some(handles) = crate::jsc_hooks::active_handles() {
-            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this)));
+            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
+                this,
+            )));
         }
 
         if matches!(listener, ListenerType::Uws(_)) {
@@ -891,7 +893,9 @@ impl Listener {
         let listener = self.listener.replace(ListenerType::None);
         if !matches!(listener, ListenerType::None) {
             if let Some(handles) = crate::jsc_hooks::active_handles() {
-                handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(&*self)));
+                handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
+                    &*self,
+                )));
             }
         }
         match listener {

@@ -734,7 +734,10 @@ impl All {
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
             self.uv_timer.unref();
         }
-        debug_assert!(!self.uv_timer.is_closing(), "timer scheduled after teardown closed the heap's uv timer");
+        debug_assert!(
+            !self.uv_timer.is_closing(),
+            "timer scheduled after teardown closed the heap's uv timer"
+        );
 
         let reg_next = self.timers.peek().map(|timer| {
             // SAFETY: `peek` returns a live heap node.

@@ -81,5 +81,4 @@ impl KeepAlive {
     pub fn r#ref(&mut self, event_loop_ctx: EventLoopCtx) {
         self.ref_(event_loop_ctx)
     }
-
 }

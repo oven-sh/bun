@@ -1618,7 +1618,10 @@ impl WindowsBufferedReader {
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {
         debug_assert!(!self.source.as_ref().unwrap().is_closed());
         let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
-        self.source.as_mut().unwrap().set_owner(self_ptr, Self::stop_for_vm_teardown);
+        self.source
+            .as_mut()
+            .unwrap()
+            .set_owner(self_ptr, Self::stop_for_vm_teardown);
         self.buffer().clear();
         self.flags.remove(WindowsFlags::IS_DONE);
         // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts:

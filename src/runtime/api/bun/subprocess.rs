@@ -1552,7 +1552,9 @@ impl Subprocess<'_> {
         for item in me.stdio_pipes.get().iter() {
             if let StdioResult::Buffer(buffer) = item {
                 bun_sys::windows::libuv::open_handles::set_owner(
-                    core::ptr::from_ref::<bun_sys::windows::libuv::Pipe>(&**buffer).cast_mut().cast(),
+                    core::ptr::from_ref::<bun_sys::windows::libuv::Pipe>(&**buffer)
+                        .cast_mut()
+                        .cast(),
                     this.cast(),
                     Some(Self::stop_for_vm_teardown),
                 );

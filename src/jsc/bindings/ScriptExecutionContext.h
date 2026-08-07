@@ -39,7 +39,6 @@ class EventLoopTask;
 class ActiveDOMObject;
 class ContextDestructionObserver;
 
-
 using ScriptExecutionContextIdentifier = uint32_t;
 
 #if ENABLE(MALLOC_BREAKDOWN)
@@ -86,7 +85,8 @@ public:
     // Called once after an ActiveDOMObject is constructed: stops it if this context already stopped.
     void suspendActiveDOMObjectIfNeeded(ActiveDOMObject&);
 
-    enum class ShouldContinue : bool { No, Yes };
+    enum class ShouldContinue : bool { No,
+        Yes };
     void forEachActiveDOMObject(NOESCAPE const Function<ShouldContinue(ActiveDOMObject&)>&) const;
 
     // WorkerOrWorkletGlobalScope::prepareForDestruction(): the one point, while script may still

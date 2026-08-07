@@ -19,7 +19,7 @@
 //! before `close()` returned or observed `Closed` and touched nothing.
 
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use crate::event_loop::EventLoop;
@@ -97,7 +97,10 @@ impl Drop for Access<'_> {
 /// An off-thread job is using memory the VM owns (request buffers, a JS
 /// buffer's backing store) for as long as this is held; the VM's teardown
 /// waits for it before freeing anything. Obtain with [`VmHandle::borrow`].
-pub struct Borrow(#[allow(dead_code)] Access<'static>, #[allow(dead_code)] VmHandle);
+pub struct Borrow(
+    #[allow(dead_code)] Access<'static>,
+    #[allow(dead_code)] VmHandle,
+);
 
 impl VmHandle {
     /// JS thread, at VM creation.
@@ -148,7 +151,9 @@ impl VmHandle {
 
     /// Queue `task` on the VM's `kind` loop and wake it, or hand it back.
     pub fn post(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
-        let Some(_a) = self.enter() else { return Posted::Refused(task) };
+        let Some(_a) = self.enter() else {
+            return Posted::Refused(task);
+        };
         // SAFETY: inside the gate.
         let el = Self::loop_of(unsafe { self.vm() }, kind);
         el.concurrent_tasks.push(task);
@@ -226,7 +231,9 @@ impl VmHandle {
         self.assert_js_thread();
         let s = self.0.state.load(Ordering::SeqCst);
         if s < State::ScriptForbidden as u8 {
-            self.0.state.store(State::ScriptForbidden as u8, Ordering::SeqCst);
+            self.0
+                .state
+                .store(State::ScriptForbidden as u8, Ordering::SeqCst);
         }
     }
 
@@ -290,4 +297,3 @@ pub extern "C" fn Bun__VmHandle__refKeepAlive(handle: &VmHandle, delta: core::ff
         handle.unref_keep_alive(LoopKind::Regular);
     }
 }
-

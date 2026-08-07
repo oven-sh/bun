@@ -1249,7 +1249,6 @@ pub trait BaseWindowsPipeWriter: Sized {
         self.start_with_current_pipe()
     }
 
-
     fn start_sync(&mut self, fd: Fd, _pollable: bool) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
         let mut source = Source::SyncFile(Source::open_file(fd));

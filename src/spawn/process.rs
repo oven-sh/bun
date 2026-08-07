@@ -2075,14 +2075,15 @@ mod spawn_process_body {
         }
         // SAFETY: `process` is live; poller was just set to the spawned Uv handle.
         unsafe {
-            let Poller::Uv(ref mut uv_proc) = (*process).poller else { unreachable!() };
+            let Poller::Uv(ref mut uv_proc) = (*process).poller else {
+                unreachable!()
+            };
             uv::open_handles::set_owner(
                 core::ptr::from_mut(uv_proc).cast(),
                 process.cast(),
                 Some(stop_for_vm_teardown),
             );
         }
-
 
         // SAFETY: process is valid, poller is Uv
         unsafe {

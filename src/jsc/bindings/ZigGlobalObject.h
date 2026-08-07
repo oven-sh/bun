@@ -180,7 +180,6 @@ public:
 
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
-
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
     JSDOMStructureMap& structures(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {

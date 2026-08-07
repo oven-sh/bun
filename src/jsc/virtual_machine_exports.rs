@@ -100,7 +100,10 @@ unsafe extern "C" {
 /// Off-thread counterpart of [`vm_queue_task`], through the VM's handle: the
 /// task is queued, or — if the VM has been torn down — deleted here unrun.
 // HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
-pub fn vm_handle_queue_task_concurrently(handle: &crate::VmHandle, task: *mut crate::cpp_task::CppTask) {
+pub fn vm_handle_queue_task_concurrently(
+    handle: &crate::VmHandle,
+    task: *mut crate::cpp_task::CppTask,
+) {
     crate::mark_binding!();
     let ct = ConcurrentTask::create(Task::init(task));
     if let crate::vm_handle::Posted::Refused(ct) = handle.post(crate::LoopKind::Regular, ct) {

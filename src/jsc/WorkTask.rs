@@ -166,6 +166,11 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         let this = core::mem::ManuallyDrop::new(unsafe { bun_core::heap::take(this) });
         Context::release_off_thread(this.ctx);
         // SAFETY: reclaim the carrier's storage without running member Drops.
-        unsafe { std::alloc::dealloc((&**this as *const Self).cast_mut().cast(), std::alloc::Layout::new::<Self>()) };
+        unsafe {
+            std::alloc::dealloc(
+                (&**this as *const Self).cast_mut().cast(),
+                std::alloc::Layout::new::<Self>(),
+            )
+        };
     }
 }

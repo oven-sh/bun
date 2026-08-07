@@ -787,7 +787,10 @@ impl VirtualMachine {
     /// the loop that was current when their work started.
     #[inline]
     pub fn current_loop_kind(&self) -> crate::LoopKind {
-        if core::ptr::eq(self.event_loop, &raw const self.macro_event_loop as *mut EventLoop) {
+        if core::ptr::eq(
+            self.event_loop,
+            &raw const self.macro_event_loop as *mut EventLoop,
+        ) {
             crate::LoopKind::Macro
         } else {
             crate::LoopKind::Regular
@@ -2210,7 +2213,8 @@ impl VirtualMachine {
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
             addr_of_mut!((*vm).child_workers).write(Vec::new());
-            addr_of_mut!((*vm).handle).write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
+            addr_of_mut!((*vm).handle)
+                .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());

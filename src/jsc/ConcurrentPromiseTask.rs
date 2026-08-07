@@ -113,7 +113,9 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // `this` while a `&mut` to the field is live is sound because `from`
         // only stores the pointer (does not dereference it).
         let (task, posted) = unsafe {
-            let task = core::ptr::NonNull::from((*this).concurrent_task.from(this, AutoDeinit::ManualDeinit));
+            let task = core::ptr::NonNull::from(
+                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
+            );
             (task, (*this).vm.post((*this).loop_kind, task))
         };
         let _ = task;

@@ -1574,7 +1574,6 @@ fn cron_clear_all_reload(vm: &mut VirtualMachine) {
     CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(vm);
 }
 
-
 /// `RuntimeHooks::cancel_all_timers` — cancel every `TimeoutObject` /
 /// `ImmediateObject` still linked in the current thread's timer heap so the
 /// in-heap `+1` ref and the JS pin drop before the GC sweep / `~VM`.
@@ -1691,7 +1690,9 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) {
             ActiveHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
             ActiveHandle::Server(mut s) => s.stop(true),
             // Live until it unregisters in `do_stop`/`finalize`.
-            ActiveHandle::Listener(l) => crate::socket::Listener::stop_for_vm_teardown(unsafe { l.as_ref() }),
+            ActiveHandle::Listener(l) => {
+                crate::socket::Listener::stop_for_vm_teardown(unsafe { l.as_ref() })
+            }
         }
     }
 }

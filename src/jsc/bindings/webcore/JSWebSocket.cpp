@@ -440,7 +440,7 @@ void JSWebSocket::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-static_assert(std::is_base_of<ActiveDOMObject, WebSocket>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
+    static_assert(std::is_base_of<ActiveDOMObject, WebSocket>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
 }
 
 JSObject* JSWebSocket::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

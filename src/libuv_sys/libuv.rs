@@ -446,8 +446,16 @@ pub mod open_handles {
     fn add(handle: *mut uv_handle_t, kind: Kind) {
         OPEN.with(|o| {
             let mut o = o.borrow_mut();
-            debug_assert!(!o.iter().any(|e| e.handle == handle), "uv handle registered twice");
-            o.push(Entry { handle, kind, owner: ptr::null_mut(), close_via_owner: None });
+            debug_assert!(
+                !o.iter().any(|e| e.handle == handle),
+                "uv handle registered twice"
+            );
+            o.push(Entry {
+                handle,
+                kind,
+                owner: ptr::null_mut(),
+                close_via_owner: None,
+            });
         });
     }
 
@@ -494,8 +502,19 @@ pub mod open_handles {
     /// so take one entry at a time.
     pub fn stop_all_for_vm_teardown() {
         loop {
-            let Some(e) = OPEN.with(|o| o.borrow_mut().pop()) else { break };
-            log!("teardown: closing open {} handle @{:p} (owner {:p})", match e.kind { Kind::Pipe => "pipe", Kind::Tty => "tty", Kind::Process => "process" }, e.handle, e.owner);
+            let Some(e) = OPEN.with(|o| o.borrow_mut().pop()) else {
+                break;
+            };
+            log!(
+                "teardown: closing open {} handle @{:p} (owner {:p})",
+                match e.kind {
+                    Kind::Pipe => "pipe",
+                    Kind::Tty => "tty",
+                    Kind::Process => "process",
+                },
+                e.handle,
+                e.owner
+            );
             match (e.close_via_owner, e.kind) {
                 // SAFETY: the owner recorded itself for this live handle and clears
                 // or replaces the slot before it goes away (set_owner contract).
@@ -508,7 +527,13 @@ pub mod open_handles {
                         // SAFETY: heap tty (stdin's static tty is never listed).
                         drop(unsafe { Box::from_raw(t) });
                     }
-                    uv_close(e.handle, Some(mem::transmute::<unsafe extern "C" fn(*mut uv_tty_t), unsafe extern "C" fn(*mut uv_handle_t)>(free_tty)));
+                    uv_close(
+                        e.handle,
+                        Some(mem::transmute::<
+                            unsafe extern "C" fn(*mut uv_tty_t),
+                            unsafe extern "C" fn(*mut uv_handle_t),
+                        >(free_tty)),
+                    );
                 },
                 // A process handle is embedded in its owner and always adopted at
                 // spawn; an unowned one cannot be freed safely — close in place.
@@ -699,7 +724,11 @@ unsafe fn handle_type_name<'a>(handle: *mut uv_handle_t) -> &'a str {
     // SAFETY: fn contract; libuv returns a static C string or null.
     unsafe {
         let name = uv_handle_type_name(uv_handle_get_type(handle));
-        if name.is_null() { "?" } else { core::ffi::CStr::from_ptr(name).to_str().unwrap_or("?") }
+        if name.is_null() {
+            "?"
+        } else {
+            core::ffi::CStr::from_ptr(name).to_str().unwrap_or("?")
+        }
     }
 }
 

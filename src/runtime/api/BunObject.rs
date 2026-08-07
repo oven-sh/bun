@@ -1631,9 +1631,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
 
             if let Some(handles) = crate::jsc_hooks::active_handles() {
                 bun_core::handle_oom(handles.put(
-                    crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(
-                        server.cast_const(),
-                    )),
+                    crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(server.cast_const())),
                     (),
                 ));
             }

@@ -1,4 +1,3 @@
-
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
@@ -55,7 +54,11 @@ impl EventLoopTaskNoContext {
     pub(crate) fn vm_handle(&self) -> Option<&crate::VmHandle> {
         // SAFETY: C++ stores a `BunVmHandle*` from `Bun__VmHandle__create`
         // (or null); it lives as long as the task.
-        unsafe { Bun__EventLoopTaskNoContext__vmHandle(self).cast::<crate::VmHandle>().as_ref() }
+        unsafe {
+            Bun__EventLoopTaskNoContext__vmHandle(self)
+                .cast::<crate::VmHandle>()
+                .as_ref()
+        }
     }
 }
 
@@ -76,7 +79,9 @@ impl ConcurrentCppTask {
         // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref`
         // is the centralised non-null deref proof. Valid until `run` consumes it.
         // Clone before `run` consumes (and frees) the C++ task that owns the box.
-        let handle = EventLoopTaskNoContext::opaque_ref(cpp_task).vm_handle().cloned();
+        let handle = EventLoopTaskNoContext::opaque_ref(cpp_task)
+            .vm_handle()
+            .cloned();
         drop(self);
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.

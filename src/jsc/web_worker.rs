@@ -126,7 +126,11 @@ pub enum Status {
 // round-tripped from `create()`; it is only ever handed back to C++.
 unsafe extern "C" {
     safe fn WebWorker__workerGlobalScopeStarted(proxy: *mut c_void, global: &JSGlobalObject);
-    safe fn WebWorker__workerGlobalScopeDestroyed(proxy: *mut c_void, exit_code: i32, stopped_by_parent: bool);
+    safe fn WebWorker__workerGlobalScopeDestroyed(
+        proxy: *mut c_void,
+        exit_code: i32,
+        stopped_by_parent: bool,
+    );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
     safe fn WebWorker__dispatchError(
@@ -164,7 +168,9 @@ pub fn join_child_workers(parent: &mut VirtualMachine) {
 /// workerData, ...).
 #[unsafe(no_mangle)]
 extern "C" fn WebWorker__getMessagingProxy(vm: &VirtualMachine) -> *mut c_void {
-    vm.worker_ref().map(|w| w.proxy).unwrap_or(core::ptr::null_mut())
+    vm.worker_ref()
+        .map(|w| w.proxy)
+        .unwrap_or(core::ptr::null_mut())
 }
 
 impl WebWorker {
@@ -402,7 +408,10 @@ impl WebWorker {
         // SAFETY: that was the last ref; nobody else can reach `this`.
         let this = unsafe { bun_core::heap::take(this) };
         log!("[{}] destroy", this.execution_context_id);
-        debug_assert!(this.join_handle.with_mut(|h| h.is_none()), "worker thread was never joined");
+        debug_assert!(
+            this.join_handle.with_mut(|h| h.is_none()),
+            "worker thread was never joined"
+        );
         drop(this);
     }
 
@@ -948,7 +957,10 @@ impl WebWorker {
             vm.is_shutting_down = true;
             vm.on_exit();
             exit_code = i32::from(vm.exit_handler.exit_code);
-            log!("[{}] shutdown: exit handlers done", self.execution_context_id);
+            log!(
+                "[{}] shutdown: exit handlers done",
+                self.execution_context_id
+            );
 
             // ---- 3–5. Stop, forbid script, ~VM, loops, destroy ---------------
             // SAFETY: unpublished under `vm_lock`; this thread is the sole owner.
@@ -976,7 +988,10 @@ impl WebWorker {
                 );
             }
         }
-        log!("[{}] shutdown: VirtualMachine destroyed", self.execution_context_id);
+        log!(
+            "[{}] shutdown: VirtualMachine destroyed",
+            self.execution_context_id
+        );
         // Reclaim the cloned env (`heap::alloc`'d in `start_vm()`; see field doc).
         if !env_loader.is_null() {
             // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
@@ -988,7 +1003,10 @@ impl WebWorker {
         // http2 session on this thread allocated.
         Bun__freeSharedHeaderBufferForThreadExit();
         drop(arena.take());
-        log!("[{}] shutdown: thread state freed", self.execution_context_id);
+        log!(
+            "[{}] shutdown: thread state freed",
+            self.execution_context_id
+        );
 
         // ---- 6. Report to the parent ------------------------------------------
         // The parent joins this thread from that task, so it must be the last
@@ -996,8 +1014,8 @@ impl WebWorker {
         // its forced unwind would cross `extern "C"` frames and abort).
         // A worker stopped by its parent that never called process.exit() did
         // not choose `exit_code`; the proxy decides what that reads as per kind.
-        let stopped_by_parent =
-            self.terminated_by_parent.load(Ordering::Relaxed) && !self.exit_called.load(Ordering::Relaxed);
+        let stopped_by_parent = self.terminated_by_parent.load(Ordering::Relaxed)
+            && !self.exit_called.load(Ordering::Relaxed);
         WebWorker__workerGlobalScopeDestroyed(self.proxy, exit_code, stopped_by_parent);
     }
 
@@ -1140,7 +1158,12 @@ fn on_unhandled_rejection(
     // last-resort error handler and about to arm termination.
     let mut error_message = bun_core::OwnedString::new(BunString::clone_utf8(&array));
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
-        WebWorker__dispatchError(global_object, worker.proxy, &mut error_message, error_instance);
+        WebWorker__dispatchError(
+            global_object,
+            worker.proxy,
+            &mut error_message,
+            error_instance,
+        );
     })
     .is_err()
     {

@@ -1064,11 +1064,8 @@ impl<'a> PackageInstall<'a> {
             top_level_dir,
             &[self.node_modules.path.as_slice()],
         );
-        node_modules_dir.len() >= source.len()
-            && node_modules_dir[..source.len()] == *source
-            && (node_modules_dir.len() == source.len()
-                || source[source.len() - 1] == SEP
-                || node_modules_dir[source.len()] == SEP)
+        path::resolve_path::is_parent_or_equal(source, node_modules_dir)
+            != path::resolve_path::ParentEqual::Unrelated
     }
 
     // ───────────────────────────── install backends ─────────────────────────────

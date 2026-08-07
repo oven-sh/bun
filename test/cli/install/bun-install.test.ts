@@ -6,6 +6,7 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isMacOS,
   isWindows,
   joinP,
   readdirSorted,
@@ -9554,7 +9555,10 @@ it("reinstalls a file: dependency on an ancestor directory resolved to an absolu
     "index.js": "module.exports = 'poto';",
     "sample/package.json": "",
   });
-  const root = String(dir).replaceAll("\\", "/");
+  // On case-insensitive filesystems, containment must be detected even when
+  // the lockfile spells the ancestor path with different casing.
+  const realRoot = String(dir).replaceAll("\\", "/");
+  const root = isWindows || isMacOS ? realRoot.toUpperCase() : realRoot;
   const projectDir = join(String(dir), "sample");
   await write(
     join(projectDir, "package.json"),

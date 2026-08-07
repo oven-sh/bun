@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.Cookie expires validation", () => {
   describe("Date objects", () => {
@@ -74,6 +75,36 @@ describe("Bun.Cookie expires validation", () => {
       expect(() => {
         new Bun.Cookie("name", "value", { expires: { time: 123456 } });
       }).toThrow();
+    });
+
+    test("throws for objects whose inspect.custom throws", async () => {
+      // Bun__inspect renders the received value into the error message; a
+      // throwing inspect.custom must surface as a JS error, not a crash.
+      // Spawn a subprocess so a regression fails cleanly instead of aborting.
+      const src = `
+        const obj = {
+          [Symbol.for("nodejs.util.inspect.custom")]() {
+            throw new Error("boom from inspect.custom");
+          },
+        };
+        try {
+          new Bun.Cookie("name", "value", { expires: obj });
+          console.log("no-throw");
+        } catch (e) {
+          console.log("threw:" + e.message);
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+        stdout: "threw:boom from inspect.custom",
+        exitCode: 0,
+      });
     });
 
     test("invalid strings throw", () => {

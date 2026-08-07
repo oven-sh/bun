@@ -4254,7 +4254,10 @@ void GlobalObject::forbidExecution()
         scope.clearException();
     }
 
-    // WorkerOrWorkletScriptController::scheduleExecutionTermination(): no script past this point.
+    // WorkerOrWorkletScriptController::forbidExecution() + scheduleExecutionTermination(): no script
+    // past this point. executionForbidden is what the native→JS boundary (Bun__JSValue__call,
+    // JSEventListener via isJSExecutionForbidden) and JSC's microtask drain consult.
+    vm.setExecutionForbidden();
     vm.setHasTerminationRequest();
 }
 

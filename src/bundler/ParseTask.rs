@@ -2663,11 +2663,8 @@ pub mod parse_worker {
         ast.target = target;
         // Construction sites that bypass the resolver leave module_type Unknown; fall back to extension.
         let module_type_for_print = if task.module_type == options::ModuleType::Unknown {
-            match task.path.name().ext {
-                b".mjs" | b".mts" => options::ModuleType::Esm,
-                b".cjs" | b".cts" => options::ModuleType::Cjs,
-                _ => options::ModuleType::Unknown,
-            }
+            _resolver::module_type_from_ext(task.path.name().ext)
+                .unwrap_or(options::ModuleType::Unknown)
         } else {
             task.module_type
         };

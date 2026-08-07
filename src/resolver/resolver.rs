@@ -6635,8 +6635,11 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// The module format Node.js infers from a file extension alone
+/// (`.mjs`/`.mts` => ESM, `.cjs`/`.cts` => CJS), or `None` for every other
+/// extension.
 #[inline]
-fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
+pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
 }
 

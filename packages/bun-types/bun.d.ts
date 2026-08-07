@@ -555,6 +555,18 @@ declare module "bun" {
      * @default true
      */
     ambiguousIsNarrow?: boolean;
+
+    /**
+     * If `true`, measure every Unicode code point individually (East Asian
+     * Width plus emoji presentation, the algorithm Node.js uses for
+     * `console.table` and `util.inspect` alignment), so each member of an
+     * emoji ZWJ sequence is counted: `"👨‍👩‍👧‍👦"` measures 8. If `false`,
+     * emoji sequences and other grapheme clusters count once: `"👨‍👩‍👧‍👦"`
+     * measures 2.
+     *
+     * @default false
+     */
+    perCodePoint?: boolean;
   }
 
   /**
@@ -822,6 +834,144 @@ declare module "bun" {
   }
 
   /**
+   * XML related APIs
+   */
+  namespace XML {
+    /**
+     * An element in the node tree returned by {@link parse} with `{ compact: false }`
+     * and accepted by {@link stringify}.
+     */
+    interface Node {
+      /** The element name as written, including any namespace prefix (`"soap:Envelope"`). */
+      name: string;
+      /**
+       * Attribute values by name, in document order, after attribute-value
+       * normalization and with defaults declared in the internal DTD subset applied.
+       * Namespace declarations (`xmlns`, `xmlns:*`) appear as ordinary attributes.
+       */
+      attributes: Record<string, string>;
+      /**
+       * Child elements and character data in document order. Text is passed through
+       * exactly (whitespace-only runs between elements included); CDATA sections,
+       * character references and internal entities are already expanded into the
+       * surrounding text, while a reference to an entity that only an (unread) external
+       * DTD could declare is kept as written (`"&name;"`). Comments and processing
+       * instructions are not represented.
+       */
+      children: Array<Node | string>;
+    }
+
+    interface ParseOptions {
+      /**
+       * Selects the shape of the result.
+       *
+       * - `true` (default): a compact object — `{ [rootName]: value }`, where an
+       *   element with no attributes and no child elements becomes its text (trimmed
+       *   of surrounding whitespace, `""` when empty), and any other element becomes
+       *   an object with a `"@name"` key per attribute, one key per distinct child
+       *   element name (an array when that name repeats, in document order), and
+       *   `"#text"` for its trimmed character data if any. The relative order of
+       *   differently named siblings and of text between them is not kept.
+       * - `false`: the root element as a {@link Node} tree, which keeps everything
+       *   in document order.
+       *
+       * @default true
+       */
+      compact?: boolean | undefined;
+    }
+
+    /**
+     * Parse an XML 1.0 document.
+     *
+     * `Bun.XML` is a non-validating processor: the document (including its internal
+     * DTD subset) must be well-formed, internal entities are expanded, and attribute
+     * defaults declared in the internal subset are applied, but external DTDs and
+     * external entities are never loaded. Comments and processing instructions are
+     * skipped. All values are strings; nothing is coerced to numbers or booleans.
+     *
+     * A string is parsed as already-decoded text. Bytes (`Buffer`, `TypedArray`,
+     * `DataView`, `ArrayBuffer`, `Blob`) are decoded per the XML rules: a byte-order
+     * mark or the `encoding` declared in `<?xml ...?>` selects UTF-8, UTF-16, or
+     * ISO-8859-1.
+     *
+     * @category Utilities
+     *
+     * @param input The XML document
+     * @throws {SyntaxError} If the document is not well-formed (which, in a document
+     * without an external DTD, includes referencing an undeclared entity), uses an
+     * unsupported encoding, or exceeds the entity-expansion limits
+     *
+     * @example
+     * ```ts
+     * import { XML } from "bun";
+     *
+     * XML.parse(`<order id="A1"><item sku="x">Tea</item><item sku="y">Mug</item><paid/></order>`);
+     * // {
+     * //   order: {
+     * //     "@id": "A1",
+     * //     item: [ { "@sku": "x", "#text": "Tea" }, { "@sku": "y", "#text": "Mug" } ],
+     * //     paid: "",
+     * //   },
+     * // }
+     *
+     * XML.parse(`<p>Hello <b>world</b>!</p>`, { compact: false });
+     * // {
+     * //   name: "p",
+     * //   attributes: {},
+     * //   children: [ "Hello ", { name: "b", attributes: {}, children: ["world"] }, "!" ],
+     * // }
+     * ```
+     */
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options?: ParseOptions & { compact?: true },
+    ): Record<string, unknown>;
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options: ParseOptions & { compact: false },
+    ): Node;
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options?: ParseOptions,
+    ): Record<string, unknown> | Node;
+
+    /**
+     * Serialize a value to an XML document (without an XML declaration).
+     *
+     * Accepts either shape {@link parse} produces: a {@link Node} (anything with a
+     * string `name` and a `children` or `attributes` property), or a compact
+     * object with exactly one key naming the root element, using the same `"@name"` /
+     * `"#text"` / array conventions. Strings, numbers, booleans, bigints and `Date`s
+     * (as ISO strings) become text; `null` becomes an empty element; `undefined`,
+     * functions and symbols are skipped. The output is always well-formed: `& < >`
+     * (and, in attributes, quotes and whitespace other than space) are escaped, and
+     * names that are not XML names, characters XML cannot contain, and circular
+     * structures throw.
+     *
+     * @category Utilities
+     *
+     * @param value The {@link Node} or compact object to serialize
+     * @param replacer Not supported; pass `undefined` or `null`
+     * @param space Indentation for element-only content, as in `JSON.stringify`: a
+     * number of spaces (at most 10) or a string (its first 10 characters). Elements
+     * that contain text are always written inline so character data is unchanged.
+     * @returns The XML, or `undefined` if `value` is `undefined`, a function, or a symbol
+     *
+     * @example
+     * ```ts
+     * import { XML } from "bun";
+     *
+     * XML.stringify({ order: { "@id": "A1", item: ["Tea", "Mug"], paid: null } });
+     * // '<order id="A1"><item>Tea</item><item>Mug</item><paid/></order>'
+     *
+     * XML.stringify({ name: "p", attributes: { class: "x" }, children: ["Hi ", { name: "b", children: ["!"] }] }, null, 2);
+     * // '<p class="x">Hi <b>!</b></p>'
+     * ```
+     */
+    function stringify(value: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+  }
+
+  /**
    * JSONC related APIs
    */
   namespace JSONC {
@@ -835,6 +985,7 @@ declare module "bun" {
      *
      * @param input The JSONC string to parse
      * @returns A JavaScript value
+     * @throws {SyntaxError} If the input is not valid JSONC
      *
      * @example
      * ```js
@@ -949,12 +1100,13 @@ declare module "bun" {
    */
   namespace YAML {
     /**
-     * Parse a YAML string into a JavaScript value
+     * Parse a YAML string into a JavaScript value. Every alias (`*name`) of an anchored collection yields the
+     * same object, and an alias may refer to a collection that contains it, so the result can be cyclic.
      *
      * @category Utilities
      *
      * @param input The YAML string to parse
-     * @returns A JavaScript value
+     * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
      * ```ts
@@ -3078,6 +3230,14 @@ declare module "bun" {
     executablePath?: string;
     outfile?: string;
     /**
+     * Files or directories to embed into the executable under their original
+     * relative paths. At runtime they are reachable via `node:fs` and
+     * `Bun.file()` relative to `import.meta.dir`.
+     *
+     * Equivalent CLI flag: `--asset` (repeatable)
+     */
+    assets?: string[];
+    /**
      * Whether the standalone executable loads .env files when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
@@ -4551,6 +4711,16 @@ declare module "bun" {
      * @default true
      */
     shared?: boolean;
+    /**
+     * Byte offset into the file where the mapping starts.
+     * @default 0
+     */
+    offset?: number;
+    /**
+     * Maximum number of bytes to map. Clamped to the file size
+     * (minus `offset`). Defaults to mapping the rest of the file.
+     */
+    size?: number;
   }
   /**
    * Open a file as a live-updating `Uint8Array` without copying memory
@@ -5391,6 +5561,7 @@ declare module "bun" {
     | "jsonc"
     | "toml"
     | "yaml"
+    | "xml"
     | "file"
     | "napi"
     | "wasm"
@@ -6994,8 +7165,12 @@ declare module "bun" {
        * Use this to abort the subprocess when another part of the program is
        * aborted, such as a `fetch`.
        *
-       * If the signal is aborted, the process is killed with the signal
-       * specified by `killSignal` (defaults to SIGTERM).
+       * If the signal is already aborted when `spawn` is called, no process is
+       * created and an `AbortError` (with `cause` set to `signal.reason`) is
+       * thrown synchronously.
+       *
+       * If the signal is aborted after the process starts, the process is
+       * killed with the signal specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
        * ```ts
@@ -7597,6 +7772,17 @@ declare module "bun" {
   }
 
   /**
+   * Options for the in-process {@link Bun.cron} callback overload and {@link Bun.cron.parse}.
+   */
+  interface CronOptions {
+    /**
+     * IANA time-zone name to interpret the schedule in (e.g. `"UTC"`,
+     * `"America/New_York"`). Defaults to the system's local time zone.
+     */
+    tz?: string;
+  }
+
+  /**
    * Schedule cron jobs.
    *
    * Call with a callback to run an in-process job, or with a module path and
@@ -7637,8 +7823,7 @@ declare module "bun" {
      *
      * ### Cron expression syntax
      *
-     * Five fields: `minute hour day-of-month month day-of-week`. Schedules are
-     * interpreted in **UTC** — `0 9 * * *` fires at 9:00 UTC, regardless of `TZ`.
+     * Five fields: `minute hour day-of-month month day-of-week`.
      *
      * | Field | Values | Special chars |
      * |-------|--------|---------------|
@@ -7692,7 +7877,7 @@ declare module "bun" {
      * @see {@link CronJob} for the returned handle.
      * @see {@link Bun.cron.parse} to preview the next fire time.
      */
-    (schedule: CronWithAutocomplete, handler: (this: CronJob) => unknown): CronJob;
+    (schedule: CronWithAutocomplete, handler: (this: CronJob) => unknown, options?: CronOptions): CronJob;
     /**
      * Register an **OS-level** cron job that runs a JavaScript/TypeScript module on a schedule.
      *
@@ -7792,7 +7977,10 @@ declare module "bun" {
      */
     remove(title: string): Promise<void>;
     /**
-     * Parse a cron expression and return the next matching `Date` in UTC.
+     * Parse a cron expression and return the next matching `Date` in the
+     * system's local time zone — the same way crontab, launchd, and Windows
+     * Task Scheduler interpret schedules. Pass `{ tz: "UTC" }` (or any IANA
+     * time-zone name) to override.
      *
      * Supports the same syntax as {@link Bun.cron} — 5-field expressions, named
      * days/months, and predefined nicknames like `@daily`.
@@ -7801,15 +7989,23 @@ declare module "bun" {
      * matching uses OR logic per [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html):
      * a date matches if **either** field matches.
      *
+     * DST: spring-forward times shift forward by the gap; in the fall-back
+     * duplicated hour, fixed-time schedules fire once (first occurrence) while
+     * schedules with `*` minute or hour fire through both occurrences.
+     *
      * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
      * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.
-     * @returns The next `Date` matching the expression in UTC, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
-     * @throws If the expression is invalid or `relativeDate` is `NaN`/`Infinity`
+     * @param options - `{ tz?: string }` — IANA time-zone name to interpret the schedule in (defaults to the system's local zone).
+     * @returns The next `Date` matching the expression, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
+     * @throws If the expression is invalid, `relativeDate` is `NaN`/`Infinity`, or `options.tz` is not a valid IANA name
      *
      * @example
      * ```ts
-     * // Next weekday at 09:30 UTC
+     * // Next weekday at 09:30 local time
      * const next = Bun.cron.parse("30 9 * * MON-FRI");
+     *
+     * // 09:00 in New York, regardless of the server's TZ
+     * const ny = Bun.cron.parse("0 9 * * *", Date.now(), { tz: "America/New_York" });
      *
      * // Chain calls to get a sequence
      * const from = new Date();
@@ -7817,7 +8013,7 @@ declare module "bun" {
      * const second = first ? Bun.cron.parse("@hourly", first) : null;
      * ```
      */
-    parse(expression: CronWithAutocomplete, relativeDate?: Date | number): Date | null;
+    parse(expression: CronWithAutocomplete, relativeDate?: Date | number, options?: CronOptions): Date | null;
   };
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */

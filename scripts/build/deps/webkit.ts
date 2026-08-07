@@ -3,16 +3,10 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-// oven-sh/WebKit main: macOS + Windows artifacts cross-compiled on Linux,
-// -lto variants built with ThinLTO (per-module summaries for cross-language
-// importing), and the Windows ICU data table filtered + per-item zstd
-// compressed (lazily decompressed via bun_icu_decompress.cpp).
-// Preview build of oven-sh/WebKit#309 (JSModuleLoader: don't treat a
-// TerminationException from resolve() as a resolution failure), based on
-// 4895f45dfbd0 with #282/#306/#286 cherry-picked so the bump carries only the
-// termination fixes. Replace with the autobuild-<sha> tag once #286 and #309
-// are merged.
-export const WEBKIT_VERSION = "autobuild-preview-pr-309-5113fb40";
+// oven-sh/WebKit#391: JSModuleLoader::hostLoadImportedModule propagates a
+// TerminationException from resolve() instead of treating it as a module
+// resolution failure. One commit past the previous pin (ddea71318fec).
+export const WEBKIT_VERSION = "171babe26c3b330ac0263d1bed3550571908c838";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -61,17 +55,13 @@ import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSo
 
 /**
  * Tarball suffix encoding ABI-affecting flags. MUST match the WebKit
- * release workflow naming in oven-sh/WebKit's CI.
+ * release workflow naming in oven-sh/WebKit's CI. There is no -baseline
+ * variant: every x64 WebKit is built at the nehalem floor.
  */
 function prebuiltSuffix(cfg: Config): string {
   let s = "";
   if (cfg.linux && cfg.abi === "musl") s += "-musl";
   if (cfg.linux && cfg.abi === "android") s += "-android";
-  // Baseline WebKit artifacts (-march=nehalem, /arch:SSE2 ICU) exist for
-  // Linux amd64 (glibc + musl) and Windows amd64. No baseline variant for
-  // arm64 or macOS. Suffix order matches the release asset names:
-  // bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
-  if (cfg.baseline && cfg.x64) s += "-baseline";
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";
   if (cfg.asan) s += "-asan";
@@ -118,6 +108,11 @@ function prebuiltDestDir(cfg: Config): string {
 // ───────────────────────────────────────────────────────────────────────────
 // Lib paths — relative to destDir (prebuilt) or buildDir (local)
 // ───────────────────────────────────────────────────────────────────────────
+
+export function webkitTestFFIPath(cfg: Config): string {
+  const root = cfg.webkit === "prebuilt" ? prebuiltDestDir(cfg) : depBuildDir(cfg, "WebKit");
+  return resolve(root, "bin", cfg.windows ? "testFFI.exe" : "testFFI");
+}
 
 /** Build a lib path under the WebKit install's lib/ dir. */
 function wkLib(cfg: Config, name: string): string {
@@ -242,7 +237,7 @@ export const webkit: Dependency = {
     // forward:
     //   - CPU target (-march/-mcpu): WebKit never sets this — without it,
     //     local builds target generic x86-64 while bun + prebuilt WebKit
-    //     target haswell/nehalem.
+    //     target nehalem.
     //   - LTO/PGO: WebKit's cmake doesn't set those itself.
     //
     // Windows: ICU built from source via preBuild before cmake configure.

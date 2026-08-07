@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "JSCallbackArgs.h"
 #include "helpers.h"
 #include "ncrypto.h"
 
@@ -11,7 +12,7 @@ struct CheckPrimeJobCtx {
     ~CheckPrimeJobCtx();
 
     void runTask(JSC::JSGlobalObject* lexicalGlobalObject);
-    void runFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback);
+    JSCallbackArgs runFromJS(JSC::JSGlobalObject* lexicalGlobalObject);
     void deinit();
 
     int32_t m_checks;
@@ -35,7 +36,7 @@ struct GeneratePrimeJobCtx {
     ~GeneratePrimeJobCtx();
 
     void runTask(JSC::JSGlobalObject* lexicalGlobalObject);
-    void runFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback);
+    JSCallbackArgs runFromJS(JSC::JSGlobalObject* lexicalGlobalObject);
     void deinit();
 
     int32_t m_size;

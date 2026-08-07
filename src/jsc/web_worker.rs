@@ -167,15 +167,13 @@ pub struct WebWorker {
     // `JsCell` (not `Cell`) because `Arena` is non-`Copy`; worker-thread-only
     // so the single-owner-thread invariant `JsCell` documents is upheld.
     arena: JsCell<Option<bun_alloc::Arena>>,
-    /// Heap-owned cloned env (Map + Loader) for the worker VM. The worker
-    /// `Arena` (`bumpalo::Bump`) does not run `Drop` (so the inner
-    /// `HashTable` would leak), and `clone_with_allocator()` does not route
-    /// through the arena allocator anyway — own them as `Box`es
-    /// here instead. `start_vm()` `heap::alloc`s and stores the pointers;
-    /// `shutdown()` step 5 `heap::take`s after `vm.destroy()` (loader
-    /// first, then map — `Loader<'static>` borrows `*map`).
-    worker_env_map: Cell<*mut bun_dotenv::Map>,
-    worker_env_loader: Cell<*mut bun_dotenv::Loader<'static>>,
+    /// Heap-owned cloned env for the worker VM. The worker `Arena`
+    /// (`bumpalo::Bump`) does not run `Drop` (so the inner `HashTable` would
+    /// leak), and `clone_with_allocator()` does not route through the arena
+    /// allocator anyway — own it as a `Box` here instead. `start_vm()`
+    /// `heap::alloc`s and stores the pointer; `shutdown()` step 5
+    /// `heap::take`s after `vm.destroy()`.
+    worker_env_loader: Cell<*mut bun_dotenv::Loader>,
     /// Set by `exit()` so that `spin()`'s error paths don't clobber an explicit
     /// `process.exit(code)`. Atomic so `exit()` can take `&self` (the struct is
     /// observed concurrently by `terminate_all_and_wait` / parent-thread FFI;
@@ -399,14 +397,14 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut c_void {
+extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut c_void {
     vm.worker_ref()
         .map(|w| w.cpp_worker)
         .unwrap_or(core::ptr::null_mut())
 }
 
 impl WebWorker {
-    pub fn has_requested_terminate(&self) -> bool {
+    pub(crate) fn has_requested_terminate(&self) -> bool {
         self.requested_terminate.load(Ordering::Acquire)
     }
 
@@ -473,7 +471,7 @@ impl WebWorker {
     /// set and nothing to clean up (no keep-alive held, no allocation
     /// outstanding).
     #[unsafe(export_name = "WebWorker__create")]
-    pub unsafe extern "C" fn create(
+    pub(crate) unsafe extern "C" fn create(
         cpp_worker: *mut c_void,
         parent: *mut VirtualMachine,
         name_str: BunString,
@@ -496,17 +494,21 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
-        // SAFETY: `parent` is the calling thread's live VM (BACKREF).
-        let parent_ref = unsafe { &mut *parent };
-        let prev_log = parent_ref.transpiler.log;
         let mut temp_log = bun_ast::Log::default();
-        parent_ref.transpiler.set_log(&raw mut temp_log);
+        // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
+        // are scoped to each statement.
+        let prev_log = unsafe {
+            let prev = (*parent).transpiler.log;
+            (*parent).transpiler.set_log(&raw mut temp_log);
+            prev
+        };
         // RAII: log pointer restored and temp log dropped on every return path.
-        let mut restore = scopeguard::guard((parent_ref, temp_log), |(p, log)| {
-            p.transpiler.set_log(prev_log);
+        let mut restore = scopeguard::guard(temp_log, move |log| {
+            // SAFETY: `parent` outlives the guard (this call's frame).
+            unsafe { (*parent).transpiler.set_log(prev_log) };
             drop(log);
         });
-        let (parent_ref, temp_log) = &mut *restore;
+        let temp_log = &mut *restore;
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
@@ -522,15 +524,10 @@ impl WebWorker {
                 preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
                 continue;
             }
-            // SAFETY: `parent_ref` is the live VM on the calling (parent)
-            // thread — its `transpiler` is uniquely owned here.
+            // SAFETY: `parent` is the live VM on the calling (parent) thread;
+            // `resolve_entry_point_specifier` takes the raw pointer.
             if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(
-                    *parent_ref,
-                    utf8_slice.slice(),
-                    error_message,
-                    temp_log,
-                )
+                resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message, temp_log)
             } {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
@@ -541,7 +538,8 @@ impl WebWorker {
             }
         }
 
-        let store_fd = parent_ref.transpiler.resolver.store_fd;
+        // SAFETY: `parent` is live (see above); borrow ends at `;`.
+        let store_fd = unsafe { (*parent).transpiler.resolver.store_fd };
 
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             cpp_worker,
@@ -571,7 +569,6 @@ impl WebWorker {
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             status: Cell::new(Status::Start),
             arena: JsCell::new(None),
-            worker_env_map: Cell::new(core::ptr::null_mut()),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
         }));
@@ -586,7 +583,8 @@ impl WebWorker {
         // worker keeping the process alive. Exception: a nested worker (parent is
         // itself a worker, not joined on exit) must hold the parent-loop keepalive
         // regardless, because the child holds a non-owning `BackRef` to the parent VM.
-        if !default_unref || parent_ref.worker_ref().is_some() {
+        // SAFETY: `parent` is live (see above); borrow scoped to the call.
+        if !default_unref || unsafe { (*parent).worker_ref().is_some() } {
             // `worker` is a fresh heap allocation; not yet shared.
             // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop.
             worker_ref.with_parent_poll_ref(|p| p.ref_(bun_io::js_vm_ctx()));
@@ -636,7 +634,7 @@ impl WebWorker {
     /// allocator is mimalloc (thread-safe), so the caller's thread doesn't
     /// matter.
     #[unsafe(export_name = "WebWorker__destroy")]
-    pub unsafe extern "C" fn destroy(this: *mut WebWorker) {
+    pub(crate) unsafe extern "C" fn destroy(this: *mut WebWorker) {
         // SAFETY: this was heap-allocated in create(); C++ owns it and calls
         // destroy exactly once.
         let this = unsafe { bun_core::heap::take(this) };
@@ -658,7 +656,7 @@ impl WebWorker {
     /// dereferences this struct; materialising `&mut WebWorker` here would be
     /// aliased-&mut UB.
     #[unsafe(export_name = "WebWorker__setRef")]
-    pub extern "C" fn set_ref(this: *mut WebWorker, value: bool) {
+    pub(crate) extern "C" fn set_ref(this: *mut WebWorker, value: bool) {
         // `this` is a valid heap allocation owned by C++ `WebCore::Worker`
         // (alive while JSWorker holds its Ref) — `ParentRef` invariant holds.
         // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop, which
@@ -688,7 +686,7 @@ impl WebWorker {
     /// `vm_lock`, reading `vm`); materialising `&mut WebWorker` on the parent
     /// thread while the worker holds any reference is aliased-&mut UB.
     #[unsafe(export_name = "WebWorker__notifyNeedTermination")]
-    pub extern "C" fn notify_need_termination(this: *mut WebWorker) {
+    pub(crate) extern "C" fn notify_need_termination(this: *mut WebWorker) {
         // `this` is a valid heap allocation owned by C++ `WebCore::Worker`
         // (alive while JSWorker holds its Ref) — `ParentRef` invariant holds.
         // Only atomic / lock-guarded fields are touched cross-thread; never
@@ -724,7 +722,7 @@ impl WebWorker {
     /// (the worker thread has exited by the time this runs, so `&mut` would be
     /// sound here, but matching signatures avoids surprises).
     #[unsafe(export_name = "WebWorker__releaseParentPollRef")]
-    pub extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
+    pub(crate) extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
         // `this` is a valid heap allocation owned by C++ — `ParentRef` invariant
         // holds; parent-thread only.
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
@@ -735,12 +733,12 @@ impl WebWorker {
     /// (`parent_poll_ref` keeps the parent loop alive until the close task
     /// runs).
     #[inline]
-    pub fn parent_vm(&self) -> bun_ptr::BackRef<VirtualMachine> {
+    pub(crate) fn parent_vm(&self) -> bun_ptr::BackRef<VirtualMachine> {
         self.parent
     }
 
     #[inline]
-    pub fn execution_context_id(&self) -> u32 {
+    pub(crate) fn execution_context_id(&self) -> u32 {
         self.execution_context_id
     }
 
@@ -749,12 +747,12 @@ impl WebWorker {
     /// `Zig__GlobalObject__create` so the ZigGlobalObject is born with its
     /// WorkerGlobalScope wired.
     #[inline]
-    pub fn cpp_worker(&self) -> *mut c_void {
+    pub(crate) fn cpp_worker(&self) -> *mut c_void {
         self.cpp_worker
     }
 
     #[inline]
-    pub fn mini(&self) -> bool {
+    pub(crate) fn mini(&self) -> bool {
         self.mini
     }
 
@@ -872,8 +870,8 @@ impl WebWorker {
             // reads the slice and owns its own temporary allocations.
             let parsed = unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) };
             if let Some(allow_addons) = parsed {
-                // override the existing even if it was set
-                transform_options.allow_addons = Some(allow_addons);
+                let parent_allows = transform_options.allow_addons.unwrap_or(true);
+                transform_options.allow_addons = Some(parent_allows && allow_addons);
             }
         }
 
@@ -889,29 +887,23 @@ impl WebWorker {
         // state.
         let mut temp_proxy_slots = jsc::rare_data::ProxyEnvSlots::default();
 
-        // Box Map/Loader on the global heap and hand ownership to the VM via
+        // Box the Loader on the global heap and hand ownership to the VM via
         // `transpiler.env`; reclaimed in `vm.destroy()` in `shutdown()`.
-        let mut map = Box::new(bun_dotenv::Map::default());
-        {
+        let mut map = {
             let parent_slots = parent.proxy_env_storage.lock();
             temp_proxy_slots.clone_from(&parent_slots);
             // SAFETY: `parent.transpiler.env` is the parent-owned `DotEnv::Loader`
             // set in `Transpiler::init`; valid while `parent` lives. Read-only.
-            *map = parent.env_loader().map.clone_with_allocator()?;
-        }
+            parent.env_loader().map.clone_with_allocator()?
+        };
         // Ensure map entries point at the exact bytes we hold refs on.
         temp_proxy_slots.sync_into(&mut map);
 
-        // `Loader<'static>` borrows `map` for its lifetime. Both are `heap::alloc`'d
-        // and stashed on `self` so `shutdown()` step 5 reclaims them on every
-        // path — including the early-terminate checkpoint below, which calls
-        // `shutdown()` before the VM exists.
-        let map_ptr: *mut bun_dotenv::Map = bun_core::heap::into_raw(map);
-        // SAFETY: `map_ptr` heap-allocated above; `'static` is the lifetime
-        // erasure for the worker-VM-lifetime borrow.
-        let loader = Box::new(bun_dotenv::Loader::init(unsafe { &mut *map_ptr }));
-        let loader_ptr: *mut bun_dotenv::Loader<'static> = bun_core::heap::into_raw(loader);
-        self.worker_env_map.set(map_ptr);
+        // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
+        // it on every path — including the early-terminate checkpoint below,
+        // which calls `shutdown()` before the VM exists.
+        let loader_ptr: *mut bun_dotenv::Loader =
+            bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(map)));
         self.worker_env_loader.set(loader_ptr);
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
@@ -1120,10 +1112,14 @@ impl WebWorker {
         unsafe {
             let status = (*promise).status();
             if status == jsc::js_promise::Status::Rejected {
+                // Same rule as the main thread (run_command): a CJS worker
+                // entry's top-level throw is an uncaughtException; only an
+                // ESM entry rejection reports origin "unhandledRejection".
+                let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs;
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
-                    true,
+                    is_rejection,
                 );
                 if !handled {
                     // exit_code is already 1 from uncaught_exception; re-setting it here
@@ -1233,7 +1229,6 @@ impl WebWorker {
         // worker-thread only field; no other thread reads `arena`.
         let mut arena = self.arena.replace(None);
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
-        let env_map = self.worker_env_map.replace(core::ptr::null_mut());
 
         // ---- 1. Unpublish vm ------------------------------------------------
         self.vm_lock.lock();
@@ -1312,14 +1307,15 @@ impl WebWorker {
             // or observes m_isShuttingDown under m_lock and drops. Idempotent;
             // teardownJSCVM sets it again.
             Bun__JSCTaskScheduler__markShuttingDown(vm.global());
-            // Reclaim queued CppTasks (the per-worker stdio/messaging
-            // MessagePort drain tasks that can be in self.tasks mid-tick when
-            // terminate() lands, and any Worker dispatchExit close task from a
-            // sub-worker) while JSC is still live: ~Ref<Worker> walks
-            // ~JSEventListener Weak<> handles, and after teardownJSCVM the
-            // worker VM is dealloc'd-without-Drop so anything still in
-            // self.tasks leaks. Mirrors the global_exit() ordering.
+            // Reclaim queued CppTasks while JSC is still live (after teardownJSCVM the worker VM is
+            // dealloc'd-without-Drop so anything still in self.tasks leaks). Work-pool fs completions
+            // post without a shutdown check; wait for in-flight ones so the drain below sees every
+            // post.
+            vm.event_loop_mut().wait_for_concurrent_posters();
             vm.event_loop_mut().release_queued_tasks_for_shutdown();
+            if let Some(rare) = vm.rare_data.as_deref_mut() {
+                rare.release_js_handles();
+            }
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }
@@ -1393,18 +1389,12 @@ impl WebWorker {
                 );
             }
         }
-        // Reclaim the cloned env (loader borrows `*map` — drop loader first).
-        // Both were `heap::alloc`'d in `start_vm()` (see field doc).
+        // Reclaim the cloned env (`heap::alloc`'d in `start_vm()`; see field doc).
         if !env_loader.is_null() {
             // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
             // gone so its raw `transpiler.env` borrow is dead.
             drop(unsafe { bun_core::heap::take(env_loader) });
         }
-        if !env_map.is_null() {
-            // SAFETY: `heap::alloc`'d in `start_vm`; sole owner.
-            drop(unsafe { bun_core::heap::take(env_map) });
-        }
-        bun_core::delete_all_pools_for_thread_exit();
         // Same reason as the uWS loop below: this thread's C++ thread_local destructors are not
         // guaranteed to run before the process exits, so free the HPACK scratch buffer that any
         // http2 session on this thread allocated.

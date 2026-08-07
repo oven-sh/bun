@@ -286,8 +286,13 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
             flushPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
             return NextStep::Suspended;
         }
-        if (auto* wrotePromise = asPromise(wrote))
+        if (auto* wrotePromise = asPromise(wrote)) {
             markPromiseAsHandled(vm, wrotePromise);
+            if (wrotePromise->status() == JSPromise::Status::Pending) {
+                wrotePromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
+                return NextStep::Suspended;
+            }
+        }
     }
 
     if (op->m_iteratorDone) {

@@ -13,6 +13,18 @@ use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
 use bun_collections::HashMap;
 
+/// Pseudo-header presence bits shared by the per-field decode loop and the RFC 9113 §8.3.1
+/// request checks in `finish_header_block` (nghttp2's NGHTTP2_HTTP_FLAG__* equivalents).
+mod pseudo {
+    pub(super) const METHOD: u8 = 1;
+    pub(super) const SCHEME: u8 = 2;
+    pub(super) const AUTHORITY: u8 = 4;
+    pub(super) const PATH: u8 = 8;
+    pub(super) const STATUS: u8 = 16;
+    pub(super) const PROTOCOL: u8 = 32;
+    pub(super) const UNKNOWN: u8 = 64;
+}
+
 /// Snapshot of the local-settings values carried by one sent-but-unACKed SETTINGS frame, so an
 /// inbound ACK is attributed to the submission it actually acknowledges (RFC 9113 §6.5.3) rather
 /// than to the latest submission.
@@ -154,6 +166,10 @@ pub trait Sink {
     /// The peer exceeded the session's invalid-frame allowance (node's maxSessionInvalidFrames):
     /// the embedder should destroy the session with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
     fn on_too_many_invalid_frames(&self) {}
+    /// Frame-counter update (perf_hooks http2 session stats). Called whenever either
+    /// counter moves, while the connection is mutably borrowed — the embedder must only
+    /// store the values.
+    fn on_frame_counters(&self, _received: u64, _sent: u64) {}
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
     /// inbound frames for it are not treated as frames on an idle stream.
@@ -179,6 +195,10 @@ pub trait Sink {
 
 pub struct Connection {
     pub is_server: bool,
+    /// Wire frames fully accepted from the peer (perf_hooks http2 session stats).
+    pub frames_received: u64,
+    /// Wire frames this engine itself has written (the embedder counts its own).
+    pub frames_sent: u64,
 
     pub local_settings: Settings,
     pub remote_settings: Settings,
@@ -235,6 +255,11 @@ pub struct Connection {
     header_target: u32,
     /// 0 for a normal HEADERS block; the parent stream id when assembling a PUSH_PROMISE block.
     header_push_parent: u32,
+    /// The assembling block opens a new inbound stream (a request block on the server, a
+    /// PUSH_PROMISE request block on the client). False for a later HEADERS on the same stream
+    /// (a trailer section), which RFC 9113 §8.1 forbids from carrying pseudo-headers and which
+    /// must not be held to the request pseudo-header requirements of §8.3.1.
+    header_is_request: bool,
     /// HEADERS arrived on a closed/half-closed-remote stream: the block is still decoded so the
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
@@ -269,6 +294,8 @@ impl Connection {
             remote_settings: Settings::default(),
             local_settings_acked: false,
             max_header_list_pairs: 128,
+            frames_received: 0,
+            frames_sent: 0,
             max_invalid_frames: 1000,
             acked_local_initial_window: 65_535,
             enforced_max_header_list_size: local.max_header_list_size,
@@ -286,6 +313,7 @@ impl Connection {
             header_flags: 0,
             header_target: 0,
             header_push_parent: 0,
+            header_is_request: false,
             header_stream_closed: false,
             header_stream_refused: false,
             terminated: false,
@@ -309,6 +337,8 @@ impl Connection {
         stream_id: u32,
         payload: &[u8],
     ) {
+        self.frames_sent += 1;
+        sink.on_frame_counters(self.frames_received, self.frames_sent);
         let mut hdr_buf = [0u8; wire::FRAME_HEADER_SIZE];
         let hdr = FrameHeader {
             length: payload.len() as u32,
@@ -323,27 +353,8 @@ impl Connection {
         }
     }
 
-    /// §3.4 client preface (24-octet magic), sent before our first SETTINGS.
-    pub fn send_client_preface(&mut self, sink: &impl Sink) {
-        sink.write(wire::CONNECTION_PREFACE);
-    }
-
-    pub fn send_settings(&mut self, sink: &impl Sink) {
-        let mut buf = [0u8; Settings::STANDARD_COUNT * 6];
-        let n = self.local_settings.pack_standard(&mut buf);
-        self.pending_local_settings_acks
-            .push_back(PendingLocalSettings {
-                settings: self.local_settings,
-            });
-        self.write_frame(sink, FrameType::Settings, 0, 0, &buf[..n]);
-    }
-
     fn send_settings_ack(&mut self, sink: &impl Sink) {
         self.write_frame(sink, FrameType::Settings, wire::flags::ACK, 0, &[]);
-    }
-
-    pub fn send_ping(&mut self, sink: &impl Sink, payload: [u8; 8]) {
-        self.write_frame(sink, FrameType::Ping, 0, 0, &payload);
     }
 
     fn send_ping_ack(&mut self, sink: &impl Sink, payload: &[u8]) {
@@ -578,6 +589,12 @@ impl Connection {
 
     /// Dispatch one fully-buffered frame. Returns true if the connection is now fatally closing.
     fn dispatch(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+        // GOAWAY is excluded: it terminates the session, so node's statistics — which are
+        // read off a session that stopped processing at that frame — never include it.
+        if !matches!(hdr.typ(), Some(FrameType::GoAway)) {
+            self.frames_received += 1;
+            sink.on_frame_counters(self.frames_received, self.frames_sent);
+        }
         // RFC 9113 §4.3 / §6.10: once a HEADERS/PUSH_PROMISE without END_HEADERS is received, the
         // ONLY permitted frame is a CONTINUATION for that same stream until the block completes.
         // Checked before structural validation: a malformed non-CONTINUATION frame mid-block is a
@@ -986,6 +1003,10 @@ impl Connection {
         self.header_flags = hdr.flags;
         self.header_target = hdr.stream_id;
         self.header_push_parent = 0;
+        // Only a server receives request blocks via HEADERS; on a client every response block
+        // looks "new" (the engine only tracks inbound-created streams), so without this gate it
+        // would be misclassified as a request. PUSH_PROMISE sets the flag itself.
+        self.header_is_request = self.is_server && is_new;
         self.header_stream_closed = stream_closed;
         self.header_stream_refused = refused;
         if !end_headers {
@@ -1056,9 +1077,14 @@ impl Connection {
         let mut malformed = is_trailer && !self.header_end_stream;
         let mut seen_regular = false;
         let mut seen_pseudo: u8 = 0;
+        // Request-block state for the RFC 9113 §8.3.1 checks below (nghttp2's
+        // nghttp2_http_on_request_headers): only an initial HEADERS block (or a PUSH_PROMISE
+        // block) is a request; a later HEADERS on the same stream is a trailer section.
+        let is_request = self.header_is_request;
+        let mut saw_connect = false;
+        let mut saw_host = false;
         let mut informational = false;
         let mut content_length: Option<u64> = None;
-        let mut connect = false;
         while off < block.len() {
             match self.hpack.decode(&block[off..]) {
                 Ok(h) => {
@@ -1090,13 +1116,13 @@ impl Connection {
                             malformed = true;
                         } else if let Some(rest) = name_b.strip_prefix(b":") {
                             let bit: u8 = match rest {
-                                b"method" => 1,
-                                b"scheme" => 2,
-                                b"authority" => 4,
-                                b"path" => 8,
-                                b"status" => 16,
-                                b"protocol" => 32,
-                                _ => 64,
+                                b"method" => pseudo::METHOD,
+                                b"scheme" => pseudo::SCHEME,
+                                b"authority" => pseudo::AUTHORITY,
+                                b"path" => pseudo::PATH,
+                                b"status" => pseudo::STATUS,
+                                b"protocol" => pseudo::PROTOCOL,
+                                _ => pseudo::UNKNOWN,
                             };
                             // 8.3.1: requests never carry :status - a server seeing it inbound is
                             // a malformed block. (The client direction also constrains pseudo
@@ -1112,12 +1138,16 @@ impl Connection {
                             let protocol_disabled = self.is_server
                                 && rest == b"protocol"
                                 && self.local_settings.enable_connect_protocol == 0;
+                            // nghttp2 (check_pseudo_header) treats an empty pseudo-header value as
+                            // malformed, so `:path: ""` never counts as a present :path (§8.3.1:
+                            // `:path` "MUST NOT be empty" for http/https).
                             if seen_regular
-                                || bit == 64
+                                || bit == pseudo::UNKNOWN
                                 || (seen_pseudo & bit) != 0
                                 || wrong_direction
                                 || protocol_disabled
                                 || is_trailer
+                                || value_b.is_empty()
                             {
                                 malformed = true;
                             }
@@ -1126,13 +1156,14 @@ impl Connection {
                             }
                             seen_pseudo |= bit;
                             if rest == b"method" && value_b == b"CONNECT" {
-                                connect = true;
+                                saw_connect = true;
                             }
                         } else {
                             seen_regular = true;
                             match name_b {
                                 b"connection" | b"keep-alive" | b"proxy-connection"
                                 | b"transfer-encoding" | b"upgrade" => malformed = true,
+                                b"host" if is_request => saw_host = true,
                                 b"te" => {
                                     // RFC 9110 10.1.4: field values are case-insensitive.
                                     if !value_b.eq_ignore_ascii_case(b"trailers") {
@@ -1186,9 +1217,25 @@ impl Connection {
             sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
             return false;
         }
+        // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
+        // non-empty :method, :scheme and :path plus an :authority or Host; plain CONNECT omits
+        // :scheme/:path and carries :authority; extended CONNECT (:protocol, RFC 8441) requires
+        // :method CONNECT and :authority. Without this a block with an empty or missing :path
+        // reaches JS as a request with an empty url (no compliant peer can produce that shape).
+        if is_request && !rejected && !malformed {
+            use pseudo::{AUTHORITY, METHOD, PATH, PROTOCOL, SCHEME};
+            let extended_connect = (seen_pseudo & PROTOCOL) != 0;
+            malformed = if saw_connect && !extended_connect {
+                (seen_pseudo & (SCHEME | PATH)) != 0 || (seen_pseudo & AUTHORITY) == 0
+            } else {
+                (seen_pseudo & (METHOD | SCHEME | PATH)) != (METHOD | SCHEME | PATH)
+                    || ((seen_pseudo & AUTHORITY) == 0 && !saw_host)
+                    || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
+            };
+        }
         if push_parent == 0 && self.is_server && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {
-                if !connect && s.content_length.is_none() {
+                if !saw_connect && s.content_length.is_none() {
                     s.content_length = content_length;
                 }
                 if self.header_end_stream
@@ -1344,6 +1391,10 @@ impl Connection {
         };
         debug_assert!(inflight.payload_remaining > 0);
         self.data_in_flight = Some(inflight);
+        // An incrementally-streamed DATA frame never reaches dispatch(); count it here,
+        // once, when its header is accepted.
+        self.frames_received += 1;
+        sink.on_frame_counters(self.frames_received, self.frames_sent);
         StreamedDataStart::Consumed(wire::FRAME_HEADER_SIZE + consumed_payload)
     }
 
@@ -1654,6 +1705,7 @@ impl Connection {
         self.header_flags = 0;
         self.header_target = promised;
         self.header_push_parent = hdr.stream_id;
+        self.header_is_request = true;
         self.header_stream_closed = false;
         self.header_stream_refused = false;
         if !end_headers {
@@ -1855,14 +1907,6 @@ impl Connection {
         };
         if inc > 0 {
             self.send_window_update(sink, stream_id, inc);
-        }
-    }
-
-    /// Locally reset a stream (RST_STREAM) and mark it closed.
-    pub fn send_reset(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
-        self.send_rst_stream(sink, stream_id, code);
-        if let Some(s) = self.streams.get_mut(&stream_id) {
-            s.state = State::Closed;
         }
     }
 
@@ -2072,7 +2116,12 @@ mod tests {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
-        let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let block = encode_block(&[
+            (b":method", b"GET"),
+            (b":scheme", b"http"),
+            (b":path", b"/"),
+            (b":authority", b"localhost"),
+        ]);
         let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
         let f = frame(FrameType::Headers, flags, 1, &block);
         let fed = c.receive(&sink, &f);
@@ -2104,7 +2153,12 @@ mod tests {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
-        let block = encode_block(&[(b":method", b"POST"), (b":path", b"/")]);
+        let block = encode_block(&[
+            (b":method", b"POST"),
+            (b":scheme", b"http"),
+            (b":path", b"/"),
+            (b":authority", b"localhost"),
+        ]);
         // HEADERS without END_STREAM -> stream stays open for DATA.
         let h = frame(FrameType::Headers, wire::flags::END_HEADERS, 1, &block);
         c.receive(&sink, &h);
@@ -2144,7 +2198,9 @@ mod tests {
         let mut client = Connection::new(false, Settings::default());
         client.begin_header_block();
         assert!(client.encode_header(b":method", b"GET", false));
+        assert!(client.encode_header(b":scheme", b"http", false));
         assert!(client.encode_header(b":path", b"/x", false));
+        assert!(client.encode_header(b":authority", b"localhost", false));
         client.send_header_block(&csink, 1, true);
         let wire_bytes = csink.out.borrow().clone();
         assert_eq!(
@@ -2183,7 +2239,9 @@ mod tests {
         let mut server = Connection::new(true, Settings::default());
         server.begin_header_block();
         assert!(server.encode_header(b":method", b"GET", false));
+        assert!(server.encode_header(b":scheme", b"http", false));
         assert!(server.encode_header(b":path", b"/pushed", false));
+        assert!(server.encode_header(b":authority", b"localhost", false));
         server.send_push_promise(&ssink, 1, 2);
         let bytes = ssink.out.borrow().clone();
         assert_eq!(

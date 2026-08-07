@@ -422,6 +422,215 @@ describe("frame size limit (checklist §4.2)", () => {
   });
 });
 
+describe.concurrent("header block decoding errors (RFC 9113 §4.3)", () => {
+  // The stream is rejected before the 'stream' event ever fires, so no user code can have
+  // attached an 'error' listener to it. The error must stay at the connection level
+  // (GOAWAY COMPRESSION_ERROR) instead of being raised as an uncaught exception that kills
+  // the process. Run in a child so a regression shows up as the child dying, not this runner.
+  test("an undecodable HEADERS block does not kill the server process", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const net = require("node:net");
+      const server = http2.createServer((req, res) => res.end("ok"));
+      server.listen(0, "127.0.0.1", () => {
+        const port = server.address().port;
+        // Raw prior-knowledge h2c client: preface, empty SETTINGS, then a HEADERS frame
+        // (END_HEADERS | END_STREAM, stream 1) whose payload is not a valid HPACK block.
+        const raw = net.connect(port, "127.0.0.1", () => {
+          const preface = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
+          const settings = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
+          const block = Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff]);
+          const headers = Buffer.alloc(9);
+          headers.writeUIntBE(block.length, 0, 3);
+          headers[3] = 0x01;
+          headers[4] = 0x05;
+          headers.writeUInt32BE(1, 5);
+          raw.write(Buffer.concat([preface, settings, headers, block]));
+        });
+        let received = Buffer.alloc(0);
+        raw.on("data", d => (received = Buffer.concat([received, d])));
+        raw.on("error", () => {});
+        // The server answers with GOAWAY and closes the connection; only then prove the
+        // process is still alive and still serving by completing a real request.
+        raw.on("close", () => {
+          let goawayCode = -1;
+          for (let i = 0; i + 9 <= received.length; i += 9 + received.readUIntBE(i, 3)) {
+            if (received[i + 3] === 0x07) {
+              goawayCode = received.readUInt32BE(i + 9 + 4);
+              break;
+            }
+          }
+          console.log("goaway", goawayCode);
+          const client = http2.connect("http://127.0.0.1:" + port);
+          client.on("error", err => {
+            console.error(err);
+            process.exit(3);
+          });
+          const req = client.request({ ":path": "/" });
+          req.setEncoding("utf8");
+          let body = "";
+          req.on("data", c => (body += c));
+          req.on("error", err => {
+            console.error(err);
+            process.exit(4);
+          });
+          req.on("end", () => {
+            console.log("second request", body);
+            client.close();
+            server.close();
+          });
+          req.end();
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // COMPRESSION_ERROR (0x9) on the wire, and the process survived to serve the second request.
+    // stderr is in the diff for debugging but only asserted not to carry the uncaught stream
+    // error (debug/ASAN builds write benign warnings to it).
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "goaway 9\nsecond request ok\n",
+      stderr: expect.not.stringContaining("ERR_HTTP2"),
+      exitCode: 0,
+    });
+  }, 30_000);
+
+  // Same sink, reached by PROTOCOL_ERROR instead of COMPRESSION_ERROR: a HEADERS frame without
+  // END_HEADERS followed by anything other than a CONTINUATION on the same stream is a connection
+  // error (RFC 9113 §6.10). The stream was created for the HEADERS frame but never announced.
+  test("a non-CONTINUATION frame during header assembly does not kill the server process", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const net = require("node:net");
+      const server = http2.createServer((req, res) => res.end("ok"));
+      server.on("sessionError", () => {});
+      server.listen(0, "127.0.0.1", () => {
+        const port = server.address().port;
+        const raw = net.connect(port, "127.0.0.1", () => {
+          const preface = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
+          const settings = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
+          // HEADERS (stream 1, END_STREAM, NOT END_HEADERS) with a valid one-byte HPACK fragment,
+          // then a DATA frame on stream 3 where CONTINUATION(stream 1) was required.
+          const block = Buffer.from([0x82]);
+          const headers = Buffer.alloc(9);
+          headers.writeUIntBE(block.length, 0, 3);
+          headers[3] = 0x01;
+          headers[4] = 0x01;
+          headers.writeUInt32BE(1, 5);
+          const data = Buffer.alloc(9 + 1);
+          data.writeUIntBE(1, 0, 3);
+          data[3] = 0x00;
+          data[4] = 0x01;
+          data.writeUInt32BE(3, 5);
+          data[9] = 0x78;
+          raw.write(Buffer.concat([preface, settings, headers, block, data]));
+        });
+        let received = Buffer.alloc(0);
+        raw.on("data", d => (received = Buffer.concat([received, d])));
+        raw.on("error", () => {});
+        raw.on("close", () => {
+          let goawayCode = -1;
+          for (let i = 0; i + 9 <= received.length; i += 9 + received.readUIntBE(i, 3)) {
+            if (received[i + 3] === 0x07) {
+              goawayCode = received.readUInt32BE(i + 9 + 4);
+              break;
+            }
+          }
+          console.log("goaway", goawayCode);
+          const client = http2.connect("http://127.0.0.1:" + port);
+          client.on("error", err => {
+            console.error(err);
+            process.exit(3);
+          });
+          const req = client.request({ ":path": "/" });
+          req.setEncoding("utf8");
+          let body = "";
+          req.on("data", c => (body += c));
+          req.on("error", err => {
+            console.error(err);
+            process.exit(4);
+          });
+          req.on("end", () => {
+            console.log("second request", body);
+            client.close();
+            server.close();
+          });
+          req.end();
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // PROTOCOL_ERROR (0x1) on the wire, and the process survived to serve the second request.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "goaway 1\nsecond request ok\n",
+      stderr: expect.not.stringContaining("ERR_HTTP2"),
+      exitCode: 0,
+    });
+  }, 30_000);
+
+  // Same guard, second hand-off point: a pushStream() whose PUSH_PROMISE headers fail native
+  // validation destroys the not-yet-delivered pushed stream with the validation error. Only the
+  // pushStream callback reports it; emitting 'error' on that stream was an uncaught exception.
+  test("a pushStream() validation error is reported through the callback, not as an uncaught 'error'", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.pushStream({ ":path": "/p", "bad header": "x" }, err => {
+          console.log("pushStream callback", err ? err.code : null);
+          stream.respond({ ":status": 200 });
+          stream.end("main");
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", err => {
+          console.error(err);
+          process.exit(3);
+        });
+        client.on("stream", pushed => pushed.on("error", () => {}));
+        const req = client.request({ ":path": "/" });
+        req.setEncoding("utf8");
+        let body = "";
+        req.on("data", c => (body += c));
+        req.on("error", err => {
+          console.error(err);
+          process.exit(4);
+        });
+        req.on("end", () => {
+          console.log("response", body);
+          client.close();
+          server.close();
+        });
+        req.end();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "pushStream callback ERR_INVALID_HTTP_TOKEN\nresponse main\n",
+      stderr: expect.not.stringContaining("ERR_INVALID_HTTP_TOKEN"),
+      exitCode: 0,
+    });
+  }, 30_000);
+});
+
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`
 // client and asserts the client's wire behavior (push stream states, SETTINGS ack ordering).
 
@@ -799,6 +1008,248 @@ describe("request header and body framing (RFC 9113 §8.1)", () => {
   });
 });
 
+describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
+  // HPACK "literal never indexed, new name" (0x10) so the wire shape is exactly what is written
+  // and no client library normalizes it away.
+  function hpackBlock(pairs: [string, string][]): Buffer {
+    return Buffer.concat(pairs.flatMap(([n, v]) => [Buffer.from([0x10]), hpackLiteral(n), hpackLiteral(v)]));
+  }
+
+  async function probe(
+    headers: [string, string][],
+    opts?: http2.ServerOptions,
+  ): Promise<{ dispatched: boolean; frames: Frame[] }> {
+    const srv = http2.createServer(opts ?? {});
+    srv.on("sessionError", () => {});
+    let dispatched = false;
+    srv.on("stream", stream => {
+      dispatched = true;
+      stream.on("error", () => {});
+      try {
+        stream.respond({ ":status": 200 });
+        stream.end();
+      } catch {}
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const srvPort = (srv.address() as net.AddressInfo).port;
+    const c = await RawH2.connect(srvPort);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, hpackBlock(headers));
+      // PING as a barrier: by the time the ACK (or a GOAWAY/close) arrives, the server has
+      // fully processed the HEADERS above.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await Promise.race([
+        c.waitFor(f => (f.type === FrameType.PING && (f.flags & 1) !== 0) || f.type === FrameType.GOAWAY),
+        c.waitClosed(),
+      ]);
+      return { dispatched, frames: c.frames.slice() };
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  function expectStreamProtocolError({ dispatched, frames }: { dispatched: boolean; frames: Frame[] }) {
+    expect(dispatched).toBe(false);
+    const rst = frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+    expect(rst?.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+    expect(frames.find(f => f.type === FrameType.HEADERS && f.streamId === 1)).toBeUndefined();
+  }
+
+  test.each([
+    [
+      "empty :path",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", ""],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "empty :method",
+      [
+        [":method", ""],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "empty :scheme",
+      [
+        [":method", "GET"],
+        [":scheme", ""],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "empty :authority",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", ""],
+      ],
+    ],
+    [
+      "missing :path",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "missing :method",
+      [
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "missing :scheme",
+      [
+        [":method", "GET"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "no :authority or host",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", "/"],
+      ],
+    ],
+    [
+      "CONNECT with :path",
+      [
+        [":method", "CONNECT"],
+        [":authority", "localhost"],
+        [":path", "/"],
+      ],
+    ],
+    [
+      "CONNECT with :scheme",
+      [
+        [":method", "CONNECT"],
+        [":authority", "localhost"],
+        [":scheme", "http"],
+      ],
+    ],
+    ["CONNECT without :authority", [[":method", "CONNECT"]]],
+  ] as const)("a request with %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
+    expectStreamProtocolError(await probe(headers as [string, string][]));
+  });
+
+  test.each([
+    [
+      ":protocol on non-CONNECT",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+        [":protocol", "websocket"],
+      ],
+    ],
+    [
+      "extended CONNECT without :scheme",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "extended CONNECT without :path",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "extended CONNECT without :authority",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":path", "/"],
+      ],
+    ],
+    [
+      "extended CONNECT with empty :path",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":path", ""],
+        [":authority", "localhost"],
+      ],
+    ],
+  ] as const)("with enableConnectProtocol: %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
+    expectStreamProtocolError(
+      await probe(headers as [string, string][], { settings: { enableConnectProtocol: true } }),
+    );
+  });
+
+  test("a valid request block is dispatched", async () => {
+    const { dispatched, frames } = await probe([
+      [":method", "GET"],
+      [":scheme", "http"],
+      [":path", "/"],
+      [":authority", "localhost"],
+    ]);
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+
+  test("a request with a host header in place of :authority is dispatched", async () => {
+    const { dispatched, frames } = await probe([
+      [":method", "GET"],
+      [":scheme", "http"],
+      [":path", "/"],
+      ["host", "localhost"],
+    ]);
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+
+  test("a plain CONNECT with only :authority is dispatched", async () => {
+    const { dispatched, frames } = await probe([
+      [":method", "CONNECT"],
+      [":authority", "localhost"],
+    ]);
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+
+  test("an extended CONNECT (:protocol) with :scheme/:path/:authority is dispatched", async () => {
+    const { dispatched, frames } = await probe(
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+      { settings: { enableConnectProtocol: true } },
+    );
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+});
+
 describe("inbound stream lifecycle", () => {
   test("releases server stream objects once the peer resets their streams", async () => {
     const total = 32;
@@ -839,7 +1290,7 @@ describe("inbound stream lifecycle", () => {
       // needed a retry at 20 passes; collection is late there, not stuck).
       for (let i = 0; i < 50 && refs.some(ref => ref.deref() !== undefined); i++) {
         await new Promise(resolve => setImmediate(resolve));
-        await gcTick(true);
+        await gcTick();
       }
       expect(refs.filter(ref => ref.deref() !== undefined).length).toBe(0);
     } finally {

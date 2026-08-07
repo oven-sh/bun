@@ -16,26 +16,26 @@ pub struct Options {
     pub log_level: LogLevel,
     pub global: bool,
 
-    pub global_bin_dir: bun_sys::Fd,
-    pub explicit_global_directory: &'static [u8],
+    pub(crate) global_bin_dir: bun_sys::Fd,
+    pub(crate) explicit_global_directory: &'static [u8],
     /// destination directory to link bins into
     // must be a variable due to global installs and bunx
     pub bin_path: &'static ZStr,
 
-    pub did_override_default_scope: bool,
+    pub(crate) did_override_default_scope: bool,
     pub scope: Npm::registry::Scope,
 
-    pub registries: Npm::registry::Map,
-    pub cache_directory: &'static [u8],
+    pub(crate) registries: Npm::registry::Map,
+    pub(crate) cache_directory: &'static [u8],
     pub enable: Enable,
     pub do_: Do,
     pub positionals: &'static [&'static [u8]],
-    pub update: Update,
+    pub(crate) update: DependencyGroup,
     pub dry_run: bool,
-    pub link_workspace_packages: bool,
-    pub remote_package_features: Features,
-    pub local_package_features: Features,
-    pub patch_features: PatchFeatures,
+    pub(crate) link_workspace_packages: bool,
+    pub(crate) remote_package_features: Features,
+    pub(crate) local_package_features: Features,
+    pub(crate) patch_features: PatchFeatures,
 
     pub filter_patterns: &'static [&'static [u8]],
     pub pack_destination: &'static [u8],
@@ -43,20 +43,20 @@ pub struct Options {
     pub pack_gzip_level: Option<&'static [u8]>,
     pub json_output: bool,
 
-    pub max_retry_count: u16,
-    pub min_simultaneous_requests: usize,
+    pub(crate) max_retry_count: u16,
+    pub(crate) min_simultaneous_requests: usize,
 
     pub max_concurrent_lifecycle_scripts: usize,
 
     pub publish_config: PublishConfig,
 
-    pub ca: Box<[Box<[u8]>]>,
-    pub ca_file_name: &'static [u8],
+    pub(crate) ca: Box<[Box<[u8]>]>,
+    pub(crate) ca_file_name: &'static [u8],
 
     // if set to `false` in bunfig, save a binary lockfile
-    pub save_text_lockfile: Option<bool>,
+    pub(crate) save_text_lockfile: Option<bool>,
 
-    pub lockfile_only: bool,
+    pub(crate) lockfile_only: bool,
 
     // `bun pm version` command options
     pub git_tag_version: bool,
@@ -70,10 +70,14 @@ pub struct Options {
     pub depth: Option<usize>,
 
     /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
-    pub node_linker: NodeLinker,
+    pub(crate) node_linker: NodeLinker,
 
-    pub public_hoist_pattern: Option<Api::PnpmMatcher>,
-    pub hoist_pattern: Option<Api::PnpmMatcher>,
+    pub(crate) public_hoist_pattern: Option<Api::PnpmMatcher>,
+    pub(crate) hoist_pattern: Option<Api::PnpmMatcher>,
+
+    /// Isolated linker: `false` skips the `node_modules/.bun/node_modules`
+    /// fallback (pnpm's `hoist=false`); takes precedence over `hoist_pattern`.
+    pub(crate) hoist: bool,
 
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
@@ -85,11 +89,11 @@ pub struct Options {
     pub minimum_release_age_excludes: Option<&'static [&'static [u8]]>,
 
     /// Override CPU architecture for optional dependencies filtering
-    pub cpu: Npm::Architecture,
+    pub(crate) cpu: Npm::Architecture,
     /// Override OS for optional dependencies filtering
-    pub os: Npm::OperatingSystem,
+    pub(crate) os: Npm::OperatingSystem,
 
-    pub config_version: Option<ConfigVersion>,
+    pub(crate) config_version: Option<ConfigVersion>,
 }
 
 impl Default for Options {
@@ -108,7 +112,7 @@ impl Default for Options {
             enable: Enable::default(),
             do_: Do::default(),
             positionals: &[],
-            update: Update::default(),
+            update: DependencyGroup::default(),
             dry_run: false,
             link_workspace_packages: true,
             remote_package_features: Features {
@@ -147,6 +151,7 @@ impl Default for Options {
             node_linker: NodeLinker::Auto,
             public_hoist_pattern: None,
             hoist_pattern: None,
+            hoist: true,
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
@@ -207,7 +212,7 @@ pub enum AuthType {
 
 impl AuthType {
     // was `bun.ComptimeEnumMap(AuthType)`; ≤8 entries → plain match on &[u8].
-    pub fn from_str(str: &[u8]) -> Option<AuthType> {
+    pub(crate) fn from_str(str: &[u8]) -> Option<AuthType> {
         match str {
             b"legacy" => Some(AuthType::Legacy),
             b"web" => Some(AuthType::Web),
@@ -268,20 +273,26 @@ impl LogLevel {
         matches!(self, LogLevel::VerboseNoProgress | LogLevel::Verbose)
     }
     #[inline]
+    pub fn is_silent(self) -> bool {
+        matches!(self, LogLevel::Silent)
+    }
+    #[inline]
     pub fn show_progress(self) -> bool {
         matches!(self, LogLevel::Default | LogLevel::Verbose)
+    }
+    #[inline]
+    pub fn without_progress(self) -> Self {
+        match self {
+            LogLevel::Default => LogLevel::DefaultNoProgress,
+            LogLevel::Verbose => LogLevel::VerboseNoProgress,
+            other => other,
+        }
     }
 }
 
 pub use crate::config_version::ConfigVersion;
+pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
-
-#[derive(Default, Copy, Clone)]
-pub struct Update {
-    pub development: bool,
-    pub optional: bool,
-    pub peer: bool,
-}
 
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
@@ -385,7 +396,7 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
 }
 
 impl Options {
-    pub fn load(
+    pub(crate) fn load(
         &mut self,
         log: &mut bun_ast::Log,
         env: &mut DotEnvLoader,
@@ -454,6 +465,10 @@ impl Options {
 
             if let Some(global_store) = config.global_store {
                 self.enable.set(Enable::GLOBAL_VIRTUAL_STORE, global_store);
+            }
+
+            if let Some(hoist) = config.hoist {
+                self.hoist = hoist;
             }
 
             if let Some(security_scanner) = config.security_scanner.as_deref() {
@@ -576,43 +591,37 @@ impl Options {
         };
 
         // technically, npm_config is case in-sensitive
-        // load_registry:
         {
             const REGISTRY_KEYS: [&[u8]; 3] = [
                 b"BUN_CONFIG_REGISTRY",
                 b"NPM_CONFIG_REGISTRY",
                 b"npm_config_registry",
             ];
-            let mut did_set = false;
 
-            // was `inline for`; homogeneous elements → plain for.
             for registry_key in REGISTRY_KEYS {
-                if !did_set {
-                    if let Some(registry_) = env.get(registry_key) {
-                        if !registry_.is_empty()
-                            && (registry_.starts_with(b"https://")
-                                || registry_.starts_with(b"http://"))
+                if let Some(registry_) = env.get(registry_key) {
+                    if !registry_.is_empty()
+                        && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
+                    {
+                        let prev_scope = self.scope.clone();
+                        let prev_url = prev_scope.url.url();
+                        let new_url = bun_url::URL::parse(registry_);
+                        let token = if bun_core::without_trailing_slash(new_url.host)
+                            == bun_core::without_trailing_slash(prev_url.host)
+                            && (new_url.is_https() || !prev_url.is_https())
                         {
-                            let prev_scope = self.scope.clone();
-                            let prev_url = prev_scope.url.url();
-                            let new_url = bun_url::URL::parse(registry_);
-                            let token = if bun_core::without_trailing_slash(new_url.host)
-                                == bun_core::without_trailing_slash(prev_url.host)
-                                && (new_url.is_https() || !prev_url.is_https())
-                            {
-                                prev_scope.token
-                            } else {
-                                Box::default()
-                            };
-                            // Default (empty strings) is the zero value for Api::NpmRegistry.
-                            let api_registry = Api::NpmRegistry {
-                                url: registry_.into(),
-                                token,
-                                ..Default::default()
-                            };
-                            self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
-                            did_set = true;
-                        }
+                            prev_scope.token
+                        } else {
+                            Box::default()
+                        };
+                        // Default (empty strings) is the zero value for Api::NpmRegistry.
+                        let api_registry = Api::NpmRegistry {
+                            url: registry_.into(),
+                            token,
+                            ..Default::default()
+                        };
+                        self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                        break;
                     }
                 }
             }
@@ -624,18 +633,12 @@ impl Options {
                 b"NPM_CONFIG_TOKEN",
                 b"npm_config_token",
             ];
-            let mut did_set = false;
 
-            // was `inline for`; homogeneous elements → plain for.
-            for registry_key in TOKEN_KEYS {
-                if !did_set {
-                    if let Some(registry_) = env.get(registry_key) {
-                        if !registry_.is_empty() {
-                            self.scope.token = registry_.into();
-                            did_set = true;
-                            // stage1 bug: break inside inline is broken
-                            // break :load_registry;
-                        }
+            for token_key in TOKEN_KEYS {
+                if let Some(token) = env.get(token_key) {
+                    if !token.is_empty() {
+                        self.scope.token = token.into();
+                        break;
                     }
                 }
             }
@@ -681,7 +684,22 @@ impl Options {
                 .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
 
             if !cli.registry.is_empty() {
-                self.scope.url = bun_url::OwnedURL::from_href(cli.registry.into());
+                let new_url = bun_url::URL::parse(cli.registry);
+                let same_origin = {
+                    let prev_url = self.scope.url.url();
+                    bun_core::without_trailing_slash(new_url.host)
+                        == bun_core::without_trailing_slash(prev_url.host)
+                        && (new_url.is_https() || !prev_url.is_https())
+                };
+                if !same_origin {
+                    self.scope.token = Box::default();
+                    self.scope.auth = Box::default();
+                    self.scope.user = Box::default();
+                }
+                let href: Box<[u8]> = cli.registry.into();
+                self.scope.url_hash =
+                    Npm::registry::Scope::hash(bun_core::without_trailing_slash(&href));
+                self.scope.url = bun_url::OwnedURL::from_href(href);
             }
 
             if let Some(cache_dir) = cli.cache_dir {
@@ -708,7 +726,7 @@ impl Options {
                 self.do_.set(Do::SAVE_LOCKFILE, false);
             }
 
-            if cli.no_summary || cli.silent {
+            if cli.no_summary || cli.log_level.is_silent() {
                 self.do_.set(Do::SUMMARY, false);
             }
 
@@ -767,30 +785,13 @@ impl Options {
                 self.node_linker = node_linker;
             }
 
-            let disable_progress_bar = default_disable_progress_bar || cli.no_progress;
-
-            if cli.verbose {
-                self.log_level = if disable_progress_bar {
-                    LogLevel::VerboseNoProgress
-                } else {
-                    LogLevel::Verbose
-                };
-                // SAFETY: main-thread CLI option load — single writer.
-                super::PackageManager::set_verbose_install(true);
-            } else if cli.silent {
-                self.log_level = LogLevel::Silent;
-                super::PackageManager::set_verbose_install(false);
-            } else if cli.quiet {
-                self.log_level = LogLevel::Quiet;
-                super::PackageManager::set_verbose_install(false);
+            self.log_level = if default_disable_progress_bar || cli.no_progress {
+                cli.log_level.without_progress()
             } else {
-                self.log_level = if disable_progress_bar {
-                    LogLevel::DefaultNoProgress
-                } else {
-                    LogLevel::Default
-                };
-                super::PackageManager::set_verbose_install(false);
-            }
+                cli.log_level
+            };
+            // SAFETY: main-thread CLI option load — single writer.
+            super::PackageManager::set_verbose_install(cli.log_level.is_verbose());
 
             if cli.no_verify {
                 self.do_.set(Do::VERIFY_INTEGRITY, false);
@@ -834,13 +835,7 @@ impl Options {
                 self.enable.set(Enable::FORCE_SAVE_LOCKFILE, true);
             }
 
-            if cli.development {
-                self.update.development = cli.development;
-            } else if cli.optional {
-                self.update.optional = cli.optional;
-            } else if cli.peer {
-                self.update.peer = cli.peer;
-            }
+            self.update = cli.dependency_group;
 
             match &cli.patch {
                 command_line_arguments::PatchOpts::Nothing => {}
@@ -980,116 +975,44 @@ impl Default for Enable {
 // so getters return by value and setters take `&mut self`.
 impl Do {
     #[inline]
-    pub fn save_lockfile(self) -> bool {
+    pub(crate) fn save_lockfile(self) -> bool {
         self.contains(Do::SAVE_LOCKFILE)
     }
     #[inline]
-    pub fn set_save_lockfile(&mut self, v: bool) {
-        self.set(Do::SAVE_LOCKFILE, v);
-    }
-    #[inline]
-    pub fn load_lockfile(self) -> bool {
+    pub(crate) fn load_lockfile(self) -> bool {
         self.contains(Do::LOAD_LOCKFILE)
     }
     #[inline]
-    pub fn set_load_lockfile(&mut self, v: bool) {
-        self.set(Do::LOAD_LOCKFILE, v);
-    }
-    #[inline]
-    pub fn install_packages(self) -> bool {
+    pub(crate) fn install_packages(self) -> bool {
         self.contains(Do::INSTALL_PACKAGES)
-    }
-    #[inline]
-    pub fn set_install_packages(&mut self, v: bool) {
-        self.set(Do::INSTALL_PACKAGES, v);
-    }
-    #[inline]
-    pub fn write_package_json(self) -> bool {
-        self.contains(Do::WRITE_PACKAGE_JSON)
-    }
-    #[inline]
-    pub fn set_write_package_json(&mut self, v: bool) {
-        self.set(Do::WRITE_PACKAGE_JSON, v);
     }
     #[inline]
     pub fn run_scripts(self) -> bool {
         self.contains(Do::RUN_SCRIPTS)
     }
     #[inline]
-    pub fn set_run_scripts(&mut self, v: bool) {
-        self.set(Do::RUN_SCRIPTS, v);
-    }
-    #[inline]
-    pub fn save_yarn_lock(self) -> bool {
+    pub(crate) fn save_yarn_lock(self) -> bool {
         self.contains(Do::SAVE_YARN_LOCK)
     }
     #[inline]
-    pub fn set_save_yarn_lock(&mut self, v: bool) {
-        self.set(Do::SAVE_YARN_LOCK, v);
-    }
-    #[inline]
-    pub fn print_meta_hash_string(self) -> bool {
+    pub(crate) fn print_meta_hash_string(self) -> bool {
         self.contains(Do::PRINT_META_HASH_STRING)
     }
     #[inline]
-    pub fn set_print_meta_hash_string(&mut self, v: bool) {
-        self.set(Do::PRINT_META_HASH_STRING, v);
-    }
-    #[inline]
-    pub fn verify_integrity(self) -> bool {
-        self.contains(Do::VERIFY_INTEGRITY)
-    }
-    #[inline]
-    pub fn set_verify_integrity(&mut self, v: bool) {
-        self.set(Do::VERIFY_INTEGRITY, v);
-    }
-    #[inline]
-    pub fn summary(self) -> bool {
+    pub(crate) fn summary(self) -> bool {
         self.contains(Do::SUMMARY)
     }
     #[inline]
-    pub fn set_summary(&mut self, v: bool) {
-        self.set(Do::SUMMARY, v);
-    }
-    #[inline]
-    pub fn trust_dependencies_from_args(self) -> bool {
+    pub(crate) fn trust_dependencies_from_args(self) -> bool {
         self.contains(Do::TRUST_DEPENDENCIES_FROM_ARGS)
-    }
-    #[inline]
-    pub fn set_trust_dependencies_from_args(&mut self, v: bool) {
-        self.set(Do::TRUST_DEPENDENCIES_FROM_ARGS, v);
     }
     #[inline]
     pub fn update_to_latest(self) -> bool {
         self.contains(Do::UPDATE_TO_LATEST)
     }
     #[inline]
-    pub fn set_update_to_latest(&mut self, v: bool) {
-        self.set(Do::UPDATE_TO_LATEST, v);
-    }
-    #[inline]
-    pub fn analyze(self) -> bool {
-        self.contains(Do::ANALYZE)
-    }
-    #[inline]
-    pub fn set_analyze(&mut self, v: bool) {
-        self.set(Do::ANALYZE, v);
-    }
-    #[inline]
     pub fn recursive(self) -> bool {
         self.contains(Do::RECURSIVE)
-    }
-    #[inline]
-    pub fn set_recursive(&mut self, v: bool) {
-        self.set(Do::RECURSIVE, v);
-    }
-    #[inline]
-    pub fn prefetch_resolved_tarballs(self) -> bool {
-        self.contains(Do::PREFETCH_RESOLVED_TARBALLS)
-    }
-    #[inline]
-    pub fn set_prefetch_resolved_tarballs(&mut self, v: bool) {
-        self.set(Do::PREFETCH_RESOLVED_TARBALLS, v);
     }
 }
 
@@ -1098,35 +1021,31 @@ impl Do {
 // so getters return by value and setters take `&mut self`.
 impl Enable {
     #[inline]
-    pub fn cache(self) -> bool {
+    pub(crate) fn cache(self) -> bool {
         self.contains(Enable::CACHE)
     }
     #[inline]
-    pub fn set_cache(&mut self, v: bool) {
-        self.set(Enable::CACHE, v);
-    }
-    #[inline]
-    pub fn manifest_cache(self) -> bool {
+    pub(crate) fn manifest_cache(self) -> bool {
         self.contains(Enable::MANIFEST_CACHE)
     }
     #[inline]
-    pub fn set_manifest_cache(&mut self, v: bool) {
+    pub(crate) fn set_manifest_cache(&mut self, v: bool) {
         self.set(Enable::MANIFEST_CACHE, v);
     }
     #[inline]
-    pub fn manifest_cache_control(self) -> bool {
+    pub(crate) fn manifest_cache_control(self) -> bool {
         self.contains(Enable::MANIFEST_CACHE_CONTROL)
     }
     #[inline]
-    pub fn set_manifest_cache_control(&mut self, v: bool) {
+    pub(crate) fn set_manifest_cache_control(&mut self, v: bool) {
         self.set(Enable::MANIFEST_CACHE_CONTROL, v);
     }
     #[inline]
-    pub fn fail_early(self) -> bool {
+    pub(crate) fn fail_early(self) -> bool {
         self.contains(Enable::FAIL_EARLY)
     }
     #[inline]
-    pub fn frozen_lockfile(self) -> bool {
+    pub(crate) fn frozen_lockfile(self) -> bool {
         self.contains(Enable::FROZEN_LOCKFILE)
     }
     #[inline]
@@ -1134,19 +1053,19 @@ impl Enable {
         self.contains(Enable::FORCE_SAVE_LOCKFILE)
     }
     #[inline]
-    pub fn force_install(self) -> bool {
+    pub(crate) fn force_install(self) -> bool {
         self.contains(Enable::FORCE_INSTALL)
     }
     #[inline]
-    pub fn exact_versions(self) -> bool {
+    pub(crate) fn exact_versions(self) -> bool {
         self.contains(Enable::EXACT_VERSIONS)
     }
     #[inline]
-    pub fn only_missing(self) -> bool {
+    pub(crate) fn only_missing(self) -> bool {
         self.contains(Enable::ONLY_MISSING)
     }
     #[inline]
-    pub fn global_virtual_store(self) -> bool {
+    pub(crate) fn global_virtual_store(self) -> bool {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
     }
 }

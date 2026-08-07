@@ -5,7 +5,13 @@ import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
-import EventEmitter, { captureRejectionSymbol, getEventListeners, getMaxListeners, setMaxListeners } from "node:events";
+import EventEmitter, {
+  captureRejectionSymbol,
+  getEventListeners,
+  getMaxListeners,
+  listenerCount,
+  setMaxListeners,
+} from "node:events";
 
 describe("node:events", () => {
   test("captureRejectionSymbol", () => {
@@ -877,6 +883,85 @@ test("using addAbortListener", async () => {
   expect(mocked).not.toHaveBeenCalled();
 });
 
+describe("addAbortListener resists stopImmediatePropagation", () => {
+  test("runs after an earlier listener stopped propagation", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const order: string[] = [];
+
+    signal.addEventListener("abort", e => {
+      order.push("stopper");
+      e.stopImmediatePropagation();
+    });
+    EventEmitter.addAbortListener(signal, e => {
+      order.push(`cleanup:${(e as Event).target === signal}`);
+    });
+    signal.addEventListener("abort", () => order.push("plain-after"));
+
+    controller.abort();
+    expect(order).toEqual(["stopper", "cleanup:true"]);
+  });
+
+  test("runs when it was registered before the listener that stops propagation", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const order: string[] = [];
+
+    EventEmitter.addAbortListener(signal, () => order.push("cleanup"));
+    signal.addEventListener("abort", e => {
+      order.push("stopper");
+      e.stopImmediatePropagation();
+    });
+    signal.addEventListener("abort", () => order.push("plain-after"));
+
+    controller.abort();
+    expect(order).toEqual(["cleanup", "stopper"]);
+  });
+
+  test("is not run once disposed", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const mocked = mock();
+
+    signal.addEventListener("abort", e => e.stopImmediatePropagation());
+    {
+      using _ = EventEmitter.addAbortListener(signal, mocked);
+    }
+
+    controller.abort();
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  test("once(emitter, event, { signal }) still rejects on a suppressed signal", async () => {
+    const emitter = new EventEmitter();
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", e => e.stopImmediatePropagation());
+
+    const promise = EventEmitter.once(emitter, "never", { signal: controller.signal });
+    expect(emitter.listenerCount("never")).toBe(1);
+    controller.abort();
+
+    // once()'s abort listener detaches the emitter listener and rejects, both synchronously.
+    expect(emitter.listenerCount("never")).toBe(0);
+    expect(await promise.catch(err => err.code)).toBe("ABORT_ERR");
+  });
+
+  test("stopImmediatePropagation still suppresses ordinary listeners", () => {
+    const target = new EventTarget();
+    const order: string[] = [];
+
+    target.addEventListener("x", () => order.push("a"));
+    target.addEventListener("x", e => {
+      order.push("b");
+      e.stopImmediatePropagation();
+    });
+    target.addEventListener("x", () => order.push("c"));
+
+    target.dispatchEvent(new Event("x"));
+    expect(order).toEqual(["a", "b"]);
+  });
+});
+
 test("getMaxListeners", () => {
   const emitter = new EventEmitter();
   expect(emitter.getMaxListeners()).toBe(10);
@@ -908,6 +993,54 @@ test("getEventListeners", () => {
   expect(getEventListeners(target, "hey").length).toBe(1);
   target.dispatchEvent(new Event("hey"));
   expect(getEventListeners(target, "hey").length).toBe(0);
+});
+
+test("EventEmitter.prototype.listenerCount", () => {
+  const ee = new EventEmitter();
+  const a = () => {};
+  const b = () => {};
+
+  expect(ee.listenerCount("x")).toBe(0);
+  expect(ee.listenerCount("x", a)).toBe(0);
+
+  ee.on("x", a);
+  expect(ee.listenerCount("x")).toBe(1);
+  expect(ee.listenerCount("x", a)).toBe(1);
+  expect(ee.listenerCount("x", b)).toBe(0);
+
+  ee.on("x", b);
+  expect(ee.listenerCount("x")).toBe(2);
+  expect(ee.listenerCount("x", a)).toBe(1);
+  expect(ee.listenerCount("x", b)).toBe(1);
+
+  ee.once("y", a);
+  expect(ee.listenerCount("y")).toBe(1);
+  expect(ee.listenerCount("y", a)).toBe(1);
+
+  // null/undefined listener arg means "count all", same as omitting it
+  expect(ee.listenerCount("x", null as any)).toBe(2);
+  expect(ee.listenerCount("x", undefined)).toBe(2);
+});
+
+test("events.listenerCount validates emitter argument", () => {
+  const ee = new EventEmitter();
+  ee.on("y", () => {});
+  expect(listenerCount(ee, "y")).toBe(1);
+
+  const et = new EventTarget();
+  et.addEventListener("k", () => {});
+  et.addEventListener("k", () => {});
+  expect(listenerCount(et, "k")).toBe(2);
+
+  const np = Object.create(null);
+  EventEmitter.call(np);
+  EventEmitter.prototype.on.call(np, "y", () => {});
+
+  for (const bad of [{}, 42, np]) {
+    expect(() => listenerCount(bad as any, "y")).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  }
 });
 
 test("EventEmitter.name", () => {

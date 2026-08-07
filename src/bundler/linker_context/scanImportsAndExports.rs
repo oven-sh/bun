@@ -75,7 +75,7 @@ macro_rules! col_ref {
     };
 }
 
-pub fn scan_imports_and_exports(
+pub(crate) fn scan_imports_and_exports(
     this: &mut LinkerContext,
 ) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
@@ -265,29 +265,6 @@ pub fn scan_imports_and_exports(
             }
         }
 
-        if cfg!(feature = "debug_logs") {
-            let mut cjs_count: usize = 0;
-            let mut esm_count: usize = 0;
-            let mut wrap_cjs_count: usize = 0;
-            let mut wrap_esm_count: usize = 0;
-            for kind in col_ref!(exports_kind).iter() {
-                cjs_count += (*kind == ExportsKind::Cjs) as usize;
-                esm_count += (*kind == ExportsKind::Esm) as usize;
-            }
-            for flag in col_ref!(flags).iter() {
-                wrap_cjs_count += (flag.wrap == WrapKind::Cjs) as usize;
-                wrap_esm_count += (flag.wrap == WrapKind::Esm) as usize;
-            }
-            bun_core::scoped_log!(
-                LinkerCtx,
-                "Step 1: {} CommonJS modules (+ {} wrapped), {} ES modules (+ {} wrapped)",
-                cjs_count,
-                wrap_cjs_count,
-                esm_count,
-                wrap_esm_count,
-            );
-        }
-
         // Step 2: Propagate dynamic export status for export star statements that
         // are re-exports from a module whose exports are not statically analyzable.
         // In this case the export star must be evaluated at run time instead of at
@@ -308,6 +285,7 @@ pub fn scan_imports_and_exports(
                     export_star_map: HashMap::default(),
                     export_star_records: &*export_star_import_records,
                     output_format,
+                    wrap_stack: Vec::new(),
                 }
             };
             for source_index_ in &reachable {
@@ -1171,6 +1149,7 @@ struct DependencyWrapper<'a> {
     entry_point_kinds: &'a [EntryPoint::Kind],
     export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
+    wrap_stack: Vec<IndexInt>,
 }
 
 impl DependencyWrapper<'_> {
@@ -1213,35 +1192,40 @@ impl DependencyWrapper<'_> {
     }
 
     fn wrap(&mut self, source_index: IndexInt) {
-        let mut flag = self.flags[source_index as usize];
+        // Explicit worklist (was per-edge recursive). Only flag bits are
+        // written and never re-read to decide later iterations, so
+        // processing order is irrelevant.
+        debug_assert!(self.wrap_stack.is_empty());
+        self.wrap_stack.push(source_index);
 
-        if flag.did_wrap_dependencies {
-            return;
-        }
-        flag.did_wrap_dependencies = true;
+        while let Some(source_index) = self.wrap_stack.pop() {
+            let flag = &mut self.flags[source_index as usize];
 
-        // Never wrap the runtime file since it always comes first
-        if source_index == Index::RUNTIME.get() {
-            return;
-        }
-
-        // This module must be wrapped
-        if flag.wrap == WrapKind::None {
-            flag.wrap = match self.exports_kind[source_index as usize] {
-                ExportsKind::Cjs => WrapKind::Cjs,
-                _ => WrapKind::Esm,
-            };
-        }
-        self.flags[source_index as usize] = flag;
-
-        // `import_records` is a `&'a [_]` (Copy) field — copy it out so the
-        // recursive `&mut self` call does not overlap the iterator borrow.
-        let records = self.import_records;
-        for record in records[source_index as usize].as_slice() {
-            if !record.source_index.is_valid() {
+            if flag.did_wrap_dependencies {
                 continue;
             }
-            self.wrap(record.source_index.get());
+            flag.did_wrap_dependencies = true;
+
+            // Never wrap the runtime file since it always comes first
+            if source_index == Index::RUNTIME.get() {
+                continue;
+            }
+
+            // This module must be wrapped
+            if flag.wrap == WrapKind::None {
+                flag.wrap = match self.exports_kind[source_index as usize] {
+                    ExportsKind::Cjs => WrapKind::Cjs,
+                    _ => WrapKind::Esm,
+                };
+            }
+
+            for record in self.import_records[source_index as usize].as_slice() {
+                if record.source_index.is_valid()
+                    && !self.flags[record.source_index.get() as usize].did_wrap_dependencies
+                {
+                    self.wrap_stack.push(record.source_index.get());
+                }
+            }
         }
     }
 }

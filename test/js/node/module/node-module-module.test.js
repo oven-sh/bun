@@ -135,6 +135,36 @@ console.log("survived", require("./late.js"));`,
     },
   );
 
+  test("compile cache entries are keyed by sha256 and accepted on re-run", async () => {
+    using dir = tempDir("compile-cache-sha", {
+      "main.js": `console.log(require("./dep.js"));`,
+      "dep.js": "module.exports = 7;",
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    const env = { ...bunEnv, NODE_COMPILE_CACHE: cacheDir, NODE_DEBUG_NATIVE: "COMPILE_CACHE" };
+    {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], env, cwd: String(dir), stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe("7");
+      expect(exitCode).toBe(0);
+    }
+    // Entry names are the first 8 bytes of SHA256(type byte || path) in hex.
+    const files = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })];
+    expect(files.length).toBe(2);
+    for (const f of files) {
+      expect(path.basename(f)).toMatch(/^[0-9a-f]{16}$/);
+    }
+    {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], env, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("7");
+      // The second run accepts both entries from disk and rewrites nothing.
+      expect(stderr).toContain("was accepted");
+      expect(stderr).not.toContain("writing cache");
+      expect(exitCode).toBe(0);
+    }
+  });
+
   test("native module functions are not constructors", () => {
     // Constructing these used to crash instead of throwing.
     const compile = new Module("not-a-constructor-test")._compile;

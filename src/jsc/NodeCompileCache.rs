@@ -8,19 +8,20 @@ use bstr::ByteSlice;
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
 use bun_core::{Mutex, ZStr, env_var};
+use bun_boringssl::c as boring;
 use bun_options_types::Format;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_sys::{self as sys, Fd, O};
-use bun_wyhash::Wyhash;
 
 pub const STATUS_FAILED: i32 = 0;
 pub const STATUS_ENABLED: i32 = 1;
 pub const STATUS_ALREADY_ENABLED: i32 = 2;
 pub const STATUS_DISABLED: i32 = 3;
 
-const MAGIC: u32 = 0xb0bcace1;
-const HEADER_COUNT: usize = 5;
-const HEADER_SIZE: usize = HEADER_COUNT * 4;
+const MAGIC: u32 = 0xb0bcace2;
+const HASH_SIZE: usize = 32;
+/// `magic u32 | code_size u32 | cache_size u32 | code sha256 | blob sha256`.
+const HEADER_SIZE: usize = 3 * 4 + 2 * HASH_SIZE;
 
 // 0 = not initialized from env yet, 1 = off, 2 = on.
 static ENABLED: AtomicU8 = AtomicU8::new(0);
@@ -36,7 +37,7 @@ struct CacheState {
     /// Portable mode: keys use paths relative to `dir`, so the cache
     /// survives moving the tree (NODE_COMPILE_CACHE_PORTABLE / {portable}).
     portable: bool,
-    entries: HashMap<u32, Entry, IdentityContext<u32>>,
+    entries: HashMap<u64, Entry, IdentityContext<u64>>,
 }
 
 // SAFETY: `CacheState` is only reached through the global `STATE` mutex; the
@@ -47,7 +48,7 @@ struct Entry {
     /// `path.text` of the module (absolute file path).
     filename: Box<[u8]>,
     is_cjs: bool,
-    code_hash: u32,
+    code_hash: [u8; HASH_SIZE],
     code_size: u32,
     /// Post-transpile text; `None` when the module never transpiled
     /// successfully (parse error) — mirrors Node's "not initialized" state.
@@ -58,12 +59,27 @@ struct Entry {
     persisted: bool,
 }
 
-/// 128-byte-aligned heap buffer. JSC's bytecode decoder reads the blob in
-/// place and requires the same alignment the standalone graph provides (see
-/// StandaloneModuleGraph.rs "Bytecode alignment" note).
+/// 128-byte-aligned blob. JSC's bytecode decoder reads the blob in place and
+/// requires the same alignment the standalone graph provides (see
+/// StandaloneModuleGraph.rs "Bytecode alignment" note). Either a heap buffer
+/// or a span inside a whole-file mapping.
 struct AlignedBlob {
     ptr: core::ptr::NonNull<u8>,
     len: usize,
+    backing: Backing,
+}
+
+enum Backing {
+    Heap,
+    /// `PROT_READ`/`MAP_PRIVATE` mapping of the whole cache file; `ptr` points
+    /// at [`blob_file_offset`] inside it, 128-aligned because the mapping base
+    /// is page-aligned. Safe against entry rewrites: writers go through
+    /// tmpfile + rename, so a replaced file's old inode stays live under the
+    /// mapping.
+    Map {
+        base: core::ptr::NonNull<u8>,
+        map_len: usize,
+    },
 }
 
 // SAFETY: the buffer is plain bytes; ownership is unique to the entry map.
@@ -83,26 +99,32 @@ impl AlignedBlob {
         // SAFETY: layout has non-zero size.
         let raw = unsafe { std::alloc::alloc(layout) };
         let ptr = core::ptr::NonNull::new(raw)?;
-        Some(Self { ptr, len })
+        Some(Self {
+            ptr,
+            len,
+            backing: Backing::Heap,
+        })
     }
 
     fn as_mut_slice(&mut self) -> &mut [u8] {
         // SAFETY: `ptr` is valid for `len` bytes for the lifetime of `self`.
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
-
-    fn as_slice(&self) -> &[u8] {
-        // SAFETY: `ptr` is valid for `len` bytes for the lifetime of `self`.
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
-    }
 }
 
 impl Drop for AlignedBlob {
     fn drop(&mut self) {
-        let layout =
-            core::alloc::Layout::from_size_align(self.len.max(1), BLOB_ALIGN).expect("valid");
-        // SAFETY: allocated in `new_uninit` with the identical layout.
-        unsafe { std::alloc::dealloc(self.ptr.as_ptr(), layout) };
+        match self.backing {
+            Backing::Heap => {
+                let layout = core::alloc::Layout::from_size_align(self.len.max(1), BLOB_ALIGN)
+                    .expect("valid");
+                // SAFETY: allocated in `new_uninit` with the identical layout.
+                unsafe { std::alloc::dealloc(self.ptr.as_ptr(), layout) };
+            }
+            Backing::Map { base, map_len } => {
+                let _ = sys::munmap(base.as_ptr(), map_len);
+            }
+        }
     }
 }
 
@@ -172,19 +194,39 @@ fn type_name(is_cjs: bool) -> &'static str {
 // Hashing / keys / version tag
 // ──────────────────────────────────────────────────────────────────────────
 
-fn hash32(bytes: &[u8]) -> u32 {
-    Wyhash::hash(0, bytes) as u32
+fn sha256(bytes: &[u8]) -> [u8; HASH_SIZE] {
+    let mut out = [0u8; HASH_SIZE];
+    // SAFETY: `out` is exactly the 32 bytes SHA256 writes.
+    unsafe { boring::SHA256(bytes.as_ptr(), bytes.len(), out.as_mut_ptr()) };
+    out
 }
 
-fn cache_key(filename: &[u8], is_cjs: bool) -> u32 {
+/// First 8 digest bytes of `SHA256(type byte || filename)`: the in-memory map
+/// key and the on-disk entry name (16 hex chars).
+fn cache_key(filename: &[u8], is_cjs: bool) -> u64 {
     let type_byte: [u8; 1] = [is_cjs as u8];
-    Wyhash::hash(Wyhash::hash(0, &type_byte), filename) as u32
+    let mut ctx = core::mem::MaybeUninit::<boring::SHA256_CTX>::uninit();
+    let mut out = [0u8; HASH_SIZE];
+    // SAFETY: `SHA256_Init` fully initializes the context; updates/final only
+    // read the given byte ranges and write the 32-byte digest.
+    unsafe {
+        boring::SHA256_Init(ctx.as_mut_ptr());
+        boring::SHA256_Update(ctx.as_mut_ptr(), type_byte.as_ptr().cast(), 1);
+        boring::SHA256_Update(ctx.as_mut_ptr(), filename.as_ptr().cast(), filename.len());
+        boring::SHA256_Final(out.as_mut_ptr(), ctx.as_mut_ptr());
+    }
+    u64::from_le_bytes(out[..8].try_into().expect("8 bytes"))
+}
+
+/// Digest rendering for NODE_DEBUG_NATIVE=COMPILE_CACHE lines.
+fn hex(digest: &[u8; HASH_SIZE]) -> String {
+    bun_core::fmt::bytes_to_hex_lower_string(digest)
 }
 
 /// Portable mode keys on the path relative to the cache dir (Node parity).
 /// Falls back to absolute keys when no relative form exists (e.g. different
 /// Windows drives, where `relative` returns `to` unchanged — Node parity).
-fn key_for(state: &CacheState, filename: &[u8], is_cjs: bool) -> u32 {
+fn key_for(state: &CacheState, filename: &[u8], is_cjs: bool) -> u64 {
     if state.portable {
         // Thread-local scratch result: consumed before any other resolve call.
         let rel = bun_paths::resolve_path::relative(&state.dir, filename);
@@ -479,7 +521,7 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
     let Ok(code_size) = u32::try_from(code.len()) else {
         return None;
     };
-    let code_hash = hash32(code);
+    let code_hash = sha256(code);
 
     let mut guard = STATE.lock();
     let state = guard.as_mut()?;
@@ -545,7 +587,7 @@ pub fn note_parse_failure(filename: &[u8], is_cjs: bool) {
     let mut entry = Entry {
         filename: filename.into(),
         is_cjs,
-        code_hash: 0,
+        code_hash: [0u8; HASH_SIZE],
         code_size: 0,
         code: None,
         blob: None,
@@ -558,13 +600,38 @@ pub fn note_parse_failure(filename: &[u8], is_cjs: bool) {
     state.entries.insert(key, entry);
 }
 
-fn cache_basename(key: u32) -> [u8; 8] {
-    let mut out = [0u8; 8];
+fn cache_basename(key: u64) -> [u8; 16] {
+    let mut out = [0u8; 16];
     bun_core::fmt::bytes_to_hex_lower(&key.to_be_bytes(), &mut out);
     out
 }
 
-fn read_cache_file(state: &CacheState, key: u32, entry: &mut Entry, code: Option<&[u8]>) {
+/// Blob's byte offset in the cache file: header + stored code, padded to the
+/// decoder's 128-byte alignment so a page-aligned mapping keeps the blob
+/// aligned in place.
+fn blob_file_offset(code_size: u32) -> u64 {
+    (HEADER_SIZE as u64 + u64::from(code_size)).next_multiple_of(BLOB_ALIGN as u64)
+}
+
+/// Unmaps on drop unless [`MapGuard::take`]n for a blob that keeps the
+/// mapping alive.
+struct MapGuard(Option<(core::ptr::NonNull<u8>, usize)>);
+
+impl MapGuard {
+    fn take(&mut self) -> Option<(core::ptr::NonNull<u8>, usize)> {
+        self.0.take()
+    }
+}
+
+impl Drop for MapGuard {
+    fn drop(&mut self) {
+        if let Some((base, map_len)) = self.0.take() {
+            let _ = sys::munmap(base.as_ptr(), map_len);
+        }
+    }
+}
+
+fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option<&[u8]>) {
     let basename = cache_basename(key);
     let mut line = String::new();
     if LOG_ENABLED.load(Ordering::Relaxed) {
@@ -609,22 +676,48 @@ fn read_cache_file(state: &CacheState, key: u32, entry: &mut Entry, code: Option
         return;
     }
 
-    let mut header_bytes = [0u8; HEADER_SIZE];
-    match file.pread_all(&mut header_bytes, 0) {
-        Ok(n) if n == HEADER_SIZE => {}
-        _ => {
-            finish(line, &|| "reading header failed\n".into());
-            return;
+    // Map the file so an accepted blob is handed to JSC zero-copy; fall back
+    // to a heap read when mmap is unavailable (Windows) or fails.
+    #[cfg(unix)]
+    let (prot, flags) = (libc::PROT_READ, libc::MAP_PRIVATE);
+    #[cfg(not(unix))]
+    let (prot, flags) = (0i32, 0i32);
+    let mut map_guard = MapGuard(
+        sys::mmap(core::ptr::null_mut(), total, prot, flags, file.fd(), 0)
+            .ok()
+            .and_then(core::ptr::NonNull::new)
+            .map(|base| (base, total)),
+    );
+    let heap_contents;
+    let bytes: &[u8] = match &map_guard.0 {
+        // SAFETY: the mapping is `total` bytes and outlives this borrow.
+        Some((base, _)) => unsafe { core::slice::from_raw_parts(base.as_ptr(), total) },
+        None => {
+            let mut contents = vec![0u8; total];
+            match file.pread_all(&mut contents, 0) {
+                Ok(n) if n == total => {}
+                _ => {
+                    finish(line, &|| "reading header failed\n".into());
+                    return;
+                }
+            }
+            heap_contents = contents;
+            &heap_contents
         }
-    }
-    let mut headers = [0u32; HEADER_COUNT];
-    for (i, h) in headers.iter_mut().enumerate() {
-        *h = u32::from_le_bytes(header_bytes[i * 4..i * 4 + 4].try_into().expect("4 bytes"));
-    }
-    let [magic, code_size, cache_size, code_hash, cache_hash] = headers;
+    };
+
+    let magic = u32::from_le_bytes(bytes[0..4].try_into().expect("4 bytes"));
+    let code_size = u32::from_le_bytes(bytes[4..8].try_into().expect("4 bytes"));
+    let cache_size = u32::from_le_bytes(bytes[8..12].try_into().expect("4 bytes"));
+    let code_hash: &[u8; HASH_SIZE] = bytes[12..12 + HASH_SIZE].try_into().expect("32 bytes");
+    let cache_hash: &[u8; HASH_SIZE] = bytes[12 + HASH_SIZE..HEADER_SIZE]
+        .try_into()
+        .expect("32 bytes");
     if LOG_ENABLED.load(Ordering::Relaxed) {
         line.push_str(&format!(
-            "[{magic} {code_size} {cache_size} {code_hash} {cache_hash}]..."
+            "[{magic} {code_size} {cache_size} {} {}]...",
+            hex(code_hash),
+            hex(cache_hash)
         ));
     }
 
@@ -643,21 +736,23 @@ fn read_cache_file(state: &CacheState, key: u32, entry: &mut Entry, code: Option
         });
         return;
     }
-    if code_hash != entry.code_hash {
+    if code_hash != &entry.code_hash {
         finish(line, &|| {
             format!(
-                "code hash mismatch: expected {}, actual {code_hash}\n",
-                entry.code_hash
+                "code hash mismatch: expected {}, actual {}\n",
+                hex(&entry.code_hash),
+                hex(code_hash)
             )
         });
         return;
     }
-    let expected_total = HEADER_SIZE as u64 + code_size as u64 + cache_size as u64;
+    let blob_off = blob_file_offset(code_size);
+    let expected_total = blob_off + u64::from(cache_size);
     if total as u64 != expected_total {
         finish(line, &|| {
             format!(
                 "cache size mismatch: expected {cache_size}, actual {}\n",
-                (total as u64).saturating_sub(HEADER_SIZE as u64 + code_size as u64)
+                (total as u64).saturating_sub(blob_off)
             )
         });
         return;
@@ -665,50 +760,65 @@ fn read_cache_file(state: &CacheState, key: u32, entry: &mut Entry, code: Option
     let Some(code) = code else {
         // Parse-failure probe: no current code to compare against.
         finish(line, &|| {
-            format!("code hash mismatch: expected 0, actual {code_hash}\n")
+            format!("code hash mismatch: expected 0, actual {}\n", hex(code_hash))
         });
         return;
     };
 
-    // Stored code copy: byte-compare against the current post-transpile text
-    // so "accepted" is exact, not merely hash-equal.
-    let mut stored_code = vec![0u8; code_size as usize];
-    match file.pread_all(&mut stored_code, HEADER_SIZE as u64) {
-        Ok(n) if n == code_size as usize => {}
-        _ => {
-            finish(line, &|| "reading code failed\n".into());
-            return;
-        }
-    }
-    if stored_code != code {
+    // Stored code: byte-compare against the current post-transpile text so
+    // "accepted" is exact, not merely hash-equal.
+    if &bytes[HEADER_SIZE..HEADER_SIZE + code_size as usize] != code {
         finish(line, &|| {
             format!(
-                "code hash mismatch: expected {}, actual {code_hash}\n",
-                entry.code_hash
+                "code hash mismatch: expected {}, actual {}\n",
+                hex(&entry.code_hash),
+                hex(code_hash)
             )
         });
         return;
     }
 
-    let blob_off = HEADER_SIZE as u64 + code_size as u64;
-    let Some(mut blob) = AlignedBlob::new_uninit(cache_size as usize) else {
-        finish(line, &|| "allocation failed\n".into());
-        return;
-    };
-    match file.pread_all(blob.as_mut_slice(), blob_off) {
-        Ok(n) if n == cache_size as usize => {}
-        _ => {
-            finish(line, &|| "reading cache failed\n".into());
-            return;
-        }
-    }
-    let actual_cache_hash = hash32(blob.as_slice());
-    if actual_cache_hash != cache_hash {
+    let blob_bytes = &bytes[blob_off as usize..][..cache_size as usize];
+    let actual_cache_hash = sha256(blob_bytes);
+    if &actual_cache_hash != cache_hash {
         finish(line, &|| {
-            format!("cache hash mismatch: expected {cache_hash}, actual {actual_cache_hash}\n")
+            format!(
+                "cache hash mismatch: expected {}, actual {}\n",
+                hex(cache_hash),
+                hex(&actual_cache_hash)
+            )
         });
         return;
     }
+
+    // The decoder requires the blob 128-aligned. The mapping base is
+    // page-aligned (every supported page size is a multiple of 128) and
+    // `blob_off` is a multiple of 128 by construction, but a miss here would
+    // be a JSC assert or segfault, so verify instead of assuming.
+    let map_is_aligned = map_guard
+        .0
+        .as_ref()
+        .is_some_and(|(base, _)| (base.as_ptr() as usize + blob_off as usize).is_multiple_of(BLOB_ALIGN));
+    let blob = if map_is_aligned {
+        let (base, map_len) = map_guard.take().expect("checked above");
+        // SAFETY: `blob_off + cache_size == map_len` was just validated.
+        let ptr =
+            unsafe { core::ptr::NonNull::new_unchecked(base.as_ptr().add(blob_off as usize)) };
+        AlignedBlob {
+            ptr,
+            len: cache_size as usize,
+            backing: Backing::Map { base, map_len },
+        }
+    } else {
+        // No mapping, or the blob would be misaligned in it: copy to an
+        // aligned heap buffer instead (map_guard unmaps on return).
+        let Some(mut blob) = AlignedBlob::new_uninit(cache_size as usize) else {
+            finish(line, &|| "allocation failed\n".into());
+            return;
+        };
+        blob.as_mut_slice().copy_from_slice(blob_bytes);
+        blob
+    };
     finish(line, &|| format!(" success, size={cache_size}\n"));
     entry.blob = Some(blob);
 }
@@ -775,13 +885,13 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
 /// dropped. `code` is moved out (concurrent `fetch` sees `code: None` and skips). Keys hash
 /// `(is_cjs, filename)` — not content — so Phase 3 re-checks `code_hash` before touching the entry.
 struct PersistJob {
-    key: u32,
+    key: u64,
     format: Format,
     code: Box<[u8]>,
     filename: Box<[u8]>,
     is_cjs: bool,
     code_size: u32,
-    code_hash: u32,
+    code_hash: [u8; HASH_SIZE],
 }
 
 /// Phase 1 (locked): decide what needs persisting and move the source code
@@ -847,16 +957,14 @@ fn write_persist_job_locked(
     };
 
     let cache_size = blob.len() as u32;
-    let cache_hash = hash32(blob);
-    let headers: [u32; HEADER_COUNT] =
-        [MAGIC, job.code_size, cache_size, job.code_hash, cache_hash];
+    let cache_hash = sha256(blob);
 
     let basename = cache_basename(job.key);
     let mut tmpname_buf = PathBuffer::uninit();
     let tmpname_zstr: &ZStr = match bun_resolver::fs::FileSystem::tmpname(
         &basename,
         &mut tmpname_buf[..],
-        u64::from(job.key),
+        job.key,
     ) {
         Ok(z) => z,
         Err(_) => return Err(()),
@@ -885,24 +993,25 @@ fn write_persist_job_locked(
     };
     cclog!(" -> {tmp_display}\n");
     cclog!(
-        "[compile cache] writing cache for {tname} {name} to temporary file {tmp_display} [{} {} {} {} {}]...",
-        headers[0],
-        headers[1],
-        headers[2],
-        headers[3],
-        headers[4]
+        "[compile cache] writing cache for {tname} {name} to temporary file {tmp_display} [{MAGIC} {} {cache_size} {} {}]...",
+        job.code_size,
+        hex(&job.code_hash),
+        hex(&cache_hash)
     );
 
     let mut header_bytes = [0u8; HEADER_SIZE];
-    for (i, h) in headers.iter().enumerate() {
-        header_bytes[i * 4..i * 4 + 4].copy_from_slice(&h.to_le_bytes());
-    }
+    header_bytes[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+    header_bytes[4..8].copy_from_slice(&job.code_size.to_le_bytes());
+    header_bytes[8..12].copy_from_slice(&cache_size.to_le_bytes());
+    header_bytes[12..12 + HASH_SIZE].copy_from_slice(&job.code_hash);
+    header_bytes[12 + HASH_SIZE..HEADER_SIZE].copy_from_slice(&cache_hash);
     // ManuallyDrop: the fd is owned by `_close` above.
     let file = core::mem::ManuallyDrop::new(sys::File::from_fd(tmpfile.fd));
     let write_all = || -> sys::Maybe<()> {
         file.pwrite_all(&header_bytes, 0)?;
         file.pwrite_all(&job.code, HEADER_SIZE as i64)?;
-        file.pwrite_all(blob, (HEADER_SIZE + job.code.len()) as i64)?;
+        // The gap up to the 128-aligned blob offset is a hole (zeros).
+        file.pwrite_all(blob, blob_file_offset(job.code_size) as i64)?;
         Ok(())
     };
     if let Err(e) = write_all() {
@@ -912,9 +1021,9 @@ fn write_persist_job_locked(
     }
     cclog!("success\n");
 
-    let mut dest_z = [0u8; 9];
-    dest_z[..8].copy_from_slice(&basename);
-    let dest_zstr = ZStr::from_buf(&dest_z, 8);
+    let mut dest_z = [0u8; 17];
+    dest_z[..16].copy_from_slice(&basename);
+    let dest_zstr = ZStr::from_buf(&dest_z, 16);
     let final_display = if logging {
         format!(
             "{}{}{}",

@@ -18,8 +18,7 @@ test('format invalid input', () => {
   ];
 
   for (const urlObject of throwsObjsAndReportTypes) {
-    console.log(urlObject)
-    assert.throws(function runFormat() {
+    assert.throws(() => {
       url.format(urlObject);
     }, {
       code: 'ERR_INVALID_ARG_TYPE',

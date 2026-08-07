@@ -131,12 +131,12 @@ find test/ -type f \
   | awk 'BEGIN{srand();}{print rand()"\t"$0}' | sort -k1 -n | sed 's/^[0-9.]*\t//' \
   > "$PDIR/test_files_all.txt"
 
-# 把慢测试移到末尾（避免阻塞调度循环）
-# 匹配已知 >300s 的测试模式
-grep -v -E "(jsx-production|shell-cmdsub-crash|run-extensionless|udp_socket\.test|bunshell\.test|spawn\.test|fetch/fetch\.test|terminal/terminal-|terminal\.test\.ts|bun-install\.test|request-clone-leak|create-jsx|bun-run\.test|dev-server\.test|expo-app|fetch-leak|bun-security-scanner-matrix|test-dev-peer-dependency|spawn-noread-leak|bun-install-registry|boundary-conditions|streams-leak|serve-response-stream-sink-leak|bun-serve-static-stress|bun-add\.test|init\.test|rm\.test\.ts|inspector\.test\.ts)" \
-  "$PDIR/test_files_all.txt" > "$PDIR/test_files_fast.txt"
-grep -E "(jsx-production|shell-cmdsub-crash|run-extensionless|udp_socket\.test|bunshell\.test|spawn\.test|fetch/fetch\.test|terminal/terminal-|terminal\.test\.ts|bun-install\.test|request-clone-leak|create-jsx|bun-run\.test|dev-server\.test|expo-app|fetch-leak|bun-security-scanner-matrix|test-dev-peer-dependency|spawn-noread-leak|bun-install-registry|boundary-conditions|streams-leak|serve-response-stream-sink-leak|bun-serve-static-stress|bun-add\.test|init\.test|rm\.test\.ts|inspector\.test\.ts)" \
-  "$PDIR/test_files_all.txt" >> "$PDIR/test_files_fast.txt"
+# 慢文件放末尾（交错会导致 slow 散布全程，5 个 worker 被 slow 占满，
+# fast 排队等待 → 完成速率骤降 → 3600s 超时杀剩余 1800 文件）。
+# 放末尾：fast 先快速完成（~1900 个），最后 35 个 slow 5 并行集中跑。
+SLOW_RE="(jsx-production|shell-cmdsub-crash|run-extensionless|udp_socket\.test|bunshell\.test|spawn\.test|fetch/fetch\.test|terminal/terminal-|terminal\.test\.ts|bun-install\.test|request-clone-leak|create-jsx|bun-run\.test|dev-server\.test|expo-app|fetch-leak|bun-security-scanner-matrix|test-dev-peer-dependency|spawn-noread-leak|bun-install-registry|boundary-conditions|streams-leak|serve-response-stream-sink-leak|bun-serve-static-stress|bun-add\.test|init\.test|rm\.test\.ts|inspector\.test\.ts)"
+grep -v -E "$SLOW_RE" "$PDIR/test_files_all.txt" > "$PDIR/test_files_fast.txt"
+grep -E "$SLOW_RE" "$PDIR/test_files_all.txt" >> "$PDIR/test_files_fast.txt"
 mv "$PDIR/test_files_fast.txt" "$PDIR/test_files.txt"
 
 TOTAL_FILES=$(wc -l < "$PDIR/test_files.txt")
@@ -163,30 +163,39 @@ run_test() {
     # ── 已知连续多日 600s 超时文件：快速失败（120s 就杀，不白等 600s）──
     # 这些文件在 OHOS 上持续超时（repl/streams 连续 3+ 次全量），降低 WT
     # 让失败尽早暴露，同时省下 ~480s/文件 的等待时间。
+    # 08-06 新增：import-attributes/snapshot/spawn.ipc.bun-node/26286 均 600s TIMEOUT
     */js/node/tty.test.ts|*/cli/install/bun-pack.test.ts|*/cli/run/env.test.ts|\
     */js/bun/repl/repl.test.ts|*/cli/install/bun-install-registry.test.ts|\
-    */js/web/streams/streams.test.js|*/js/bun/shell/shell-cmdsub-crash.test.ts)
+    */js/web/streams/streams.test.js|*/js/bun/shell/shell-cmdsub-crash.test.ts|\
+    */js/bun/import-attributes/import-attributes.test.ts|\
+    */js/bun/test/snapshot-tests/snapshots/snapshot.test.ts|\
+    */js/bun/spawn/spawn.ipc.bun-node.test.ts|*/regression/issue/26286.test.ts)
       WT=120
       BT="--expose-internals --smol --timeout 120000"
       ;;
     # ── 慢测试单独调大超时 ──
-    # spawn.test.ts 已连续超时（2400s 白等），降为 1200s 快速失败
+    # spawn.test.ts 已连续超时（2402s 白等），降为 600s 快速失败（省 ~20m）
     */bundler/transpiler/jsx-production.test.ts|*/udp/udp_socket.test.ts|*/terminal/terminal-platform-gaps.test.ts|*/inspector/inspector.test.ts|*/run-extensionless.test.ts)
       WT=$((TMOUT * 4))       # 2400s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
     */spawn/spawn.test.ts)
-      WT=1200
-      BT="--expose-internals --smol --timeout 1200000"
+      WT=600
+      BT="--expose-internals --smol --timeout 600000"
       ;;
     */bake/dev/server-sourcemap.test.ts|*/web/fetch/fetch.test.ts|*/cli/create/create-jsx.test.ts|*/shell/bunshell.test.ts|*/terminal/terminal.test.ts)
       WT=$((TMOUT * 3))       # 1800s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
     # ── 泄漏/长时间测试 ──
-    *leak*|*no-orphans*|*spawn-pipe-leak*|*serve-body-leak*|*handle-leak*)
+    # shell/leak、spawn-pipe-leak 连续多日 FAIL（386-400s），降为 300s 快速失败
+    *serve-body-leak*|*handle-leak*|*no-orphans*)
       WT=$((TMOUT * 2))
       BT="--expose-internals --smol --timeout 600000"
+      ;;
+    *shell/leak.test.ts|*spawn-pipe-leak.test.ts)
+      WT=300
+      BT="--expose-internals --smol --timeout 300000"
       ;;
     # ── bundler ──
     */bundler/*)
@@ -336,13 +345,19 @@ show_progress() {
   no_progress_start=0; last_completed=0
   while true; do
     # 从追加日志统计（无 read-modify-write 竞态）。日志行数即 DONE。
-    completed=0; passed=0; failed=0; case_pass=0; case_fail=0
+    # 增量统计：completed/passed 等跨轮累计（local 声明在函数开头），
+    # 每轮只扫新增行，避免全量重扫（~2000 行 × 每 10s）。
+    if [ -z "${_pl_seen:-}" ]; then _pl_seen=0; completed=0; passed=0; failed=0; case_pass=0; case_fail=0; fi
     if [ -f "$PDIR/progress.log" ]; then
-      while IFS=' ' read -r _st _cp _cf; do
-        completed=$((completed + 1))
-        if [ "$_st" = "PASS" ]; then passed=$((passed + 1)); else failed=$((failed + 1)); fi
-        case_pass=$((case_pass + _cp)); case_fail=$((case_fail + _cf))
-      done < "$PDIR/progress.log"
+      _pl_total=$(wc -l < "$PDIR/progress.log" 2>/dev/null || echo 0)
+      if [ "${_pl_total:-0}" -gt "$_pl_seen" ]; then
+        while IFS=' ' read -r _st _cp _cf; do
+          completed=$((completed + 1))
+          if [ "$_st" = "PASS" ]; then passed=$((passed + 1)); else failed=$((failed + 1)); fi
+          case_pass=$((case_pass + _cp)); case_fail=$((case_fail + _cf))
+        done < <(tail -n $((_pl_total - _pl_seen)) "$PDIR/progress.log")
+        _pl_seen=$_pl_total
+      fi
     fi
 
     first=1; running_list=""
@@ -479,22 +494,27 @@ _ohos_napi_prebuild
 # 孤儿扫荡 — 每 120 秒跑一次（取代原来每 30 文件）
 _ohos_last_sweep=$SECONDS
 i=1
+_g_max_wt=0
 while IFS= read -r f; do
   echo "$f" > "$PDIR/running_${i}"
   # 保存该测试的 watchdog 超时（秒），供调度循环超时判断
   # 必须与 run_test 中的 case 保持一致
   case "$f" in
     */bundler/transpiler/jsx-production.test.ts|*/udp/udp_socket.test.ts|*/terminal/terminal-platform-gaps.test.ts|*/spawn/spawn.test.ts|*/inspector/inspector.test.ts|*/run-extensionless.test.ts)
-      echo $((TMOUT * 4)) > "$PDIR/wt_${i}" ;;
+      _wt=$((TMOUT * 4)) ;;
     */bake/dev/server-sourcemap.test.ts|*/web/fetch/fetch.test.ts|*/cli/create/create-jsx.test.ts|*/shell/bunshell.test.ts|*/terminal/terminal.test.ts)
-      echo $((TMOUT * 3)) > "$PDIR/wt_${i}" ;;
+      _wt=$((TMOUT * 3)) ;;
     *leak*|*no-orphans*|*spawn-pipe-leak*|*serve-body-leak*|*handle-leak*)
-      echo $((TMOUT * 2)) > "$PDIR/wt_${i}" ;;
+      _wt=$((TMOUT * 2)) ;;
     */bundler/*)
-      echo $TMOUT_BUNDLER > "$PDIR/wt_${i}" ;;
+      _wt=$TMOUT_BUNDLER ;;
     *)
-      echo $TMOUT > "$PDIR/wt_${i}" ;;
+      _wt=$TMOUT ;;
   esac
+  echo "$_wt" > "$PDIR/wt_${i}"
+  # 全局最大 WT：_wait_start 阶段 wt_* 可能已被回收（worker 完成时删除），
+  # 动态超时依赖它计算；在分派时记录，避免 _max_wt=0 退化为 3600s 固定值。
+  [ "$_wt" -gt "$_g_max_wt" ] 2>/dev/null && _g_max_wt=$_wt
   run_test "$i" "$f" &
   echo "$!" > "$PDIR/pid_${i}"
 
@@ -625,13 +645,14 @@ while true; do
   # 动态超时：60m 固定值会在慢文件堆积时误杀仍合法运行的 worker
   # （spawn.test WT=2400s + bunshell WT=1800s + 排队 = 超 3600s）。
   # 改为：剩余 worker 的最大 WT × 2 + 10min 余量；无 worker 时用
-  # 兜底 3600s（等 ZOMBIE 兜底/防死锁）。
+  # 分派时记录的全局最大 WT（_g_max_wt），兜底 3600s 防死锁。
   _max_wt=0
   for _wf in "$PDIR"/wt_*; do
     [ -f "$_wf" ] || continue
     _wv=$(cat "$_wf" 2>/dev/null || echo 0)
     [ "${_wv:-0}" -gt "$_max_wt" ] 2>/dev/null && _max_wt=$_wv
   done
+  [ "$_g_max_wt" -gt "$_max_wt" ] 2>/dev/null && _max_wt=$_g_max_wt
   _wait_timeout=3600
   if [ "$_max_wt" -gt 0 ] 2>/dev/null; then
     _wait_timeout=$((_max_wt * 2 + 600))

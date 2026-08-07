@@ -1250,7 +1250,9 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
   expect(lockCold).toContain(`branch-dep.git#${branchSha}`);
   expect(lockCold).not.toContain(movedSha);
   expect(await file(join(memberModules, "branch-dep", "index.js")).text()).toBe("module.exports = 'branch-dep';\n");
-}, 30_000);
+  // Five staged installs plus a git-child-kill retry exceed the 5s default;
+  // this also bounds the cold-cache starvation mode to a fast failure.
+}, 90_000);
 
 // `bun update` must keep going to the remote for a branch-tracking ref: the
 // reuse above is explicitly skipped for update targets.

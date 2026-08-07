@@ -952,16 +952,18 @@ impl FileSink {
             .with_mut(|p| p.consumed = p.consumed.saturating_sub(accepted));
     }
 
-    /// `write()` for a JS `data` value that is a string / ArrayBuffer(View),
-    /// plus the encoded byte count accepted; `Ok(None)` for anything else so
-    /// the caller can take its general path. `now`: attempt the syscall
-    /// immediately (`IOWriter::write_now`) rather than coalescing small chunks
-    /// until end of tick.
+    /// `write()` for a JS `data` value that is a string / ArrayBuffer(View);
+    /// `Ok(None)` for anything else so the caller can take its general path.
+    /// `now`: attempt the syscall immediately (`IOWriter::write_now`) rather
+    /// than coalescing small chunks until end of tick. `count`: also return
+    /// this call's UTF-8 byte count (a pass over the string; only `Bun.write`
+    /// wants it) — otherwise the second element is unspecified.
     pub fn write_js_value(
         &self,
         global: &JSGlobalObject,
         data: JSValue,
         now: bool,
+        count: bool,
     ) -> JsResult<Option<(streams::Writable, u64)>> {
         if let Some(buffer) = data.as_array_buffer(global) {
             let _keep = bun_jsc::EnsureStillAlive(data);
@@ -969,7 +971,7 @@ impl FileSink {
             if bytes.is_empty() {
                 return Ok(Some((streams::Writable::Owned(0), 0)));
             }
-            return Ok(Some(self.write_with(|w| {
+            return Ok(Some(self.write_with(Some(bytes.len() as u64), |w| {
                 if now {
                     w.write_now(bytes)
                 } else {
@@ -988,7 +990,9 @@ impl FileSink {
         let _keep = bun_jsc::EnsureStillAlive(str_.to_js());
         if view.is_16bit() {
             let utf16 = view.utf16_slice_aligned();
-            return Ok(Some(self.write_with(|w| {
+            let len =
+                count.then(|| bun_core::strings::element_length_utf16_into_utf8(utf16) as u64);
+            return Ok(Some(self.write_with(len, |w| {
                 if now {
                     w.write_utf16_now(utf16)
                 } else {
@@ -997,7 +1001,8 @@ impl FileSink {
             })));
         }
         let latin1 = view.slice();
-        Ok(Some(self.write_with(|w| {
+        let len = count.then(|| bun_core::strings::element_length_latin1_into_utf8(latin1) as u64);
+        Ok(Some(self.write_with(len, |w| {
             if now {
                 w.write_latin1_now(latin1)
             } else {
@@ -1428,20 +1433,26 @@ impl FileSink {
     }
 
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
-        self.write_with(|w| w.write(data.slice())).0
+        self.write_with(None, |w| w.write(data.slice())).0
     }
 
     pub(crate) fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
-        self.write_with(|w| w.write_latin1(data.slice())).0
+        self.write_with(None, |w| w.write_latin1(data.slice())).0
     }
 
     pub(crate) fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
-        self.write_with(|w| w.write_utf16(data.slice16())).0
+        self.write_with(None, |w| w.write_utf16(data.slice16())).0
     }
 
-    /// The result plus the number of (encoded) bytes this call accepted.
+    /// The result, plus how many UTF-8 bytes *this call* handed the writer:
+    /// exact when the caller supplied `encoded_len` (the writer accepts all of
+    /// its input or errors), else only meaningful for `Pending`.
     #[inline]
-    fn write_with(&self, f: impl FnOnce(&mut IOWriter) -> WriteResult) -> (streams::Writable, u64) {
+    fn write_with(
+        &self,
+        encoded_len: Option<u64>,
+        f: impl FnOnce(&mut IOWriter) -> WriteResult,
+    ) -> (streams::Writable, u64) {
         if let Some(err) = self.stdio_error() {
             return (streams::Writable::Err(err), 0);
         }
@@ -1452,12 +1463,16 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write*` buffers/writes to fd; does not call JS.
         let rc = self.writer.with_mut(f);
+        // What `to_result` credits a pending operation with.
+        let pending_credit = self.bytes_accepted(buffered_before, &rc);
         let accepted = match rc {
-            WriteResult::Pending(_) => self.bytes_accepted(buffered_before, &rc),
-            WriteResult::Wrote(n) | WriteResult::Done(n) => n as u64,
             WriteResult::Err(_) => 0,
+            // `n` may include bytes coalesced by earlier calls and flushed now,
+            // or be a partial write with the rest queued: not this call's count.
+            WriteResult::Wrote(n) | WriteResult::Done(n) => encoded_len.unwrap_or(n as u64),
+            WriteResult::Pending(_) => encoded_len.unwrap_or(pending_credit),
         };
-        (self.to_result(rc, accepted), accepted)
+        (self.to_result(rc, pending_credit), accepted)
     }
 
     /// Native-path terminator called from `SinkHandle::end`. On upstream error
@@ -2168,7 +2183,7 @@ pub(crate) fn write_now(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     // (FileSink has no `get_pending_error`, unlike the socket sinks.)
     let sink: &FileSink = unsafe { &(*this).sink };
     let _keep = bun_jsc::EnsureStillAlive(data);
-    match sink.write_js_value(global, data, true)? {
+    match sink.write_js_value(global, data, true, false)? {
         Some((result, _)) => Ok(result.to_js(global)),
         // Same errors as `FileSink.prototype.write` (Sink.rs `js_write`).
         None => Err(global.throw_value(global.to_type_error(

@@ -4994,10 +4994,6 @@ pub(crate) fn write_file_with_source_destination(
 // writeFileInternal / writeFile (Bun.write)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// ## Errors
-/// - If `path_or_blob` is a detached blob
-/// ## Panics
-/// - If `path_or_blob` is a `Blob` backed by a byte store
 /// `Some(Fd::stdout()|stderr())` when `store` is this VM's stdout/stderr store
 /// or any fd-backed store on fd 1/2 — i.e. writes to it belong to the stdio sink.
 pub(crate) fn stdio_fd_of_store(global_this: &JSGlobalObject, store: &Store) -> Option<Fd> {
@@ -5025,6 +5021,10 @@ pub(crate) fn stdio_fd_of_store(global_this: &JSGlobalObject, store: &Store) -> 
     }
 }
 
+/// ## Errors
+/// - If `path_or_blob` is a detached blob
+/// ## Panics
+/// - If `path_or_blob` is a `Blob` backed by a byte store
 pub(crate) fn write_file_internal(
     global_this: &JSGlobalObject,
     path_or_blob_: &mut PathOrBlob,
@@ -5087,7 +5087,7 @@ pub(crate) fn write_file_internal(
                 let vm = global_this.bun_vm().as_mut();
                 if let Some(sink) = webcore::file_sink::stdio_sink_for(vm, stdio_fd) {
                     // SAFETY: canonical live pointer held by RareData.
-                    let wrote = unsafe { (*sink).write_js_value(global_this, data, true)? };
+                    let wrote = unsafe { (*sink).write_js_value(global_this, data, true, true)? };
                     if let Some((result, accepted)) = wrote {
                         // `Bun.write` resolves once the bytes are written, with
                         // *this* call's byte count — not whenever (and with

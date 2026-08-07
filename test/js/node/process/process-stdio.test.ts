@@ -471,11 +471,13 @@ const nonblock = fd => fd_is_nonblock(fd) !== 0;
       const backedUp = !process.stdout.write(Buffer.alloc(${K256}, "x"));
       const n = await Bun.write(Bun.stdout, "abc");
       const m = await Bun.write(Bun.stdout, new TextEncoder().encode("\\ndef!\\n"));
+      Bun.stdout.writer().write("[coalesced]");             // still in the writer's buffer...
+      const k = await Bun.write(Bun.stdout, "h\\u00e9!\\n"); // ...flushed by this, but not counted in it
       console.log("after");
-      process.stderr.write(JSON.stringify({ backedUp, n, m }));
+      process.stderr.write(JSON.stringify({ backedUp, n, m, k }));
     `);
-    expect(JSON.parse(stderr)).toEqual({ backedUp: true, n: 3, m: 6 });
-    expect(squash(stdout)).toBe(`<x*${K256}>abc\ndef!\nafter\n`);
+    expect(JSON.parse(stderr)).toEqual({ backedUp: true, n: 3, m: 6, k: 5 });
+    expect(squash(stdout)).toBe(`<x*${K256}>abc\ndef!\n[coalesced]h\u00c3\u00a9!\nafter\n`);
     expect(exitCode).toBe(0);
   });
 

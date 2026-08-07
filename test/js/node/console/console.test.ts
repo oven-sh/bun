@@ -290,17 +290,6 @@ describe.concurrent("global console -> process.stdout / process.stderr", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("process._rawDebug bypasses process.stderr entirely", async () => {
-    const { stdout, stderr, exitCode } = await run(`
-      process.stderr.write = () => { throw new Error("broken"); };
-      console._stderr = { write() { throw new Error("also broken"); } };
-      process._rawDebug("still %s", "here", { n: 1 });
-    `);
-    expect(stdout).toBe("");
-    expect(stderr).toBe("still here {\n  n: 1,\n}\n");
-    expect(exitCode).toBe(0);
-  });
-
   test("diagnostics_channel console.* channels publish the argument list before formatting, only while subscribed", async () => {
     // https://github.com/nodejs/node/blob/v24.0.0/lib/internal/console/constructor.js#L409-L443
     const { stdout, stderr, exitCode } = await run(`

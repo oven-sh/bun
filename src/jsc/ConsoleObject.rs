@@ -6178,54 +6178,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     time_log_impl(global, "console.timeLog()", label, false, args);
 }
 
-/// `process._rawDebug(...args)`: format like `console.log` (no colours, as
-/// `util.format`) and write straight to fd 2 — no stdio sink, no
-/// `process.stderr`, so it works when that stream is broken or replaced.
-/// https://github.com/nodejs/node/blob/v24.0.0/lib/internal/process/per_thread.js#L118-L120
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub extern "C" fn Bun__Process__rawDebug(
-    global: &JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
-) {
-    let console = vm_console(global);
-    let mut buf = ConsoleObject::take_scratch(console);
-    // SAFETY: caller (BunProcess.cpp) passes the call frame's argument span.
-    let vals = unsafe { bun_core::ffi::slice(vals, len) };
-    let result = if vals.is_empty() {
-        buf.push(b'\n');
-        Ok(())
-    } else {
-        format2(
-            MessageLevel::Log,
-            global,
-            vals,
-            &mut buf,
-            FormatOptions {
-                enable_colors: false,
-                add_newline: true,
-                flush: false,
-                max_depth: bun_options_types::context::try_get()
-                    .and_then(|ctx| ctx.runtime_options.console_depth)
-                    .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH),
-                ..FormatOptions::default()
-            },
-        )
-    };
-    {
-        let _lock = bun_io::StdioLock::acquire(bun_sys::Fd::stderr());
-        let _ = bun_sys::write_all_retrying(bun_sys::Fd::stderr(), &buf);
-    }
-    ConsoleObject::put_scratch(console, buf);
-    if let Err(err) = result {
-        if matches!(err, jsc::JsError::OutOfMemory) {
-            global.throw_out_of_memory_value();
-        }
-        debug_assert!(global.has_exception());
-    }
-}
-
 /// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's
 /// `ConsoleClient` vtable requires but Bun leaves unimplemented. Two arms cover
 /// the two trailing-arg shapes the C++ side declares in

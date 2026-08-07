@@ -2377,6 +2377,45 @@ it("getActiveResourcesInfo reports a unix-socket http.Server as PipeWrap like no
   expect(exitCode).toBe(0);
 });
 
+it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a client-side TLS wrap", async () => {
+  // tls.connect({ socket }) over a unix transport: the TLS socket registers
+  // from its open handler and must inherit the wrapped connection's kind.
+  using dir = tempDir("tls-client-pipewrap", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net");
+       const tls = require("tls");
+       const server = net.createServer(() => {});
+       server.listen(process.argv[1], () => {
+         const raw = net.connect(process.argv[1], () => {
+           tls.connect({ socket: raw, rejectUnauthorized: false });
+           setImmediate(() => {
+             const info = process.getActiveResourcesInfo();
+             console.log(JSON.stringify({
+               pipe: info.filter(x => x === "PipeWrap").length,
+               tcp: info.filter(x => x === "TCPSocketWrap").length,
+             }));
+             process.exit(0);
+           });
+         });
+       });`,
+      `${dir}/s.sock`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim(), stderr).not.toBe("");
+  // Everything rides the unix transport; nothing may report as TCP.
+  const parsed = JSON.parse(stdout.trim());
+  expect(parsed.tcp).toBe(0);
+  expect(parsed.pipe).toBeGreaterThanOrEqual(2);
+  expect(exitCode).toBe(0);
+});
+
 it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a server-side TLS wrap", async () => {
   // Wrapping an accepted unix-socket connection in a server-side TLSSocket
   // re-registers the handle; the transport kind must survive the swap.

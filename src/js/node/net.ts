@@ -1328,11 +1328,14 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     let { self } = socket.data;
     if (err) $debug(err);
     if (self[kclosed]) return;
+    // A superseded handle's close (a lost family-autoselection attempt, a raw
+    // handle handed to a TLS wrap) must not mark the still-live socket closed,
+    // end its stream, or swallow the current handle's own close later. A null
+    // _handle is the ordinary post-destroy close: fall through so the tail
+    // work (end delivery, pending-write settlement) still runs.
+    if (self._handle != null && socket !== self._handle) return;
     self[kclosed] = true;
-    // Only the current handle's close retires the registration: closes from a
-    // lost family-autoselection attempt or a handed-off raw handle must not
-    // deregister a socket that is still live on another handle.
-    if (socket === self._handle) unregisterHandle(self);
+    unregisterHandle(self);
     // A received RST surfacing as ECONNRESET with the close is not a clean
     // EOF - Node destroys the socket with "read ECONNRESET" instead of a
     // graceful 'end'. Only surface it when the closing handle is still the
@@ -2004,6 +2007,9 @@ Socket.prototype.connect = function connect(...args) {
         this.connecting = false;
       }
       if (connectListener != null) this.once("secureConnect", connectListener);
+      // The TLS wrap registers from its open handler via this[kHandleKind];
+      // keep the wrapped connection's transport kind (a pipe stays 'PipeWrap').
+      this[kHandleKind] = connection[kHandleKind] || "TCPSocketWrap";
       try {
         // reset the underlying writable object when establishing a new connection
         // this is a function on `Duplex`, originally defined on `Writable`

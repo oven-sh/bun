@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
@@ -163,33 +163,35 @@ it("console.log(Bun) prints remaining properties when a lazy property fails to i
   expect(exitCode).toBe(0);
 });
 
-it.concurrent.each([
+describe.each([
   ["replaced with a non-function", `require("node:util").inspect = 42;`],
   [
     "a throwing getter",
     `Object.defineProperty(require("node:util"), "inspect", { get() { throw new Error("boom"); } });`,
   ],
-])("console.log survives node:util inspect being %s", async (_label, sabotage) => {
-  // util.inspect is cached lazily when a custom inspect runs; a tampered
-  // export must produce a catchable error, not a crash.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `${sabotage}
+])("console.log with node:util inspect %s", (_label, sabotage) => {
+  it.concurrent("produces a catchable error instead of crashing", async () => {
+    // util.inspect is cached lazily when a custom inspect runs; a tampered
+    // export must produce a catchable error, not a crash.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${sabotage}
 try { console.log({ [Bun.inspect.custom]() { return "custom"; } }) } catch (e) {}
 console.log("ok")`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toContain("custom");
-  expect(stdout).toContain("ok");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+    expect(stdout).toContain("custom");
+    expect(stdout).toContain("ok");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("console.log with SharedArrayBuffer", () => {

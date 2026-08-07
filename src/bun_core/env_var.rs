@@ -334,6 +334,7 @@ pub(crate) mod kind {
         pub(crate) struct Cache {
             ptr_value: AtomicPtr<u8>,
             len_value: AtomicUsize,
+            epoch: core::sync::atomic::AtomicU32, // heap-image restore epoch the value was loaded in; stale => reload
         }
 
         type PointerType = *mut u8; // AtomicPtr requires *mut
@@ -349,10 +350,14 @@ pub(crate) mod kind {
                 Self {
                     ptr_value: AtomicPtr::new(NOT_LOADED_PTR),
                     len_value: AtomicUsize::new(NOT_LOADED_LEN),
+                    epoch: core::sync::atomic::AtomicU32::new(0),
                 }
             }
 
             pub(crate) fn get_cached(&self) -> Output {
+                if self.epoch.load(Ordering::Relaxed) != crate::image::epoch() {
+                    return CacheOutput::Unknown;
+                }
                 let len = self.len_value.load(Ordering::Acquire);
 
                 if len == NOT_LOADED_LEN {
@@ -375,6 +380,7 @@ pub(crate) mod kind {
                 &self,
                 raw_env: Option<&'static [u8]>,
             ) -> Option<ValueType> {
+                self.epoch.store(crate::image::epoch(), Ordering::Relaxed);
                 // The implementation is racy and allows two threads to both set the value at
                 // the same time, as long as the value they are setting is the same. This is
                 // difficult to write an assertion for since it requires the DEV path take a
@@ -412,7 +418,8 @@ pub(crate) mod kind {
         // Cache type is emitted for every environment variable.
         // (In Rust, per-var statics give us per-var caches without distinct types.)
         pub(crate) struct Cache {
-            value: AtomicU8, // StoredType
+            value: AtomicU8,                      // StoredType
+            epoch: core::sync::atomic::AtomicU32, // heap-image restore epoch the value was loaded in; stale => reload
         }
 
         #[repr(u8)]
@@ -428,11 +435,15 @@ pub(crate) mod kind {
             pub(crate) const fn new() -> Self {
                 Self {
                     value: AtomicU8::new(StoredType::Unknown as u8),
+                    epoch: core::sync::atomic::AtomicU32::new(0),
                 }
             }
 
             #[inline]
             pub(crate) fn get_cached(&self) -> Output {
+                if self.epoch.load(Ordering::Relaxed) != crate::image::epoch() {
+                    return CacheOutput::Unknown;
+                }
                 // only ever stored from StoredType discriminants
                 let cached: StoredType = match self.value.load(Ordering::Relaxed) {
                     1 => StoredType::NotSet,
@@ -453,6 +464,7 @@ pub(crate) mod kind {
 
             #[inline]
             pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
+                self.epoch.store(crate::image::epoch(), Ordering::Relaxed);
                 let Some(raw_env) = raw_env else {
                     self.value
                         .store(StoredType::NotSet as u8, Ordering::Relaxed);
@@ -546,6 +558,7 @@ pub(crate) mod kind {
         pub(crate) struct Cache {
             value: AtomicU64,
             ip: Input,
+            epoch: core::sync::atomic::AtomicU32, // heap-image restore epoch the value was loaded in; stale => reload
         }
 
         type StoredType = ValueType;
@@ -560,11 +573,15 @@ pub(crate) mod kind {
                 Self {
                     value: AtomicU64::new(UNKNOWN_SENTINEL),
                     ip,
+                    epoch: core::sync::atomic::AtomicU32::new(0),
                 }
             }
 
             #[inline]
             pub(crate) fn get_cached(&self) -> Output {
+                if self.epoch.load(Ordering::Relaxed) != crate::image::epoch() {
+                    return CacheOutput::Unknown;
+                }
                 match self.value.load(Ordering::Relaxed) {
                     UNKNOWN_SENTINEL => {
                         crate::hint::cold();
@@ -577,6 +594,7 @@ pub(crate) mod kind {
 
             #[inline]
             pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
+                self.epoch.store(crate::image::epoch(), Ordering::Relaxed);
                 let Some(raw_env) = raw_env else {
                     self.value.store(NOT_SET_SENTINEL, Ordering::Relaxed);
                     return None;

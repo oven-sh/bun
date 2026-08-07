@@ -3434,61 +3434,45 @@ impl VirtualMachine {
                 return;
             }
             Mode::Strict => {
-                // Watch/hot mode: the reload driver owns recovery (see the
-                // Mode::Bun comment); skip the uncaught machinery.
-                if self.hot_reload == 0 {
-                    let wrapped = wrap_unhandled_rejection_error_for_uncaught_exception(
-                        global_object,
-                        reason,
-                    );
-                    let _ = self.uncaught_exception_fatal(
-                        global_object,
-                        wrapped,
-                        UncaughtExceptionOrigin::Rejection,
-                    );
-                    let handled = handle_unhandled();
-                    if !handled {
-                        emit_warning(self);
-                    }
-                    drain(self);
-                    return;
-                }
-                // Under hot, fall through to the counter/print tail unconditionally: under strict
-                // an unhandledRejection listener alone does not suppress the uncaught treatment.
+                // Unconditional, including under watch/hot: the fatal gate
+                // inside uncaught_exception_impl already skips process_exit
+                // there and falls to the keep-alive print, while the
+                // uncaughtException listener dispatch still runs (Node routes
+                // strict-mode rejections to uncaughtException regardless).
+                let wrapped =
+                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
+                let _ = self.uncaught_exception_fatal(
+                    global_object,
+                    wrapped,
+                    UncaughtExceptionOrigin::Rejection,
+                );
                 if !handle_unhandled() {
                     emit_warning(self);
                 }
+                drain(self);
+                return;
             }
             Mode::Throw => {
                 if handle_unhandled() {
                     drain(self);
                     return;
                 }
-                // Watch/hot mode: see the Mode::Bun comment.
-                if self.hot_reload == 0 {
-                    let wrapped = wrap_unhandled_rejection_error_for_uncaught_exception(
-                        global_object,
-                        reason,
-                    );
-                    if self.uncaught_exception_fatal(
-                        global_object,
-                        wrapped,
-                        UncaughtExceptionOrigin::Rejection,
-                    ) {
-                        drain(self);
-                        return;
-                    }
-                    // Same as Mode::Bun: the keep-alive tail already printed
-                    // when the fatal gate was skipped (REPL / worker).
-                    let _ = self.event_loop_mut().drain_microtasks();
+                // Unconditional, including under watch/hot (see Mode::Strict).
+                let wrapped =
+                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
+                if self.uncaught_exception_fatal(
+                    global_object,
+                    wrapped,
+                    UncaughtExceptionOrigin::Rejection,
+                ) {
+                    drain(self);
                     return;
                 }
-                // continue to default handler — but RETURN if this drain
-                // errors (the VM is dead; don't bump the counter or invoke the
-                // handler).
-                if self.event_loop_mut().drain_microtasks().is_err() {
-                    return;
-                }
+                // The keep-alive tail already printed when the fatal gate was
+                // skipped (REPL / worker / hot); don't fall through and print
+                // again.
+                let _ = self.event_loop_mut().drain_microtasks();
+                return;
             }
         }
         self.unhandled_error_counter += 1;

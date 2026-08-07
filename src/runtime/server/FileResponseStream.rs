@@ -401,13 +401,9 @@ impl FileResponseStream {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // The header write can leave a partially-sent tail in the userspace
-            // buffer when the kernel send buffer is full (AsyncSocket::uncork's
-            // partial-send path). sendfile() bypasses that buffer and writes
-            // straight to the socket fd, so if the kernel drains in between,
-            // file bytes overtake the header tail on the wire. Defer to the
-            // writable path: HttpContext::onWritable flushes the userspace
-            // buffer and only calls back in here once it is empty.
+            // sendfile() bypasses the userspace socket buffer, so an unsent
+            // header tail parked there must flush first or file bytes overtake
+            // it on the wire. The writable path re-enters here once it has.
             let buffered = self.resp.get().get_buffered_amount();
             if buffered > 0 {
                 bun_output::scoped_log!(

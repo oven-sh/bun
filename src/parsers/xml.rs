@@ -167,7 +167,6 @@ const MAX_AMPLIFICATION: u64 = 100;
 /// Entity references open at any one time (the depth of the reference chain).
 const MAX_ENTITY_DEPTH: usize = 256;
 
-
 // ── code units ──────────────────────────────────────────────────────────────
 
 /// The parser runs over UTF-8 / Latin-1 bytes or UTF-16 code units alike:
@@ -288,7 +287,8 @@ fn starts_with_ascii<U: Unit>(units: &[U], lit: &[u8]) -> bool {
 fn find_ascii<U: Unit>(units: &[U], lit: &[u8]) -> Option<usize> {
     if !U::WIDE {
         // SAFETY: `!WIDE` units are bytes.
-        let bytes: &[u8] = unsafe { core::slice::from_raw_parts(units.as_ptr().cast(), units.len()) };
+        let bytes: &[u8] =
+            unsafe { core::slice::from_raw_parts(units.as_ptr().cast(), units.len()) };
         return strings::index_of(bytes, lit);
     }
     let first = lit[0];
@@ -1628,14 +1628,16 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                 b'\r' if self.in_document() => {
                     // A line end in the document (CR or CRLF) is one #xA,
                     // hence one space.
-                    Self::materialize(self.bump, self.src, start, self.pos, &mut buf).push(U::ascii(b' '));
+                    Self::materialize(self.bump, self.src, start, self.pos, &mut buf)
+                        .push(U::ascii(b' '));
                     self.pos += 1;
                     if self.peek() == b'\n' {
                         self.pos += 1;
                     }
                 }
                 b'\t' | b'\n' | b'\r' => {
-                    Self::materialize(self.bump, self.src, start, self.pos, &mut buf).push(U::ascii(b' '));
+                    Self::materialize(self.bump, self.src, start, self.pos, &mut buf)
+                        .push(U::ascii(b' '));
                     self.pos += 1;
                 }
                 _ if c < 0x20 || (c >= 0x80 && !self.latin1) => return Err(self.err_at_entry(c)),
@@ -2771,7 +2773,8 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
                 self.fold_repeats(children_mark);
             }
             if !trimmed.is_empty() {
-                self.tape.push_prop(U::bytes(U::KEY_TEXT), Tape::str(trimmed), frame.loc);
+                self.tape
+                    .push_prop(U::bytes(U::KEY_TEXT), Tape::str(trimmed), frame.loc);
             }
             E::JsonValue::Object(self.tape.object_from(props_mark, frame.loc))
         };
@@ -3184,10 +3187,12 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         // than 1.0 is processed as 1.0 (§2.8, erratum E10).
         let Some((version, pos)) = self.parse_pseudo_attribute(b"version")? else {
             return Err(match self.scanner.tok.kind {
-                Kind::Name(n) if eq_ascii(n, b"encoding") || eq_ascii(n, b"standalone") => self.scanner.err(
-                    self.scanner.tok.pos,
-                    "The XML declaration must start with version=\"1.0\"",
-                ),
+                Kind::Name(n) if eq_ascii(n, b"encoding") || eq_ascii(n, b"standalone") => {
+                    self.scanner.err(
+                        self.scanner.tok.pos,
+                        "The XML declaration must start with version=\"1.0\"",
+                    )
+                }
                 Kind::Question => self.scanner.err(
                     self.scanner.tok.pos,
                     "The XML declaration must specify the version",
@@ -3249,7 +3254,11 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                     return Err(self.unexpected("'?>' to end the XML declaration"));
                 }
             }
-            Kind::Name(name) if eq_ascii(name, b"version") || eq_ascii(name, b"encoding") || eq_ascii(name, b"standalone") => {
+            Kind::Name(name)
+                if eq_ascii(name, b"version")
+                    || eq_ascii(name, b"encoding")
+                    || eq_ascii(name, b"standalone") =>
+            {
                 return Err(self.scanner.err_named(
                     self.scanner.tok.pos,
                     "Misplaced",
@@ -3283,10 +3292,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     /// `S name Eq "value"` in the XML declaration if the current token is
     /// `name`: returns the value and the name's position and advances past
     /// it; otherwise consumes nothing.
-    fn parse_pseudo_attribute(
-        &mut self,
-        name: &'static [u8],
-    ) -> PResult<Option<(&'a [U], usize)>> {
+    fn parse_pseudo_attribute(&mut self, name: &'static [u8]) -> PResult<Option<(&'a [U], usize)>> {
         if !matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, name)) {
             return Ok(None);
         }
@@ -3314,7 +3320,8 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         self.expect_name("the document type name")?;
         self.require_spaced()?;
         self.advance()?;
-        if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC")) {
+        if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC"))
+        {
             self.require_spaced()?;
             self.parse_external_id(false)?;
             self.scanner.has_external_subset = true;
@@ -3747,7 +3754,8 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         self.expect_name("a notation name after '<!NOTATION'")?;
         self.require_spaced()?;
         self.advance()?;
-        if !matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC")) {
+        if !matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC"))
+        {
             return Err(self.unexpected("SYSTEM or PUBLIC in the notation declaration"));
         }
         self.require_spaced()?;

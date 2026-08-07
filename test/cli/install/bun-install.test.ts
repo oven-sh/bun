@@ -9537,9 +9537,67 @@ it("reinstalls a file: dependency pointing at an ancestor directory", async () =
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [runOut, runExit] = await Promise.all([runProc.stdout.text(), runProc.exited]);
+  const [runOut, runErr, runExit] = await Promise.all([
+    runProc.stdout.text(),
+    runProc.stderr.text(),
+    runProc.exited,
+  ]);
+  expect(runErr).toBe("");
   expect(runOut).toBe("poto\n");
   expect(runExit).toBe(0);
+});
+
+it("reinstalls a file: dependency on an ancestor directory resolved to an absolute path", async () => {
+  // Folder paths parsed from package.json are normalized relative to the
+  // project (`file:../` becomes `..`, installed as symlinks), but resolutions
+  // parsed from a lockfile are verbatim: an absolute path routes the install
+  // through the hardlink/copyfile walk instead. That walk must also skip the
+  // project's node_modules when the source contains the destination.
+  using dir = tempDir("file-dep-ancestor-abs", {
+    "package.json": JSON.stringify({ name: "poto", version: "1.0.0" }),
+    "index.js": "module.exports = 'poto';",
+    "sample/package.json": "",
+  });
+  const root = String(dir).replaceAll("\\", "/");
+  const projectDir = join(String(dir), "sample");
+  await write(
+    join(projectDir, "package.json"),
+    JSON.stringify({
+      name: "sample",
+      version: "1.0.0",
+      dependencies: { poto: "file:" + root },
+    }),
+  );
+  await write(
+    join(projectDir, "bun.lock"),
+    JSON.stringify({
+      lockfileVersion: 2,
+      configVersion: 1,
+      workspaces: { "": { name: "sample", dependencies: { poto: "file:" + root } } },
+      packages: { poto: ["poto@file:" + root, {}] },
+    }),
+  );
+
+  for (let i = 0; i < 3; i++) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).not.toContain("ENOENT");
+    expect(err).not.toContain("Failed to install");
+    expect(out).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+
+    expect(await exists(join(projectDir, "node_modules", "poto", "package.json"))).toBe(true);
+    expect(await exists(join(projectDir, "node_modules", "poto", "index.js"))).toBe(true);
+    expect(await exists(join(projectDir, "node_modules", "poto", "sample", "node_modules"))).toBe(false);
+  }
 });
 
 for (const field of ["resolutions", "overrides"]) {

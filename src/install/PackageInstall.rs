@@ -1159,6 +1159,10 @@ impl<'a> PackageInstall<'a> {
         };
         self.file_count = match copy(&subdir, &mut walker_) {
             Ok(n) => n,
+            // `install()` only falls back to copyfile on `Err(NotSupported)`;
+            // wrapping it in an `InstallResult` would report the install failed
+            // on filesystems without clonefile support.
+            Err(crate::Error::NotSupported) => return Err(crate::Error::NotSupported),
             Err(err) => return Ok(InstallResult::fail(err, Step::CopyingFiles, None)),
         };
 

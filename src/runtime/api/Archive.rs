@@ -702,7 +702,7 @@ impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
             Ok(r) => r,
             Err(e) => {
                 // JSError means exception is already pending
-                return Ok(promise.reject(global, Ok(global.take_exception(e)))?);
+                return Ok(promise.reject(global, Err(e))?);
             }
         };
         Ok(result.fulfill(global, promise)?)

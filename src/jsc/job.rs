@@ -500,6 +500,16 @@ impl<C: JobContext> Drop for Completion<C> {
 /// `ptr` is a `Job<C>` posted by its `Completion` (for some `C`).
 pub unsafe fn complete_erased(ptr: *mut (), cx: &JsThread<'_>) -> JsResult<()> {
     let header = ptr.cast::<JobHeader>();
+    // A completion dispatched after the VM was asked to stop (a parent's
+    // terminate() lands while the worker still ticks): its `then` would only
+    // build script-facing values under a pending termination. Release it as
+    // teardown would — Node's threadpool `after` callbacks bail the same way
+    // on `!can_call_into_js()`.
+    if !cx.vm().script_allowed() {
+        // SAFETY: as below; released exactly once, here.
+        unsafe { ((*header).release_unrun)(header, cx) };
+        return Ok(());
+    }
     // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
     unsafe { ((*header).complete)(header, cx) }
 }

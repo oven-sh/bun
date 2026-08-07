@@ -1246,7 +1246,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `this` is the live server backref registered as the uws
         // userdata; only one borrow derived from it is alive at a time.
-        if unsafe { &*this }.js_value_for_dispatch().is_none() {
+        // A stopped server, or a VM whose script gate has closed (a worker asked
+        // to terminate, still draining its loop): uWS requires every dispatched
+        // request to be answered or adopted, so answer natively.
+        if unsafe { &*this }.js_value_for_dispatch().is_none()
+            || !unsafe { &*this }.vm().script_allowed()
+        {
             server_body::respond_stopped_503(resp);
             return;
         }
@@ -1318,6 +1323,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             )
         })
         .unwrap_or_else(|err| global.take_exception(err));
+
+        if node_http_response.is_null() {
+            // The request never reached the handler: an exception (in practice
+            // a termination request landing in the header conversion) unwound
+            // before the response object existed. Nothing adopted the response;
+            // answer it natively as above.
+            if !result.is_empty() && !result.is_termination_exception() {
+                // SAFETY: `vm` is the process-static VirtualMachine.
+                let _ = unsafe { (*vm).uncaught_exception(global, result, false) };
+            }
+            server_body::respond_stopped_503(resp);
+            // SAFETY: same `this`; balances `on_pending_request` above.
+            unsafe { (*this).on_static_request_complete() };
+            return;
+        }
 
         enum HttpResult {
             Rejection(JSValue),

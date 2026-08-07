@@ -65,6 +65,10 @@ pub trait CompletionStruct: Node + Send + 'static {
         transpiler: &mut Transpiler<'a>,
         bump: &'a Arena,
     ) -> Result<(), crate::Error>;
+    /// Bundle thread, on dequeue: `false` if the owner released this build
+    /// while it was still queued ([`free_released_unstarted`] then frees it).
+    fn try_start(&mut self) -> bool;
+    fn free_released_unstarted(this: *mut Self);
     fn complete_on_bundle_thread(&mut self);
     fn set_result(&mut self, result: BundleV2Result);
     fn set_log(&mut self, log: bun_ast::Log);
@@ -221,7 +225,13 @@ impl<C: CompletionStruct> BundleThread<C> {
                     break;
                 }
                 // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner keeps it alive
-                // until complete_on_bundle_thread() signals completion.
+                // until complete_on_bundle_thread() signals completion — unless it
+                // released the build while it sat here (its VM went away).
+                if !unsafe { (*completion).try_start() } {
+                    C::free_released_unstarted(completion);
+                    continue;
+                }
+                // SAFETY: as above; started ⇒ the owner waits for us.
                 let completion = unsafe { &mut *completion };
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
                 let generation = unsafe { (*instance).generation };

@@ -2,7 +2,6 @@
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
 
-use bun_jsc::HostReturn as _;
 use bun_paths::strings;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
@@ -958,13 +957,13 @@ mod _async_tasks {
                 Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
-                        return promise.reject(global_object, Ok(global_object.take_exception(e)));
+                        return promise.reject(global_object, Err(e));
                     }
                 },
                 Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return promise.reject(global_object, Ok(global_object.take_exception(e)));
+                        return promise.reject(global_object, Err(e));
                     }
                 },
             };
@@ -1274,14 +1273,14 @@ mod _async_tasks {
                         Ok(v) => v,
                         Err(e) => {
                             return Ok(promise
-                                .reject(global_object, Ok(global_object.take_exception(e)))?);
+                                .reject(global_object, Err(e))?);
                         }
                     },
                     Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                         Ok(v) => v,
                         Err(e) => {
                             return Ok(promise
-                                .reject(global_object, Ok(global_object.take_exception(e)))?);
+                                .reject(global_object, Err(e))?);
                         }
                     },
                 };
@@ -1721,7 +1720,7 @@ mod _async_tasks {
                         // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
                         // reference on this thread (see comment above `let promise`).
                         return unsafe { &mut *promise }
-                            .reject(global_object, Ok(global_object.take_exception(e)));
+                            .reject(global_object, Err(e));
                     }
                 },
                 Ok(res) => match FsReturn::fs_to_js(res, global_object) {
@@ -1730,7 +1729,7 @@ mod _async_tasks {
                         // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
                         // reference on this thread (see comment above `let promise`).
                         return unsafe { &mut *promise }
-                            .reject(global_object, Ok(global_object.take_exception(e)));
+                            .reject(global_object, Err(e));
                     }
                 },
             };
@@ -2209,7 +2208,7 @@ mod _async_tasks {
                     Ok(v) => v,
                     Err(e) => {
                         return Ok(
-                            promise.reject(global_object, Ok(global_object.take_exception(e)))?
+                            promise.reject(global_object, Err(e))?
                         );
                     }
                 }
@@ -2228,7 +2227,7 @@ mod _async_tasks {
                     Ok(v) => v,
                     Err(e) => {
                         return Ok(
-                            promise.reject(global_object, Ok(global_object.take_exception(e)))?
+                            promise.reject(global_object, Err(e))?
                         );
                     }
                 }
@@ -7180,11 +7179,18 @@ impl NodeFS {
                             // (per-thread singleton; see `pipe_read_buffer`
                             // above) — `BackRef` invariant holds.
                             let global = vm.global();
-                            let array_buffer = bun_jsc::ArrayBuffer::create_buffer(
+                            let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,
                                 temporary_read_buffer_before_stat_call,
-                            )
-                            .or_pending_exception();
+                            ) else {
+                                // OOM / a termination request: that JS exception
+                                // is pending and wins — the binding's `throw_value`
+                                // yields to it and drops this errno.
+                                return Err(with_path_like(
+                                    sys::Error::from_code(E::ENOMEM, sys::Tag::read),
+                                    &args.path,
+                                ));
+                            };
                             array_buffer.ensure_still_alive();
                             return match array_buffer.as_array_buffer(global) {
                                 Some(buffer) => Ok(ret::ReadFileWithOptions::Buffer(

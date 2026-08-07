@@ -86,10 +86,10 @@ impl Strong {
         self.swap().reject(global, val)
     }
 
-    /// The one way native code hands an outcome to script: `Ok` resolves,
-    /// `Err` rejects with the exception the failed conversion left pending —
-    /// and either does nothing once the VM is stopping (see
-    /// [`JSPromise::resolve`]). Prefer this over `resolve(v.unwrap_or(..))`.
+    /// The one way native code hands a conversion outcome to script: `Ok`
+    /// resolves, `Err` rejects with the exception the failed conversion left
+    /// pending (see [`JSPromise::resolve`]). Prefer this over
+    /// `resolve(v.unwrap_or(..))`.
     pub fn settle(
         &mut self,
         global: &JSGlobalObject,
@@ -344,22 +344,19 @@ impl JSPromise {
     // ── the native → promise boundary ─────────────────────────────────────
     //
     // Every settlement native code performs funnels through `resolve` /
-    // `reject` below (the `Strong` methods delegate here). Two rules live
-    // here so no completion path has to remember them:
+    // `reject` below (the `Strong` methods delegate here), so the rule lives
+    // here once: an empty `JSValue` is never a value — it means the producer's
+    // JS conversion threw and left the exception pending (a termination request
+    // landing mid-conversion is the common case). It becomes "reject with that
+    // exception", which itself yields to a termination (`Err(JSTerminated)`,
+    // exception left pending to unwind the caller).
     //
-    // * Once the VM is stopping (a parent's `terminate()`, or this thread's
-    //   own exit) nothing is settled: settlement can run script (thenables,
-    //   reactions) and nothing will observe the outcome — Node's
-    //   `can_call_into_js()` gate. The caller gets `Err(JSTerminated)`.
-    // * An empty `JSValue` is never a value: it means the producer's JS
-    //   conversion threw and left the exception pending (a termination
-    //   request landing mid-conversion is the common case). It is turned into
-    //   "reject with that exception", which itself yields to a termination.
+    // Whether a *completion* should reach script at all once the VM is
+    // stopping is decided where completions enter (`job::complete_erased`,
+    // the event loop's callback entry), not here: a host function that is
+    // still running script settles promises normally until its own trap fires.
 
     pub fn resolve(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
-        if !global.bun_vm().script_allowed() {
-            return Err(JsTerminated::JSTerminated);
-        }
         if value.is_empty() {
             debug_assert!(
                 global.has_exception(),
@@ -389,9 +386,6 @@ impl JSPromise {
         global: &JSGlobalObject,
         value: JsResult<JSValue>,
     ) -> Result<(), JsTerminated> {
-        if !global.bun_vm().script_allowed() {
-            return Err(JsTerminated::JSTerminated);
-        }
         let err = match value {
             Ok(v) if v.is_empty() => {
                 debug_assert!(
@@ -430,9 +424,6 @@ impl JSPromise {
         global: &JSGlobalObject,
         value: JSValue,
     ) -> Result<(), JsTerminated> {
-        if !global.bun_vm().script_allowed() {
-            return Err(JsTerminated::JSTerminated);
-        }
         if value.is_empty() {
             self.set_handled();
             return self.reject(global, Ok(value));

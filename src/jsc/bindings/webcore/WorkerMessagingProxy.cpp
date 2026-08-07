@@ -195,6 +195,10 @@ void WorkerMessagingProxy::postMessageToWorkerGlobalScope(MessageWithMessagePort
 {
     {
         Locker locker { m_toWorker.lock };
+        // A terminated (or terminating) worker drains nothing more: drop, as a closed port does.
+        auto state = m_state.load();
+        if (state == State::Closing || state == State::Closed)
+            return;
         m_toWorker.queue.append(WTF::move(message));
         // Before Running the inbox is only buffered; workerGlobalScopeStarted() schedules the first
         // drain on the worker thread. One drain task in flight at a time.

@@ -1720,10 +1720,21 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
 /// prepareForDestruction discards the pre-exit queues.)
 pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = vm.event_loop_mut().drain_microtasks();
-    let _ = stop_active_handles_for_vm_teardown(vm);
+    let _ = stop_active_handles(vm, StopReason::TestIsolation);
 }
 
 pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
+    stop_active_handles(vm, StopReason::VmTeardown)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StopReason {
+    VmTeardown,
+    /// The VM keeps running (`bun test --isolate` global swap).
+    TestIsolation,
+}
+
+fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResult {
     let state = runtime_state();
     if state.is_null() {
         return SweepResult::Idle;
@@ -1747,6 +1758,8 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
             unsafe { (*all).fake_timers.reset_for_isolation(global) };
         }
     }
+    // Entries that stay registered across a test-isolation swap.
+    let mut kept: Vec<ActiveHandle> = Vec::new();
     loop {
         // SAFETY: live boxed per-thread `RuntimeState`; the borrow ends before
         // the close below re-enters JS.
@@ -1789,6 +1802,10 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
             ActiveHandle::S3Download(t) => unsafe {
                 crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask::stop_for_vm_teardown(t.as_ptr())
             },
+            // A live VM cannot cancel a build: hop tasks it already queued here
+            // would still be dispatched against the finished pass. The build
+            // runs on; its completion lands on the next file's global.
+            ActiveHandle::Bundle(_) if reason == StopReason::TestIsolation => kept.push(kv.key),
             // SAFETY: live until it unregisters in `on_complete_anytask`.
             ActiveHandle::Bundle(c) => unsafe {
                 crate::api::js_bundle_completion_task::JSBundleCompletionTask::stop_for_vm_teardown(
@@ -1801,6 +1818,9 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
                 let _ = crate::dns_jsc::Resolver::close_channel_for_terminate(r.as_ptr());
             },
         }
+    }
+    for handle in kept {
+        handle.register();
     }
     result
 }

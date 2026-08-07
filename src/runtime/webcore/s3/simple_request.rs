@@ -116,8 +116,6 @@ pub struct S3HttpSimpleTask {
     // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
     // `http_callback` / `Drop`) may `assume_init`.
     pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
-    /// the inert `Default` placeholder (overwritten before the task escapes).
     /// How the HTTP thread reaches the VM to deliver the response.
     pub(crate) loop_handle: bun_jsc::LoopHandle,
     pub(crate) sign_result: SignResult,
@@ -143,32 +141,6 @@ pub struct S3HttpSimpleTask {
 
 impl Taskable for S3HttpSimpleTask {
     const TAG: TaskTag = task_tag::S3HttpSimpleTask;
-}
-
-// `..Default::default()` requires the whole struct to be Default, so beyond
-// `response_buffer`/`result`/`concurrent_task` the remaining fields get
-// inert placeholders that callers always overwrite (see client.rs / execute_simple_s3_request).
-impl Default for S3HttpSimpleTask {
-    fn default() -> Self {
-        fn unset_callback(_: S3UploadResult<'_>, _: *mut c_void) -> JsTerminatedResult<()> {
-            unreachable!("S3HttpSimpleTask.callback used before being set")
-        }
-        Self {
-            http: core::mem::MaybeUninit::uninit(),
-            loop_handle: VirtualMachine::get().loop_handle(),
-            sign_result: SignResult::default(),
-            headers: Headers::default(),
-            callback_context: core::ptr::null_mut(),
-            callback: Callback::Upload(unset_callback),
-            response_buffer: MutableString::default(),
-            result: HTTPClientResult::default(),
-            concurrent_task: ConcurrentTask::default(),
-            proxy_url: Box::default(),
-            body: Box::default(),
-            poll_ref: KeepAlive::default(),
-            signal_store: Default::default(),
-        }
-    }
 }
 
 // Re-export the canonical alias so sibling modules that imported it from here keep compiling.

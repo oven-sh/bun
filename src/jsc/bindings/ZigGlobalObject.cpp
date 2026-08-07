@@ -604,9 +604,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 size_t i = 0;
                 for (auto k : map) {
                     // Numeric env keys hit putDirectIndex → defineOwnProperty (declares a
-                    // ThrowScope). Seeded values are JSStrings so only OOM can throw.
+                    // ThrowScope). Seeded values are JSStrings, so this throws only on OOM
+                    // or under a termination already requested for this starting worker.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
-                    scope.assertNoException();
+                    if (scope.exception()) [[unlikely]]
+                        break;
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             } else if (options.sharedEnvStore) {
@@ -622,9 +624,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             // that we can request their termination from another thread. For the main thread, we
             // can delay this until we are actually requesting termination (until and unless we ever
             // do need to request termination from another thread).
+            //
+            // Execution is forbidden by the exit path (GlobalObject::forbidExecution), not by any
+            // TerminationException: node:vm {timeout} and breakOnSigint terminate transiently and the
+            // worker keeps running afterwards.
             vm.ensureTerminationException();
-            // Make the VM stop sooner once terminated (e.g. microtasks won't run)
-            vm.forbidExecutionOnTermination();
         };
 
         if (auto* worker = static_cast<WebCore::WorkerMessagingProxy*>(worker_ptr)) {
@@ -1768,9 +1772,9 @@ JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globa
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto interfaceName = callFrame->uncheckedArgument(0).getString(globalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
     auto attributeName = callFrame->uncheckedArgument(1).getString(globalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto error = static_cast<ErrorInstance*>(createTypeError(globalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(interfaceName.utf8().data(), attributeName)));
     error->setNativeGetterTypeError();
@@ -1787,10 +1791,10 @@ JSC_DEFINE_HOST_FUNCTION(makeDOMExceptionForBuiltins, (JSGlobalObject * globalOb
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto codeValue = callFrame->uncheckedArgument(0).getString(globalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto message = callFrame->uncheckedArgument(1).getString(globalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
 
     ExceptionCode code { TypeError };
     if (codeValue == "AbortError"_s)
@@ -4371,9 +4375,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined, (JS
     auto& vm = JSC::getVM(leixcalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto name = callFrame->argument(0).toWTFString(leixcalGlobalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
     auto count = callFrame->argument(1).toNumber(leixcalGlobalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
     auto* func = InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, leixcalGlobalObject, count, name, jsFunctionNotImplemented);
     return JSC::JSValue::encode(func);
 }

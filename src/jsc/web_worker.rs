@@ -1108,10 +1108,14 @@ impl WebWorker {
         self.status.set(status);
     }
 
+    /// Report the VM log (entry resolution / load errors) to the parent as the
+    /// worker's 'error' event. Nothing is reported once the worker is being
+    /// stopped: the parent asked for exactly that, and building the error
+    /// object would run into the pending termination.
     fn flush_logs(&self, vm: &VirtualMachine) {
         jsc::mark_binding();
         let vm_log = vm.log_ref().unwrap();
-        if vm_log.msgs.is_empty() {
+        if vm_log.msgs.is_empty() || !vm.script_allowed() {
             return;
         }
         let global = vm.global();
@@ -1123,7 +1127,13 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
+            // A termination request landed while building the error: as above.
+            Err(JsError::Terminated) => return,
+            Err(JsError::Thrown) => {
+                // Building an error from log messages threw: report that instead.
+                global.report_active_exception_as_unhandled(JsError::Thrown);
+                return;
+            }
         };
         let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
@@ -1341,6 +1351,13 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 }
             }
         }
+    }
+
+    // A `data:` URL is the module itself (the loader decodes it); it never names
+    // a path, so it must not go through path resolution (long ones would fail
+    // with ENAMETOOLONG there).
+    if str.starts_with(b"data:") {
+        return Some(str);
     }
 
     // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — prefix `"blob:"`

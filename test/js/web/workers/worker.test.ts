@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -333,6 +333,103 @@ describe("web worker", () => {
       expect(err.type).toBe("error");
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
+    });
+  });
+
+  describe("terminate() races and lifecycle edges", () => {
+    // A vm timeout inside a worker is a transient termination of that VM; it
+    // must not leave the worker unable to run script (parent messages dropped).
+    test("parent messages still arrive after a node:vm timeout in the worker", async () => {
+      const src = `import vm from "node:vm";
+        self.onmessage = e => postMessage("pong " + e.data);
+        try { vm.runInNewContext("for(;;){}", {}, { timeout: 20 }) } catch {}
+        postMessage("ready");`;
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      const got: string[] = [];
+      const done = Promise.withResolvers<void>();
+      w.onmessage = e => {
+        if (e.data === "ready") {
+          for (let i = 0; i < 3; i++) w.postMessage(i);
+          return;
+        }
+        got.push(e.data);
+        if (got.length === 3) done.resolve();
+      };
+      await done.promise;
+      expect(got).toEqual(["pong 0", "pong 1", "pong 2"]);
+      w.terminate();
+    });
+
+    // As in browsers and Node: not an error, the message is dropped.
+    test("postMessage() to a terminated worker is a no-op", async () => {
+      const w = new Worker("data:text/javascript,postMessage('up')");
+      await new Promise(r => (w.onmessage = r));
+      w.terminate();
+      await once(w, "close");
+      expect(() => w.postMessage("late")).not.toThrow();
+    });
+
+    // A data: URL is the module itself and never a path (no length limit).
+    test("a long data: URL worker", async () => {
+      const pad = "/*" + Buffer.alloc(4000, "x").toString() + "*/";
+      const w = new Worker("data:text/javascript," + encodeURIComponent(pad + "postMessage('hi')"));
+      const [msg] = await once(w, "message");
+      expect(msg.data).toBe("hi");
+      w.terminate();
+    });
+
+    // terminate() landing while the worker reports that its entry point does not
+    // resolve: the report is skipped, not turned into a panic.
+    test("terminate() while the entry point fails to resolve", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let done = 0;
+           async function one(i) {
+             const w = new Worker("/nonexistent/path-" + i + ".js");
+             const closed = new Promise(r => w.addEventListener("close", r));
+             w.onerror = () => {};
+             setTimeout(() => w.terminate(), i % 8);
+             await closed;
+             done++;
+           }
+           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 8 }, (_, i) => one(r * 8 + i)));
+           console.log("done", done);`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("done 96\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // fs completions racing terminate(): whatever completes on the worker
+    // after the request must release, not build script values under it.
+    test("terminate() while fs.readFile completions keep arriving", async () => {
+      using dir = tempDir("worker-readfile-churn", { "f.bin": Buffer.alloc(65536, 7) });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const src = \`import { readFile } from "node:fs";
+             let n = 0; (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => { n--; setImmediate(pump) }) } })();
+             postMessage("busy")\`;
+           const url = URL.createObjectURL(new Blob([src]));
+           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
+             const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), (r + i) % 10) })));
+           console.log("PASS");`,
+          path.join(String(dir), "f.bin"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("PASS\n");
+      expect(exitCode).toBe(0);
     });
   });
 });

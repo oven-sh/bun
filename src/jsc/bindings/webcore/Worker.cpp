@@ -89,11 +89,10 @@ Worker::~Worker()
     m_contextProxy->workerObjectDestroyed();
 }
 
+// As in WebCore and Node: a message for a worker that has terminated is serialized (transfer
+// side effects still happen) and then dropped by the proxy; it is not an error.
 ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
-    if (!m_contextProxy->hasPendingActivity())
-        return Exception { InvalidStateError, "Worker has been terminated"_s };
-
     Vector<RefPtr<MessagePort>> ports;
     auto serialized = SerializedScriptValue::create(state, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException())
@@ -414,14 +413,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
         WebCore::propagateException(*globalObject, scope, serialized.releaseException());
         RELEASE_AND_RETURN(scope, {});
     }
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
 
     ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
     if (disentangledPorts.hasException()) {
         WebCore::propagateException(*globalObject, scope, disentangledPorts.releaseException());
         RELEASE_AND_RETURN(scope, {});
     }
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
 
     proxy->postMessageToWorkerObject(MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() });
 

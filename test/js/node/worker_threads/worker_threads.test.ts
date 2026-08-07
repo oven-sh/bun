@@ -2075,10 +2075,11 @@ describe("terminate with work in flight", () => {
       cmd: [
         bunExe(),
         "-e",
-        `const server = Bun.serve({ port: 0, fetch: () => new Promise(() => {}) }); // never responds
+        // The server never responds; exit once both requests have reached it.
+        `let seen = 0;
+         const server = Bun.serve({ port: 0, fetch: () => { if (++seen === 2) { console.log("exiting"); process.exit(0); } return new Promise(() => {}); } });
          fetch("http://127.0.0.1:" + server.port + "/").catch(() => {});
-         fetch("http://127.0.0.1:" + server.port + "/").catch(() => {});
-         setTimeout(() => { console.log("exiting"); process.exit(0); }, 20);`,
+         fetch("http://127.0.0.1:" + server.port + "/").catch(() => {});`,
       ],
       env: bunEnv,
       stdout: "pipe",

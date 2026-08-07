@@ -2584,6 +2584,24 @@ pub struct ShellTask {
 }
 
 impl ShellTask {
+    /// A subtask created on a pool thread (`ls -R` discovering a directory):
+    /// it reports to the same loop as `parent`, whose poster was captured on
+    /// the JS thread — nothing here derives one from the VM.
+    pub(crate) fn new_child(parent: &ShellTask) -> Self {
+        ShellTask {
+            task: WorkPoolTask {
+                node: Default::default(),
+                callback: shell_task_unset_callback,
+            },
+            poster: parent.poster.clone(),
+            event_loop: parent.event_loop,
+            keep_alive: Default::default(),
+            interp: core::ptr::null_mut(),
+            concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(parent.event_loop),
+        }
+    }
+
+    /// JS thread (the interpreter's): derives the poster for `event_loop`.
     pub(crate) fn new(event_loop: EventLoopHandle) -> Self {
         ShellTask {
             task: WorkPoolTask {

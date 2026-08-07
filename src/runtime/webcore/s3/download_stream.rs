@@ -7,7 +7,6 @@ use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_io::KeepAlive;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;
 use bun_threading::Mutex;
@@ -18,8 +17,6 @@ pub struct S3HttpDownloadStreamingTask {
     // `MaybeUninit` because `AsyncHTTP` contains non-null references, so
     // `mem::zeroed()` can't be used here (mirrors `S3HttpSimpleTask`).
     pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
-    /// the inert `Default` placeholder (overwritten before the task escapes).
     /// How the HTTP thread reaches the VM to deliver chunks.
     pub(crate) loop_handle: bun_jsc::LoopHandle,
     pub(crate) sign_result: SignResult,
@@ -51,34 +48,6 @@ impl Taskable for S3HttpDownloadStreamingTask {
     const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
 }
 
-impl Default for S3HttpDownloadStreamingTask {
-    fn default() -> Self {
-        // only the fields `has_schedule_callback` .. `concurrent_task`
-        // are observed via this path; the rest are placeholders that the caller (client.rs
-        // `..Default::default()`) overwrites before the task pointer escapes
-        // (see S3HttpSimpleTask in simple_request.rs).
-        Self {
-            // never read — fully overwritten by `AsyncHTTP::init` before first use.
-            http: core::mem::MaybeUninit::uninit(),
-            loop_handle: VirtualMachine::get().loop_handle(),
-            sign_result: SignResult::default(),
-            headers: Headers::default(),
-            callback_context: NonNull::dangling(),
-            callback: |_, _, _, _| {},
-            proxy_url: Box::default(),
-            has_schedule_callback: AtomicBool::new(false),
-            signal_store: bun_http::signals::Store::default(),
-            signals: Signals::default(),
-            poll_ref: KeepAlive::default(),
-            mutex: Mutex::default(),
-            reported_response_buffer: MutableString::default(),
-            request_error: None,
-            state: AtomicU64::new(State::default().0),
-            concurrent_task: ConcurrentTask::default(),
-            async_http_id: 0,
-        }
-    }
-}
 
 impl S3HttpDownloadStreamingTask {
     pub(crate) fn new(init: Self) -> Box<Self> {

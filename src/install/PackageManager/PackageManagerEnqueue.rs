@@ -629,9 +629,8 @@ fn is_update_target(this: &mut PackageManager, dependency: &Dependency, id: Depe
     }
     let this_ptr: *mut PackageManager = this;
     // Update direct deps of the current workspace; catalogs are root-scoped.
-    // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
-    // `manager.workspace_package_json_cache` only — disjoint from
-    // `manager.lockfile`.
+    // SAFETY: `is_root_dependency` reads `manager.root_package_id` /
+    // `manager.workspace_name_hash` only — disjoint from `manager.lockfile`.
     if dependency.version.tag != dependency::version::Tag::Catalog
         && !unsafe { &*(*this_ptr).lockfile }.is_root_dependency(unsafe { &mut *this_ptr }, id)
     {
@@ -2013,8 +2012,8 @@ fn get_or_put_resolved_package_with_find_result(
     // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = {
         let this_ptr: *mut PackageManager = this;
-        // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
-        // `manager.workspace_package_json_cache` only — disjoint from
+        // SAFETY: `is_root_dependency` reads `manager.root_package_id` /
+        // `manager.workspace_name_hash` only — disjoint from
         // `manager.lockfile`.
         this.to_update
             // Update direct deps of the current workspace; catalogs are root-scoped.

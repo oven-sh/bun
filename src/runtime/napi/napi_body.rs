@@ -1791,6 +1791,10 @@ impl napi_async_work {
         }
         self.scheduled = true;
         self.poll_ref.ref_(bun_io::js_vm_ctx());
+        // The work object belongs to the addon and `execute` receives this
+        // env: counted, so the VM waits for it (Node likewise settles its
+        // threadpool requests before an environment is freed).
+        self.loop_handle.embedded_work_scheduled();
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -1802,34 +1806,47 @@ impl napi_async_work {
 
     fn run(&mut self) {
         let self_ptr: *mut Self = self;
-        if let Err(state) = self.status.compare_exchange(
-            AsyncWorkStatus::Pending as u32,
-            AsyncWorkStatus::Started as u32,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ) {
-            if state == AsyncWorkStatus::Cancelled as u32 {
-                self.post_to_js_thread(self_ptr);
-                return;
-            }
+        let handle = self.loop_handle.clone();
+        // A VM that is already stopping cancels work it has not started, as
+        // Node's environment cleanup does (uv_cancel); otherwise `execute` runs
+        // with the VM held open.
+        let vm = handle.borrow_if_running();
+        let started = vm.is_some()
+            && match self.status.compare_exchange(
+                AsyncWorkStatus::Pending as u32,
+                AsyncWorkStatus::Started as u32,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => true,
+                Err(state) => state != AsyncWorkStatus::Cancelled as u32,
+            };
+        if started {
+            (self.execute)(self.env.get(), self.data);
+            self.status
+                .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
+        } else {
+            let _ = self.cancel();
         }
-        (self.execute)(self.env.get(), self.data);
-        self.status
-            .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
+        drop(vm);
         self.post_to_js_thread(self_ptr);
+        // `self` may already be freed by the JS thread; the handle is ours.
+        handle.embedded_work_finished();
     }
 
     /// Pool thread → JS thread: run `complete` there. `concurrent_task` is the
     /// live inline field of this heap work; the queue takes ownership of its
-    /// `next` link. If the VM has been torn down, `complete` is never called
-    /// (as when Node tears an env down with work outstanding) and the work
-    /// object stays with the addon that owns it.
+    /// `next` link. Counted work, so the VM has not closed its handle; a VM
+    /// tearing down runs `complete` from its queue release (status cancelled
+    /// if `execute` never ran), as Node does at environment cleanup.
     fn post_to_js_thread(&mut self, self_ptr: *mut Self) {
         let ct = core::ptr::NonNull::from(
             self.concurrent_task
                 .from(self_ptr, AutoDeinit::ManualDeinit),
         );
-        let _ = self.loop_handle.post_task(ct);
+        let bun_jsc::vm_handle::Posted::Queued = self.loop_handle.post_task(ct) else {
+            unreachable!("VM handle closed with napi async work outstanding");
+        };
     }
 
     pub(crate) fn cancel(&mut self) -> bool {
@@ -5125,9 +5142,9 @@ impl NapiFinalizerTask {
         if !is_main_thread {
             // Off the JS thread (e.g. an external buffer finalized from a GC
             // helper thread): post through the env's VM handle. If the VM is
-            // already torn down the finalizer can never run safely; release the
-            // task (and its env ref) here, as the cleanup-hooks-already-ran case
-            // below does.
+            // already torn down the finalizer can never run; free the task but
+            // not the env ref — the env's count is not atomic and the env goes
+            // with its VM — as the cleanup-hooks-already-ran case below does.
             // SAFETY: env is valid (held by NapiEnvRef).
             let handle = unsafe { &*self.finalizer.env.get() }.vm_handle().clone();
             let this = bun_core::heap::into_raw(self);
@@ -5138,7 +5155,8 @@ impl NapiFinalizerTask {
                 // SAFETY: refused ⇒ we own both boxes.
                 unsafe {
                     drop(bun_core::heap::take(ct.as_ptr()));
-                    drop(bun_core::heap::take(this));
+                    let task = bun_core::heap::take(this);
+                    core::mem::forget(task.finalizer.env);
                 }
             }
             return;

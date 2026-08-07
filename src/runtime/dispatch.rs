@@ -1323,6 +1323,16 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             unsafe { node_zlib_binding::CompressionStream::<NativeZstd>::release_unrun(task.ptr.cast()) };
             true
         }
+        // napi async work the pool handed back during teardown: its `complete`
+        // callback is how the addon learns the outcome and frees the work
+        // (Node calls it from environment cleanup too); script it tries to run
+        // is refused at the boundary.
+        task_tag::NapiAsyncWork => {
+            let vm = VirtualMachine::get().as_mut();
+            // SAFETY: `task.ptr` is the addon's live work object the pool posted.
+            unsafe { (*task.ptr.cast::<napi_async_work>()).run_from_js(vm, global) };
+            true
+        }
         // A finished fs.cp whose completion will not run: destroy releases its
         // promise handle, protected arguments and keep-alive.
         task_tag::AsyncCpTask => {

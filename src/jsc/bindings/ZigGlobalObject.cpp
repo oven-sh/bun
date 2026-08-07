@@ -416,8 +416,11 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
         checkIfNextTickWasCalledDuringMicrotask(vm);
     } else {
         vm.setOnEachMicrotaskTick(nullptr);
-        // Drain so nextTick callbacks queued before this cleanup aren't dropped.
-        globalObject->m_nextTickQueue.get()->drain(vm, globalObject);
+        // Only drain pending ticks; drain() on an empty queue would re-drain
+        // the (already exhausted) microtask queue.
+        auto* queue = globalObject->m_nextTickQueue.get();
+        if (!queue->isEmpty())
+            queue->drain(vm, globalObject);
     }
 }
 

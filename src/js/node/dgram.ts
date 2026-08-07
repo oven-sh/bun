@@ -706,11 +706,6 @@ function startBunSocket(self, state, createOptions) {
     Bun.udpSocket({
       ...createOptions,
       socket: {
-        // guardCallback: a throw from a "message"/"error" listener (or a send
-        // callback run by drain) is a fatal uncaught exception, as in node
-        // (UDPWrap invokes these via MakeCallback). Without it the bound
-        // socket's ref keeps the loop alive and the process hangs after
-        // reporting.
         data: guardCallback((_socket, data, port, address, flags) => {
           // Per-packet, from the received sockaddr's family: bind({ fd }) can
           // adopt a descriptor of the other family than `type`.

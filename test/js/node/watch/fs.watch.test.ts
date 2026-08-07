@@ -1622,9 +1622,6 @@ test("fs.watch wrapper reference survives GC across event, abort and close paths
   expect(exitCode).toBe(0);
 }, 30_000);
 
-// A throw from a watch callback (or a "change" listener) is a fatal uncaught
-// exception, as in node. Previously it was reported but the watcher's ref kept
-// the event loop alive, so the process hung.
 test("fs.watch callback throw is a fatal uncaught exception", async () => {
   const fixture = `
     const fs = require("node:fs");

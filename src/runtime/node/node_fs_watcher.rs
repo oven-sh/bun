@@ -793,9 +793,6 @@ impl FSWatcher {
             if let Some(listener) = js::listener_get_cached(js_this) {
                 listener.ensure_still_alive();
                 let global_this = self.global_this;
-                // "abort", not "error": the JS layer emits the abort reason as
-                // a lenient "error" event (node emits only "close" on abort),
-                // while a real "error" event's unhandled throw is fatal.
                 let args = [
                     EventType::Abort.to_js(&global_this),
                     if err.is_empty_or_undefined_or_null() {

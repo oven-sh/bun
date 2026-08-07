@@ -1090,9 +1090,6 @@ impl VirtualMachine {
             .platform_loop_opt()
             .map(|h| h.is_active())
             .unwrap_or(false);
-        // unhandled_error_counter no longer kills liveness: fatal throws exit inside
-        // uncaught_exception_fatal and keep-alive reports leave servers serving. The counter
-        // still arms exit code 1 and skips beforeExit at the natural end of the run.
         (active as usize)
             + self.active_tasks
             + el.tasks.readable_length()
@@ -1401,9 +1398,6 @@ impl VirtualMachine {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
 
-    /// Fire `uncaughtException` listeners; if none claim the error, print it, set `exit_code = 1`,
-    /// and return. The process keeps running — this is the keep-alive contract Bun-native callers
-    /// rely on (`Bun.serve`/`listen`/`spawn`, `EventLoop::run_callback`, `reportError()`, ...).
     pub fn uncaught_exception(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1413,9 +1407,6 @@ impl VirtualMachine {
         self.uncaught_exception_impl(global_object, err, origin, false)
     }
 
-    /// Node's fatal path: if no listener/domain claims the error, print it, emit `'exit'`, and
-    /// `process.exit(1)` without another loop turn. For Node-compat throws where the caller's task
-    /// is dead (`Bun__reportUnhandledError`, `--unhandled-rejections=throw`/`strict`, `Bun.cron`).
     pub fn uncaught_exception_fatal(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1490,9 +1481,6 @@ impl VirtualMachine {
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
             }
-            // Node's fatal path exits without another loop turn — only 'exit' listeners run.
-            // Entry-point rejections keep their run_command owner, watch/hot mode stays alive for
-            // reload, and a worker falls through to route the error to its parent.
             if fatal_exit
                 && !self.suppress_fatal_uncaught
                 && self.is_main_thread()
@@ -1502,20 +1490,12 @@ impl VirtualMachine {
                 self.unhandled_error_counter += 1;
                 self.exit_handler.exit_code = 1;
                 (self.on_unhandled_rejection)(self, global_object, err);
-                // process_exit bypasses run_command's exit_with_unhandled_note, so emit the
-                // sourcemap note and version footer here. 'exit' fires after this (cosmetic only;
-                // emitting 'exit' first would double-run on_exit's cleanup-hook loop).
                 bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
                 bun_core::pretty_errorln!(
                     "<r>\n<d>{}<r>",
                     bun_core::Global::unhandled_error_bun_version_string,
                 );
-                // See the recursion-guard note above: drop it before
-                // process_exit emits 'exit'.
                 self.is_handling_uncaught_exception = false;
-                // Arm the wind-down flag so a throwing 'exit' listener
-                // re-enters via the block above (run_error_handler, no
-                // repeated footer) instead of this one.
                 self.exit_on_uncaught_exception = true;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
@@ -3388,9 +3368,6 @@ impl VirtualMachine {
                 if handle_unhandled() {
                     return;
                 }
-                // Take the fatal path like Mode::Throw (Node's default since v15; an
-                // uncaughtException listener can still claim it). Watch/hot mode skips this —
-                // the reload driver owns recovery and the counter/print tail keeps it ticking.
                 if self.hot_reload == 0 {
                     let wrapped = wrap_unhandled_rejection_error_for_uncaught_exception(
                         global_object,
@@ -3404,8 +3381,6 @@ impl VirtualMachine {
                         drain(self);
                         return;
                     }
-                    // The keep-alive tail already bumped/printed when the fatal gate was
-                    // skipped (REPL / worker); don't fall through and print again.
                     let _ = self.event_loop_mut().drain_microtasks();
                     return;
                 }
@@ -3434,11 +3409,6 @@ impl VirtualMachine {
                 return;
             }
             Mode::Strict => {
-                // Unconditional, including under watch/hot: the fatal gate
-                // inside uncaught_exception_impl already skips process_exit
-                // there and falls to the keep-alive print, while the
-                // uncaughtException listener dispatch still runs (Node routes
-                // strict-mode rejections to uncaughtException regardless).
                 let wrapped =
                     wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
                 let _ = self.uncaught_exception_fatal(
@@ -3457,7 +3427,6 @@ impl VirtualMachine {
                     drain(self);
                     return;
                 }
-                // Unconditional, including under watch/hot (see Mode::Strict).
                 let wrapped =
                     wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
                 if self.uncaught_exception_fatal(
@@ -3468,9 +3437,6 @@ impl VirtualMachine {
                     drain(self);
                     return;
                 }
-                // The keep-alive tail already printed when the fatal gate was
-                // skipped (REPL / worker / hot); don't fall through and print
-                // again.
                 let _ = self.event_loop_mut().drain_microtasks();
                 return;
             }

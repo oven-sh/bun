@@ -23,9 +23,6 @@ class StatWatcher extends EventEmitter {
 
   constructor(path, options) {
     super();
-    // guardCallback: a throwing "change" listener is a fatal uncaught
-    // exception, as in node (StatWatcher invokes onchange via MakeCallback).
-    // Without it the scheduler keeps polling and the process hangs.
     this._handle = fs.watchFile(path, options, guardCallback(this.#onChange.bind(this)));
   }
 

@@ -106,9 +106,6 @@ function getInterface() {
   return "::%lo";
 }
 
-// A throw from a "message" listener is a fatal uncaught exception, as in node.
-// Previously it was reported but the bound socket's ref kept the event loop
-// alive, so the process hung.
 test("node:dgram 'message' listener throw is a fatal uncaught exception", async () => {
   const fixture = `
     const dgram = require("node:dgram");

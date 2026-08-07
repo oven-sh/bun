@@ -497,9 +497,6 @@ describe("fs.watchFile", () => {
   }, 30_000);
 });
 
-// A throw from a watchFile listener is a fatal uncaught exception, as in node.
-// Previously it was reported but the stat poller kept the event loop alive, so
-// the process hung (and kept polling and rethrowing).
 test("fs.watchFile listener throw is a fatal uncaught exception", async () => {
   const fixture = `
     const fs = require("node:fs");

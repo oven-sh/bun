@@ -572,9 +572,6 @@ describe("dns.lookupService", () => {
   });
 });
 
-// Node v26.3.0 removed the DEP0118 warn-and-succeed path: every falsy
-// hostname throws synchronously without invoking the callback, and the
-// promises API rejects with the same error.
 describe("lookup rejects falsy hostnames", () => {
   it.each([undefined, false, null, NaN, ""])("dns.lookup(%p) throws without calling back", domain => {
     const callback = jest.fn();

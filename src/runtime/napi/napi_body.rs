@@ -1865,9 +1865,6 @@ impl napi_async_work {
 
         // SAFETY: env is valid for the duration of this call.
         let env_ref = unsafe { &*env };
-        // Node's AfterThreadPoolWork runs the complete callback via
-        // CallbackIntoModule<true> -> TriggerUncaughtException (fatal); see
-        // the node_api.cc link above.
         if let Some(exception) = env_ref.get_and_clear_pending_exception() {
             let _ = vm.uncaught_exception_fatal(
                 global,
@@ -2332,8 +2329,6 @@ impl Finalizer {
         // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
         unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
-        // Node runs finalizers via CallbackIntoModule (fatal on throw), like
-        // the async_work complete path above.
         if let Some(exception) = env_ref.to_js().try_take_exception() {
             let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception_fatal(
                 env_ref.to_js(),

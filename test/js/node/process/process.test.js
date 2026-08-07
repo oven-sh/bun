@@ -2608,9 +2608,6 @@ describe("NODE_NO_WARNINGS", () => {
 });
 
 it("a fatal uncaught exception exits before already-queued work runs", async () => {
-  // Node's fatal path: print the error, run 'exit' listeners, exit 1 -
-  // already-queued I/O completions, timers, immediates, later ticks, and
-  // beforeExit never run.
   using dir = tempDir("fatal-uncaught-order", {
     "fatal.js": `
       const fs = require("fs");
@@ -2660,10 +2657,6 @@ it("a handled uncaughtException keeps the event loop running", async () => {
 });
 
 it("a throwing Bun.listen data handler with no error: handler keeps the server alive", async () => {
-  // Bun-native long-running handlers keep the pre-existing print-and-continue
-  // contract (matching the Bun.serve HTTP fetch path, which reports via
-  // on_unhandled_rejection and keeps serving); only Node-compat paths take
-  // the fatal exit.
   using dir = tempDir("bun-listen-handler-throw", {
     "server.js": `
       let hits = 0;
@@ -2697,17 +2690,12 @@ it("a throwing Bun.listen data handler with no error: handler keeps the server a
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Both connections reached the handler: the first throw did not exit.
   expect(stdout.trim().split(/\r?\n/)).toEqual(["DATA-HANDLER-RAN:1", "DATA-HANDLER-RAN:2"]);
   expect(stderr).toContain("handler-boom");
-  // No error: handler and no uncaughtException listener, so the error is
-  // reported (exit code 1), but only after the loop drained naturally.
   expect(exitCode).toBe(1);
 });
 
 it("a Bun.listen error: handler that itself throws keeps the server alive", async () => {
-  // The sibling branch of the case above: the user supplied an error: handler
-  // and that handler threw. Same print-and-continue contract.
   using dir = tempDir("bun-listen-error-handler-throw", {
     "server.js": `
       let hits = 0;
@@ -2748,10 +2736,6 @@ it("a Bun.listen error: handler that itself throws keeps the server alive", asyn
 });
 
 it("a throwing EventTarget listener lets dispatch complete, then fatal-exits next tick", async () => {
-  // Node's EventTarget catches a listener throw and defers it via
-  // process.nextTick(() => { throw err }) so later listeners and code after
-  // dispatchEvent()/abort() run, then the process fatal-exits; a keep-alive
-  // report would leave the interval ticking forever.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2775,9 +2759,6 @@ it("a throwing EventTarget listener lets dispatch complete, then fatal-exits nex
 });
 
 it("a rejecting async EventTarget listener fatal-exits next tick", async () => {
-  // The async-listener rejection is already deferred to nextTick
-  // (jsFunctionEmitUncaughtExceptionNextTick); that nextTick takes the fatal
-  // path so pending work never runs.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2802,9 +2783,6 @@ it("a rejecting async EventTarget listener fatal-exits next tick", async () => {
 it.each([undefined, "throw", "strict"])(
   "an unhandled rejection fatal-exits with pending work (--unhandled-rejections=%s)",
   async mode => {
-    // Node's default is throw since v15. With no unhandledRejection /
-    // uncaughtException listener, Node fatal-exits 1; a keep-alive report
-    // would leave the interval ticking forever.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -2824,8 +2802,6 @@ it.each([undefined, "throw", "strict"])(
 );
 
 it("a throwing Bun.spawn ipc handler keeps the parent alive", async () => {
-  // Same keep-alive default as the Bun.listen handlers above, reached
-  // through EventLoop::run_callback instead of the socket error path.
   using dir = tempDir("spawn-ipc-throw", {
     "parent.js": `
       const child = Bun.spawn({
@@ -2852,17 +2828,12 @@ it("a throwing Bun.spawn ipc handler keeps the parent alive", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // The second ipc message still ran: the first throw did not exit.
   expect(stdout).toContain("got:second");
   expect(stderr).toContain("ipc-boom");
-  // Reported error arms exit 1 for the natural end of the run.
   expect(exitCode).toBe(1);
 });
 
 it("a throwing Bun.serve websocket message handler keeps the server serving", async () => {
-  // The error is reported, but the listen socket keeps the loop alive: a
-  // second connection is served afterwards (previously any unhandled
-  // report made is_event_loop_alive false and an idle server exited).
   using dir = tempDir("ws-throw-alive", {
     "server.js": `
       const server = Bun.serve({
@@ -2893,8 +2864,6 @@ it("a throwing Bun.serve websocket message handler keeps the server serving", as
   reader.releaseLock();
   const port = parseInt(new TextDecoder().decode(value).trim());
 
-  // First connection: the handler throws; the socket stays open, so don't
-  // wait on a close event that never comes.
   const first = new WebSocket("ws://127.0.0.1:" + port);
   await new Promise((resolve, reject) => {
     first.onopen = resolve;
@@ -2902,8 +2871,6 @@ it("a throwing Bun.serve websocket message handler keeps the server serving", as
   });
   first.send("boom");
 
-  // Wait for the reported throw before connecting again, so the second
-  // connection provably exercises serve-after-throw.
   let stderrText = "";
   const errReader = proc.stderr.getReader();
   const errDecoder = new TextDecoder();
@@ -2913,7 +2880,6 @@ it("a throwing Bun.serve websocket message handler keeps the server serving", as
     stderrText += errDecoder.decode(value);
   }
 
-  // Second connection is served normally, after the throw.
   const echoed = await new Promise((resolve, reject) => {
     const ws = new WebSocket("ws://127.0.0.1:" + port);
     ws.onopen = () => ws.send("after");
@@ -2924,9 +2890,6 @@ it("a throwing Bun.serve websocket message handler keeps the server serving", as
   expect(echoed).toBe("echo:after");
   first.close();
 
-  // The server would keep serving forever; tear it down ourselves, then
-  // drain the remaining stderr through the same reader. The polling loop
-  // above already established "ws-boom" was reported.
   proc.kill();
   while (true) {
     const { done } = await errReader.read();

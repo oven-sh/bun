@@ -705,10 +705,6 @@ describe("HTMLRewriter", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // The rejection reaches the process-global unhandledRejection path (the
-      // UNHANDLED: marker), not transform()'s synchronous throw. As in node
-      // (v24 dies at the unhandled rejection, before the suspended entry
-      // module resumes), the rewrite output is never printed.
       expect({ stdout: stdout.trim(), reported: stderr.includes("UNHANDLED:detached"), exitCode }).toEqual({
         stdout: "",
         reported: true,

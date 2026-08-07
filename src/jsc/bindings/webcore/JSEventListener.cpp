@@ -114,8 +114,6 @@ void JSEventListener::visitJSFunction(SlotVisitor& visitor) { visitJSFunctionImp
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtException, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    // Reached from a nextTick with no dispatch loop above it; the caller's
-    // task is dead, so take Node's fatal path.
     Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(callFrame->argument(0)));
     return JSValue::encode(JSC::jsUndefined());
 }
@@ -130,9 +128,6 @@ static void queueUncaughtExceptionNextTick(JSC::JSGlobalObject* lexicalGlobalObj
     Bun::Process* process = globalObject->processObject();
     auto func = JSFunction::create(vm, globalObject, 1, String(), jsFunctionEmitUncaughtException, JSC::ImplementationVisibility::Private);
     process->queueNextTick(lexicalGlobalObject, func, exception);
-    // queueNextTick calls process.nextTick as JS; if that throws (e.g.
-    // termination) while reporting the original error, drop it so the caller's
-    // scope does not see an unchecked exception.
     (void)scope.tryClearException();
 }
 

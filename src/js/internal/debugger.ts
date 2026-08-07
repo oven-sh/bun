@@ -892,9 +892,6 @@ function reset(): string {
   return "";
 }
 
-// Bun.write returns a promise; the banner writes are best-effort and a
-// rejected stderr write (racing writers on a piped stderr, seen on Windows)
-// must not become a fatal unhandled rejection.
 function kIgnoreWriteError(): void {}
 
 function notify(options): void {

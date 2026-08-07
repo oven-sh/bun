@@ -159,10 +159,6 @@ class FSWatcher extends EventEmitter {
     this.#ignoreMatcher = createIgnoreMatcher(options?.ignore);
     this.#listener = listener;
     try {
-      // guardCallback: a throw from a "change"/"error" listener is a fatal
-      // uncaught exception, as in node (FSEventWrap invokes onchange via
-      // MakeCallback). Without it the watcher's ref keeps the loop alive and
-      // the process hangs after reporting.
       this.#watcher = fs.watch(path, options || {}, guardCallback(this.#onEvent.bind(this)));
     } catch (e: any) {
       e.path = path;
@@ -190,10 +186,6 @@ class FSWatcher extends EventEmitter {
       });
       return;
     } else if (eventType === "abort") {
-      // The abort reason arrives as an "error" event (node emits only "close"
-      // on abort). With no "error" listener the emitter's throw stays
-      // swallowed, since node never emits this event at all; a real "error"
-      // event below keeps node's fatal unhandled behavior.
       try {
         this.emit("error", filenameOrError);
       } catch {}

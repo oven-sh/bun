@@ -300,8 +300,6 @@ function onClientHandshakeComplete(self, socket, verifyError) {
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
   self.alpnProtocol = socket.alpnProtocol;
-  // Node's TLSWrap completion runs via MakeCallback so a listener throw is an uncaughtException;
-  // mirror that here instead of falling through to Bun.connect's handshake-to-error-handler contract.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
   try {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673

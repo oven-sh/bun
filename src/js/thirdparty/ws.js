@@ -380,9 +380,6 @@ class BunWebSocket extends EventEmitter {
       return super.on(event, listener);
     }
     const mask = 1 << eventIds[event];
-    // Add a persistent native bridge if one isn't already forwarding this
-    // event. once() reaches here via super.once() -> this.on(), so there is
-    // no once-only bridge shape any more.
     if (mask && (this.#eventId & mask) !== mask) {
       this.#eventId |= mask;
       if (event === "open") {
@@ -429,8 +426,6 @@ class BunWebSocket extends EventEmitter {
   }
 
   once(event, listener) {
-    // super.once() calls this.on() which arms the native bridge; arming a second bridge here would
-    // re-emit after the once wrapper removed itself and throw "Unhandled error".
     return super.once(event, listener);
   }
 

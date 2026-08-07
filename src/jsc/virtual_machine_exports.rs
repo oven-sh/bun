@@ -88,9 +88,6 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValu
     crate::mark_binding!();
 
     if !value.is_termination_exception() {
-        // The one entry to Node's fatal path: nextTick drain, timers, guardCallback (fs/dns/crypto),
-        // napi_fatal_exception, node:events unhandled 'error', JSC's reportUncaughtExceptionAtEventLoop.
-        // Bun-native callers that want print-and-continue use Bun__reportError instead.
         let _ = global.bun_vm().as_mut().uncaught_exception_fatal(
             global,
             value,

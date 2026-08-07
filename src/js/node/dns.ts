@@ -287,8 +287,6 @@ function lookup(hostname, options, callback) {
   validateLookupOptions(options);
 
   if (!hostname) {
-    // Node v26.3.0 throws synchronously without invoking the callback
-    // (lib/dns.js lookup); the old warn-and-succeed branch predates that.
     throw $ERR_INVALID_ARG_VALUE("hostname", hostname, "must be a non-empty string");
   }
 
@@ -732,8 +730,6 @@ const promises = {
     validateLookupOptions(options);
 
     if (!hostname) {
-      // Node v26.3.0's promises lookup is an async function, so the same
-      // ERR_INVALID_ARG_VALUE surfaces as a rejection here.
       return Promise.$reject($ERR_INVALID_ARG_VALUE("hostname", hostname, "must be a non-empty string"));
     }
 

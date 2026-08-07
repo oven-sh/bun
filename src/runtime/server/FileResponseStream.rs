@@ -265,6 +265,13 @@ impl FileResponseStream {
         // hold a ref for the in-flight read; released in on_reader_done/on_reader_error
         this_ref.hold_read_ref();
         if opts.fifo_from_path {
+            // Must precede the eager read below: without it, the 0-byte read
+            // a writerless FIFO produces on macOS would end the response.
+            #[cfg(target_os = "macos")]
+            this_ref
+                .reader_mut()
+                .flags
+                .insert(ReaderFlags::FIFO_AWAITING_FIRST_WRITER);
             this_ref.arm_fifo_probe();
         }
         // SAFETY: `reader` is live for the stream's lifetime; `read` is the
@@ -394,18 +401,17 @@ impl FileResponseStream {
         Some(unsafe { bun_ptr::ScopedRef::<Self>::adopt(self.as_ptr()) })
     }
 
-    // ───────────────── macOS FIFO poll liveness probe ─────────────────
-    // A kqueue `EVFILT_READ` knote attached to a FIFO read end while the FIFO
-    // has zero writers never fires, even after a writer connects and writes
-    // (one attached while a writer exists works). A fetch handler returning
-    // `Response(Bun.file(fifo))` opens the read end itself, so when the
-    // producer connects only after the request, the poll registered in
-    // `start()` is dead and the response would sit silent until idleTimeout.
-    // While waiting for the first byte we tick
-    // `BufferedReader::retry_stalled_fifo_read` on a backoff timer: each tick
-    // re-creates the kevent and reads directly, so progress does not depend
-    // on the dead knote. The probe stops at the first chunk/EOF — from then
-    // on every registration happens after a writer existed and is reliable.
+    // ───────────────── macOS FIFO first-writer probe ─────────────────
+    // A fetch handler returning `Response(Bun.file(fifo))` opens the FIFO's
+    // read end itself, so when the producer connects only after the request,
+    // the reader starts against a FIFO with zero writers. On macOS that state
+    // cannot be waited on through the descriptor: `read()` returns 0 (which
+    // `FIFO_AWAITING_FIRST_WRITER` stops us from mistaking for EOF), and a
+    // kqueue filter registered then does not reliably report the first
+    // writer's data. Until the first byte we tick
+    // `BufferedReader::retry_stalled_fifo_read` on a backoff timer; see its
+    // doc for the full story. The probe stops at the first chunk/EOF — from
+    // then on the descriptor behaves and kqueue registrations work.
 
     #[cfg(target_os = "macos")]
     const FIFO_PROBE_MIN_MS: u32 = 2;

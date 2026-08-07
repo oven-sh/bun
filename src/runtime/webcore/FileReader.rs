@@ -546,6 +546,12 @@ impl FileReader {
 
         #[cfg(unix)]
         if fifo_from_path && !self.done.get() && !self.reader().is_done() {
+            // Must precede any read: without it, the 0-byte read a writerless
+            // FIFO produces on macOS would end the stream.
+            #[cfg(target_os = "macos")]
+            self.reader()
+                .flags
+                .insert(bun_io::pipe_reader::PosixFlags::FIFO_AWAITING_FIRST_WRITER);
             self.arm_fifo_probe();
         }
 
@@ -675,13 +681,14 @@ impl FileReader {
         true
     }
 
-    // ───────────────── macOS FIFO poll liveness probe ─────────────────
-    // Twin of `FileResponseStream::arm_fifo_probe` (see the full story
-    // there): a kqueue `EVFILT_READ` knote attached to a FIFO read end with
-    // zero writers never fires, so `Bun.file(fifo).stream()` started before
-    // the first writer connects would never deliver anything. While waiting
-    // for the first byte, tick `retry_stalled_fifo_read` on a backoff timer;
-    // stop at the first chunk/EOF.
+    // ───────────────── macOS FIFO first-writer probe ─────────────────
+    // Twin of `FileResponseStream::arm_fifo_probe` (see the full story there
+    // and on `retry_stalled_fifo_read`): a FIFO with no writer yet cannot be
+    // waited on through the descriptor on macOS, so
+    // `Bun.file(fifo).stream()` started before the first writer connects
+    // would end empty or never deliver anything. While waiting for the first
+    // byte, tick `retry_stalled_fifo_read` on a backoff timer; stop at the
+    // first chunk/EOF.
 
     #[cfg(target_os = "macos")]
     const FIFO_PROBE_MIN_MS: u32 = 2;

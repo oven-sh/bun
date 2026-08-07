@@ -157,6 +157,13 @@ bitflags::bitflags! {
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
         const KEEP_ALIVE               = 1 << 10; // default true
+        /// macOS: the fd is a named FIFO opened by path before any writer
+        /// connected. In that state `read()` returns 0 even though no writer
+        /// has come and gone, so a 0-byte read must be treated as not-ready
+        /// rather than EOF until the first writer is observed (an EAGAIN or
+        /// data clears this flag). Owners arm a recovery timer as the wake
+        /// source while this is set; see `retry_stalled_fifo_read`.
+        const FIFO_AWAITING_FIRST_WRITER = 1 << 11;
     }
 }
 
@@ -542,19 +549,24 @@ impl PosixBufferedReader {
     }
 
     /// macOS recovery tick for reading a named FIFO that may not have a
-    /// writer yet. An `EVFILT_READ` knote attached to a FIFO read end while
-    /// the FIFO has zero writers never fires — not even after a writer
-    /// connects and writes — so a reader that registered its kevent before
-    /// the first writer arrived waits forever. (A knote attached while a
-    /// writer exists, or while data/EOF is pending, works.)
+    /// writer yet. Two platform quirks make the descriptor useless for
+    /// waiting in that state:
     ///
-    /// Owners that opened a FIFO by path arm a repeating timer against this
-    /// method until the first byte or EOF is observed. Each tick deletes the
-    /// (possibly dead) kevent registration and reads directly: any bytes the
-    /// poll failed to report are consumed, and the EAGAIN path re-attaches a
-    /// fresh kevent. Once data or EOF has been seen, a writer has existed,
-    /// so every later registration attaches in a reliable state and the
-    /// owner stops the timer.
+    /// - `read()` returns 0 while the FIFO has never had a writer, which is
+    ///   indistinguishable from EOF at the call site;
+    ///   [`PosixFlags::FIFO_AWAITING_FIRST_WRITER`] makes the read loop
+    ///   treat it as not-ready instead (the first EAGAIN or data clears it,
+    ///   since either proves a writer connected).
+    /// - an `EVFILT_READ` filter registered while the FIFO has zero writers
+    ///   does not reliably report the first writer's data (one registered
+    ///   while a writer exists works).
+    ///
+    /// So while waiting for the first writer there is no kernel event to
+    /// wait on, and owners arm a repeating timer against this method
+    /// instead. Each tick drops the kevent registration and reads directly;
+    /// once a writer exists the read comes back as data or EAGAIN, and the
+    /// EAGAIN path re-attaches a fresh kevent in a state where it works.
+    /// Owners stop the timer at the first chunk/EOF.
     ///
     /// # Safety
     /// Same contract as [`Self::read`]: `this` is the live reader; the
@@ -1066,6 +1078,36 @@ impl PosixBufferedReader {
 
                     match sys_fn(fd, buf, offset) {
                         sys::Result::Ok(bytes_read) => {
+                            #[cfg(target_os = "macos")]
+                            {
+                                // SAFETY: caller contract; borrows end at `;`.
+                                let awaiting_first_writer = unsafe {
+                                    !(*this).flags.contains(PosixFlags::IS_DONE)
+                                        && (*this)
+                                            .flags
+                                            .contains(PosixFlags::FIFO_AWAITING_FIRST_WRITER)
+                                };
+                                if awaiting_first_writer {
+                                    if bytes_read == 0 {
+                                        // A FIFO with no writer yet reads as
+                                        // 0 on macOS even though it is not at
+                                        // EOF (see the flag's doc). Not ready
+                                        // — stop without closing; the owner's
+                                        // probe timer retries. No bytes can
+                                        // be buffered: data clears the flag.
+                                        debug_assert!(head_start == 0);
+                                        return;
+                                    }
+                                    // First bytes: a writer exists, so a
+                                    // 0-byte read from here on is a real EOF.
+                                    // SAFETY: caller contract; borrow ends at `;`.
+                                    unsafe {
+                                        (*this)
+                                            .flags
+                                            .remove(PosixFlags::FIFO_AWAITING_FIRST_WRITER);
+                                    }
+                                }
+                            }
                             // SAFETY: caller contract; borrow scoped to the call.
                             let over_budget =
                                 Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
@@ -1131,6 +1173,17 @@ impl PosixBufferedReader {
                         }
                         sys::Result::Err(err) => {
                             if err.is_retry() {
+                                // EAGAIN from a FIFO means a writer exists
+                                // now (macOS reads 0, not EAGAIN, while the
+                                // FIFO has never had one), so from here on a
+                                // 0-byte read is a real EOF and the kevent
+                                // about to be registered attaches in a
+                                // working state.
+                                #[cfg(target_os = "macos")]
+                                // SAFETY: caller contract; borrow ends at `;`.
+                                unsafe {
+                                    (*this).flags.remove(PosixFlags::FIFO_AWAITING_FIRST_WRITER);
+                                }
                                 if file_type == FileType::File {
                                     bun_core::debug_warn!(
                                         "Received EAGAIN while reading from a file. This is a bug.",

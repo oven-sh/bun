@@ -189,6 +189,15 @@ class FSWatcher extends EventEmitter {
         this.emit("close", filenameOrError);
       });
       return;
+    } else if (eventType === "abort") {
+      // The abort reason arrives as an "error" event (node emits only "close"
+      // on abort). With no "error" listener the emitter's throw stays
+      // swallowed, since node never emits this event at all; a real "error"
+      // event below keeps node's fatal unhandled behavior.
+      try {
+        this.emit("error", filenameOrError);
+      } catch {}
+      return;
     } else if (eventType === "error") {
       // Next.js/watchpack ends up watching paths it does not have access to,
       // which surfaces here as EACCES errors. Rewriting the code to EPERM

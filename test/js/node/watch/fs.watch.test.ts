@@ -421,9 +421,6 @@ describe("fs.watch", () => {
     try {
       const ac = new AbortController();
       const watcher = fs.watch(pathToFileURL(filepath), { signal: ac.signal });
-      // The abort delivers an unhandled "error" (AbortError), which is an
-      // uncaught exception as in node; this test is about close-from-close.
-      watcher.once("error", () => {});
 
       watcher.once("close", () => {
         try {

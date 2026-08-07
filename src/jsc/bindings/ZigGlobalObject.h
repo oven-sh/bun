@@ -450,6 +450,10 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    // Set by moduleLoaderEvaluate/evaluateCommonJSModuleOnce, consumed by checkIfNextTickWasCalledDuringMicrotask.
+    bool nextTickQueueCheckpointAtEndOfMicrotask = false;
+    // One-shot; keys resetOnEachMicrotaskTick in place of "m_nextTickQueue is non-null".
+    bool nextTickQueueHandoffDone = false;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 

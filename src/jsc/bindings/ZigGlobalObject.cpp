@@ -398,7 +398,15 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
+    // Consume the mark even after the handoff so it cannot go stale.
+    bool atModuleTopLevelBoundary = std::exchange(globalObject->nextTickQueueCheckpointAtEndOfMicrotask, false);
+    if (globalObject->nextTickQueueHandoffDone)
+        return;
     if (auto queue = globalObject->m_nextTickQueue.get()) {
+        // Hand off at a module top-level boundary, or once the microtask queue is exhausted.
+        if (!atModuleTopLevelBoundary && !vm.defaultMicrotaskQueue().isEmpty())
+            return;
+        globalObject->nextTickQueueHandoffDone = true;
         globalObject->resetOnEachMicrotaskTick();
         queue->drain(vm, globalObject);
     }
@@ -409,12 +417,9 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
-    if (!globalObject->m_nextTickQueue) {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-        checkIfNextTickWasCalledDuringMicrotask(vm);
-    } else {
-        vm.setOnEachMicrotaskTick(nullptr);
-    }
+    // Restore the bootstrap-hook state machine's slot and run it for this boundary.
+    globalObject->resetOnEachMicrotaskTick();
+    checkIfNextTickWasCalledDuringMicrotask(vm);
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
@@ -458,7 +463,7 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     if (this->asyncHooksNeedsCleanup) {
         vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
     } else {
-        if (this->m_nextTickQueue) {
+        if (this->nextTickQueueHandoffDone) {
             vm.setOnEachMicrotaskTick(nullptr);
         } else {
             vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
@@ -564,15 +569,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
-    vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
-        // if you process.nextTick on a microtask we need this
-        auto* globalObject = defaultGlobalObject();
-        if (auto queue = globalObject->m_nextTickQueue.get()) {
-            globalObject->resetOnEachMicrotaskTick();
-            queue->drain(vm, globalObject);
-            return;
-        }
-    });
+    // if you process.nextTick on a microtask we need this
+    vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
 
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
@@ -674,6 +672,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
     Bun__setDefaultGlobalObject(globalObject);
+    // Re-arm the nextTick bootstrap hook for this fresh global, as Zig__GlobalObject__create does.
+    globalObject->resetOnEachMicrotaskTick();
     JSC::gcProtect(globalObject);
 
     // NapiEnv holds a raw Zig::GlobalObject*; deferred napi finalizers for
@@ -3931,8 +3931,11 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
-    return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
+    JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
+    // Mark this microtask's end as a process.nextTick checkpoint; see checkIfNextTickWasCalledDuringMicrotask.
+    defaultGlobalObject()->nextTickQueueCheckpointAtEndOfMicrotask = true;
+    return result;
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
@@ -3949,6 +3952,8 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
 
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
+    // See the matching line in GlobalObject::moduleLoaderEvaluate.
+    defaultGlobalObject()->nextTickQueueCheckpointAtEndOfMicrotask = true;
     // The new C++ loader propagates the module body's throw out of
     // evaluateNonVirtual; the old JS-side ModuleLoader.js swallowed it before
     // dispatching here. Don't call back into native code (which opens an

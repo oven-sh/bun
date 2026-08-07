@@ -178,6 +178,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         // exit 0 silently. Use the out-param overload and rethrow.
         WTF::NakedPtr<JSC::Exception> returnedException;
         JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
+        // See checkIfNextTickWasCalledDuringMicrotask; moduleLoaderEvaluate does this for ES modules.
+        defaultGlobalObject()->nextTickQueueCheckpointAtEndOfMicrotask = true;
         if (returnedException) [[unlikely]] {
             scope.throwException(globalObject, returnedException.get());
             return false;
@@ -239,6 +241,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
     //
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
+    // See the matching line on the eval-entry path above.
+    defaultGlobalObject()->nextTickQueueCheckpointAtEndOfMicrotask = true;
     RETURN_IF_EXCEPTION(scope, false);
     return true;
 }

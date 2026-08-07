@@ -12,9 +12,9 @@ export enum StackFrameScope {
 }
 
 export interface StackFramePosition {
-  /** 1-based */
+  /** 1-based; -1 when the frame has no source position */
   line: number;
-  /** 1-based */
+  /** 1-based; -1 when the frame has no source position */
   column: number;
   // Only set on frames built client-side (runtime-error.ts, source-map remapping in index.tsx).
   source_offset?: number;

@@ -109,8 +109,8 @@ fn write_stack_trace(w: &mut Vec<u8>, stack: &StackTrace) {
             w,
             ",\"scope\":{},\"position\":{{\"line\":{},\"column\":{}}}}}",
             frame.code_type.0,
-            frame.position.line.one_based(),
-            frame.position.column.one_based(),
+            one_based_or_missing(frame.position.line),
+            one_based_or_missing(frame.position.column),
         )
         .unwrap();
     }
@@ -124,6 +124,15 @@ fn write_stack_trace(w: &mut Vec<u8>, stack: &StackTrace) {
         w.push(b'}');
     }
     w.extend_from_slice(b"]}");
+}
+
+/// bun-error treats `-1` as "no line/column" (e.g. frames without a source position).
+fn one_based_or_missing(ordinal: bun_core::Ordinal) -> core::ffi::c_int {
+    if ordinal.is_valid() {
+        ordinal.one_based()
+    } else {
+        -1
+    }
 }
 
 fn write_message(w: &mut Vec<u8>, msg: &Msg) {

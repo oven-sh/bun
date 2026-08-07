@@ -2039,9 +2039,7 @@ where
         // A request that does not name "websocket" in its |Upgrade| token list,
         // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
         // WebSocket handshake; fall through so the caller's fetch() can respond.
-        if !upgrade_header
-            .slice()
-            .split(|&c| c == b',')
+        if !strings::split(upgrade_header.slice(), b",")
             .any(|t| strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true))
         {
             return Ok(JSValue::FALSE);

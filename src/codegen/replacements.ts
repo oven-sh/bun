@@ -91,9 +91,8 @@ replacements.push({
 // These enums map to $<enum>IdToLabel and $<enum>LabelToId (ids start at 1)
 // Make sure to define in ./builtins.d.ts
 export const enums = {
-  // Ids follow the `bun_options_types::schema::api::Loader` discriminants
-  // (JSBundler passes those numbers to BundlerPlugin.ts). TODO: json5 (20) and
-  // md (21) are missing.
+  // Ids are the `bun_options_types::schema::api::Loader` discriminants
+  // (JSBundler passes those numbers to BundlerPlugin.ts).
   Loader: [
     "jsx",
     "js",
@@ -114,6 +113,9 @@ export const enums = {
     "sqlite_embedded",
     "html",
     "yaml",
+    "json5",
+    "md",
+    "xml",
   ],
   ImportKind: [
     "entry-point-run",

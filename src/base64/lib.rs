@@ -79,7 +79,7 @@ pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -
     // that keeps decoding past the '='. Apply the rule up front in that case
     // so both strategies agree.
     let source = if destination.len() < decode_lenient_len(source.len()) {
-        match source.iter().position(|&c| c == b'=') {
+        match bun_core::strings::index_of_char_usize(source, b'=') {
             Some(index) => &source[..index],
             None => source,
         }

@@ -1653,6 +1653,11 @@ impl Terminal {
                 } else {
                     bun_core::tty::Mode::Normal
                 },
+                // Never Drain on the PTY master: with the child blocked in
+                // write() on a full PTY, the drain waits on a lock only our
+                // own reads can release, freezing the JS thread for as long
+                // as the child stays blocked.
+                bun_core::tty::SetAttrWhen::Now,
             );
             self.tty_state.set(state);
             if tty_result != 0 {

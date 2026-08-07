@@ -2345,7 +2345,7 @@ pub fn format_ip<'a>(
     let mut end = written;
 
     // Strip `:<port>`
-    if let Some(colon) = into[start..end].iter().rposition(|&b| b == b':') {
+    if let Some(colon) = strings::last_index_of_char(&into[start..end], b':') {
         end = start + colon;
     }
     // Strip brackets
@@ -2356,7 +2356,7 @@ pub fn format_ip<'a>(
     // Strip `%<zone>` — Node formats addresses via uv_inet_ntop on the bare
     // in6_addr and never includes the zone identifier; the scope is exposed
     // separately (e.g. `scopeid` in os.networkInterfaces()).
-    if let Some(percent) = into[start..end].iter().position(|&b| b == b'%') {
+    if let Some(percent) = strings::index_of_char_usize(&into[start..end], b'%') {
         end = start + percent;
     }
     Ok(&mut into[start..end])

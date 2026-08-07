@@ -1153,11 +1153,21 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 
 #pragma mark - Globals
 
+// onmessage/onerror are CustomValue properties, so JSC invokes these callbacks
+// with the property receiver as thisValue, which is not necessarily the global
+// object: `new Proxy(globalThis, {}).onmessage = fn` passes the Proxy.
+static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue)
+{
+    if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(JSValue::decode(thisValue)))
+        return globalObject;
+    return defaultGlobalObject(lexicalGlobalObject);
+}
+
 JSC_DEFINE_CUSTOM_GETTER(globalOnMessage,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    Zig::GlobalObject* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().messageEvent, thisObject->world()));
 }
 
@@ -1165,7 +1175,7 @@ JSC_DEFINE_CUSTOM_GETTER(globalOnError,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    Zig::GlobalObject* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().errorEvent, thisObject->world()));
 }
 
@@ -1175,7 +1185,7 @@ JSC_DEFINE_CUSTOM_SETTER(setGlobalOnMessage,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSValue value = JSValue::decode(encodedValue);
-    auto* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().messageEvent, value, *thisObject);
     vm.writeBarrier(thisObject, value);
     ensureStillAliveHere(value);
@@ -1188,7 +1198,7 @@ JSC_DEFINE_CUSTOM_SETTER(setGlobalOnError,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSValue value = JSValue::decode(encodedValue);
-    auto* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().errorEvent, value, *thisObject);
     vm.writeBarrier(thisObject, value);
     ensureStillAliveHere(value);

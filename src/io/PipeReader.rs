@@ -541,6 +541,42 @@ impl PosixBufferedReader {
         }
     }
 
+    /// macOS recovery tick for reading a named FIFO that may not have a
+    /// writer yet. An `EVFILT_READ` knote attached to a FIFO read end while
+    /// the FIFO has zero writers never fires — not even after a writer
+    /// connects and writes — so a reader that registered its kevent before
+    /// the first writer arrived waits forever. (A knote attached while a
+    /// writer exists, or while data/EOF is pending, works.)
+    ///
+    /// Owners that opened a FIFO by path arm a repeating timer against this
+    /// method until the first byte or EOF is observed. Each tick deletes the
+    /// (possibly dead) kevent registration and reads directly: any bytes the
+    /// poll failed to report are consumed, and the EAGAIN path re-attaches a
+    /// fresh kevent. Once data or EOF has been seen, a writer has existed,
+    /// so every later registration attaches in a reliable state and the
+    /// owner stops the timer.
+    ///
+    /// # Safety
+    /// Same contract as [`Self::read`]: `this` is the live reader; the
+    /// chunk/done/error dispatches it reaches may re-enter or free the
+    /// parent, so the read runs in tail position.
+    #[cfg(target_os = "macos")]
+    pub unsafe fn retry_stalled_fifo_read(this: *mut Self) {
+        // SAFETY: caller contract; borrow ends at `;`.
+        let skip = unsafe { (*this).flags.contains(PosixFlags::IS_PAUSED) || (*this).is_done() };
+        if skip {
+            return;
+        }
+        // SAFETY: caller contract; pause/unpause only unregister the poll and
+        // flip flags — neither dispatches into the parent.
+        unsafe {
+            (*this).pause();
+            (*this).unpause();
+        }
+        // SAFETY: caller contract; tail position.
+        unsafe { Self::read(this) };
+    }
+
     /// # Safety
     /// `this` is the live reader. Raw (not `&mut self`) because
     /// `on_read_chunk` dispatched from the read loops re-enters JS, which can

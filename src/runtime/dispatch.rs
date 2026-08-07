@@ -1206,6 +1206,36 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
                 owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
             crate::node::quic::QuicEndpoint::on_timer_fire(c);
         }
+        EventLoopTimerTag::FileResponseStreamFifoProbe => {
+            #[cfg(target_os = "macos")]
+            {
+                use crate::server::file_response_stream::FileResponseStream;
+                timer_arm!(FileResponseStream, fifo_probe_timer, |c, _now, _vm| {
+                    FileResponseStream::on_fifo_probe(c)
+                })
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!("FileResponseStream FIFO probe timer on non-macOS");
+                }
+            }
+        }
+        EventLoopTimerTag::FileReaderFifoProbe => {
+            #[cfg(target_os = "macos")]
+            {
+                use crate::webcore::FileReader;
+                timer_arm!(FileReader, fifo_probe_timer, |c, _now, _vm| {
+                    FileReader::on_fifo_probe(c)
+                })
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!("FileReader FIFO probe timer on non-macOS");
+                }
+            }
+        }
     }
 }
 

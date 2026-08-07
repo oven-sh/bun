@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test"
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1372,3 +1373,71 @@ test("file route serves a burst of concurrent requests after reloads", async () 
   const a = await fetch(`${server.url}a`).then(r => r.text());
   expect(a).toBe("a-new");
 });
+
+// A FIFO body whose producer connects only after the request is in flight:
+// the server opens the FIFO read end while it has no writer, and must still
+// deliver the bytes once a writer opens the FIFO and writes.
+//
+// Two requests on purpose, each with a fresh FIFO. On Linux the first FIFO
+// read in a process downgrades the RWF_NOWAIT fast path (named FIFOs return
+// EOPNOTSUPP), and the downgraded fallback used plain read(), which reports
+// EOF on a FIFO that has no writer yet — so the first exchange worked and
+// every later one answered with an instant empty body. On macOS a kqueue
+// EVFILT_READ filter registered on a FIFO with zero writers never fires
+// (even after a writer connects), so both exchanges hung until idleTimeout
+// without the recovery probe.
+test.skipIf(isWindows)(
+  "Response(Bun.file(FIFO)) streams bytes from a writer that opens after the request",
+  async () => {
+    using dir = tempDir("serve-fifo-late-writer", {});
+
+    for (let iteration = 0; iteration < 2; iteration++) {
+      const fifoPath = join(String(dir), `late-${iteration}.fifo`);
+      mkfifo(fifoPath);
+
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch() {
+          return new Response(Bun.file(fifoPath));
+        },
+      });
+
+      const { promise: wireDone, resolve: resolveWire, reject: rejectWire } = Promise.withResolvers<string>();
+      let wire = "";
+      let writerAttached = false;
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(s) {
+            s.write("GET /late HTTP/1.1\r\nHost: x\r\n\r\n");
+          },
+          async data(_s, d) {
+            wire += Buffer.from(d).toString("latin1");
+            // The response head reaching the wire proves the server already
+            // opened the FIFO and started streaming; only now attach a writer.
+            if (!writerAttached && wire.includes("HTTP/1.1 200 OK")) {
+              writerAttached = true;
+              const writer = await open(fifoPath, "w");
+              await writer.write("LATEBYTES!");
+              await writer.close();
+            }
+            if (wire.includes("LATEBYTES!")) resolveWire(wire);
+          },
+          close() {
+            // Surface whatever arrived so a failure shows the truncated wire.
+            resolveWire(wire);
+          },
+          error(_s, err) {
+            rejectWire(err);
+          },
+        },
+      });
+
+      const captured = await wireDone;
+      client.end();
+      expect({ iteration, wire: captured }).toEqual({ iteration, wire: expect.stringContaining("LATEBYTES!") });
+    }
+  },
+);

@@ -373,11 +373,17 @@ impl FileRoute {
             }
         });
 
-        let (can_serve_file, size, file_type, pollable): (bool, u64, FileType, bool) = 'brk: {
+        let (can_serve_file, size, file_type, pollable, is_fifo): (
+            bool,
+            u64,
+            FileType,
+            bool,
+            bool,
+        ) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
                 // file_type is never read because can_serve_file == false
-                Err(_) => break 'brk (false, 0, FileType::File, false),
+                Err(_) => break 'brk (false, 0, FileType::File, false, false),
             };
 
             let stat_size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
@@ -385,7 +391,7 @@ impl FileRoute {
 
             let mode = stat.st_mode as bun_sys::Mode;
             if bun_sys::S::ISDIR(mode) {
-                break 'brk (false, 0, FileType::File, false);
+                break 'brk (false, 0, FileType::File, false, false);
             }
 
             // `Cell::take` → mutate → `set`: single-threaded event loop, no
@@ -395,14 +401,14 @@ impl FileRoute {
             this.stat_hash.set(sh);
 
             if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
-                break 'brk (true, _size, FileType::Pipe, true);
+                break 'brk (true, _size, FileType::Pipe, true, bun_sys::S::ISFIFO(mode));
             }
 
             if bun_sys::S::ISSOCK(mode) {
-                break 'brk (true, _size, FileType::Socket, true);
+                break 'brk (true, _size, FileType::Socket, true, false);
             }
 
-            break 'brk (true, _size, FileType::File, false);
+            break 'brk (true, _size, FileType::File, false, false);
         };
 
         if !can_serve_file {
@@ -510,6 +516,8 @@ impl FileRoute {
             vm: bun_ptr::BackRef::new(this.server.get().unwrap().vm()),
             file_type,
             pollable,
+            // The fd was opened by path above.
+            fifo_from_path: is_fifo,
             offset: body_offset,
             length: body_len,
             idle_timeout: this.server.get().unwrap().config().idle_timeout,

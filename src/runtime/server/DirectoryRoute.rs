@@ -266,6 +266,7 @@ impl DirectoryRoute {
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type: FileType::File,
             pollable: false,
+            fifo_from_path: false,
             offset: body_offset,
             length: Some(body_len),
             idle_timeout: server.config().idle_timeout,

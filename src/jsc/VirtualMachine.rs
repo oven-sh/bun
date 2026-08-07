@@ -1501,6 +1501,12 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
+        // A TerminationException still pending after a worker terminate() has
+        // served its purpose (dispatch_on_exit skips 'exit' on it); clear it so
+        // the deferred tasks, cleanup hooks, and native->JS teardown callbacks
+        // below don't trip assertNoException. No-op for other exception kinds.
+        self.global().clear_termination_exception();
+
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
             self.is_inside_deferred_task_queue.set(true);

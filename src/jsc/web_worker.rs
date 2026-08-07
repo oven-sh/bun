@@ -1239,8 +1239,9 @@ impl WebWorker {
         // TerminationException, still pending on the VM. uncaught_exception
         // would re-enter JS with it (process 'uncaughtException' emit) and trip
         // assertNoException; node does not report a terminate() as uncaught.
+        // No flush_logs here: Log::to_js enters JS and would see the pending
+        // exception, and there is nothing user-facing to report on terminate.
         if self.has_requested_terminate() {
-            self.flush_logs(vm);
             return self.shutdown();
         }
 
@@ -1382,7 +1383,10 @@ impl WebWorker {
             let vm = unsafe { &mut *vm_ptr };
             // terminate() set the JSC termination flag to interrupt running JS;
             // clear it so process.on('exit') handlers can run. teardownJSCVM
-            // re-sets it for the JSC VM teardown.
+            // re-sets it for the JSC VM teardown. A TerminationException still
+            // pending on the VM is left for on_exit's dispatch gate (it skips
+            // 'exit' on a terminate that interrupted running JS, as node does)
+            // and cleared there right after.
             vm.jsc_vm().clear_has_termination_request();
             vm.is_shutting_down = true;
             vm.on_exit();
@@ -1605,7 +1609,11 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
+            // terminate() raced this flush: the trap/pending TerminationException
+            // fails to_js. The worker is being torn down and node emits no
+            // 'error' for a terminate(), so drop the diagnostics.
+            Err(JsError::Terminated) => return,
+            Err(JsError::Thrown) => panic!("unhandled exception"),
         };
         let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {

@@ -307,6 +307,10 @@ struct us_socket_t {
    * the driver's epilogue via ssl_pending_detach. */
   unsigned char ssl_in_use : 1;
   unsigned char ssl_pending_detach : 1;
+  /* on_end has been dispatched for the half-open path; recv() can only return
+   * 0 now. Guards the callers that would otherwise re-arm READABLE (partial
+   * write, resume) so on_end is not re-derived and re-fired every tick. */
+  unsigned char readable_ended : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */

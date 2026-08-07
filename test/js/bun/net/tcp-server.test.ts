@@ -1,4 +1,5 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
+import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { expectMaxObjectTypeCount, isWindows } from "harness";
 
@@ -293,6 +294,80 @@ describe("tcp socket binaryType", () => {
       })();
     });
   }
+});
+
+// With allowHalfOpen, a server's end() handler that writes more than the kernel
+// send buffer accepts (a partial write) triggered us_internal_rearm_writable,
+// which re-added READABLE to the poll mask. The half-open eof branch had just
+// set it to WRITABLE-only, so the next epoll tick re-derived recv()==0 -> eof
+// and re-dispatched end(), forever. Drain fired at most once between re-entries.
+it("allowHalfOpen: end() fires once when the handler's write is partially accepted", async () => {
+  const PAYLOAD = Buffer.alloc(256 * 1024, 0x61);
+  let endCount = 0;
+  let drainCount = 0;
+  const serverClosed = Promise.withResolvers<void>();
+  const clientClosed = Promise.withResolvers<void>();
+
+  using server = listen<{ sent: number }>({
+    hostname: "127.0.0.1",
+    port: 0,
+    allowHalfOpen: true,
+    socket: {
+      open(s) {
+        // Clamp SO_SNDBUF so the write from end() is a partial write on every
+        // POSIX kernel. No-op on Windows; the drainCount assertion is gated.
+        setSocketOptions(s, 1, 4096);
+        s.data = { sent: 0 };
+      },
+      data() {},
+      end(s) {
+        if (++endCount > 1) {
+          // The bug re-enters end() every tick; terminate so the test fails on
+          // the assertion below instead of spinning.
+          s.terminate();
+          return;
+        }
+        s.data.sent = s.write(PAYLOAD);
+        if (s.data.sent >= PAYLOAD.length) s.shutdown();
+      },
+      drain(s) {
+        drainCount++;
+        if (s.data.sent === 0) return;
+        s.data.sent += s.write(PAYLOAD.subarray(s.data.sent));
+        if (s.data.sent >= PAYLOAD.length) s.shutdown();
+      },
+      close() {
+        serverClosed.resolve();
+      },
+    },
+  });
+
+  let received = 0;
+  await connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open(s) {
+        s.write("hi");
+        s.shutdown();
+      },
+      data(_s, chunk) {
+        received += chunk.byteLength;
+      },
+      end() {},
+      close() {
+        clientClosed.resolve();
+      },
+    },
+  });
+
+  await Promise.all([serverClosed.promise, clientClosed.promise]);
+
+  expect({ endCount, received }).toEqual({ endCount: 1, received: PAYLOAD.length });
+  // setSocketOptions is a POSIX-only no-op on Windows, where loopback
+  // auto-tuning can accept 256 KiB in one send(). The assertion above already
+  // proves the fix there (endCount == 1 with the whole payload delivered).
+  if (!isWindows) expect(drainCount).toBeGreaterThanOrEqual(1);
 });
 
 it("should not leak memory", async () => {

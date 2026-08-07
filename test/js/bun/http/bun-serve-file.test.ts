@@ -1381,19 +1381,21 @@ test("file route serves a burst of concurrent requests after reloads", async () 
 // big x-pad header makes the partial header send happen on most iterations,
 // and the separate client process supplies the concurrent reads that open
 // kernel buffer space between the header write and the sendfile call.
-test.skipIf(!isLinux)("sendfile does not overtake a buffered response header tail", async () => {
-  const FILE_SIZE = 4 * 1024 * 1024;
-  const PAD_SIZE = 16 * 1024 * 1024;
-  // The race hinges on scheduler placement of the reader relative to the
-  // server thread, which is sticky per process; fresh client processes re-roll
-  // it, so several short-lived clients catch what one long-lived client can
-  // miss.
-  const ITERATIONS_PER_CLIENT = 16;
-  const CLIENTS_PER_WAVE = 3;
-  const WAVES = 3;
+test.skipIf(!isLinux)(
+  "sendfile does not overtake a buffered response header tail",
+  async () => {
+    const FILE_SIZE = 4 * 1024 * 1024;
+    const PAD_SIZE = 16 * 1024 * 1024;
+    // The race hinges on scheduler placement of the reader relative to the
+    // server thread, which is sticky per process; fresh client processes re-roll
+    // it, so several short-lived clients catch what one long-lived client can
+    // miss.
+    const ITERATIONS_PER_CLIENT = 16;
+    const CLIENTS_PER_WAVE = 3;
+    const WAVES = 3;
 
-  using dir = tempDir("serve-sendfile-tail", {
-    "client-fixture.ts": `
+    using dir = tempDir("serve-sendfile-tail", {
+      "client-fixture.ts": `
       // One GET per fresh connection. Reads with plain blocking recv(2) via
       // FFI: when response bytes land, the kernel wakes the parked task and
       // sends the window-update ACK from kernel context within microseconds,
@@ -1531,51 +1533,53 @@ test.skipIf(!isLinux)("sendfile does not overtake a buffered response header tai
       }
       console.log(JSON.stringify({ ok, failures }));
     `,
-  });
-  await Bun.write(join(String(dir), "file.bin"), Buffer.alloc(FILE_SIZE, 0xee));
+    });
+    await Bun.write(join(String(dir), "file.bin"), Buffer.alloc(FILE_SIZE, 0xee));
 
-  const pad = Buffer.alloc(PAD_SIZE, "p").toString();
-  await using server = Bun.serve({
-    port: 0,
-    idleTimeout: 0,
-    fetch() {
-      return new Response(Bun.file(join(String(dir), "file.bin")), {
-        headers: { "x-pad": pad },
-      });
-    },
-  });
+    const pad = Buffer.alloc(PAD_SIZE, "p").toString();
+    await using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch() {
+        return new Response(Bun.file(join(String(dir), "file.bin")), {
+          headers: { "x-pad": pad },
+        });
+      },
+    });
 
-  const problems: unknown[] = [];
-  let cleanClients = 0;
-  for (let wave = 0; wave < WAVES && problems.length === 0; wave++) {
-    const procs = Array.from({ length: CLIENTS_PER_WAVE }, () =>
-      Bun.spawn({
-        cmd: [bunExe(), join(String(dir), "client-fixture.ts")],
-        env: {
-          ...bunEnv,
-          PORT: String(server.port),
-          PAD_SIZE: String(PAD_SIZE),
-          FILE_SIZE: String(FILE_SIZE),
-          ITERATIONS: String(ITERATIONS_PER_CLIENT),
-        },
-        stderr: "inherit",
-      }),
-    );
-    const results = await Promise.all(
-      procs.map(async proc => {
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        return { verdict: JSON.parse(stdout.trim()), exitCode };
-      }),
-    );
-    for (const { verdict, exitCode } of results) {
-      expect(exitCode).toBe(0);
-      if (verdict.failures.length > 0 || verdict.ok !== ITERATIONS_PER_CLIENT) {
-        problems.push(verdict);
-      } else {
-        cleanClients++;
+    const problems: unknown[] = [];
+    let cleanClients = 0;
+    for (let wave = 0; wave < WAVES && problems.length === 0; wave++) {
+      const procs = Array.from({ length: CLIENTS_PER_WAVE }, () =>
+        Bun.spawn({
+          cmd: [bunExe(), join(String(dir), "client-fixture.ts")],
+          env: {
+            ...bunEnv,
+            PORT: String(server.port),
+            PAD_SIZE: String(PAD_SIZE),
+            FILE_SIZE: String(FILE_SIZE),
+            ITERATIONS: String(ITERATIONS_PER_CLIENT),
+          },
+          stderr: "inherit",
+        }),
+      );
+      const results = await Promise.all(
+        procs.map(async proc => {
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          return { verdict: JSON.parse(stdout.trim()), exitCode };
+        }),
+      );
+      for (const { verdict, exitCode } of results) {
+        expect(exitCode).toBe(0);
+        if (verdict.failures.length > 0 || verdict.ok !== ITERATIONS_PER_CLIENT) {
+          problems.push(verdict);
+        } else {
+          cleanClients++;
+        }
       }
     }
-  }
-  expect(problems).toEqual([]);
-  expect(cleanClients).toBe(WAVES * CLIENTS_PER_WAVE);
-}, 90_000);
+    expect(problems).toEqual([]);
+    expect(cleanClients).toBe(WAVES * CLIENTS_PER_WAVE);
+  },
+  90_000,
+);

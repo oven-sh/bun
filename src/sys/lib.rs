@@ -7459,6 +7459,28 @@ pub fn make_stdio_blocking(fd: Fd) {
     }
 }
 
+/// Whether `fd` is an anonymous pipe (lives on pipefs) rather than a named
+/// FIFO opened from a real filesystem. Only the former get `FMODE_NOWAIT`
+/// (torvalds/linux@afed6271f5b0), so only they honour `RWF_NOWAIT`; a FIFO
+/// answers `EOPNOTSUPP`, which would also switch `RWFFlagSupport` off for the
+/// whole process.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn is_on_pipefs(fd: Fd) -> bool {
+    const PIPEFS_MAGIC: u32 = 0x5049_5045;
+    // SAFETY: all-zero is a valid `statfs`; fstatfs writes it fully on success.
+    let mut st: libc::statfs = unsafe { core::mem::zeroed() };
+    loop {
+        // SAFETY: `fd` is a plain int; `st` is a live out-param.
+        let rc = unsafe { libc::fstatfs(fd.native(), &raw mut st) };
+        if rc == 0 {
+            return st.f_type as u32 == PIPEFS_MAGIC;
+        }
+        if last_errno() != libc::EINTR {
+            return false;
+        }
+    }
+}
+
 /// See [`STDIO_MADE_BLOCKING`].
 #[cfg(unix)]
 #[inline]

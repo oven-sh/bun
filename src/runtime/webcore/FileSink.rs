@@ -678,18 +678,19 @@ impl FileSink {
         if self.nonblocking.get() || !self.pollable.get() || self.is_socket.get() {
             return;
         }
+        let fd = self.writer.get().get_fd();
+        if fd == Fd::INVALID {
+            return;
+        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let v = bun_core::linux_kernel_version();
             if (v.major > 6 || (v.major == 6 && v.minor >= 4))
                 && sys::linux::RWFFlagSupport::is_maybe_supported()
+                && sys::is_on_pipefs(fd)
             {
                 return;
             }
-        }
-        let fd = self.writer.get().get_fd();
-        if fd == Fd::INVALID {
-            return;
         }
         let already = sys::get_fcntl_flags(fd)
             .map(|f| f as i32 & sys::O::NONBLOCK != 0)
@@ -2221,6 +2222,20 @@ unsafe fn __bun_stdio_sink_deinit(ptr: *mut ()) {
         // keep-alive ref (`to_result` → `must_be_kept_alive_until_eof`) is
         // still held; drop it with RareData's.
         FileSink::clear_keep_alive_ref(this);
+        // User code that closes fds by number behind our back (and anything
+        // that then reuses and closes that number) can leave our dup already
+        // closed; tearing down must not trip close()'s use-after-close check.
+        #[cfg(not(windows))]
+        {
+            let fd = (*this).writer.get().get_fd();
+            if fd != Fd::INVALID && sys::get_fcntl_flags(fd).is_err() {
+                (*this).writer.with_mut(|w| {
+                    w.handle
+                        .close_impl(None, None::<fn(*mut core::ffi::c_void)>, false)
+                });
+                (*this).fd.set(Fd::INVALID);
+            }
+        }
         FileSink::deref(this);
     }
 }

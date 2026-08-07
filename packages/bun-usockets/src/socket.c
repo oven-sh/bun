@@ -409,48 +409,13 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
 #endif
 }
 
-/* Re-arm writable for a backpressured write, preserving the current read
- * interest: us_poll_change sets absolute flags, and read interest is only ever
- * off because something dropped it deliberately - us_socket_pause, the
- * half-open EOF branch (re-adding it would re-deliver EOF and fire on_end
- * again), or low-priority parking. Forcing READABLE back on undid all three. */
+/* Re-arm writable for a backpressured write without resuming the read side of
+ * a paused socket: us_poll_change sets absolute flags, so including READABLE
+ * unconditionally would silently undo us_socket_pause mid-backpressure and
+ * deliver data the caller asked to defer. */
 static void us_internal_rearm_writable(struct us_socket_t *s) {
     us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_WRITABLE | (us_poll_events(&s->p) & LIBUS_SOCKET_READABLE));
-}
-
-#ifndef _WIN32
-/* send() errnos that mean the peer or the path to it is gone: no retry can ever
- * succeed, so report them to the caller now; only the EAGAIN/ENOBUFS class waits for
- * another writable event (https://github.com/libuv/libuv/blob/v1.51.0/src/unix/stream.c#L820-L837). */
-static int us_internal_send_errno_is_peer_gone(int e) {
-    switch (e) {
-    case EPIPE:
-    case ECONNRESET:
-    case ECONNABORTED:
-    case ENOTCONN:
-    case ETIMEDOUT:
-    case ENETDOWN:
-    case ENETUNREACH:
-    case EHOSTUNREACH:
-        return 1;
-    default:
-        return 0;
-    }
-}
-#endif
-
-/* On a peer-gone errno a PAUSED socket must not re-arm: kqueue's one-shot EVFILT_WRITE would
- * re-fire with EV_EOF forever, and the loop.c close branch deliberately excludes paused sockets
- * (deferred-EOF keeps their unread data). Everything else still re-arms so a live socket always
- * has a filter registered - the re-fired EV_EOF then takes the loop.c error-close next tick. */
-static int us_internal_send_should_rearm(struct us_socket_t *s, ssize_t written) {
-#ifndef _WIN32
-    if (written < 0 && s->flags.is_paused && us_internal_send_errno_is_peer_gone(errno)) {
-        return 0;
-    }
-#endif
-    return 1;
+                   LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
@@ -459,7 +424,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
     }
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
-    if (written != header_length + payload_length && us_internal_send_should_rearm(s, written)) {
+    if (written != header_length + payload_length) {
         us_internal_rearm_writable(s);
     }
 
@@ -492,6 +457,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
+    s->read_eof = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -532,7 +498,7 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
     }
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
-    if (written != length && us_internal_send_should_rearm(s, written)) {
+    if (written != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -541,6 +507,28 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
 }
 
 #ifndef _WIN32
+/* send() errnos that mean the peer or the path to it is gone: no retry can
+ * ever succeed, so they are reported to the caller immediately (libuv fails
+ * the write request for these in uv__try_write, unix/stream.c; only the
+ * EAGAIN/ENOBUFS class waits for another writable event). Mirrored by the
+ * blanket `result < -1` fatal handling in h2_frame_parser's
+ * is_transport_fatal_write_result - classification lives here only. */
+static int us_internal_send_errno_is_peer_gone(int e) {
+    switch (e) {
+    case EPIPE:
+    case ECONNRESET:
+    case ECONNABORTED:
+    case ENOTCONN:
+    case ETIMEDOUT:
+    case ENETDOWN:
+    case ENETUNREACH:
+    case EHOSTUNREACH:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 /* One retry runs per writable dispatch (one event-loop iteration), so 32
  * consecutive failures is far beyond any observed transient race window
  * (the macOS EPROTOTYPE race resolves within a dispatch or two) while still
@@ -631,7 +619,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
     for (int i = 0; i < count; i++) total += iov[i].iov_len;
 
     ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
-    if (written != (ssize_t)total && us_internal_send_should_rearm(s, written)) {
+    if (written != (ssize_t)total) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -650,7 +638,7 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
     }
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
-    if (written != length && us_internal_send_should_rearm(s, written)) {
+    if (written != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -687,7 +675,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
-    if (sent != length && us_internal_send_should_rearm(s, sent)) {
+    if (sent != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -872,11 +860,12 @@ void us_socket_resume(struct us_socket_t *s) {
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 
+    int readable = s->read_eof ? 0 : LIBUS_SOCKET_READABLE;
     if (us_socket_is_shut_down(s)) {
         // we already sent FIN so we resume only readable side we are read-only
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
+        us_poll_change(&s->p, s->group->loop, readable);
         return;
     }
     // we are readable and writable so we resume everything
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    us_poll_change(&s->p, s->group->loop, readable | LIBUS_SOCKET_WRITABLE);
 }

@@ -540,6 +540,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.adopted = 0;
                         s->flags.last_write_failed = 0;
                         s->unclassified_send_failures = 0;
+                        s->read_eof = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -586,21 +587,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
             /* The group can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->group->loop;
-            #ifdef LIBUS_USE_KQUEUE
-            /* EV_EOF on EVFILT_WRITE we didn't shutdown() = SS_CANTSENDMORE (xnu bsd/kern/uipc_socket.c filt_sowrite);
-             * with the read side already ended nothing else closes us and the one-shot filter re-fires forever, so take
-             * the POLLERR close below like epoll's EPOLLERR|EPOLLHUP (libuv: deps/uv/src/unix/stream.c uv__write error path). */
-            if ((events & LIBUS_SOCKET_WRITABLE) && eof && !error
-                && !(s->p.state.poll_type & POLL_TYPE_POLLING_IN)
-                && !s->flags.is_paused
-                && !us_socket_is_shut_down(s)) {
-                /* Clear POLLING_OUT for the consumed one-shot filter (POLLING_IN is already clear per the guard) */
-                s->p.state.poll_type = us_internal_poll_type(&s->p);
-                error = 1;
-                eof = 0; /* on_end already ran when POLLING_IN was dropped (or the read side never
-                          * started, e.g. low-prio parked mid-handshake) - error-close fits both */
-            }
-            #endif
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 s->flags.last_write_failed = 0;
                 #ifdef LIBUS_USE_KQUEUE
@@ -866,7 +852,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
-                if(s->flags.allow_half_open) {
+                if (s->flags.allow_half_open && s->read_eof) {
+                    /* on_end already delivered (libuv UV_HANDLE_READ_EOF): just drop the readable interest that re-surfaced it. */
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
+                } else if(s->flags.allow_half_open) {
+                    s->read_eof = 1;
                     /* EOF with half-open allowed: stop polling readable but KEEP
                      * polling writable. Masking with the current events dropped
                      * writable when the EOF landed before the poll had been

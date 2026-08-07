@@ -307,6 +307,8 @@ struct us_socket_t {
    * the driver's epilogue via ssl_pending_detach. */
   unsigned char ssl_in_use : 1;
   unsigned char ssl_pending_detach : 1;
+  /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
+  unsigned char read_eof : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */

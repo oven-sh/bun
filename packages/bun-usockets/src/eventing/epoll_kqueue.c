@@ -280,8 +280,9 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         uint8_t writable : 1;
         uint8_t error    : 1;
         uint8_t eof      : 1;
+        uint8_t send_eof : 1;
         uint8_t skip     : 1;
-        uint8_t _pad     : 3;
+        uint8_t _pad     : 2;
     };
 
     _Static_assert(sizeof(struct kevent_flags) == 1, "kevent_flags must be 1 byte");
@@ -305,7 +306,9 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #endif
             .writable = (filter == EVFILT_WRITE),
             .error = !!(flags & EV_ERROR),
-            .eof = !!(flags & EV_EOF),
+            /* EV_EOF on EVFILT_READ is the peer's FIN; on EVFILT_WRITE it is SS_CANTSENDMORE (peer gone, or our own shutdown) - not a read EOF (libuv kqueue.c ignores it there too). */
+            .eof = (flags & EV_EOF) && filter == EVFILT_READ,
+            .send_eof = (flags & EV_EOF) && filter == EVFILT_WRITE,
         };
 
         /* Look backward for a prior entry with the same poll to coalesce into.
@@ -317,6 +320,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 coalesced[j].writable |= bits.writable;
                 coalesced[j].error |= bits.error;
                 coalesced[j].eof |= bits.eof;
+                coalesced[j].send_eof |= bits.send_eof;
                 coalesced[i] = (struct kevent_flags){ .skip = 1 };
                 merged = 1;
                 break;
@@ -344,9 +348,16 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         int events = (bits.readable ? LIBUS_SOCKET_READABLE : 0)
                    | (bits.writable ? LIBUS_SOCKET_WRITABLE : 0);
 
+        int error = bits.error;
+        /* Write side dead without our own shutdown(): peer reset (or connect refused). Surface it as the poll error epoll would report as EPOLLERR. */
+        if (bits.send_eof) {
+            int type = us_internal_poll_type(poll);
+            if (type == POLL_TYPE_SOCKET || type == POLL_TYPE_SEMI_SOCKET) error = 1;
+        }
+
         events &= us_poll_events(poll);
-        if (events || bits.error || bits.eof) {
-            us_internal_dispatch_ready_poll(poll, bits.error, bits.eof, events);
+        if (events || error || bits.eof) {
+            us_internal_dispatch_ready_poll(poll, error, bits.eof, events);
         }
     }
 #endif

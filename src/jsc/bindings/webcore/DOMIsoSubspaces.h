@@ -71,6 +71,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForFunctionTemplate;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMIMEType;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMIMEParams;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSWebLock;
     std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNodeHTTPServerSocket;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;

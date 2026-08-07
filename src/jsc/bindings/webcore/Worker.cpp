@@ -882,7 +882,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM()))
         isNodeWorker = worker->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 11);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 12);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -895,6 +895,8 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 8, JSFunction::create(vm, globalObject, 1, "markAsUncloneable"_s, jsFunctionMarkAsUncloneable, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
+    // Shared with navigator.locks: the same process-wide LockManager, like Node.
+    array->putDirectIndex(globalObject, 11, globalObject->webLockManagerObject());
     return array;
 }
 

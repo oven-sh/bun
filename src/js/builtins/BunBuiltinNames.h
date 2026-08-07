@@ -99,6 +99,7 @@ using namespace JSC;
     macro(format) \
     macro(fulfillModuleSync) \
     macro(handleEvent) \
+    macro(hasSubscribers) \
     macro(headers) \
     macro(highWaterMark) \
     macro(host) \
@@ -155,6 +156,7 @@ using namespace JSC;
     macro(preventClose) \
     macro(processBindingConstants) \
     macro(props) \
+    macro(publish) \
     macro(pull) \
     macro(rawHeaders) \
     macro(read) \

@@ -114,6 +114,7 @@
 #include "JSFFICString.h"
 #include "webcore/JSMIMEParams.h"
 #include "webcore/JSMIMEType.h"
+#include "webcore/JSWebLocks.h"
 #include "JSMessageChannel.h"
 #include "JSMessageEvent.h"
 #include "JSMessagePort.h"
@@ -1759,6 +1760,13 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobal
     return JSValue::encode(JSC::jsNumber(WTF::numberOfProcessorCores()));
 }
 
+// navigator.locks and worker_threads.locks are the same LockManager instance,
+// like Node.js (lib/internal/navigator.js).
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetLocks, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    return JSValue::encode(defaultGlobalObject(lexicalGlobalObject)->webLockManagerObject());
+}
+
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(isAbortSignal);
@@ -2121,6 +2129,22 @@ void GlobalObject::finishCreation(VM& vm)
             WebCore::setupJSMIMETypeClassStructure(init);
         });
 
+    m_JSWebLockClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            WebCore::setupJSWebLockClassStructure(init);
+        });
+
+    m_JSWebLockManagerClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            WebCore::setupJSWebLockManagerClassStructure(init);
+        });
+
+    m_webLockManagerObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(init.owner);
+            init.set(WebCore::JSWebLockManager::create(init.vm, globalObject->m_JSWebLockManagerClassStructure.get(globalObject)));
+        });
+
     m_JSConnectionsListClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             setupConnectionsListClassStructure(init);
@@ -2376,11 +2400,12 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSGlobalObject* globalObject = init.owner;
             unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
 
-            JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+            JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 5);
 
             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
+            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "locks"_s), functionNavigatorGetLocks, JSC::NoIntrinsic, accessorAttributes);
 
             obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                 jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);

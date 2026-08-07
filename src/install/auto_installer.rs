@@ -369,8 +369,9 @@ impl hooks::AutoInstaller for PackageManager {
         &mut self,
         name: &[u8],
         version: &hooks::DependencyVersion,
+        version_buf: &[u8],
     ) -> Option<PackageID> {
-        pm_resolution::resolve_from_disk_cache(self, name, version)
+        pm_resolution::resolve_from_disk_cache(self, name, version, version_buf)
     }
 
     fn enqueue_dependency_to_root(

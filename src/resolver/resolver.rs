@@ -3630,7 +3630,8 @@ impl<'a> Resolver<'a> {
         }
 
         if self.opts.install_preference == bun_options_types::offline_mode::OfflineMode::Offline {
-            if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version) {
+            if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version, version_buf)
+            {
                 *input_package_id_ = package_id;
                 return DependencyToResolve::Resolution(
                     pm!().lockfile_package_resolution(package_id),

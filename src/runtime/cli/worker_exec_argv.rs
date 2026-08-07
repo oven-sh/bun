@@ -364,7 +364,7 @@ fn normalized(name: &[u8]) -> Vec<u8> {
 /// short values (`-r./s.js`) with the whole token in the message.
 fn split_token(tok: &[u8]) -> (&[u8], Option<&[u8]>) {
     if tok.starts_with(b"--") {
-        if let Some(pos) = tok.iter().position(|&b| b == b'=') {
+        if let Some(pos) = bun_core::strings::index_of_char_usize(tok, b'=') {
             return (&tok[..pos], Some(&tok[pos + 1..]));
         }
     }

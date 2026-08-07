@@ -1445,5 +1445,4 @@ test.concurrent(
     expect(stdout).toBe("done 12\n");
     expect(exitCode).toBe(0);
   },
-  30_000,
 );

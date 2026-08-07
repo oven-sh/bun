@@ -120,7 +120,6 @@ sign.json
 src/bake/generated.ts
 src/jsc/bindings-obj
 src/bun.js/debug-bindings-obj
-src/fallback.version
 src/js/out/DebugPath.h
 src/js/out/functions*
 src/js/out/modules*

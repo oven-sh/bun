@@ -1894,6 +1894,15 @@ impl WindowsNamedPipeListeningContext {
         // return error.FailedChmodPipe;
         //}
 
+        // `uv_listen` made the pipe an active+ref'd uv handle. Strip libuv's
+        // loop ref so the owning `Listener`'s `poll_ref` is the only thing
+        // keeping the process alive (the contract usockets' libuv backend
+        // applies to its handles); otherwise `server.unref()` drops the
+        // `poll_ref` but the uv handle still pins `uv_loop_alive` and the
+        // process never exits.
+        // SAFETY: `this` is live; `&mut uv_pipe` is scoped to this call.
+        unsafe { (*this).uv_pipe.unref() };
+
         let (this, _) = scopeguard::ScopeGuard::into_inner(cleanup);
         Ok(this)
     }

@@ -32,9 +32,7 @@ test/js/bun/resolve/xml/xml-utf8-bom.xml -text
 test/js/bun/resolve/xml/xml-latin1.xml -text
 
 .vscode/launch.json linguist-generated
-src/api/schema.d.ts linguist-generated
 fixture.*.c linguist-generated
-src/api/schema.js linguist-generated
 *-fixture* linguist-generated
 src/jsc/bindings/ZigGeneratedCode.h linguist-generated
 src/jsc/bindings/ZigGeneratedCode.cpp linguist-generated

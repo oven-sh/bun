@@ -115,6 +115,17 @@ pub(crate) fn openat2_beneath(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> R
     openat(dir, path, flags, mode)
 }
 
+// OHOS seccomp blocks openat2 (syscall 437) with uncatchable SIGSYS;
+// returning ENOSYS lets the lib.rs wrapper cache UNAVAILABLE and fall
+// back to plain openat.
+#[cfg(target_env = "ohos")]
+#[inline]
+pub(crate) fn openat2_in_root(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
+    let _ = (dir, path, flags, mode);
+    Err(libc::ENOSYS)
+}
+
+#[cfg(not(target_env = "ohos"))]
 #[inline]
 pub(crate) fn openat2_in_root(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);

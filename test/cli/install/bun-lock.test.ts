@@ -1012,3 +1012,77 @@ it("optional peer with a non-wildcard range is idempotent with two versions of t
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await run(["install", "--frozen-lockfile"]);
 });
+
+it("writes the configured registry's tarball URL into bun.lock by default", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "keeps-registry-resolved",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.0.0" },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain(`${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`);
+});
+
+it("omits the configured registry's tarball URL with omit-lockfile-registry-resolved", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "omits-registry-resolved",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    ),
+    write(join(packageDir, ".npmrc"), "omit-lockfile-registry-resolved=true\n"),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.0.0", ""');
+  expect(lockfile).not.toContain(registry.registryUrl());
+
+  // integrity still pins the contents
+  expect(lockfile).toContain("sha512-");
+
+  // `""` still installs, and the URL does not come back
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+});
+
+it("adding a dependency does not reintroduce registry URLs with omit-lockfile-registry-resolved", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "omits-registry-resolved-on-add",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    ),
+    write(join(packageDir, ".npmrc"), "omit-lockfile-registry-resolved=true\n"),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  // a lockfile-updating install rewrites every entry, including the new one
+  await runBunInstall(env, packageDir, { packages: ["a-dep@1.0.1"] });
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain('"a-dep": ["a-dep@1.0.1", ""');
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.0.0", ""');
+  expect(lockfile).not.toContain(registry.registryUrl());
+});

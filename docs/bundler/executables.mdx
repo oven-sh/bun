@@ -51,41 +51,15 @@ To build for Linux x64 (most servers):
   <Tab title="CLI">
     ```bash icon="terminal" terminal
     bun build --compile --target=bun-linux-x64 ./index.ts --outfile myapp
-
-    # To support CPUs from before 2013, use the baseline version (nehalem)
-    bun build --compile --target=bun-linux-x64-baseline ./index.ts --outfile myapp
-
-    # To explicitly only support CPUs from 2013 and later, use the modern version (haswell)
-    # modern is faster, but baseline is more compatible.
-    bun build --compile --target=bun-linux-x64-modern ./index.ts --outfile myapp
     ```
 
   </Tab>
   <Tab title="JavaScript">
     ```ts build.ts icon="/icons/typescript.svg"
-    // Standard Linux x64
     await Bun.build({
       entrypoints: ["./index.ts"],
       compile: {
         target: "bun-linux-x64",
-        outfile: "./myapp",
-      },
-    });
-
-    // Baseline (pre-2013 CPUs)
-    await Bun.build({
-      entrypoints: ["./index.ts"],
-      compile: {
-        target: "bun-linux-x64-baseline",
-        outfile: "./myapp",
-      },
-    });
-
-    // Modern (2013+ CPUs, faster)
-    await Bun.build({
-      entrypoints: ["./index.ts"],
-      compile: {
-        target: "bun-linux-x64-modern",
         outfile: "./myapp",
       },
     });
@@ -123,33 +97,17 @@ To build for Windows x64:
     ```bash icon="terminal" terminal
     bun build --compile --target=bun-windows-x64 ./path/to/my/app.ts --outfile myapp
 
-    # To support CPUs from before 2013, use the baseline version (nehalem)
-    bun build --compile --target=bun-windows-x64-baseline ./path/to/my/app.ts --outfile myapp
-
-    # To explicitly only support CPUs from 2013 and later, use the modern version (haswell)
-    bun build --compile --target=bun-windows-x64-modern ./path/to/my/app.ts --outfile myapp
-
     # note: if no .exe extension is provided, Bun adds it automatically for Windows executables
     ```
 
   </Tab>
   <Tab title="JavaScript">
     ```ts build.ts icon="/icons/typescript.svg"
-    // Standard Windows x64
     await Bun.build({
       entrypoints: ["./path/to/my/app.ts"],
       compile: {
         target: "bun-windows-x64",
         outfile: "./myapp", // .exe added automatically
-      },
-    });
-
-    // Baseline or modern variants
-    await Bun.build({
-      entrypoints: ["./path/to/my/app.ts"],
-      compile: {
-        target: "bun-windows-x64-baseline",
-        outfile: "./myapp",
       },
     });
     ```
@@ -228,23 +186,22 @@ To build for macOS x64:
 
 The segments of the `--target` value can appear in any order, as long as they're delimited by `-`.
 
-| --target             | Operating System | Architecture | Modern | Baseline | Libc  |
-| -------------------- | ---------------- | ------------ | ------ | -------- | ----- |
-| bun-linux-x64        | Linux            | x64          | ✅     | ✅       | glibc |
-| bun-linux-arm64      | Linux            | arm64        | ✅     | N/A      | glibc |
-| bun-windows-x64      | Windows          | x64          | ✅     | ✅       | -     |
-| bun-windows-arm64    | Windows          | arm64        | ✅     | N/A      | -     |
-| bun-darwin-x64       | macOS            | x64          | ✅     | ✅       | -     |
-| bun-darwin-arm64     | macOS            | arm64        | ✅     | N/A      | -     |
-| bun-linux-x64-musl   | Linux            | x64          | ✅     | ✅       | musl  |
-| bun-linux-arm64-musl | Linux            | arm64        | ✅     | N/A      | musl  |
+| --target             | Operating System | Architecture | Libc  |
+| -------------------- | ---------------- | ------------ | ----- |
+| bun-linux-x64        | Linux            | x64          | glibc |
+| bun-linux-arm64      | Linux            | arm64        | glibc |
+| bun-windows-x64      | Windows          | x64          | -     |
+| bun-windows-arm64    | Windows          | arm64        | -     |
+| bun-darwin-x64       | macOS            | x64          | -     |
+| bun-darwin-arm64     | macOS            | arm64        | -     |
+| bun-linux-x64-musl   | Linux            | x64          | musl  |
+| bun-linux-arm64-musl | Linux            | arm64        | musl  |
 
-<Warning>
-  On x64 platforms, Bun uses SIMD optimizations that require a CPU with AVX2 instructions. The `-baseline` build of Bun
-  is for older CPUs without them. The Bun installer detects which version to use, but when cross-compiling you might not
-  know the target CPU. This mostly matters on Windows x64 and Linux x64, rarely on Darwin x64. If you or your users see
-  `"Illegal instruction"` errors, you might need to use the baseline version.
-</Warning>
+<Note>
+  On x64, Bun requires a CPU with SSE4.2 (Nehalem, 2008+); wider SIMD is dispatched at runtime when available. Bun 1.3
+  and earlier shipped a separate `-modern` (Haswell/AVX2) build alongside a `-baseline` build. Both suffixes are still
+  accepted by `--target`; for Bun 1.4 and later they resolve to the same x64 binary.
+</Note>
 
 ---
 

@@ -1,0 +1,312 @@
+---
+title: Upgrading to Bun 1.4
+sidebarTitle: Upgrading to 1.4
+description: "A guide to the behavior changes in Bun 1.4 and how to migrate a project from Bun 1.3."
+---
+
+Bun 1.4 is largely backward compatible with Bun 1.3, but a handful of defaults and validation rules changed. This page covers the changes most likely to require a code or configuration update and what to do about each one.
+
+Most projects will upgrade without any code changes. Run your test suite after upgrading; the sections below are a reference for anything that surfaces.
+
+<Note>
+  The exhaustive list of 1.4 behavior changes, including narrow validation fixes not covered here, is tracked at
+  [oven-sh/bun#28792](https://github.com/oven-sh/bun/issues/28792).
+</Note>
+
+```sh terminal icon="terminal"
+bun upgrade
+```
+
+## Summary
+
+| Area                  | Change                                                           | Action                                                                  |
+| --------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `bun install`         | New lockfiles are written as `lockfileVersion: 2`                | Upgrade CI and teammates to Bun ≥ 1.4, or keep your existing `bun.lock` |
+| `bunfig.toml` / TOML  | Strict TOML parsing; unquoted string values are rejected         | Quote string values                                                     |
+| JSX                   | `"jsx": "react-jsx"` now emits the production runtime            | Use `"jsx": "react-jsxdev"` for development output                      |
+| `Bun.cron`            | Schedules now use local time instead of UTC                      | Pass `{ tz: "UTC" }` to keep UTC                                        |
+| Bun Shell             | Glob characters in `${interpolated}` values are literal          | Write the pattern inline or use `{ raw: pattern }`                      |
+| CSS imports           | `import styles from "./x.css"` default export is `{}` at runtime | Use `with { type: "file" }` for the asset path                          |
+| Node.js compat        | `process.versions.node` is `26.3.0`                              | Rebuild non-N-API native addons                                         |
+| `trustedDependencies` | Matches the resolved package name, not the alias                 | List the real package name                                              |
+| Distribution          | Single x64 build (no separate AVX2 build)                        | None; `-baseline` names still resolve                                   |
+
+---
+
+## Package manager
+
+### `bun.lock` is written as `lockfileVersion: 2`
+
+When Bun 1.4 creates a **new** lockfile (a fresh `bun install`, or a migration from `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` / `bun.lockb`), it writes `"lockfileVersion": 2`. Bun 1.3 and earlier cannot read version 2 lockfiles and will fail with:
+
+```
+error: Unknown lockfile version
+    at bun.lock:2:22
+```
+
+Existing `bun.lock` files are **not** upgraded to version 2 in place. A version 1 lockfile stays at version 1 when Bun 1.4 rewrites it (a version 0 lockfile is bumped to version 1, which Bun 1.3 also reads), so committing your existing lockfile keeps the repo installable by older Bun releases.
+
+Bun 1.4 can read all previous lockfile versions.
+
+**What to do:** if every machine that runs `bun install` (CI, Docker images, teammates) is on Bun 1.4 or newer, no action is needed. If you need to support Bun 1.3 for a transition period, keep your existing `bun.lock` checked in and avoid deleting it; a regenerated lockfile will be version 2.
+
+### `trustedDependencies` matches the resolved package name
+
+[`trustedDependencies`](/pm/lifecycle) and the built-in default trust list are now compared against the **resolved** package name, not the dependency alias, and the built-in list additionally requires the tarball URL to match the configured registry's canonical URL.
+
+```jsonc package.json icon="file-json"
+{
+  "dependencies": {
+    "esbuild": "npm:my-esbuild-fork@1.0.0",
+  },
+  "trustedDependencies": ["esbuild"], // [!code --]
+  "trustedDependencies": ["my-esbuild-fork"], // [!code ++]
+}
+```
+
+Trust entries that were only stored as a hash in a legacy binary `bun.lockb` no longer match. Re-run `bun install` so the entries are persisted by name in `bun.lock`, or re-run `bun pm trust <name>`.
+
+These changes are a strict narrowing: nothing that was previously blocked will now run. Packages whose scripts previously ran may now be listed under "blocked scripts" at the end of `bun install` output; add them explicitly with `bun pm trust <name>` or in `"trustedDependencies"`.
+
+---
+
+## `bunfig.toml` and TOML imports
+
+Bun 1.4 ships a new TOML parser that conforms to the TOML specification. A small amount of invalid TOML that the previous parser silently accepted is now a syntax error. This affects `bunfig.toml`, any `.toml` file you `import`, and `Bun.TOML.parse()`.
+
+The most common case is an unquoted string value:
+
+```toml bunfig.toml icon="settings"
+[install]
+linker = isolated   # [!code --]
+linker = "isolated" # [!code ++]
+```
+
+The error points at the location:
+
+```
+error: Strings must be quoted
+    at bunfig.toml:2:10
+```
+
+For `Bun.TOML.parse()` and imported `.toml` files, the offending value is included in the message (`Strings must be quoted: "isolated"`); `bunfig.toml` redacts it because the file can contain registry tokens.
+
+Other newly rejected input includes bare keys containing `@` / `$` / `:`, invalid backslash escapes inside `"…"` strings (notably Windows paths), duplicate keys, leading zeros, and control characters. For Windows paths in `bunfig.toml`, use a literal string or escape the backslashes:
+
+```toml bunfig.toml icon="settings"
+[install]
+cache = "C:\Users\me\.bun-cache"    # [!code --]
+cache = 'C:\Users\me\.bun-cache'    # [!code ++]
+```
+
+A few value types are also parsed differently:
+
+- `inf` / `-inf` / `nan` are numbers (`Infinity` / `-Infinity` / `NaN`), not the strings `"inf"` / `"-inf"` / `"nan"`.
+- Integers outside `Number.MAX_SAFE_INTEGER` throw instead of silently losing precision.
+- Date and time literals parse as strings (previously rejected).
+- `Bun.TOML.parse()` throws a `SyntaxError` instead of a `BuildMessage`.
+
+See the [TOML docs](/runtime/toml) for the full supported syntax.
+
+---
+
+## JSX: `"react-jsx"` emits the production runtime
+
+Previously, `"jsx": "react-jsx"` in `tsconfig.json` behaved the same as `"react-jsxdev"` and emitted the development runtime (`jsxDEV` from `react/jsx-dev-runtime`). Bun 1.4 matches TypeScript, Babel, and esbuild: `"react-jsx"` emits the production runtime (`jsx` / `jsxs` from `react/jsx-runtime`).
+
+If you relied on development JSX output (component stack traces, extra runtime checks), set `"jsx": "react-jsxdev"` in `tsconfig.json`:
+
+```jsonc tsconfig.json icon="file-json"
+{
+  "compilerOptions": {
+    "jsx": "react-jsxdev", // [!code highlight]
+  },
+}
+```
+
+See [JSX](/runtime/jsx) for the full set of `jsx` values and pragma options.
+
+---
+
+## `Bun.cron` uses local time by default
+
+[`Bun.cron`](/runtime/cron) and `Bun.cron.parse` now interpret cron expressions in the system's local time zone (matching `crontab`, `launchd`, and Windows Task Scheduler). In Bun 1.3 they used UTC.
+
+To keep UTC scheduling, pass the new `tz` option:
+
+```ts
+const job = Bun.cron("0 9 * * *", handler); // [!code --]
+const job = Bun.cron("0 9 * * *", handler, { tz: "UTC" }); // [!code ++]
+```
+
+Any IANA time zone name is accepted.
+
+---
+
+## Bun Shell: interpolated values are not glob patterns
+
+When a template literal passed to [`$`](/runtime/shell) contains both a literal `*` and an interpolated value, glob metacharacters inside the interpolated part (or inside a `$var` / command substitution) are now matched literally instead of being treated as pattern syntax. Only `*`, `**`, and brace expansion typed directly in the template act as glob syntax.
+
+```ts
+import { $ } from "bun";
+
+const dir = "logs/2025-*";
+
+await $`rm ${dir}*.log`; // 1.3: pattern; 1.4: literal "logs/2025-*" prefix
+await $`rm logs/2025-*/*.log`; // unchanged: literal pattern in the template still globs
+await $`rm ${{ raw: dir }}*.log`; // opt back in: inject as raw shell syntax
+```
+
+A purely interpolated argument (no literal `*` in the template) was already literal in Bun 1.3 and is unchanged.
+
+Redirect targets that expand to more than one word now fail with `ambiguous redirect` (matching `bash`) instead of silently creating a file with a concatenated name.
+
+---
+
+## CSS imports at runtime
+
+In `bun run`, the default export of a `.css` import is now an empty object, matching what `bun build` already produced:
+
+```ts
+import styles from "./app.css";
+// Bun 1.3 (runtime): "/abs/path/app.css"
+// Bun 1.4:           {}
+```
+
+If you were importing a CSS file to obtain its path, use the `file` loader:
+
+```ts
+import stylesPath from "./app.css" with { type: "file" };
+```
+
+[CSS modules](/bundler/css#css-modules) (`.module.css`) are unaffected.
+
+---
+
+## Node.js compatibility target is 26
+
+Bun 1.4 reports Node.js `26.3.0`:
+
+- `process.version` → `"v26.3.0"`
+- `process.versions.node` → `"26.3.0"`
+- `process.versions.modules` → `"147"`
+- `napi_get_node_version()` → `26.3.0`
+- `npm_config_user_agent` set by `bun run` contains `node/v26.3.0`
+
+Native addons built against the V8 C++ API (not N-API) must be rebuilt; the module loader rejects a mismatched ABI version. N-API addons are ABI-stable and continue to load.
+
+Bun 1.4 also ships the corresponding Node.js 26 semver-major changes, including:
+
+- `node:http`: `response.writeHeader()` (deprecated alias for `writeHead()`) is removed.
+- `node:stream`: `readable.read()` in paused mode returns one chunk at a time instead of concatenating the internal buffer.
+- `node:dgram`: `bind()` on an already-bound socket and calls after `close()` throw synchronously.
+
+---
+
+## `fetch` and `Headers`
+
+When a server sends the same response header more than once (or a client sends a duplicate request header to `Bun.serve`), the values are now combined with `", "` as the Fetch Standard specifies, instead of the last value silently replacing the earlier ones. A header that arrives once with an empty value now reads back as `""` instead of `null`. `Set-Cookie`, `Headers.set()`, and `Headers.append()` are unchanged.
+
+```ts
+// server sends:  X-Thing: a
+//                X-Thing: b
+const res = await fetch(url);
+res.headers.get("x-thing");
+// Bun 1.3: "b"
+// Bun 1.4: "a, b"
+```
+
+Related `fetch` correctness changes:
+
+- `Request#clone()` and `Response#clone()` throw `TypeError` when the body has already been read or is locked, instead of returning a clone with an empty body.
+- `Response.redirect(url)` parses the URL and serializes it into the `Location` header.
+- A compressed response body that is truncated mid-stream (when the server closes the connection to delimit the body) now rejects instead of resolving with partial data.
+- `fetch()` rejects its returned promise when an option conversion throws, instead of throwing synchronously.
+
+---
+
+## Sockets and SQL
+
+### `Bun.Socket#setKeepAlive` delay is milliseconds
+
+The second argument to `socket.setKeepAlive(enable, initialDelay)` is now interpreted as **milliseconds** (matching `node:net`). In Bun 1.3 the value was passed to the kernel as seconds, so the effective delay was 1000× longer than requested.
+
+```ts
+socket.setKeepAlive(true, 60_000); // 1.3: ~16.7 hours; 1.4: 60 seconds
+```
+
+`setKeepAlive(true)` with no delay now returns `true` instead of `false`.
+
+### MySQL `DATETIME` / `TIMESTAMP` decode as UTC
+
+The MySQL driver now decodes `DATETIME` and `TIMESTAMP` columns as UTC to match how it encodes them. In Bun 1.3 these were decoded as local time, so values round-tripped through the driver came back shifted by the local UTC offset. Reading existing rows after upgrading returns the value actually stored in the database.
+
+---
+
+## Distribution: single x64 build
+
+Bun no longer ships a separate AVX2-optimized x64 build. There is one x64 build per platform, targeting SSE4.2 (Nehalem, 2008+). The `-baseline` download names and `@oven/bun-*-x64-baseline` npm packages still resolve as aliases, so existing install scripts and lockfiles keep working.
+
+No action is needed. CPUs that previously required the `-baseline` build now run the default `bun-*-x64` download.
+
+---
+
+## Other changes you may notice
+
+These are correctness fixes that tighten validation or align with a specification. They only affect code that was relying on the previous (incorrect) behavior.
+
+**`bun test`**
+
+- `jest.resetAllMocks()` now resets mock implementations (matching Jest). Use `jest.clearAllMocks()` if you only want to clear call data.
+- `expect(array).toContain(value)` now uses `===` instead of `Object.is`. `expect([NaN]).toContain(NaN)` now fails (use `toContainEqual`).
+
+**`Bun.serve` and WebSocket**
+
+- An out-of-range `port` throws `RangeError` instead of being clamped.
+- A `Response` status outside `100..=999` is routed through the `error()` handler as a 500 instead of writing an invalid status line.
+- Per-method route objects (`{ GET, POST, ... }`) serve `HEAD` with the `GET` handler.
+- `ServerWebSocket#publish()` and `server.publish()` return `0` / `-1` when a subscriber hits backpressure, instead of always returning the payload length.
+- The client `WebSocket` rejects `close()` with an invalid code (`InvalidAccessError`) or a reason over 123 UTF-8 bytes (`SyntaxError`). Client and server WebSockets reject `ping()` / `pong()` payloads over 125 bytes (`RangeError`), and the server rejects unmasked client frames per RFC 6455.
+
+**Bun APIs**
+
+- `Bun.spawn`: passing an already-aborted `AbortSignal` throws immediately instead of spawning; `timeout: NaN`, `killSignal: 0`, and NUL bytes in `argv0` / `cwd` are rejected.
+- `bun:ffi`: validation errors from `viewSource()` and `new JSCallback()` are thrown instead of returned.
+- `structuredClone` / `postMessage`: transfer lists are validated before serialization instead of silently dropping invalid entries.
+- `FileSystemRouter#match()` returns `null` for paths that do not start with `/`.
+- `Bun.mmap()` returns a view starting at the requested `offset` instead of the page-aligned offset.
+- `Bun.color`: `"ansi-16"` output is a real SGR escape sequence; `"ansi-256"`, `"hsl"`, and `"lab"` output is now round-trip parseable.
+- `Bun.Cookie`: `Expires` is serialized as an IMF-fixdate.
+- `Bun.randomUUIDv7()`: timestamps at or above 2⁴⁸, or `NaN`, throw instead of being truncated.
+- `Bun.YAML.parse()` rejects NUL bytes with `SyntaxError` instead of silently truncating.
+
+**Node.js compatibility**
+
+- `tls.Server` with `requestCert: true` now enforces the default `rejectUnauthorized: true` for client certificates.
+
+**CLI**
+
+- `bun init` templates pin `"typescript": "^6"`.
+
+See [oven-sh/bun#28792](https://github.com/oven-sh/bun/issues/28792) for the full list, including narrow protocol and bounds checks not repeated here.
+
+---
+
+## Pinning to Bun 1.3
+
+If you need to stay on Bun 1.3 while migrating, you can install a specific version:
+
+<Tabs>
+  <Tab title="macOS & Linux">
+    ```bash terminal icon="terminal"
+    curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.14"
+    ```
+  </Tab>
+  <Tab title="Windows">
+    ```powershell PowerShell icon="windows"
+    iex "& {$(irm https://bun.sh/install.ps1)} -Version 1.3.14"
+    ```
+  </Tab>
+</Tabs>
+
+See [Upgrade Bun](/guides/util/upgrade) for other ways to manage versions.

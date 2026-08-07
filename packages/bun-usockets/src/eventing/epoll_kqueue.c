@@ -362,31 +362,44 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         const int wanted = us_poll_events(poll);
         events &= wanted;
 
-        if (bits.send_eof && wanted == 0) {
-            /* This poll asked for no events, so its only kernel presence is
-             * the EV_CLEAR write knote kqueue_change keeps as a
-             * connection-death detector (a half-open socket past on_end whose
-             * writes drained, or a paused socket). EV_EOF there is
-             * SS_CANTSENDMORE, never a read EOF: keep it away from the eof
-             * path, which would re-run on_end on a half-open socket or
-             * clean-close a shut-down one on its own shutdown echo. With a
-             * socket error in fflags (a TCP reset) it is the poll error,
-             * routed exactly like epoll's implicit EPOLLERR. Without one it
-             * stays silent - our own shutdown's echo, a unix peer's graceful
-             * close (SS_CANTSENDMORE with so_error 0), the peer's FIN after
-             * our shutdown - because tearing down an allowHalfOpen or paused
-             * socket here would fabricate ECONNRESET for a graceful
-             * disconnect that epoll reports as a mere EPOLLHUP. Such a
-             * socket stays reachable through us_socket_resume, a write's
-             * EPIPE, or a later reset; epoll reports some of these promptly
-             * where kqueue now waits for the app, which is the deliberate
-             * cost of not guessing. */
+        /* The EV_CLEAR write knote kqueue_change keeps as a connection-death
+         * detector exists whenever WRITABLE is not armed: it is the only
+         * kernel presence of a poll at zero events (a half-open socket past
+         * on_end whose writes drained, or a paused socket), and it survives a
+         * later 0 -> READABLE transition, whose diff has no reason to touch
+         * the write filter. EV_EOF from it is SS_CANTSENDMORE, and what that
+         * means depends on what we know. */
+        if (bits.send_eof && !(wanted & LIBUS_SOCKET_WRITABLE)) {
             const int kind = us_internal_poll_type(poll);
             if (kind == POLL_TYPE_SOCKET || kind == POLL_TYPE_SOCKET_SHUT_DOWN) {
+                const struct us_socket_t *s = (const struct us_socket_t *) poll;
                 if (bits.send_eof_err) {
+                    /* A pending socket error (a TCP reset) is the poll error,
+                     * routed exactly like epoll's implicit EPOLLERR. */
                     error = 1;
+                    eof = bits.eof;
+                } else if (kind == POLL_TYPE_SOCKET_SHUT_DOWN && !s->flags.is_paused && wanted == 0) {
+                    /* Both directions are done: the only route to zero events
+                     * without pause consumed the peer's FIN already (and
+                     * deleted the read knote with it), and our own shutdown
+                     * answered it, so this echo is the close signal. eof
+                     * stays set (bits.eof | bits.send_eof) and the shut-down
+                     * branch in loop.c clean-closes, exactly like epoll's
+                     * EPOLLHUP for the same both-directions-shut state. */
+                } else {
+                    /* Stay silent. A paused socket's disconnect may have
+                     * readable data queued ahead of it, which resume()'s
+                     * re-armed EVFILT_READ drains before the real
+                     * end-of-stream. A resumed reader (wanted == READABLE)
+                     * hears the peer through the read filter, so a stale
+                     * shutdown echo must not clean-close it first. And on a
+                     * not-shut-down socket, a unix peer's graceful close
+                     * (SS_CANTSENDMORE with so_error 0) must not fabricate
+                     * the ECONNRESET the error path would clamp to, nor
+                     * re-run on_end via eof, for a disconnect epoll reports
+                     * as a mere EPOLLHUP. */
+                    eof = bits.eof;
                 }
-                eof = bits.eof;
             }
         }
 

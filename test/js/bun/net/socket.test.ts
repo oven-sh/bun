@@ -832,6 +832,115 @@ describe.concurrent("socket", () => {
     }
   });
 
+  // Replying to the peer's FIN with our own shutdown (what node:net's end()
+  // does) leaves the socket shut down at zero poll events, and the write-side
+  // shutdown echo is then its only close signal (the read knote went away
+  // with the consumed FIN). It must be delivered as the clean close, the way
+  // epoll's EPOLLHUP closes the same both-directions-shut state.
+  it.skipIf(isWindows)("allowHalfOpen socket closes cleanly after both sides shut down", async () => {
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<string>();
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open() {},
+        data() {},
+        end(socket) {
+          // The canonical reply to the peer's FIN: finish our side too.
+          // shutdown() half-closes natively; end() would close outright at
+          // the JS layer and never depend on the kernel's close signal.
+          socket.shutdown();
+        },
+        close() {
+          onClosed("close");
+        },
+        error() {
+          onClosed("error");
+        },
+      },
+    });
+
+    const client = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+    client.on("error", () => {});
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once("connect", resolve);
+        client.once("error", reject);
+      });
+      client.end();
+
+      // Hangs forever if the shutdown echo is suppressed at zero events.
+      expect(await closed).toBe("close");
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // The reverse ordering: half-close while paused, then resume reading. The
+  // detector knote survives the 0 -> READABLE transition, so the stale
+  // shutdown echo is delivered while the socket legitimately reads; it must
+  // not clean-close the socket before the peer's reply and FIN arrive.
+  it.skipIf(isWindows)("half-closed paused socket still hears the peer after resume", async () => {
+    const { promise: opened, resolve: onOpen } = Promise.withResolvers<Socket<undefined>>();
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<string>();
+    let received = "";
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open(socket) {
+          socket.pause();
+          onOpen(socket);
+        },
+        data(_socket, buffer) {
+          received += buffer.toString();
+        },
+        end() {},
+        close() {
+          onClosed("close");
+        },
+        error() {
+          onClosed("error");
+        },
+      },
+    });
+
+    // A raw half-open client: it must keep writing after the server's FIN
+    // arrives (node:net's client tears its stream down there).
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: { open() {}, data() {}, end() {}, close() {}, error() {} },
+    });
+    try {
+      const socket = await opened;
+      // Let the pause's writable dispatch drop the poll to zero events and
+      // arm the detector.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+
+      socket.shutdown(); // half-close while paused; the shutdown echo is now queued
+      socket.resume(); // re-arms reading; the detector knote survives
+
+      // The peer answers in two chunks. A stale echo closing the socket
+      // early loses part or all of the reply.
+      client.write("part1");
+      await new Promise(resolve => setImmediate(resolve));
+      client.write("part2");
+      client.end();
+
+      expect(await closed).toBe("close");
+      expect(received).toBe("part1part2");
+    } finally {
+      client.terminate();
+    }
+  });
+
   it("upgradeTLS handles errors", async () => {
     using server = Bun.serve({
       port: 0,

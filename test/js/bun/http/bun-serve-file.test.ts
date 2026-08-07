@@ -1211,19 +1211,30 @@ describe.skipIf(isWindows)("Response(Bun.file(FIFO)) ends the response when the 
       const fifoPath = join(String(dir), "body.fifo");
       mkfifo(fifoPath);
 
+      // Hold the FIFO open read+write until the real writer is established:
+      // the server's O_RDONLY|O_NONBLOCK open then always finds a writer (no
+      // instant EOF before the writer exists, and macOS kqueue registration
+      // needs a writer present to deliver events), and the write-end open
+      // below cannot block forever on a reader that already came and went.
+      const keeperFd = openSync(fifoPath, "r+");
+      let keeperOpen = true;
+
       await using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
+        // Bounds how long a broken build keeps the unterminated response
+        // open; its force-close resolves the promises below with whatever
+        // reached the wire.
+        idleTimeout: 5,
         fetch() {
           return new Response(Bun.file(fifoPath));
         },
       });
 
       const { promise: wireDone, resolve: resolveWire } = Promise.withResolvers<string>();
+      const { promise: headSeen, resolve: resolveHeadSeen } = Promise.withResolvers<void>();
       const { promise: payloadSeen, resolve: resolvePayloadSeen } = Promise.withResolvers<void>();
       let wire = "";
-      // On a broken build the response never becomes complete, `wireDone`
-      // never resolves, and the runner timeout fails the test.
       await using client = await Bun.connect({
         hostname: "127.0.0.1",
         port: server.port,
@@ -1233,30 +1244,48 @@ describe.skipIf(isWindows)("Response(Bun.file(FIFO)) ends the response when the 
           },
           data(_s, d) {
             wire += Buffer.from(d).toString("latin1");
+            resolveHeadSeen();
             if (payload.length > 0 && wire.includes(payload)) resolvePayloadSeen();
             if (decodeBody(wire) !== null) resolveWire(wire);
           },
           close() {
+            resolveHeadSeen();
+            resolvePayloadSeen();
             resolveWire(wire);
           },
           error() {
+            resolveHeadSeen();
+            resolvePayloadSeen();
             resolveWire(wire);
           },
         },
       });
 
-      // Opening the FIFO's write end blocks (in the fs thread pool) until the
-      // fetch handler above opens the read end, so the write below always
-      // lands while the server is already streaming the pipe. Closing only
-      // after the payload came out the other side pins down the shape under
-      // test: the pipe EOF reaches the server strictly after the data did, as
-      // its own poll event with no bytes left to read.
-      const writer = await fsOpen(fifoPath, "w");
-      if (payload.length > 0) {
-        await writer.write(payload);
-        await payloadSeen;
+      try {
+        // The response head reaching the client means the fetch handler ran
+        // to completion: the server opened the FIFO's read end (finding the
+        // keeper's write end) and armed its poll. Only then hand over from
+        // the keeper to the real writer.
+        await headSeen;
+        const writer = await fsOpen(fifoPath, "w");
+        try {
+          // Drop the keeper so `writer` holds the only write end; its close
+          // below is what delivers EOF. Writing first and closing only after
+          // the payload came out the other side pins down the shape under
+          // test: the pipe EOF reaches the server strictly after the data
+          // did, as its own poll event with no bytes left to read.
+          closeSync(keeperFd);
+          keeperOpen = false;
+          if (payload.length > 0) {
+            await writer.write(payload);
+            await payloadSeen;
+          }
+        } finally {
+          await writer.close();
+        }
+      } finally {
+        if (keeperOpen) closeSync(keeperFd);
       }
-      await writer.close();
 
       const captured = await wireDone;
 

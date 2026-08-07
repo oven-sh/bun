@@ -918,6 +918,16 @@ pub struct CacheDirAndSubpath<'a> {
     pub(crate) cache_dir_subpath: &'a ZStr,
 }
 
+/// Slice one of a `Resolution`'s strings with the buffer it actually indexes
+/// into: `resolution_string_bytes` when given, else `lockfile`'s own.
+fn resolution_str<'a, T: Semver::Slicable>(
+    lockfile: &'a Lockfile,
+    resolution_string_bytes: Option<&'a [u8]>,
+    s: &'a T,
+) -> &'a [u8] {
+    s.slice(resolution_string_bytes.unwrap_or_else(|| lockfile.buffers.string_bytes.as_slice()))
+}
+
 /// this is copy pasted from `installPackageWithNameAndResolution()`
 /// it's not great to do this
 ///
@@ -943,11 +953,11 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Git => {
-            let git = resolution.git();
-            let resolved = match resolution_string_bytes {
-                Some(buf) => git.resolved.slice(buf),
-                None => manager.lockfile.str(&git.resolved),
-            };
+            let resolved = resolution_str(
+                &manager.lockfile,
+                resolution_string_bytes,
+                &resolution.git().resolved,
+            );
             cache_dir_subpath = cached_git_folder_name_print(
                 cached_package_folder_name_buf(),
                 resolved,
@@ -956,11 +966,11 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Github => {
-            let github = resolution.github();
-            let resolved = match resolution_string_bytes {
-                Some(buf) => github.resolved.slice(buf),
-                None => manager.lockfile.str(&github.resolved),
-            };
+            let resolved = resolution_str(
+                &manager.lockfile,
+                resolution_string_bytes,
+                &resolution.github().resolved,
+            );
             cache_dir_subpath = cached_github_folder_name_print(
                 cached_package_folder_name_buf(),
                 resolved,
@@ -969,11 +979,11 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Folder => {
-            let buf = match resolution_string_bytes {
-                Some(buf) => buf,
-                None => manager.lockfile.buffers.string_bytes.as_slice(),
-            };
-            let folder = resolution.folder().slice(buf);
+            let folder = resolution_str(
+                &manager.lockfile,
+                resolution_string_bytes,
+                resolution.folder(),
+            );
             // Handle when a package depends on itself via file:
             // example:
             //   "mineflayer": "file:."
@@ -987,31 +997,31 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Fd::cwd();
         }
         ResolutionTag::LocalTarball => {
-            let tarball = resolution.local_tarball();
-            let url = match resolution_string_bytes {
-                Some(buf) => tarball.slice(buf),
-                None => manager.lockfile.str(tarball),
-            };
+            let url = resolution_str(
+                &manager.lockfile,
+                resolution_string_bytes,
+                resolution.local_tarball(),
+            );
             cache_dir_subpath =
                 cached_tarball_folder_name_print(cached_package_folder_name_buf(), url, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::RemoteTarball => {
-            let tarball = resolution.remote_tarball();
-            let url = match resolution_string_bytes {
-                Some(buf) => tarball.slice(buf),
-                None => manager.lockfile.str(tarball),
-            };
+            let url = resolution_str(
+                &manager.lockfile,
+                resolution_string_bytes,
+                resolution.remote_tarball(),
+            );
             cache_dir_subpath =
                 cached_tarball_folder_name_print(cached_package_folder_name_buf(), url, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Workspace => {
-            let buf = match resolution_string_bytes {
-                Some(buf) => buf,
-                None => manager.lockfile.buffers.string_bytes.as_slice(),
-            };
-            let folder = resolution.workspace().slice(buf);
+            let folder = resolution_str(
+                &manager.lockfile,
+                resolution_string_bytes,
+                resolution.workspace(),
+            );
             // Handle when a package depends on itself
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");
@@ -1028,13 +1038,12 @@ pub fn compute_cache_dir_and_subpath<'a>(
             // borrowck — `global_link_dir_path` below reborrows
             // `manager` mutably, so copy the symlink target out of the lockfile
             // string buffer first instead of holding a slice across that call.
-            let folder = {
-                let buf = match resolution_string_bytes {
-                    Some(buf) => buf,
-                    None => manager.lockfile.buffers.string_bytes.as_slice(),
-                };
-                resolution.symlink().slice(buf).to_vec()
-            };
+            let folder = resolution_str(
+                &manager.lockfile,
+                resolution_string_bytes,
+                resolution.symlink(),
+            )
+            .to_vec();
 
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");

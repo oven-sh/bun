@@ -971,8 +971,7 @@ fn write_persist_job_locked(
 
     cclog!("[compile cache] Creating temporary file for cache of {name} ({tname})...");
 
-    // 0600 like Node: entries hold module source + bytecode, and the default
-    // cache dir is world-readable (`$TMPDIR/node-compile-cache/...`).
+    // 0600 like Node: entries contain the module's post-transpile source.
     let mut tmpfile =
         match sys::Tmpfile::create_with_mode(state.dir_handle.fd(), tmpname_zstr, 0o600) {
             Ok(t) => t,

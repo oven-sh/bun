@@ -4574,9 +4574,11 @@ impl DuplexUpgradeContext {
             // SAFETY: this thread's live runtime state; `this` was registered
             // in `js_upgrade_duplex_to_tls`.
             unsafe {
-                (*state).active_handles.swap_remove(&crate::jsc_hooks::ActiveHandle::DuplexUpgrade(
-                    core::ptr::NonNull::new_unchecked(this),
-                ));
+                (*state).active_handles.swap_remove(
+                    &crate::jsc_hooks::ActiveHandle::DuplexUpgrade(
+                        core::ptr::NonNull::new_unchecked(this),
+                    ),
+                );
             }
         }
         {
@@ -4892,9 +4894,12 @@ pub fn js_upgrade_duplex_to_tls(
     // SAFETY: `runtime_state()` is this thread's live state; `duplex_context`
     // is the fully-initialised allocation, unregistered again in `deinit`.
     unsafe {
-        (*crate::jsc_hooks::runtime_state())
-            .active_handles
-            .insert(crate::jsc_hooks::ActiveHandle::DuplexUpgrade(core::ptr::NonNull::new_unchecked(duplex_context)), ());
+        (*crate::jsc_hooks::runtime_state()).active_handles.insert(
+            crate::jsc_hooks::ActiveHandle::DuplexUpgrade(core::ptr::NonNull::new_unchecked(
+                duplex_context,
+            )),
+            (),
+        );
     }
     // SAFETY: `duplex_context` is the freshly built live allocation.
     unsafe { DuplexUpgradeContext::start_tls(duplex_context) };

@@ -217,8 +217,8 @@ public:
     {
     }
     sqlite3* db;
-    // The VM (main thread or worker) that opened this connection: a worker's exit closes only
-    // its own (Bun__closeAllSQLiteDatabasesForTermination); the main thread's exit closes all.
+    // The VM (main thread or worker) that opened this connection; only that VM's exit closes it
+    // (Bun__closeAllSQLiteDatabasesForTermination).
     JSC::VM* const vm;
     std::atomic<uint64_t> version;
     size_t reference_count;
@@ -297,11 +297,9 @@ extern "C" void Bun__sqliteCheckpointForTermination(sqlite3* db)
     sqlite3_wal_checkpoint_v2(db, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
 }
 
-// Called from the exiting VM's teardown once script is forbidden. An exiting worker closes the
-// connections it opened; the exiting main thread (allVMs) closes every connection in the
-// process, since workers it did not join die with it and would otherwise leave their WAL
-// un-checkpointed.
-extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* globalObject, bool allVMs)
+// Called from the exiting VM's teardown once script is forbidden and its child workers are
+// joined: closes the connections that VM opened and never touches another VM's entries.
+extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* globalObject)
 {
     if (!_instance) {
         return;
@@ -311,7 +309,7 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* 
     auto& dbs = _instance->databases;
 
     for (auto& db : dbs) {
-        if (!allVMs && db->vm != exitingVM)
+        if (db->vm != exitingVM)
             continue;
         if (db->db) {
             Bun__sqliteCheckpointForTermination(db->db);

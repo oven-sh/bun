@@ -103,6 +103,11 @@ pub(crate) struct RuntimeState {
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
+    /// Every FetchTasklet this VM created that has not been deinit'd. Its
+    /// JS-side state is released here on the JS thread at teardown
+    /// (`abandon_fetch_tasklets_for_vm_teardown`); the HTTP thread frees the
+    /// rest whenever its last reference drops.
+    pub(crate) fetch_tasklets: std::collections::HashSet<*mut crate::webcore::fetch::FetchTasklet>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -390,6 +395,7 @@ unsafe fn init_runtime_state(
         },
         active_handles: ActiveHandles::default(),
         wake_ctx: None,
+        fetch_tasklets: Default::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -1523,6 +1529,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
+    abandon_fetch_tasklets_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
 };
 
@@ -1668,6 +1675,23 @@ unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) 
 unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> SweepResult {
     // SAFETY: per the contract above.
     stop_active_handles_for_vm_teardown(unsafe { &mut *vm })
+}
+
+/// `RuntimeHooks::abandon_fetch_tasklets_for_vm_teardown`: JS thread, heap
+/// alive, before the handle closes — release the JS side of every live fetch
+/// so the HTTP thread can free the rest on its own once the VM is gone.
+unsafe fn abandon_fetch_tasklets_for_vm_teardown(_vm: *mut VirtualMachine) {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: this thread's live runtime state; entries are removed only on
+    // this thread (`FetchTasklet::deinit`), so each pointer is live here.
+    let tasklets = core::mem::take(unsafe { &mut (*state).fetch_tasklets });
+    for t in tasklets {
+        // SAFETY: as above.
+        unsafe { (*t).abandon_js_state() };
+    }
 }
 
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.

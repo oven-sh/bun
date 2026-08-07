@@ -88,6 +88,7 @@ pub mod task_tag {
         FChown,
         Fdatasync,
         FetchTasklet,
+        FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
         FileResponseStreamEof,
         Fstat,

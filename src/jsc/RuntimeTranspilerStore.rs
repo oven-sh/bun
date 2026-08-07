@@ -203,6 +203,11 @@ pub struct RuntimeTranspilerStore {
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
+    /// Jobs handed to the WorkPool whose pool-side part has not finished. The
+    /// job storage is inside this VM, so teardown waits for this to drain
+    /// ([`Self::wait_for_pool_jobs`]) before the VM can be freed; a job that
+    /// starts after `close()` sees the closed handle and finishes at once.
+    pub(crate) pool_jobs_in_flight: AtomicU32,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -211,6 +216,7 @@ impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
+            pool_jobs_in_flight: AtomicU32::new(0),
             store: TranspilerJobStore::init(),
             enabled: true,
             queue: Queue::new(),
@@ -232,6 +238,16 @@ impl RuntimeTranspilerStore {
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
+    /// VM teardown, after `handle.close()`: wait until no pool thread can still
+    /// touch a job slot (they live in this VM). Jobs that start now see the
+    /// closed handle and finish immediately, so this is bounded by jobs already
+    /// mid-transpile.
+    pub fn wait_for_pool_jobs(&self) {
+        while self.pool_jobs_in_flight.load(Ordering::SeqCst) != 0 {
+            std::thread::yield_now();
+        }
+    }
+
     /// VM teardown (JS thread, heap alive, script forbidden, handle closed so
     /// no job is mid-flight): jobs whose completion arrived too late to run —
     /// queued after the last tick, or posted after `close()` began — release
@@ -597,6 +613,8 @@ impl TranspilerJob {
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+        // SAFETY: `vm` outlives the job (the store is a field of it); JS thread.
+        unsafe { (*self.vm).transpiler_store.pool_jobs_in_flight.fetch_add(1, Ordering::SeqCst) };
         WorkPool::schedule(&raw mut self.work_task);
     }
 
@@ -607,20 +625,28 @@ impl TranspilerJob {
         // `from_field_ptr!` recovers the live `TranspilerJob` parent.
         let this = unsafe { bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
         // The job lives inside the VM (`transpiler_store.store`) and reads VM
-        // state while it runs, so all of it happens under a borrow the VM's
-        // teardown waits for. If the VM is already closed there is nothing to
-        // touch or release: the slot went with the VM.
-        // SAFETY: the one access before the borrow: `schedule` (JS thread)
-        // wrote the handle before handing the job to the pool, and the teardown
-        // joins/waits on pool work it owns before freeing the store.
-        let handle = unsafe { (*this).loop_handle.clone() };
-        // Held (RAII) for the rest of this fn: `close()` cannot complete while
-        // the job reads VM-owned memory below.
-        let Some(_borrow) = handle.borrow() else {
-            return;
+        // state while it runs. The VM cannot have been freed yet: teardown
+        // waits for `pool_jobs_in_flight` (raised in `schedule`) to drain, and
+        // we lower it last. Whether the VM is still *open* is what the borrow
+        // decides; if not, there is nothing to touch or release — the slot and
+        // its queue entry go with the VM (`release_queued_jobs_for_teardown`).
+        // SAFETY: as above — the slot is live until we decrement.
+        let (handle, in_flight) = unsafe {
+            (
+                (*this).loop_handle.clone(),
+                &(*(*this).vm).transpiler_store.pool_jobs_in_flight,
+            )
         };
-        // SAFETY: borrow held ⇒ VM (and this slot) alive for the rest of this fn.
-        unsafe { (*this).run() };
+        {
+            // Held (RAII) for the block: `close()` cannot complete while the
+            // job reads VM-owned memory.
+            if let Some(_borrow) = handle.borrow() {
+                // SAFETY: borrow held ⇒ VM open and this slot alive.
+                unsafe { (*this).run() };
+            }
+        }
+        // Last touch of VM memory from this thread.
+        in_flight.fetch_sub(1, Ordering::SeqCst);
     }
 
     fn run(&mut self) {

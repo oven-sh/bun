@@ -2574,41 +2574,6 @@ it("exit-time WAL checkpoint runs even with a never-finalized prepared statement
   expect(exitCode).toBe(0);
 });
 
-// The exiting main thread checkpoints every connection in the process, including
-// one a still-running Worker opened: that worker dies with the process and its
-// own exit sweep never runs.
-it("main-thread exit checkpoints a WAL database a still-running Worker opened", async () => {
-  await using dir = tempDir("bun-sqlite-exit-live-worker", {});
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { Worker } = require('worker_threads');
-       new Worker(\`
-         const { Database } = require('bun:sqlite');
-         const db = new Database('worker.db');
-         db.exec('PRAGMA journal_mode = WAL');
-         db.exec('CREATE TABLE t (x INTEGER)');
-         for (let i = 0; i < 100; i++) db.run('INSERT INTO t VALUES (?)', [i]);
-         require('worker_threads').parentPort.postMessage(require('node:fs').statSync('worker.db-wal').size > 0);
-         setInterval(() => {}, 1000); // still running when the main thread exits
-       \`, { eval: true }).on('message', walHasData => { console.log(walHasData); process.exit(0); });`,
-    ],
-    env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "0" },
-    cwd: dir,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("true\n");
-  const wal = path.join(dir, "worker.db-wal");
-  expect(existsSync(wal) ? statSync(wal).size : 0).toBe(0);
-  const verify = new Database(path.join(dir, "worker.db"));
-  expect(verify.query("SELECT count(*) AS n FROM t").get().n).toBe(100);
-  verify.close();
-  expect(exitCode).toBe(0);
-});
-
 // sqlite3_prepare_v3 treats an interior NUL byte as end-of-SQL. The exec/run
 // multi-statement loop used to re-prepare the same empty statement forever
 // once the head reached a NUL, pinning the event loop at 100% CPU.

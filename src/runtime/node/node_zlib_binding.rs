@@ -490,14 +490,22 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // (R-2). `ParentRef` Deref collapses the per-site raw deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("async_job_run: this"));
 
-        this_ref.stream().with_mut(|s| s.do_work());
+        // The stream reads and writes JS ArrayBuffer backing stores: only while
+        // the VM is open, under a borrow its teardown waits for. If it is
+        // already closed there is nothing to do but drop our ref below.
+        let loop_handle = this_ref.loop_handle().clone();
+        if let Some(_borrow) = loop_handle.borrow() {
+            this_ref.stream().with_mut(|s| s.do_work());
+        }
 
         // `this` is the heap-allocated `m_ctx` payload — the matching `ref()` in
         // `write()` keeps it alive until `run_from_js_thread` runs and calls
-        // `deref()`; if the VM has been torn down that never happens, so drop
-        // the task and that ref here.
+        // `deref()`. If the VM has been torn down that never happens: drop the
+        // task and that ref here. The count is atomic; if ours is the last
+        // (the wrapper was already finalized with the VM, which emptied its JS
+        // handle), destroy runs here on portable state only.
         let ct = ConcurrentTask::create(Task::init(this));
-        if let bun_jsc::vm_handle::Posted::Refused(ct) = this_ref.loop_handle().post_task(ct) {
+        if let bun_jsc::vm_handle::Posted::Refused(ct) = loop_handle.post_task(ct) {
             // SAFETY: refused ⇒ we own the task box; `this` is live (ref held).
             unsafe {
                 drop(bun_core::heap::take(ct.as_ptr()));
@@ -1033,12 +1041,16 @@ macro_rules! __impl_compression_stream {
             // with their own `#[ref_count(destroy = …)]` (or the default
             // `Box::from_raw` drop) — delegate so the macro doesn't hard-code
             // a `Self::deinit(*mut Self)` signature that only one of them has.
-            #[inline] fn ref_(&self) { <Self as ::bun_ptr::CellRefCounted>::ref_(self) }
+            // Atomic count: the pool thread drops the job's ref itself when
+            // the VM refused the completion (see `async_job_run`).
+            #[inline] fn ref_(&self) {
+                // SAFETY: `self` is live.
+                unsafe { ::bun_ptr::ThreadSafeRefCount::<Self>::ref_(::core::ptr::from_ref(self).cast_mut()) }
+            }
             #[inline] unsafe fn deref(this: *mut Self) {
-                // SAFETY: forwarded trait contract — `this` is live; the
-                // derived `CellRefCounted::deref` routes zero to the per-type
-                // `destroy`.
-                unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
+                // SAFETY: forwarded trait contract — `this` is live; zero routes
+                // to the per-type `destroy`.
+                unsafe { ::bun_ptr::ThreadSafeRefCount::<Self>::deref(this) }
             }
 
             #[inline] fn write_result_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {

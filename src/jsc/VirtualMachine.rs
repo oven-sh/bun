@@ -244,8 +244,9 @@ pub struct VirtualMachine {
     pub has_loaded: bool,
     /// The current entry load reached module evaluation: the graph is linked and
     /// its synchronous prefixes have run (set from the moduleLoaderEvaluate
-    /// hook). What is still pending on the entry promise after that is a
-    /// top-level await.
+    /// hook; armed by `reload_entry_point` after preloads ran, so a preload's
+    /// modules do not count). What is still pending on the entry promise after
+    /// that is a top-level await.
     pub entry_evaluation_started: bool,
 
     pub(crate) had_errors: bool,
@@ -392,8 +393,8 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
-    safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject, all_vms: bool);
-    safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject, all_vms: bool);
+    safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
+    safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
@@ -1651,13 +1652,14 @@ impl VirtualMachine {
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
     }
 
-    /// Checkpoint + close sqlite connections while this VM is alive and no user
-    /// script will touch them again: the exiting main thread closes every
-    /// connection in the process (workers it did not join die with it); an
-    /// exiting worker closes only the ones it opened.
+    /// Checkpoint + close the sqlite connections *this* VM opened, while it is
+    /// alive and no user script will touch them again. Never another VM's: a
+    /// worker still running when the main thread exits without joining it owns
+    /// live objects on another thread; its WAL is recovered on next open, as
+    /// after any abrupt exit (and as in Node).
     fn close_sqlite_databases_for_exit(&self) {
-        Bun__closeAllSQLiteDatabasesForTermination(self.global(), self.worker.is_none());
-        Bun__closeAllNodeSqliteDatabasesForTermination(self.global(), self.worker.is_none());
+        Bun__closeAllSQLiteDatabasesForTermination(self.global());
+        Bun__closeAllNodeSqliteDatabasesForTermination(self.global());
     }
 
     /// Tear down this thread's VM: the one sequence both a finished worker
@@ -1690,14 +1692,24 @@ impl VirtualMachine {
         let vm = unsafe { &mut *this };
         let hooks = runtime_hooks();
 
-        // ---- A. stop phase; script may still run ------------------------------
+        // ---- A. no more script; stop phase ------------------------------------
+        // The user's last word was the exit handlers (`on_exit`, before this).
+        // Everything below closes natively and dispatches nothing into JS —
+        // Node runs its environment cleanup under a DisallowJavascriptExecution
+        // scope, WebCore's ActiveDOMObject::stop() runs no script — so no
+        // 'close'/'error' handler runs after 'exit', and nothing can reopen what
+        // a sweep just closed.
         vm.handle.set_stopping();
+        vm.forbid_script();
         Zig__GlobalObject__prepareForDestruction(vm.global());
-        // Close handlers run during this sweep, and a handler may open something
-        // a sweep already emptied (a socket from a DNS rejection, a server from
-        // an on_close) — those are picked up by the second, silent sweep below.
         // SAFETY: fn contract.
-        let _ = unsafe { Self::stop_phase_sweep(this, kind) };
+        unsafe {
+            let _ = Self::stop_phase_sweep(this, kind);
+            debug_assert!(
+                Self::stop_phase_sweep(this, kind) == SweepResult::Idle,
+                "a native close path registered a stoppable resource during teardown"
+            );
+        }
         if matches!(kind, Teardown::MainThreadExit) {
             // The HTTP thread holds a `Box<ThreadlocalAsyncHTTP>` per in-flight
             // request that will never complete now; have it reclaim them (≤1 s).
@@ -1705,23 +1717,7 @@ impl VirtualMachine {
         }
         teardown_log!("teardown: stopped");
 
-        // ---- B. no more script -----------------------------------------------
-        vm.forbid_script();
-        // Whatever A's close handlers opened is stopped now, silently. Nothing
-        // can reopen after this one — script is refused — so the stop phase is
-        // quiescent by construction (Node needs no bound either: its cleanup
-        // runs with can_call_into_js already false).
-        // SAFETY: fn contract.
-        unsafe {
-            let _ = Self::stop_phase_sweep(this, kind);
-            debug_assert!(
-                Self::stop_phase_sweep(this, kind) == SweepResult::Idle,
-                "something registered a stoppable resource after script was forbidden"
-            );
-        }
-        // After the stop phase (its close handlers may still have used them),
-        // before finalizers could: sqlite connections checkpoint and close.
-        vm.close_sqlite_databases_for_exit();
+        // ---- B. release ------------------------------------------------------
         #[cfg(windows)]
         if let Some(t) = vm.event_loop_mut().forever_timer.take() {
             // SAFETY: live usockets timer from `hold_forever_poll`; closed like
@@ -1746,10 +1742,25 @@ impl VirtualMachine {
         }
         vm.gc_controller.deinit();
         crate::web_worker::join_child_workers(vm);
+        // Children have closed their own; now this VM's sqlite connections
+        // checkpoint and close, before finalizers could.
+        vm.close_sqlite_databases_for_exit();
+        if let Some(hooks) = hooks {
+            // In-flight fetches: their promise/response/stream/signal handles
+            // are released here, on this thread, while the heap is alive; the
+            // HTTP thread frees the transport side whenever it is done — after
+            // `close()` below it can no longer hand that back to us.
+            // SAFETY: fn contract.
+            unsafe { (hooks.abandon_fetch_tasklets_for_vm_teardown)(this) };
+        }
         // From here no other thread reaches this VM: posts are refused (the
         // poster releases its task itself), wake/keep-alive are no-ops, and any
         // job still using VM-owned memory has finished (close waits for it).
         vm.handle.close();
+        // Transpiler jobs are stored inside this VM: none may still be on a
+        // pool thread when it is freed (started-late ones bail on the closed
+        // handle).
+        vm.transpiler_store.wait_for_pool_jobs();
         // A worker closes its uv loop below (D), so requests still in flight
         // must complete first, against this live VM. Their handles were closed
         // in A, so what remains completes on its own (threadpool work). The
@@ -2095,6 +2106,8 @@ pub struct RuntimeHooks {
     pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
     pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
+    /// Teardown, before the handle closes: release the JS side of live fetches.
+    pub abandon_fetch_tasklets_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
     /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
     /// so the loop close unlinks them before the runtime state is freed.
@@ -2560,7 +2573,6 @@ impl VirtualMachine {
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
-        self.entry_evaluation_started = false;
         self.set_main(entry_path);
         self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
@@ -2653,6 +2665,9 @@ impl VirtualMachine {
                 }
             }
 
+            // Preloads (evaluated above, synchronously) are not the entry: only
+            // module evaluations from here on mark the entry graph as executing.
+            self.entry_evaluation_started = false;
             // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
             let global_ref = self.global();
@@ -2677,6 +2692,7 @@ impl VirtualMachine {
             JSValue::from_cell(promise).ensure_still_alive();
             Ok(promise)
         } else {
+            self.entry_evaluation_started = false;
             let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
             let promise =

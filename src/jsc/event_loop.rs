@@ -564,7 +564,7 @@ impl EventLoop {
     /// and once more from a worker's shutdown after its stop phase (which unrefs
     /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
     /// torn down still believing something keeps it alive.
-    pub(crate) fn apply_concurrent_ref_delta(&mut self) {
+    pub(crate) fn apply_concurrent_ref_delta(&self) {
         // Do NOT silently drop the swapped delta when the handle is
         // missing — refs queued via `ref_concurrently()` would be lost forever.
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
@@ -1045,11 +1045,15 @@ impl EventLoop {
     /// counter a `VmHandle::ref_keep_alive` from another thread adjusts).
     pub fn ref_keep_alive(&self) {
         let _ = self.concurrent_ref.fetch_add(1, Ordering::SeqCst);
+        // Fold now: JS between the last tick and the poll (an immediate, a
+        // promise reaction) must not leave the loop's active count stale.
+        self.apply_concurrent_ref_delta();
     }
 
     /// JS thread: balance a [`Self::ref_keep_alive`].
     pub fn unref_keep_alive(&self) {
         let _ = self.concurrent_ref.fetch_sub(1, Ordering::SeqCst);
+        self.apply_concurrent_ref_delta();
     }
 
     // ──────────── private helpers ────────────

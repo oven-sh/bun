@@ -82,7 +82,7 @@ use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
-pub use self::fetch_tasklet::FetchTasklet;
+pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
 
 // ──────────────────────────────────────────────────────────────────────────

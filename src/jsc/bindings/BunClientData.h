@@ -3,6 +3,7 @@
 // Opaque box of the Rust per-VM handle (bun_jsc::VmHandle); see JSVMClientData::vmHandle.
 struct BunVmHandle;
 extern "C" BunVmHandle* Bun__VmHandle__create(void* bunVM);
+extern "C" BunVmHandle* Bun__VmHandle__clone(const BunVmHandle*);
 extern "C" void Bun__VmHandle__release(BunVmHandle*);
 extern "C" void Bun__VmHandle__refKeepAlive(BunVmHandle*, int delta);
 // JS thread only: adjust the keep-alive of the VM this thread runs.

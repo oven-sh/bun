@@ -35,10 +35,10 @@ mod _impl {
     /// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<NativeZlib>`; when the count hits
     /// zero it invokes [`NativeZlib::deinit`].
     #[bun_jsc::JsClass]
-    #[derive(bun_ptr::CellRefCounted)]
+    #[derive(bun_ptr::ThreadSafeRefCounted)]
     #[ref_count(destroy = Self::deinit)]
     pub struct NativeZlib {
-        pub(crate) ref_count: Cell<u32>,
+        pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Self>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
@@ -95,8 +95,7 @@ mod _impl {
                 ..Default::default()
             };
             Ok(Box::new(Self {
-                ref_count: Cell::new(1),
-                // JSC_BORROW backref — the global outlives this m_ctx payload.
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 global_this: bun_ptr::BackRef::new(global),
                 loop_handle: global.bun_vm().loop_handle(),
                 stream: JsCell::new(stream),

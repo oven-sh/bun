@@ -78,10 +78,10 @@ mod _impl {
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
     // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
     #[bun_jsc::JsClass]
-    #[derive(bun_ptr::CellRefCounted)]
+    #[derive(bun_ptr::ThreadSafeRefCounted)]
     #[ref_count(destroy = Self::destroy_on_zero)]
     pub struct NativeBrotli {
-        pub(crate) ref_count: Cell<u32>,
+        pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Self>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
@@ -147,8 +147,7 @@ mod _impl {
                 ..Default::default()
             };
             Ok(Box::new(Self {
-                ref_count: Cell::new(1),
-                // JSC_BORROW backref — the global outlives this m_ctx payload.
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 global_this: bun_ptr::BackRef::new(global_this),
                 loop_handle: global_this.bun_vm().loop_handle(),
                 stream: JsCell::new(stream),

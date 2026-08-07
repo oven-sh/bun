@@ -961,18 +961,17 @@ void JSDatabaseSync::finishDeferredClose()
     m_registeredCallbacks.clear();
 }
 
-// Called from the exiting VM's teardown once script is forbidden. An exiting worker closes
-// its own entries (others are skipped by the stored-VM comparison without touching the
-// foreign cell); the exiting main thread (allVMs) closes every entry, since workers it did
-// not join die with the process.
-extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObject* globalObject, bool allVMs)
+// Called from the exiting VM's teardown once script is forbidden and its child workers are
+// joined: closes that VM's entries; others are skipped by the stored-VM comparison without
+// touching the foreign cell.
+extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObject* globalObject)
 {
     JSC::VM* exitingVM = &globalObject->vm();
     WTF::Vector<JSDatabaseSync*> toClose;
     {
         WTF::Locker locker { openDatabasesLock };
         for (auto& entry : openDatabases()) {
-            if (allVMs || entry.value == exitingVM)
+            if (entry.value == exitingVM)
                 toClose.append(entry.key);
         }
     }

@@ -4233,6 +4233,14 @@ void GlobalObject::prepareForDestruction()
     context->prepareForDestruction();
 }
 
+void GlobalObject::clearDOMGuardedObjects()
+{
+    // No lock: clear() takes the GC lock itself when it removes the entry (JSDOMGlobalObject).
+    auto guardedObjectsCopy = m_guardedObjects;
+    for (auto& guarded : guardedObjectsCopy)
+        guarded->clear();
+}
+
 void GlobalObject::forbidExecution()
 {
     auto& vm = this->vm();
@@ -4299,6 +4307,10 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     Ref<WTF::RunLoop> runLoop = vm.runLoop();
 
     Bun__InspectorConnection__disconnectAllOnExit(globalObject);
+    // Deferred promises / callbacks (DOMGuardedObject) hold JSC::Weak handles and observe the
+    // context; the context outlives ~VM here, so their handles are cleared now, with the heap
+    // alive — WebCore's ~WorkerOrWorkletScriptController does the same right before its VM goes.
+    globalObject->clearDOMGuardedObjects();
     gcUnprotect(globalObject);
     globalObject = nullptr;
 
@@ -4315,6 +4327,8 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
     Ref context = *globalObject->scriptExecutionContext();
 
     vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+    // See Zig__GlobalObject__destructOnExit.
+    globalObject->clearDOMGuardedObjects();
     gcUnprotect(globalObject);
     globalObject = nullptr;
 

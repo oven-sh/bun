@@ -410,6 +410,10 @@ pub(crate) fn run_task(
         task_tag::FetchTasklet => {
             cast!(FetchTasklet).on_progress_update()?;
         }
+        task_tag::FetchTaskletDeinit => {
+            // SAFETY: posted by `deref_from_thread` with the last ref.
+            unsafe { crate::webcore::fetch::FetchTaskletDeinitHop::run(cast_ptr!(crate::webcore::fetch::FetchTaskletDeinitHop)) };
+        }
         // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
         // is the sole owner here.
         task_tag::S3HttpSimpleTask => {
@@ -689,7 +693,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 111,
+    task_tag::COUNT == 112,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1272,6 +1276,13 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             // SAFETY: `task.ptr` is the live heap `FetchTasklet`; HTTP daemon is
             // already parked so we hold the sole reference.
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
+            true
+        }
+        // The last ref dropped on the HTTP thread while we were tearing down:
+        // deinit here, on the JS thread with the heap alive, as the hop intended.
+        task_tag::FetchTaskletDeinit => {
+            // SAFETY: as the dispatch arm.
+            unsafe { crate::webcore::fetch::FetchTaskletDeinitHop::run(task.ptr.cast()) };
             true
         }
         task_tag::SendQueueDeferred => {

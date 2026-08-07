@@ -320,10 +320,17 @@ pub extern "C" fn Bun__VmHandle__create(vm: &VirtualMachine) -> *mut VmHandle {
     bun_core::heap::into_raw(Box::new(vm.handle()))
 }
 
-/// Any thread: release a box obtained from `Bun__VmHandle__create`.
+/// Any thread: another owned box on the same handle (for a task that may
+/// outlive whoever it got the handle from).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VmHandle__clone(handle: &VmHandle) -> *mut VmHandle {
+    bun_core::heap::into_raw(Box::new(handle.clone()))
+}
+
+/// Any thread: release a box obtained from `Bun__VmHandle__create`/`__clone`.
 ///
 /// # Safety
-/// `handle` came from `Bun__VmHandle__create` and is not used afterwards.
+/// `handle` came from one of those and is not used afterwards.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__VmHandle__release(handle: *mut VmHandle) {
     // SAFETY: fn contract.

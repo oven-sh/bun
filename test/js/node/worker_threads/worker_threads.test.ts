@@ -1959,3 +1959,170 @@ parentPort.on("message", m => parentPort.postMessage("got " + m + " " + listener
   expect(await reply).toBe("got hi 0");
   await w.terminate();
 });
+
+// ─── worker teardown vs. work still in flight ────────────────────────────────
+// Each of these terminates a worker (or exits the process) while some off-thread
+// or cross-thread work of that worker is still pending. They exercise the
+// refusal / wait paths of VM teardown; a broken build crashes or trips ASAN
+// rather than failing an assertion.
+describe("terminate with work in flight", () => {
+  test("a transpile queued on the thread pool that starts after terminate()", async () => {
+    using dir = tempDir("worker-terminate-transpile", {
+      // large enough that the pool job is still queued/running at terminate
+      "big.ts": Array.from({ length: 4000 }, (_, i) => `export const v${i}: number = ${i};`).join("\n"),
+      "w.js": `require("worker_threads").parentPort.postMessage("go"); import("./big.ts").then(() => {});`,
+    });
+    for (let i = 0; i < 8; i++) {
+      const w = new Worker(join(String(dir), "w.js"));
+      await new Promise(r => w.once("message", r));
+      expect(await w.terminate()).toBe(1);
+    }
+  });
+
+  test("a SubtleCrypto digest still on the work queue at terminate()", async () => {
+    for (let i = 0; i < 4; i++) {
+      const w = new Worker(
+        `const { parentPort } = require("worker_threads");
+         crypto.subtle.digest("SHA-256", new Uint8Array(64 << 20)).then(() => {});
+         parentPort.postMessage("go");`,
+        { eval: true },
+      );
+      await new Promise(r => w.once("message", r));
+      expect(await w.terminate()).toBe(1);
+    }
+  });
+
+  test("an async zlib job on the thread pool at terminate()", async () => {
+    for (let i = 0; i < 4; i++) {
+      const w = new Worker(
+        `const { parentPort } = require("worker_threads");
+         const zlib = require("zlib");
+         const buf = Buffer.alloc(32 << 20, "a");
+         zlib.deflate(buf, () => {});
+         zlib.brotliCompress(buf.subarray(0, 4 << 20), () => {});
+         parentPort.postMessage("go");`,
+        { eval: true },
+      );
+      await new Promise(r => w.once("message", r));
+      expect(await w.terminate()).toBe(1);
+    }
+  });
+
+  test("a fetch whose body is still streaming at terminate(), then process exit", async () => {
+    // Subprocess: the exiting main thread must not touch the dead worker's fetch.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const server = Bun.serve({
+           port: 0,
+           fetch() {
+             // never-ending chunked body
+             return new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1024)); return Bun.sleep(5); } }));
+           },
+         });
+         const w = new Worker(
+           'const { parentPort, workerData } = require("worker_threads");' +
+           'fetch(workerData).then(async r => { const rd = r.body.getReader(); await rd.read(); parentPort.postMessage("streaming"); for (;;) await rd.read(); });',
+           { eval: true, workerData: "http://127.0.0.1:" + server.port + "/" },
+         );
+         w.once("message", async () => {
+           await w.terminate();
+           server.stop(true);
+           console.log("exiting");
+           process.exit(0);
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("exiting\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the main thread exits while a worker is mid-way through sqlite statements", async () => {
+    using dir = tempDir("worker-sqlite-main-exit", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker(
+           'const { DatabaseSync } = require("node:sqlite"); const { Database } = require("bun:sqlite");' +
+           'const a = new DatabaseSync("a.db"); a.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS t (x)");' +
+           'const b = new Database("b.db"); b.run("PRAGMA journal_mode=WAL"); b.run("CREATE TABLE IF NOT EXISTS t (x)");' +
+           'const ins = a.prepare("INSERT INTO t VALUES (?)");' +
+           'require("worker_threads").parentPort.postMessage("busy");' +
+           'for (let i = 0; ; i++) { ins.run(i); b.run("INSERT INTO t VALUES (?)", [i]); }',
+           { eval: true },
+         );
+         w.once("message", () => setTimeout(() => process.exit(0), 20));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("a fetch still in flight when the main thread exits", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const server = Bun.serve({ port: 0, fetch: () => new Promise(() => {}) }); // never responds
+         fetch("http://127.0.0.1:" + server.port + "/").catch(() => {});
+         fetch("http://127.0.0.1:" + server.port + "/").catch(() => {});
+         setTimeout(() => { console.log("exiting"); process.exit(0); }, 20);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("exiting\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A JS preload's modules are not the entry: the worker counts as started (online,
+// parent messages delivered) only once its own entry graph has executed.
+test("a worker with a preload is not started before its entry module runs", async () => {
+  using dir = tempDir("worker-preload-start", {
+    "setup.js": `globalThis.setupRan = true;`,
+    "dep.js": `export const dep = 1;\n${"// filler\n".repeat(3000)}`,
+    "w.mjs": `import { dep } from "./dep.js";
+import { parentPort } from "worker_threads";
+parentPort.on("message", m => parentPort.postMessage(["got", m, dep, globalThis.setupRan === true]));`,
+  });
+  const w = new Worker(join(String(dir), "w.mjs"), { preload: join(String(dir), "setup.js") });
+  const reply = new Promise(resolve => w.on("message", resolve));
+  w.postMessage("hi");
+  expect(await reply).toEqual(["got", "hi", 1, true]);
+  await w.terminate();
+});
+
+// Releasing the last keep-alive from an immediate (after the tick, before the
+// poll) must be noticed before the loop parks.
+test("closing the only ref'd port from setImmediate lets the process exit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { port1 } = new MessageChannel();
+       port1.onmessage = () => {};
+       setImmediate(() => { port1.close(); console.log("closed"); });`,
+    ],
+    // Without the idle GC timer nothing else would ever wake a parked loop.
+    env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("closed\n");
+  expect(exitCode).toBe(0);
+});

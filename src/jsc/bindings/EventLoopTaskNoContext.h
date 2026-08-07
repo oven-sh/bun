@@ -12,9 +12,14 @@ class EventLoopTaskNoContext {
 
 public:
     EventLoopTaskNoContext(JSC::JSGlobalObject* globalObject, Function<void()>&& task)
-        : m_vmHandle(WebCore::clientData(JSC::getVM(globalObject))->vmHandle)
+        : m_vmHandle(Bun__VmHandle__clone(WebCore::clientData(JSC::getVM(globalObject))->vmHandle))
         , m_task(WTF::move(task))
     {
+    }
+
+    ~EventLoopTaskNoContext()
+    {
+        Bun__VmHandle__release(m_vmHandle);
     }
 
     void performTask()
@@ -23,8 +28,7 @@ public:
         delete this;
     }
 
-    // The creating VM's handle (owned by its JSVMClientData, which outlives
-    // every task it hands to the pool).
+    // The creating VM's handle: an owned clone, since a pool task can outlive that VM.
     ::BunVmHandle* vmHandle() const { return m_vmHandle; }
 
 private:

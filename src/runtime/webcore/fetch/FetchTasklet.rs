@@ -44,6 +44,22 @@ use boringssl::c::{X509_free, d2i_X509};
 
 // ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
 // but the impl lives next to the type (cycle-break).
+/// The "last ref dropped on the HTTP thread → deinit on the JS thread" hop:
+/// same pointer, its own tag, so teardown can tell it from a progress update.
+#[repr(transparent)]
+pub struct FetchTaskletDeinitHop(FetchTasklet);
+impl Taskable for FetchTaskletDeinitHop {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletDeinit;
+}
+impl FetchTaskletDeinitHop {
+    /// # Safety
+    /// `this` is the tasklet the hop was created from, ref_count == 0, JS thread.
+    pub(crate) unsafe fn run(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe { FetchTasklet::deinit(this.cast()) }
+    }
+}
+
 impl Taskable for FetchTasklet {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
 }
@@ -126,6 +142,8 @@ pub struct FetchTasklet {
     pub(crate) is_buffering_body: AtomicBool,
     pub(crate) is_waiting_abort: bool,
     pub(crate) is_waiting_request_stream_start: bool,
+    /// `abandon_js_state` ran (VM teardown): nothing JS-side is left in here.
+    pub(crate) js_state_abandoned: bool,
     pub(crate) mutex: Mutex,
 
     pub(crate) tracker: AsyncTaskTracker,
@@ -394,26 +412,19 @@ impl FetchTasklet {
         }
         let self_ = Self::from_raw_ref(this);
         // Last ref dropped on the HTTP thread: deinit must run on the JS thread
-        // (it drops JSC Strong/Weak handles). Post it; if the VM is already
-        // gone, reclaim only the Rust-side boxes here — the JSC structures the
-        // handles pointed into went with the heap.
-        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`.
-        let task = ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback);
+        // (it drops JSC Strong/Weak handles), so hop there — as a task with its
+        // own tag, so a VM that is tearing down still runs it from
+        // `release_queued_work` instead of parking it. If the VM is already
+        // gone it abandoned this tasklet's JS side before closing: free the
+        // rest here.
+        let task = ConcurrentTask::create(bun_event_loop::Task::init(this.cast::<FetchTaskletDeinitHop>()));
         if let jsc::vm_handle::Posted::Refused(task) = self_.post(task) {
             // SAFETY: refused ⇒ we own the task box; last ref ⇒ exclusive access to `this`.
             unsafe {
                 drop(bun_core::heap::take(task.as_ptr()));
-                FetchTasklet::dealloc_for_shutdown(this);
+                FetchTasklet::release_vm_gone(this);
             }
         }
-    }
-
-    // ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
-    // (cycle-broken erased error).
-    fn deinit_callback(this: *mut FetchTasklet) -> ElJsResult<()> {
-        // SAFETY: enqueued with last ref; exclusive access on main thread
-        unsafe { FetchTasklet::deinit(this) };
-        Ok(())
     }
 
     fn clear_sink(&mut self) {
@@ -493,6 +504,15 @@ impl FetchTasklet {
 
         // SAFETY: caller contract — `this` is live with ref_count == 0.
         unsafe { (*this).ref_count.assert_no_refs() };
+        // JS thread: leave the VM's live-fetch registry (a no-op if teardown
+        // already took it).
+        // SAFETY: this thread's live runtime state.
+        unsafe {
+            let state = crate::jsc_hooks::runtime_state();
+            if !state.is_null() {
+                (*state).fetch_tasklets.remove(&this);
+            }
+        }
 
         // SAFETY: this was allocated via heap::alloc in `get()`; ref_count == 0 so exclusive
         let mut boxed = unsafe { bun_core::heap::take(this) };
@@ -501,34 +521,47 @@ impl FetchTasklet {
         drop(boxed);
     }
 
-    /// Last-ref reclaim from the HTTP thread once the VM has begun shutdown.
-    ///
-    /// Neither `clear_data()` nor dropping the box is safe here:
-    ///   * the JSC `Strong`/`Weak` fields touch the VM's StrongRootBlock list /
-    ///     WeakSet on `Drop` (JS-thread-only), and
-    ///   * the leaked `response: jsc::Weak` keeps a finalize callback
-    ///     (`on_response_finalize`) registered against `this`, so freeing the
-    ///     box before `destructOnExit` sweeps the Response is a UAF.
-    ///
-    /// Park the intact box on the JS thread via
-    /// `bun_http::defer_shutdown_reclaim`; the drain runs from
-    /// `global_exit()` after the HTTP thread has parked but before
-    /// `destructOnExit`, so `deinit()` there can release every handle on the
-    /// right thread and the Weak is cleared before its referent is finalized.
-    ///
-    /// SAFETY: `this` must be the last reference (ref_count == 0) and have
-    /// been allocated via heap::alloc.
-    unsafe fn dealloc_for_shutdown(this: *mut FetchTasklet) {
-        bun_output::scoped_log!(FetchTasklet, "deallocForShutdown");
-        // SAFETY: caller contract — `this` is live with ref_count == 0.
-        unsafe { (*this).ref_count.assert_no_refs() };
-        http::defer_shutdown_reclaim(this.cast(), FetchTasklet::deinit_erased);
+    /// VM teardown, JS thread, heap alive: release everything of this tasklet
+    /// that lives in or must be touched on the JS heap/thread — response Weak
+    /// (and its finalize back-pointer), Response ref, stream/abort/identity
+    /// handles, sink, promise, keep-alive. What remains is portable, so the
+    /// HTTP thread's last deref can free the box by itself (`release_vm_gone`).
+    /// The HTTP thread never touches these fields (its `callback` uses
+    /// `result`/`scheduled_response_buffer`/`metadata`/atomics under `mutex`).
+    pub(crate) fn abandon_js_state(&mut self) {
+        bun_output::scoped_log!(FetchTasklet, "abandonJsState");
+        self.response.clear();
+        if let Some(response) = self.native_response.take() {
+            // SAFETY: the +1 held in `native_response`.
+            Response::unref(response);
+        }
+        self.clear_stream_handlers();
+        self.readable_stream_ref.deinit();
+        self.request_body.detach();
+        self.abort_reason.deinit();
+        self.check_server_identity.deinit();
+        self.clear_abort_signal();
+        self.clear_sink();
+        drop(self.promise.take());
+        let mut poll_ref = core::mem::take(&mut self.poll_ref);
+        poll_ref.unref(bun_io::js_vm_ctx());
+        self.js_state_abandoned = true;
     }
 
-    unsafe fn deinit_erased(this: *mut c_void) {
-        // SAFETY: parked by `dealloc_for_shutdown` with ref_count == 0; runs
-        // on the JS thread after the HTTP daemon has parked.
-        unsafe { FetchTasklet::deinit(this.cast()) };
+    /// HTTP thread, last reference, VM gone (the post was refused): the VM's
+    /// teardown already ran `abandon_js_state` on the JS thread before its
+    /// handle closed, so nothing left here belongs to the JS heap — free it.
+    ///
+    /// # Safety
+    /// `this` is live with ref_count == 0.
+    unsafe fn release_vm_gone(this: *mut FetchTasklet) {
+        bun_output::scoped_log!(FetchTasklet, "releaseVmGone");
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).ref_count.assert_no_refs();
+            debug_assert!((*this).js_state_abandoned, "VM refused a fetch it never abandoned");
+            drop(bun_core::heap::take(this));
+        }
     }
 
     /// `HTTPClientResultCallback::release_at_shutdown` for `FetchTasklet`.
@@ -540,8 +573,8 @@ impl FetchTasklet {
     /// is already parked in the parent's concurrent queue.
     ///
     /// The `has_schedule_callback` flag distinguishes the two states:
-    ///   * `false` — nothing queued. Drop both refs here; `dealloc_for_shutdown`
-    ///     parks the box for `shutdown_for_exit`'s drain.
+    ///   * `false` — nothing queued. Drop both refs here; the last one hops
+    ///     `deinit` to the JS thread, which teardown runs from its queue release.
     ///   * `true` — a non-final `on_progress_update` is queued (this entry is
     ///     still in `in_flight`, so the *final* `callback` hasn't run). That
     ///     queued node owns the JS-side ref. The JS thread releases it from
@@ -1941,6 +1974,7 @@ impl FetchTasklet {
             is_buffering_body: AtomicBool::new(false),
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
+            js_state_abandoned: false,
             mutex: Mutex::new(),
             // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
             // bumps a counter on the VM.
@@ -1994,6 +2028,10 @@ impl FetchTasklet {
         }
 
         let fetch_tasklet_ptr = bun_core::heap::into_raw(fetch_tasklet);
+        // JS thread: the VM releases this tasklet's JS side at teardown if it
+        // is still live then (see `abandon_js_state`).
+        // SAFETY: this thread's live runtime state.
+        unsafe { (*crate::jsc_hooks::runtime_state()).fetch_tasklets.insert(fetch_tasklet_ptr) };
         // SAFETY: just allocated; exclusive access until returned
         let fetch_tasklet = unsafe { &mut *fetch_tasklet_ptr };
 

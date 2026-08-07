@@ -192,7 +192,8 @@ impl State {
                 // SAFETY: `c` was produced by `create_and_schedule_completion_task`
                 // (heap::alloc, refcount ≥ 1) and we hold one of those refs.
                 unsafe {
-                    (*c).cancelled = true;
+                    (*c).cancelled
+                        .store(true, core::sync::atomic::Ordering::Release);
                     RefCount::<JSBundleCompletionTask>::deref(c);
                 }
             }

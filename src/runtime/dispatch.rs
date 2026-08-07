@@ -1331,6 +1331,18 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             };
             true
         }
+        // A Bun.build the bundle thread handed back during teardown (cancelled
+        // in the stop phase): its completion releases the keep-alive, plugin
+        // cell and promise against the live heap.
+        task_tag::JSBundleCompletionTask => {
+            let _ = crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(
+                task.ptr.cast(),
+            );
+            true
+        }
+        // Plugin requests of a cancelled build: arena-owned by a bundle pass
+        // that failed them itself and may already be gone — nothing to touch.
+        task_tag::BundleV2PluginResolve | task_tag::BundleV2PluginLoad | task_tag::BundleV2DeferredBatchTask => true,
         // napi async work the pool handed back during teardown: its `complete`
         // callback is how the addon learns the outcome and frees the work
         // (Node calls it from environment cleanup too); script it tries to run

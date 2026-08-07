@@ -2147,3 +2147,43 @@ test("an unref'ed worker with a 'message' listener still delivers to the parent"
   expect(stdout).toBe("hello\n");
   expect(exitCode).toBe(0);
 });
+
+// A Bun.build whose plugin never answers, in a worker that is terminated: the
+// build is cancelled with the worker, and the process-wide bundle thread stays
+// usable for the parent.
+test("terminating a worker mid-Bun.build (plugin pending) does not wedge the bundler", async () => {
+  using dir = tempDir("worker-build-cancel", {
+    "entry.js": `import "./dep.js"; console.log("entry");`,
+    "dep.js": `console.log("dep");`,
+    "w.js": `
+      const { parentPort } = require("worker_threads");
+      Bun.build({
+        entrypoints: ["./entry.js"],
+        plugins: [{ name: "hang", setup(b) { b.onLoad({ filter: /dep\\.js$/ }, () => new Promise(() => {})); } }],
+      }).then(() => parentPort.postMessage("built"), e => parentPort.postMessage("failed"));
+      setTimeout(() => parentPort.postMessage("pending"), 100);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const w = new Worker("./w.js");
+       w.once("message", async m => {
+         console.log("worker:", m);
+         await w.terminate();
+         const out = await Bun.build({ entrypoints: ["./entry.js"] });
+         console.log("parent build:", out.success, out.outputs.length > 0);
+         process.exit(0);
+       });`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("worker: pending\nparent build: true true\n");
+  expect(exitCode).toBe(0);
+});

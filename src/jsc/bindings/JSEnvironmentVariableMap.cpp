@@ -13,6 +13,7 @@
 #include "BunClientData.h"
 #include "wtf/Compiler.h"
 #include "wtf/Forward.h"
+#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/StructureInlines.h>
@@ -108,11 +109,24 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     unsigned attributes;
     JSValue existing = object->getDirect(vm, propertyName, attributes);
     if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
-        // putDirectCustomAccessor asserts NewProperty, so delete first.
-        object->deleteProperty(globalObject, propertyName);
-        RETURN_IF_EXCEPTION(scope, false);
-        object->putDirectCustomAccessor(vm, propertyName, existing,
-            attributes & ~JSC::PropertyAttribute::DontEnum);
+        if (existing.isCustomGetterSetter()) {
+            // putDirectCustomAccessor asserts NewProperty, so delete first.
+            object->deleteProperty(globalObject, propertyName);
+            RETURN_IF_EXCEPTION(scope, false);
+            object->putDirectCustomAccessor(vm, propertyName, existing,
+                attributes & ~JSC::PropertyAttribute::DontEnum);
+        } else if (existing.isGetterSetter()) {
+            // Object.defineProperty() reified the CustomGetterSetter into a
+            // GetterSetter of wrapper functions, and this setter now runs via
+            // the set wrapper. Re-install it as the plain accessor it became;
+            // putDirectCustomAccessor on a GetterSetter corrupts the slot.
+            object->putDirectAccessor(globalObject, propertyName,
+                uncheckedDowncast<JSC::GetterSetter>(existing),
+                attributes & ~JSC::PropertyAttribute::DontEnum);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        // Anything else: the property was redefined as a data property and a
+        // captured set wrapper was invoked; keep the user's configuration.
     }
     return true;
 }

@@ -2789,6 +2789,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
+                if dep.behavior.is_optional_peer() {
+                    continue;
+                }
                 let peer_res_id = if is_deferred_peer(dep) {
                     resolve_peer_dep_version_based(
                         dep,
@@ -2852,6 +2855,10 @@ pub(crate) fn parse_into_binary_lockfile(
                     let dep_id: DependencyID = _dep_id;
                     let dep = &mut dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(string_buf);
+
+                    if dep.behavior.is_optional_peer() {
+                        continue;
+                    }
 
                     let workspace_node_modules = {
                         let buf_slice = &mut path_buf[..];
@@ -2943,6 +2950,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
+                if dep.behavior.is_optional_peer() {
+                    continue 'deps;
+                }
                 let peer_res_id = if is_deferred_peer(dep) {
                     resolve_peer_dep_version_based(
                         dep,
@@ -3005,15 +3015,12 @@ pub(crate) fn parse_into_binary_lockfile(
 }
 
 /// True for peer edges the fresh resolver defers to its second phase
-/// (`install_peer`) and binds by version there. Two exemptions, matching
-/// `enqueue_dependency_with_main_and_success_fn`: optional peers return
-/// before the deferred phase and are bound to the hoisted-tree sibling by
-/// `process_subtree` instead, and `*` peers express no version preference
-/// and bind to whatever sibling pin existed first. Both of those are
-/// exactly what the printed tree's path walk reproduces, so they keep it.
+/// (`install_peer`) and binds by version there. Callers skip optional peers
+/// entirely; `*` peers express no version preference so the printed tree's
+/// path walk binds them.
 fn is_deferred_peer(dep: &Dependency) -> bool {
+    debug_assert!(!dep.behavior.is_optional_peer());
     dep.behavior.is_peer()
-        && !dep.behavior.is_optional_peer()
         && !(dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().version.is_star())
 }
 

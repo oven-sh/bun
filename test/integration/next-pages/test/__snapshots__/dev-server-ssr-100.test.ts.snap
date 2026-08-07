@@ -26725,7 +26725,7 @@ exports[`ssr works for 100-ish requests 1`] = `
           "package_id": 315,
         },
         "jiti": {
-          "id": 434,
+          "id": 937,
           "package_id": 316,
         },
         "js-tokens": {

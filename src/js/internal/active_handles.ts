@@ -72,7 +72,7 @@ function forEachActive(out, pushKind) {
     if (h._handle == null) {
       unregisterHandle(h);
     } else if (!h[h[kUnrefFlag]]) {
-      out.push(pushKind ? h[kKind] : h);
+      $arrayPush(out, pushKind ? h[kKind] : h);
     }
     h = next;
   }
@@ -89,17 +89,17 @@ function getActiveResourcesInfo() {
   // FSReqCallback/FSReqPromise split does not exist here.
   const resources: string[] = [];
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
-    resources.push("FSReqCallback");
+    $arrayPush(resources, "FSReqCallback");
   }
   pendingRequestWraps.$forEach(kind => {
-    resources.push(kind);
+    $arrayPush(resources, kind);
   });
   forEachActive(resources, true);
   for (let i = 0, n = getActiveTimeoutCount(); i < n; i++) {
-    resources.push("Timeout");
+    $arrayPush(resources, "Timeout");
   }
   for (let i = 0, n = getActiveImmediateCount(); i < n; i++) {
-    resources.push("Immediate");
+    $arrayPush(resources, "Immediate");
   }
   return resources;
 }
@@ -109,10 +109,10 @@ function getActiveRequests() {
   // fresh FSReqCallback instance; dns entries are the live wraps registered at dispatch.
   const requests: unknown[] = [];
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
-    requests.push(new FSReqCallback());
+    $arrayPush(requests, new FSReqCallback());
   }
   pendingRequestWraps.$forEach((_kind, wrap) => {
-    requests.push(wrap);
+    $arrayPush(requests, wrap);
   });
   return requests;
 }

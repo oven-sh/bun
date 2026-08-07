@@ -4923,6 +4923,24 @@ pub fn js_get_buffered_amount(global: &JSGlobalObject, callframe: &CallFrame) ->
     Ok(JSValue::js_number(0.0))
 }
 
+/// `bun:internal-for-testing` poll-leak probe; -1 on platforms without the
+/// libuv eventing backend.
+#[bun_jsc::host_fn]
+pub fn js_uv_poll_live_count(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+
+    #[cfg(windows)]
+    {
+        Ok(JSValue::js_number(
+            bun_uws_sys::socket_context::c::us_internal_uv_poll_live_count() as f64,
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(JSValue::js_number(-1.0))
+    }
+}
+
 #[bun_jsc::host_fn]
 pub fn js_create_socket_pair(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();

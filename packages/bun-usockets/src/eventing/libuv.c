@@ -19,8 +19,16 @@
 #include "internal/fault_inject.h"
 #include "libusockets.h"
 #include <stdlib.h>
+#include <stdatomic.h>
 
 #ifdef LIBUS_USE_LIBUV
+
+/* Live us_poll_t count: incremented on create/resize, decremented wherever
+ * one is freed. Read by leak tests (bun:internal-for-testing
+ * uvPollLiveCount) to assert this backend frees every poll it allocates. */
+static _Atomic long uv_poll_live = 0;
+
+long us_internal_uv_poll_live_count(void) { return atomic_load(&uv_poll_live); }
 
 /* The shared dispatch follows socket adoption (a tunneled/upgraded socket
  * moves; the old allocation stays readable with flags.adopted set and prev
@@ -171,8 +179,17 @@ static void close_cb_free_poll(uv_handle_t *h) {
   /* It is only in case we called us_poll_stop then quickly us_poll_free that we
    * enter this. Most of the time, actual freeing is done by us_poll_free. */
   if (h->data) {
+    atomic_fetch_sub(&uv_poll_live, 1);
     us_free(h->data);
     us_free(h);
+  } else {
+    /* us_poll_stop ran but us_poll_free has not yet. This callback never runs
+     * again, and uv_is_closing() cannot tell a CLOSED handle from a CLOSING
+     * one, so mark the handle: a later us_poll_free must free both blocks
+     * itself instead of deferring to us. The mark cannot collide with a live
+     * poll, whose data is either 0 or the us_poll_t (a different
+     * allocation). */
+    h->data = h;
   }
 }
 
@@ -197,6 +214,7 @@ void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd,
 void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
   // poll was resized and dont own uv_poll_t anymore
   if(!p->uv_p) {
+    atomic_fetch_sub(&uv_poll_live, 1);
     us_free(p);
     return;
   }
@@ -207,8 +225,19 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
    * simply change back the data to point to our structure so that we actually
    * do free it like we should. */
   if (uv_is_closing((uv_handle_t *)p->uv_p)) {
-    p->uv_p->data = p;
+    if (p->uv_p->data == (void *)p->uv_p) {
+      /* uv_is_closing() is also true for a handle that finished closing.
+       * close_cb_free_poll already ran (marking the handle; see above) and
+       * will never run again, so deferring to it would leak both blocks.
+       * libuv is done with the handle; free them here. */
+      atomic_fetch_sub(&uv_poll_live, 1);
+      us_free(p->uv_p);
+      us_free(p);
+    } else {
+      p->uv_p->data = p;
+    }
   } else {
+    atomic_fetch_sub(&uv_poll_live, 1);
     us_free(p->uv_p);
     us_free(p);
   }
@@ -404,6 +433,7 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
                                  unsigned int ext_size) {
   struct us_poll_t *p =
       (struct us_poll_t *)us_malloc(sizeof(struct us_poll_t) + ext_size);
+  atomic_fetch_add(&uv_poll_live, 1);
   p->uv_p = us_malloc(sizeof(uv_poll_t));
   p->uv_p->data = p;
   return p;
@@ -422,6 +452,7 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
   if(new_size <= old_size) return p;
 
   struct us_poll_t *new_p = us_calloc(1, new_size);
+  atomic_fetch_add(&uv_poll_live, 1);
   memcpy(new_p, p, old_size);
 
   new_p->uv_p->data = new_p;

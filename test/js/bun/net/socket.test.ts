@@ -3667,3 +3667,134 @@ describe.concurrent("connect() failure promise settlement", () => {
     ).rejects.toBe(boom);
   });
 });
+
+// On the libuv backend (Windows), us_poll_free defers freeing a stopped poll
+// to the uv close callback while the handle is closing. uv_is_closing() is
+// also true once the handle has *finished* closing, when that callback
+// already ran (freeing nothing, since us_poll_stop nulled handle->data) and
+// will never run again: us_poll_free re-pointed handle->data and returned,
+// leaking both the us_socket_t and the uv_poll_t allocations.
+//
+// Reachable from JS: terminate() dispatches the close handler synchronously
+// before the socket is linked to the closed-sockets sweep list, so a
+// synchronous event-loop re-entry inside the close handler (expect().resolves
+// blocks on waitForPromise) lets libuv finish closing the poll handle; the
+// sweep then frees a CLOSED handle. The probe chains terminates through close
+// handlers (none of the chained sockets is on the sweep list until its
+// handler returns) with one re-entry at the bottom, so every chained socket's
+// handle is CLOSED by the time the sweep frees it. uvPollLiveCount (a counter
+// of live us_poll_t allocations in eventing/libuv.c) must return to its
+// pre-churn baseline; unfixed, it grows by ROUNDS x DEPTH.
+it.skipIf(!isWindows)("socket terminated around a nested event-loop tick does not leak its poll", async () => {
+  using dir = tempDir("uv-poll-free-leak", {
+    "poll-free-leak.test.ts": `
+        import { test, expect } from "bun:test";
+        import { uvPollLiveCount } from "bun:internal-for-testing";
+
+        const ROUNDS = 10;
+        const DEPTH = 8;
+        const WARMUP = 3;
+
+        test("probe", async () => {
+          let pile: any[] = [];
+          let closedCount = 0;
+          let allClosed: (() => void) | null = null;
+
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              open(s) {
+                pile.push(s);
+              },
+              data() {},
+              error() {},
+              close() {
+                const next = pile.pop();
+                if (next) {
+                  next.terminate();
+                } else {
+                  // Bottom of the chain: DEPTH sockets are mid-close-
+                  // dispatch, none on the sweep list yet. Synchronous
+                  // event-loop re-entry (.resolves blocks on waitForPromise)
+                  // lets libuv finish closing their poll handles before the
+                  // sweep frees them.
+                  expect(new Promise<void>(r => setImmediate(r))).resolves.toBeUndefined();
+                }
+                closedCount++;
+                if (closedCount === DEPTH && allClosed) allClosed();
+              },
+            },
+          });
+
+          async function round() {
+            pile = [];
+            closedCount = 0;
+            const { promise, resolve } = Promise.withResolvers<void>();
+            allClosed = resolve;
+
+            const clients = await Promise.all(
+              Array.from({ length: DEPTH }, () =>
+                Bun.connect({
+                  hostname: "127.0.0.1",
+                  port: server.port,
+                  socket: { data() {}, error() {}, close() {} },
+                }),
+              ),
+            );
+            while (pile.length < DEPTH) {
+              await new Promise(r => setImmediate(r));
+            }
+
+            pile.pop()!.terminate();
+            await promise;
+            allClosed = null;
+
+            for (const c of clients) c.terminate();
+          }
+
+          // Pending frees flush asynchronously (a CLOSING handle is freed by
+          // its uv close callback a tick later), so settle before reading.
+          async function stableCount(): Promise<number> {
+            let prev = uvPollLiveCount();
+            for (let stable = 0; stable < 10; ) {
+              await new Promise(r => setImmediate(r));
+              const cur = uvPollLiveCount();
+              if (cur === prev) stable++;
+              else [stable, prev] = [0, cur];
+            }
+            return prev;
+          }
+
+          for (let i = 0; i < WARMUP; i++) await round();
+          const baseline = await stableCount();
+          expect(baseline).toBeGreaterThan(0); // the listen poll, at least
+
+          for (let i = 0; i < ROUNDS; i++) await round();
+          let after = uvPollLiveCount();
+          for (let i = 0; i < 200 && after !== baseline; i++) {
+            await new Promise(r => setImmediate(r));
+            after = uvPollLiveCount();
+          }
+
+          console.log(JSON.stringify({ baseline, after, leaked: after - baseline }));
+          expect(after - baseline).toBe(0);
+        });
+      `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "poll-free-leak.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const line = stdout.split("\n").find(l => l.includes("leaked"));
+  expect(line, `probe produced no measurement.\nstdout: ${stdout}\nstderr: ${stderr}`).toBeDefined();
+  const { leaked } = JSON.parse(line!);
+  expect(leaked).toBe(0);
+  expect(exitCode).toBe(0);
+});

@@ -1228,9 +1228,11 @@ console.log("aborted");
 // stream cleared the reader's CLOSE_HANDLE flag (it owns the fd itself), and
 // the reader's own teardown skips the FilePoll in that mode, so the poll's
 // event-loop active ref leaked even after the response finished at EOF.
-test.skipIf(isWindows)("process exits after a FIFO file response completes at EOF", async () => {
-  using dir = tempDir("serve-fifo-eof-exit", {
-    "fixture.ts": `
+test.skipIf(isWindows)(
+  "process exits after a FIFO file response completes at EOF",
+  async () => {
+    using dir = tempDir("serve-fifo-eof-exit", {
+      "fixture.ts": `
 import { openSync, writeSync, closeSync } from "node:fs";
 
 const fifoPath = process.argv[2];
@@ -1265,25 +1267,27 @@ try {
 server.stop(true);
 console.log(body);
 `,
-  });
+    });
 
-  const fifoPath = join(String(dir), "body.fifo");
-  mkfifo(fifoPath);
+    const fifoPath = join(String(dir), "body.fifo");
+    mkfifo(fifoPath);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts", fifoPath],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", fifoPath],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe("fifo-body");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-}, 15_000);
+    expect(stdout.trim()).toBe("fifo-body");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  15_000,
+);
 
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared

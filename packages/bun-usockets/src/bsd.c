@@ -67,6 +67,9 @@ extern int Bun__doesMacOSVersionSupportSendRecvMsgX();
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) return (int) injected;
+    (void)unused;
 #if defined(_WIN32)// || defined(__APPLE__)
     for (int i = 0; i < sendbuf->num; i++) {
         while (1) {

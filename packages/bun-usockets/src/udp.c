@@ -62,8 +62,11 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
         if (sent < 0) {
             /* Linux sendmmsg reports EAGAIN as -1 (per-msg-loop platforms
              * report it as sent==0): re-arm writable so on_drain fires and
-             * report how many earlier batches went out. */
-            if (bsd_would_block()) {
+             * report how many earlier batches went out. ENOBUFS/ENOMEM are
+             * transient kernel resource exhaustion (macOS returns ENOBUFS when
+             * bursty sends fill the interface queue); libuv classifies them as
+             * EAGAIN for UDP sends, so a later retry can succeed. */
+            if (bsd_would_block() || bsd_send_is_transient_error()) {
                 us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
                 return total_sent;
             }

@@ -1182,9 +1182,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
-            // Second: reuse the package an identical dependency is already
-            // bound to. A branch, tag, or bare committish can never match the
-            // lookup above after a lockfile round-trip.
+            // Second: the package an identical dependency literal resolved to
             if let Some(pkg_id) =
                 find_locked_git_package(this, id, dependency, &dep, ResolutionTag::Git)
             {
@@ -1302,9 +1300,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
-            // Second: reuse the package an identical dependency is already
-            // bound to. A branch, tag, or bare committish can never match the
-            // lookup above after a lockfile round-trip.
+            // Second: the package an identical dependency literal resolved to
             if let Some(pkg_id) =
                 find_locked_git_package(this, id, dependency, dep, ResolutionTag::Github)
             {
@@ -1953,18 +1949,12 @@ fn update_name_and_name_hash_from_version_replacement(
     }
 }
 
-/// Finds the package an identical, already-resolved dependency is bound to, so
-/// a git/github dependency re-enqueued during re-resolution (most commonly a
-/// workspace member edit re-parsing the member's whole dependency list) reuses
-/// it instead of fetching the remote again.
-///
-/// The `get_package_id` lookup in the git/github arms can only match a
-/// committish equal to the loaded one, and the text lockfile writes the
-/// *resolved* commit in the committish position of the resolution string, so a
-/// branch, tag, or bare ref never matches again after a lockfile round-trip.
-/// Dependency entries keep their original version literals, so an identical
-/// literal bound to a package of the same repository is the lossless record of
-/// what this dependency previously resolved to.
+/// The package an identical git/github dependency (same name and version
+/// literal) is already bound to. `bun.lock` writes the resolved commit in the
+/// committish position of the resolution string, so after a reload a branch,
+/// tag, or bare ref never matches `get_package_id`'s committish comparison;
+/// the unchanged dependency literal is the lossless record of the previous
+/// resolution, and reusing its binding keeps re-resolution off the network.
 fn find_locked_git_package(
     this: &PackageManager,
     id: DependencyID,
@@ -1976,9 +1966,8 @@ fn find_locked_git_package(
         return None;
     }
 
-    // `bun update` re-resolves git refs against the remote; reusing the locked
-    // commit here would turn the update into a no-op. Same update-target test
-    // as `Diff::generate` (an empty request list is a bare `bun update`).
+    // An update target must re-resolve against the remote (same test as
+    // `Diff::generate`; an empty request list is a bare `bun update`).
     if this.to_update
         && (this.update_requests.is_empty()
             || this
@@ -2007,11 +1996,9 @@ fn find_locked_git_package(
         {
             continue;
         }
-        // Overrides and catalogs replace the version after parsing, so an
-        // identical literal does not guarantee an identical resolution; the
-        // resolved repository must match the effective one too. (A changed
-        // override/catalog also invalidates the old binding before
-        // re-enqueueing, so a stale binding is never reachable here.)
+        // Overrides/catalogs replace the version after parsing, so the bound
+        // package must also match the effective repository (changed overrides
+        // and catalogs invalidate old bindings before re-enqueueing).
         let resolution = &package_resolutions[package_id as usize];
         if resolution.tag != resolution_tag {
             continue;

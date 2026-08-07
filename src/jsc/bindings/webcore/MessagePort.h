@@ -70,7 +70,6 @@ public:
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
 
     void start();
-    bool hasMessageEventListener() const { return m_hasMessageEventListener; }
     void close();
     // Called on the entangled peer when this side closes: dispatches a
     // 'close' event and releases the event-loop ref so the loop can idle.

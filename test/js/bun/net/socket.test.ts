@@ -761,9 +761,7 @@ describe.concurrent("socket", () => {
       await new Promise(resolve => setImmediate(resolve));
       await new Promise(resolve => setImmediate(resolve));
 
-      await new Promise<void>((resolve, reject) =>
-        client.write("hello", err => (err ? reject(err) : resolve())),
-      );
+      await new Promise<void>((resolve, reject) => client.write("hello", err => (err ? reject(err) : resolve())));
       client.destroy(); // graceful full close; unix sockets have no RST
 
       // Give a misrouted detector event plenty of turns to close the socket.

@@ -136,6 +136,9 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::create(CryptoAlgorithmIdentifier identifier, 
         iqmp.release();
     }
 
+    if (!RSA_check_key(rsa.get()))
+        return nullptr;
+
     auto pkey = EvpPKeyPtr(EVP_PKEY_new());
     if (!pkey)
         return nullptr;

@@ -803,3 +803,62 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/9987
+it.concurrent("onLoad loader: 'object' provides a default export when exports has no 'default' key", async () => {
+  using dir = tempDir("plugin-object-loader-default", {
+    "preload.ts": `
+      Bun.plugin({
+        name: "object-loader-default",
+        setup(build) {
+          build.onLoad({ filter: /\\.nodef$/ }, () => ({
+            exports: { name: "Tom", age: 10 },
+            loader: "object",
+          }));
+          build.onLoad({ filter: /\\.withdef$/ }, () => ({
+            exports: { default: "EXPLICIT", named: "NAMED" },
+            loader: "object",
+          }));
+        },
+      });
+    `,
+    "data.nodef": ``,
+    "data.withdef": ``,
+    "entry.ts": `
+      import data from "./data.nodef";
+      import { name, age } from "./data.nodef";
+      import * as ns from "./data.nodef";
+      import explicit, { named } from "./data.withdef";
+      console.log(
+        JSON.stringify({
+          data,
+          name,
+          age,
+          nsDefault: ns.default,
+          nsKeys: Object.keys(ns).sort(),
+          explicit,
+          named,
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    data: { name: "Tom", age: 10 },
+    name: "Tom",
+    age: 10,
+    nsDefault: { name: "Tom", age: 10 },
+    nsKeys: ["age", "default", "name"],
+    explicit: "EXPLICIT",
+    named: "NAMED",
+  });
+  expect(exitCode).toBe(0);
+});

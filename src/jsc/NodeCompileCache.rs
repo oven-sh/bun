@@ -971,13 +971,16 @@ fn write_persist_job_locked(
 
     cclog!("[compile cache] Creating temporary file for cache of {name} ({tname})...");
 
-    let mut tmpfile = match sys::Tmpfile::create(state.dir_handle.fd(), tmpname_zstr) {
-        Ok(t) => t,
-        Err(e) => {
-            cclog!("failed. {}\n", errno_name(&e));
-            return Err(());
-        }
-    };
+    // 0600 like Node: entries hold module source + bytecode, and the default
+    // cache dir is world-readable (`$TMPDIR/node-compile-cache/...`).
+    let mut tmpfile =
+        match sys::Tmpfile::create_with_mode(state.dir_handle.fd(), tmpname_zstr, 0o600) {
+            Ok(t) => t,
+            Err(e) => {
+                cclog!("failed. {}\n", errno_name(&e));
+                return Err(());
+            }
+        };
     let _close = sys::CloseOnDrop::new(tmpfile.fd);
 
     let tmp_display = if logging {

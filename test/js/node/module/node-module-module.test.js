@@ -192,6 +192,29 @@ console.log("survived", require("./late.js"));`,
     }
   });
 
+  test.skipIf(isWindows)("compile cache entries are created 0600 like Node", async () => {
+    // Entries hold the module's post-transpile source, and the default cache
+    // location is a world-readable tmpdir; Node creates entry files 0600.
+    using dir = tempDir("compile-cache-mode", {
+      "main.js": `process.umask(0o022); console.log(require("./dep.js"));`,
+      "dep.js": "module.exports = 7;",
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("7");
+    expect(exitCode).toBe(0);
+    const files = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })];
+    expect(files.length).toBe(2);
+    const modes = files.map(f => (fs.statSync(path.join(cacheDir, f)).mode & 0o777).toString(8));
+    expect(modes).toEqual(["600", "600"]);
+  });
+
   test("native module functions are not constructors", () => {
     // Constructing these used to crash instead of throwing.
     const compile = new Module("not-a-constructor-test")._compile;

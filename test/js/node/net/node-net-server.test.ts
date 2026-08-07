@@ -629,3 +629,33 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
     ).toEqual({ stdout: "fast", exitCode: 0, failureDetail: "" });
   });
 });
+
+// The Windows named-pipe listener never stripped libuv's own loop ref from its
+// uv_pipe_t (uv_listen marks the handle active+ref'd), so server.unref()
+// dropped the Listener's KeepAlive but the uv handle still pinned
+// uv_loop_alive and the process never exited. TCP and unix-socket listeners go
+// through usockets, which unrefs its uv handles up front.
+it("server.unref() on a pipe/unix-socket listener lets the process exit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const net = require("net");
+      const path = process.platform === "win32"
+        ? "\\\\\\\\.\\\\pipe\\\\bun-server-unref-" + process.pid
+        : require("os").tmpdir() + "/bun-server-unref-" + process.pid + ".sock";
+      const server = net.createServer();
+      server.listen(path, () => server.unref());
+      setTimeout(() => { process.stdout.write("HUNG"); process.exit(1); }, 4000).unref();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(exitCode === 0 ? "" : stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

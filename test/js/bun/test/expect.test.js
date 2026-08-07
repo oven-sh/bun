@@ -141,6 +141,68 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  // https://github.com/oven-sh/bun/issues/14670
+  test("resolves/rejects on a Promise subclass with a lazy then()", async () => {
+    /** @type {ReturnType<typeof setTimeout>[]} */
+    const timers = [];
+    /**
+     * @param {"resolve" | "reject"} how
+     * @param {unknown} what
+     */
+    function lazy(how, what) {
+      /** @extends {Promise<unknown>} */
+      class Lazy extends Promise {
+        static get [Symbol.species]() {
+          return Promise;
+        }
+        /** @override */
+        // @ts-expect-error
+        then(onFulfilled, onRejected) {
+          // Start the work on the first `.then()`, the same way `await` observes it.
+          queueMicrotask(() => settle(what));
+          return super.then(onFulfilled, onRejected);
+        }
+      }
+      let settle;
+      const p = new Lazy((resolve, reject) => {
+        settle = how === "resolve" ? resolve : reject;
+      });
+      // Fallback settler: if `.then()` is never called (the bug this test
+      // guards), the promise still settles so the assertion fails instead of
+      // spinning. With the fix the microtask above always wins.
+      timers.push(setTimeout(() => settle(new Error("then() was never called")), 500));
+      return p;
+    }
+    try {
+      await expect(lazy("resolve", 42)).resolves.toBe(42);
+      await expect(lazy("resolve", 42)).resolves.not.toBe(43);
+      await expect(lazy("reject", new Error("lazy boom"))).rejects.toThrow("lazy boom");
+      await expect(lazy("reject", 7)).rejects.toBe(7);
+
+      if (isBun) {
+        // `expect(fn).toThrow()` where fn synchronously returns the lazy subclass
+        // (Bun awaits the returned promise; Jest does not)
+        expect(() => lazy("reject", new Error("lazy boom"))).toThrow("lazy boom");
+        expect(() => lazy("resolve", 1)).not.toThrow();
+        // wrong-way settlement still fails the matcher
+        await expectFailure(() => expect(lazy("resolve", 1)).rejects.toBe(1)).toThrow();
+        await expectFailure(() => expect(lazy("reject", 1)).resolves.toBe(1)).toThrow();
+        // a custom matcher that returns the lazy subclass directly
+        expect.extend({
+          _toBeViaLazySubclass(/** @type {unknown} */ received, /** @type {unknown} */ expected) {
+            return lazy("resolve", { pass: Object.is(received, expected), message: () => "no" });
+          },
+        });
+        // @ts-expect-error custom matcher
+        expect(1)._toBeViaLazySubclass(1);
+        // @ts-expect-error custom matcher
+        expect(() => expect(1)._toBeViaLazySubclass(2)).toThrow();
+      }
+    } finally {
+      for (const t of timers) clearTimeout(t);
+    }
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });

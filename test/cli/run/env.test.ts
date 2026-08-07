@@ -268,7 +268,7 @@ test.concurrent(".env value expansion respects quote style", async () => {
     "index.ts":
       "console.log(JSON.stringify([process.env.UNQUOTED, process.env.DOUBLE, process.env.SINGLE, process.env.PASSWORD, process.env.BACKTICK, process.env.SPACED, process.env.REASSIGNED]));",
   });
-  const { stdout } = await bunRun(`${dir}/index.ts`);
+  const { stdout, stderr, exitCode } = await bunRun(`${dir}/index.ts`);
   expect(JSON.parse(stdout)).toEqual([
     "helloworld",
     "hello$VAR",
@@ -278,6 +278,8 @@ test.concurrent(".env value expansion respects quote style", async () => {
     "helloworld",
     "hello$VAR",
   ]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 test(".env ${VAR:-default} with nested references (issue #32411)", async () => {

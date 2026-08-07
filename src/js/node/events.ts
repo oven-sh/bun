@@ -65,7 +65,6 @@ function EventEmitter(opts) {
   EventEmitter.init.$call(this, opts);
 }
 
-// node exposes .init as a static so node:domain / userland can wrap it.
 EventEmitter.init = function init(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = Object.create(null);
@@ -206,7 +205,6 @@ EventEmitterPrototype.emit = function emit(type, ...args) {
         result = handler.$apply(this, args);
         break;
     }
-    // node lib/events.js fast-path guard; addCatch early-returns when !this[kCapture].
     if (result !== undefined && $isPromise(result)) {
       addCatch(this, result, type, args);
     }
@@ -865,7 +863,6 @@ class EventEmitterAsyncResource extends EventEmitter {
 
   emit(event, ...args) {
     const asyncResource = this.#asyncResource;
-    // node routes through super.emit; single prototype emit gates on this[kCapture].
     ArrayPrototypeUnshift.$call(args, super.emit, this, event);
     return asyncResource.runInAsyncScope.$apply(asyncResource, args);
   }

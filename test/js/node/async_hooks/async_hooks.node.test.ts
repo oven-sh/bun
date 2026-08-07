@@ -3,10 +3,6 @@ import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { bunEnv, bunExe } from "harness";
 
 test("enterWith at main-module scope does not drop a subsequent process.nextTick", async () => {
-  // Regression: cleanupAsyncHooksData ran on the microtask tick without
-  // draining the nextTick queue, so a tick scheduled after enterWith() at
-  // main-module scope with no other event-loop work was silently dropped.
-  // This is independent of node:domain.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

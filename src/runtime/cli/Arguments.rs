@@ -268,7 +268,6 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--abort-on-uncaught-exception     Abort instead of exiting when an uncaught exception is not handled."
     ),
-    // V8 accepts both spellings; hidden from --help like the Node compat flags below.
     parse_param!("--abort_on_uncaught_exception"),
     parse_param!("--no-warnings                     Silence all process warnings"),
     parse_param!("--trace-warnings                  Show stack traces on process warnings"),

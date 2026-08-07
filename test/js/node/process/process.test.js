@@ -1272,6 +1272,32 @@ describe.concurrent(() => {
     );
   });
 
+  it("process._fatalException in a Worker logs a throwing capture callback instead of dropping it", async () => {
+    using dir = tempDir("process-test", {
+      "index.js": `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(
+          \`process.setUncaughtExceptionCaptureCallback(() => { throw new Error("from capture"); });
+           console.log("handled:", process._fatalException(new Error("original")));
+           process.setUncaughtExceptionCaptureCallback(null);\`,
+          { eval: true },
+        );
+        w.on("exit", code => console.log("exit", code));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "index.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("handled: false");
+    expect(stderr).toContain("from capture");
+    expect(stdout).toContain("exit 0");
+    expect(exitCode).toBe(0);
+  });
+
   for (const stub of undefinedStubs) {
     it(`process.${stub}`, () => {
       expect(process[stub]()).toBeUndefined();
@@ -1305,6 +1331,8 @@ describe.concurrent(() => {
     expect(flags.has("require")).toBe(true);
     expect(flags.has("--no_warnings")).toBe(true);
     expect(flags.has("--require=./foo.js")).toBe(true);
+    expect(flags.has("--abort-on-uncaught-exception")).toBe(true);
+    expect(flags.has("--abort_on_uncaught_exception")).toBe(true);
     expect(flags.has("--not-a-real-flag")).toBe(false);
     flags.add("--not-a-real-flag");
     expect(flags.has("--not-a-real-flag")).toBe(false);
@@ -1461,10 +1489,6 @@ describe.concurrent(() => {
   });
 
   const spawnAbort = async (src, extraFlags = [], exe = bunExe()) => {
-    // The abort is intentional: disable core dumps like the upstream node
-    // abort tests do, and clear BUN_CRASH_REPORT_URL so the SIGABRT isn't
-    // uploaded to CI's remap server and pinned on the next failing test as
-    // "crash reported" (which blocks its retry).
     const cmd = [exe, "--abort-on-uncaught-exception", ...extraFlags, "-e", src];
     const proc = Bun.spawn(isWindows ? cmd : ["sh", "-c", 'ulimit -c 0 && exec "$@"', "sh", ...cmd], {
       env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
@@ -1475,26 +1499,18 @@ describe.concurrent(() => {
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   };
   // The set of terminations node's own common.nodeProcessAborted accepts:
-  // Bun's abort() → SIGABRT on POSIX; _exit(134) on Windows;
-  // SIGILL/SIGTRAP are what node/V8 emit via __builtin_trap on the
-  // sync-throw path and are accepted for parity.
   const aborted = r =>
     ["SIGABRT", "SIGILL", "SIGTRAP"].includes(r.signalCode) || r.exitCode === 134 || r.exitCode >>> 0 === 0x80000003;
 
   const rejectionAbortFixture = `process.on("uncaughtExceptionMonitor", () => console.log("mon")); process.on("uncaughtException", () => console.log("listener")); Promise.reject(new Error("x"));`;
 
   it("--abort-on-uncaught-exception aborts an unhandled rejection even with an uncaughtException listener", async () => {
-    // node's JS-facing triggerUncaughtException binding checks the flag and
-    // aborts before process._fatalException runs, so neither the monitor
-    // nor 'uncaughtException' listeners observe the rejection.
     const r = await spawnAbort(rejectionAbortFixture, ["--unhandled-rejections=strict"]);
     expect(r.stdout).toBe("");
     expect(aborted(r)).toBe(true);
   });
 
   it.skipIf(!nodeExe())("--abort-on-uncaught-exception rejection ordering matches node (differential)", async () => {
-    // Pin the assertion above to node's observed behavior so a re-reading
-    // of node_errors.cc cannot silently flip it (17fb9a90 → 52d415c2).
     const r = await spawnAbort(rejectionAbortFixture, ["--unhandled-rejections=strict"], nodeExe());
     expect(r.stdout).toBe("");
     expect(aborted(r)).toBe(true);
@@ -1507,18 +1523,12 @@ describe.concurrent(() => {
   });
 
   it("--abort-on-uncaught-exception aborts a synchronous throw with no listeners", async () => {
-    // The primary contract of the flag with no domain, capture callback or
-    // listener installed. This is the domain-free path (m_domainErrorHandler
-    // slot empty), distinct from the test-domain-no-error-handler-* suite
-    // which throws inside d.run().
     const r = await spawnAbort(`throw new Error("x")`);
     expect(r.stderr).toContain("x");
     expect(aborted(r)).toBe(true);
   });
 
   it("--abort-on-uncaught-exception aborts a synchronous throw even with an uncaughtException listener", async () => {
-    // Listeners do not suppress the throw-time abort. Throw from a
-    // setTimeout callback so it surfaces as origin=0 (sync uncaught).
     const r = await spawnAbort(
       `process.on("uncaughtException", () => process.exit(0)); setTimeout(() => { throw new Error("x") }, 0)`,
     );
@@ -1526,10 +1536,6 @@ describe.concurrent(() => {
   });
 
   it("--abort-on-uncaught-exception does not fire uncaughtExceptionMonitor before aborting", async () => {
-    // In Node the abort happens inside V8 (Isolate::Throw) before
-    // process._fatalException runs, so the monitor never observes the
-    // error when neither a capture callback nor a domain error handler is
-    // installed.
     const r = await spawnAbort(
       `process.on("uncaughtExceptionMonitor", () => console.log("monitor ran")); setTimeout(() => { throw new Error("x") }, 0)`,
     );
@@ -1538,9 +1544,6 @@ describe.concurrent(() => {
   });
 
   it("--abort-on-uncaught-exception aborts before monitor when node:domain is loaded but no domain would handle", async () => {
-    // Node's should_abort_on_uncaught_toggle stays 1 until a domain with an
-    // 'error' listener enters, so a bare require('domain') must not delay
-    // the throw-time abort past the monitor emit.
     const r = await spawnAbort(
       `require("domain"); process.on("uncaughtExceptionMonitor", () => console.log("monitor ran")); setTimeout(() => { throw new Error("x") }, 0)`,
     );
@@ -1575,9 +1578,6 @@ describe.concurrent(() => {
   });
 
   it("--abort-on-uncaught-exception uses the throw-time capture snapshot even if the monitor clears it", async () => {
-    // Node decides abort once at Isolate::Throw and never re-checks; a
-    // monitor listener that nulls the capture callback must not turn a
-    // suppressed exception into a SIGABRT.
     const r = await spawnAbort(
       `process.setUncaughtExceptionCaptureCallback(() => {});
        process.on("uncaughtExceptionMonitor", () => process.setUncaughtExceptionCaptureCallback(null));
@@ -1588,11 +1588,6 @@ describe.concurrent(() => {
     expect(aborted(r)).toBe(false);
   });
 
-  // node's async-hooks init hook pairs the resource with process.domain and
-  // before() enter()s it, clearing should_abort_on_uncaught_toggle — so the
-  // setter suppresses the abort for callbacks scheduled after it, but NOT for
-  // a synchronous throw (nothing ever pushed the domain onto the stack).
-  // Both directions verified against node v26.3.0.
   const setterCases = [
     [
       "async callback pairs with the setter's domain",
@@ -1622,11 +1617,6 @@ describe.concurrent(() => {
       if (code !== undefined) expect(r.exitCode).toBe(code);
     });
 
-    // The abort-expecting differential is skipped on Windows: node's V8-trap
-    // abort there terminates with a status aborted() does not recognise, so it
-    // reports false (observed on all three Windows lanes). Bun's own abort is
-    // recognised, so the bun-side case above still runs everywhere; what this
-    // differential pins is node's ordering, which is not platform-specific.
     it.skipIf(!nodeExe() || (isWindows && willAbort))(
       `--abort-on-uncaught-exception: process.domain setter — ${name} (node differential)`,
       async () => {
@@ -1639,18 +1629,12 @@ describe.concurrent(() => {
   }
 
   it("--abort-on-uncaught-exception: a non-Domain process.domain never suppresses the abort", async () => {
-    // fatalErrorDispatch only routes into a value with _errorHandler, so the
-    // predicate must not claim for one without it. node aborts here too.
     const r = await spawnAbort(
       `require("domain"); process.domain = { listenerCount: () => 1 }; setTimeout(() => { throw new Error("x") }, 0)`,
     );
     expect(aborted(r)).toBe(true);
   });
 
-  // Node latches the abort decision at throw time (should_abort_on_uncaught_toggle
-  // was already 0), and removeAllListeners does not re-run updateExceptionCapture,
-  // so the error falls through to the normal uncaught path (exit 1) instead of
-  // aborting. Verified against node v26.3.0.
   const monitorRemovesListenerFixture = `const d = require("domain").create();
        d.on("error", () => console.log("domain-error"));
        process.on("uncaughtExceptionMonitor", () => d.removeAllListeners("error"));
@@ -1672,8 +1656,6 @@ describe.concurrent(() => {
   );
 
   it("dispatches to a capture callback installed inside uncaughtExceptionMonitor", async () => {
-    // Node reads exceptionHandlerState.captureFn after the monitor emit; the
-    // dispatch must not use a pre-monitor snapshot.
     const proc = Bun.spawn(
       [
         bunExe(),
@@ -1693,10 +1675,6 @@ describe.concurrent(() => {
   });
 
   it("uncaughtExceptionCaptureCallback survives domain enter/exit and hasUncaughtExceptionCaptureCallback reflects only the user slot", async () => {
-    // Bun keeps the domain dispatch in a separate native slot, so a user
-    // capture callback set before loading node:domain is not clobbered by
-    // enter()/exit(). Node v26 still nulls it via updateExceptionCapture();
-    // this test pins Bun's chosen behaviour.
     const proc = Bun.spawn(
       [
         bunExe(),
@@ -1794,8 +1772,6 @@ describe.concurrent(() => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallbackAbort.js")], {
       stderr: "pipe",
     });
-    // An exception thrown from the capture callback exits with code 7 like
-    // node (internal exception handler run-time failure).
     expect(await proc.exited).toBe(7);
     expect(await proc.stderr.text()).toContain("bar");
   });

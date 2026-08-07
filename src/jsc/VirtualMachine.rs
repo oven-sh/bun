@@ -362,8 +362,6 @@ pub struct TestIsolationState {
 }
 
 /// How an uncaught error reached [`VirtualMachine::uncaught_exception`].
-/// Forwarded to `Bun__handleUncaughtException` (BunProcess.cpp) for
-/// --abort-on-uncaught-exception ordering (node V8 Isolate::Throw / node_errors.cc).
 #[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UncaughtExceptionOrigin {
@@ -1459,7 +1457,6 @@ impl VirtualMachine {
             origin as c_int,
             &raw mut substitute,
         ) > 0;
-        // node workerOnGlobalUncaughtException: route the handler's throw to the parent.
         let err = if substitute.is_empty() {
             err
         } else {

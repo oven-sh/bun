@@ -1,6 +1,5 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
-const diagnosticsChannel = require("node:diagnostics_channel");
 const { Readable } = StreamModule;
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
@@ -17,7 +16,7 @@ const File = bindings[4];
 const URL = bindings[5];
 const AbortSignal = bindings[6];
 const URLSearchParams = bindings[7];
-const BunWebSocket = bindings[8];
+const WebSocket = bindings[8];
 const CloseEvent = bindings[9];
 const ErrorEvent = bindings[10];
 const MessageEvent = bindings[11];
@@ -373,49 +372,6 @@ const util = {
   },
 };
 
-const pingChannel = diagnosticsChannel.channel("undici:websocket:ping");
-const pongChannel = diagnosticsChannel.channel("undici:websocket:pong");
-
-class WebSocket extends BunWebSocket {
-  constructor(...args) {
-    super(...args);
-    this.addEventListener("ping", ({ data }) => {
-      if (pingChannel.hasSubscribers) {
-        pingChannel.publish({ payload: data, websocket: this });
-      }
-    });
-    this.addEventListener("pong", ({ data }) => {
-      if (pongChannel.hasSubscribers) {
-        pongChannel.publish({ payload: data, websocket: this });
-      }
-    });
-  }
-}
-
-/**
- * Sends a ping frame on an established WebSocket connection.
- * @param {WebSocket} ws
- * @param {Buffer|undefined} payload
- */
-function ping(ws, payload) {
-  if (!(ws instanceof BunWebSocket)) {
-    throw new TypeError("Expected a WebSocket instance");
-  }
-
-  if (Buffer.isBuffer(payload)) {
-    if (payload.length > 125) {
-      throw new TypeError("A PING frame cannot have a body larger than 125 bytes.");
-    }
-  } else if (payload !== undefined) {
-    throw new TypeError("Expected buffer payload");
-  }
-
-  if (ws.readyState === BunWebSocket.OPEN) {
-    if (payload === undefined) ws.ping();
-    else ws.ping(payload);
-  }
-}
-
 class EventSource extends EventTarget {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -526,7 +482,6 @@ const moduleExports = {
   mockErrors,
   MockPool,
   parseMIMEType,
-  ping,
   pipeline,
   Pool,
   ProxyAgent,

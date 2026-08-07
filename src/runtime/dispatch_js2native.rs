@@ -61,7 +61,6 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 
-/// Per-VM (node treats `--use-system-ca` as an Environment option, so a Worker's execArgv can differ).
 /// `undefined` ⇒ neither flag given, NODE_USE_SYSTEM_CA decides; only `--no-use-system-ca` beats the env var.
 pub(crate) fn bun_get_use_system_ca(
     _global: &JSGlobalObject,
@@ -87,9 +86,6 @@ pub(crate) fn bun_get_loop_elu(global: &JSGlobalObject, _frame: &CallFrame) -> J
     if loop_ptr.is_null() {
         return Ok(JSValue::NULL);
     }
-    // Idle BEFORE elapsed, matching node's order (it passes loopIdleTime() in
-    // and reads process.hrtime() after). Reversed, idle is dated after now and
-    // active = now - idle comes out short.
     // SAFETY: `loop_ptr` was just null-checked and stays valid for this tick
     // under the same ownership argument as above.
     let idle_ms = unsafe { bun_uws::us_loop_idle_ns(loop_ptr) } as f64 / 1_000_000.0;

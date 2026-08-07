@@ -987,9 +987,6 @@ impl WebWorker {
                 env_loader: NonNull::new(loader_ptr),
                 store_fd: self.store_fd,
                 graph: parent.standalone_module_graph,
-                // Same rule as every other execArgv option: an explicit list,
-                // even an empty one, replaces the parent's rather than adding
-                // to it, so only an inheriting worker takes the parent's CA intent.
                 use_system_ca: if own_exec_argv.is_some() {
                     exec_argv.use_system_ca
                 } else {
@@ -1022,8 +1019,6 @@ impl WebWorker {
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
 
-            // Node profiles every thread; own execArgv wins, and an inheriting
-            // worker takes the immediate parent's config (not the process's).
             let profile = if exec_argv.cpu_prof {
                 let mut config = crate::bun_cpu_profiler::CPUProfilerConfig {
                     json_format: true,
@@ -1195,9 +1190,6 @@ impl WebWorker {
             return self.shutdown();
         }
 
-        // node reports 'online' before user code runs, so a worker whose entry
-        // point never returns still goes online. Only the event goes out here:
-        // the Pending→Running flip stays put, so message routing is unchanged.
         WebWorker__dispatchOnlineEvent(self.cpp_worker);
 
         // `path` borrows the resolver's process-lifetime string store, the
@@ -1222,12 +1214,6 @@ impl WebWorker {
         // Atomics.waitAsync settles. dispatchOnline re-calls it as a no-op.
         WebWorker__entrySettled(vm.global());
 
-        // Terminated during entry evaluation: the rejection IS the
-        // TerminationException, still pending on the VM. uncaught_exception
-        // would re-enter JS with it (process 'uncaughtException' emit) and trip
-        // assertNoException; node does not report a terminate() as uncaught.
-        // No flush_logs here: Log::to_js enters JS and would see the pending
-        // exception, and there is nothing user-facing to report on terminate.
         if self.has_requested_terminate() {
             return self.shutdown();
         }
@@ -1370,10 +1356,7 @@ impl WebWorker {
             let vm = unsafe { &mut *vm_ptr };
             // terminate() set the JSC termination flag to interrupt running JS;
             // clear it so process.on('exit') handlers can run. teardownJSCVM
-            // re-sets it for the JSC VM teardown. A TerminationException still
-            // pending on the VM is left for on_exit's dispatch gate (it skips
-            // 'exit' on a terminate that interrupted running JS, as node does)
-            // and cleared there right after.
+            // re-sets it for the JSC VM teardown.
             vm.jsc_vm().clear_has_termination_request();
             vm.is_shutting_down = true;
             vm.on_exit();
@@ -1594,9 +1577,6 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            // terminate() raced this flush: the trap/pending TerminationException
-            // fails to_js. The worker is being torn down and node emits no
-            // 'error' for a terminate(), so drop the diagnostics.
             Err(JsError::Terminated) => return,
             Err(JsError::Thrown) => panic!("unhandled exception"),
         };

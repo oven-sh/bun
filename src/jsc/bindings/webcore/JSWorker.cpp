@@ -882,9 +882,6 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     return JSValue::encode(promise);
 }
 
-// Synchronous by contract: node's worker.performance.eventLoopUtilization()
-// returns a value, it does not await the worker. Safe to read cross-thread —
-// the counter is atomic and the loop start is immutable after publish.
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_eventLoopUtilizationInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

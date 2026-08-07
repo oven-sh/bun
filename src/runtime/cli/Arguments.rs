@@ -1495,8 +1495,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Global::exit(1);
         }
 
-        // --no-use-system-ca is the only thing that overrides NODE_USE_SYSTEM_CA;
-        // node lets the env var win under --use-bundled-ca/--use-openssl-ca.
         let no_use_system_ca = args.flag(b"--no-use-system-ca");
         let store: Option<BunCAStore> = if use_bundled_ca {
             Some(BunCAStore::Bundled)

@@ -285,8 +285,6 @@ pub struct VirtualMachine {
 
     pub origin_timer: std::time::Instant,
     /// When THIS thread's loop started, for performance.eventLoopUtilization().
-    /// Not `origin_timer`, which is the process origin shared by every thread —
-    /// a worker's active time is measured from its own start.
     pub loop_start: std::time::Instant,
     pub(crate) origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
@@ -1529,10 +1527,6 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
-        // A TerminationException still pending after a worker terminate() has
-        // served its purpose (dispatch_on_exit skips 'exit' on it); clear it so
-        // the deferred tasks, cleanup hooks, and native->JS teardown callbacks
-        // below don't trip assertNoException. No-op for other exception kinds.
         self.global().clear_termination_exception();
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
@@ -2057,8 +2051,6 @@ fn get_origin_timestamp() -> u64 {
     (now - ORIGIN_RELATIVE_EPOCH).max(0) as u64
 }
 
-/// `performance.timeOrigin` is the PROCESS start time, shared by every thread (a worker's equals the
-/// main thread's in node). Captured once on the first VM so worker VMs inherit instead of restarting.
 fn process_origin() -> (std::time::Instant, u64) {
     static ORIGIN: std::sync::OnceLock<(std::time::Instant, u64)> = std::sync::OnceLock::new();
     *ORIGIN.get_or_init(|| (std::time::Instant::now(), get_origin_timestamp()))

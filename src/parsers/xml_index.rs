@@ -350,7 +350,10 @@ mod tests {
         let mut big: Vec<u16> = Vec::new();
         let mut i = 0;
         while big.len() < 5 * REFILL_INPUT {
-            big.extend(format!("<item id=\"{i}\" 名前='n'>\r\n\tテキスト {i} &amp; > z</item>\n").encode_utf16());
+            big.extend(
+                format!("<item id=\"{i}\" 名前='n'>\r\n\tテキスト {i} &amp; > z</item>\n")
+                    .encode_utf16(),
+            );
             i += 1;
         }
         let (si, ci) = build_both16(&big);

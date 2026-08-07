@@ -360,8 +360,7 @@ impl EncodedPattern {
                         while segment_start < path.len() {
                             let segment_end = strings::index_of_char_pos(path, b'/', segment_start)
                                 .unwrap_or(path.len());
-                            // An empty segment (double slash) never matches,
-                            // same as the Param arm.
+                            // An empty segment (double slash) never matches.
                             if segment_start == segment_end {
                                 return false;
                             }
@@ -1871,11 +1870,10 @@ impl JSFrameworkRouter {
     pub fn r#match(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let path_value = callframe.arguments_as_array::<1>()[0];
         let path = path_value.to_slice(global)?;
-        // match_slow requires an origin-form path; see the same guard in
-        // DevServer's server-side route lookup.
+        // match_slow requires an origin-form path.
         if path.slice().is_empty() || path.slice()[0] != b'/' {
             return Err(global.throw(format_args!(
-                "Invalid path \"{}\" it should be non-empty and start with a slash",
+                "Invalid path \"{}\": it should be non-empty and start with a slash",
                 bstr::BStr::new(path.slice())
             )));
         }

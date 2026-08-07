@@ -106,6 +106,9 @@ pub struct WebWorker {
     /// Heap-owned by this struct; freed in `destroy()`.
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
+    /// Parent VM's `initial_preload`, cloned at `create()` time so `spin()`
+    /// can seed the worker VM's own `initial_preload` for nested workers.
+    inherited_preloads: Vec<Box<[u8]>>,
     /// Owned NUL-terminated bytes.
     name: bun_core::ZBox,
 
@@ -514,8 +517,32 @@ impl WebWorker {
         let preload_modules: &[BunString] =
             unsafe { bun_core::ffi::slice(preload_modules_ptr, preload_modules_len) };
 
-        let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
-        for module in preload_modules {
+        // Inherit the parent VM's configured preloads (bunfig/CLI), skipped
+        // when the user passed an explicit `execArgv`: Node.js puts
+        // `--require` in `execArgv`, so overriding it is the opt-out.
+        let inherited_preloads: Vec<Box<[u8]>> = if inherit_exec_argv {
+            parent_ref.initial_preload.clone()
+        } else {
+            Vec::new()
+        };
+        let mut preloads: Vec<Box<[u8]>> =
+            Vec::with_capacity(inherited_preloads.len() + preload_modules_len);
+
+        // The node:worker_threads JS wrapper injects "node:worker_threads" as
+        // the first option preload so its bootstrap runs before user code;
+        // keep that sentinel first and splice inherited preloads in after it.
+        let mut option_preloads = preload_modules;
+        if let Some(first) = option_preloads.first() {
+            let first_slice = first.to_utf8();
+            if first_slice.slice() == b"node:worker_threads" {
+                preloads.push(first_slice.slice().to_vec().into_boxed_slice());
+                option_preloads = &option_preloads[1..];
+            }
+        }
+        // Inherited preloads run before user `{ preload: [...] }` entries so
+        // plugin registrations are in place for them.
+        preloads.extend(inherited_preloads.iter().cloned());
+        for module in option_preloads {
             let utf8_slice = module.to_utf8();
             // node: builtin specifiers skip the file resolver — the worker-side
             // module loader resolves them. Lets node:worker_threads run its
@@ -556,6 +583,7 @@ impl WebWorker {
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             preloads,
+            inherited_preloads,
             name: if name_str.is_empty() {
                 bun_core::ZBox::default()
             } else {
@@ -1045,6 +1073,11 @@ impl WebWorker {
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
         // `preload: Vec<Box<[u8]>>` — clone the boxes (cheap, ≤handful).
         vm.as_mut().preload.clone_from(&self.preloads);
+        // Seed `initial_preload` so workers spawned from this worker inherit
+        // the same bunfig/CLI preload list the main thread saw.
+        vm.as_mut()
+            .initial_preload
+            .clone_from(&self.inherited_preloads);
 
         // Resolve the entry point on the worker thread (the parent only stored
         // the raw specifier). The returned slice is BORROWED — every exit from

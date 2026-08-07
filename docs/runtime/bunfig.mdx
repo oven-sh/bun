@@ -32,6 +32,8 @@ An array of scripts/plugins to execute before running a file or script.
 preload = ["./preload.ts"]
 ```
 
+These scripts also run inside every `Worker` the process creates, so `Bun.plugin` loaders registered here work in worker code. Guard one-time setup with `if (Bun.isMainThread) { ... }`.
+
 ### `jsx`
 
 Configure how Bun handles JSX. You can also set these fields in the `compilerOptions` of your `tsconfig.json`, but `bunfig.toml` supports them for non-TypeScript projects.

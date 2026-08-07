@@ -76,6 +76,8 @@ const worker = new Worker("./worker.ts", {
 });
 ```
 
+Preloads configured via `bunfig.toml` or the `--preload` / `--require` / `--import` CLI flags are automatically inherited by every worker, so `Bun.plugin` registrations made there are available in worker code too. Guard side effects that should only run once with `if (Bun.isMainThread) { ... }`, or pass `execArgv: []` when constructing the worker to opt out of inherited preloads entirely.
+
 ### `blob:` URLs
 
 You can also pass a `blob:` URL to `Worker` to create a worker from a string or other in-memory source.

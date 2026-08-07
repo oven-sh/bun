@@ -182,6 +182,10 @@ pub struct VirtualMachine {
     /// threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
+    /// Immutable snapshot of the configured preloads (bunfig + CLI), for
+    /// `WebWorker::create` to copy into child workers. Set once on the
+    /// owning thread before any worker spawns, never mutated afterwards.
+    pub initial_preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
     /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
@@ -2144,6 +2148,7 @@ impl VirtualMachine {
             // their validity invariants even when len/cap are 0. Write the
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
+            addr_of_mut!((*vm).initial_preload).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
@@ -2281,6 +2286,33 @@ impl VirtualMachine {
     #[inline]
     pub fn set_main(&mut self, path: &[u8]) {
         self.main = bun_ptr::RawSlice::new(path);
+    }
+
+    /// Snapshot `self.preload` into `self.initial_preload` for worker
+    /// inheritance. `./` / `../` entries are joined against the startup
+    /// `top_level_dir` so a later `process.chdir()` does not break resolution.
+    pub fn seed_initial_preload(&mut self) {
+        use bun_paths::{
+            is_absolute, is_package_path_not_absolute, path_buffer_pool, resolve_path,
+        };
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        self.initial_preload = self
+            .preload
+            .iter()
+            .map(|p| {
+                if is_absolute(p) || is_package_path_not_absolute(p) {
+                    return p.clone();
+                }
+                let mut buf = path_buffer_pool::get();
+                resolve_path::join_abs_string_buf::<resolve_path::platform::Auto>(
+                    top_level_dir,
+                    &mut buf[..],
+                    &[p],
+                )
+                .to_vec()
+                .into_boxed_slice()
+            })
+            .collect();
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
@@ -4417,6 +4449,7 @@ impl VirtualMachine {
         // time and `load_preloads` clears the boxes but keeps the Vec buffer,
         // so reclaim it here or every Worker leaks it.
         drop(core::mem::take(&mut self.preload));
+        drop(core::mem::take(&mut self.initial_preload));
 
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
         // `transpiler` is never auto-dropped after `deinit` clears its fields.

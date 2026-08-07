@@ -126,6 +126,10 @@ pub struct WebWorker {
     /// Set by the parent (`notifyNeedTermination`) or by the worker itself
     /// (`exit`). The worker loop polls this between ticks.
     requested_terminate: AtomicBool,
+    /// `requested_terminate` is also set by worker-side paths (uncaught
+    /// exception, process.exit). `shutdown()` uses this to know the request
+    /// came from the parent's `terminate()` so it can report exit code 1.
+    terminate_from_parent: AtomicBool,
 
     /// The worker's `jsc.VirtualMachine`, or null before `startVM()` / after
     /// `shutdown()` nulls it. Lives inside `arena`. `vm_lock` must be held for
@@ -361,6 +365,7 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
             let w = bun_ptr::ParentRef::from(nn);
             // live_workers::MUTEX held; list links written only under it.
             it = w.live_next.get();
+            w.terminate_from_parent.store(true, Ordering::Release);
             if w.requested_terminate.swap(true, Ordering::Release) {
                 continue;
             }
@@ -564,6 +569,7 @@ impl WebWorker {
             live_next: Cell::new(core::ptr::null_mut()),
             live_prev: Cell::new(core::ptr::null_mut()),
             requested_terminate: AtomicBool::new(false),
+            terminate_from_parent: AtomicBool::new(false),
             vm: Cell::new(core::ptr::null_mut()),
             vm_lock: Mutex::new(),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
@@ -692,6 +698,7 @@ impl WebWorker {
         // Only atomic / lock-guarded fields are touched cross-thread; never
         // `&mut WebWorker`.
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        this.terminate_from_parent.store(true, Ordering::Release);
         if this.set_requested_terminate() {
             return;
         }
@@ -1220,6 +1227,7 @@ impl WebWorker {
     /// closure — see the note at the bottom of this fn.
     fn shutdown(&self) {
         jsc::mark_binding();
+        let was_running = self.status.get() == Status::Running;
         self.set_status(Status::Terminated);
         bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
         log!("[{}] shutdown", self.execution_context_id);
@@ -1252,6 +1260,15 @@ impl WebWorker {
             // clear it so process.on('exit') handlers can run. teardownJSCVM
             // re-sets it for the JSC VM teardown.
             vm.jsc_vm().clear_has_termination_request();
+            // Node's terminate() resolves to 1 when it interrupts a running
+            // worker. Not requested_terminate: a worker-side uncaught sets that
+            // too after the user's exit handler may rewrite process.exitCode.
+            if was_running
+                && self.terminate_from_parent.load(Ordering::Acquire)
+                && !self.exit_called.load(Ordering::Relaxed)
+            {
+                vm.exit_handler.exit_code = 1;
+            }
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
@@ -1496,6 +1513,108 @@ impl WebWorker {
     }
 }
 
+/// Convert build/resolve diagnostics into a `SyntaxError` that survives
+/// `dispatchErrorWithValue`'s structured clone. The in-process shapes
+/// (`BuildMessage`, `AggregateError` of `BuildMessage`s) do not: `BuildMessage`
+/// is not cloneable, and the Error clone path drops `AggregateError.errors`,
+/// so the parent used to see a bare `Error("N errors building ...")` with no
+/// diagnostic text, file, or position.
+///
+/// The returned `SyntaxError` (matching Node) carries every diagnostic in its
+/// message as `text (file:line:col)`, plus an enumerable `.errors` array of
+/// plain `{message, position}` objects so the parent can access each
+/// diagnostic programmatically. Both ride across the thread boundary via
+/// `dispatchErrorWithValue`'s own-properties serialization.
+fn build_msgs_to_worker_error(
+    msgs: &[bun_ast::Msg],
+    global: &JSGlobalObject,
+) -> jsc::JsResult<JSValue> {
+    use core::fmt::Write as _;
+    debug_assert!(!msgs.is_empty());
+
+    let mut message = std::string::String::with_capacity(128);
+    for (i, msg) in msgs.iter().enumerate() {
+        if i > 0 {
+            message.push('\n');
+        }
+        let _ = write!(message, "{}", bstr::BStr::new(&msg.data.text));
+        if let Some(loc) = &msg.data.location {
+            let _ = write!(
+                message,
+                " ({}:{}:{})",
+                bstr::BStr::new(&loc.file),
+                loc.line,
+                loc.column,
+            );
+        }
+    }
+
+    let err = global.create_syntax_error_instance(format_args!("{}", message));
+
+    let errors = JSValue::create_array_from_iter(global, msgs.iter(), |msg| {
+        let entry = JSValue::create_empty_object(global, 2);
+        entry.put(
+            global,
+            b"message",
+            jsc::bun_string_jsc::create_utf8_for_js(global, &msg.data.text)?,
+        );
+        entry.put(
+            global,
+            b"position",
+            jsc::BuildMessage::generate_position_object(msg, global),
+        );
+        Ok(entry)
+    })?;
+    err.put(global, b"errors", errors);
+
+    Ok(err)
+}
+
+/// If `value` is a `BuildMessage` or an `AggregateError` that contains only
+/// `BuildMessage` entries (the shape the module loader produces on parse
+/// failure), return the cloneable `SyntaxError` built from those diagnostics.
+/// `ResolveMessage`s are not rewritten: a module-not-found error is not a
+/// syntax error, and `#onError` in `node:worker_threads` already reshapes the
+/// entry-point ModuleNotFound into Node's `MODULE_NOT_FOUND`.
+fn maybe_build_error_to_worker_error(
+    value: JSValue,
+    global: &JSGlobalObject,
+) -> jsc::JsResult<Option<JSValue>> {
+    let extract_build_msg = |v: JSValue| -> Option<bun_ast::Msg> {
+        v.as_::<crate::BuildMessage>().map(|bm| {
+            // SAFETY: `as_` returned a live `BuildMessage` cell; read-only on
+            // the worker (JS) thread that owns it.
+            unsafe { (*bm).msg.clone() }
+        })
+    };
+
+    if let Some(msg) = extract_build_msg(value) {
+        return Ok(Some(build_msgs_to_worker_error(&[msg], global)?));
+    }
+
+    if value.is_aggregate_error(global) {
+        let errors = value.get_errors_property(global);
+        if errors.is_array() {
+            let len = errors.get_length(global)? as u32;
+            if len > 0 {
+                let mut msgs: Vec<bun_ast::Msg> = Vec::with_capacity((len as usize).min(16));
+                for i in 0..len {
+                    let entry = errors.get_index(global, i)?;
+                    match extract_build_msg(entry) {
+                        Some(m) => msgs.push(m),
+                        // Not a loader-produced parse aggregate; let the
+                        // generic own-properties path handle it.
+                        None => return Ok(None),
+                    }
+                }
+                return Ok(Some(build_msgs_to_worker_error(&msgs, global)?));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 fn on_unhandled_rejection(
     vm: &mut VirtualMachine,
     global_object: &JSGlobalObject,
@@ -1508,15 +1627,16 @@ fn on_unhandled_rejection(
         .to_error()
         .unwrap_or(error_instance_or_exception);
 
-    // A parse failure rejects with a BuildMessage, which doesn't survive structured
-    // clone. Node reports a SyntaxError; build a real one from the formatted parse
-    // error so the subtype reaches the parent intact.
-    if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
-        // SAFETY: as_ returned a live BuildMessage cell, read-only on the
-        // worker (JS) thread that owns it.
-        let text = unsafe { (*bm).msg.data.text.clone() };
-        error_instance =
-            global_object.create_syntax_error_instance(format_args!("{}", bstr::BStr::new(&text)));
+    // A parse failure rejects with a BuildMessage (or an AggregateError of
+    // them), neither of which survives the structured clone in
+    // dispatchErrorWithValue. Convert to a cloneable SyntaxError so the
+    // subtype and every diagnostic (text + file:line:col) reach the parent.
+    match maybe_build_error_to_worker_error(error_instance, global_object) {
+        Ok(Some(converted)) => error_instance = converted,
+        Ok(None) => {}
+        Err(_) => {
+            let _ = global_object.try_take_exception();
+        }
     }
 
     let mut array: Vec<u8> = Vec::new();

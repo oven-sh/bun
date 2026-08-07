@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -345,19 +345,21 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
+// The fixture's leak check needs six workers with 100 MiB of source each (see
+// the sizing note in the fixture); that takes about 30s on a debug+ASAN
+// build, well over the default per-test budget, hence the explicit one.
 test("eval does not leak source code", async () => {
-  const proc = Bun.spawn({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],
     env: bunEnv,
     cwd: __dirname,
     stderr: "pipe",
     stdout: "ignore",
   });
-  await proc.exited;
-  const errors = await proc.stderr.text();
+  const [errors, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   if (errors.length > 0) throw new Error(errors);
-  expect(proc.exitCode).toBe(0);
-});
+  expect(exitCode).toBe(0);
+}, 90_000);
 
 describe("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is
@@ -603,6 +605,301 @@ describe("error event", () => {
     const [err] = await once(worker, "error");
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
+  });
+
+  test("preserves own enumerable properties of the thrown Error", async () => {
+    const worker = new Worker(
+      /* js */ `
+      const err = new Error("boom");
+      err.code = "E_CUSTOM";
+      err.errno = -2;
+      err.extra = { path: "/tmp/x", n: 42 };
+      throw err;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("boom");
+    // Own properties must survive the thread boundary so pool libraries can
+    // switch on err.code / err.errno like they do in Node.
+    expect(err.code).toBe("E_CUSTOM");
+    expect(err.errno).toBe(-2);
+    expect(err.extra).toEqual({ path: "/tmp/x", n: 42 });
+  });
+
+  test("preserves the error's own name", async () => {
+    const worker = new Worker(
+      /* js */ `
+      class CustomError extends Error {
+        constructor(msg) { super(msg); this.name = "CustomError"; this.code = "E_SUB"; }
+      }
+      throw new CustomError("boom");`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe("CustomError");
+    expect(err.code).toBe("E_SUB");
+  });
+
+  // Node's internal/error_serdes.js materializes `name` as an own property of
+  // the parent-side error and never exposes JSC's line/column/sourceURL. The
+  // expected objects were taken verbatim from Node v26.3.0.
+  test.each([
+    [
+      "Error with custom props",
+      `const e = new Error("boom"); e.code = "E_CUSTOM"; e.extra = { foo: 42 }; throw e;`,
+      { own: ["code", "extra", "message", "name", "stack"], name: "Error", nameIsEnumerable: false },
+    ],
+    [
+      "built-in subclass",
+      `throw new TypeError("boom")`,
+      { own: ["message", "name", "stack"], name: "TypeError", nameIsEnumerable: false },
+    ],
+    [
+      "own enumerable name set by the constructor",
+      `class C extends Error { constructor(m) { super(m); this.name = "CustomError"; this.code = "E_SUB"; } } throw new C("boom");`,
+      { own: ["code", "message", "name", "stack"], name: "CustomError", nameIsEnumerable: true },
+    ],
+  ])("matches Node's own-key set: %s", async (_label, source, expected) => {
+    const worker = new Worker(source, { eval: true });
+    const [err] = await once(worker, "error");
+    expect({
+      own: Object.getOwnPropertyNames(err).sort(),
+      name: err.name,
+      nameIsEnumerable: Object.prototype.propertyIsEnumerable.call(err, "name"),
+    }).toEqual(expected);
+  });
+
+  // Bun's internal error codes (and any user class that puts `code` on a
+  // prototype) only expose `code` through the prototype chain; Node's
+  // internal/error_serdes.js walks the chain and materializes what it finds
+  // as own properties. The expected object is Node v26.3.0's output verbatim.
+  test("materializes a prototype-chain `code` as an own property, like Node", async () => {
+    const worker = new Worker(
+      /* js */ `
+      class AppErr extends Error {}
+      AppErr.prototype.code = "E_PROTO_CODE";
+      const err = new AppErr("boom");
+      err.own = 1;
+      throw err;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect({
+      isError: err instanceof Error,
+      name: err.name,
+      code: err.code,
+      own: err.own,
+      ownKeys: Object.getOwnPropertyNames(err).sort(),
+      codeIsEnumerable: Object.prototype.propertyIsEnumerable.call(err, "code"),
+    }).toEqual({
+      isError: true,
+      name: "Error",
+      code: "E_PROTO_CODE",
+      own: 1,
+      ownKeys: ["code", "message", "name", "own", "stack"],
+      codeIsEnumerable: true,
+    });
+  });
+
+  test("drops non-cloneable own properties instead of losing the whole error", async () => {
+    const worker = new Worker(
+      /* js */ `
+      const err = new Error("boom");
+      err.code = "E_FN";
+      err.fn = () => {};
+      throw err;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("boom");
+    expect(err.code).toBe("E_FN");
+    expect(err.fn).toBeUndefined();
+  });
+
+  test("preserves integer-indexed own properties on the thrown Error", async () => {
+    const worker = new Worker(
+      /* js */ `
+      const err = new Error("boom");
+      err[0] = "zero";
+      err[2] = "two";
+      err.code = "E_IDX";
+      throw err;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("boom");
+    expect(err.code).toBe("E_IDX");
+    expect(err[0]).toBe("zero");
+    expect(err[2]).toBe("two");
+  });
+
+  test("a non-cloneable prototype `name` does not cost the error its own properties", async () => {
+    const worker = new Worker(
+      /* js */ `
+      class E extends Error {}
+      E.prototype.name = new WeakMap();
+      const err = new E("boom");
+      err.code = "E_PROTO";
+      throw err;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    // The pathological prototype name must never sink the [error, props]
+    // serialization: the parent still gets a real Error and its own props.
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("boom");
+    expect(err.code).toBe("E_PROTO");
+    expect(err.name).toBe("Error");
+  });
+
+  test("still delivers an Error instance when own props include a WeakMap", async () => {
+    const worker = new Worker(
+      /* js */ `
+      const err = new Error("boom");
+      err.code = "E_WEAK";
+      err.cache = new WeakMap();
+      throw err;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    // The WeakMap sinks the own-props clone; the error itself must still
+    // round-trip as an Error instance rather than falling back to a string.
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("boom");
+    expect(err.cache).toBeUndefined();
+  });
+
+  test("passes non-Error thrown objects through unchanged", async () => {
+    const worker = new Worker(`throw { code: "E_PLAIN", msg: "plain" };`, { eval: true });
+    const [err] = await once(worker, "error");
+    expect(err).toEqual({ code: "E_PLAIN", msg: "plain" });
+  });
+
+  test("passes thrown primitives through unchanged", async () => {
+    const worker = new Worker(`throw 42;`, { eval: true });
+    const [err] = await once(worker, "error");
+    expect(err).toBe(42);
+  });
+
+  test("passes thrown arrays through unchanged", async () => {
+    const worker = new Worker(`throw [1, "two", { three: 3 }];`, { eval: true });
+    const [err] = await once(worker, "error");
+    expect(err).toEqual([1, "two", { three: 3 }]);
+  });
+
+  // A worker module that fails to parse rejects worker-side with a BuildMessage
+  // (one error) or an AggregateError of them (several). Neither survives
+  // structured clone, so the parent used to see a bare
+  // Error("N errors building ...") with every diagnostic gone. Node delivers a
+  // SyntaxError naming the first diagnostic; Bun now delivers a SyntaxError
+  // whose message joins every diagnostic with its file:line:col and carries a
+  // structured-clone-safe `errors` array.
+  describe("module parse errors", () => {
+    test("surface as a SyntaxError with every diagnostic and location, not a bare summary", async () => {
+      using dir = tempDir("worker-parse-err", {
+        "w.mjs": "let x = 1; let x = 2;\nconst y = ;\n",
+      });
+      const file = join(String(dir), "w.mjs");
+      const worker = new Worker(file);
+      const [err] = await once(worker, "error");
+
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.name).toBe("SyntaxError");
+      expect(err.message).not.toMatch(/^\d+ errors building/);
+      expect(err.message).toContain("already been declared");
+      expect(err.message).toContain("Unexpected");
+      // Each diagnostic carries file:line:col in the joined message.
+      expect(err.message).toContain(`${file}:1:`);
+      expect(err.message).toContain(`${file}:2:`);
+      // The per-diagnostic data is exposed as a cloneable array so the parent
+      // can act on each diagnostic programmatically (text + position).
+      expect(err.errors).toHaveLength(2);
+      expect(err.errors[0]).toEqual({
+        message: expect.stringContaining("already been declared"),
+        position: expect.objectContaining({ file, line: 1 }),
+      });
+      expect(err.errors[1]).toEqual({
+        message: expect.stringContaining("Unexpected"),
+        position: expect.objectContaining({ file, line: 2 }),
+      });
+    });
+
+    test("single parse error also surfaces as a located SyntaxError", async () => {
+      using dir = tempDir("worker-parse-err-1", {
+        "w.mjs": "const y = ;\n",
+      });
+      const file = join(String(dir), "w.mjs");
+      const worker = new Worker(file);
+      const [err] = await once(worker, "error");
+
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toContain("Unexpected");
+      expect(err.message).toContain(`${file}:1:`);
+      expect(err.errors).toHaveLength(1);
+      expect(err.errors[0].position).toEqual(expect.objectContaining({ file, line: 1 }));
+    });
+
+    test("the same shape reaches the parent for an eval worker", async () => {
+      const worker = new Worker("let x = 1; let x = 2; const y = ;", { eval: true });
+      const [err] = await once(worker, "error");
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).not.toMatch(/^\d+ errors building/);
+      expect(err.errors).toHaveLength(2);
+      expect(err.errors[0].message).toContain("already been declared");
+    });
+  });
+});
+
+describe("terminate()", () => {
+  test("resolves with exit code 1 for a running worker", async () => {
+    const worker = new Worker(`setInterval(() => {}, 1e9)`, { eval: true });
+    await once(worker, "online");
+    const code = await worker.terminate();
+    expect(code).toBe(1);
+  });
+
+  test("emits exit event with code 1 for a terminated worker", async () => {
+    const worker = new Worker(`setInterval(() => {}, 1e9)`, { eval: true });
+    await once(worker, "online");
+    const exitP = once(worker, "exit");
+    await worker.terminate();
+    const [code] = await exitP;
+    expect(code).toBe(1);
+  });
+
+  test("process.exit() in the worker wins over terminate()'s exit code", async () => {
+    const worker = new Worker(`process.exit(7)`, { eval: true });
+    const [code] = await once(worker, "exit");
+    expect(code).toBe(7);
+  });
+
+  test("resolves with undefined when the worker has already exited", async () => {
+    const worker = new Worker(`/* empty */`, { eval: true });
+    await once(worker, "exit");
+    const code = await worker.terminate();
+    expect(code).toBeUndefined();
+  });
+
+  test("resolves when called repeatedly after exit", async () => {
+    const worker = new Worker(`/* empty */`, { eval: true });
+    await once(worker, "exit");
+    // Before the fix the falsy exit code 0 fell through and awaited a close
+    // event that will never fire again, hanging forever.
+    expect(await worker.terminate()).toBeUndefined();
+    expect(await worker.terminate()).toBeUndefined();
+    expect(await worker.terminate()).toBeUndefined();
+  });
+
+  test("concurrent terminate() calls share the same resolution", async () => {
+    const worker = new Worker(`setInterval(() => {}, 1e9)`, { eval: true });
+    await once(worker, "online");
+    const [a, b] = await Promise.all([worker.terminate(), worker.terminate()]);
+    expect(a).toBe(1);
+    expect(b).toBe(1);
   });
 });
 

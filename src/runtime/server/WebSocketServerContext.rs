@@ -93,10 +93,11 @@ impl Handler {
             return;
         }
 
-        let _ =
-            VirtualMachine::get()
-                .as_mut()
-                .uncaught_exception(global_object, error_value, false);
+        let _ = VirtualMachine::get().as_mut().uncaught_exception(
+            global_object,
+            error_value,
+            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+        );
     }
 
     pub fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {

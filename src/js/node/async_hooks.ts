@@ -33,6 +33,8 @@ function sameValue(a, b) {
   return a !== a && b !== b;
 }
 
+let domainActiveGetter: (() => any) | null = null;
+
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
   // undefined is OK
@@ -376,6 +378,19 @@ class AsyncResource {
     this.type = type;
     this.#snapshot = get();
     this.#triggerAsyncId = triggerAsyncId;
+
+    if (domainActiveGetter !== null) {
+      const domain = domainActiveGetter();
+      if (domain != null) {
+        Object.defineProperty(this, "domain", {
+          __proto__: null,
+          configurable: true,
+          enumerable: false,
+          value: domain,
+          writable: true,
+        });
+      }
+    }
   }
 
   emitBefore() {
@@ -614,6 +629,8 @@ const asyncWrapProviders = {
   INSPECTORJSBINDING: 57,
 };
 
+const kSetDomainActiveGetter = Symbol.for("::bunternal::async_hooks.setDomainActiveGetter");
+
 export default {
   AsyncLocalStorage,
   createHook,
@@ -622,4 +639,7 @@ export default {
   executionAsyncResource,
   asyncWrapProviders,
   AsyncResource,
+  [kSetDomainActiveGetter](fn: () => any) {
+    domainActiveGetter = fn;
+  },
 };

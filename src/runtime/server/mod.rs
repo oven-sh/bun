@@ -1410,7 +1410,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     (*vm).uncaught_exception(
                         global,
                         *err,
-                        matches!(http_result, HttpResult::Rejection(_)),
+                        if matches!(http_result, HttpResult::Rejection(_)) {
+                            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Rejection
+                        } else {
+                            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception
+                        },
                     )
                 };
 

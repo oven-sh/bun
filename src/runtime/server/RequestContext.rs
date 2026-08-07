@@ -222,6 +222,7 @@ where
 // stream handling, error handling.
 use bun_collections::VecExt;
 use bun_core::Output;
+use bun_core::strings;
 use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
 use bun_paths::PathBuffer;
@@ -3899,10 +3900,7 @@ where
             // we may not know the content-type when streaming
             && (!blob.is_detached()
                 || content_type.value.as_ptr() != bun_http_types::MimeType::OTHER.value.as_ptr())
-            && !content_type
-                .value
-                .iter()
-                .any(|&b| matches!(b, b'\r' | b'\n' | 0))
+            && !strings::contains_any(&content_type.value, b"\r\n\0")
         {
             resp.write_header(b"content-type", &content_type.value);
         }
@@ -3925,10 +3923,7 @@ where
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
-                    if !truncated
-                        .iter()
-                        .any(|&b| matches!(b, b'\r' | b'\n' | 0 | b'"'))
-                    {
+                    if !strings::contains_any(truncated, b"\r\n\0\"") {
                         let header_value = {
                             let mut w = &mut filename_buf[..];
                             if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {

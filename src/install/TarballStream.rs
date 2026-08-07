@@ -23,7 +23,6 @@ use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::VecExt;
-#[cfg(windows)]
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
@@ -1464,7 +1463,7 @@ fn make_symlink(
         let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
         let target_bytes = target.as_bytes();
         let mut seen_named_component = false;
-        for component in target_bytes.split(|c| *c == b'/') {
+        for component in strings::split(target_bytes, b"/") {
             match component {
                 b"" | b"." => {}
                 b".." => {

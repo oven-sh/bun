@@ -574,14 +574,12 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
         return false;
     }
 
-    for component in name.split(|&c| c == b'/') {
+    for component in strings::split(name, b"/") {
         if component.is_empty() || component == b"." || component == b".." {
             return false;
         }
-        for &c in component {
-            if c == b'\\' || c == b':' || c == 0 {
-                return false;
-            }
+        if strings::contains_any(component, b"\\:\0") {
+            return false;
         }
     }
 

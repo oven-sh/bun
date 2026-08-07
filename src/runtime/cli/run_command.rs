@@ -3096,10 +3096,7 @@ const EVAL_TRIGGER: &[u8] = b"/[eval]";
 /// embedding in a double-quoted JS string literal. Used by the cron-execution
 /// wrapper script to inline the entry path and cron period.
 fn escape_for_js_string(input: &[u8]) -> Vec<u8> {
-    if !input
-        .iter()
-        .any(|&c| matches!(c, b'\\' | b'"' | b'\n' | b'\r' | b'\t'))
-    {
+    if !strings::contains_any(input, b"\\\"\n\r\t") {
         return input.to_vec();
     }
     let mut result: Vec<u8> = Vec::with_capacity(input.len() + 16);
@@ -3943,9 +3940,7 @@ impl BunXFastPath {
 
         // Trigger quoting only on
         // space/tab/quote — compare the FULL u16, not the truncated low byte.
-        let needs_quote = warg
-            .iter()
-            .any(|&c| c == b' ' as u16 || c == b'\t' as u16 || c == b'"' as u16);
+        let needs_quote = strings::index_of_any16(warg, bun_core::w!(" \t\"")).is_some();
 
         if !needs_quote {
             buffer[..warg.len()].copy_from_slice(warg);
@@ -3953,7 +3948,7 @@ impl BunXFastPath {
         }
 
         // Fast path: no embedded `"`/`\` → simple wrap.
-        let has_quote_or_backslash = warg.iter().any(|&c| c == b'"' as u16 || c == b'\\' as u16);
+        let has_quote_or_backslash = strings::index_of_any16(warg, bun_core::w!("\"\\")).is_some();
         if !has_quote_or_backslash {
             buffer[0] = b'"' as u16;
             buffer[1..1 + warg.len()].copy_from_slice(warg);

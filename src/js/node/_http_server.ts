@@ -663,9 +663,6 @@ Server.prototype.listen = function () {
 
     if (cluster === undefined) cluster = require("node:cluster");
 
-    // Named so every failure path can unregister it: a dangling once-listener
-    // from a failed listen() would fire again on a later retry's success and
-    // notify the primary twice with this call's captured port/host.
     const notifyListening = () => {
       cluster.worker.state = "listening";
       const address = server.address();
@@ -700,8 +697,6 @@ Server.prototype.listen = function () {
         return this;
       }
 
-      // Bun-specific: workers self-bind with SO_REUSEPORT; the primary probe-binds
-      // to surface EADDRINUSE like Node's listenInCluster->queryServer path.
       const askPrimary = typeof port === "number" && port > 0 && !socketPath && process.connected;
       if (askPrimary) {
         cluster._sendInternal(
@@ -764,7 +759,6 @@ function onProbePortReply(server, notifyListening, tls, port, host, socketPath, 
     server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
   } catch (err) {
     server.removeListener("listening", notifyListening);
-    // Release the primary's claim now; a server that never listened owes no close().
     server[kClusterProbeKey] = undefined;
     cluster._sendInternal({ act: "close", key: reply.key });
     server.emit("error", err);

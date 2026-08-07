@@ -475,11 +475,6 @@ const child = fork('child.js');
 
 child.on('message', m => {
   if (m !== 'ready') return;
-  // 8MB per message: far beyond what one synchronous write can hand to the
-  // kernel, so all three sends still sit (at least partly) in the send
-  // queue when the SIGKILL lands in this same tick. Node settles accepted
-  // plain sends with null even when the peer dies before reading them
-  // (req.oncomplete ignores the write status); none may be dropped.
   const big = Buffer.alloc(8 * 1024 * 1024, 'x').toString();
   const results = [];
   const total = 3;
@@ -523,9 +518,6 @@ const child = fork('child.js');
 const server = net.createServer();
 server.listen(0, '127.0.0.1', () => {
   let a = 'nocall', h = 'nocall';
-  // 8MB plain write saturates the pipe, so the handle send below is still
-  // queued (never written, no ack pending) when the SIGKILL lands. Node
-  // settles both callbacks with null in this shape (verified v26.3.0).
   const big = Buffer.alloc(8 * 1024 * 1024, 'x').toString();
   child.send(big, err => { a = err === null ? 'null' : err.code; });
   child.send('withhandle', server, err => { h = err === null ? 'null' : err.code; });
@@ -569,8 +561,6 @@ child.on('message', m => {
   child.kill();
   process.exit(0);
 });
-// Watchdog: a dropped handle leaves both sides waiting with no observable
-// signal; fail with a diagnostic instead of hanging the test runner.
 setTimeout(() => { console.log('RESULT:timeout'); process.exit(1); }, 10000);
 `,
       "child.js": `
@@ -631,8 +621,6 @@ setInterval(() => {}, 1 << 30);
         stderr: "pipe",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
-      // Same routing as real node: the NODE_-prefixed message fires
-      // 'internalMessage' on the child handle; the other one is a normal message.
       expect(JSON.parse(stdout.trim())).toEqual([
         ["internalMessage", { cmd: "NODE_CLUSTER", x: 1 }],
         ["message", { cmd: "OTHER", y: 2 }],

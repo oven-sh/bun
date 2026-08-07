@@ -1122,8 +1122,6 @@ class ChildProcess extends EventEmitter {
       this.exitCode = exitCode;
     }
 
-    // Detach stdin pumps first: leftover data in the user stream must stay
-    // readable by whoever picks the stream up after 'exit' fires.
     const stdinPumps = this.#stdinPumps;
     if (stdinPumps !== undefined) {
       this.#stdinPumps = undefined;
@@ -1303,9 +1301,6 @@ class ChildProcess extends EventEmitter {
   #stdinPumps;
   #stdoutPumps;
 
-  // Pump data between fd-less user streams and the pipes the child was
-  // spawned with. Like node's 'wrap' stdio, the position reads as null on
-  // this.stdio/stdin/stdout/stderr.
   #wireWrappedStdio(wrappedStdio) {
     const handle = this.#handle;
     for (let j = 0; j < wrappedStdio.length; j += 2) {
@@ -1321,9 +1316,6 @@ class ChildProcess extends EventEmitter {
           continue;
         }
         stream.pipe(writable);
-        // A source dying without 'end' ('error', or destroy -> 'close') would
-        // never EOF the child's stdin; end the sink so stdin-draining children
-        // can exit. An errorless emitClose:false destroy is not observable.
         const endSinkOnSourceDeath = function endSinkOnSourceDeath() {
           if (!writable.destroyed && !writable.writableEnded) writable.end();
         };
@@ -1335,14 +1327,9 @@ class ChildProcess extends EventEmitter {
         if (!source) continue;
         const readable = require("internal/streams/native-readable").constructNativeReadable(source, {});
         readable.on("error", swallowStreamError);
-        // Hold 'close' until the pump drained what the child wrote, then
-        // pump into the user stream; it may be shared, so never end it here.
         this.#closesNeeded++;
         readable.once("close", this.#maybeClose.bind(this));
         readable.pipe(stream, { end: false });
-        // Every pipe-cleanup path (dest error/close, source end) funnels
-        // through src.unpipe(dest); destroy the pump there so its 'close'
-        // always balances #closesNeeded.
         stream.on("unpipe", function destroyPumpOnUnpipe(src) {
           if (src === readable) {
             stream.removeListener("unpipe", destroyPumpOnUnpipe);
@@ -1421,8 +1408,6 @@ class ChildProcess extends EventEmitter {
 
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio, true);
-    // Positions holding an fd-less stream spawn as a plain pipe; the user
-    // stream is pumped into/out of that pipe after spawn (#wireWrappedStdio).
     let wrappedStdio;
     for (let i = 0; i < bunStdio.length; i++) {
       const wrapped = bunStdio[i]?.[kWrappedStdioStream];
@@ -1460,9 +1445,6 @@ class ChildProcess extends EventEmitter {
     const detachedOption = options.detached;
     this.#stdioOptions = bunStdio;
     if (wrappedStdio !== undefined) {
-      // Mark wrapped positions up front so the getters read null (node's
-      // 'wrap' semantics) on the deferred-spawn-error path too; Bun.spawn
-      // still sees "pipe" in bunStdio.
       this.#stdioOptions = bunStdio.slice();
       for (let j = 0; j < wrappedStdio.length; j += 2) this.#stdioOptions[wrappedStdio[j]] = "wrapped";
     }
@@ -1535,8 +1517,6 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
-        // Lets the IPC receive path (builtins/Ipc.ts parseHandle) find this
-        // wrapper from the subprocess to register received socket lists on it.
         require("internal/socket_list").setChannelOwner(this.#handle, this);
         Object.defineProperty(this, "_channel", {
           get() {
@@ -1607,8 +1587,6 @@ class ChildProcess extends EventEmitter {
     }
 
     if (handle !== undefined && handle !== null) {
-      // serialize() (builtins/Ipc.ts) needs this ChildProcess for node's
-      // socket-tracking handleConversion; hand it over out-of-band.
       options = { ...options, "$target": this };
     }
 
@@ -1782,8 +1760,6 @@ function isInternalIpcMessage(message) {
 }
 
 function streamFdOf(item): number | undefined {
-  // fd -1 is the "no usable CRT fd" sentinel (Windows uv handles, closed
-  // streams); fall through to pumping rather than inheriting it.
   const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
   if (typeof itemFd === "number" && itemFd >= 0) return itemFd;
 
@@ -1805,9 +1781,6 @@ function streamFdOf(item): number | undefined {
 
 const kWrappedStdioStream = Symbol("wrappedStdioStream");
 
-// A stream with no resolvable fd can still be wired to the child after spawn
-// by pumping through a regular pipe, but only when it is backed by a native
-// source (subprocess pipe, socket handle) that node would accept as 'wrap'.
 function isPumpableStdioStream(item): boolean {
   if (item.$bunNativePtr) return true;
   if (item._handle !== null && typeof item._handle === "object") return true;
@@ -1836,9 +1809,6 @@ function nodeToBun(
     if (allowStreamWrap && isPumpableStdioStream(item)) return { [kWrappedStdioStream]: item };
     throw $ERR_INVALID_ARG_VALUE("stdio", item);
   }
-  // A handle-like object (Bun SocketListener, or a net.Server/Socket exposing
-  // one via _handle) shares its descriptor with the child, matching Node's
-  // getHandleWrapType path for `stdio: [..., server._handle, ...]`.
   if (typeof item === "object" && item !== null) {
     const fd = typeof item.fd === "number" ? item.fd : item._handle?.fd;
     if (typeof fd === "number" && fd >= 0) return fd;

@@ -908,9 +908,6 @@ JSC::Structure* createNodeHTTPServerSocketStructure(JSC::VM& vm, JSC::JSGlobalOb
 
 } // namespace Bun
 
-// do_send (ipc_host.rs): raw descriptor of a node:http server connection so a
-// net.Socket wrapping it can be sent over an IPC channel; -1 when the value is
-// not an open JSNodeHTTPServerSocket.
 extern "C" [[ZIG_EXPORT(nothrow)]] int64_t NodeHTTP__getServerSocketFd(JSC::EncodedJSValue value)
 {
     JSC::JSValue decoded = JSC::JSValue::decode(value);
@@ -920,9 +917,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] int64_t NodeHTTP__getServerSocketFd(JSC::Enco
     return (int64_t)us_socket_get_fd(socket->socket);
 }
 
-// Stops the sender-side read loop while a handle-send awaits its
-// NODE_HANDLE_ACK; unlike net.Socket handles there is no JS pause() on this
-// wrapper, so the IPC host calls this native form. No-op for non-http values.
 extern "C" [[ZIG_EXPORT(nothrow)]] void NodeHTTP__pauseServerSocket(JSC::EncodedJSValue value)
 {
     JSC::JSValue decoded = JSC::JSValue::decode(value);

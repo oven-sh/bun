@@ -294,7 +294,6 @@ impl<const SSL: bool> App<SSL> {
         fd: i32,
         options: i32,
     ) {
-        // Callers supply the C-ABI shim directly.
         // SAFETY: self is a valid app; fd is an adopted descriptor owned by the caller.
         unsafe {
             c::uws_app_listen_fd(

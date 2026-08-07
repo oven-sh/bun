@@ -1596,7 +1596,6 @@ function Socket(options?) {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
-  // -1 = do not adopt; otherwise the validated fd to attach at the end of the ctor.
   let adoptFd = -1;
   if (options?.fd !== undefined) {
     const { fd } = options;
@@ -1640,7 +1639,6 @@ function Socket(options?) {
       }
     } else if (options.readable === undefined && options.writable === undefined && fd > 0) {
       // Bare `new net.Socket({ fd })`: adopt pipes/sockets like Node's createHandle.
-      // Other fd types and fd 0 stay inert (non-regression with connect()'s truthy check).
       // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L424-L441
       let stats;
       try {
@@ -1648,7 +1646,6 @@ function Socket(options?) {
       } catch {
         stats = undefined;
       }
-      // Adopt after option validation so a later throw can't leak the handle.
       if (stats !== undefined && (stats.isFIFO() || stats.isSocket())) adoptFd = fd;
     }
   }
@@ -1781,8 +1778,6 @@ function Socket(options?) {
     this.blockList = optsBlockList;
   }
 
-  // Adopt after every option is validated; use the captured fd (not options.fd,
-  // whose getter could change) and forward pauseOnConnect since connect() resets it.
   if (adoptFd !== -1) {
     Socket.prototype.connect.$call(this, { fd: adoptFd, pauseOnConnect: this.pauseOnConnect });
   }
@@ -1916,8 +1911,6 @@ Socket.prototype.connect = function connect(...args) {
         // Always half-open natively; see kConnect.
         allowHalfOpen: true,
       }).catch(error => {
-        // The attach failed, so nothing owns this fd now. Drop the sentinel or a
-        // retry with the same fd would be silently skipped by the guard above.
         this[kAdoptedFd] = undefined;
         if (!this.destroyed) {
           this.emit("error", error);
@@ -2168,9 +2161,6 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
-  // Release the adopted-fd sentinel: the handle is going away, so a later
-  // connect() with the same fd number must attach again rather than be
-  // mistaken for the constructor's adoption.
   this[kAdoptedFd] = undefined;
   // Tear down a wrapped generic duplex with this socket: the native handle's
   // close only flushes close_notify and lets the wrapper drain; without an
@@ -3672,8 +3662,6 @@ Server.prototype.address = function address() {
 
 Server.prototype.getConnections = function getConnections(callback) {
   if (typeof callback !== "function") return this;
-  // Same live-workers guard as close() above: with _workers emptied the
-  // polling loop below would never invoke the callback.
   if (!this._usingWorkers || this._workers.length === 0) {
     //in Bun case we will never error on getConnections
     //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
@@ -3682,7 +3670,6 @@ Server.prototype.getConnections = function getConnections(callback) {
     return this;
   }
 
-  // Poll the processes this server's sockets were sent to, like node.
   function end(err, connections?) {
     process.nextTick(callback, err, connections);
   }
@@ -3872,8 +3859,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
-  // Invalidate the previous call's pending cluster reply, matching Node's
-  // Server.prototype.listen `_listeningId++`.
   this._listeningId++;
 
   if (onListen != null) {
@@ -4052,8 +4037,6 @@ Server.prototype[kRealListen] = function (
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
   if (nextTickListening) {
-    // Cluster-worker path: Node emits 'listening' on nextTick, ahead of any
-    // setImmediate scheduled from the same IPC reply.
     process.nextTick(emitListeningNextTick, this);
   } else {
     setTimeout(emitListeningNextTick, 1, this);
@@ -4204,8 +4187,6 @@ function listenInCluster(
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2080-L2102
   const listeningId = server._listeningId;
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, _reply) {
-    // A later listen() invalidated this reply; release the handle so the
-    // primary drops its round-robin entry (Node's listeningId check).
     if (listeningId !== server._listeningId) {
       handle?.close?.();
       return;
@@ -4271,8 +4252,6 @@ Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   handle[kClusterOwner] = this;
   handle.listen(backlog || 511);
   if (this._unref) this.unref();
-  // Cluster-worker path: Node emits 'listening' on nextTick, ahead of any
-  // setImmediate scheduled from the same IPC reply.
   process.nextTick(emitListeningNextTick, this);
 };
 

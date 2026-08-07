@@ -1486,9 +1486,6 @@ impl ServerConfig {
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));
         }
-        // `fd` is internal plumbing for node:http's listen({fd}), not public
-        // Bun.serve API: drop it unless the node:http shim built this config
-        // with TCP addressing, and refuse it without an HTTP/1 stack.
         if args.listen_fd.is_some() {
             if args.on_node_http_request.is_empty() || !matches!(args.address, Address::Tcp { .. })
             {

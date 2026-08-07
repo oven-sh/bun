@@ -255,9 +255,6 @@ mod advanced {
     const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
     // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
     const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
-    // v2 added `SerializedMessageWithBuffers`. The peer's advertised version is
-    // debug-logged, never consulted, so mixed-version pairs only break when a
-    // Buffer-bearing message actually crosses to a v1 peer.
     const VERSION: u32 = 2;
 
     #[repr(u8)]
@@ -534,8 +531,6 @@ mod json {
         let deserialized = match parsed {
             Ok(v) => v,
             Err(JsError::Thrown) | Err(JsError::Terminated) => {
-                // Don't erase a pending TerminationException - clearing it
-                // would resurrect a terminated worker's execution.
                 global_this.clear_exception_except_termination();
                 return Err(IPCDecodeError::InvalidFormat);
             }
@@ -2025,8 +2020,6 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
         Ok(Some(v)) if v.is_string() => v,
         Ok(_) => return None,
         Err(_) => {
-            // Don't erase a pending TerminationException — clearing it would
-            // resurrect a terminated worker's execution.
             global.clear_exception_except_termination();
             return None;
         }
@@ -2254,8 +2247,6 @@ fn handle_ipc_message(
                     }
                     Ok(_) => {}
                     Err(_) => {
-                        // See import_windows_socket_payload: never clear a
-                        // pending TerminationException.
                         global_this.clear_exception_except_termination();
                     }
                 }

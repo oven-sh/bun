@@ -3,8 +3,6 @@
 // the receiving process (NODE_SOCKET_* internal messages).
 const EventEmitter = require("node:events");
 
-// Matches node's ERR_CHILD_CLOSED_BEFORE_REPLY; the code is deliberately not
-// part of the ErrorCode.ts table (see the note in ErrorCode.rs).
 function ERR_CHILD_CLOSED_BEFORE_REPLY() {
   const err = new Error("Child closed before reply received");
   err.code = "ERR_CHILD_CLOSED_BEFORE_REPLY";
@@ -24,9 +22,6 @@ function getChannelOwner(subprocess) {
 
 function noop() {}
 
-// Node sends these through target._send(msg, undefined, swallowErrors). The
-// public send() with a noop callback routes failures to the callback (the
-// swallow behavior); without one they surface as an 'error' event, like node.
 function sendInternal(target, msg, swallowErrors) {
   if (!target.connected) return;
   target.send(msg, undefined, undefined, swallowErrors ? noop : undefined);
@@ -157,8 +152,6 @@ class SocketListReceive extends EventEmitter {
   }
 }
 
-// Node keeps these lists on worker[kChannelHandle].sockets; here they live
-// directly on the channel owner (ChildProcess or process) under a symbol.
 function getSocketList(type, worker, key) {
   const sockets = (worker[kChannelSockets] ??= { got: { __proto__: null }, send: { __proto__: null } })[type];
   let socketList = sockets[key];

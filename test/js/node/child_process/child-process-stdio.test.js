@@ -192,14 +192,10 @@ describe("stream stdio entries without an fd (post-spawn pump)", () => {
     );
     await firstChunk;
     dest.destroy(new Error("boom"));
-    // Regression: the pump readable must be torn down when its destination
-    // dies, or #closesNeeded is never met and 'close' never fires.
     await once(child, "close");
   });
 
   it("EOFs the child's stdin when the wrapped source dies without ending", async () => {
-    // autoDestroy/emitClose off: the source dies emitting only 'error',
-    // the shape that used to leave the child's stdin open forever.
     const source = new Readable({ read() {}, autoDestroy: false, emitClose: false });
     source._handle = {}; // no fd: forces the post-spawn pump path
     source.on("error", () => {});
@@ -209,8 +205,6 @@ describe("stream stdio entries without an fd (post-spawn pump)", () => {
     });
     source.push("data with no end() to follow");
     source.destroy(new Error("boom"));
-    // Regression: a source that dies without 'end' must still end the child's
-    // stdin, or stdin-draining children (cat, sort, gzip) block forever.
     const [code] = await once(child, "close");
     expect(code).toBe(42);
   });

@@ -439,10 +439,6 @@ public:
             httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
         }
 
-        /* Only mark this when the socket being upgraded is the one the parser
-         * is walking (pointer value compare; adoption may have moved it). An
-         * async upgrade, a different socket's upgrade, or a nested parse must
-         * not make the parse loop treat ITS socket as adopted. */
         if (httpContextData->parsingSocket == (us_socket_t *) this) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;

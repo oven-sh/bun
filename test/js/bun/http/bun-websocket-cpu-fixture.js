@@ -33,9 +33,6 @@ let bytesReceived = 0;
 const { promise: drained, resolve: onDrained } = Promise.withResolvers();
 ws.onmessage = event => {
   bytesReceived += event.data.length;
-  // "hello" is 5 bytes; wait for all 1000 echoes so the sampling below
-  // measures idle CPU, not the burst drain (which on loaded runners bleeds
-  // into the verdict sample).
   if (bytesReceived >= 5000) onDrained();
 };
 await drained;

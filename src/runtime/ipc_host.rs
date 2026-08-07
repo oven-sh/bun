@@ -165,18 +165,12 @@ pub(crate) fn do_send(
 
     let original_message = message;
     if !handle.is_undefined_or_null() {
-        // Socket-list owner for serialize(): null = the process object; only
-        // ChildProcess#send injects "$target", so process.send ignores a user
-        // value and Subprocess.send gets undefined (no tracking).
         let target = match from {
             FromEnum::Process => JSValue::NULL,
             _ => options_
                 .get(global_object, "$target")?
                 .unwrap_or(JSValue::UNDEFINED),
         };
-        // Like node: an unsupported handle type throws synchronously, but a
-        // conversion write-failure (e.g. EBADF from an unbound dgram socket)
-        // settles through the send callback like async write errors.
         let serialized_array: JSValue =
             match IPC::ipc_serialize(global_object, message, handle, options_, target) {
                 Ok(v) => v,
@@ -259,9 +253,6 @@ pub(crate) fn do_send(
                 }
             }
         } else if handle.is_int32() {
-            // Raw descriptor from serialize() (dgram.Socket, POSIX-only): dup
-            // and share it; the sender keeps its socket, so nothing closes on
-            // ack (node's dgram conversion has no postSend close).
             #[cfg(not(windows))]
             {
                 let raw = handle.as_int32();
@@ -274,16 +265,10 @@ pub(crate) fn do_send(
                 }
             }
         } else {
-            // node:http server connection (JSNodeHTTPServerSocket): read the
-            // uSockets descriptor; close-on-ack detaches the sender's side
-            // like the TCPSocket path above.
             let raw = bun_jsc::cpp::NodeHTTP__getServerSocketFd(handle);
             if raw >= 0 {
                 log!("got node:http server socket fd");
                 if !keep_open {
-                    // Same park-until-ack contract as the TCPSocket branch;
-                    // the pause itself happens natively after the send (this
-                    // wrapper has no JS pause()).
                     pause_target = handle;
                 }
                 #[cfg(not(windows))]
@@ -321,9 +306,6 @@ pub(crate) fn do_send(
     }
     if zig_handle.is_none() {
         if !handle.is_undefined_or_null() {
-            // serialize() returned a native handle but its fd is gone; its
-            // side effects (socket_list, _connections--) already ran, so fail
-            // the send instead of silently dropping the NODE_HANDLE envelope.
             use bun_jsc::SysErrorJsc as _;
             let e = bun_sys::Error::new(bun_sys::E::EBADF, bun_sys::Tag::send);
             return do_send_err(global_object, callback, e.to_js(global_object), from);
@@ -345,8 +327,6 @@ pub(crate) fn do_send(
                     global_object.report_active_exception_as_unhandled(e);
                 }
             }
-            // node:http server sockets have no JS pause(); natively stop the uSockets read
-            // loop so bytes before NODE_HANDLE_ACK aren't drained here (no-op for other shapes).
             Ok(_) => bun_jsc::cpp::NodeHTTP__pauseServerSocket(pause_target),
             Err(e) => global_object.report_active_exception_as_unhandled(e),
         }

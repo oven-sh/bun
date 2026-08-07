@@ -65,17 +65,11 @@ cluster._setupWorker = function () {
     }
   });
 
-  // Node's cluster handler is itself an 'internalMessage' listener, so user
-  // listeners compose exactly like in node: process.on() runs after the
-  // cluster's dispatch, process.prependListener() runs before it.
   process.on("internalMessage", onmessage);
   onInternalMessage(worker, emitInternalMessage);
   send({ act: "online" });
 
   function emitInternalMessage(message, handle) {
-    // Materialize a wire-passed connection fd (delivered through the
-    // (message, handle) slot like Node) before any listener sees it, so
-    // prepended user listeners observe the same handle onconnection gets.
     if (message.act === "newconn" && typeof handle === "number" && handle >= 0) {
       handle = makeConnectionHandle(handle);
     }

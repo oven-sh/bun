@@ -169,8 +169,6 @@ cluster.fork = function (env) {
   });
 
   onInternalMessage(worker.process[kHandle], worker, onmessage);
-  // Cluster commands whose '$internal' framing was lost arrive as plain
-  // 'internalMessage' events; route them by cmd like Node does.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L31-L51
   worker.process.on("internalMessage", function forwardExternalClusterMessage(message, handle) {
     if (message !== null && typeof message === "object" && message.cmd === "NODE_CLUSTER") {
@@ -394,7 +392,6 @@ class ReusePortHandle {
   }
 }
 
-// Node routes a worker's listen({fd}) through SharedHandle in the primary;
 // Bun dups the descriptor to the worker over SCM_RIGHTS so Bun.serve adopts it.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/shared_handle.js#L13-L29
 function shareListenFd(worker, message) {

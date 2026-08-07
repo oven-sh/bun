@@ -3140,12 +3140,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
             Addr::Fd(fd) => {
-                // Adopted-descriptor listen (node:http `listen({fd})`). No
-                // HTTP/3 companion socket is created for an adopted fd.
                 #[cfg(windows)]
                 {
-                    // Matches Listener.rs: the CRT-fd <-> SOCKET mapping is
-                    // not wired up, so refuse instead of adopting garbage.
                     let _ = (fd, http1);
                     let _ = global.throw_invalid_arguments(format_args!(
                         "listening on a file descriptor is not supported on Windows"
@@ -3164,8 +3160,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         );
                     }
                 } else {
-                    // ServerConfig rejects fd+http3-only; a no-listener server
-                    // must never start silently if that invariant regresses.
                     let _ = global.throw_invalid_arguments(format_args!(
                         "fd cannot be used with an http3-only server"
                     ));

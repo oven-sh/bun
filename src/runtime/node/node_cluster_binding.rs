@@ -206,9 +206,6 @@ pub(crate) fn on_internal_message_primary(
 
 #[bun_jsc::host_fn]
 pub(crate) fn settle_cluster_ack(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // Externally-framed {cmd:'NODE_CLUSTER', ack: N} replies reach the JS
-    // internalMessage fallback in primary.ts instead of the Internal-framed
-    // path below; settle the same per-seq callback it would have.
     let arguments = frame.arguments_as_array::<2>();
     let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
         return Ok(JSValue::FALSE);
@@ -312,9 +309,6 @@ pub(crate) fn handle_internal_message_primary(
 
 #[bun_jsc::host_fn]
 pub(crate) fn channel_fd(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    // Node parity: `process.channel.fd` is the raw IPC descriptor while the
-    // channel is open, `undefined` otherwise (v26.3.0
-    // lib/internal/child_process.js Control#fd).
     let vm = global.bun_vm().as_mut();
     let Some(instance) = crate::ipc_host::get_ipc_instance(vm) else {
         return Ok(JSValue::UNDEFINED);

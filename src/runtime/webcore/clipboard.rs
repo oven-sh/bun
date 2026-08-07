@@ -167,7 +167,9 @@ impl Mime {
 
     fn from_bytes(bytes: &[u8]) -> Option<Mime> {
         // Keys arrive as serialized MIME types; the essence picks the format.
-        match bytes.split(|&byte| byte == b';').next().unwrap_or(bytes) {
+        let essence = bun_core::strings::split_once_char(bytes, b';')
+            .map_or(bytes, |(essence, _params)| essence);
+        match essence {
             b"text/plain" => Some(Mime::TextPlain),
             b"text/html" => Some(Mime::TextHtml),
             b"image/png" => Some(Mime::ImagePng),
@@ -717,10 +719,7 @@ mod platform {
                 return Ok(Some(bytes));
             }
             // CF_HTML is NUL-padded UTF-8; an unparsable envelope reads as absent.
-            let end = bytes
-                .iter()
-                .position(|&byte| byte == 0)
-                .unwrap_or(bytes.len());
+            let end = bun_core::strings::index_of_char_usize(&bytes, 0).unwrap_or(bytes.len());
             return Ok(cf_html_fragment(&bytes[..end]));
         }
         Ok(None)
@@ -798,7 +797,7 @@ mod platform {
         let converted;
         let payload: &[u8] = match mime {
             Mime::TextPlain => {
-                let text: &[u8] = if bytes.contains(&b'\n') {
+                let text: &[u8] = if bun_core::strings::contains_char(bytes, b'\n') {
                     converted = normalize_to_crlf(bytes);
                     &converted
                 } else {

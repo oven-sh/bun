@@ -347,8 +347,6 @@ server.bind(0, '127.0.0.1', () => {
   };
   child.send({ greeting: 'hi' }, server, err => {
     if (err) return finish(false, 'send:' + err.message);
-    // The child adopted a dup of this descriptor; close the parent's copy so
-    // only the child reads from it before we ping.
     server.close(() => { closed = true; maybePing(); });
   });
   child.on('message', m => {

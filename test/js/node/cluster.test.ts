@@ -967,8 +967,6 @@ if (cluster.isPrimary) {
 );
 
 test("round-robin newconn reaches the worker's internalMessage listener via the handle slot", async () => {
-  // Node's child_process passes the received handle as the second arg to the
-  // internalMessage listener; the message object itself carries no fd property.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
   using dir = tempDir("cluster-handle-slot", {
     "main.ts": `

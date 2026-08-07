@@ -276,7 +276,6 @@ impl Listener {
                             if let Some((name, se)) = sys_err.get_error_code_tag_name() {
                                 if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
                                     let err = jsc::SystemError {
-                                        // Raw UV errno (SystemErrno ordinal differs on Windows).
                                         errno: *uv_errno,
                                         code: bun_core::String::static_(name).into(),
                                         message: bun_core::String::clone_utf8(
@@ -493,7 +492,6 @@ impl Listener {
                 bstr::BStr::new(hostname_bytes)
             ));
             log!("Failed to listen {}", errno);
-            // Node's createServerHandle maps non-TCP/PIPE fds to UV_EINVAL.
             let mapped = bun_sys::SystemErrno::init(errno as i64);
             let errno = if mapped == Some(bun_sys::SystemErrno::ENAMETOOLONG)
                 || (matches!(connection, UnixOrHost::Fd(_))

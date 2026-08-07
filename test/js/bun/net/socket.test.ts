@@ -3892,6 +3892,11 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
           while (sent < TOTAL) {
             const want = Math.min(CHUNK, TOTAL - sent);
             const n = s.write(payload.subarray(0, want));
+            if (n < 0) {
+              // Dead socket: fail now instead of waiting out the timeout.
+              console.log("FAIL write returned " + n + " after " + sent + " bytes");
+              process.exit(1);
+            }
             sent += n;
             if (n < want) return; // backpressure: drain() resumes the pump
           }

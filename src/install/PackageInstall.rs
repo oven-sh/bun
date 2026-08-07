@@ -2377,13 +2377,23 @@ impl<'a> PackageInstall<'a> {
                     &self.cache_dir_subpath.as_bytes()[..idx];
                 // Use a stack PathBuffer (no shared state).
                 let mut join_buf = PathBuffer::uninit();
-                join_buf[..cache_dir_subpath_without_patch_hash.len()]
-                    .copy_from_slice(cache_dir_subpath_without_patch_hash);
-                join_buf[cache_dir_subpath_without_patch_hash.len()] = 0;
-                // SAFETY: NUL written above.
-                let subpath =
-                    ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
-                let exists = sys::directory_exists_at(self.cache_dir, subpath).unwrap_or(false);
+                let exists = if matches!(resolution_tag, resolution::Tag::Git) {
+                    // Same as the unpatched arm above: the base checkout is only
+                    // complete once `.bun-tag` exists.
+                    let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                        &mut join_buf.0,
+                        &[cache_dir_subpath_without_patch_hash, b".bun-tag"],
+                    );
+                    sys::exists_at(self.cache_dir, tag_path)
+                } else {
+                    join_buf[..cache_dir_subpath_without_patch_hash.len()]
+                        .copy_from_slice(cache_dir_subpath_without_patch_hash);
+                    join_buf[cache_dir_subpath_without_patch_hash.len()] = 0;
+                    // SAFETY: NUL written above.
+                    let subpath =
+                        ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
+                    sys::directory_exists_at(self.cache_dir, subpath).unwrap_or(false)
+                };
                 if exists {
                     manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
                 }

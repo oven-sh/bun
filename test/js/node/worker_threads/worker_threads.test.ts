@@ -473,6 +473,8 @@ describe("execArgv option", async () => {
            'catch (e) { out.partial = e.code; }' +
            'try { Object.defineProperty(process.env, Symbol("s"), { value: "v", writable: true, enumerable: true, configurable: true }); out.symbol = null; }' +
            'catch (e) { out.symbol = e.name; }' +
+           'try { process.env[Symbol("s")] = "v"; out.symbolSet = null; }' +
+           'catch (e) { out.symbolSet = e.name; }' +
            'try { Object.defineProperty(process.env, "BUN_TEST_SHARE_NUM", { value: 7, writable: true, enumerable: true, configurable: true }); out.numeric = typeof process.env.BUN_TEST_SHARE_NUM; }' +
            'catch (e) { out.numeric = e.code; }' +
            'try { Object.freeze(process.env); out.freeze = null; } catch (e) { out.freeze = e.name; }' +
@@ -489,6 +491,7 @@ describe("execArgv option", async () => {
       out: {
         partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
         symbol: "TypeError",
+        symbolSet: "TypeError",
         numeric: "string",
         freeze: "TypeError",
         extensibleAfterFreeze: true,

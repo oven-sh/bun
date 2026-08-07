@@ -734,7 +734,14 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* uid = propertyName.uid();
-    if (propertyName.isSymbol() || !uid) {
+    // Node's EnvSetter coerces the key, so a symbol key throws the plain
+    // conversion TypeError, same as defineOwnProperty below and the other
+    // env maps.
+    if (propertyName.isSymbol()) {
+        throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
+        return false;
+    }
+    if (!uid) {
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 

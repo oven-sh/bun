@@ -209,6 +209,14 @@ it("process.env defineProperty matches assignment semantics", () => {
     }),
   ).toThrow(TypeError);
 
+  // ...the descriptor is validated before the key is coerced, so a symbol
+  // key with an invalid descriptor reports the descriptor error...
+  expect(() => Object.defineProperty(process.env, Symbol("env"), {})).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+    }),
+  );
+
   // ...a data descriptor without a [[Value]] is rejected...
   expect(() =>
     Object.defineProperty(process.env, "NO_VALUE_DESCRIPTOR", {

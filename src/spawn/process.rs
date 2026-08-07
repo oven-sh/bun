@@ -124,13 +124,10 @@ pub struct Process {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) pidfd: PidFdType,
     pub status: Status,
-    /// Untruncated `GetExitCodeProcess` DWORD captured in `on_exit_uv`.
-    /// `Exited::code` is `u8`, which collapses NTSTATUS crash codes into
-    /// small integers indistinguishable from `process.exit(N)` (e.g.
-    /// `0xC0000409`, `__fastfail`, becomes 9). Consumers that must tell a
-    /// native fault from a deliberate exit read this instead. 0 until the
-    /// process exits with a status (stays 0 when it was signaled via
-    /// `uv_process_kill` or the wait itself failed).
+    /// Untruncated `GetExitCodeProcess` DWORD captured in `on_exit_uv`;
+    /// `Exited::code` is `u8` and collapses NTSTATUS crash codes into small
+    /// integers indistinguishable from `process.exit(N)` (0xC0000409 → 9).
+    /// 0 until the process exits with a plain status.
     #[cfg(windows)]
     pub windows_raw_exit_code: u32,
     pub poller: Poller,

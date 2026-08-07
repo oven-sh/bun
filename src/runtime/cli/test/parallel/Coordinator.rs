@@ -200,9 +200,8 @@ impl<'a> Coordinator<'a> {
                 }
                 #[cfg(not(unix))]
                 {
-                    // 9 (SIGKILL) → TerminateProcess. libuv-win only maps
-                    // SIGQUIT/SIGTERM/SIGKILL/SIGINT; anything else is ENOSYS
-                    // and would leave the worker running.
+                    // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
+                    // other than SIGQUIT/SIGTERM/SIGKILL/SIGINT.
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process.
                     let _ = unsafe { (*p).kill(9) };
                 }
@@ -722,12 +721,10 @@ impl<'a> Coordinator<'a> {
                 }
                 #[cfg(not(unix))]
                 {
-                    // 9 (SIGKILL) → TerminateProcess; the killed sibling reaps
-                    // as Signaled(9) → "aborted: sibling worker panicked".
-                    // libuv-win returns ENOSYS for signals other than
-                    // SIGQUIT/SIGTERM/SIGKILL/SIGINT, so e.g. kill(1) would
-                    // leave the sibling running and the coordinator waiting on
-                    // it past the banner.
+                    // SIGKILL → TerminateProcess (libuv-win ENOSYSes most
+                    // signals, so e.g. kill(1) would leave the sibling running
+                    // past the banner); it reaps as Signaled(9) →
+                    // "aborted: sibling worker panicked".
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process.
                     let _ = unsafe { (*p).kill(9) };
                 }
@@ -813,15 +810,12 @@ impl<'a> Coordinator<'a> {
 /// (SIGSEGV/SIGBUS/SIGFPE/SIGILL) or SIGABRT for panics; JSC/WTF
 /// assertion failures abort() → SIGABRT.
 ///
-/// Windows delivers no signals: a fault that reaches Bun's crash handler
-/// exits with code 3 (indistinguishable from process.exit(3), so it can
-/// only be recognized by its banner in the captured stderr), but an
-/// unhandled exception or `__fastfail` terminates the process with the
-/// NTSTATUS as its exit code. `raw_exit_code` is the untruncated value
-/// (`Status::Exited.code` is `u8` and collapses `0xC0000409` to 9);
-/// recognized fatal NTSTATUS codes are classified as panics so a native
-/// crash aborts the run instead of being recycled as a per-file failure.
-/// `raw_exit_code` is always 0 on POSIX.
+/// Windows delivers no signals: an unhandled exception or `__fastfail`
+/// exits with the NTSTATUS as the exit code, so recognized fatal values of
+/// `raw_exit_code` (untruncated, `Exited.code` being `u8`; always 0 on
+/// POSIX) classify as panics too. A fault Bun's crash handler catches
+/// still exits with code 3, indistinguishable from process.exit(3), and
+/// stays a per-file failure, recognizable only by its banner in stderr.
 fn is_panic_status(status: &SpawnStatus, raw_exit_code: u32) -> bool {
     if let Some(sig) = status.signal_code() {
         use bun_core::SignalCode;
@@ -839,13 +833,10 @@ fn is_panic_status(status: &SpawnStatus, raw_exit_code: u32) -> bool {
     matches!(status, SpawnStatus::Exited(_)) && is_fatal_windows_exit_code(raw_exit_code)
 }
 
-/// Windows NTSTATUS exit codes that mean the worker died of a native
-/// fault — the moral equivalent of the fatal-signal list above. An
-/// allowlist, not a `>= 0xC0000000` range check: `process.exit(-1)` exits
-/// with 0xFFFFFFFF, so severity bits alone don't prove a crash.
-/// Deliberate TerminateProcess (taskkill, job limits — exit code 1 or an
-/// arbitrary value) intentionally stays non-panic, like SIGKILL on POSIX,
-/// and so does 0xC000013A (Ctrl+C), the SIGINT analog.
+/// Fatal NTSTATUS exit codes — the Windows mirror of the signal list
+/// above. An allowlist, not `>= 0xC0000000`: process.exit(-1) exits with
+/// 0xFFFFFFFF. TerminateProcess (taskkill, job limits) and Ctrl+C
+/// (0xC000013A) intentionally stay per-file failures, like SIGKILL.
 #[rustfmt::skip]
 fn is_fatal_windows_exit_code(code: u32) -> bool {
     matches!(

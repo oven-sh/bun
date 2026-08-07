@@ -70,11 +70,9 @@ pub struct Worker {
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub(crate) exit_status: Option<Status>,
-    /// Windows: the untruncated exit code (`Process.windows_raw_exit_code`)
-    /// captured together with `exit_status`. `Status::Exited.code` is `u8`,
-    /// which collapses NTSTATUS crash codes into small integers that look
-    /// like `process.exit(N)`; crash classification needs the full value.
-    /// Always 0 on POSIX.
+    /// Windows: untruncated exit code (`Process.windows_raw_exit_code`)
+    /// captured with `exit_status`, since `Exited.code` is `u8` and crash
+    /// classification needs the full NTSTATUS. Always 0 on POSIX.
     pub(crate) raw_exit_code: u32,
     pub(crate) reap_pending: bool,
 }

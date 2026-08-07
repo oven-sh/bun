@@ -152,14 +152,11 @@ pub(crate) mod js_bindings {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Dies the way foreign native code does when a fatal runtime check
-    /// fires, without Bun's crash handler ever running. On Windows
-    /// `std::process::abort()` is `__fastfail`: no exception dispatch (VEH/
-    /// SEH cannot observe it), no banner, and the process exit code is the
-    /// raw NTSTATUS 0xC0000409 (STATUS_STACK_BUFFER_OVERRUN) — the same
-    /// death UCRT `abort()`, Rust aborts in addons, and /GS failures
-    /// produce. On POSIX it raises SIGABRT. The `abort` binding above is
-    /// the opposite: it routes into the crash handler on purpose.
+    /// Dies like foreign native code, without Bun's crash handler running:
+    /// `std::process::abort()` is `__fastfail` on Windows (uncatchable,
+    /// exit code 0xC0000409, same as UCRT abort(), Rust aborts, /GS checks)
+    /// and SIGABRT on POSIX. The `abort` binding above is the opposite: it
+    /// routes into the crash handler on purpose.
     #[bun_jsc::host_fn]
     fn js_fastfail(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();

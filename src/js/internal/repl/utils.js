@@ -59,14 +59,10 @@ const { REPL_MODE_SLOPPY, REPL_MODE_STRICT } = require("internal/repl/mode");
 // If the error is unexpected end of input, let the user recover by adding more.
 // https://github.com/nodejs/node/blob/main/lib/internal/repl/utils.js
 function isRecoverableError(e, code) {
-  // Like `defaultEval`, wrap leading-`{` expressions with an open paren (only the open
-  // paren — we're testing for potentially valid but incomplete expressions).
   if (RegExpPrototypeExec(/^\s*\{/, code) !== null && isRecoverableError(e, `(${code}`)) return true;
 
   let recoverable = false;
 
-  // Recoverable iff the error is at end of input: (1) raised after the 'eof' token, or
-  // (2) 'unterminated' template/comment/line-continuation (matched by Acorn message text).
   // https://github.com/nodejs/node/blob/main/lib/internal/repl/utils.js
   const RecoverableParser = acorn.Parser.extend(Parser => {
     return class extends Parser {
@@ -297,8 +293,6 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
             ) {
               callback(null, null);
             } else if (result.objectId) {
-              // Use `inspect` (not `JSON.stringify`) so live writer options (showProxy/getters/
-              // showHidden) apply and `Infinity` etc. survive.
               const inspectOptions = inspect(
                 {
                   ...repl.writer.options,
@@ -440,8 +434,6 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
     }
     wrapped = false;
   };
-
-  // Replace multiple interface functions to support previews without changing readline behavior.
 
   // Refresh prints the whole screen again and the preview will be removed
   // during that procedure. Print the preview again. This also makes sure
@@ -759,9 +751,6 @@ function getREPLResourceName() {
 
 const globalBuiltins = new SafeSet(vm.runInNewContext("Object.getOwnPropertyNames(globalThis)"));
 
-// Node's filter, verbatim (lib/internal/repl/utils.js). Unlike getBuiltinLibs()
-// (REPL auto-globals), this keeps `bun*`/`undici`/`ws` so require()/import
-// completion matches module.builtinModules.
 let _builtinLibs = ArrayPrototypeFilter(
   CJSModule.builtinModules,
   e => e[0] !== "_" && !StringPrototypeStartsWith(e, "node:"),

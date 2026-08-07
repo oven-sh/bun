@@ -1554,8 +1554,6 @@ describe.concurrent("--interactive", () => {
   ])(
     "%s reaches the REPL",
     async (_label, extra) => {
-      // Locks in the Arguments.rs `interactive` extension: these -i spellings
-      // now reach exec_node_repl (bare `bun -i` previously printed help).
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...extra],
         env,
@@ -1608,9 +1606,6 @@ describe.concurrent("--interactive", () => {
     ["module-typescript", 'import assert from "assert"; const n: number = 1; assert.ok(n); console.log("ok");'],
     ["commonjs-typescript", 'const assert = require("assert"); const n: number = 1; assert.ok(n); console.log("ok");'],
   ])("--input-type=%s with --eval runs the matching grammar", async (inputType, src) => {
-    // Bun's eval grammar accepts ESM, CJS, and TS in one source, so every
-    // spelling's requested parse semantics are satisfied by acceptance
-    // (the vendored test-assert-esm-cjs-message-verify.js relies on this).
     await using proc = Bun.spawn({
       cmd: [bunExe(), `--input-type=${inputType}`, "-e", src],
       env,
@@ -1679,11 +1674,6 @@ describe.concurrent("--interactive", () => {
     interactiveTimeout,
   );
 
-  // Node places the --input-type rejection inside the else of the
-  // NODE_REPL_EXTERNAL_MODULE branch (lib/internal/main/repl.js), so an
-  // external replacement loads regardless. The env-file case guards against
-  // the gate and the bootstrap reading different env stores (libc environ vs
-  // the DotEnv loader behind process.env).
   test.each([
     ["process env", { env: { NODE_REPL_EXTERNAL_MODULE: "./ext.js" } }],
     ["--env-file", { args: ["--env-file=ext.env"] }],
@@ -1791,9 +1781,6 @@ test("require('node:repl') is hollow until start() or REPLServer is used", async
 describe.concurrent("node:repl completion", () => {
   const env = { ...bunEnv, NO_COLOR: "1" };
 
-  // completion.js offers only `node:`-prefixed specifiers that resolve:
-  // scheme-only names (node:test) are included, while Bun's builtinModules
-  // extras (bun, bun:*, undici, ws) have no node:-prefixed form.
   test.each(['require("node:', 'import("node:'])(
     "%s <Tab> offers real node-scheme specifiers only",
     async prefix => {

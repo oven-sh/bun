@@ -1,5 +1,3 @@
-// Shims for Node.js internals consumed by the ported node:repl / internal/readline stack.
-// Exports match the Node internal's name/signature; implementations delegate to Bun equivalents.
 const util = require("node:util");
 const Module = require("node:module");
 const path = require("node:path");
@@ -20,8 +18,6 @@ const {
 
 // ---- internal/util ----------------------------------------------------
 
-// Node reconstructs the regex in an internal realm; Bun lacks one, so load-time-captured
-// intrinsics close the `[Symbol.*]` override hole (tampered `.exec` still observable per spec).
 // https://github.com/nodejs/node/blob/main/lib/internal/util.js
 function SideEffectFreeRegExpPrototypeSymbolReplace(regexp, str, replacement) {
   return RegExpPrototypeSymbolReplace(regexp, str, replacement);
@@ -112,11 +108,7 @@ function has() {
 
 const BuiltinModule = {
   getSchemeOnlyModuleNames() {
-    // Bare names; completion.js prefixes them with "node:" itself. Derived
-    // from the `node:`-prefixed builtinModules entries (e.g. node:sqlite);
-    // `test` and `quic` resolve under node: but are missing from builtinModules.
     const names = ["test", "quic"];
-    // Indexed, not for..of: user code can delete Array.prototype[Symbol.iterator].
     const modules = Module.builtinModules;
     for (let i = 0; i < modules.length; i++) {
       const id = modules[i];
@@ -303,8 +295,6 @@ class CJSModuleShim {
 // ---- internalBinding('contextify') ----------------------------------------------
 
 function startSigintWatchdog() {
-  // breakOnSigint works via Bun's SigintWatcher (NodeVMScript.cpp). Only Node's
-  // `had_pending_signals` post-script race is unimplemented, so stopSigintWatchdog() returns false.
   return true;
 }
 
@@ -351,8 +341,6 @@ function getOwnNonIndexProperties(obj, filter = ALL_PROPERTIES) {
 }
 
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
-// Bun only implements the single-callback set/clear API; emulate Node's additive API with a
-// dispatcher list that occupies the exclusive slot once the first REPL starts.
 
 let captureCallbacks = null;
 
@@ -377,8 +365,6 @@ function addUncaughtExceptionCaptureCallback(cb) {
         process.exit(1);
       });
     } catch {
-      // A user capture callback already occupies the exclusive slot; without native additive
-      // support, defer to it and don't push (the dispatcher isn't wired).
       return;
     }
   }

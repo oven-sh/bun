@@ -1100,9 +1100,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             bun_options_types::offline_mode::OfflineMode::Online
         });
 
-        // `-i` that reaches the REPL means node's --interactive, not --install=fallback; keep
-        // bunfig/default resolver options. Mirrors exec_node_repl in mod.rs: interactive, no
-        // --print, no run target (RunCommand positionals carry a leading "run").
         let repl_no_target = match cmd {
             CommandTag::AutoCommand => ctx.positionals.is_empty(),
             CommandTag::RunCommand => match ctx.positionals.as_slice() {
@@ -1149,8 +1146,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
-        // Plain `bun -i` with nothing to run (previously the help screen) also starts
-        // the REPL; `-i <script>` / `-i -e` keep bun's auto-install semantics.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"))
             || (cmd == CommandTag::AutoCommand
@@ -1171,9 +1166,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     Global::exit(9);
                 }
             }
-            // Node applies --input-type to -e/-p/STDIN; Bun's eval accepts ESM+CJS in one source,
-            // so every valid value is already satisfied. File entrypoints ignore it and the REPL
-            // rejects it (src/js/eval/node-repl.ts), both matching node.
         }
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");

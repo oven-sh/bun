@@ -71,15 +71,9 @@ fixReplRequire(__node_module__);
 
 const { BuiltinModule } = require("internal/repl/node-shims");
 
-// Only offer `node:`-prefixed forms that actually resolve: _builtinLibs now
-// includes bun/bun:*/undici/ws (module.builtinModules parity), and
-// `node:bun:ffi` / `node:undici` are not real specifiers.
 function toNodeSchemeId(lib) {
   return `node:${lib}`;
 }
-// Module.isBuiltin strips a leading `node:` and re-checks, so it accepts
-// `node:bun:ffi`/`node:undici`/`node:ws` even though those never resolve; the
-// node: scheme only covers node's own namespace, so exclude Bun's extras.
 function isNodeNamespaceLib(lib) {
   return lib !== "bun" && !StringPrototypeStartsWith(lib, "bun:") && lib !== "undici" && lib !== "ws";
 }
@@ -577,7 +571,6 @@ function findExpressionCompleteTarget(code) {
 
   if (code.at(-1) === ".") {
     if (code.at(-2) === "?") {
-      // Trailing `?.` can't parse to a valid AST: strip it, recurse, re-append.
       const result = findExpressionCompleteTarget(code.slice(0, -2));
       return !result ? result : `${result}?.`;
     }
@@ -596,7 +589,6 @@ function findExpressionCompleteTarget(code) {
     const keywords = code.split(" ");
 
     if (keywords.length > 1) {
-      // Parse failed (possibly incomplete code like `{ a: obj.te`): retry with the last keyword.
       // upstream-todo(dario-piotrowicz): space-split misses `{ a: obj['hello world'].te`.
       return findExpressionCompleteTarget(keywords.at(-1));
     }

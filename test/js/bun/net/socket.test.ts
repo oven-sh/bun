@@ -3667,3 +3667,179 @@ describe.concurrent("connect() failure promise settlement", () => {
     ).rejects.toBe(boom);
   });
 });
+
+// A paused socket polls without READABLE, so a peer FIN is only reported
+// through AFD's one-shot DISCONNECT. The eof is deferred until resume (pause
+// contract), which consumes the only event the poll had; when the connection
+// later dies, nothing is subscribed that could report it, so the 4s sweep has
+// to probe the socket. Writing one byte into the dead connection resets the
+// victim's TCB the same way a remote peer's RST segment would (Windows emits
+// no RST from FIN_WAIT_2 on loopback, so the peer's abort alone is invisible
+// to an idle victim here). The sleeps in these tests are structural: the
+// sweep runs on a fixed 4s cadence, and the deferred-FIN window asserts the
+// absence of a close across one full sweep.
+function pausedVictimPair() {
+  const state = {
+    victimClosed: Promise.withResolvers<string>(),
+    closedHow: null as string | null,
+    closeError: undefined as unknown,
+    endFired: false,
+    dataReceived: "",
+  };
+  const victimOpen = Promise.withResolvers<Socket>();
+  const server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(s) {
+        s.pause(); // receive backpressure before any bytes flow
+        victimOpen.resolve(s);
+      },
+      data(_s, buf) {
+        state.dataReceived += buf.toString();
+      },
+      end() {
+        state.endFired = true;
+      },
+      error(_s, e) {
+        state.closedHow ??= "error";
+        state.closeError = e;
+        state.victimClosed.resolve("error");
+      },
+      close(_s, e) {
+        state.closedHow ??= "close";
+        state.closeError ??= e;
+        state.victimClosed.resolve("close");
+      },
+    },
+  });
+  const peer = (async () => {
+    const peerOpened = Promise.withResolvers<Socket>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          peerOpened.resolve(s);
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {},
+      },
+    });
+    return peerOpened.promise;
+  })();
+  return { state, server, victimOpen: victimOpen.promise, peer };
+}
+
+// Exercises the peeked == 0 path in poll_cb: the FIN lands on an empty
+// receive buffer.
+it.concurrent.skipIf(!isWindows)(
+  "paused socket with a deferred empty-buffer FIN still closes when the connection later dies",
+  async () => {
+    const { state, server, victimOpen, peer: peerP } = pausedVictimPair();
+    using _server = server;
+    const peer = await peerP;
+    const victim = await victimOpen;
+
+    // Let the pause settle: the writable dispatch drops WRITABLE, leaving the
+    // victim's poll subscribed to DISCONNECT only.
+    await Bun.sleep(200);
+
+    // Clean FIN with the victim's receive buffer empty.
+    peer.shutdown();
+
+    // A full sweep period passes: the deferred FIN alone must not close the
+    // paused victim (its peer is alive and half-closed; the sweep's probe has
+    // to keep it deferred).
+    await Bun.sleep(4600);
+    expect(state.closedHow).toBeNull();
+
+    // Peer dies; the victim streams on, and the byte's RST reply resets its
+    // TCB. Without the sweep escalation nothing is ever delivered and the
+    // socket strands, so a bounded race is the condition check.
+    peer.terminate();
+    await Bun.sleep(100);
+    victim.write("x");
+
+    const result = await Promise.race([state.victimClosed.promise, Bun.sleep(12_000).then(() => "stranded")]);
+    expect(result).not.toBe("stranded");
+    // The deferred eof must not have been delivered as end; the socket died.
+    expect(state.endFired).toBe(false);
+  },
+  40_000,
+);
+
+// Exercises the pre-existing peeked > 0 latch in poll_cb (FIN deferred behind
+// buffered data), which the fin_deferred init fix first makes reachable: the
+// garbage-broken count kept the sweep gate closed, so this path had never
+// actually run.
+it.concurrent.skipIf(!isWindows)(
+  "paused socket with a FIN deferred behind buffered data still closes when the connection later dies",
+  async () => {
+    const { state, server, victimOpen, peer: peerP } = pausedVictimPair();
+    using _server = server;
+    const peer = await peerP;
+    const victim = await victimOpen;
+
+    await Bun.sleep(200);
+
+    // Data, then a clean FIN: the victim is paused, so the bytes sit in its
+    // kernel receive buffer and MSG_PEEK sees them at the DISCONNECT.
+    peer.write("data-behind-fin");
+    peer.flush();
+    await Bun.sleep(50);
+    peer.shutdown();
+
+    await Bun.sleep(4600);
+    expect(state.closedHow).toBeNull();
+
+    peer.terminate();
+    await Bun.sleep(100);
+    victim.write("x");
+
+    const result = await Promise.race([state.victimClosed.promise, Bun.sleep(12_000).then(() => "stranded")]);
+    expect(result).not.toBe("stranded");
+    // Node parity for a paused socket whose peer died: the reset wins; the
+    // buffered bytes and the end are never delivered.
+    expect(state.dataReceived).toBe("");
+    expect(state.endFired).toBe(false);
+  },
+  40_000,
+);
+
+// The resume side of the contract: a deferred FIN (and the data in front of
+// it) is delivered once the socket resumes, and the close is clean. Resume
+// also hands the socket back from the sweep (the fin_deferred count returns
+// to zero), so a wrong count here would silently re-break the sweep gate.
+it.concurrent.skipIf(!isWindows)(
+  "resuming a paused socket delivers the data and FIN that were deferred while paused",
+  async () => {
+    const { state, server, victimOpen, peer: peerP } = pausedVictimPair();
+    using _server = server;
+    const peer = await peerP;
+    const victim = await victimOpen;
+
+    await Bun.sleep(200);
+
+    peer.write("deferred-data");
+    peer.flush();
+    await Bun.sleep(50);
+    peer.shutdown();
+
+    // Let the FIN's DISCONNECT report arrive and defer while paused.
+    await Bun.sleep(300);
+    expect(state.closedHow).toBeNull();
+
+    victim.resume();
+
+    const result = await Promise.race([state.victimClosed.promise, Bun.sleep(12_000).then(() => "stranded")]);
+    expect(result).not.toBe("stranded");
+    expect(state.dataReceived).toBe("deferred-data");
+    expect(state.endFired).toBe(true);
+    // Clean shutdown, not a reset.
+    expect(state.closeError).toBeFalsy();
+  },
+  30_000,
+);

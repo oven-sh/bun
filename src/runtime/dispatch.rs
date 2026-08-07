@@ -302,6 +302,14 @@ pub(crate) fn run_task(
             }
             .run();
         }
+        task_tag::AsyncCpTask => {
+            // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
+            unsafe { (*task.ptr.cast::<crate::node::fs::AsyncCpTask>()).run_from_js_thread()? };
+        }
+        task_tag::ShellAsyncCpTask => {
+            // SAFETY: as above.
+            unsafe { (*task.ptr.cast::<crate::node::fs::ShellAsyncCpTask>()).run_from_js_thread()? };
+        }
         task_tag::StatWatcherHop => {
             // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
             if let Err(err) = unsafe {
@@ -619,7 +627,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 64,
+    task_tag::COUNT == 66,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1313,6 +1321,18 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         task_tag::NativeZstd => {
             // SAFETY: as above.
             unsafe { node_zlib_binding::CompressionStream::<NativeZstd>::release_unrun(task.ptr.cast()) };
+            true
+        }
+        // A finished fs.cp whose completion will not run: destroy releases its
+        // promise handle, protected arguments and keep-alive.
+        task_tag::AsyncCpTask => {
+            // SAFETY: as the dispatch arm.
+            unsafe { crate::node::fs::AsyncCpTask::destroy(task.ptr.cast()) };
+            true
+        }
+        task_tag::ShellAsyncCpTask => {
+            // SAFETY: as above.
+            unsafe { crate::node::fs::ShellAsyncCpTask::destroy(task.ptr.cast()) };
             true
         }
         // A stat-watcher continuation the pool posted: drop the ref it carries.

@@ -711,6 +711,8 @@ impl ShellRmTask {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
+            // Counted until `ShellTask::on_finish` (see `ShellTask::schedule_no_ref`).
+            (*st).poster.embedded_work_scheduled();
             WorkPool::schedule(&raw mut (*st).task);
         }
     }
@@ -1495,8 +1497,10 @@ impl DirTask {
         match &mut me.concurrent_task {
             EventLoopTask::Js(ct) => {
                 ct.from(this, AutoDeinit::ManualDeinit);
-                // Refused ⇒ owning JS VM torn down; intrusive task stays unqueued.
-                let _ = poster.post_js(core::ptr::NonNull::from(ct));
+                // Posted while the rm task is counted work: the VM has not closed.
+                let bun_jsc::vm_handle::Posted::Queued = poster.post_js(core::ptr::NonNull::from(ct)) else {
+                    unreachable!("VM handle closed with shell rm work outstanding");
+                };
             }
             EventLoopTask::Mini(at) => {
                 let at = at.from(this, dir_task_run_from_main_thread_mini);

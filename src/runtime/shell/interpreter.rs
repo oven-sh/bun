@@ -2632,6 +2632,10 @@ impl ShellTask {
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this).task.callback = shell_task_trampoline::<C>;
+            // The context lives in interpreter state a JS wrapper may own:
+            // counted until `on_finish`, so that VM waits for it (see
+            // `VmHandle::embedded_work_scheduled`).
+            (*this).poster.embedded_work_scheduled();
             WorkPool::schedule(&raw mut (*this).task);
         }
     }
@@ -2661,10 +2665,10 @@ impl ShellTask {
                 EventLoopTask::Js(ct) => {
                     // Tag resolved via `C: Taskable`.
                     ct.from(ctx, AutoDeinit::ManualDeinit);
-                    // Refused ⇒ the owning JS VM was torn down; the intrusive task
-                    // stays unqueued inside its context, which belongs to the
-                    // interpreter the dead VM owned. Nothing to run.
-                    let _ = poster.post_js(core::ptr::NonNull::from(ct));
+                    // Counted work: the VM has not closed its handle.
+                    let bun_jsc::vm_handle::Posted::Queued = poster.post_js(core::ptr::NonNull::from(ct)) else {
+                        unreachable!("VM handle closed with shell pool work outstanding");
+                    };
                 }
                 EventLoopTask::Mini(at) => {
                     // Pass the monomorphised callback explicitly.
@@ -2672,6 +2676,9 @@ impl ShellTask {
                     poster.post_mini(core::ptr::NonNull::new(at).expect("intrusive task"));
                 }
             }
+            // The pool side is done with this context (`this` may already be
+            // freed by the main thread; the poster is ours).
+            poster.embedded_work_finished();
         }
     }
 

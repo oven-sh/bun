@@ -133,21 +133,7 @@ fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
         nsec: t.tv_nsec as i64,
     }
 }
-// Local namespace shim: dependents in this file spell `ConcurrentTask::create*`.
-// The Rust crate exports the *struct* as `ConcurrentTask`
-// inside a same-named module, so re-export the free constructors here under the
-// module name the call sites expect.
-mod ConcurrentTask {
-    pub(super) use bun_event_loop::ConcurrentTask::ConcurrentTask;
-    use core::ptr::NonNull;
-    #[inline]
-    pub(super) fn from_callback<T>(
-        ptr: *mut T,
-        cb: fn(*mut T) -> bun_event_loop::JsResult<()>,
-    ) -> NonNull<ConcurrentTask> {
-        ConcurrentTask::from_callback(ptr, cb)
-    }
-}
+use bun_event_loop::ConcurrentTask;
 
 /// `webcore.Blob.SizeType` — logically a 52-bit unsigned integer.
 /// Rust has no native `u52`, so the *storage* width is `u64`, but **never** use
@@ -1511,6 +1497,14 @@ mod _async_tasks {
         }
     }
 
+    impl<const IS_SHELL: bool> bun_event_loop::Taskable for NewAsyncCpTask<IS_SHELL> {
+        const TAG: bun_event_loop::TaskTag = if IS_SHELL {
+            bun_event_loop::task_tag::ShellAsyncCpTask
+        } else {
+            bun_event_loop::task_tag::AsyncCpTask
+        };
+    }
+
     impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         pub(crate) fn on_copy(
             &self,
@@ -1578,6 +1572,9 @@ mod _async_tasks {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
             }
             task.tracker.did_schedule(global_object);
+            // Its arguments may point into JS buffers and its promise lives on
+            // the JS heap: counted, so the VM waits for it (embedded work).
+            task.poster.embedded_work_scheduled();
 
             let raw = bun_core::heap::release(task);
             WorkPool::schedule(&raw mut raw.task);
@@ -1615,6 +1612,7 @@ mod _async_tasks {
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
             }
+            task.poster.embedded_work_scheduled();
 
             let raw = bun_core::heap::release(task);
             WorkPool::schedule(&raw mut raw.task);
@@ -1680,21 +1678,13 @@ mod _async_tasks {
             // Count reached zero ⇒ exclusive access. `this` carries mutable
             // provenance from `Box::leak`, so the enqueued callback may safely
             // form `&mut *this` on the JS thread.
-            if this_ref.poster.is_js() {
-                let ct = ConcurrentTask::from_callback(this, |p| {
-                    // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
-                    // JS-thread callback holds the only live reference (exclusive `&mut`).
-                    unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) }
-                });
-                if let bun_jsc::vm_handle::Posted::Refused(ct) = this_ref.poster.post_js(ct) {
-                    // VM torn down: nobody will settle the promise. Free the task box
-                    // and this task's portable storage here.
-                    // SAFETY: refused ⇒ we own `ct`; count hit zero ⇒ exclusive `this`.
-                    unsafe {
-                        drop(bun_core::heap::take(ct.as_ptr()));
-                        Self::release_off_thread(this);
-                    }
-                }
+            let poster = this_ref.poster.clone();
+            if poster.is_js() {
+                let ct = ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(this));
+                // Counted work: the VM has not closed its handle.
+                let bun_jsc::vm_handle::Posted::Queued = poster.post_js(ct) else {
+                    unreachable!("VM handle closed with an fs.cp outstanding");
+                };
             } else {
                 let at = AnyTaskWithExtraContext::from_callback_auto_deinit(
                     this,
@@ -1704,33 +1694,17 @@ mod _async_tasks {
                     },
                 );
                 // `from_callback_auto_deinit` heap-allocates; never null.
-                this_ref
-                    .poster
-                    .post_mini(core::ptr::NonNull::new(at).expect("heap task"));
+                poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
             }
-        }
-
-        /// Off the JS thread, VM gone: drop the arguments' own storage (without
-        /// unprotecting through the dead heap), the result, and the task storage;
-        /// the promise handle and keep-alive are forgotten.
-        ///
-        /// # Safety
-        /// Exclusive access to the leaked task; nothing else references it.
-        unsafe fn release_off_thread(this: *mut Self) {
-            // SAFETY: fn contract.
-            unsafe {
-                drop(core::ptr::read(&raw const (*this).args));
-                core::ptr::drop_in_place(&raw mut (*this).result);
-                core::ptr::drop_in_place(&raw mut (*this).poster);
-                std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
-            }
+            // The pool side is done (`this` may already be freed by its loop).
+            poster.embedded_work_finished();
         }
 
         pub(crate) fn run_from_js_thread_mini(&mut self, _: *mut c_void) {
             let _ = self.run_from_js_thread(); // TODO: properly propagate exception upwards
         }
 
-        fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
             if IS_SHELL {
                 // SAFETY: shelltask is set by create_with_shell_task/create_mini and outlives this task
                 // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap

@@ -512,6 +512,8 @@ impl ShellCpTask {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
+            // Counted until `ShellTask::on_finish` (see `ShellTask::schedule_no_ref`).
+            (*st).poster.embedded_work_scheduled();
             WorkPool::schedule(&raw mut (*st).task);
         }
     }

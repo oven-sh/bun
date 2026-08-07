@@ -466,6 +466,19 @@ impl ConcurrentPoster {
         matches!(self, ConcurrentPoster::Js(..))
     }
 
+    /// JS arm: count embedded work on the VM (see `VmHandle`). A mini loop is
+    /// owned by its thread and outlives its work, so there is nothing to count.
+    pub fn embedded_work_scheduled(&self) {
+        if let ConcurrentPoster::Js(p) = self {
+            p.embedded_work_scheduled();
+        }
+    }
+    pub fn embedded_work_finished(&self) {
+        if let ConcurrentPoster::Js(p) = self {
+            p.embedded_work_finished();
+        }
+    }
+
     /// Post a JS-loop `ConcurrentTask`. `Refused` ⇒ VM torn down, caller
     /// releases. Panics (debug) if this poster is `Mini`.
     pub fn post_js(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
@@ -521,9 +534,23 @@ unsafe fn poster_drop(data: *const ()) {
     // SAFETY: as above; balances `into_raw`/`increment_strong_count`.
     unsafe { drop(Arc::from_raw(data.cast::<PosterData>())) };
 }
+unsafe fn poster_embedded_scheduled(data: *const ()) {
+    // SAFETY: as `poster_post`.
+    unsafe { &*data.cast::<PosterData>() }
+        .handle
+        .embedded_work_scheduled();
+}
+unsafe fn poster_embedded_finished(data: *const ()) {
+    // SAFETY: as `poster_post`.
+    unsafe { &*data.cast::<PosterData>() }
+        .handle
+        .embedded_work_finished();
+}
 static POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
     post: poster_post,
     wake: poster_wake,
+    embedded_work_scheduled: poster_embedded_scheduled,
+    embedded_work_finished: poster_embedded_finished,
     clone: poster_clone,
     drop: poster_drop,
 };
@@ -755,9 +782,14 @@ unsafe fn isolated_drop(data: *const ()) {
     // SAFETY: as above.
     unsafe { drop(Arc::from_raw(data.cast::<IsolatedPosterInner>())) };
 }
+// An isolated loop is driven to completion synchronously by its creator on
+// the JS thread (spawnSync), so its VM cannot tear down under its work.
+unsafe fn isolated_embedded_noop(_data: *const ()) {}
 static ISOLATED_POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
     post: isolated_post,
     wake: isolated_wake,
+    embedded_work_scheduled: isolated_embedded_noop,
+    embedded_work_finished: isolated_embedded_noop,
     clone: isolated_clone,
     drop: isolated_drop,
 };

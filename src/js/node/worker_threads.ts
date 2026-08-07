@@ -1113,11 +1113,19 @@ class Worker extends EventEmitter {
       once: true,
     });
     // Messages from parentPort.postMessage() arrive on the public port. Listening
-    // starts the port; unref it so only the running worker (not this port) keeps
-    // the parent alive — node refs/unrefs the public port together with the handle.
+    // starts the port. Node's setupPortReferencing: the port counts toward the
+    // parent's liveness only while this Worker has 'message' listeners (and
+    // ref()/unref() also touch it, together with the handle).
     this.#publicPort.addEventListener("message", this.#onMessage.bind(this));
     this.#publicPort.addEventListener("messageerror", this.#onMessageError.bind(this));
     this.#publicPort.unref();
+    const publicPort = this.#publicPort;
+    this.on("newListener", function (this: Worker, name) {
+      if (name === "message" && this.listenerCount("message") === 0) publicPort.ref();
+    });
+    this.on("removeListener", function (this: Worker, name) {
+      if (name === "message" && this.listenerCount("message") === 0) publicPort.unref();
+    });
     // A worker may also use the Web Worker global `postMessage()` / `self.onmessage`
     // pair, which travels through the Worker object itself; surface those too.
     this.#worker.addEventListener("message", this.#onMessage.bind(this));

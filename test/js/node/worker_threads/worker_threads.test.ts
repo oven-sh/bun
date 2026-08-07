@@ -2126,3 +2126,24 @@ test("closing the only ref'd port from setImmediate lets the process exit", asyn
   expect(stdout).toBe("closed\n");
   expect(exitCode).toBe(0);
 });
+
+// Node's setupPortReferencing: the parent side of parentPort keeps the parent
+// alive while the Worker has 'message' listeners, independently of unref().
+test("an unref'ed worker with a 'message' listener still delivers to the parent", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const w = new Worker('require("worker_threads").parentPort.postMessage("hello"); setTimeout(() => {}, 1000);', { eval: true });
+       w.unref();
+       w.on("message", m => { console.log(m); process.exit(0); });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("hello\n");
+  expect(exitCode).toBe(0);
+});

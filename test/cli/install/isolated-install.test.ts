@@ -2688,6 +2688,33 @@ describe("hoist", () => {
   });
 });
 
+// Isolated install with stdout/stderr drained concurrently, and the exit
+// bounded by a deadline instead of the test timeout: the regressions covered
+// below make the install never exit on its own.
+async function runInstall(cwd: string, env: Record<string, string | undefined>): Promise<number | "install hung"> {
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--linker", "isolated"],
+    cwd,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdout = proc.stdout.text();
+  const stderr = proc.stderr.text();
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const hung = new Promise<"install hung">(resolve => {
+    deadline = setTimeout(() => resolve("install hung"), 60_000);
+  });
+  const exited = await Promise.race([proc.exited, hung]);
+  clearTimeout(deadline);
+  if (exited === "install hung") {
+    proc.kill();
+    await proc.exited;
+  }
+  await Promise.all([stdout, stderr]);
+  return exited;
+}
+
 // bun.lock writes an scp-form git repo ("git@host:path") with an "ssh://"
 // prefix, and every git task id hashes the exact repo bytes. If parsing does
 // not strip that prefix back off, the loaded resolution ("ssh://git@host:path")
@@ -2755,16 +2782,9 @@ exec sh -c "$1"
     GIT_ASKPASS: "echo",
   });
 
-  await using firstInstall = spawn({
-    cmd: [bunExe(), "install", "--linker", "isolated"],
-    cwd: projectDir,
-    env: installEnv("cache-fresh"),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
   // stderr is not asserted: the https attempt that precedes the ssh
   // fallback fails with a git error even on the happy path
-  const firstExitCode = await firstInstall.exited;
+  const firstExitCode = await runInstall(projectDir, installEnv("cache-fresh"));
   expect(firstExitCode).toBe(0);
   expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
     name: "scp-dep",
@@ -2779,20 +2799,7 @@ exec sh -c "$1"
   await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
   await rm(join(String(dir), "ssh.log"), { force: true });
 
-  await using secondInstall = spawn({
-    cmd: [bunExe(), "install", "--linker", "isolated"],
-    cwd: projectDir,
-    env: installEnv("cache-cold"),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  // Deadline, not a wait-for-condition: the broken install never exits, so
-  // bound it instead of timing out the whole test.
-  const secondExitCode = await Promise.race([
-    secondInstall.exited,
-    Bun.sleep(60_000).then(() => "install hung" as const),
-  ]);
-  if (secondExitCode === "install hung") secondInstall.kill();
+  const secondExitCode = await runInstall(projectDir, installEnv("cache-cold"));
   expect(secondExitCode).toBe(0);
   expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
     name: "scp-dep",
@@ -2804,5 +2811,88 @@ exec sh -c "$1"
   // transfer), and the lockfile round trip is byte-stable
   const sshLog = await file(join(String(dir), "ssh.log")).text();
   expect(sshLog.split("\n").filter(line => line.includes("git-upload-pack"))).toHaveLength(1);
+  expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
+});
+
+// A dependency that really is an ssh URL (bracketed IPv6 host here) must keep
+// its ssh:// form: stripping it would turn "ssh://git@[::1]/path" into
+// "git@[::1]/path", which git reads as a local path (no scp separator after
+// the brackets).
+test.skipIf(isWindows)("cold cache install of a bracketed IPv6 ssh URL git dependency", async () => {
+  using dir = tempDir("isolated-ipv6-git", {
+    "fake-ssh.sh": `#!/bin/sh
+# "ssh" for tests: skip options, drop the host, run the command locally.
+while [ $# -gt 1 ]; do
+  case "$1" in
+    -o|-p) shift 2 ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+shift
+exec sh -c "$1"
+`,
+    "upstream/package.json": JSON.stringify({ name: "v6-dep", version: "1.0.0" }),
+  });
+  const fakeSsh = join(String(dir), "fake-ssh.sh");
+  chmodSync(fakeSsh, 0o755);
+
+  const git = (args: string[], cwd: string) => {
+    const { exitCode, stderr } = Bun.spawnSync({
+      cmd: ["git", ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr.toString()}`);
+  };
+  git(["init", "-q"], join(String(dir), "upstream"));
+  git(["add", "package.json"], join(String(dir), "upstream"));
+  git(
+    ["-c", "user.email=test@bun.com", "-c", "user.name=bun-test", "commit", "-qm", "init"],
+    join(String(dir), "upstream"),
+  );
+  git(["clone", "-q", "--bare", "upstream", "repo.git"], String(dir));
+
+  const projectDir = join(String(dir), "project");
+  await write(
+    join(projectDir, "package.json"),
+    JSON.stringify({
+      name: "v6-project",
+      dependencies: {
+        // the fake ssh ignores the host, so the URL path carries the repo
+        "v6-dep": `ssh://git@[::1]${join(String(dir), "repo.git")}`,
+      },
+    }),
+  );
+
+  const installEnv = (cache: string) => ({
+    ...bunEnv,
+    BUN_INSTALL_CACHE_DIR: join(String(dir), cache),
+    GIT_SSH_COMMAND: fakeSsh,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "echo",
+  });
+
+  const firstExitCode = await runInstall(projectDir, installEnv("cache-fresh"));
+  expect(firstExitCode).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "v6-dep", "package.json")).json()).toMatchObject({
+    name: "v6-dep",
+    version: "1.0.0",
+  });
+
+  // the URL keeps its ssh:// form and its bracketed host in the lockfile
+  const lockAfterFirst = await file(join(projectDir, "bun.lock")).text();
+  expect(lockAfterFirst).toContain('"v6-dep@git+ssh://git@[::1]');
+
+  await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+
+  const secondExitCode = await runInstall(projectDir, installEnv("cache-cold"));
+  expect(secondExitCode).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "v6-dep", "package.json")).json()).toMatchObject({
+    name: "v6-dep",
+    version: "1.0.0",
+  });
   expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
 });

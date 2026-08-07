@@ -413,18 +413,31 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
 /// an scp-form repo (`git@host:path`): git task ids, package dedupe, and
 /// store paths key on the exact repo bytes, so a reloaded resolution must
 /// byte-match the parsed dependency. `None` when `repo` is a real URL that
-/// keeps its prefix (no `:` before the path, or a numeric `host:port`).
+/// keeps its prefix (no scp `:` separator before the path, or a numeric
+/// `host:port`).
 pub(crate) fn scp_path_without_ssh_prefix(repo: &[u8]) -> Option<&[u8]> {
     let rest = strings::without_prefix_if_possible_comptime(repo, b"ssh://")?;
     if !is_scp_like_path(rest) {
         return None;
     }
-    // scp form requires the `:`; `is_scp_like_path` also matches `user@host/path`
-    let colon = strings::index_of_char_usize(rest, b':')?;
-    if strings::index_of_char_usize(rest, b'/').is_some_and(|slash| slash < colon) {
+    // the scp separator is the first `:` after the userinfo `@` and outside a
+    // bracketed IPv6 host; `is_scp_like_path` alone also matches
+    // `user@host/path` and `user@[::1]/path`, which are not scp forms
+    let host_start = match strings::index_of_char_usize(rest, b'@') {
+        Some(at) if strings::index_of_any(rest, b":/").is_none_or(|sep| at < sep) => at + 1,
+        _ => 0,
+    };
+    let mut search_from = host_start;
+    if rest[search_from..].starts_with(b"[") {
+        let close = strings::index_of_char_usize(&rest[search_from..], b']')?;
+        search_from += close + 1;
+    }
+    let host_end = &rest[search_from..];
+    let colon = strings::index_of_char_usize(host_end, b':')?;
+    if strings::index_of_char_usize(host_end, b'/').is_some_and(|slash| slash < colon) {
         return None;
     }
-    let after_colon = &rest[colon + 1..];
+    let after_colon = &host_end[colon + 1..];
     let port_end = strings::index_of_char_usize(after_colon, b'/').unwrap_or(after_colon.len());
     let port = &after_colon[..port_end];
     if !port.is_empty() && port.iter().all(u8::is_ascii_digit) {

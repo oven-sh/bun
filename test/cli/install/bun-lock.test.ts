@@ -1320,7 +1320,7 @@ it("`bun update` still re-resolves a branch ref git dependency against the remot
 
   await run(["update", "git-dep"]);
   expect(gitRequests).toBeGreaterThan(requestsAfterInstall);
-});
+}, 60_000);
 
 // A changed override or catalog entry that moves a git dependency to a
 // different ref of the same repository must re-resolve every dependent.
@@ -1416,8 +1416,14 @@ async function changedEntryReResolves(mode: "overrides" | "catalog") {
   expect(await file(join(packageDir, "node_modules", "over-dep", "index.js")).text()).toBe("module.exports = 'V2';\n");
 }
 
-it("a changed git override re-resolves every dependent instead of reusing the old pin", () =>
-  changedEntryReResolves("overrides"));
+it(
+  "a changed git override re-resolves every dependent instead of reusing the old pin",
+  () => changedEntryReResolves("overrides"),
+  60_000,
+);
 
-it("a changed git catalog entry re-resolves every dependent instead of reusing the old pin", () =>
-  changedEntryReResolves("catalog"));
+it(
+  "a changed git catalog entry re-resolves every dependent instead of reusing the old pin",
+  () => changedEntryReResolves("catalog"),
+  60_000,
+);

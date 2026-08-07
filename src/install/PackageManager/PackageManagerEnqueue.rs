@@ -2030,20 +2030,13 @@ fn find_locked_git_package(
         if resolution.tag != resolution_tag {
             continue;
         }
+        // Byte-equal repos only. An scp-like repo ("git@host:path") is
+        // serialized with an "ssh://" prefix the dependency parse lacks, and
+        // every git task id downstream keys on these exact bytes, so binding
+        // across the two spellings would strand the isolated store's checkout
+        // waiter; scp dependencies keep the pre-reuse fetch path instead.
         let locked = resolution.repository();
-        if !locked.owner.eql(repo.owner, buf, buf) {
-            continue;
-        }
-        // The lockfile writer prefixes an scp-like repo ("git@host:path") with
-        // "ssh://", so a reloaded resolution carries the prefix while the
-        // freshly parsed dependency does not.
-        let locked_repo = locked.repo.slice(buf);
-        let dep_repo = repo.repo.slice(buf);
-        let repo_matches = strings::eql(locked_repo, dep_repo)
-            || (strings::has_prefix_comptime(locked_repo, b"ssh://")
-                && dependency::is_scp_like_path(dep_repo)
-                && strings::eql(&locked_repo[b"ssh://".len()..], dep_repo));
-        if !repo_matches {
+        if !locked.repo.eql(repo.repo, buf, buf) || !locked.owner.eql(repo.owner, buf, buf) {
             continue;
         }
         return Some(package_id);

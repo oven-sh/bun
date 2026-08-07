@@ -344,21 +344,23 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("an async throw from nextTick/setTimeout keeps the session alive", async () => {
-      // The nextTick/timer drain routes through Bun__reportUnhandledError, which
+    test("an async throw from nextTick keeps the session alive", async () => {
+      // The nextTick drain routes through Bun__reportUnhandledError, which
       // opts into Node's fatal exit under `bun run`. The REPL sets
       // suppress_fatal_uncaught so the prompt redraws (Node's REPL wraps
-      // evaluation in a domain for the same effect).
+      // evaluation in a domain for the same effect). No timer variant: the
+      // piped-stdin loop does not wait for timers between lines, so a 0ms
+      // setTimeout may never fire before .exit (build-dependent timing).
       const { stdout, stderr, exitCode } = await runRepl([
         "process.nextTick(() => { throw new Error('from-tick') })",
-        "setTimeout(() => { throw new Error('from-timer') }, 0)",
         "'REPL-SURVIVED:' + (7 * 6)",
         ".exit",
       ]);
       const allOutput = stripAnsi(stdout + stderr);
+      // Reported at some point (between lines on debug, at exit drain on
+      // release); position is build-dependent, presence is not.
       expect(allOutput).toContain("from-tick");
-      expect(allOutput).toContain("from-timer");
-      // The session reached the third line after both throws: it did not
+      // The session reached the second line after the throw: it did not
       // hard-exit. The marker cannot appear in a stack trace or version
       // footer, unlike a bare digit.
       expect(allOutput).toContain("REPL-SURVIVED:42");

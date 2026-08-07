@@ -73,7 +73,7 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
         let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
         {
             let hostname_utf8 = hostname_str.to_utf8_without_ref();
-            if hostname_utf8.slice().contains(&0) {
+            if bun_core::strings::contains_char(hostname_utf8.slice(), 0) {
                 return Err(global_object.throw_invalid_arguments(format_args!(
                     "hostname must not contain null bytes"
                 )));

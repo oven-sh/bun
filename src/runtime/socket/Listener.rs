@@ -716,7 +716,7 @@ impl Listener {
                 global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
             );
         }
-        if server_name_bytes.contains(&0) {
+        if bun_core::strings::contains_char(server_name_bytes, 0) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "hostname pattern must not contain null bytes"
             )));

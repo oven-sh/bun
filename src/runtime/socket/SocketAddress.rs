@@ -389,7 +389,7 @@ impl SocketAddress {
 
         // Checked pre-slice_z: that conversion absorbs one trailing NUL.
         if let Some(address_str) = &options.address {
-            if address_str.to_utf8().slice().contains(&0) {
+            if strings::contains_char(address_str.to_utf8().slice(), 0) {
                 use bun_jsc::js_global_object::SysErrOptions;
                 return Err(global.throw_sys_error(
                     &SysErrOptions {

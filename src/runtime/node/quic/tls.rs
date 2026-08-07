@@ -115,7 +115,7 @@ impl TlsConfig {
         }
         if let Some(v) = tls.get(global, "servername")?.filter(|v| v.is_string()) {
             let mut bytes = bun_core::String::from_js(v, global)?.to_utf8_bytes();
-            if bytes.contains(&0) {
+            if bun_core::strings::contains_char(&bytes, 0) {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "servername must not contain null bytes"
                 )));

@@ -163,7 +163,7 @@ impl SSLConfigFromJs for SSLConfig {
             any = true;
         }
         if let Some(server_name) = generated.server_name.get() {
-            if server_name.to_utf8().slice().contains(&0) {
+            if bun_core::strings::contains_char(server_name.to_utf8().slice(), 0) {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "\"serverName\" must not contain null bytes"
                 )));

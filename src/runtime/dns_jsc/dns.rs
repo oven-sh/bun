@@ -2955,7 +2955,7 @@ pub mod internal {
             );
         };
 
-        if hostname_slice.slice().contains(&0) {
+        if strings::contains_char(hostname_slice.slice(), 0) {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("hostname must not contain null bytes")));
         }
@@ -5526,7 +5526,7 @@ impl Resolver {
         // ZigStringSlice has no `into_owned_slice_z`; build the
         // NUL-terminated buffer inline.
         let bytes = str_.slice();
-        if bytes.contains(&0) {
+        if strings::contains_char(bytes, 0) {
             return Err(jsc::Error::INVALID_IP_ADDRESS.throw(
                 global_this,
                 format_args!("Invalid IP address: \"{}\"", bstr::BStr::new(bytes)),
@@ -5649,7 +5649,7 @@ impl Resolver {
             );
             let address_slice = address_string.to_owned_slice();
 
-            if address_slice.contains(&0) {
+            if strings::contains_char(&address_slice, 0) {
                 return Err(jsc::Error::INVALID_IP_ADDRESS.throw(
                     global_this,
                     format_args!(

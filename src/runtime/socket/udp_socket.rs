@@ -396,7 +396,7 @@ impl UDPSocketConfig {
                 }
                 // Coerce once; a repeated coercion could observe a different value.
                 let host_str = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
-                if host_str.to_utf8_without_ref().slice().contains(&0) {
+                if bun_core::strings::contains_char(host_str.to_utf8_without_ref().slice(), 0) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "\"hostname\" must not contain null bytes"
                     )));
@@ -492,7 +492,7 @@ impl UDPSocketConfig {
             // Coerce once; a repeated coercion could observe a different value.
             let connect_host =
                 bun_core::OwnedString::new(connect_host_js.to_bun_string(global_this)?);
-            if connect_host.to_utf8_without_ref().slice().contains(&0) {
+            if bun_core::strings::contains_char(connect_host.to_utf8_without_ref().slice(), 0) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "\"connect.hostname\" must not contain null bytes"
                 )));
@@ -1576,7 +1576,7 @@ impl UDPSocket {
         let _ = self;
         let str = bun_core::OwnedString::new(address_val.to_bun_string(global_this)?);
         // Checked pre-slice_z: that conversion absorbs one trailing NUL.
-        if str.to_utf8_without_ref().slice().contains(&0) {
+        if bun_core::strings::contains_char(str.to_utf8_without_ref().slice(), 0) {
             return Ok(false);
         }
         let address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
@@ -1882,7 +1882,7 @@ impl UDPSocket {
         let str = bun_core::OwnedString::new(args[0].to_bun_string(global_this)?);
         {
             let host_utf8 = str.to_utf8_without_ref();
-            if host_utf8.slice().contains(&0) {
+            if bun_core::strings::contains_char(host_utf8.slice(), 0) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "\"address\" must not contain null bytes"
                 )));
@@ -2274,7 +2274,7 @@ pub(crate) fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let fd = dgram_owned_fd_arg(global, frame.argument(0))?;
         let address = bun_core::OwnedString::new(frame.argument(1).to_bun_string(global)?);
         // Checked pre-slice_z: that conversion absorbs one trailing NUL.
-        if address.to_utf8_without_ref().slice().contains(&0) {
+        if bun_core::strings::contains_char(address.to_utf8_without_ref().slice(), 0) {
             return Err(global.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::bind2)
                     .to_js(global),

@@ -437,15 +437,19 @@ impl Loop {
             }
             // SAFETY: `loop_` is the live per-thread loop initialized in `get()`.
             if let Some(err) = unsafe { uv_loop_close(loop_) }.raw_errno() {
-                // Only EBUSY means handles are
-                // still open; walk + close them, run once to flush close
-                // callbacks, then close again (must succeed). `uv_loop_close`
-                // documents no other failure code.
+                // Only EBUSY means handles are still open; walk + close them,
+                // drain, then close again. `uv_loop_close` documents no other
+                // failure code.
                 if err == (UV_EBUSY as c_int).unsigned_abs() as u16 {
                     unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
-                    let _ = unsafe { uv_run(loop_, RunMode::Default) };
-                    // NOTE the call is unconditional — the close must run in
-                    // release builds too.
+                    // `uv_run(Default)` returns 0 once the loop is dead and
+                    // nonzero only when `uv_stop` cut it short, so re-enter;
+                    // with every handle closed above it must drain to empty.
+                    // SAFETY: `loop_` is the live per-thread loop.
+                    while unsafe { uv_run(loop_, RunMode::Default) } != 0 {}
+                    // Unconditional (not debug-only): removing the loop from
+                    // libuv's global uv__loops[] registry is what makes it safe
+                    // to release the TLS storage when this thread exits.
                     let rc = unsafe { uv_loop_close(loop_) };
                     debug_assert_eq!(rc, ReturnCode::ZERO);
                 }

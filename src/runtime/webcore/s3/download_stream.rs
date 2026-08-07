@@ -385,7 +385,9 @@ impl S3HttpDownloadStreamingTask {
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
                 let bun_jsc::vm_handle::Posted::Queued = handle.post_task(task) else {
-                    unreachable!("VM handle closed with an S3 download outstanding on the HTTP thread");
+                    unreachable!(
+                        "VM handle closed with an S3 download outstanding on the HTTP thread"
+                    );
                 };
             }
             handle.embedded_work_finished();

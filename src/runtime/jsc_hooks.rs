@@ -1791,7 +1791,9 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
             },
             // SAFETY: live until it unregisters in `on_complete_anytask`.
             ActiveHandle::Bundle(c) => unsafe {
-                crate::api::js_bundle_completion_task::JSBundleCompletionTask::stop_for_vm_teardown(c.as_ptr())
+                crate::api::js_bundle_completion_task::JSBundleCompletionTask::stop_for_vm_teardown(
+                    c.as_ptr(),
+                )
             },
             // Live until it unregisters in `destroy_channel`.
             // SAFETY: registered ⇒ live; may free itself inside, not touched after.

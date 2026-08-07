@@ -2022,7 +2022,9 @@ pub mod bv2_impl {
                     // bundle pass's stack frame; the tasks it runs re-enter
                     // `*this` exactly as `tick_once` would between `is_done` calls.
                     unsafe {
-                        if let bun_event_loop::AnyEventLoop::Mini(mini) = &mut *(*this).any_loop_mut() {
+                        if let bun_event_loop::AnyEventLoop::Mini(mini) =
+                            &mut *(*this).any_loop_mut()
+                        {
                             mini.run_ready(this.cast());
                         }
                     }

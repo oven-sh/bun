@@ -153,7 +153,8 @@ pub(crate) fn create_and_schedule_completion_task(
     // teardown (registry) and waits for it (embedded work).
     // SAFETY: `completion` is live (refcount==1), JS thread.
     unsafe { (*completion).loop_handle.embedded_work_scheduled() };
-    crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(completion).expect("completion")).register();
+    crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(completion).expect("completion"))
+        .register();
     bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
 
     // SAFETY: `completion` is live (refcount==1); `vm` outlives this call.

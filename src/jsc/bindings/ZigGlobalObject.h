@@ -762,6 +762,7 @@ public:
     size_t reloadCount = 0;
 
     void reload();
+    void clearModuleRegistryAndRequireCache();
 
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }

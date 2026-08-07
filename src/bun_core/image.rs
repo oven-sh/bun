@@ -57,6 +57,43 @@ impl ImageOnce {
     }
 }
 
+/// A lazily computed value derived from this process's launch context (argv, environment, cwd, uid, terminal…).
+/// It is recomputed after a heap-image restore: the value in the image belongs to the process that built it.
+/// Use this — not `Once`/`OnceLock`/`static mut` — for anything read from the OS at startup and cached.
+pub struct ProcessDerived<T: 'static> {
+    epoch_plus_one: AtomicU32,
+    lock: std::sync::Mutex<()>,
+    ptr: core::sync::atomic::AtomicPtr<T>,
+}
+impl<T: 'static> ProcessDerived<T> {
+    pub const fn new() -> Self {
+        Self {
+            epoch_plus_one: AtomicU32::new(0),
+            lock: std::sync::Mutex::new(()),
+            ptr: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+        }
+    }
+    /// The value for the current process; `init` runs on first use and again on first use after each restore.
+    /// Previous values are leaked, never dropped (references handed out earlier stay valid).
+    pub fn get(&'static self, init: impl FnOnce() -> T) -> &'static T {
+        let want = epoch() + 1;
+        if self.epoch_plus_one.load(Ordering::Acquire) != want {
+            let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+            if self.epoch_plus_one.load(Ordering::Acquire) != want {
+                self.ptr
+                    .store(Box::leak(Box::new(init())), Ordering::Release);
+                self.epoch_plus_one.store(want, Ordering::Release);
+            }
+        }
+        // SAFETY: non-null (stored above for this epoch) and leaked for the process lifetime.
+        unsafe { &*self.ptr.load(Ordering::Acquire) }
+    }
+    /// True if a value has been computed for the current process.
+    pub fn is_current(&self) -> bool {
+        self.epoch_plus_one.load(Ordering::Acquire) == epoch() + 1
+    }
+}
+
 static SNAPSHOT_REQUESTED: AtomicU32 = AtomicU32::new(0);
 static SNAPSHOT_PATH: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 /// Ask the main run loop to leave JS entirely and take the image at top level (caller then unwinds via a termination exception).

@@ -1294,6 +1294,9 @@ extern "C" void Bun__imageContinueEventLoop();
 extern "C" void uws_adopt_loop_for_current_thread(struct us_loop_t*);
 void _mi_scavenger_forked_child(void); // C++-mangled (mimalloc is built as C++ here)
 extern "C" void Bun__imageAdoptMainThreadVM();
+struct BunLaunchContext { size_t argc; const char* const* argv; };
+extern "C" void bun_launch_context_capture(BunLaunchContext*);
+extern "C" void bun_launch_context_restore(const BunLaunchContext*);
 extern "C" void Bun__VM__refreshStackBoundsAfterImageRestore(JSC::VM* vm) { if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] refreshing VM stack bounds: lastStackTop=%p thread stack=[%p,%p)\n", vm->lastStackTop(), WTF::Thread::currentSingleton().stack().end(), WTF::Thread::currentSingleton().stack().origin()); vm->refreshStackBoundsAfterImageRestore(); if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] refreshed: lastStackTop=%p\n", vm->lastStackTop()); }
 // "Image-capable" = a `bun build --compile` executable (BUN_COMPILED, the __BUN/.bun section header, has a non-zero size in those and is
 // readable before main by anything statically linked) or explicitly requested via env. Drives deterministic allocator hints, the fixed JIT
@@ -1469,6 +1472,23 @@ static uint64_t platformCpuFeatures()
     f |= 1ull << 62; // "arm64" tag
 #endif
     return f;
+}
+
+
+// Invocation shape recorded in the image: an image is only valid for the argv it was built with (a compiled CLI's
+// subcommands / fast paths must boot normally, or a restored REPL would answer `exe some-subcommand`).
+static uint64_t imageArgvKey()
+{
+    uint64_t h = 1469598103934665603ull; int argc = 0; char** argv = nullptr;
+#if OS(DARWIN)
+    argc = *_NSGetArgc(); argv = *_NSGetArgv();
+#elif OS(LINUX)
+    static std::vector<std::string> args; static std::vector<char*> ptrs;
+    if (ptrs.empty()) { FILE* f = fopen("/proc/self/cmdline", "r"); std::string cur; int c; while (f && (c = fgetc(f)) != EOF) { if (!c) { args.push_back(cur); cur.clear(); } else cur.push_back((char)c); } if (f) fclose(f); for (auto& a : args) ptrs.push_back(a.data()); }
+    argc = (int)ptrs.size(); argv = ptrs.data();
+#endif
+    for (int i = 1; i < argc; i++) { for (const char* p = argv[i]; *p; p++) { h ^= (uint8_t)*p; h *= 1099511628211ull; } h ^= 0xff; h *= 1099511628211ull; }
+    return h ^ ((uint64_t)(argc > 0 ? argc - 1 : 0) << 56) ^ 0x5a5a; // never 0
 }
 
 struct ImageHeader { char magic[8]; uint64_t textBase; uint64_t vm; uint64_t globalObject; uint64_t mainThread; uint64_t nregions; uint64_t reserved[8]; uint64_t libsBase; uint64_t spare[7]; }; // 176 bytes; region table follows
@@ -1688,7 +1708,7 @@ static void imageDump(JSC::VM& vm, const char* path)
     int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) { fprintf(stderr, "[image] open %s failed\n", path); return; }
     ImageHeader hdr {}; memcpy(hdr.magic, "BUNIMG2", 8);
-    hdr.textBase = platformTextBase(); hdr.libsBase = platformLibsBase(); hdr.spare[0] = platformBuildId(); hdr.spare[2] = platformCpuFeatures(); hdr.vm = (uint64_t)&vm;
+    hdr.textBase = platformTextBase(); hdr.libsBase = platformLibsBase(); hdr.spare[0] = platformBuildId(); hdr.spare[2] = platformCpuFeatures(); hdr.spare[3] = imageArgvKey(); hdr.vm = (uint64_t)&vm;
     hdr.globalObject = (uint64_t)defaultGlobalObject();
     hdr.mainThread = (uint64_t)&WTF::Thread::currentSingleton();
     hdr.reserved[0] = (uint64_t)mi_theap_get_default(); // main thread's mimalloc theap (TLS-referenced, lives in the heap)
@@ -1754,6 +1774,7 @@ static void imageRestoreAndRun(const char* path)
     ImageHeader hdr; ipread(fd, &hdr, sizeof hdr, 0);
     if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] source %s base=%lld magic=%.7s nregions=%llu text=%llx libs=%llx build=%llx\n", filePath, (long long)s_imageBaseOff, hdr.magic, (unsigned long long)hdr.nregions, (unsigned long long)hdr.textBase, (unsigned long long)hdr.libsBase, (unsigned long long)hdr.spare[0]);
     if (memcmp(hdr.magic, "BUNIMG2", 8) || hdr.spare[0] != platformBuildId()) { fprintf(stderr, "[image] %s was not produced by this build of the executable; booting normally\n", path); close(fd); return; }
+    if (hdr.spare[3] && hdr.spare[3] != imageArgvKey() && !getenv("BUN_IMAGE_IN")) { if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] argv differs from the build invocation; booting normally\n"); close(fd); return; }
     { uint64_t need = hdr.spare[2], have = platformCpuFeatures(); if (need && (have & need) != need) { fprintf(stderr, "[image] %s was built on a CPU with features this one lacks (%llx vs %llx); booting normally\n", path, (unsigned long long)need, (unsigned long long)have); close(fd); return; } }
     if (hdr.textBase != platformTextBase()) { fprintf(stderr, "[image] ASLR slide differs (image text %llx vs ours %llx); booting normally\n", (unsigned long long)hdr.textBase, (unsigned long long)platformTextBase()); close(fd); return; }
     if (false) { fprintf(stderr, "[image] %s was produced by a different build of this executable; booting normally\n", path); close(fd); return; }
@@ -1792,6 +1813,7 @@ static void imageRestoreAndRun(const char* path)
         if (top) mi_os_hint_floor((void*)(top + (1ull << 30)));
     }
     const off_t imageBaseOff = s_imageBaseOff; // s_imageBaseOff lives in __DATA, which the overlay below rewrites with the builder's value
+    BunLaunchContext launch; bun_launch_context_capture(&launch); // this process's raw argc/argv (our statics get the builder's below)
     uint64_t hintFloorAfterOverlay = 0; { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); hintFloorAfterOverlay = (top ? top : 0x20000000000ull) + (1ull << 30); }
     size_t mapped = 0, copied = 0;
     struct DataSeg { uint64_t* dst; const uint64_t* src; size_t words; }; DataSeg dataSegs[16]; size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
@@ -1867,6 +1889,7 @@ static void imageRestoreAndRun(const char* path)
         mi_os_hint_floor((void*)hintFloorAfterOverlay);
     }
     for (size_t di = 0; di < nDataSegs; di++) munmap((void*)dataSegs[di].src, dataSegs[di].words * 8);
+    bun_launch_context_restore(&launch); // everything derived from it (process.argv, Bun.argv, …) is ProcessDerived and recomputes this epoch
     if (hdr.reserved[0]) mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
     _mi_scavenger_forked_child(); // same situation as a fork child: the image says a scavenger runs, but no such thread exists here
     mi_prof_reinit_lock(); // and any allocator-internal lock a build-process thread was holding is nobody's now

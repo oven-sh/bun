@@ -3211,8 +3211,16 @@ extern "C" void Bun__Process__reloadEnvAfterImageRestore(JSC::JSGlobalObject* le
     globalObject->m_processEnvObject.set(vm, globalObject, fresh.getObject());
     JSObject* process = globalObject->processObject();
     process->putDirect(vm, JSC::Identifier::fromString(vm, "env"_s), fresh, 0);
-    uncheckedDowncast<Bun::Process>(process)->clearCachedCwd(); // process.cwd() re-reads getcwd() (the image cached the builder's)
+    uncheckedDowncast<Bun::Process>(process)->invalidateLaunchContext();
     (void)scope.tryClearException();
+}
+
+void Process::invalidateLaunchContext()
+{
+    // Lazily materialized from argv / cwd / exec path / title of the launching process; the getters rebuild them.
+    m_argv.clear();
+    m_execArgv.clear();
+    m_cachedCwd.clear();
 }
 
 static JSValue constructEnv(VM& vm, JSObject* processObject)

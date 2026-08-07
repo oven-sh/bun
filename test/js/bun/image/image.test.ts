@@ -56,3 +56,26 @@ test.skipIf(!hasImages)("bun build --compile --compile-image embeds the image; t
   expect(viaFile.stdout.toString()).toContain("epoch 1");
   expect(viaFile.exitCode).toBe(0);
 }, 60_000);
+
+test("launch context (argv, env, cwd, HOME) comes from the restoring process, not the builder", async () => {
+  using dir = tempDir("bun-image-launchctx", { a: { ".keep": "" }, b: { ".keep": "" }, homeA: { ".keep": "" }, homeB: { ".keep": "" } });
+  const img = join(String(dir), "ctx.img");
+  const fixture = join(import.meta.dir, "launchctx-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture, "built-arg"], env: { ...buildEnv, BUN_IMAGE_OUT: img, LAUNCH_MARKER: "builder", HOME: join(String(dir), "homeA") }, cwd: join(String(dir), "a"), stdout: "pipe", stderr: "pipe" });
+    const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(out).toContain('"marker":"builder"');
+    expect(code).toBe(0);
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture, "restored-arg", "--flag"], env: { ...restoreEnv, BUN_IMAGE_IN: img, LAUNCH_MARKER: "restorer", HOME: join(String(dir), "homeB") }, cwd: join(String(dir), "b"), stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  const line = out.split("\n").find(l => l.startsWith("[js] restored "));
+  expect(line, err.slice(-2000)).toBeDefined();
+  const got = JSON.parse(line!.slice("[js] restored ".length));
+  expect(got.argv).toEqual(["restored-arg", "--flag"]);
+  expect(got.bunArgv).toEqual(["restored-arg", "--flag"]);
+  expect(got.marker).toBe("restorer");
+  expect(got.home).toBe(join(String(dir), "homeB"));
+  expect(got.cwd.endsWith("/b")).toBe(true);
+  expect(code).toBe(0);
+}, 60000);

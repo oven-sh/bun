@@ -280,40 +280,43 @@ async function readPort(nextLine: () => Promise<string>) {
   return port;
 }
 
-it.concurrent("should dispatch handshake success, not ECONNRESET, when renegotiation completes without app data", async () => {
-  await using server = spawnQuietRenegotiationServer("end");
-  const port = await readPort(lineReader(server));
+it.concurrent(
+  "should dispatch handshake success, not ECONNRESET, when renegotiation completes without app data",
+  async () => {
+    await using server = spawnQuietRenegotiationServer("end");
+    const port = await readPort(lineReader(server));
 
-  const events: unknown[] = [];
-  const { promise: closed, resolve } = Promise.withResolvers<void>();
-  await Bun.connect({
-    hostname: "127.0.0.1",
-    port,
-    tls: { rejectUnauthorized: false },
-    socket: {
-      open() {},
-      data() {},
-      handshake(_socket, success, authorizationError) {
-        events.push({ success, code: (authorizationError as any)?.code ?? null });
+    const events: unknown[] = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      tls: { rejectUnauthorized: false },
+      socket: {
+        open() {},
+        data() {},
+        handshake(_socket, success, authorizationError) {
+          events.push({ success, code: (authorizationError as any)?.code ?? null });
+        },
+        error(_socket, err) {
+          events.push({ error: (err as any)?.code ?? String(err) });
+        },
+        close() {
+          resolve();
+        },
       },
-      error(_socket, err) {
-        events.push({ error: (err as any)?.code ?? String(err) });
-      },
-      close() {
-        resolve();
-      },
-    },
-  });
-  await closed;
+    });
+    await closed;
 
-  // One dispatch per completed handshake (initial + renegotiation), both with
-  // the certificate verdict. The renegotiated session completed, so no
-  // "disconnected before secure TLS connection was established" ECONNRESET.
-  expect(events).toEqual([
-    { success: true, code: "DEPTH_ZERO_SELF_SIGNED_CERT" },
-    { success: true, code: "DEPTH_ZERO_SELF_SIGNED_CERT" },
-  ]);
-});
+    // One dispatch per completed handshake (initial + renegotiation), both with
+    // the certificate verdict. The renegotiated session completed, so no
+    // "disconnected before secure TLS connection was established" ECONNRESET.
+    expect(events).toEqual([
+      { success: true, code: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+      { success: true, code: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+    ]);
+  },
+);
 
 it.concurrent("should re-emit secure/secureConnect after server-initiated renegotiation like node", async () => {
   await using server = spawnQuietRenegotiationServer("end");

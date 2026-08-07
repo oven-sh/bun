@@ -151,8 +151,12 @@ describe.if(isWindows && canBuildNodeAddons())("usockets sweep timer (libuv back
       "package.json": JSON.stringify({
         name: "sweep-introspect",
         version: "1.0.0",
-        scripts: { "build:napi": "node-gyp configure && node-gyp build" },
-        dependencies: { "node-gyp": "10.2.0" },
+        // `bun --bun` like napi-app: under node >= 26, node-gyp inherits
+        // clang=1 from the runner's process.config and generates vcxprojs
+        // for the ClangCL toolset, which CI's VS install does not have.
+        // Bun reports clang=0, selecting the stock MSVC toolset.
+        scripts: { "build:napi": "bun --bun node-gyp rebuild" },
+        dependencies: { "node-gyp": "^11.2.0" },
       }),
     });
 

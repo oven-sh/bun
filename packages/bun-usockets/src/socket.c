@@ -440,12 +440,13 @@ static int us_internal_send_errno_is_peer_gone(int e) {
 }
 #endif
 
-/* Peer-gone errnos are final: don't wait for writable on them (libuv fails the req and stops POLLOUT,
- * deps/uv/src/unix/stream.c uv__try_write/uv__write). Re-arming would spin kqueue's one-shot EVFILT_WRITE,
- * which re-fires with EV_EOF; loop.c's error/EOF paths close the socket instead. */
-static int us_internal_send_should_rearm(ssize_t written) {
+/* On a peer-gone errno a PAUSED socket must not re-arm: kqueue's one-shot EVFILT_WRITE would
+ * re-fire with EV_EOF forever, and the loop.c close branch deliberately excludes paused sockets
+ * (deferred-EOF keeps their unread data). Everything else still re-arms so a live socket always
+ * has a filter registered - the re-fired EV_EOF then takes the loop.c error-close next tick. */
+static int us_internal_send_should_rearm(struct us_socket_t *s, ssize_t written) {
 #ifndef _WIN32
-    if (written < 0 && us_internal_send_errno_is_peer_gone(errno)) {
+    if (written < 0 && s->flags.is_paused && us_internal_send_errno_is_peer_gone(errno)) {
         return 0;
     }
 #endif
@@ -458,7 +459,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
     }
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
-    if (written != header_length + payload_length && us_internal_send_should_rearm(written)) {
+    if (written != header_length + payload_length && us_internal_send_should_rearm(s, written)) {
         us_internal_rearm_writable(s);
     }
 
@@ -531,7 +532,7 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
     }
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
-    if (written != length && us_internal_send_should_rearm(written)) {
+    if (written != length && us_internal_send_should_rearm(s, written)) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -630,7 +631,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
     for (int i = 0; i < count; i++) total += iov[i].iov_len;
 
     ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
-    if (written != (ssize_t)total && us_internal_send_should_rearm(written)) {
+    if (written != (ssize_t)total && us_internal_send_should_rearm(s, written)) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -649,7 +650,7 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
     }
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
-    if (written != length && us_internal_send_should_rearm(written)) {
+    if (written != length && us_internal_send_should_rearm(s, written)) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -686,7 +687,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
-    if (sent != length && us_internal_send_should_rearm(sent)) {
+    if (sent != length && us_internal_send_should_rearm(s, sent)) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }

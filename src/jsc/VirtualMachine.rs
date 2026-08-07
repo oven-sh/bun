@@ -325,6 +325,9 @@ pub struct VirtualMachine {
     /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
     /// `join_child_workers` drains at exit.
     pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
+    /// The one object other threads hold to reach this VM (post completions,
+    /// wake, keep-alive, borrow VM-owned memory); closed by `teardown`.
+    handle: core::mem::ManuallyDrop<crate::VmHandle>,
     pub pending_ipc: Option<PendingIpc>,
     pub hot_reload_counter: u32,
 
@@ -770,6 +773,25 @@ impl VirtualMachine {
     pub fn event_loop_shared(&self) -> &EventLoop {
         // SAFETY: see `event_loop_mut`.
         unsafe { &*self.event_loop }
+    }
+
+    /// A clone of this VM's [`crate::VmHandle`] — what off-thread work captures
+    /// instead of a pointer to the VM or its event loop.
+    #[inline]
+    pub fn handle(&self) -> crate::VmHandle {
+        (*self.handle).clone()
+    }
+
+    /// Which loop is current (`event_loop` points at the regular loop except
+    /// while a macro runs). Off-thread completions carry this so they land on
+    /// the loop that was current when their work started.
+    #[inline]
+    pub fn current_loop_kind(&self) -> crate::LoopKind {
+        if core::ptr::eq(self.event_loop, &raw const self.macro_event_loop as *mut EventLoop) {
+            crate::LoopKind::Macro
+        } else {
+            crate::LoopKind::Regular
+        }
     }
 
     /// Alias for [`Self::event_loop_mut`]. Kept for callers migrated on the
@@ -1574,6 +1596,7 @@ impl VirtualMachine {
         let hooks = runtime_hooks();
 
         // ---- A. stop phase; script may still run ------------------------------
+        vm.handle.set_stopping();
         Zig__GlobalObject__prepareForDestruction(vm.global());
         if let Some(hooks) = hooks {
             // SAFETY: fn contract; JSC heap alive.
@@ -1607,6 +1630,7 @@ impl VirtualMachine {
 
         // ---- B. no more script -----------------------------------------------
         Zig__GlobalObject__forbidExecution(vm.global());
+        vm.handle.forbid_script();
         #[cfg(windows)]
         if let Some(t) = vm.event_loop_mut().forever_timer.take() {
             // SAFETY: live usockets timer from `hold_forever_poll`; closed like
@@ -1625,6 +1649,10 @@ impl VirtualMachine {
         }
         vm.gc_controller.deinit();
         crate::web_worker::join_child_workers(vm);
+        // From here no other thread reaches this VM: posts are refused (the
+        // poster releases its task itself), wake/keep-alive are no-ops, and any
+        // job still using VM-owned memory has finished (close waits for it).
+        vm.handle.close();
         // A worker closes its uv loop below (D), so requests still in flight
         // must complete first, against this live VM. Their handles were closed
         // in A, so what remains completes on its own (threadpool work). The
@@ -2188,6 +2216,7 @@ impl VirtualMachine {
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
             addr_of_mut!((*vm).child_workers).write(Vec::new());
+            addr_of_mut!((*vm).handle).write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());

@@ -1349,6 +1349,9 @@ pub use self::saved_source_map as SavedSourceMap;
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "VirtualMachine.rs"]
 pub mod virtual_machine;
+#[path = "VmHandle.rs"]
+pub mod vm_handle;
+pub use self::vm_handle::{LoopKind, VmHandle};
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
 

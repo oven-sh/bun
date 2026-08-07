@@ -791,13 +791,21 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     // host the bytes can lag the client's write by longer than any fixed tick
     // budget, and a connection whose bytes the server never saw is closed as
     // idle) - that round proves nothing and is retried on a fresh server.
+    //
+    // Two variants run on confirmed-spared rounds:
+    // - destroy: the promise keeps pending until the client hangs up.
+    // - complete: the client finishes the head after stop(); the request must
+    //   still dispatch and be answered (the close-when-idle mark has to
+    //   survive the dispatch's response-state reset, which only spares
+    //   connection-scoped bits), and then the mark closes the served
+    //   connection and the drain resolves.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           const net = require("net");
-          async function round() {
+          async function round(completeHead) {
             const server = Bun.serve({
               port: 0,
               hostname: "127.0.0.1",
@@ -839,21 +847,41 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
               c.destroy();
               return null;
             }
+            // Confirmed: the sweep spared the mid-request connection, so the
+            // partial head was parsed and the close-when-idle mark is set.
+            if (completeHead) {
+              // Finish the head: the request dispatches on the marked
+              // connection, its response reaches the client, then the mark
+              // closes the drained connection (the client never hangs up).
+              c.write("\\r\\n");
+              while (!state.closed) await new Promise(r => setImmediate(r));
+              await stopped;
+              return {
+                resolved: true,
+                closed: true,
+                secondServed: (state.buf.match(/\\r\\nok/g) || []).length === 2,
+              };
+            }
             c.destroy();
             await stopped;
             const until = Date.now() + 2000;
             while (!state.closed && Date.now() < until) await new Promise(r => setImmediate(r));
             return { resolved: true, closed: state.closed };
           }
-          for (let attempt = 1; attempt <= 8; attempt++) {
-            const r = await round();
+          const results = {};
+          for (let attempt = 1; attempt <= 16 && (!results.destroy || !results.complete); attempt++) {
+            const variant = results.destroy ? "complete" : "destroy";
+            const r = await round(variant === "complete");
             if (r === null) continue;
             if (r.fail) { console.error(r.fail); process.exit(1); }
-            console.log(JSON.stringify(r));
-            process.exit(0);
+            results[variant] = r;
           }
-          console.error("every round raced: the partial head never arrived before stop()");
-          process.exit(1);
+          if (!results.destroy || !results.complete) {
+            console.error("every round raced: the partial head never arrived before stop()");
+            process.exit(1);
+          }
+          console.log(JSON.stringify(results));
+          process.exit(0);
         `,
       ],
       env: bunEnv,
@@ -863,7 +891,10 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       stderr: "",
-      out: { resolved: true, closed: true },
+      out: {
+        destroy: { resolved: true, closed: true },
+        complete: { resolved: true, closed: true, secondServed: true },
+      },
       exitCode: 0,
     });
   });

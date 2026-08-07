@@ -276,6 +276,39 @@ test.skipIf(!isWindows)(
   isASAN || isDebug ? 60_000 : 20_000,
 );
 
+// POSIX twin of the NTSTATUS test: fastfail resets the SIGABRT disposition
+// and raises it, so the worker dies by the raw signal with no crash-handler
+// banner, and the fatal-signal classification aborts the run.
+test.skipIf(isWindows)(
+  "--parallel: a worker dying of a raw SIGABRT (fastfail) aborts the run",
+  async () => {
+    using dir = tempDir("parallel-fastfail-posix", {
+      "a-hang.test.js": `import {test} from "bun:test"; test("hang", async () => { await new Promise(() => {}); }, 999999);`,
+      "b-fastfail.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("fastfail", () => { crash_handler.fastfail(); });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2"],
+      // A deliberate crash must not upload a report (see the POSIX test above).
+      env: {
+        ...bunEnv,
+        BUN_TEST_PARALLEL_SCALE_MS: "0",
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("(worker crashed: SIGABRT)");
+    expect(stderr).toContain("a test worker process crashed with SIGABRT");
+    expect(stderr).toContain("Aborting");
+    expect(stderr).toContain("aborted: sibling worker panicked");
+    expect(exitCode).not.toBe(0);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
+
 test("--parallel prints per-test lines under their file's header", async () => {
   using dir = tempDir("parallel-output", {
     "a.test.js": `import {test,expect} from "bun:test";

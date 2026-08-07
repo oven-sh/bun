@@ -152,15 +152,19 @@ pub(crate) mod js_bindings {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Dies like foreign native code, without Bun's crash handler running:
-    /// `std::process::abort()` is `__fastfail` on Windows (uncatchable,
+    /// Dies like foreign native code, with Bun's crash handler provably out
+    /// of the way on both platforms: `__fastfail` on Windows (uncatchable,
     /// exit code 0xC0000409, same as UCRT abort(), Rust aborts, /GS checks)
-    /// and SIGABRT on POSIX. The `abort` binding above is the opposite: it
-    /// routes into the crash handler on purpose.
+    /// and a raw SIGABRT on POSIX (handlers reset first, like the
+    /// `raiseIgnoringPanicHandler` binding below). The `abort` binding
+    /// above is the opposite: it routes into the crash handler on purpose.
     #[bun_jsc::host_fn]
     fn js_fastfail(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
+        #[cfg(windows)]
         std::process::abort();
+        #[cfg(not(windows))]
+        Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGABRT);
     }
 
     #[bun_jsc::host_fn]

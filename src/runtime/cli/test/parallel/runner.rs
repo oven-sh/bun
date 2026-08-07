@@ -135,7 +135,6 @@ pub(crate) fn run_as_coordinator(
             captured: Vec::new(),
             alive: false,
             exit_status: None,
-            raw_exit_code: 0,
             reap_pending: false,
         });
         let w: *mut Worker = workers.last_mut().unwrap();

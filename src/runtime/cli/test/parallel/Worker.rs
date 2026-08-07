@@ -70,10 +70,6 @@ pub struct Worker {
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub(crate) exit_status: Option<Status>,
-    /// Windows: untruncated exit code (`Process.windows_raw_exit_code`)
-    /// captured with `exit_status`, since `Exited.code` is `u8` and crash
-    /// classification needs the full NTSTATUS. Always 0 on POSIX.
-    pub(crate) raw_exit_code: u32,
     pub(crate) reap_pending: bool,
 }
 
@@ -336,11 +332,7 @@ impl Worker {
         Ok(())
     }
 
-    pub(crate) fn on_process_exit(&mut self, _process: &Process, status: Status, _: &Rusage) {
-        #[cfg(windows)]
-        {
-            self.raw_exit_code = _process.windows_raw_exit_code;
-        }
+    pub(crate) fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
         self.alive = false;
         // SAFETY: coord backref valid for worker lifetime; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };

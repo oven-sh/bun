@@ -124,12 +124,6 @@ pub struct Process {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) pidfd: PidFdType,
     pub status: Status,
-    /// Untruncated `GetExitCodeProcess` DWORD captured in `on_exit_uv`;
-    /// `Exited::code` is `u8` and collapses NTSTATUS crash codes into small
-    /// integers indistinguishable from `process.exit(N)` (0xC0000409 → 9).
-    /// 0 until the process exits with a plain status.
-    #[cfg(windows)]
-    pub windows_raw_exit_code: u32,
     pub poller: Poller,
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Process>,
     pub exit_handler: ProcessExitHandler,
@@ -519,12 +513,12 @@ impl Process {
         } else if exit_status >= 0 {
             // The check is on the signed libuv `exit_status`, so a negative
             // `-UV_E*` reaches the Err arm.
-            this.windows_raw_exit_code = exit_status as u32;
             this.close();
             this.on_exit(
                 Status::Exited(Exited {
                     code: exit_code,
                     signal: 0,
+                    raw: exit_status as u32,
                 }),
                 &rusage,
             );
@@ -706,6 +700,10 @@ pub struct Exited {
     /// `SignalCode` discriminants are 1..=31; storing it as the
     /// enum and transmuting `0` would be UB. Convert via `Status::signal_code`.
     pub signal: u8,
+    /// Untruncated `GetExitCodeProcess` DWORD; `code` is its low byte.
+    /// NTSTATUS crash codes only survive here (0xC0000409 → `code` 9).
+    #[cfg(windows)]
+    pub raw: u32,
 }
 
 impl Status {
@@ -2022,7 +2020,6 @@ mod spawn_process_body {
             event_loop: options.windows.loop_,
             pid: 0,
             status: Status::Running,
-            windows_raw_exit_code: 0,
             poller: Poller::Detached,
             exit_handler: ProcessExitHandler::default(),
         }));

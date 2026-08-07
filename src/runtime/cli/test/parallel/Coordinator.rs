@@ -576,21 +576,20 @@ impl<'a> Coordinator<'a> {
             // masked by the rest of the suite passing: abort the whole run so
             // the exit status reflects the crash. SIGKILL is treated as a
             // regular failure (commonly the OOM killer or the user).
-            let raw_exit_code = w.raw_exit_code;
-            let panicked = is_panic_status(status, raw_exit_code);
+            let panicked = is_panic_status(status);
             let was_bailed = self.bailed;
             if was_bailed && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
                 self.record_timing(idx, w.dispatched_at);
-                self.account_crash(idx, status, raw_exit_code);
+                self.account_crash(idx, status);
             }
             Output::flush();
             // SAFETY: fresh root derivation — `account_crash` can reach `bail_out`, which retags the slots.
             let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.inflight = None;
             if panicked {
-                self.abort_on_worker_panic(idx, status, raw_exit_code);
+                self.abort_on_worker_panic(idx, status);
             }
         }
 
@@ -651,13 +650,13 @@ impl<'a> Coordinator<'a> {
         self.files_done += 1;
     }
 
-    fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus, raw_exit_code: u32) {
+    fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
         bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>(worker crashed: {})<r>\n",
             bstr::BStr::new(self.rel_path(file_idx)),
-            bstr::BStr::new(describe_status(&mut buf, status, raw_exit_code)),
+            bstr::BStr::new(describe_status(&mut buf, status)),
         );
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;
@@ -674,7 +673,7 @@ impl<'a> Coordinator<'a> {
     /// files as aborted so the run ends immediately with a non-zero exit
     /// and the panic's stderr (already flushed via flushCaptured) is the
     /// last meaningful output, not buried under hundreds of later passes.
-    fn abort_on_worker_panic(&mut self, file_idx: u32, status: &SpawnStatus, raw_exit_code: u32) {
+    fn abort_on_worker_panic(&mut self, file_idx: u32, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
         bun_core::pretty_error!(
@@ -682,7 +681,7 @@ impl<'a> Coordinator<'a> {
                 "\n<red>error<r>: a test worker process crashed with <b>{}<r> while running <b>{}<r>.\n",
                 "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
             ),
-            bstr::BStr::new(describe_status(&mut buf, status, raw_exit_code)),
+            bstr::BStr::new(describe_status(&mut buf, status)),
             bstr::BStr::new(self.rel_path(file_idx)),
         );
         Output::flush();
@@ -812,11 +811,11 @@ impl<'a> Coordinator<'a> {
 ///
 /// Windows delivers no signals: an unhandled exception or `__fastfail`
 /// exits with the NTSTATUS as the exit code, so recognized fatal values of
-/// `raw_exit_code` (untruncated, `Exited.code` being `u8`; always 0 on
-/// POSIX) classify as panics too. A fault Bun's crash handler catches
-/// still exits with code 3, indistinguishable from process.exit(3), and
-/// stays a per-file failure, recognizable only by its banner in stderr.
-fn is_panic_status(status: &SpawnStatus, raw_exit_code: u32) -> bool {
+/// `Exited.raw` (the untruncated code; `Exited.code` is `u8`) classify as
+/// panics too. A fault Bun's crash handler catches still exits with code
+/// 3, indistinguishable from process.exit(3), and stays a per-file
+/// failure, recognizable only by its banner in stderr.
+fn is_panic_status(status: &SpawnStatus) -> bool {
     if let Some(sig) = status.signal_code() {
         use bun_core::SignalCode;
         return matches!(
@@ -830,13 +829,20 @@ fn is_panic_status(status: &SpawnStatus, raw_exit_code: u32) -> bool {
                 | SignalCode::SIGSYS
         );
     }
-    matches!(status, SpawnStatus::Exited(_)) && is_fatal_windows_exit_code(raw_exit_code)
+    #[cfg(windows)]
+    if let SpawnStatus::Exited(e) = status {
+        return is_fatal_windows_exit_code(e.raw);
+    }
+    false
 }
 
 /// Fatal NTSTATUS exit codes — the Windows mirror of the signal list
-/// above. An allowlist, not `>= 0xC0000000`: process.exit(-1) exits with
-/// 0xFFFFFFFF. TerminateProcess (taskkill, job limits) and Ctrl+C
-/// (0xC000013A) intentionally stay per-file failures, like SIGKILL.
+/// above. An allowlist, not `>= 0xC0000000`, because high exit codes are
+/// not all faults: 0xC000013A is Ctrl+C (the SIGINT analog), and foreign
+/// code in the worker can exit with arbitrary DWORDs (CRT `exit(-1)` is
+/// 0xFFFFFFFF). TerminateProcess (taskkill, job limits) stays a per-file
+/// failure, like SIGKILL.
+#[cfg(windows)]
 #[rustfmt::skip]
 fn is_fatal_windows_exit_code(code: u32) -> bool {
     matches!(
@@ -863,20 +869,15 @@ fn is_fatal_windows_exit_code(code: u32) -> bool {
     )
 }
 
-fn describe_status<'b>(
-    buf: &'b mut [u8; 32],
-    status: &SpawnStatus,
-    raw_exit_code: u32,
-) -> &'b [u8] {
+fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] {
     match status {
         SpawnStatus::Exited(e) => {
-            // Windows: prefer the untruncated code; NTSTATUS values print in
+            // Windows: report the untruncated code; NTSTATUS values print in
             // hex ("exit code 0xC0000409"), the form Windows tooling uses.
-            let code = if raw_exit_code != 0 {
-                raw_exit_code
-            } else {
-                u32::from(e.code)
-            };
+            #[cfg(windows)]
+            let code: u32 = e.raw;
+            #[cfg(not(windows))]
+            let code: u32 = u32::from(e.code);
             let mut cursor: &mut [u8] = &mut buf[..];
             if code >= 0x8000_0000 {
                 write!(cursor, "exit code 0x{code:08X}").expect("unreachable");

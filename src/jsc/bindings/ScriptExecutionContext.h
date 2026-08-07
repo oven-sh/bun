@@ -70,8 +70,6 @@ public:
     bool activeDOMObjectsAreSuspended() { return false; }
     bool activeDOMObjectsAreStopped() { return false; }
     bool isContextThread();
-    bool isDocument() { return false; }
-    bool isWorkerGlobalScope() { return true; }
     bool isJSExecutionForbidden();
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {

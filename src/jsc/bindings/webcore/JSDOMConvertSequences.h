@@ -80,14 +80,6 @@ struct SequenceTraits<
         }
     }
 
-    static void reserveEstimated(
-        JSC::JSGlobalObject& lexicalGlobalObject,
-        VectorType& sequence,
-        size_t size)
-    {
-        reserveExact(lexicalGlobalObject, sequence, size);
-    }
-
     template<typename T>
     static void append(
         JSC::JSGlobalObject& lexicalGlobalObject,
@@ -120,11 +112,6 @@ struct SequenceTraits<IDLType, std::array<typename IDLType::ImplementationType, 
             throwTypeError(&lexicalGlobalObject, scope);
         }
     }
-
-    static void reserveEstimated(
-        JSC::JSGlobalObject& lexicalGlobalObject,
-        VectorType& sequence,
-        size_t size) {}
 
     template<typename T>
     static void append(

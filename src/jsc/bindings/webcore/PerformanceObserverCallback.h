@@ -38,8 +38,6 @@ class PerformanceObserverCallback : public RefCounted<PerformanceObserverCallbac
 public:
     using ActiveDOMCallback::ActiveDOMCallback;
 
-    virtual bool hasCallback() const = 0;
-
     virtual CallbackResult<void> handleEvent(PerformanceObserver&, PerformanceObserverEntryList&, PerformanceObserver&) = 0;
 };
 

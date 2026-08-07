@@ -778,10 +778,13 @@ impl RewriterPipe {
     /// `__finalize` on its raw `m_sinkPtr`) and a parked suspension (whose
     /// `NativePromiseContext` destructor queues
     /// [`Self::abandon_suspension`]). Those owners hold `claims`; leak the
-    /// Box here and the last of them frees it.
+    /// Box here and the last of them frees it. At VM shutdown the other
+    /// owners' deferred releases never run, so a still-claimed pipe leaks —
+    /// the safe side of that teardown race, since their destructors can still
+    /// dispatch into the allocation.
     pub fn finalize(this: Box<Self>) {
         this.cell.set(JSValue::ZERO);
-        if !VirtualMachine::get().is_shutting_down() && this.release_claim() {
+        if this.release_claim() {
             let _ = Box::into_raw(this);
             return;
         }

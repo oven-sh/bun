@@ -299,6 +299,11 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     /// whose allocation is co-owned by another GC cell releases the
     /// controller's claim here (the two cells are swept in unspecified order
     /// within one GC cycle, so neither destructor alone may free it).
+    /// Implementations must not free the sink allocation inline: the caller
+    /// holds `&mut Self`, and the C++ dispatcher keeps using `m_sinkPtr` in
+    /// the same frame after this returns (the destructor's trailing
+    /// `__finalize`, the close path's `__close`). Defer a last-owner free to
+    /// the event loop.
     fn controller_detached(&mut self) {}
     fn done(&self) -> bool {
         false

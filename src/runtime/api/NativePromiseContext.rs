@@ -216,8 +216,13 @@ impl DeferredDerefTask {
     pub(crate) fn run_from_js_thread(packed_ptr: usize) {
         let tag = Tag::from_raw((packed_ptr & Self::TAG_MASK) as u8);
         let ctx = (packed_ptr & !Self::TAG_MASK) as *mut c_void;
-        // SAFETY: ctx was packed in `schedule` from a live intrusive-refcounted
-        // pointer of the type indicated by `tag`; we are on the JS thread.
+        // SAFETY: ctx was packed in `schedule` from a live pointer of the
+        // type indicated by `tag`. The request-context tags hold an intrusive
+        // refcount released here. The HTMLRewriter tags point at a
+        // claim-counted `RewriterPipe`: the suspension task owns the claim
+        // taken in `begin_suspension`, and `HTMLRewriterPipeFree` is
+        // scheduled only by the release of the last claim, so this task is
+        // the sole owner of the allocation it frees. We are on the JS thread.
         unsafe {
             match tag {
                 Tag::HTTPServerRequestContext => (*ctx.cast::<HTTPServerRequestContext>()).deref(),

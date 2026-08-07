@@ -4383,6 +4383,7 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
   it("a paused socket with buffered data survives quiescence and resumes", async () => {
     const { stdout, stderr, exitCode } = await runChild(`
         let sawError = null;
+        let closeError = null;
         let closed = false;
         const opened = Promise.withResolvers();
         const gotData = Promise.withResolvers();
@@ -4402,7 +4403,8 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
             error(s, e) {
               sawError = e?.code || String(e);
             },
-            close() {
+            close(s, e) {
+              closeError = e?.code || (e ? String(e) : null);
               closed = true;
             },
           },
@@ -4427,7 +4429,7 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
         // "poll parked N times", so hold the state across a fixed window.
         await Bun.sleep(1500);
         if (sawError || closed) {
-          console.log("FAIL early-death error=" + sawError + " closed=" + closed);
+          console.log("FAIL early-death error=" + (sawError || closeError) + " closed=" + closed);
           process.exit(1);
         }
         paused.resume();
@@ -4446,6 +4448,7 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
   it("a half-closed paused socket sees the peer FIN and closes cleanly", async () => {
     const { stdout, stderr, exitCode } = await runChild(`
         let sawError = null;
+        let closeError = null;
         const serverClosed = Promise.withResolvers();
         using server = Bun.listen({
           hostname: "127.0.0.1",
@@ -4462,7 +4465,8 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
             error(s, e) {
               sawError = e?.code || String(e);
             },
-            close() {
+            close(s, e) {
+              closeError = e?.code || (e ? String(e) : null);
               serverClosed.resolve();
             },
           },
@@ -4470,9 +4474,16 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
         await Bun.connect({
           hostname: "127.0.0.1",
           port: server.port,
+          // Half-open so receiving the server FIN does not auto-answer with
+          // ours: the delayed reply first holds the server socket parked in
+          // the DISCONNECT-only state across loop iterations (the broken path
+          // error-closes it within one), then delivers the FIN it must not
+          // miss.
+          allowHalfOpen: true,
           socket: {
             data() {},
-            end(s) {
+            async end(s) {
+              await Bun.sleep(700);
               s.end();
             },
             error() {},
@@ -4480,8 +4491,9 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
           },
         });
         await serverClosed.promise;
-        console.log(sawError ? "FAIL " + sawError : "OK clean close");
-        process.exit(sawError ? 1 : 0);
+        const bad = sawError || closeError;
+        console.log(bad ? "FAIL " + bad : "OK clean close");
+        process.exit(bad ? 1 : 0);
       `);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK clean close");
@@ -4491,6 +4503,7 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
   it("a paused socket with buffered data learns of a peer reset", async () => {
     const { stdout, stderr, exitCode } = await runChild(`
         let sawError = null;
+        let closeError = null;
         let closed = false;
         const opened = Promise.withResolvers();
         const gone = Promise.withResolvers();
@@ -4507,7 +4520,8 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
               sawError = e?.code || String(e);
               gone.resolve("error");
             },
-            close() {
+            close(s, e) {
+              closeError = e?.code || (e ? String(e) : null);
               closed = true;
               gone.resolve("close");
             },
@@ -4525,7 +4539,7 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
         // instant error-close would satisfy the later assertion by accident.
         await Bun.sleep(1200);
         if (sawError || closed) {
-          console.log("FAIL early-death error=" + sawError + " closed=" + closed);
+          console.log("FAIL early-death error=" + (sawError || closeError) + " closed=" + closed);
           process.exit(1);
         }
         // Abortive close: the RST discards the queued byte, so the periodic

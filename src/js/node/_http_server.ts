@@ -1038,7 +1038,21 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
-          const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
+          // Node.js's head is bytes past end of message: slice off a Content-Length body prefix (and skip that tail on the tunnel data path, which re-delivers it).
+          let upgradeHead = kEmptyBuffer;
+          if (!hasBody) {
+            if (connectHead) upgradeHead = connectHead;
+          } else if (
+            connectHead &&
+            (dispatchBits & DISPATCH_HAS_CONTENT_LENGTH) !== 0 &&
+            (dispatchBits & DISPATCH_HAS_TRANSFER_ENCODING) === 0
+          ) {
+            const contentLength = +http_req.headers["content-length"];
+            if (contentLength >= 0 && connectHead.length > contentLength) {
+              upgradeHead = connectHead.subarray(contentLength);
+              socket[kSkipTunnelBytes] = upgradeHead.length;
+            }
+          }
           let upgradeHandled;
           try {
             upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
@@ -1379,6 +1393,8 @@ const kEnableStreaming = Symbol("kEnableStreaming");
 // resumes this request, like Node.js's UpgradeStream._read, so an unread body
 // can never stall the upgrade data behind it.
 const kUpgradeIncoming = Symbol("kUpgradeIncoming");
+// Leading tunnel bytes already handed to 'upgrade' as the head buffer.
+const kSkipTunnelBytes = Symbol("kSkipTunnelBytes");
 
 // Like Node.js's net.Socket onReadableStreamEnd: every socket carries one 'end'
 // listener. http server connections have allowHalfOpen: true, so it is a no-op,
@@ -1547,6 +1563,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   [kBytesWritten] = 0;
   [kHandle];
   [kUpgradeIncoming] = undefined;
+  [kSkipTunnelBytes] = 0;
   server: Server;
   _httpMessage;
   _secureEstablished = false;
@@ -1634,6 +1651,17 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   }
   #onData(chunk, last) {
     this._unrefTimer();
+    const skip = this[kSkipTunnelBytes];
+    if (skip > 0 && chunk) {
+      const chunkLength = chunk.length;
+      if (chunkLength <= skip) {
+        this[kSkipTunnelBytes] = skip - chunkLength;
+        chunk = null;
+      } else {
+        this[kSkipTunnelBytes] = 0;
+        chunk = chunk.subarray(skip);
+      }
+    }
     if (chunk) {
       this.push(chunk);
     }

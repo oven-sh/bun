@@ -803,3 +803,58 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+describe("Array subclass", () => {
+  it("prints ClassName(length) prefix and skips non-enumerable own properties (#13946)", () => {
+    class Result extends Array {
+      constructor() {
+        super();
+        Object.defineProperties(this, {
+          count: { value: null, writable: true },
+          state: { value: null, writable: true },
+          command: { value: null, writable: true },
+          columns: { value: null, writable: true },
+          statement: { value: null, writable: true },
+        });
+      }
+    }
+    const r = new Result();
+    r.push({ "?column?": 1 });
+    r.count = 1;
+    r.state = { pid: 3724 };
+    r.command = "SELECT";
+    expect(Bun.inspect(r)).toBe('Result(1) [\n  {\n    "?column?": 1,\n  }\n]');
+  });
+
+  it("prints ClassName(0) [] for an empty subclass instance", () => {
+    class Empty extends Array {}
+    expect(Bun.inspect(new Empty())).toBe("Empty(0) []");
+  });
+
+  it("still prints enumerable own non-index properties on a subclass", () => {
+    class Result2 extends Array {}
+    const r = new Result2();
+    r.push(1, 2, 3);
+    r.extra = "hello";
+    expect(Bun.inspect(r)).toBe('Result2(3) [ 1, 2, 3, extra: "hello" ]');
+  });
+
+  it("omits the prefix for an anonymous subclass", () => {
+    const Anon = (() => class extends Array {})();
+    const a = new Anon();
+    a.push(1, 2);
+    expect(Bun.inspect(a)).toBe("[ 1, 2 ]");
+  });
+
+  it("plain Array skips non-enumerable own properties", () => {
+    const a = [1, 2, 3];
+    Object.defineProperty(a, "hidden", { value: 42, enumerable: false });
+    expect(Bun.inspect(a)).toBe("[ 1, 2, 3 ]");
+  });
+
+  it("plain Array keeps enumerable own non-index properties", () => {
+    const a = [1, 2, 3];
+    a.extra = "x";
+    expect(Bun.inspect(a)).toBe('[ 1, 2, 3, extra: "x" ]');
+  });
+});

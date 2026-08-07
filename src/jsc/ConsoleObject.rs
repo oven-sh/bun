@@ -4331,8 +4331,20 @@ pub mod formatter {
 
             let len = value.get_length(self.global_this)?;
 
-            // TODO: DerivedArray does not get passed along in JSType, and it's
-            // not clear why.
+            // Prefix Array subclasses with `ClassName(len) ` to match Node's
+            // util.inspect (e.g. postgres.js `Result(1) [ ... ]`). Subclass
+            // instances report `JSType::Array`, not `DerivedArray`, so the
+            // subclass check has to go through the constructor name.
+            if js_type.is_array() {
+                let mut name_str = ZigString::init(b"");
+                value.get_class_name(self.global_this, &mut name_str)?;
+                if name_str.len != 0 && !name_str.eql_comptime(b"Array") {
+                    writer.add_for_new_line(
+                        name_str.len + bun_core::fmt::digit_count(len) + "() ".len(),
+                    );
+                    writer.print(format_args!("{name_str}({len}) "));
+                }
+            }
 
             if len == 0 {
                 writer.write_all(b"[]");

@@ -60,9 +60,9 @@ if [ -f "$SUP/pugixml-$PUGI_VERSION/src/pugixml.cpp" ]; then
 fi
 if [ -f /usr/include/expat.h ]; then XML_C_DEFS+=(-DHAVE_EXPAT); XML_C_LIBS+=(-Clink-arg=-lexpat); fi
 if [ -d /usr/include/libxml2 ]; then XML_C_DEFS+=(-DHAVE_LIBXML2 -I/usr/include/libxml2); XML_C_LIBS+=(-Clink-arg=-lxml2); fi
-$CXX -O3 -fPIC -std=c++17 "${XML_C_DEFS[@]}" -c src/parsers/benches/support/xml_c_shim.cpp -o "$SUP/xml_c_shim.o"
+$CXX -O3 -fPIC -std=c++17 ${XML_C_DEFS[@]+"${XML_C_DEFS[@]}"} -c src/parsers/benches/support/xml_c_shim.cpp -o "$SUP/xml_c_shim.o"
 XML_CFG=()
-for d in "${XML_C_DEFS[@]}"; do
+for d in ${XML_C_DEFS[@]+"${XML_C_DEFS[@]}"}; do
   case "$d" in -DHAVE_*) XML_CFG+=("--cfg" "$(echo "${d#-DHAVE_}" | tr A-Z a-z)") ;; esac
 done
 
@@ -75,7 +75,7 @@ export BUN_JSON_BENCH_FIXTURES=${BUN_JSON_BENCH_FIXTURES:-$PWD/bench/json-corpus
 CXXLIB=stdc++
 [ "$(uname -s)" = Darwin ] && CXXLIB=c++
 export BUN_XML_BENCH_FIXTURES=${BUN_XML_BENCH_FIXTURES:-$PWD/bench/xml-corpus}
-export RUSTFLAGS="${RUSTFLAGS:-} ${XML_CFG[*]} -Clink-arg=$PWD/$SUP/libbun_bench_cdeps.a ${XML_C_LIBS[*]} -Clink-arg=-l$CXXLIB -Clink-arg=-lm -Clink-arg=-ldl -Clink-arg=-lpthread -Clink-arg=-lc"
+export RUSTFLAGS="${RUSTFLAGS:-} ${XML_CFG[*]-} -Clink-arg=$PWD/$SUP/libbun_bench_cdeps.a ${XML_C_LIBS[*]-} -Clink-arg=-l$CXXLIB -Clink-arg=-lm -Clink-arg=-ldl -Clink-arg=-lpthread -Clink-arg=-lc"
 
 if [ "${1:-}" = "--test" ]; then
   shift

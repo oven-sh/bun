@@ -2338,8 +2338,8 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
 /// Receives the document structure from the parser — attributes already
 /// deduplicated, normalized and defaulted — and builds the rows.
 trait Sink<'a, U: Unit> {
-    /// `begin_element`, any number of `attribute`s, `end_attributes`; then
-    /// content (`text` and child elements); then `end_element`.
+    /// `begin_element`, any number of `attribute`s; then content (`text`
+    /// and child elements); then `end_element`.
     fn begin_element(&mut self, name: &'a [U], loc: Loc);
     fn attribute(&mut self, name: &'a [U], value: &'a [U]);
     fn text(&mut self, text: &'a [U], loc: Loc);
@@ -2916,7 +2916,7 @@ impl<'a, U: Unit> AttList<'a, U> {
 }
 
 /// Up to this many attributes on one tag, duplicates are found by comparing
-/// names pairwise (`Sink::has_attribute`); beyond it, through
+/// names pairwise (`Parser::attribute_first`); beyond it, through
 /// `Parser::attribute_names`.
 const LINEAR_ATTRIBUTE_LIMIT: usize = 8;
 

@@ -2719,19 +2719,10 @@ async function runInstall(
   return { exitCode, stderr: await stderr };
 }
 
-// bun.lock writes an scp-form git repo ("git@host:path") with an "ssh://"
-// prefix, and every git task id hashes the exact repo bytes. If parsing does
-// not strip that prefix back off, the loaded resolution ("ssh://git@host:path")
-// and the freshly parsed dependency ("git@host:path") enqueue disjoint
-// clone/checkout tasks: the store entry waits on the resolution's checkout id
-// while the re-enqueue after the clone keys the dependency's, so a cold-cache
-// install from the lockfile never finishes.
-// Needs an ssh transport for the scp form; GIT_SSH_COMMAND substitutes a shell
-// script that runs git-upload-pack locally, which git for Windows cannot do.
-test.skipIf(isWindows)("cold cache install from bun.lock with an scp-form git dependency completes", async () => {
-  using dir = tempDir("isolated-scp-git", {
-    "fake-ssh.sh": `#!/bin/sh
-# "ssh" for tests: log the call, skip options, drop the host, run the command locally.
+// The stand-in ssh transport for the git dependency tests below: logs the
+// call, skips options, drops the host, and runs the command locally. git for
+// Windows cannot run a shell script transport, hence the skips.
+const fakeSshScript = `#!/bin/sh
 echo "$*" >> "$(dirname "$0")/ssh.log"
 while [ $# -gt 1 ]; do
   case "$1" in
@@ -2742,29 +2733,52 @@ while [ $# -gt 1 ]; do
 done
 shift
 exec sh -c "$1"
-`,
+`;
+
+function gitIn(cwd: string, ...args: string[]) {
+  const { exitCode, stderr } = Bun.spawnSync({
+    cmd: ["git", ...args],
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr.toString()}`);
+}
+
+// Commits `upstream` (which already holds a package.json) and clones it to
+// the bare repo the fake ssh serves.
+function makeBareRepo(dir: string, upstream: string, bare: string) {
+  gitIn(join(dir, upstream), "init", "-q");
+  gitIn(join(dir, upstream), "add", "package.json");
+  gitIn(join(dir, upstream), "-c", "user.email=test@bun.com", "-c", "user.name=bun-test", "commit", "-qm", "init");
+  gitIn(dir, "clone", "-q", "--bare", upstream, bare);
+}
+
+function sshInstallEnv(dir: string, cache: string): Record<string, string | undefined> {
+  return {
+    ...bunEnv,
+    BUN_INSTALL_CACHE_DIR: join(dir, cache),
+    GIT_SSH_COMMAND: join(dir, "fake-ssh.sh"),
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "echo",
+  };
+}
+
+// bun.lock writes an scp-form git repo ("git@host:path") with an "ssh://"
+// prefix, and every git task id hashes the exact repo bytes. If parsing does
+// not strip that prefix back off, the loaded resolution ("ssh://git@host:path")
+// and the freshly parsed dependency ("git@host:path") enqueue disjoint
+// clone/checkout tasks: the store entry waits on the resolution's checkout id
+// while the re-enqueue after the clone keys the dependency's, so a cold-cache
+// install from the lockfile never finishes.
+test.skipIf(isWindows)("cold cache install from bun.lock with an scp-form git dependency completes", async () => {
+  using dir = tempDir("isolated-scp-git", {
+    "fake-ssh.sh": fakeSshScript,
     "upstream/package.json": JSON.stringify({ name: "scp-dep", version: "1.0.0" }),
   });
-  const fakeSsh = join(String(dir), "fake-ssh.sh");
-  chmodSync(fakeSsh, 0o755);
-
-  const git = (args: string[], cwd: string) => {
-    const { exitCode, stderr } = Bun.spawnSync({
-      cmd: ["git", ...args],
-      cwd,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr.toString()}`);
-  };
-  git(["init", "-q"], join(String(dir), "upstream"));
-  git(["add", "package.json"], join(String(dir), "upstream"));
-  git(
-    ["-c", "user.email=test@bun.com", "-c", "user.name=bun-test", "commit", "-qm", "init"],
-    join(String(dir), "upstream"),
-  );
-  git(["clone", "-q", "--bare", "upstream", "repo.git"], String(dir));
+  chmodSync(join(String(dir), "fake-ssh.sh"), 0o755);
+  makeBareRepo(String(dir), "upstream", "repo.git");
 
   const projectDir = join(String(dir), "project");
   await write(
@@ -2778,18 +2792,10 @@ exec sh -c "$1"
     }),
   );
 
-  const installEnv = (cache: string) => ({
-    ...bunEnv,
-    BUN_INSTALL_CACHE_DIR: join(String(dir), cache),
-    GIT_SSH_COMMAND: fakeSsh,
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_ASKPASS: "echo",
-  });
-
   // stderr content is not asserted (the https attempt that precedes the ssh
   // fallback fails with a git error even on the happy path); it is the
   // failure message so a broken install surfaces git's diagnostics
-  const first = await runInstall(projectDir, installEnv("cache-fresh"));
+  const first = await runInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
   expect(first.exitCode, first.stderr).toBe(0);
   expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
     name: "scp-dep",
@@ -2804,7 +2810,7 @@ exec sh -c "$1"
   await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
   await rm(join(String(dir), "ssh.log"), { force: true });
 
-  const second = await runInstall(projectDir, installEnv("cache-cold"));
+  const second = await runInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
   expect(second.exitCode, second.stderr).toBe(0);
   expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
     name: "scp-dep",
@@ -2825,46 +2831,13 @@ exec sh -c "$1"
 // "ssh://user:pass@host..." into an scp form split at the userinfo colon.
 test.skipIf(isWindows)("cold cache install of bracketed IPv6 and userinfo ssh URL git dependencies", async () => {
   using dir = tempDir("isolated-ipv6-git", {
-    "fake-ssh.sh": `#!/bin/sh
-# "ssh" for tests: skip options, drop the host, run the command locally.
-while [ $# -gt 1 ]; do
-  case "$1" in
-    -o|-p) shift 2 ;;
-    -*) shift ;;
-    *) break ;;
-  esac
-done
-shift
-exec sh -c "$1"
-`,
+    "fake-ssh.sh": fakeSshScript,
     "upstream/package.json": JSON.stringify({ name: "v6-dep", version: "1.0.0" }),
     "upstream-auth/package.json": JSON.stringify({ name: "v6-auth", version: "1.0.0" }),
   });
-  const fakeSsh = join(String(dir), "fake-ssh.sh");
-  chmodSync(fakeSsh, 0o755);
-
-  const git = (args: string[], cwd: string) => {
-    const { exitCode, stderr } = Bun.spawnSync({
-      cmd: ["git", ...args],
-      cwd,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr.toString()}`);
-  };
-  for (const [upstream, bare] of [
-    ["upstream", "repo.git"],
-    ["upstream-auth", "repo-auth.git"],
-  ]) {
-    git(["init", "-q"], join(String(dir), upstream));
-    git(["add", "package.json"], join(String(dir), upstream));
-    git(
-      ["-c", "user.email=test@bun.com", "-c", "user.name=bun-test", "commit", "-qm", "init"],
-      join(String(dir), upstream),
-    );
-    git(["clone", "-q", "--bare", upstream, bare], String(dir));
-  }
+  chmodSync(join(String(dir), "fake-ssh.sh"), 0o755);
+  makeBareRepo(String(dir), "upstream", "repo.git");
+  makeBareRepo(String(dir), "upstream-auth", "repo-auth.git");
 
   const projectDir = join(String(dir), "project");
   await write(
@@ -2880,15 +2853,7 @@ exec sh -c "$1"
     }),
   );
 
-  const installEnv = (cache: string) => ({
-    ...bunEnv,
-    BUN_INSTALL_CACHE_DIR: join(String(dir), cache),
-    GIT_SSH_COMMAND: fakeSsh,
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_ASKPASS: "echo",
-  });
-
-  const first = await runInstall(projectDir, installEnv("cache-fresh"));
+  const first = await runInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
   expect(first.exitCode, first.stderr).toBe(0);
   for (const name of ["v6-dep", "v6-auth"]) {
     expect(await file(join(projectDir, "node_modules", name, "package.json")).json()).toMatchObject({
@@ -2905,7 +2870,7 @@ exec sh -c "$1"
 
   await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
 
-  const second = await runInstall(projectDir, installEnv("cache-cold"));
+  const second = await runInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
   expect(second.exitCode, second.stderr).toBe(0);
   for (const name of ["v6-dep", "v6-auth"]) {
     expect(await file(join(projectDir, "node_modules", name, "package.json")).json()).toMatchObject({

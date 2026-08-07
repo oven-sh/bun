@@ -2,6 +2,9 @@ import type { Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { bunEnv, bunExe, tls } from "harness";
 import type { IncomingMessage } from "http";
+import { connect as netConnect } from "node:net";
+import { Duplex } from "node:stream";
+import { connect as tlsConnect } from "node:tls";
 import { join } from "path";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "ignore"> | null = null;
@@ -200,52 +203,86 @@ if (handshakes < 2) {
 console.log("ok");
 `;
 
-// TLS 1.2 server that renegotiates right after the handshake and ends the
-// socket once the renegotiation completes, WITHOUT sending any application
-// data. The client's SSL_read finishes the renegotiated handshake with
+// TLS 1.2 server that renegotiates right after the handshake WITHOUT sending
+// any application data. The client finishes the renegotiated handshake with
 // nothing to deliver, which is the path that used to leave the socket stuck
-// in RENEGOTIATION_PENDING (no second handshake dispatch, and the close was
-// misreported as a pre-handshake ECONNRESET).
-function spawnQuietRenegotiationServer() {
+// in RENEGOTIATION_PENDING (no second handshake dispatch, no writable
+// dispatch, and the close was misreported as a pre-handshake ECONNRESET). In
+// "end" mode the server ends the socket once the renegotiation completes; in
+// "pause" mode it stops reading, prints "reneg-done", and resumes when
+// anything arrives on stdin.
+const QUIET_RENEG_SERVER_JS = /* js */ `
+  const tls = require("tls");
+  const server = tls.createServer(
+    {
+      cert: process.env.SERVER_CERT,
+      key: process.env.SERVER_KEY,
+      minVersion: "TLSv1.2",
+      maxVersion: "TLSv1.2",
+    },
+    socket => {
+      socket.on("error", () => {});
+      socket.on("data", () => {});
+      socket.renegotiate({ requestCert: true, rejectUnauthorized: false }, err => {
+        if (err) process.exit(1);
+        if (process.env.RENEG_MODE === "pause") {
+          socket.pause();
+          console.log("reneg-done");
+          process.stdin.on("data", () => socket.resume());
+        } else {
+          socket.end();
+        }
+      });
+    },
+  );
+  server.listen(0, () => console.log(server.address().port));
+`;
+
+function spawnQuietRenegotiationServer(mode: "end" | "pause") {
   return Bun.spawn({
-    cmd: [
-      "node",
-      "-e",
-      `
-        const tls = require("tls");
-        const server = tls.createServer(
-          {
-            cert: process.env.SERVER_CERT,
-            key: process.env.SERVER_KEY,
-            minVersion: "TLSv1.2",
-            maxVersion: "TLSv1.2",
-          },
-          socket => {
-            socket.on("error", () => {});
-            socket.renegotiate({ requestCert: true, rejectUnauthorized: false }, err => {
-              if (err) process.exit(1);
-              socket.end();
-            });
-          },
-        );
-        server.listen(0, () => console.log(server.address().port));
-      `,
-    ],
+    cmd: ["node", "-e", QUIET_RENEG_SERVER_JS],
     stdout: "pipe",
     stderr: "inherit",
-    stdin: "ignore",
-    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+    stdin: "pipe",
+    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key, RENEG_MODE: mode },
   });
 }
 
-async function readPort(proc: Subprocess<"ignore", "pipe", "ignore">) {
-  const { value } = await proc.stdout.getReader().read();
-  return Number(new TextDecoder().decode(value).trim());
+type RenegServer = ReturnType<typeof spawnQuietRenegotiationServer>;
+
+// stdout arrives in arbitrary chunks; accumulate until a full line is
+// available.
+function lineReader(proc: RenegServer) {
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  return async function nextLine(): Promise<string> {
+    for (;;) {
+      const newline = buffered.indexOf("\n");
+      if (newline !== -1) {
+        const line = buffered.slice(0, newline).trim();
+        buffered = buffered.slice(newline + 1);
+        return line;
+      }
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`server exited before printing a full line; buffered: ${JSON.stringify(buffered)}`);
+      buffered += decoder.decode(value);
+    }
+  };
 }
 
-it("should dispatch handshake success, not ECONNRESET, when renegotiation completes without app data", async () => {
-  await using server = spawnQuietRenegotiationServer();
-  const port = await readPort(server);
+async function readPort(nextLine: () => Promise<string>) {
+  const line = await nextLine();
+  const port = Number(line);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`server printed an invalid port: ${JSON.stringify(line)}`);
+  }
+  return port;
+}
+
+it.concurrent("should dispatch handshake success, not ECONNRESET, when renegotiation completes without app data", async () => {
+  await using server = spawnQuietRenegotiationServer("end");
+  const port = await readPort(lineReader(server));
 
   const events: unknown[] = [];
   const { promise: closed, resolve } = Promise.withResolvers<void>();
@@ -278,9 +315,9 @@ it("should dispatch handshake success, not ECONNRESET, when renegotiation comple
   ]);
 });
 
-it("should re-emit secure/secureConnect after server-initiated renegotiation like node", async () => {
-  await using server = spawnQuietRenegotiationServer();
-  const port = await readPort(server);
+it.concurrent("should re-emit secure/secureConnect after server-initiated renegotiation like node", async () => {
+  await using server = spawnQuietRenegotiationServer("end");
+  const port = await readPort(lineReader(server));
 
   // Node (verified against v26.3.0) emits 'secure' and 'secureConnect' once
   // per completed handshake, including the renegotiated one, and closes
@@ -294,13 +331,167 @@ it("should re-emit secure/secureConnect after server-initiated renegotiation lik
   let secure = 0;
   let secureConnect = 0;
   const errors: string[] = [];
-  const socket = require("tls").connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  const socket = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false });
   socket.on("secure", () => secure++);
   socket.on("secureConnect", () => secureConnect++);
   socket.on("error", (e: any) => errors.push(e.code ?? e.message));
   socket.on("close", (hadError: boolean) => resolve({ secure, secureConnect, errors, hadError }));
 
   expect(await promise).toEqual({ secure: 2, secureConnect: 2, errors: [], hadError: false });
+});
+
+// While the handshake state was latched in RENEGOTIATION_PENDING, the
+// writable path suppressed every drain dispatch, so a backpressured write's
+// completion was lost until the peer happened to send data. Flood the paused
+// server until the kernel buffers fill, then resume it and require the drain
+// callback. Runs in a subprocess with a kill timeout so a regression (drain
+// never delivered) cannot wedge the test runner.
+const drainAfterRenegotiationFixture = /* js */ `
+const server = Bun.spawn({
+  cmd: ["node", "-e", process.env.SERVER_JS],
+  stdout: "pipe",
+  stderr: "inherit",
+  stdin: "pipe",
+  env: process.env,
+});
+const reader = server.stdout.getReader();
+const decoder = new TextDecoder();
+let buffered = "";
+async function nextLine() {
+  for (;;) {
+    const newline = buffered.indexOf("\\n");
+    if (newline !== -1) {
+      const line = buffered.slice(0, newline).trim();
+      buffered = buffered.slice(newline + 1);
+      return line;
+    }
+    const { value, done } = await reader.read();
+    if (done) throw new Error("server exited early; buffered: " + JSON.stringify(buffered));
+    buffered += decoder.decode(value);
+  }
+}
+const port = Number(await nextLine());
+
+// Drain also fires for earlier writable events (connect, handshake
+// completion); only the one that completes the backpressured flood counts.
+let awaitingDrain = false;
+const { promise: drained, resolve: resolveDrained } = Promise.withResolvers();
+// The renegotiation's own completion must dispatch the second handshake
+// event: the server never sends app data and never closes, so nothing else
+// can deliver it.
+let handshakes = 0;
+const { promise: renegotiated, resolve: resolveRenegotiated } = Promise.withResolvers();
+const socket = await Bun.connect({
+  hostname: "127.0.0.1",
+  port,
+  tls: { rejectUnauthorized: false },
+  socket: {
+    open() {},
+    data() {},
+    handshake() {
+      if (++handshakes === 2) resolveRenegotiated();
+    },
+    drain() {
+      if (awaitingDrain) resolveDrained();
+    },
+    error() {},
+    close() {},
+  },
+});
+
+// The server has completed the renegotiation and stopped reading.
+const line = await nextLine();
+if (line !== "reneg-done") throw new Error("expected reneg-done, got " + JSON.stringify(line));
+
+// Write until the kernel send/receive buffers fill and the write is only
+// partially accepted (or parked by a renegotiation still finishing on our
+// side, which also reports a short write).
+const chunk = Buffer.alloc(1 << 20, 120);
+let backpressured = false;
+for (let i = 0; i < 256; i++) {
+  if (socket.write(chunk) < chunk.length) {
+    backpressured = true;
+    break;
+  }
+}
+if (!backpressured) throw new Error("never hit backpressure");
+awaitingDrain = true;
+
+// Resuming the server drains the flood; the socket must report drain.
+server.stdin.write("resume\\n");
+await drained;
+await renegotiated;
+socket.terminate();
+server.kill();
+console.log("drained-ok");
+`;
+
+it.concurrent(
+  "should dispatch drain for a backpressured write after a quiet renegotiation",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", drainAfterRenegotiationFixture],
+      env: {
+        ...bunEnv,
+        SERVER_JS: QUIET_RENEG_SERVER_JS,
+        SERVER_CERT: tls.cert,
+        SERVER_KEY: tls.key,
+        RENEG_MODE: "pause",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "drained-ok", exitCode: 0 });
+  },
+  30_000,
+);
+
+it.concurrent("should complete a quiet renegotiation over a duplex socket (SSLWrapper path)", async () => {
+  // tls.connect({ socket: <Duplex> }) is encrypted by the SSLWrapper path
+  // (UpgradedDuplex) rather than the uSockets C path. Its renegotiation state
+  // machine had the same latch: a renegotiation finishing with no app data in
+  // the same read pass never dispatched the second handshake event, so
+  // 'secure' was not re-emitted until the peer sent something.
+  await using server = spawnQuietRenegotiationServer("pause");
+  const nextLine = lineReader(server);
+  const port = await readPort(nextLine);
+
+  const raw = netConnect(port, "127.0.0.1");
+  const duplex = new Duplex({
+    read() {},
+    write(chunk, encoding, callback) {
+      raw.write(chunk, encoding, callback);
+    },
+    final(callback) {
+      raw.end();
+      callback();
+    },
+  });
+  raw.on("data", (chunk: Buffer) => duplex.push(chunk));
+  raw.on("end", () => duplex.push(null));
+  raw.on("close", () => duplex.destroy());
+
+  const { promise: renegotiated, resolve } = Promise.withResolvers<void>();
+  let secure = 0;
+  const errors: string[] = [];
+  const socket = tlsConnect({ socket: duplex, rejectUnauthorized: false });
+  socket.on("secure", () => {
+    secure++;
+    // One per completed handshake: initial + the quiet renegotiation. The
+    // server sends no app data and no close, so only the renegotiation's own
+    // completion can deliver the second event.
+    if (secure === 2) resolve();
+  });
+  socket.on("error", (e: any) => errors.push(e.code ?? e.message));
+
+  await renegotiated;
+  expect(errors).toEqual([]);
+  socket.destroy();
+  raw.destroy();
 });
 
 it("should terminate the connection when the peer exceeds the renegotiation limit over a duplex socket", async () => {

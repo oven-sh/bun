@@ -647,11 +647,23 @@ pub mod ssl_wrapper {
                 }
                 self.flags.set_received_ssl_shutdown(true);
                 // Reset pending handshake because we are closed for sure now
-                if self.flags.handshake_state() != HandshakeState::HandshakeCompleted {
-                    self.flags
-                        .set_handshake_state(HandshakeState::HandshakeCompleted);
-                    let verify = self.get_verify_error();
-                    self.trigger_handshake_callback(false, verify);
+                match self.flags.handshake_state() {
+                    HandshakeState::HandshakeCompleted => {}
+                    HandshakeState::HandshakeRenegotiationPending => {
+                        // The initial handshake completed long ago: this
+                        // teardown must not be reported as a handshake
+                        // failure. A renegotiation that already finished
+                        // still reports its success.
+                        self.handle_end_of_renegotiation();
+                        self.flags
+                            .set_handshake_state(HandshakeState::HandshakeCompleted);
+                    }
+                    HandshakeState::HandshakePending => {
+                        self.flags
+                            .set_handshake_state(HandshakeState::HandshakeCompleted);
+                        let verify = self.get_verify_error();
+                        self.trigger_handshake_callback(false, verify);
+                    }
                 }
 
                 // we need to trigger close because we are not receiving a SSL_shutdown
@@ -1059,6 +1071,12 @@ pub mod ssl_wrapper {
                         return false;
                     } else {
                         log!("wanna read/write just break");
+                        // A renegotiation can finish inside this SSL_read with
+                        // no app data to deliver (the peer's Finished arrived
+                        // alone); unlatch and fire on_handshake like the
+                        // app-data path below, or the state stays
+                        // HandshakeRenegotiationPending forever.
+                        self.handle_end_of_renegotiation();
                         // we wanna read/write just break
                         break;
                     }

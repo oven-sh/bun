@@ -150,6 +150,14 @@ unsafe extern "C" {
         out_indices: *mut u32,
         inout_state: *mut u64,
     ) -> usize;
+
+    fn highway_xml_index16_chunk(
+        input: *const u16,
+        len: usize,
+        base_offset: usize,
+        out_indices: *mut u32,
+        inout_state: *mut u64,
+    ) -> usize;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -914,6 +922,27 @@ pub fn xml_structural_index_chunk(
     // SAFETY: `out` has room for one index per byte plus a full trailing block (asserted above).
     unsafe {
         highway_xml_index_chunk(
+            chunk.as_ptr(),
+            chunk.len(),
+            base_offset,
+            out.as_mut_ptr().cast::<u32>(),
+            state.as_mut_ptr(),
+        )
+    }
+}
+
+/// [`xml_structural_index_chunk`] over UTF-16 code units (positions in units).
+#[inline(always)]
+pub fn xml_structural_index16_chunk(
+    chunk: &[u16],
+    base_offset: usize,
+    out: &mut [core::mem::MaybeUninit<u32>],
+    state: &mut [u64; 3],
+) -> usize {
+    assert!(out.len() >= chunk.len() + 64);
+    // SAFETY: `out` has room for one index per unit plus a full trailing block (asserted above).
+    unsafe {
+        highway_xml_index16_chunk(
             chunk.as_ptr(),
             chunk.len(),
             base_offset,

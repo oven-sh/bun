@@ -1,7 +1,8 @@
-// SIMD structural indexer for XML ("stage 1"), runtime-dispatched via Google Highway.
-// Emits the position of every `<`, `>`, `&`, `\r` and forbidden control character, of the last
-// byte of an encoded U+FFFE / U+FFFF (EF BF BE|BF — the only non-characters valid UTF-8 can
-// hold), and, between a `<` and the next `>`, of every `\t`, `\n`, `"`, `'` and `=` as well.
+// SIMD structural indexer for XML ("stage 1"), runtime-dispatched via Google Highway, over
+// bytes (UTF-8 / Latin-1) or over UTF-16 code units. Emits the position of every `<`, `>`, `&`,
+// `\r` and forbidden control character, of a non-character (bytes: the last byte of an encoded
+// U+FFFE / U+FFFF, EF BF BE|BF; units: 0xFFFE / 0xFFFF), and, between a `<` and the next `>`, of
+// every `\t`, `\n`, `"`, `'` and `=` as well.
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_xml.cpp"
@@ -20,26 +21,64 @@ namespace hn = hwy::HWY_NAMESPACE;
 
 using D8 = hn::CappedTag<uint8_t, 64>;
 
+// The classes of one 64-position block, as bit masks.
+struct BlockMasks {
+    uint64_t lt = 0, gt = 0, always = 0, tag = 0, nonchar = 0;
+};
+
+// Classifies one vector of (low) bytes and ORs its masks in at `sh`.
+template<class V>
+static HWY_INLINE void Classify(D8 d, V lo, unsigned sh, BlockMasks& m)
+{
+    const auto v_0f = hn::Set(d, (uint8_t)0x0f);
+    const auto lut_lo = hn::LoadDup128(d, kBunXmlLutLo);
+    const auto lut_hi = hn::LoadDup128(d, kBunXmlLutHi);
+    const auto v_zero = hn::Zero(d);
+    const auto cls = hn::And(hn::TableLookupBytes(lut_lo, hn::And(lo, v_0f)),
+        hn::TableLookupBytes(lut_hi, hn::ShiftRight<4>(lo)));
+    m.lt |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_LT)), v_zero)) << sh;
+    m.gt |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_GT)), v_zero)) << sh;
+    m.always |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_ALWAYS)), v_zero)) << sh;
+    m.tag |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_TAG)), v_zero)) << sh;
+}
+
+// The part both kernels share: `in_tag` = MatchStar(lt, ~gt) — every position reachable from a
+// `<` through non-`>` positions (the `>` included), the addition's carry linking blocks — then
+// the positions to emit, compressed out as `base`-relative indices. Returns how many.
+static HWY_INLINE size_t EmitBlock(const BlockMasks& m, uint64_t valid, uint64_t& carry, uint32_t base,
+    uint32_t* HWY_RESTRICT out)
+{
+    const hn::ScalableTag<uint32_t> d32;
+    const size_t L = hn::Lanes(d32);
+    const uint64_t run = ~m.gt;
+    uint64_t sum;
+    uint64_t c1 = __builtin_add_overflow(m.lt & run, run, &sum) ? 1 : 0;
+    uint64_t c2 = __builtin_add_overflow(sum, carry, &sum) ? 1 : 0;
+    carry = c1 | c2;
+    const uint64_t in_tag = (sum ^ run) | m.lt;
+    const uint64_t emit = (m.lt | m.gt | m.always | m.nonchar | (m.tag & in_tag)) & valid;
+
+    size_t n = 0;
+    const auto iota32 = hn::Iota(d32, 0);
+    for (size_t k = 0; k < 64; k += L) {
+        uint64_t slice = (emit >> k) & (L >= 64 ? ~(uint64_t)0 : (((uint64_t)1 << L) - 1));
+        uint8_t slice_bytes[8];
+        memcpy(slice_bytes, &slice, 8);
+        const auto mask = hn::LoadMaskBits(d32, slice_bytes);
+        const auto v = hn::Add(hn::Set(d32, base + (uint32_t)k), iota32);
+        n += hn::CompressStore(v, mask, d32, out + n);
+    }
+    return n;
+}
+
 size_t XmlIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_offset,
     uint32_t* HWY_RESTRICT out, uint64_t* HWY_RESTRICT inout_state)
 {
     const D8 d;
     const size_t N = hn::Lanes(d);
-    const hn::ScalableTag<uint32_t> d32;
-    const size_t L = hn::Lanes(d32);
-
-    const auto v_0f = hn::Set(d, (uint8_t)0x0f);
-    const auto lut_lo = hn::LoadDup128(d, kBunXmlLutLo);
-    const auto lut_hi = hn::LoadDup128(d, kBunXmlLutHi);
-    const auto v_lt_bits = hn::Set(d, (uint8_t)BUN_XML_CLASS_LT);
-    const auto v_gt_bits = hn::Set(d, (uint8_t)BUN_XML_CLASS_GT);
-    const auto v_always_bits = hn::Set(d, (uint8_t)BUN_XML_CLASS_ALWAYS);
-    const auto v_tag_bits = hn::Set(d, (uint8_t)BUN_XML_CLASS_TAG);
-    const auto v_zero = hn::Zero(d);
     const auto v_01 = hn::Set(d, (uint8_t)0x01);
     const auto v_ef = hn::Set(d, (uint8_t)0xEF);
     const auto v_bf = hn::Set(d, (uint8_t)0xBF);
-    const auto iota32 = hn::Iota(d32, 0);
 
     // Whether the previous block ended inside `<` … `>`.
     uint64_t carry = inout_state[0];
@@ -48,8 +87,7 @@ size_t XmlIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_o
     uint64_t prev_bf = inout_state[2];
     size_t n_out = 0;
 
-    size_t pos = 0;
-    while (pos < len) {
+    for (size_t pos = 0; pos < len; pos += 64) {
         const uint8_t* p = input + pos;
         size_t rem = len - pos;
         uint64_t valid = ~(uint64_t)0;
@@ -61,51 +99,80 @@ size_t XmlIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_o
             valid = (((uint64_t)1) << rem) - 1;
         }
 
-        uint64_t m_lt = 0, m_gt = 0, m_always = 0, m_tag = 0, m_ef = 0, m_bf = 0, m_bebf = 0;
+        BlockMasks m;
+        uint64_t m_ef = 0, m_bf = 0, m_bebf = 0;
         for (size_t v = 0; v < 64 / N; ++v) {
             const auto chunk = hn::LoadU(d, p + v * N);
             const unsigned sh = (unsigned)(v * N);
-            const auto cls = hn::And(hn::TableLookupBytes(lut_lo, hn::And(chunk, v_0f)),
-                hn::TableLookupBytes(lut_hi, hn::ShiftRight<4>(chunk)));
-            m_lt |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_lt_bits), v_zero)) << sh;
-            m_gt |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_gt_bits), v_zero)) << sh;
-            m_always |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_always_bits), v_zero)) << sh;
-            m_tag |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_tag_bits), v_zero)) << sh;
+            Classify(d, chunk, sh, m);
             m_ef |= hn::BitsFromMask(d, hn::Eq(chunk, v_ef)) << sh;
             m_bf |= hn::BitsFromMask(d, hn::Eq(chunk, v_bf)) << sh;
             m_bebf |= hn::BitsFromMask(d, hn::Eq(hn::Or(chunk, v_01), v_bf)) << sh;
         }
-        const uint64_t m_nonchar = m_bebf & ((m_bf << 1) | (prev_bf >> 63)) & ((m_ef << 2) | (prev_ef >> 62));
+        m.nonchar = m_bebf & ((m_bf << 1) | (prev_bf >> 63)) & ((m_ef << 2) | (prev_ef >> 62));
         prev_ef = m_ef;
         prev_bf = m_bf;
 
-        // in_tag = MatchStar(m_lt, ~m_gt): every position reachable from a `<` through
-        // non-`>` bytes (the `>` itself included), with the addition's carry linking blocks.
-        const uint64_t run = ~m_gt;
-        uint64_t sum;
-        uint64_t c1 = __builtin_add_overflow(m_lt & run, run, &sum) ? 1 : 0;
-        uint64_t c2 = __builtin_add_overflow(sum, carry, &sum) ? 1 : 0;
-        carry = c1 | c2;
-        const uint64_t in_tag = (sum ^ run) | m_lt;
-
-        const uint64_t emit = (m_lt | m_gt | m_always | m_nonchar | (m_tag & in_tag)) & valid;
-
-        const uint32_t base = (uint32_t)(base_offset + pos);
-        for (size_t k = 0; k < 64; k += L) {
-            uint64_t slice = (emit >> k) & (L >= 64 ? ~(uint64_t)0 : (((uint64_t)1 << L) - 1));
-            uint8_t slice_bytes[8];
-            memcpy(slice_bytes, &slice, 8);
-            const auto m = hn::LoadMaskBits(d32, slice_bytes);
-            const auto v = hn::Add(hn::Set(d32, base + (uint32_t)k), iota32);
-            n_out += hn::CompressStore(v, m, d32, out + n_out);
-        }
-
-        pos += 64;
+        n_out += EmitBlock(m, valid, carry, (uint32_t)(base_offset + pos), out + n_out);
     }
 
     inout_state[0] = carry;
     inout_state[1] = prev_ef;
     inout_state[2] = prev_bf;
+    return n_out;
+}
+
+// The same over UTF-16 code units (`len` and positions in units): a unit classifies as its low
+// byte when its high byte is zero, and 0xFFFE / 0xFFFF are the non-characters.
+size_t XmlIndex16Impl(const uint16_t* HWY_RESTRICT input, size_t len, size_t base_offset,
+    uint32_t* HWY_RESTRICT out, uint64_t* HWY_RESTRICT inout_state)
+{
+    const D8 d;
+    const size_t N = hn::Lanes(d);
+    const auto v_zero = hn::Zero(d);
+    const auto v_01 = hn::Set(d, (uint8_t)0x01);
+    const auto v_ff = hn::Set(d, (uint8_t)0xFF);
+
+    uint64_t carry = inout_state[0];
+    size_t n_out = 0;
+
+    for (size_t pos = 0; pos < len; pos += 64) {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(input + pos);
+        size_t rem = len - pos;
+        uint64_t valid = ~(uint64_t)0;
+        uint16_t tmp[64];
+        if (rem < 64) {
+            for (size_t i = 0; i < 64; ++i)
+                tmp[i] = 0x20;
+            memcpy(tmp, p, rem * 2);
+            p = reinterpret_cast<const uint8_t*>(tmp);
+            valid = (((uint64_t)1) << rem) - 1;
+        }
+
+        BlockMasks m;
+        // Each pair of byte vectors covers N units: even bytes are the (little-endian) low
+        // bytes, odd bytes the high bytes.
+        for (size_t v = 0; v < 64 / N; ++v) {
+            const auto a = hn::LoadU(d, p + v * 2 * N);
+            const auto b = hn::LoadU(d, p + v * 2 * N + N);
+            const auto lo = hn::ConcatEven(d, b, a);
+            const auto hi = hn::ConcatOdd(d, b, a);
+            const unsigned sh = (unsigned)(v * N);
+            BlockMasks unit;
+            Classify(d, lo, 0, unit);
+            const uint64_t ascii = hn::BitsFromMask(d, hn::Eq(hi, v_zero));
+            m.lt |= (unit.lt & ascii) << sh;
+            m.gt |= (unit.gt & ascii) << sh;
+            m.always |= (unit.always & ascii) << sh;
+            m.tag |= (unit.tag & ascii) << sh;
+            const uint64_t nonchar = hn::BitsFromMask(d, hn::And(hn::Eq(hi, v_ff), hn::Eq(hn::Or(lo, v_01), v_ff)));
+            m.nonchar |= nonchar << sh;
+        }
+
+        n_out += EmitBlock(m, valid, carry, (uint32_t)(base_offset + pos), out + n_out);
+    }
+
+    inout_state[0] = carry;
     return n_out;
 }
 
@@ -117,12 +184,19 @@ HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace bun {
 HWY_EXPORT(XmlIndexImpl);
+HWY_EXPORT(XmlIndex16Impl);
 
-// Resumable form. Sentinels are the caller's job.
+// Resumable forms. Sentinels are the caller's job.
 extern "C" size_t highway_xml_index_chunk(const uint8_t* input, size_t len, size_t base_offset,
     uint32_t* out_indices, uint64_t* inout_state)
 {
     return HWY_DYNAMIC_DISPATCH(XmlIndexImpl)(input, len, base_offset, out_indices, inout_state);
+}
+
+extern "C" size_t highway_xml_index16_chunk(const uint16_t* input, size_t len, size_t base_offset,
+    uint32_t* out_indices, uint64_t* inout_state)
+{
+    return HWY_DYNAMIC_DISPATCH(XmlIndex16Impl)(input, len, base_offset, out_indices, inout_state);
 }
 } // namespace bun
 #endif

@@ -31,7 +31,7 @@ pub struct StructuralIndex<'c, U: crate::xml::Unit = u8> {
 
 impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
     pub fn new(contents: &'c [U]) -> Self {
-        Self::with_producer(contents, U::WIDE || !bun_core::env::IS_NATIVE)
+        Self::with_producer(contents, !bun_core::env::IS_NATIVE)
     }
 
     fn with_producer(contents: &'c [U], use_scalar: bool) -> Self {
@@ -115,14 +115,24 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
         }
         let chunk_len = (len - self.src_off).min(REFILL_INPUT);
         let chunk = &self.contents[self.src_off..self.src_off + chunk_len];
-        if bun_core::env::IS_NATIVE && !U::WIDE && !self.use_scalar {
+        if bun_core::env::IS_NATIVE && !self.use_scalar {
             let filled = self.win.len();
-            let n = bun_highway::xml_structural_index_chunk(
-                U::bytes(chunk),
-                self.src_off,
-                &mut self.win.spare_capacity_mut()[..chunk_len + 64],
-                &mut self.kernel_state,
-            );
+            let out = &mut self.win.spare_capacity_mut()[..chunk_len + 64];
+            let n = if U::WIDE {
+                bun_highway::xml_structural_index16_chunk(
+                    bytemuck::cast_slice(U::bytes(chunk)),
+                    self.src_off,
+                    out,
+                    &mut self.kernel_state,
+                )
+            } else {
+                bun_highway::xml_structural_index_chunk(
+                    U::bytes(chunk),
+                    self.src_off,
+                    out,
+                    &mut self.kernel_state,
+                )
+            };
             // SAFETY: the kernel initialized `n` entries of the spare capacity it was given.
             unsafe { self.win.set_len(filled + n) };
         } else {
@@ -274,6 +284,77 @@ mod tests {
             let (si, ci) = build_both(doc.as_bytes());
             assert_eq!(si, ci, "cut {cut}");
         }
+    }
+
+    fn build_both16(units: &[u16]) -> (Vec<u32>, Vec<u32>) {
+        let mut simd = StructuralIndex::<u16>::new(units);
+        let si = collect16(&mut simd);
+        let mut scalar = StructuralIndex::<u16>::with_producer(units, true);
+        let ci = collect16(&mut scalar);
+        (si, ci)
+    }
+
+    fn collect16(idx: &mut StructuralIndex<u16>) -> Vec<u32> {
+        let len = idx.contents.len();
+        let mut out = Vec::new();
+        let mut i = 0;
+        loop {
+            let p = idx.at(i);
+            if p == len && idx.at(i + 1) == len {
+                break;
+            }
+            out.push(p as u32);
+            i += 1;
+        }
+        out
+    }
+
+    #[test]
+    fn utf16_simd_and_scalar_indexers_agree() {
+        // The byte cases, widened, index at the same positions as their bytes do…
+        let src = "a\tb <x y=\"1 2\"\n z='>'>\r\n&amp; = \"q\" > <";
+        let units: Vec<u16> = src.encode_utf16().collect();
+        let mut narrow = StructuralIndex::<u8>::with_producer(src.as_bytes(), true);
+        let expected = collect(&mut narrow);
+        let (si, ci) = build_both16(&units);
+        assert_eq!(ci, expected);
+        assert_eq!(si, ci);
+        // …units above U+00FF never classify, except the two non-characters…
+        let doc: Vec<u16> = "<日本 a=\"\u{FF1D}\u{FF1C}\">\u{FFFE}x\u{FFFF}\u{1F600}&\u{3E}</日本>"
+            .encode_utf16()
+            .collect();
+        let (si, ci) = build_both16(&doc);
+        assert_eq!(si, ci);
+        assert!(ci.contains(&(doc.iter().position(|&u| u == 0xFFFE).unwrap() as u32)));
+        assert!(!ci.contains(&(doc.iter().position(|&u| u == 0xFF1D).unwrap() as u32)));
+        // …and random / large / block-straddling input agrees too.
+        let mut state = 0x2545F4914F6CDD1Du64;
+        let mut rng = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let alphabet: &[u16] = &[
+            0x3C, 0x3E, 0x26, 0x3D, 0x22, 0x27, 0x20, 0x09, 0x0A, 0x0D, 0x61, 0x2F, 0x01, 0x1F,
+            0xE9, 0xFF, 0x100, 0x13C, 0x203E, 0x3C00, 0xFFFE, 0xFFFF, 0xD83D, 0xDE00, 0xFEFF,
+        ];
+        for _ in 0..20_000 {
+            let len = (rng() % 300) as usize;
+            let buf: Vec<u16> = (0..len)
+                .map(|_| alphabet[(rng() as usize) % alphabet.len()])
+                .collect();
+            let (si, ci) = build_both16(&buf);
+            assert_eq!(si, ci, "index mismatch for {buf:x?}");
+        }
+        let mut big: Vec<u16> = Vec::new();
+        let mut i = 0;
+        while big.len() < 5 * REFILL_INPUT {
+            big.extend(format!("<item id=\"{i}\" 名前='n'>\r\n\tテキスト {i} &amp; > z</item>\n").encode_utf16());
+            i += 1;
+        }
+        let (si, ci) = build_both16(&big);
+        assert_eq!(si, ci);
     }
 
     #[test]

@@ -3968,6 +3968,11 @@ unsafe fn normalize_specifier_for_loader<'a>(
     if slice.is_empty() {
         return (slice, slice, b"");
     }
+    // In a `data:` URL everything after the comma is the payload; a `?` is
+    // part of the data, not a query string.
+    if bun_core::strings::has_prefix_comptime(slice, b"data:") {
+        return (slice, slice, b"");
+    }
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
     let host = unsafe { &*jsc_vm }.origin.host;
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.

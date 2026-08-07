@@ -418,9 +418,8 @@ pub mod fault_inject {
     /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
     /// payload in the `on_session`/`on_keylog` dispatch.
     pub const SESSION_BUFFER: c_int = 12;
-    /// Not a syscall: the event-loop poll delivery for a listening socket.
-    /// Simulates libuv's `uv_poll_cb(status < 0)` path, which leaves the
-    /// poll handle watching nothing until re-armed.
+    /// Not a syscall: a poll-layer error delivered for a listening socket
+    /// (libuv's `uv_poll_cb(status < 0)`).
     pub const LISTEN_POLL: c_int = 13;
 
     pub const ACTION_NONE: c_int = 0;

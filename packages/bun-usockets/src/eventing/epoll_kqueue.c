@@ -609,22 +609,37 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
      * us_poll_change cannot diff away a filter the poll state says was never
      * armed, so a level-triggered EVFILT_READ with data or a FIN pending would
      * re-fire on every kevent call forever.
-     * EV_DELETE of an absent filter only reports ENOENT via
-     * KEVENT_FLAG_ERROR_EVENTS; issue the deletes anyway so a stale
-     * FIN-detector oneshot (kqueue_change arms EVFILT_WRITE at 0 events, and
-     * that knote survives a later 0 -> READABLE transition) cannot keep the
-     * old poll as udata past its free. */
+     * The deletes drop filters the poll does not want, so a stale FIN-detector
+     * oneshot (kqueue_change arms EVFILT_WRITE at 0 events, and that knote
+     * survives a later 0 -> READABLE transition) cannot keep the old poll as
+     * udata past its free. EV_DELETE of an absent filter reports ENOENT, and
+     * on FreeBSD the first error aborts the rest of the changelist (the
+     * kevent64 shim passes no eventlist), so the EV_ADDs - the udata move -
+     * go first and the one possible EV_DELETE comes last. */
     struct kevent64_s change_list[2];
-    EV_SET64(&change_list[0], new_p->state.fd, EVFILT_READ,
-        (events & LIBUS_SOCKET_READABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    int change_length = 0;
+    if (events & LIBUS_SOCKET_READABLE) {
+        EV_SET64(&change_list[change_length++], new_p->state.fd, EVFILT_READ,
+            EV_ADD, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    }
     /* At 0 events the FIN-detector oneshot is the poll's only kernel presence;
      * re-add it so its udata moves to new_p, matching what kqueue_change
      * maintains for that state. */
-    EV_SET64(&change_list[1], new_p->state.fd, EVFILT_WRITE,
-        ((events & LIBUS_SOCKET_WRITABLE) || events == 0) ? (EV_ADD | EV_ONESHOT) : EV_DELETE, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    if ((events & LIBUS_SOCKET_WRITABLE) || events == 0) {
+        EV_SET64(&change_list[change_length++], new_p->state.fd, EVFILT_WRITE,
+            EV_ADD | EV_ONESHOT, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    }
+    if (!(events & LIBUS_SOCKET_READABLE)) {
+        EV_SET64(&change_list[change_length++], new_p->state.fd, EVFILT_READ,
+            EV_DELETE, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    }
+    if ((events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
+        EV_SET64(&change_list[change_length++], new_p->state.fd, EVFILT_WRITE,
+            EV_DELETE, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    }
     int ret;
     do {
-        ret = kevent64(loop->fd, change_list, 2, change_list, 2, KEVENT_FLAG_ERROR_EVENTS, NULL);
+        ret = kevent64(loop->fd, change_list, change_length, change_list, change_length, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
 #endif
     /* This is needed for epoll also (us_change_poll doesn't update the old poll) */

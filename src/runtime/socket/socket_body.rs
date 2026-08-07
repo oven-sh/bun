@@ -5144,9 +5144,8 @@ pub mod testing_apis {
                 )));
             }
 
-            // adopt_grow has exactly one meaningful action: "short" with the
-            // byte count to add. The other actions would arm a rule whose
-            // effect (errno/zero short-circuit) the adopt hook never reads.
+            // adopt_grow only consumes the "short" byte count; any other
+            // action would arm a rule the adopt hook never reads.
             if syscall == fi::ADOPT_GROW && action != fi::ACTION_SHORT && action != fi::ACTION_NONE
             {
                 return Err(global.throw(format_args!(

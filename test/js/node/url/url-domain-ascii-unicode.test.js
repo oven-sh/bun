@@ -72,6 +72,95 @@ const invalids = [
   ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", ""],
 ];
 
+// node defines both functions in terms of the WHATWG host parser: set the
+// input as the hostname of "ws://x" and return "" on failure. Expected values
+// below are [input, domainToASCII(input), domainToUnicode(input)] as produced
+// by node v26.3.0.
+const hostParserParity = [
+  // Invalid Punycode in an all-ASCII xn-- label must fail, not echo the input.
+  ["xn--a-ecp.example", "", ""],
+  ["xn--a-ecp.ss", "", ""],
+  ["xn--a", "", ""],
+  ["xn--a.example", "", ""],
+  ["xn--a.xn--nxa", "", ""],
+  ["xn--zn7c.com", "", ""],
+  ["xn--", "", ""],
+  ["xn--.example", "", ""],
+  ["a.xn--", "", ""],
+  ["xn--1ug.example", "", ""],
+  // Forbidden domain code points: %, C0 controls, DEL, space.
+  ["a%b", "", ""],
+  ["%", "", ""],
+  ["%ZZ", "", ""],
+  ["a\x01b", "", ""],
+  ["a\x0cb", "", ""],
+  ["a\x7fb", "", ""],
+  ["a b", "", ""],
+  [" a ", "", ""],
+  // Percent-decoding happens before IDNA.
+  ["%41", "a", "a"],
+  ["ex%61mple.com", "example.com", "example.com"],
+  ["%e4%bd%a0%e5%a5%bd", "xn--6qq79v", "\u4f60\u597d"],
+  ["%zz%66%a", "", ""],
+  // ASCII lowercasing.
+  ["EXAMPLE.COM", "example.com", "example.com"],
+  ["XN--BCHER-KVA.DE", "xn--bcher-kva.de", "b\u00fccher.de"],
+  // IPv4 canonicalization and rejection.
+  ["0x7f.1", "127.0.0.1", "127.0.0.1"],
+  ["0x7f.0x0.0x0.0x1", "127.0.0.1", "127.0.0.1"],
+  ["192.168.1.1", "192.168.1.1", "192.168.1.1"],
+  ["999.999.999.999", "", ""],
+  ["1.2.3.4.5", "", ""],
+  ["09.1", "", ""],
+  // IPv6.
+  ["[::1]", "[::1]", "[::1]"],
+  ["[0:0:0:0:0:0:0:1]", "[::1]", "[::1]"],
+  ["[::ffff:127.0.0.1]", "[::ffff:7f00:1]", "[::ffff:7f00:1]"],
+  ["[", "", ""],
+  ["[:", "", ""],
+  // Tab/newline stripping, truncation, and authority characters. Tab/newline
+  // is stripped before UTS #46 runs, so it must not end up inside a Punycode
+  // label.
+  ["ex\tample.com", "example.com", "example.com"],
+  ["a\r\nb", "ab", "ab"],
+  ["b\t\u00fccher.de", "xn--bcher-kva.de", "b\u00fccher.de"],
+  ["\u00df\nxn", "xn--xn-fia", "\u00dfxn"],
+  ["\u03c2a\nxn--bcher-kva", "xn--axn--bcher-kva-phk", "\u03c2axn--bcher-kva"],
+  ["a/b", "a", "a"],
+  ["a?b", "a", "a"],
+  ["a#b", "a", "a"],
+  ["a\\b", "a", "a"],
+  ["a:80", "", ""],
+  // Valid domains are preserved.
+  ["example.com", "example.com", "example.com"],
+  ["b\u00fccher.de", "xn--bcher-kva.de", "b\u00fccher.de"],
+  ["xn--bcher-kva.de", "xn--bcher-kva.de", "b\u00fccher.de"],
+  ["\u00e7.com", "xn--7ca.com", "\u00e7.com"],
+  ["xn--ls8h.example", "xn--ls8h.example", "\u{1f4a9}.example"],
+  ["xn--6qqa088eba", "xn--6qqa088eba", "\u4f60\u597d\u4f60\u597d"],
+  ["a..b", "a..b", "a..b"],
+  [".", ".", "."],
+  ["..", "..", ".."],
+  ["example.com.", "example.com.", "example.com."],
+  ["a_b.example", "a_b.example", "a_b.example"],
+  ["a-.example", "a-.example", "a-.example"],
+  ["-a.example", "-a.example", "-a.example"],
+  ["ab--c.example", "ab--c.example", "ab--c.example"],
+  ["r4---sn-a5mlrn7s.gevideo.com", "r4---sn-a5mlrn7s.gevideo.com", "r4---sn-a5mlrn7s.gevideo.com"],
+  // IDNA mapping, deviation, and context rules.
+  ["x\u200bn--a.example", "", ""],
+  ["xn--te\u0161la", "", ""],
+  ["\ufffd.example", "", ""],
+  ["fa\u00df.de", "xn--fa-hia.de", "fa\u00df.de"],
+  ["\u0130.com", "xn--i-9bb.com", "i\u0307.com"],
+  ["\u03c2.com", "xn--3xa.com", "\u03c2.com"],
+  ["\u0dc1\u0dca\u200d\u0dbb\u0dd3", "xn--10cl1a0b660p", "\u0dc1\u0dca\u200d\u0dbb\u0dd3"],
+  ["\u30c6\u30b9\u30c8.example", "xn--zckzah.example", "\u30c6\u30b9\u30c8.example"],
+  ["\u200d.example", "", ""],
+  ["look\u200cout.net", "", ""],
+  ["", "", ""],
+];
+
 describe("url.domainToASCII", () => {
   for (const [domain, ascii] of pairs) {
     test(`convert from '${domain}' to '${ascii}'`, () => {
@@ -96,6 +185,17 @@ describe("url.domainToUnicode", () => {
   for (const [input, expected] of invalids) {
     test(`-> '${input}' is '${expected}'`, () => {
       expect(url.domainToASCII(input)).toEqual(expected);
+    });
+  }
+});
+
+describe("WHATWG host parser parity", () => {
+  for (const [input, ascii, unicode] of hostParserParity) {
+    test(`${JSON.stringify(input)}`, () => {
+      expect({
+        ascii: url.domainToASCII(input),
+        unicode: url.domainToUnicode(input),
+      }).toEqual({ ascii, unicode });
     });
   }
 });

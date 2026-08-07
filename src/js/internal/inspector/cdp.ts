@@ -599,7 +599,7 @@ class InspectorCDPAdapter {
     }
     const breakpointId = result.breakpointId;
     if (typeof breakpointId === "string") {
-      this.#preParseBreakpoints.set(breakpointId, {
+      const bp = {
         jscId: breakpointId,
         url,
         urlRegex,
@@ -607,7 +607,23 @@ class InspectorCDPAdapter {
         columnNumber: params.columnNumber,
         condition,
         resolved: false,
-      });
+      };
+      this.#preParseBreakpoints.set(breakpointId, bp);
+      // scriptParsed can land between the untranslated send and this reply; its
+      // retranslate pass ran before this entry existed, so re-check here or the
+      // binding stays at original-line-as-generated for the session.
+      const scriptId =
+        url !== undefined
+          ? this.#scriptIdsByUrl.get(url)
+          : urlRegex !== undefined
+            ? this.#scriptIdMatching(urlRegex)
+            : undefined;
+      if (scriptId !== undefined) {
+        const script = this.#scripts.$get(scriptId);
+        if (script && (script.mappings !== undefined || script.map !== undefined)) {
+          this.#resetPreParseBreakpoint(breakpointId, bp, scriptId);
+        }
+      }
     }
     this.#replyToClient(id, this.#translateResult(method, result));
   }
@@ -672,33 +688,40 @@ class InspectorCDPAdapter {
         }
       }
       if (!matches) continue;
-      bp.resolved = true;
-      const generated = this.#toGeneratedLocation({
-        scriptId,
-        lineNumber: bp.lineNumber,
-        columnNumber: bp.columnNumber ?? 0,
-      }) as AnyObject;
-      if (generated.lineNumber === bp.lineNumber && (generated.columnNumber ?? 0) === (bp.columnNumber ?? 0)) {
-        continue; // The map is an identity for this position.
-      }
-      bp.resetPending = true;
-      this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: bp.jscId });
-      const options: AnyObject = {};
-      const { condition } = bp;
-      if (condition) options.condition = condition;
-      this.#sendToBackend(
-        "Debugger.setBreakpointByUrl",
-        {
-          lineNumber: generated.lineNumber,
-          columnNumber: generated.columnNumber,
-          options,
-          urlRegex: bpUrlRegex ?? breakpointUrlRegex(bpUrl!),
-        },
-        null,
-        "Debugger.setBreakpointByUrl",
-        this.#onBreakpointReset.bind(this, bp, clientBreakpointId),
-      );
+      this.#resetPreParseBreakpoint(clientBreakpointId, bp, scriptId);
     }
+  }
+
+  // Re-binds one pre-parse breakpoint through scriptId's map: marks it
+  // resolved, and when the map moves the position, removes the stale binding
+  // and re-sets at the generated coordinate under the client's id.
+  #resetPreParseBreakpoint(clientBreakpointId: string, bp: AnyObject, scriptId: string): void {
+    bp.resolved = true;
+    const generated = this.#toGeneratedLocation({
+      scriptId,
+      lineNumber: bp.lineNumber,
+      columnNumber: bp.columnNumber ?? 0,
+    }) as AnyObject;
+    if (generated.lineNumber === bp.lineNumber && (generated.columnNumber ?? 0) === (bp.columnNumber ?? 0)) {
+      return; // The map is an identity for this position.
+    }
+    bp.resetPending = true;
+    this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: bp.jscId });
+    const options: AnyObject = {};
+    const { condition } = bp;
+    if (condition) options.condition = condition;
+    this.#sendToBackend(
+      "Debugger.setBreakpointByUrl",
+      {
+        lineNumber: generated.lineNumber,
+        columnNumber: generated.columnNumber,
+        options,
+        urlRegex: bp.urlRegex ?? breakpointUrlRegex(bp.url!),
+      },
+      null,
+      "Debugger.setBreakpointByUrl",
+      this.#onBreakpointReset.bind(this, bp, clientBreakpointId),
+    );
   }
 
   // A client may address a script by pattern rather than by URL. Matching it

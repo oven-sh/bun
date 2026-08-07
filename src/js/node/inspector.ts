@@ -648,12 +648,13 @@ const Network = {
     const requestId = requireEventString(params, "requestId");
     // `finished` short-circuits before any other field is read.
     const finished = params.finished === true;
+    let data: Uint8Array | undefined;
     if (!finished) {
       requireEventNumber(params, "timestamp");
       requireEventInt(params, "dataLength");
-      requireEventUint8Array(params, "data");
+      data = requireEventUint8Array(params, "data");
     }
-    forEachNetworkSession(sessionDataSent, { requestId, finished, data: params.data });
+    forEachNetworkSession(sessionDataSent, { requestId, finished, data });
   },
 
   dataReceived(params: any) {

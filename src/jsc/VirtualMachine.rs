@@ -387,8 +387,8 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
-    safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
-    safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
+    safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject, all_vms: bool);
+    safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject, all_vms: bool);
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
@@ -531,10 +531,6 @@ impl ExitHandler {
         if vm.script_allowed() {
             Process__dispatchOnExit(vm.global(), exit_code);
         }
-        // Checkpoint + close the sqlite connections this VM opened (main or
-        // worker) while it is still alive, rather than from GC finalizers.
-        Bun__closeAllSQLiteDatabasesForTermination(vm.global());
-        Bun__closeAllNodeSqliteDatabasesForTermination(vm.global());
         if vm.worker.is_none() {
             Bun__WebView__closeAllForTermination();
         }
@@ -1610,8 +1606,19 @@ impl VirtualMachine {
         if self.should_destruct_main_thread_on_exit() {
             // SAFETY: main-thread VM on the main thread; exit handlers have run.
             unsafe { Self::teardown(core::ptr::from_mut(self), Teardown::MainThreadExit) };
+        } else {
+            self.close_sqlite_databases_for_exit();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+    }
+
+    /// Checkpoint + close sqlite connections while this VM is alive and no user
+    /// script will touch them again: the exiting main thread closes every
+    /// connection in the process (workers it did not join die with it); an
+    /// exiting worker closes only the ones it opened.
+    fn close_sqlite_databases_for_exit(&self) {
+        Bun__closeAllSQLiteDatabasesForTermination(self.global(), self.worker.is_none());
+        Bun__closeAllNodeSqliteDatabasesForTermination(self.global(), self.worker.is_none());
     }
 
     /// Tear down this thread's VM: the one sequence both a finished worker
@@ -1684,6 +1691,9 @@ impl VirtualMachine {
         // ---- B. no more script -----------------------------------------------
         Zig__GlobalObject__forbidExecution(vm.global());
         vm.handle.forbid_script();
+        // After the stop phase (its close handlers may still have used them),
+        // before finalizers could: sqlite connections checkpoint and close.
+        vm.close_sqlite_databases_for_exit();
         #[cfg(windows)]
         if let Some(t) = vm.event_loop_mut().forever_timer.take() {
             // SAFETY: live usockets timer from `hold_forever_poll`; closed like

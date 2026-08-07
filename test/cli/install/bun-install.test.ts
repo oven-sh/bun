@@ -10173,10 +10173,17 @@ describe("version specifier classification", () => {
       "http://example.com/foo.tgz",
       "https://example.com/foo.tgz",
       "https://github.com/user/repo",
+      "https://github.com/user/repo.git",
+      "https://gitlab.com/user/repo",
+      "https://bitbucket.org/user/repo.git",
       // non-URL shapes fall through to the generic classifiers
       "sshuser@example.com:repo.git",
       "sshuser/repo",
       "ssh.tar.gz",
+      "httpuser@example.com:repo.git",
+      "httpsuser@example.com:repo.git",
+      "httpuser/repo",
+      "http.tar.gz",
     ];
     expect(Object.fromEntries(specs.map(s => [s, npmTag(s)]))).toEqual({
       "sshlatest": "dist_tag",
@@ -10192,9 +10199,16 @@ describe("version specifier classification", () => {
       "http://example.com/foo.tgz": "tarball",
       "https://example.com/foo.tgz": "tarball",
       "https://github.com/user/repo": "github",
+      "https://github.com/user/repo.git": "github",
+      "https://gitlab.com/user/repo": "git",
+      "https://bitbucket.org/user/repo.git": "git",
       "sshuser@example.com:repo.git": "git",
       "sshuser/repo": "github",
       "ssh.tar.gz": "tarball",
+      "httpuser@example.com:repo.git": "git",
+      "httpsuser@example.com:repo.git": "git",
+      "httpuser/repo": "github",
+      "http.tar.gz": "tarball",
     });
   });
 

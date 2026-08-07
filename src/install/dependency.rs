@@ -968,10 +968,9 @@ impl TagExt for Tag {
             // ssh://git@example.com/repo.git
             // sshlatest (a dist-tag, not a URL)
             b's' => {
+                // "ssh:" is always a clone URL, like "git+ssh:" above; it can
+                // never be a github shortcut, so hosted_git_info is not needed.
                 if dependency.starts_with(b"ssh:") {
-                    if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency) {
-                        return hgi_to_tag(&info);
-                    }
                     return Tag::Git;
                 }
             }

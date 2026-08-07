@@ -603,38 +603,69 @@ bool Worker::dispatchExit(int32_t exitCode)
         m_parentContextId,
         [this] { this->deref(); },
         [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
-            // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
-            // handlers observe threadId == -1 and isOnline() == false while
-            // postMessage() (gated only on Closed) still accepts and drops the
-            // message, matching browser/Node and pre-refactor behaviour.
-            //
-            // Drop any tasks queued while the worker was Pending and never
-            // reached Running (m_pendingCrossVMRequests / rejectAllCrossVMRequests
-            // settles the callers' promises + frees the parent-VM Strong<>).
-            // Take the queue under the same lock that flips m_state so a racing
-            // postTaskToWorkerGlobalScope either lands in the cleared queue or
-            // sees Closing and returns false.
-            {
-                Locker lock(protectedThis->m_pendingTasksMutex);
-                protectedThis->m_state.store(State::Closing);
-                protectedThis->m_pendingTasks.clear();
-            }
-            // Reject any introspection promises whose round-trip never completed.
-            if (auto* ctx = protectedThis->scriptExecutionContext())
-                protectedThis->rejectAllCrossVMRequests(ctx->globalObject());
-
-            if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
-                auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
-                protectedThis->EventTargetWithInlineData::dispatchEvent(event);
-            }
-
-            protectedThis->m_state.store(State::Closed);
-            WebWorker__releaseParentPollRef(protectedThis->impl_);
+            protectedThis->closeTask(exitCode);
             // protectedThis (and the JSWorker GC cell, if still rooted) keep us
             // alive across the close-event dispatch; both deref on the parent
             // thread (lambda destruction here / GC sweep), so ~Worker never runs
             // on the worker thread.
         });
+}
+
+void Worker::closeTask(int32_t exitCode)
+{
+    // The worker VM is already torn down (this task is shutdown() step 4), so
+    // m_toParent cannot grow. If messages remain (a drainToParent hit its yield
+    // budget and re-posted itself behind us), re-post this task on the SAME
+    // lane the drain reschedule uses and return. In FIFO order each re-post
+    // lands behind one drain turn, so close re-checks once per turn and only
+    // proceeds once the inbox is empty and no drain is scheduled: every posted
+    // message is delivered before 'close', and the drain's per-turn budget
+    // still paces delivery instead of one unbounded synchronous flush.
+    //
+    // terminate() skips the chase: dispatchEvent() is already a no-op under
+    // m_terminateRequested, so any undrained tail is discarded and close fires
+    // on the next turn.
+    if (!m_terminateRequested.load()) {
+        bool pending;
+        {
+            Locker locker { m_toParent.lock };
+            pending = !m_toParent.queue.isEmpty() || m_toParent.drainScheduled.load(std::memory_order_relaxed);
+        }
+        if (pending) {
+            postTaskToParent([exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
+                protectedThis->closeTask(exitCode);
+            });
+            return;
+        }
+    }
+
+    // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
+    // handlers observe threadId == -1 and isOnline() == false while
+    // postMessage() (gated only on Closed) still accepts and drops the
+    // message, matching browser/Node and pre-refactor behaviour.
+    //
+    // Drop any tasks queued while the worker was Pending and never
+    // reached Running (m_pendingCrossVMRequests / rejectAllCrossVMRequests
+    // settles the callers' promises + frees the parent-VM Strong<>).
+    // Take the queue under the same lock that flips m_state so a racing
+    // postTaskToWorkerGlobalScope either lands in the cleared queue or
+    // sees Closing and returns false.
+    {
+        Locker lock(m_pendingTasksMutex);
+        m_state.store(State::Closing);
+        m_pendingTasks.clear();
+    }
+    // Reject any introspection promises whose round-trip never completed.
+    if (auto* ctx = scriptExecutionContext())
+        rejectAllCrossVMRequests(ctx->globalObject());
+
+    if (hasEventListeners(eventNames().closeEvent)) {
+        auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
+        EventTargetWithInlineData::dispatchEvent(event);
+    }
+
+    m_state.store(State::Closed);
+    WebWorker__releaseParentPollRef(impl_);
 }
 
 // ---- extern "C" shims (called from native code) ------------------------------

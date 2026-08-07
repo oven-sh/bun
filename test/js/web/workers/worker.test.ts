@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -309,6 +309,69 @@ describe("web worker", () => {
       done();
     });
   });
+
+  test("messages posted before natural exit are all delivered before 'close'", async () => {
+    // A worker that posts a burst and then falls off the end of its script
+    // must deliver every message before 'close'. The parent's drain loop
+    // yields after ~1000 messages and re-posts itself; without the pre-close
+    // flush in dispatchExit that re-post lands behind the close task, which
+    // flips the Worker to Closed and makes the re-posted drain's dispatches
+    // silent no-ops.
+    //
+    // Subprocess because the handler busy-spins to pin the interleaving.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+         const N = 5000;
+         const flag = new Int32Array(new SharedArrayBuffer(8));
+         const src = \`self.onmessage = e => {
+           const flag = new Int32Array(e.data);
+           self.onmessage = null;
+           postMessage(-1);
+           Atomics.wait(flag, 0, 0);
+           for (let i = 0; i < \${N}; i++) postMessage(i);
+           postMessage({ done: true });
+           process.on("exit", () => Atomics.store(flag, 1, 1));
+         };\`;
+         const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+         w.postMessage(flag.buffer);
+         let got = 0, sawDone = false, first = true;
+         w.onmessage = e => {
+           if (first) {
+             first = false;
+             // Hold this handler (and so the current drain pass) open until the
+             // worker has enqueued the whole burst AND posted its close task, so
+             // this drain pass's reschedule lands behind it. flag[1] flips in
+             // process.on('exit') (shutdown step 2); the close task is posted
+             // in step 4 after step 3's full sync GC. No worker-side JS runs
+             // after step 2, so the busy-wait below covers steps 3+4.
+             Atomics.store(flag, 0, 1);
+             Atomics.notify(flag, 0);
+             while (Atomics.load(flag, 1) === 0);
+             const t = Date.now(); while (Date.now() - t < ${isDebug ? 3000 : 500});
+             return;
+           }
+           if (e.data && e.data.done) sawDone = true; else got++;
+         };
+         w.onerror = e => { console.error(e.message); process.exit(1); };
+         w.addEventListener("close", () => {
+           console.log(JSON.stringify({ got, sawDone }));
+           process.exit(sawDone && got === N ? 0 : 1);
+         });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: stdout.trim(), stderr, exitCode }).toEqual({
+      out: '{"got":5000,"sawDone":true}',
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 30_000);
 
   describe("worker event", () => {
     test("is fired with the right object", () => {

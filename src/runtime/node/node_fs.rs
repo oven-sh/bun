@@ -17,7 +17,7 @@ use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, Task, ThreadSafe, Unprotect};
+use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, ThreadSafe, Unprotect};
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
@@ -140,16 +140,6 @@ fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
 mod ConcurrentTask {
     pub(super) use bun_event_loop::ConcurrentTask::ConcurrentTask;
     use core::ptr::NonNull;
-    #[inline]
-    pub(super) fn create(task: bun_jsc::Task) -> NonNull<ConcurrentTask> {
-        ConcurrentTask::create(task)
-    }
-    #[inline]
-    pub(super) fn create_from<T: bun_event_loop::Taskable>(
-        task: *mut T,
-    ) -> NonNull<ConcurrentTask> {
-        ConcurrentTask::create_from(task)
-    }
     #[inline]
     pub(super) fn from_callback<T>(
         ptr: *mut T,
@@ -590,8 +580,6 @@ mod _async_tasks {
         const _: () = assert!(ReadFile::HAVE_ABORT_SIGNAL);
         const _: () = assert!(WriteFile::HAVE_ABORT_SIGNAL);
 
-        pub(crate) type ReaddirRecursive = AsyncReaddirRecursiveTask;
-
         #[cfg(windows)]
         /// Used internally. Not from JavaScript.
         pub struct AsyncMkdirp {
@@ -875,7 +863,7 @@ mod _async_tasks {
                         task.global_object()
                             .bun_vm()
                             .event_loop_mut()
-                            .enqueue_task(Task::init(task_ptr));
+                            .enqueue_task(bun_jsc::Task::init(task_ptr));
                         return task.promise.value();
                     }
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
@@ -944,7 +932,7 @@ mod _async_tasks {
             this.global_object()
                 .bun_vm()
                 .event_loop_mut()
-                .enqueue_task(Task::init(this_ptr));
+                .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
         extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
@@ -966,7 +954,7 @@ mod _async_tasks {
             this.global_object()
                 .bun_vm()
                 .event_loop_mut()
-                .enqueue_task(Task::init(this_ptr));
+                .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
         pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
@@ -1237,15 +1225,8 @@ mod _async_tasks {
         }
     }
 
-    /// `Taskable` glue so `ConcurrentTask::create_from(this)` resolves on the
-    /// generic `AsyncFSTask<R, A, F>`. The const-
-    /// generic `F` carries the task tag and `NodeFSFunctionEnum::task_tag()`
-    /// is `const fn`, so the per-`F` tag is computed at monomorphisation time.
-    impl<R, A: Unprotect, const F: NodeFSFunctionEnum> bun_event_loop::Taskable
-        for AsyncFSTask<R, A, F>
-    {
-        const TAG: bun_event_loop::TaskTag = F.task_tag();
-    }
+    /// `Taskable` glue for the libuv-request ops (Windows), which complete on
+    /// the JS thread and re-enter through the task queue under a per-`F` tag.
     #[cfg(windows)]
     impl<R, A: Unprotect, const F: NodeFSFunctionEnum> bun_event_loop::Taskable
         for UVFSRequest<R, A, F>
@@ -1253,155 +1234,77 @@ mod _async_tasks {
         const TAG: bun_event_loop::TaskTag = F.task_tag();
     }
 
+    /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
+    /// buffers are protected (`ThreadSafe`) and read under the pool's VM borrow.
     pub struct AsyncFSTask<R, A: Unprotect, const F: NodeFSFunctionEnum> {
-        pub(crate) promise: JSPromiseStrong,
-        /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<A>,
-        /// JS thread only (`run_from_js_thread`).
-        pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
-        /// How the pool thread reaches the VM to deliver the result.
-        pub(crate) loop_handle: bun_jsc::LoopHandle,
-        pub task: WorkPoolTask,
         pub(crate) result: Maybe<R>,
-        pub(crate) r#ref: KeepAlive,
+    }
+    // SAFETY: results are plain data / owned buffers / WTF strings built off
+    // thread for hand-off (`ret::*`); `ThreadSafe<A>` is Send by its contract.
+    unsafe impl<R: FsReturn, A: Unprotect, const F: NodeFSFunctionEnum> Send
+        for AsyncFSTask<R, A, F>
+    {
+    }
+
+    /// The JS-thread half of an async fs operation.
+    #[derive(bun_jsc::JsAffine)]
+    pub struct AsyncFSJs {
+        pub(crate) promise: JSPromiseStrong,
         pub(crate) tracker: AsyncTaskTracker,
     }
 
-    bun_threading::intrusive_work_task!([R, A: Unprotect, const F: NodeFSFunctionEnum] AsyncFSTask<R, A, F>, task);
-
-    impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F>
+    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
+        bun_jsc::JobContext for AsyncFSTask<R, A, F>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
-        /// NewAsyncFSTask supports cancelable operations via AbortSignal,
-        /// so long as a "signal" field exists. The task wrapper will ensure
-        /// a promise rejection happens if signaled, but if `function` is
-        /// already called, no guarantees are made. It is recommended for
-        /// the functions to check .signal.aborted() for early returns.
-        pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
+        type OffThread = Self;
+        type Js = AsyncFSJs;
 
-        /// Deref the raw `global_object` pointer — JS thread only.
-        ///
-        /// Invariant: set from a live `&JSGlobalObject` in `create()`; the task is
-        /// dispatched on that global's VM, which is alive while it dispatches.
-        #[inline]
-        pub(crate) fn global_object(&self) -> &JSGlobalObject {
-            self.global_object.get()
-        }
-
-        pub(crate) fn create(
-            global_object: &JSGlobalObject,
-            _binding: &Binding,
-            args: A,
-            vm: &mut VirtualMachine,
-        ) -> JSValue {
-            let mut task = Box::new(Self {
-                promise: JSPromiseStrong::init(global_object),
-                args: args.into_thread_safe(),
-                // Sentinel — overwritten by `work_pool_callback` before any read on
-                // the JS thread. `Maybe<R>` is `Result<R, sys::Error>` and may be
-                // niche-optimised; never construct an all-zero `Result` value.
-                result: Err(sys::Error::default()),
-                global_object: bun_ptr::BackRef::new(global_object),
-                loop_handle: vm.loop_handle(),
-                task: work_pool_task(Self::work_pool_callback),
-                r#ref: KeepAlive::default(),
-                tracker: AsyncTaskTracker::init(vm),
-            });
-            // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
-            // event loop is the only one that owns AsyncFSTask/UVFSRequest.
-            task.r#ref.ref_(bun_io::js_vm_ctx());
-            let _ = vm;
-            task.tracker.did_schedule(global_object);
-            let promise = task.promise.value();
-            WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
-            promise
-        }
-
-        fn work_pool_callback(task: *mut WorkPoolTask) {
-            // SAFETY: `task` points to `Self.task` (container-of).
-            let this = unsafe { Self::from_task_ptr(task) };
-
+        fn run(
+            this: &mut Self,
+            _vm: &bun_jsc::vm_handle::Borrow,
+            done: bun_jsc::Completion<Self>,
+        ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
-            // SAFETY: `this` is the live Box-leaked task; the work-pool thread owns
-            // it exclusively until the enqueue below hands it to the JS thread.
-            // `args` and `result` are disjoint fields.
-            unsafe {
-                (*this).result =
-                    NodeFS::dispatch::<R, A, F>(&mut node_fs, &(*this).args, Flavor::Async);
-            }
-            // `sys::Error::path` is `Box<[u8]>` boxed at the
-            // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
-
-            // Deliver the result to the VM. Ownership of `this` transfers to the JS
-            // thread on Queued; on Refused (VM torn down) it stays here and is
-            // released without touching JSC.
-            let ct = ConcurrentTask::create_from(this);
-            // SAFETY: `this` is still exclusively owned here (see above).
-            let posted = unsafe { (*this).loop_handle.post_task(ct) };
-            if let bun_jsc::vm_handle::Posted::Refused(ct) = posted {
-                // SAFETY: refused ⇒ we own the ConcurrentTask box and `this`.
-                unsafe {
-                    drop(bun_core::heap::take(ct.as_ptr()));
-                    Self::release_off_thread(this);
-                }
-            }
+            this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
+            // `sys::Error::path` is `Box<[u8]>` boxed at the `errno_sys_p`
+            // construction site, so no clone is needed — `node_fs` may drop.
+            Some(done)
         }
 
-        /// Off the JS thread, VM gone: free what the task owns that is portable
-        /// (the operation's result and its arguments' own storage) and the task's
-        /// storage. The promise handle, keep-alive and protected argument values
-        /// belong to a heap/loop that no longer exist and are forgotten.
-        ///
-        /// # Safety
-        /// The pool thread owns `this` and nothing else references it.
-        unsafe fn release_off_thread(this: *mut Self) {
-            // SAFETY: fn contract.
-            unsafe {
-                core::ptr::drop_in_place(&raw mut (*this).result);
-                // `args` is `ThreadSafe<A>` whose Drop would `unprotect()` JS values
-                // via the (dead) VM; drop the value's own storage without that.
-                drop(core::ptr::read(&raw const (*this).args));
-                core::ptr::drop_in_place(&raw mut (*this).loop_handle);
-                std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
-            }
-        }
+        fn then(
+            mut this: Self,
+            js: AsyncFSJs,
+            cx: &bun_jsc::JsThread<'_>,
+        ) -> bun_jsc::JsResult<()> {
+            let global_object = cx.global();
+            let _dispatch = js.tracker.dispatch(global_object);
 
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
-            // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
-            let _deinit = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| unsafe {
-                Self::destroy(p)
-            });
-            // Move `result` out so the `global_object()` `&self` borrow can coexist
-            // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
-            let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
-            let global_object = self.global_object();
-
-            let _dispatch = self.tracker.dispatch(global_object);
-
-            let success = result.is_ok();
-            let promise_value = self.promise.value();
-            let promise = self.promise.get();
-            let result = match &mut result {
+            let success = this.result.is_ok();
+            let promise_value = js.promise.value();
+            let promise = js.promise.get();
+            let result = match &mut this.result {
                 Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
-                        return promise.reject(global_object, Ok(global_object.take_exception(e)));
+                        return Ok(promise.reject(global_object, Ok(global_object.take_exception(e)))?);
                     }
                 },
                 Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return promise.reject(global_object, Ok(global_object.take_exception(e)));
+                        return Ok(promise.reject(global_object, Ok(global_object.take_exception(e)))?);
                     }
                 },
             };
             promise_value.ensure_still_alive();
 
             if Self::HAVE_ABORT_SIGNAL {
-                if let Some(signal) = self.args.signal() {
+                if let Some(signal) = this.args.signal() {
                     if let Some(abort_error) = signal.node_abort_error_if_aborted(global_object) {
-                        return promise.reject(global_object, Ok(abort_error));
+                        return Ok(promise.reject(global_object, Ok(abort_error))?);
                     }
                 }
             }
@@ -1413,14 +1316,41 @@ mod _async_tasks {
             }
             Ok(())
         }
+    }
 
-        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
-        pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
-            // reclaim ownership (paired with the Box::leak in create()).
-            let mut task = unsafe { bun_core::heap::take(this) };
-            // `bun_sys::Error` frees its path on Drop.
-            task.r#ref.unref(bun_io::js_vm_ctx());
+    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
+        AsyncFSTask<R, A, F>
+    where
+        Op<{ F }>: NodeFSDispatch<R, A>,
+    {
+        /// NewAsyncFSTask supports cancelable operations via AbortSignal,
+        /// so long as a "signal" field exists. The task wrapper will ensure
+        /// a promise rejection happens if signaled, but if `function` is
+        /// already called, no guarantees are made. It is recommended for
+        /// the functions to check .signal.aborted() for early returns.
+        pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
+
+        pub(crate) fn create(
+            global_object: &JSGlobalObject,
+            _binding: &Binding,
+            args: A,
+            vm: &mut VirtualMachine,
+        ) -> JSValue {
+            let tracker = AsyncTaskTracker::init(vm);
+            tracker.did_schedule(global_object);
+            let promise = JSPromiseStrong::init(global_object);
+            let value = promise.value();
+            bun_jsc::Job::<Self>::schedule(
+                &global_object.js_thread(),
+                Self {
+                    args: args.into_thread_safe(),
+                    // Sentinel — overwritten by `run` before any read. `Maybe<R>`
+                    // may be niche-optimised; never construct an all-zero `Result`.
+                    result: Err(sys::Error::default()),
+                },
+                AsyncFSJs { promise, tracker },
+            );
+            value
         }
     }
 
@@ -2235,17 +2165,18 @@ mod _async_tasks {
     // AsyncReaddirRecursiveTask
     // ──────────────────────────────────────────────────────────────────────────
 
+    /// `readdir(.., { recursive: true })`: a scan fanned out over pool subtasks
+    /// that share this state (it is the job's off-thread part, so its address
+    /// is stable while any subtask runs). Subtasks touch only owned data here —
+    /// never the JS-backed `args` — since they run outside the VM borrow.
     pub struct AsyncReaddirRecursiveTask {
-        pub(crate) promise: JSPromiseStrong,
-        /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
+        /// Protected arguments; their JS-backed path is not read off-thread
+        /// (`root_path` is the owned copy).
         pub args: ThreadSafe<args::Readdir>,
-        /// JS thread only.
-        pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
-        /// How the last subtask's thread delivers the completion.
-        pub(crate) loop_handle: bun_jsc::LoopHandle,
-        pub task: WorkPoolTask,
-        pub(crate) r#ref: KeepAlive,
-        pub(crate) tracker: AsyncTaskTracker,
+        pub(crate) tag: ret::ReaddirTag,
+        pub(crate) encoding: Encoding,
+        /// The completion token, finished by whichever subtask ends the scan.
+        pub(crate) done: Option<bun_jsc::Completion<Self>>,
 
         // It's not 100% clear this one is necessary
         pub(crate) has_result: AtomicBool,
@@ -2273,8 +2204,87 @@ mod _async_tasks {
         pub(crate) pending_err: Option<sys::Error>,
         pub(crate) pending_err_mutex: bun_threading::Mutex,
     }
+    // SAFETY: shared by the pool subtasks through atomics / the lock-free
+    // queue / the mutex; `args` is Send by `ThreadSafe`'s contract; results
+    // are owned buffers and WTF strings built off-thread for hand-off.
+    unsafe impl Send for AsyncReaddirRecursiveTask {}
 
-    bun_threading::intrusive_work_task!(AsyncReaddirRecursiveTask, task);
+    impl Drop for AsyncReaddirRecursiveTask {
+        fn drop(&mut self) {
+            debug_assert!(self.root_fd == FD::INVALID, "scan still owns its root fd");
+            self.clear_result_list();
+        }
+    }
+
+    impl bun_jsc::JobContext for AsyncReaddirRecursiveTask {
+        type OffThread = Self;
+        type Js = AsyncFSJs;
+
+        fn run(
+            this: &mut Self,
+            _vm: &bun_jsc::vm_handle::Borrow,
+            done: bun_jsc::Completion<Self>,
+        ) -> Option<bun_jsc::Completion<Self>> {
+            this.done = Some(done);
+            let mut buf = PathBuffer::uninit();
+            let root_path_z = {
+                // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` fixed for the
+                // task's lifetime; `perform_work` mutates other fields only.
+                let bytes: &'static [u8] =
+                    unsafe { bun_ptr::detach_lifetime(&this.root_path[..]) };
+                ZStr::from_buf(bytes, bytes.len() - 1)
+            };
+            // May finish synchronously (no subdirectories) or fan out; the last
+            // subtask finishes the token.
+            this.perform_work(root_path_z, &mut buf, true);
+            None
+        }
+
+        fn then(
+            mut this: Self,
+            js: AsyncFSJs,
+            cx: &bun_jsc::JsThread<'_>,
+        ) -> bun_jsc::JsResult<()> {
+            let global_object = cx.global();
+            let success = this.pending_err.is_none();
+            let promise_value = js.promise.value();
+            let promise = js.promise.get();
+            let result = if let Some(err) = &mut this.pending_err {
+                match err.to_js_with_async_stack(global_object, promise) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Ok(promise.reject(global_object, Ok(global_object.take_exception(e)))?);
+                    }
+                }
+            } else {
+                let res = match core::mem::replace(
+                    &mut this.result_list,
+                    ResultListEntryValue::Files(Vec::new()),
+                ) {
+                    ResultListEntryValue::WithFileTypes(v) => {
+                        ret::Readdir::WithFileTypes(v.into_boxed_slice())
+                    }
+                    ResultListEntryValue::Buffers(v) => ret::Readdir::Buffers(v.into_boxed_slice()),
+                    ResultListEntryValue::Files(v) => ret::Readdir::Files(v.into_boxed_slice()),
+                };
+                match res.to_js(global_object) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Ok(promise.reject(global_object, Ok(global_object.take_exception(e)))?);
+                    }
+                }
+            };
+            promise_value.ensure_still_alive();
+            let _dispatch = js.tracker.dispatch(global_object);
+            drop(this);
+            if success {
+                promise.resolve(global_object, result)?;
+            } else {
+                promise.reject(global_object, Ok(result))?;
+            }
+            Ok(())
+        }
+    }
 
     pub enum ResultListEntryValue {
         WithFileTypes(Vec<Dirent>),
@@ -2361,16 +2371,6 @@ mod _async_tasks {
     }
 
     impl AsyncReaddirRecursiveTask {
-        pub(crate) fn new(init: Self) -> Box<Self> {
-            Box::new(init)
-        }
-
-        /// Free `root_path` — paired with the NUL-terminated duplication in
-        /// `create()`. Idempotent (empty `Box` after first call).
-        fn free_root_path(&mut self) {
-            drop(core::mem::take(&mut self.root_path));
-        }
-
         pub(crate) fn enqueue(&mut self, basename: &ZStr) {
             // The subtask runs on another thread after the caller's `name_to_copy_z`
             // (which points into a per-iteration buffer) has been overwritten, so we
@@ -2402,60 +2402,49 @@ mod _async_tasks {
             args: args::Readdir,
             vm: &mut VirtualMachine,
         ) -> JSValue {
-            let result_list = match args.tag() {
+            let tag = args.tag();
+            let encoding = args.encoding;
+            let result_list = match tag {
                 ret::ReaddirTag::Files => ResultListEntryValue::Files(Vec::new()),
                 ret::ReaddirTag::WithFileTypes => ResultListEntryValue::WithFileTypes(Vec::new()),
                 ret::ReaddirTag::Buffers => ResultListEntryValue::Buffers(Vec::new()),
             };
-            // The
-            // subtasks read `root_path` (NUL-terminated) from the work pool after
-            // `args.to_thread_safe()` may have rehomed the original slice, so we
-            // must own a NUL-terminated copy. Freed in `finish_concurrently()` or
-            // `destroy()` via `free_root_path()`.
+            // Subtasks read the root path outside the VM borrow, so it must be an
+            // owned copy rather than the (possibly JS-backed) argument. NUL-terminated.
             let root_path = {
                 let src = args.path.slice();
                 let mut owned = Vec::with_capacity(src.len() + 1);
                 owned.extend_from_slice(src);
                 owned.push(0);
-                // NUL-terminated `[bytes.., 0]`; freed on drop / `free_root_path()`.
                 owned.into_boxed_slice()
             };
-            let mut task = Self::new(AsyncReaddirRecursiveTask {
-                promise: JSPromiseStrong::init(global_object),
-                args: FsArgument::into_thread_safe(args),
-                has_result: AtomicBool::new(false),
-                global_object: bun_ptr::BackRef::new(global_object),
-                loop_handle: vm.loop_handle(),
-                task: work_pool_task(Self::work_pool_callback),
-                r#ref: KeepAlive::default(),
-                tracker: AsyncTaskTracker::init(vm),
-                subtask_count: AtomicUsize::new(1),
-                root_path,
-                result_list,
-                result_list_count: AtomicUsize::new(0),
-                result_list_queue: UnboundedQueue::default(),
-                root_fd: FD::INVALID,
-                pending_err: None,
-                pending_err_mutex: bun_threading::Mutex::default(),
-            });
-            task.r#ref.ref_(bun_io::js_vm_ctx());
-            task.tracker.did_schedule(global_object);
-            let promise = task.promise.value();
-            WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
-            promise
+            let tracker = AsyncTaskTracker::init(vm);
+            tracker.did_schedule(global_object);
+            let promise = JSPromiseStrong::init(global_object);
+            let value = promise.value();
+            bun_jsc::Job::<Self>::schedule(
+                &global_object.js_thread(),
+                AsyncReaddirRecursiveTask {
+                    args: FsArgument::into_thread_safe(args),
+                    tag,
+                    encoding,
+                    done: None,
+                    has_result: AtomicBool::new(false),
+                    subtask_count: AtomicUsize::new(1),
+                    root_path,
+                    result_list,
+                    result_list_count: AtomicUsize::new(0),
+                    result_list_queue: UnboundedQueue::default(),
+                    root_fd: FD::INVALID,
+                    pending_err: None,
+                    pending_err_mutex: bun_threading::Mutex::default(),
+                },
+                AsyncFSJs { promise, tracker },
+            );
+            value
         }
 
-        pub(crate) fn perform_work(
-            &mut self,
-            basename: &ZStr,
-            buf: &mut PathBuffer,
-            is_root: bool,
-        ) {
-            // SAFETY: `readdir_with_entries_recursive_async` takes `args` and
-            // `async_task` separately even though `args == &async_task.args`. The
-            // callee never mutates `args` (only `async_task.{root_fd, enqueue}`),
-            // so erase the field borrow through a raw pointer to satisfy borrowck.
-            let args_ptr: *const args::Readdir = &raw const *self.args;
+        pub(crate) fn perform_work(&mut self, basename: &ZStr, buf: &mut PathBuffer, is_root: bool) {
             macro_rules! impl_tag {
                 ($T:ty, $variant:ident) => {{
                     // A bare `Vec::new()` here
@@ -2469,9 +2458,6 @@ mod _async_tasks {
                         Vec::with_capacity(8192usize / core::mem::size_of::<$T>());
                     let res = NodeFS::readdir_with_entries_recursive_async::<$T>(
                         buf,
-                        // SAFETY: `args_ptr` was derived from `&*self.args` above; the boxed
-                        // `self.args` outlives this call and is only read here.
-                        unsafe { &*args_ptr },
                         self,
                         basename,
                         &mut entries,
@@ -2488,7 +2474,7 @@ mod _async_tasks {
                                     let err_path: &[u8] = if !err.path.is_empty() {
                                         &err.path[..]
                                     } else {
-                                        self.args.path.slice()
+                                        &self.root_path[..self.root_path.len() - 1]
                                     };
                                     self.pending_err = Some(err.with_path(err_path));
                                 }
@@ -2503,34 +2489,11 @@ mod _async_tasks {
                     }
                 }};
             }
-            match self.args.tag() {
+            match self.tag {
                 ret::ReaddirTag::Files => impl_tag!(BunString, Files),
                 ret::ReaddirTag::WithFileTypes => impl_tag!(Dirent, WithFileTypes),
                 ret::ReaddirTag::Buffers => impl_tag!(Buffer, Buffers),
             }
-        }
-
-        fn work_pool_callback(task: *mut WorkPoolTask) {
-            // SAFETY: `task` points to `Self.task` (container-of).
-            let this = unsafe { Self::from_task_ptr(task) };
-            let mut buf = PathBuffer::uninit();
-            // `root_path` backing is fixed for the task's lifetime and only
-            // `perform_work`'s callee reads it (it mutates other fields), so
-            // detach the field borrow to satisfy borrowck (mirrors the
-            // `perform_work` body's own `args_ptr` erase, and line ~6623).
-            let root_path_z = {
-                // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` set in
-                // `create()` and not reallocated for the task's lifetime; shared
-                // field borrow only.
-                let root_path: &[u8] = unsafe { &(*this).root_path };
-                // SAFETY: see above — the backing bytes outlive this call.
-                let bytes: &'static [u8] = unsafe { bun_ptr::detach_lifetime(root_path) };
-                ZStr::from_buf(bytes, bytes.len() - 1)
-            };
-            // SAFETY: `this` is the live Box-leaked task; this scan task holds one
-            // `subtask_count` reference, so the JS thread cannot free it during
-            // the call. The `&mut` is scoped to the call.
-            unsafe { (*this).perform_work(root_path_z, &mut buf, true) };
         }
 
         pub(crate) fn write_results<T: IntoResultListEntry>(&mut self, result: &mut Vec<T>) {
@@ -2575,7 +2538,6 @@ mod _async_tasks {
                 use bun_sys::FdExt as _;
                 self.root_fd = FD::INVALID;
                 root_fd.close();
-                self.free_root_path();
             }
 
             if self.pending_err.is_some() {
@@ -2612,23 +2574,9 @@ mod _async_tasks {
                 }
             }
 
-            // `ConcurrentTask::create` heap-allocates a fresh task; the queue
-            // takes ownership of it — unless the VM has been torn down.
-            let this: *mut Self = self;
-            let ct = ConcurrentTask::create(Task::init(this));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) = self.loop_handle.post_task(ct) {
-                // Nobody will settle the promise: drop the collected results, the
-                // arguments' own storage and the task; forget the JS-side members.
-                // SAFETY: refused ⇒ we own `ct`; subtask count hit zero ⇒ exclusive `this`.
-                unsafe {
-                    drop(bun_core::heap::take(ct.as_ptr()));
-                    (*this).clear_result_list();
-                    core::ptr::drop_in_place(&raw mut (*this).result_list);
-                    drop(core::ptr::read(&raw const (*this).args));
-                    core::ptr::drop_in_place(&raw mut (*this).loop_handle);
-                    std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
-                }
-            }
+            // Hand the scan back to its VM (or, if that is gone, to the release
+            // that frees this off-thread part). Last touch of `self` on this thread.
+            self.done.take().expect("scan finished twice").finish();
         }
 
         fn clear_result_list(&mut self) {
@@ -2655,80 +2603,6 @@ mod _async_tasks {
             }
             self.result_list_count.store(0, Ordering::Relaxed);
         }
-
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
-            // NOTE: cannot route through `self.global_object()` here -- the returned
-            // borrow would be tied to `&self` and conflict with the `&mut self.*`
-            // field accesses below, and it must also stay valid past `Self::destroy`.
-            // BackRef is `Copy`; copy it to a local so the borrow is detached from `self`.
-            let global_object = self.global_object;
-            let global_object = global_object.get();
-            let success = self.pending_err.is_none();
-            let promise_value = self.promise.value();
-            // Raw-pointer capture: see `AsyncCpTask::run_from_js_thread` for rationale —
-            // `Self::destroy` must run before resolve/reject, and the `JSPromise` cell
-            // outlives the `Strong` wrapper via `promise_value.ensure_still_alive()`.
-            let promise: *mut bun_jsc::JSPromise = self.promise.get();
-            let result = if let Some(err) = &mut self.pending_err {
-                // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
-                match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
-                        // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }
-                            .reject(global_object, Ok(global_object.take_exception(e)));
-                    }
-                }
-            } else {
-                let res = match core::mem::replace(
-                    &mut self.result_list,
-                    ResultListEntryValue::Files(Vec::new()),
-                ) {
-                    ResultListEntryValue::WithFileTypes(v) => {
-                        ret::Readdir::WithFileTypes(v.into_boxed_slice())
-                    }
-                    ResultListEntryValue::Buffers(v) => ret::Readdir::Buffers(v.into_boxed_slice()),
-                    ResultListEntryValue::Files(v) => ret::Readdir::Files(v.into_boxed_slice()),
-                };
-                match res.to_js(global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
-                        // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }
-                            .reject(global_object, Ok(global_object.take_exception(e)));
-                    }
-                }
-            };
-            promise_value.ensure_still_alive();
-
-            let _dispatch = self.tracker.dispatch(global_object);
-
-            // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            if success {
-                bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
-            } else {
-                bun_jsc::JSPromise::opaque_mut(promise).reject(global_object, Ok(result))?;
-            }
-            Ok(())
-        }
-
-        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
-        pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
-            // reclaim ownership (paired with the Box::leak in create()).
-            let mut task = unsafe { bun_core::heap::take(this) };
-            debug_assert!(task.root_fd == FD::INVALID); // should already have closed it
-            // `bun_sys::Error` frees on Drop; nothing to do.
-            let _ = task.pending_err.take();
-            // `KeepAlive::unref` takes the type-erased
-            // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
-            task.r#ref.unref(bun_io::js_vm_ctx());
-            task.free_root_path();
-            task.clear_result_list();
-        }
     }
 
     /// Maps a readdir element type to its `ResultListEntryValue` variant.
@@ -2752,13 +2626,6 @@ mod _async_tasks {
         fn into_variant(v: Vec<Self>) -> ResultListEntryValue {
             ResultListEntryValue::Files(v)
         }
-    }
-
-    // Route `Task::init(self)` in `finish_concurrently` to the event-loop dispatch
-    // table. The `task_tag::ReaddirRecursive` arm is wired in
-    // `crate::dispatch::run_task` to call `run_from_js_thread`.
-    impl bun_event_loop::Taskable for AsyncReaddirRecursiveTask {
-        const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ReaddirRecursive;
     }
 
     impl ResultListEntryValue {
@@ -6627,7 +6494,6 @@ impl NodeFS {
 
     pub(crate) fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
         buf: &mut PathBuffer,
-        args: &args::Readdir,
         async_task: &mut AsyncReaddirRecursiveTask,
         basename: &ZStr,
         entries: &mut Vec<T>,
@@ -6685,7 +6551,7 @@ impl NodeFS {
                         return Err(err.with_path(joined.as_bytes()));
                     }
                 }
-                return Err(err.with_path(args.path.slice()));
+                return Err(err.with_path(root_basename));
             }
             Ok(fd_) => fd_,
         };
@@ -6718,7 +6584,7 @@ impl NodeFS {
                         );
                         return Err(err.with_path(joined.as_bytes()));
                     }
-                    return Err(err.with_path(args.path.slice()));
+                    return Err(err.with_path(root_basename));
                 }
                 Ok(None) => break,
                 Ok(Some(ent)) => ent,
@@ -6800,7 +6666,7 @@ impl NodeFS {
                 name_to_copy,
                 &dirent_path_prev,
                 effective_kind,
-                args.encoding,
+                async_task.encoding,
                 false,
             );
         }
@@ -10366,52 +10232,21 @@ pub enum NodeFSFunctionEnum {
 }
 
 impl NodeFSFunctionEnum {
-    /// Maps each async-FS function to its event-loop [`TaskTag`] (the `tags!`
-    /// macro in `bun_event_loop::task_tag` declares one constant per variant).
+    /// The event-loop [`TaskTag`] of the ops that are libuv requests on
+    /// Windows (`UVFSRequest`) and so re-enter through the task queue; every
+    /// other async op is a `bun_jsc::Job` and needs none.
+    #[cfg(windows)]
     pub const fn task_tag(self) -> bun_event_loop::TaskTag {
         use bun_event_loop::task_tag;
         match self {
-            Self::Access => task_tag::Access,
-            Self::AppendFile => task_tag::AppendFile,
-            Self::Chmod => task_tag::Chmod,
-            Self::Chown => task_tag::Chown,
-            Self::Close => task_tag::Close,
-            Self::CopyFile => task_tag::CopyFile,
-            Self::Exists => task_tag::Exists,
-            Self::Fchmod => task_tag::Fchmod,
-            Self::Fchown => task_tag::FChown,
-            Self::Fdatasync => task_tag::Fdatasync,
-            Self::Fstat => task_tag::Fstat,
-            Self::Fsync => task_tag::Fsync,
-            Self::Ftruncate => task_tag::FTruncate,
-            Self::Futimes => task_tag::Futimes,
-            Self::Lchmod => task_tag::Lchmod,
-            Self::Lchown => task_tag::Lchown,
-            Self::Link => task_tag::Link,
-            Self::Lstat => task_tag::Lstat,
-            Self::Lutimes => task_tag::Lutimes,
-            Self::Mkdir => task_tag::Mkdir,
-            Self::Mkdtemp => task_tag::Mkdtemp,
-            Self::Open => task_tag::Open,
-            Self::Read => task_tag::Read,
-            Self::Readdir => task_tag::Readdir,
-            Self::ReadFile => task_tag::ReadFile,
-            Self::Readlink => task_tag::Readlink,
-            Self::Readv => task_tag::Readv,
-            Self::Realpath => task_tag::Realpath,
-            Self::RealpathNonNative => task_tag::RealpathNonNative,
-            Self::Rename => task_tag::Rename,
-            Self::Rm => task_tag::Rm,
-            Self::Rmdir => task_tag::Rmdir,
-            Self::Stat => task_tag::Stat,
-            Self::Statfs => task_tag::StatFS,
-            Self::Symlink => task_tag::Symlink,
-            Self::Truncate => task_tag::Truncate,
-            Self::Unlink => task_tag::Unlink,
-            Self::Utimes => task_tag::Utimes,
-            Self::Write => task_tag::Write,
-            Self::WriteFile => task_tag::WriteFile,
-            Self::Writev => task_tag::Writev,
+            NodeFSFunctionEnum::Open => task_tag::Open,
+            NodeFSFunctionEnum::Close => task_tag::Close,
+            NodeFSFunctionEnum::Read => task_tag::Read,
+            NodeFSFunctionEnum::Write => task_tag::Write,
+            NodeFSFunctionEnum::Readv => task_tag::Readv,
+            NodeFSFunctionEnum::Writev => task_tag::Writev,
+            NodeFSFunctionEnum::Statfs => task_tag::StatFS,
+            _ => panic!("not a libuv-request fs op"),
         }
     }
 }

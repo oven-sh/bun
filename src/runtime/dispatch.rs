@@ -42,32 +42,21 @@ use bun_jsc::event_loop::{EventLoop, JsTerminated};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
 
-/// X-macro: the 42 `node:fs` async ops dispatched via `run_from_js_thread`.
-///
-/// Row shape: `$tag $ty;` — `$tag` is the `bun_event_loop::task_tag::*` const,
-/// `$ty` is the `fs_async::*` alias. They differ in exactly three rows
-/// (`FTruncate`/`Ftruncate`, `FChown`/`Fchown`, `StatFS`/`Statfs`), so the
-/// macro carries both idents. `ReaddirRecursive` is the bespoke
-/// `AsyncReaddirRecursiveTask` (not an `AsyncFSTask<_,_,F>`); `Cp` and
-/// `AsyncMkdirp` are intentionally absent — they have bespoke dispatch paths.
-macro_rules! for_each_fs_async_op {
+/// X-macro: the `node:fs` ops that are libuv requests on Windows
+/// (`UVFSRequest`); they complete on the JS thread and re-enter through the
+/// task queue under a per-op tag. Every other async fs op is a `bun_jsc::Job`.
+/// Row shape: `$tag $ty;` (`task_tag::*` const, `fs_async::*` alias).
+#[cfg(windows)]
+macro_rules! for_each_fs_uv_op {
     ($m:ident) => {
         $m! {
-            Stat Stat; Lstat Lstat; Fstat Fstat; Open Open; ReadFile ReadFile;
-            WriteFile WriteFile; CopyFile CopyFile; Read Read; Write Write;
-            Truncate Truncate; Writev Writev; Readv Readv; Rename Rename;
-            FTruncate Ftruncate; Readdir Readdir; ReaddirRecursive ReaddirRecursive;
-            Close Close; Rm Rm; Rmdir Rmdir; Chown Chown; FChown Fchown;
-            Utimes Utimes; Lutimes Lutimes; Chmod Chmod; Fchmod Fchmod; Link Link;
-            Symlink Symlink; Readlink Readlink; Realpath Realpath;
-            RealpathNonNative RealpathNonNative; Mkdir Mkdir; Fsync Fsync;
-            Fdatasync Fdatasync; Access Access; AppendFile AppendFile;
-            Mkdtemp Mkdtemp; Exists Exists; Futimes Futimes; Lchmod Lchmod;
-            Lchown Lchown; Unlink Unlink; StatFS Statfs;
+            Open Open; Close Close; Read Read; Write Write; Readv Readv;
+            Writev Writev; StatFS Statfs;
         }
     };
 }
 /// Expand the fs-op table to an or-pattern over `task_tag::*` (pattern position).
+#[cfg(windows)]
 macro_rules! __fs_pat {
     ($($tag:ident $ty:ident;)*) => { $(task_tag::$tag)|* };
 }
@@ -126,6 +115,7 @@ use crate::bake::dev_server::DevServer;
 use crate::bake::dev_server::HotReloadEvent as BakeHotReloadEvent;
 use crate::bake::dev_server::source_map_store::SourceMapStore;
 
+#[cfg(windows)]
 use crate::node::fs::async_ as fs_async;
 use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
 use crate::node::node_fs_watcher::FSWatchTask;
@@ -450,19 +440,17 @@ pub(crate) fn run_task(
         }
 
 
-        // ── node:fs async ops (`runFromJSThread`) ────────────────────────
-        // 42 arms stamped from `for_each_fs_async_op!` (module scope). The
-        // outer or-pattern proves the inner re-match is exhaustive over the
-        // table, so the trailing wildcard is genuinely unreachable.
-        for_each_fs_async_op!(__fs_pat) => {
+        // ── node:fs libuv-request ops (Windows) ──────────────────────────
+        #[cfg(windows)]
+        for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
                     $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
-                    // SAFETY: outer arm guard proves one of the 42 tags matched.
+                    // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },
                 }};
             }
-            for_each_fs_async_op!(__fs_run);
+            for_each_fs_uv_op!(__fs_run);
         }
 
         // ── compression streams ──────────────────────────────────────────
@@ -651,7 +639,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 104,
+    task_tag::COUNT == 69,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1265,28 +1253,21 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
         // `destroy()` (called from `run_from_js_thread`'s scopeguard).
-        // `destroy()` resets `JSPromiseStrong` (touches the StrongRootBlock list)
-        // and unrefs the loop `KeepAlive`, both of which are still valid
-        // here — we're before `destructOnExit`. Before
-        // `release_queued_tasks` existed these boxes stayed
-        // reachable via `concurrent_tasks` (rooted by the static `VMHolder`),
-        // so LSan didn't flag them; the drain unhooks that root and surfaces
-        // the real leak.
-        for_each_fs_async_op!(__fs_pat) => {
+        // A libuv fs request (Windows) that completed into the queue after the
+        // last tick: destroy releases its promise handle and keep-alive.
+        #[cfg(windows)]
+        for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_destroy {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
                     $(task_tag::$tag => {
-                        // SAFETY: tag identifies pointee; `Box::leak`'d in
-                        // `AsyncFSTask::create`. The work-pool callback ran
-                        // (it posted this entry) so the threadpool no longer
-                        // holds the embedded `task` field.
+                        // SAFETY: tag identifies pointee; `Box::leak`'d in `UVFSRequest::create`.
                         unsafe { fs_async::$ty::destroy(task.ptr.cast::<fs_async::$ty>()) };
                     })*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },
                 }};
             }
-            for_each_fs_async_op!(__fs_destroy);
+            for_each_fs_uv_op!(__fs_destroy);
             true
         }
         // A cross-thread Atomics.notify (or Wasm/FinalizationRegistry

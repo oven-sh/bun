@@ -7,6 +7,7 @@
 
 // CompressionStreamCoder.rs
 extern "C" void* CompressionStreamCoder__create(uint8_t format, bool decompress);
+// Releases the cell's reference (in-flight async transforms hold their own).
 extern "C" void CompressionStreamCoder__destroy(void* coder);
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish);
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformInto(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, uint8_t sinkId, void* sinkPtr);

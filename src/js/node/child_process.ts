@@ -1681,7 +1681,6 @@ const INTERNAL_IPC_PREFIX = "NODE_";
 
 function isInternalIpcMessage(message) {
   if (message === null || typeof message !== "object") return false;
-  // Own-property check: a polluted Object.prototype.cmd cannot reroute messages.
   if (!ObjectHasOwn(message, "cmd")) return false;
   const cmd = message.cmd;
   if (typeof cmd !== "string" || cmd.length <= INTERNAL_IPC_PREFIX.length) return false;
@@ -1696,7 +1695,6 @@ function streamFdOf(item): number | undefined {
   const handleFd = handle ? handle.fd : undefined;
   if (typeof handleFd === "number") return handleFd;
 
-  // Refuse a destroyed stream's sink fd: the number may be recycled.
   if (item.destroyed) return undefined;
 
   const sink = item[require("internal/fs/streams").kWriteStreamFastPath];

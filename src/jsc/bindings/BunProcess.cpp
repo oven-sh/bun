@@ -4692,7 +4692,6 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
 
-    // getDirect: own-property only (prototype-pollution safe) + no throw scope for the Rust caller.
     auto& names = WebCore::builtinNames(vm);
     auto ident = vm.propertyNames->message;
     JSValue message = JSValue::decode(value);

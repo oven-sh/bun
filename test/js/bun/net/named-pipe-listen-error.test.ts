@@ -35,9 +35,6 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
           console.error("expected code EADDRINUSE, got", e.code);
           process.exit(1);
         }
-        // errno must be the libuv value (UV_EADDRINUSE = -4091 on Windows) so
-        // util.getSystemErrorName / ExceptionWithHostPort can resolve it; the
-        // cluster worker reads this field to synthesise the listen error.
         if (require("util").getSystemErrorName(e.errno) !== "EADDRINUSE") {
           console.error("expected errno to resolve to EADDRINUSE, got", e.errno);
           process.exit(1);

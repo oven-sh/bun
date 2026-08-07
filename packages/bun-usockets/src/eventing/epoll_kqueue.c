@@ -366,24 +366,24 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
             /* This poll asked for no events, so its only kernel presence is
              * the EV_CLEAR write knote kqueue_change keeps as a
              * connection-death detector (a half-open socket past on_end whose
-             * writes drained, or a paused socket). EV_EOF there means
-             * SS_CANTSENDMORE, which is not a read EOF: never surface it as
-             * eof (that would re-run on_end on a half-open socket, or
-             * clean-close a shut-down one on its own shutdown echo). It is
-             * the connection dying - route it to the error path the way epoll
-             * reports its implicit EPOLLERR - when the kernel holds an error
-             * (fflags, a TCP reset), or when a socket we neither shut down
-             * nor paused loses its write side (a unix peer's close sets
-             * SS_CANTSENDMORE with no so_error). A paused socket without a
-             * pending error stays quiet instead: a graceful unix disconnect
-             * may still have readable data queued, and us_socket_resume
-             * re-arms EVFILT_READ, which then drains it and delivers the
-             * proper end-of-stream (epoll's EPOLLHUP takes the same deferred
-             * route through the is_paused guard in loop.c). */
+             * writes drained, or a paused socket). EV_EOF there is
+             * SS_CANTSENDMORE, never a read EOF: keep it away from the eof
+             * path, which would re-run on_end on a half-open socket or
+             * clean-close a shut-down one on its own shutdown echo. With a
+             * socket error in fflags (a TCP reset) it is the poll error,
+             * routed exactly like epoll's implicit EPOLLERR. Without one it
+             * stays silent - our own shutdown's echo, a unix peer's graceful
+             * close (SS_CANTSENDMORE with so_error 0), the peer's FIN after
+             * our shutdown - because tearing down an allowHalfOpen or paused
+             * socket here would fabricate ECONNRESET for a graceful
+             * disconnect that epoll reports as a mere EPOLLHUP. Such a
+             * socket stays reachable through us_socket_resume, a write's
+             * EPIPE, or a later reset; epoll reports some of these promptly
+             * where kqueue now waits for the app, which is the deliberate
+             * cost of not guessing. */
             const int kind = us_internal_poll_type(poll);
             if (kind == POLL_TYPE_SOCKET || kind == POLL_TYPE_SOCKET_SHUT_DOWN) {
-                const struct us_socket_t *s = (const struct us_socket_t *) poll;
-                if (bits.send_eof_err || (kind == POLL_TYPE_SOCKET && !s->flags.is_paused)) {
+                if (bits.send_eof_err) {
                     error = 1;
                 }
                 eof = bits.eof;

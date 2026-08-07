@@ -1331,8 +1331,13 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         }
         task_tag::ValkeyDeferredClose => {
             // SAFETY: boxed at the enqueue site; we own it once refused/popped.
-            unsafe { bun_core::heap::take(task.ptr.cast::<crate::valkey_jsc::js_valkey::ValkeyDeferredClose>()) }
-                .run();
+            unsafe {
+                bun_core::heap::take(
+                    task.ptr
+                        .cast::<crate::valkey_jsc::js_valkey::ValkeyDeferredClose>(),
+                )
+            }
+            .run();
             true
         }
         task_tag::JSCDeferredWorkTask => {

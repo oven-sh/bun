@@ -367,7 +367,6 @@ impl JSMySQLConnection {
         self.register_auto_flusher();
     }
 
-
     fn drain_internal(&self) {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
         // Raw-pointer RAII guard so no reference is live across the potential

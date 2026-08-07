@@ -75,7 +75,11 @@ public:
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
 
     void start();
-    bool hasMessageEventListener() const { return m_hasMessageEventListener; }
+    // For draining/pausing, a node worker's parentPort also counts `message` listeners on the
+    // worker's global scope (self.onmessage / addEventListener) — see setGlobalScopeMessageListenerCount.
+    bool hasMessageEventListener() const { return m_hasMessageEventListener || m_globalScopeMessageListenerCount > 0; }
+    // Only for the port registered as a node worker's parentPort (Zig::GlobalObject::nodeParentPort).
+    void setGlobalScopeMessageListenerCount(unsigned);
     void close();
     // Called on the entangled peer when this side closes: dispatches a
     // 'close' event and releases the event-loop ref so the loop can idle.
@@ -108,7 +112,8 @@ public:
     void dispatchEvent(Event&) final;
 
     // node:worker_threads receiveMessageOnPort — synchronous single pop.
-    JSValue tryTakeMessage(JSGlobalObject*);
+    // The message may legitimately be `undefined`/falsy, so emptiness is reported through hadMessage.
+    JSValue tryTakeMessage(JSGlobalObject*, bool& hadMessage);
 
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);
@@ -152,6 +157,7 @@ private:
     bool m_isDispatching { false };
     bool m_closeEventDispatched { false };
     bool m_hasMessageEventListener { false };
+    unsigned m_globalScopeMessageListenerCount { 0 };
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.
     std::atomic<bool> m_hasCloseEventListener { false };

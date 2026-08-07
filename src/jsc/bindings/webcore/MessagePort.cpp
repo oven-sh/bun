@@ -31,6 +31,7 @@
 
 #include "BunClientData.h"
 #include "EventNames.h"
+#include "BunWorkerGlobalScope.h"
 #include "JSMessagePort.h"
 #include "MessageEvent.h"
 #include "MessagePortPipe.h"
@@ -142,6 +143,22 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
     m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
     return {};
+}
+
+void MessagePort::setGlobalScopeMessageListenerCount(unsigned count)
+{
+    bool hadListener = hasMessageEventListener();
+    m_globalScopeMessageListenerCount = count;
+    // Same effect as adding a 'message' listener on the port itself: start draining (or resume
+    // after a pause) so buffered messages reach the global scope through the mirror in
+    // dispatchEvent(). The event-loop ref for these listeners is held by the global scope.
+    if (!hadListener && hasMessageEventListener()) {
+        start();
+        if (m_started && isEntangled()) {
+            if (auto* context = scriptExecutionContext())
+                m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+        }
+    }
 }
 
 void MessagePort::start()
@@ -351,8 +368,9 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     dispatchEvent(event.event);
 }
 
-JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
+JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& hadMessage)
 {
+    hadMessage = false;
     if (!isEntangled())
         return jsUndefined();
 
@@ -364,6 +382,7 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
     if (!message)
         return jsUndefined();
 
+    hadMessage = true;
     auto ports = MessagePort::entanglePorts(*context, WTF::move(message->transferredPorts));
     return message->message.releaseNonNull()->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::NonThrowing);
 }
@@ -373,6 +392,26 @@ void MessagePort::dispatchEvent(Event& event)
     if (m_isDetached)
         return;
     EventTarget::dispatchEvent(event);
+
+    // node:worker_threads parentPort: what arrives from the parent Worker is also a Web Worker
+    // `message` on the global scope (self.onmessage / addEventListener), as it was when parentPort
+    // was a facade over the global scope. Separate registrations, so a program using one style
+    // sees one delivery.
+    auto* context = scriptExecutionContext();
+    if (!context)
+        return;
+    auto* globalObject = defaultGlobalObject(context->globalObject());
+    if (globalObject->nodeParentPort() != this)
+        return;
+    auto& names = eventNames();
+    if (event.type() != names.messageEvent && event.type() != names.messageerrorEvent)
+        return;
+    auto& scopeTarget = globalObject->globalEventScope.get();
+    if (!scopeTarget.hasEventListeners(event.type()))
+        return;
+    // The port's dispatch is complete (flags reset), so the same event — same `data`
+    // wrapper — is dispatched again with the global scope as target.
+    scopeTarget.dispatchEvent(event);
 }
 
 void MessagePort::contextDestroyed()

@@ -20,6 +20,7 @@ enum class JSPromiseRejectionOperation : unsigned;
 } // namespace JSC
 
 namespace WebCore {
+class MessagePort;
 class ScriptExecutionContext;
 class DOMGuardedObject;
 class EventLoopTask;
@@ -381,6 +382,7 @@ public:
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<Bun::WorkerGlobalScope> globalEventScope;
+    RefPtr<WebCore::MessagePort> m_nodeParentPort;
 
     void resetOnEachMicrotaskTick();
 
@@ -772,6 +774,11 @@ public:
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     void setNodeWorkerEnvironmentData(JSMap* data);
+    // node:worker_threads parentPort — the transferred MessagePort entangled with the parent
+    // Worker's public port. Messages it dispatches are mirrored onto globalEventScope so the
+    // Web Worker style (`self.onmessage` / global addEventListener) keeps working under a node Worker.
+    void setNodeParentPort(WebCore::MessagePort*);
+    WebCore::MessagePort* nodeParentPort() const { return m_nodeParentPort.get(); }
     JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 

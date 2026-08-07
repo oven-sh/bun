@@ -1807,3 +1807,43 @@ test("terminating a worker stops the workers it spawned", async () => {
   expect(stdout.trim()).toBe("leaf port closed");
   expect(exitCode).toBe(0);
 });
+
+// parentPort is a real MessagePort entangled with the parent Worker's public
+// port, so it follows Node's lifecycle: a 'message' listener keeps the thread
+// alive, and close()/unref() let it exit.
+test("parentPort.close() ends a worker that is only listening for messages", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === "close") parentPort.close(); });`,
+    { eval: true },
+  );
+  const messages: string[] = [];
+  w.on("message", m => messages.push(m));
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  w.postMessage("hello");
+  w.postMessage("close");
+  expect(await exited).toBe(0);
+  expect(messages).toEqual(["got hello", "got close"]);
+});
+
+test("parentPort.unref() lets a listening worker exit", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.on("message", () => {});
+     parentPort.unref();`,
+    { eval: true },
+  );
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  expect(await exited).toBe(0);
+});
+
+test("receiveMessageOnPort distinguishes an undefined message from an empty queue", () => {
+  const { port1, port2 } = new MessageChannel();
+  port1.postMessage(undefined);
+  port1.postMessage(0);
+  expect(receiveMessageOnPort(port2)).toEqual({ message: undefined });
+  expect(receiveMessageOnPort(port2)).toEqual({ message: 0 });
+  expect(receiveMessageOnPort(port2)).toBeUndefined();
+  port1.close();
+  port2.close();
+});

@@ -200,6 +200,8 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
 }
 
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);
+
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -217,7 +219,16 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     }
 
     if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject)));
+        // node: `undefined` when the queue is empty, otherwise `{ message }` — built
+        // here so a posted `undefined`/falsy value is distinguishable from "empty".
+        bool hadMessage = false;
+        JSValue message = messagePort->wrapped().tryTakeMessage(lexicalGlobalObject, hadMessage);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!hadMessage)
+            return JSC::JSValue::encode(jsUndefined());
+        auto* result = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 1);
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), message);
+        return JSC::JSValue::encode(result);
     } else if (dynamicDowncast<JSBroadcastChannel>(port)) {
         // TODO: support broadcast channels
         return JSC::JSValue::encode(jsUndefined());
@@ -332,7 +343,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 11);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 12);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -345,7 +356,19 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 8, JSFunction::create(vm, globalObject, 1, "markAsUncloneable"_s, jsFunctionMarkAsUncloneable, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
+    array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
     return array;
+}
+
+// worker_threads (worker side): register the transferred port as this thread's parentPort.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetParentPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* port = dynamicDowncast<JSMessagePort>(callFrame->argument(0));
+    if (!port)
+        return JSValue::encode(jsUndefined());
+    globalObject->setNodeParentPort(&port->wrapped());
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,

@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "MessagePort.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSCellButterfly.h"
@@ -4178,6 +4179,13 @@ void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
 }
 
 extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
+
+void GlobalObject::setNodeParentPort(WebCore::MessagePort* port)
+{
+    m_nodeParentPort = port;
+    if (port)
+        port->setGlobalScopeMessageListenerCount(globalEventScope->messageListenerCount());
+}
 
 void GlobalObject::prepareForDestruction()
 {

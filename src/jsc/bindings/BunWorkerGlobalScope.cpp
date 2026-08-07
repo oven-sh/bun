@@ -1,6 +1,9 @@
 #include "config.h"
 
 #include "BunWorkerGlobalScope.h"
+#include "MessagePort.h"
+#include "ScriptExecutionContext.h"
+#include "ZigGlobalObject.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -32,6 +35,11 @@ void WorkerGlobalScope::onDidChangeListenerImpl(EventTarget& self, const AtomStr
             }
             global.m_messageEventCount = 0;
             break;
+        }
+        // A node worker's parentPort drains (or pauses) according to these listeners too.
+        if (auto* context = global.scriptExecutionContext()) {
+            if (auto* port = defaultGlobalObject(context->globalObject())->nodeParentPort())
+                port->setGlobalScopeMessageListenerCount(global.m_messageEventCount);
         }
     }
 };

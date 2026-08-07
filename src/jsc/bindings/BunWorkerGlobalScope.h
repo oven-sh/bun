@@ -20,6 +20,7 @@ class WorkerGlobalScope : public RefCounted<WorkerGlobalScope>, public EventTarg
     static void onDidChangeListenerImpl(EventTarget&, const AtomString&, OnDidChangeListenerKind);
 
 public:
+    unsigned messageListenerCount() const { return static_cast<unsigned>(m_messageEventCount); }
     WorkerGlobalScope(ScriptExecutionContext* context)
         : EventTargetWithInlineData()
         , m_context(context)

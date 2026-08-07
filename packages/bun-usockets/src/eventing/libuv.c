@@ -475,23 +475,6 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t),
   struct us_internal_callback_t *internal_cb =
       (struct us_internal_callback_t *)t;
 
-  // Match the epoll_kqueue backend: re-arming is allowed (uv_timer_start
-  // restarts an already-running timer). The one-shot guard only applies to
-  // the sweep timer: re-arming it with the same args would skew the 4s tick.
-  // Disabling it (ms == 0, us_internal_disable_sweep_timer) must fall through
-  // to uv_timer_stop below, clearing the guard so the next enable re-arms;
-  // early-returning here instead left the timer firing every 4s for the rest
-  // of the process after the last socket closed.
-  if (internal_cb->loop->data.sweep_timer == t) {
-    if (!ms) {
-      internal_cb->has_added_timer_to_event_loop = 0;
-    } else if (internal_cb->has_added_timer_to_event_loop) {
-      return;
-    } else {
-      internal_cb->has_added_timer_to_event_loop = 1;
-    }
-  }
-
   internal_cb->cb = (void (*)(struct us_internal_callback_t *))cb;
 
   uv_timer_t *uv_timer = (uv_timer_t *)(internal_cb + 1);

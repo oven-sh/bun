@@ -126,9 +126,25 @@ result.stoppedAfterLastClose = await pollUntil(() => sweepTimers().every(t => !t
 dump("after close");
 
 const server2 = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: noop });
-const sock2 = await Bun.connect({ hostname: "127.0.0.1", port: server2.port, socket: noop });
+let sawTimeout = false;
+const sock2 = await Bun.connect({
+  hostname: "127.0.0.1",
+  port: server2.port,
+  socket: {
+    ...noop,
+    timeout() {
+      sawTimeout = true;
+    },
+  },
+});
 result.rearmedForNewSocket = await pollUntil(() => sweepTimers().some(t => t.active), 10_000);
 dump("reopened");
+
+// Armed is not enough: disabling installs a noop callback, so prove the
+// re-enabled timer dispatches to the real sweep by waiting for a socket
+// timeout to fire (notify-only; one ~4s granularity tick).
+sock2.timeout(1);
+result.timeoutFiredAfterRearm = await pollUntil(() => sawTimeout, 30_000);
 
 sock2.end();
 server2.stop(true);
@@ -185,6 +201,7 @@ describe.if(isWindows && canBuildNodeAddons())("usockets sweep timer (libuv back
       armedWhileSocketsOpen: true,
       stoppedAfterLastClose: true,
       rearmedForNewSocket: true,
+      timeoutFiredAfterRearm: true,
       stoppedAfterSecondClose: true,
     });
     expect(exitCode).toBe(0);

@@ -316,19 +316,6 @@ JSValue HTTPParser::duration() const
     return jsNumber(duration);
 }
 
-bool HTTPParser::lessThan(HTTPParser& other) const
-{
-    if (m_lastMessageStart == 0 && other.m_lastMessageStart == 0) {
-        return this < &other;
-    } else if (m_lastMessageStart == 0) {
-        return true;
-    } else if (other.m_lastMessageStart == 0) {
-        return false;
-    }
-
-    return m_lastMessageStart < other.m_lastMessageStart;
-}
-
 int HTTPParser::onMessageBegin()
 {
     JSGlobalObject* globalObject = m_globalObject;

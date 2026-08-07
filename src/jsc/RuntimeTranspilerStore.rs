@@ -699,16 +699,6 @@ impl TranspilerJob {
                     ctx.deinit();
                 }
             });
-        // The bytewise copy left
-        // `linker.resolver` pointing at `vm.transpiler.resolver` (wrong allocator/log); rewire
-        // it at the local copy so `print_with_source_map` resolves through the arena-backed
-        // resolver.
-        // SAFETY (lifetime erasure): `linker.resolver` is `*mut Resolver<'static>`; the local
-        // `transpiler.resolver` is `Resolver<'arena>`. The pointer is only dereferenced inside
-        // `print_with_source_map` below, which completes before `arena` (declared first) drops,
-        // so widening `'arena → 'static` for the raw-pointer field is sound — same justification
-        // as the `Transpiler<'_>` cast above.
-        transpiler.linker.resolver = ptr::addr_of_mut!(transpiler.resolver).cast();
 
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
@@ -1036,9 +1026,7 @@ impl TranspilerJob {
 
         let source_code_printer = tls_get_or_leak(&SOURCE_CODE_PRINTER, || {
             let writer = BufferWriter::init();
-            let mut bp = Box::new(BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
-            bp
+            Box::new(BufferPrinter::init(writer))
         });
 
         // Swap the buffer out and write it back via the
@@ -1055,7 +1043,6 @@ impl TranspilerJob {
             // printer.ctx.buffer.deinit() → Drop
             let writer = BufferWriter::init();
             *source_code_printer = BufferPrinter::init(writer);
-            source_code_printer.ctx.append_null_byte = false;
             printer = core::mem::replace(
                 source_code_printer,
                 BufferPrinter::init(BufferWriter::init()),
@@ -1146,7 +1133,6 @@ impl TranspilerJob {
                 // printer.ctx.buffer.deinit() → Drop
                 let writer = BufferWriter::init();
                 *source_code_printer = BufferPrinter::init(writer);
-                source_code_printer.ctx.append_null_byte = false;
             }
             // else: writeback guard already restored `printer` into the thread-local.
 

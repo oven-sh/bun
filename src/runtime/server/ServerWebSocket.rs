@@ -40,7 +40,7 @@ pub struct ServerWebSocket {
 }
 
 // We pack the per-socket data into this struct below:
-// ssl:1, closed:1, opened:1, binary_type:4, packed_websocket_ptr:57
+// ssl:1, closed:1, <unused>:1, binary_type:4, packed_websocket_ptr:57
 #[repr(transparent)]
 #[derive(Copy, Clone, Default)]
 pub struct Flags(u64);
@@ -48,7 +48,6 @@ pub struct Flags(u64);
 impl Flags {
     const SSL_BIT: u64 = 1 << 0;
     const CLOSED_BIT: u64 = 1 << 1;
-    const OPENED_BIT: u64 = 1 << 2;
     const BINARY_TYPE_SHIFT: u32 = 3;
     const BINARY_TYPE_MASK: u64 = 0b1111 << Self::BINARY_TYPE_SHIFT;
     const PTR_SHIFT: u32 = 7;
@@ -76,14 +75,6 @@ impl Flags {
             self.0 |= Self::CLOSED_BIT;
         } else {
             self.0 &= !Self::CLOSED_BIT;
-        }
-    }
-    #[inline]
-    pub(crate) fn set_opened(&mut self, v: bool) {
-        if v {
-            self.0 |= Self::OPENED_BIT;
-        } else {
-            self.0 &= !Self::OPENED_BIT;
         }
     }
     #[inline]
@@ -426,8 +417,6 @@ impl ServerWebSocket {
             return;
         }
 
-        self.update_flags(|f| f.set_opened(false));
-
         if on_open_handler.is_empty_or_undefined_or_null() {
             return;
         }
@@ -450,7 +439,6 @@ impl ServerWebSocket {
         };
         ws.cork(&mut corker, Corker::run);
         let result = corker.result;
-        self.update_flags(|f| f.set_opened(true));
         if let Some(err_value) = result.to_error() {
             bun_output::scoped_log!(WebSocketServer, "onOpen exception");
 

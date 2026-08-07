@@ -1069,14 +1069,8 @@ pub struct ParsedPath<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StrictModeFeature {
-    WithStatement,
-    DeleteBareName,
-    ForInVarInit,
     EvalOrArguments,
     ReservedWord,
-    LegacyOctalLiteral,
-    LegacyOctalEscape,
-    IfElseFunctionStmt,
 }
 
 #[derive(Clone, Copy)]
@@ -1282,27 +1276,7 @@ pub struct FnOrArrowDataVisit {
 /// restored on the call stack around code that parses nested functions (but not
 /// nested arrow functions).
 #[derive(Default)]
-pub struct FnOnlyDataVisit<'a> {
-    /// This is a reference to the enclosing class name if there is one. It's used
-    /// to implement "this" and "super" references. A name is automatically generated
-    /// if one is missing so this will always be present inside a class body.
-    ///
-    /// `&Cell<Ref>` (not `&mut Ref`): the visit pass needs to
-    /// both share this slot into nested `fn_only_data_visit` frames *and* read/write
-    /// it from the enclosing `visit_class` frame. `Cell` gives shared interior
-    /// mutability for the `Copy` `Ref` payload with zero `unsafe`.
-    pub(crate) class_name_ref: Option<&'a core::cell::Cell<Ref>>,
-
-    /// If true, we're inside a static class context where "this" expressions
-    /// should be replaced with the class name.
-    pub(crate) should_replace_this_with_class_name_ref: bool,
-
-    /// If we're inside an async arrow function and async functions are not
-    /// supported, then we will have to convert that arrow function to a generator
-    /// function. That means references to "arguments" inside the arrow function
-    /// will have to reference a captured variable instead of the real variable.
-    pub(crate) is_inside_async_arrow_fn: bool,
-
+pub struct FnOnlyDataVisit {
     /// If false, the value for "this" is the top-level module scope "this" value.
     /// That means it's "undefined" for ECMAScript modules and "exports" for
     /// CommonJS modules. We track this information so that we can substitute the

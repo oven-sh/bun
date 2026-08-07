@@ -23,8 +23,6 @@ test("C++ sources compiled into Bun do not include <iostream>", async () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 
   const roots = ["src", "packages/bun-uws", "packages/bun-usockets"];
-  // sizegen.cpp is a build-time code generator, not linked into the bun binary.
-  const allowlist = new Set(["src/jsc/headergen/sizegen.cpp"]);
 
   const iostreamInclude = /^\s*#\s*include\s*<iostream>/m;
   const violations: string[] = [];
@@ -35,7 +33,6 @@ test("C++ sources compiled into Bun do not include <iostream>", async () => {
     for await (const rel of glob.scan({ cwd: path.join(repoRoot, root) })) {
       scanned++;
       const relFromRepo = path.join(root, rel).replaceAll("\\", "/");
-      if (allowlist.has(relFromRepo)) continue;
       const source = readFileSync(path.join(repoRoot, root, rel), "utf8");
       if (iostreamInclude.test(source)) {
         violations.push(relFromRepo);

@@ -523,9 +523,9 @@ pub mod BunInfo {
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
-// NOTE: enum + `memory_cost`/`set_server`/`ref_`/`deref_` live in
-// `super` (mod.rs). The `impl` block below adds the JS-facing constructors
-// (`from_js`/`from_options`/…) on the same type — same crate, split by file.
+// NOTE: enum + `memory_cost`/`deref_` live in `super` (mod.rs). The `impl`
+// block below adds the JS-facing constructors (`from_js`/`from_options`/…) on
+// the same type — same crate, split by file.
 pub(super) use super::AnyRoute;
 
 impl AnyRoute {

@@ -351,7 +351,6 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
-                core::ptr::null_mut(),
                 from.fs,
             ),
             env: from.env,
@@ -378,7 +377,6 @@ impl<'a> Transpiler<'a> {
             log,
             core::ptr::addr_of_mut!(self.resolve_queue),
             core::ptr::addr_of_mut!(self.options).cast(),
-            core::ptr::addr_of_mut!(self.resolver).cast(),
             core::ptr::addr_of_mut!(*self.resolve_results),
             self.fs,
         );
@@ -669,22 +667,15 @@ impl<'a> Transpiler<'a> {
     /// Initialize `self.linker` with back-pointers into this `Transpiler`,
     /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
-        // `Linker::init` dropped its `arena` arg (linker.rs:172
-        // — global mimalloc). `crate::linker::Linker` stores raw pointers
-        // so `&mut self.options` etc. coerce directly. Self-reference is
-        // load-bearing — `linker.link()` reads back through these into the
-        // owning `Transpiler` — hence raw `*mut`, not `&'a mut` (would alias
-        // `&mut self` on every call).
-        // `.cast()` on the `options`/`resolver` pointers erases the
-        // `<'a>` lifetime parameter — `Linker` stores them as
-        // `*mut BundleOptions` / `*mut Resolver` with an (implicit) distinct
-        // lifetime. The linker never
-        // outlives its owning `Transpiler<'a>`.
+        // `crate::linker::Linker` stores raw back-pointers into the owning
+        // `Transpiler`; `linker.link()` reads back through them, so they are
+        // `*mut` (a `&'a mut` would alias `&mut self` on every call). The
+        // `.cast()` on `options` erases `<'a>` to the `'static` the field is
+        // typed at; the linker never outlives its owning `Transpiler<'a>`.
         self.linker = crate::linker::Linker::init(
             self.log,
             core::ptr::addr_of_mut!(self.resolve_queue),
             core::ptr::addr_of_mut!(self.options).cast(),
-            core::ptr::addr_of_mut!(self.resolver).cast(),
             core::ptr::addr_of_mut!(*self.resolve_results),
             self.fs,
         );
@@ -1267,10 +1258,7 @@ impl<'a> Transpiler<'a> {
         // Construct directly into the caller-owned storage instead of building a
         // stack temporary and returning it. All fallible work is done; every
         // field below is written exactly once. `Linker::init` gets null
-        // back-pointers — `core::mem::zeroed()` is NOT a
-        // valid analogue (`Linker.hashed_filenames: HashMap` carries a `NonNull`
-        // niche, so all-zeroes is instant UB); the value fields get their proper
-        // defaults and `configure_linker_with_auto_jsx` overwrites the
+        // back-pointers; `configure_linker_with_auto_jsx` overwrites the
         // self-referential pointers before any deref.
         let p = dst.as_mut_ptr();
         // SAFETY: `dst` is an exclusively-borrowed, currently-uninitialised
@@ -1297,7 +1285,6 @@ impl<'a> Transpiler<'a> {
             // .thread_pool = pool,
             core::ptr::addr_of_mut!((*p).linker).write(crate::linker::Linker::init(
                 log,
-                core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
@@ -2399,7 +2386,6 @@ impl<'a> Transpiler<'a> {
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
             minify_identifiers: self.options.minify_identifiers,
-            transform_only: self.options.transform_only,
             import_meta_ref: ast.import_meta_ref,
             print_dce_annotations: self.options.emit_dce_annotations,
             runtime_transpiler_cache,
@@ -2477,7 +2463,6 @@ impl<'a> Transpiler<'a> {
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
             minify_identifiers: self.options.minify_identifiers,
-            transform_only: self.options.transform_only,
             module_type: if IS_BUN && self.options.transform_only {
                 // this is for when using `bun build --no-bundle`
                 // it should copy what was passed for the cli

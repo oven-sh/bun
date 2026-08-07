@@ -4345,8 +4345,6 @@ pub mod bv2_impl {
                         this.free_list.push(code.source_code);
                         std::borrow::Cow::Borrowed(source_code)
                     };
-                    this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
-                        .insert(crate::Graph::InputFileFlags::IS_PLUGIN_FILE);
                     let parse_task = load.parse_task_mut();
                     parse_task.loader = Some(code.loader);
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
@@ -7190,7 +7188,6 @@ pub mod bv2_impl {
                         } else {
                             let step_name = match err.step {
                                 crate::parse_task::Step::Pending => "pending",
-                                crate::parse_task::Step::ReadFile => "read_file",
                                 crate::parse_task::Step::Parse => "parse",
                                 crate::parse_task::Step::Resolve => "resolve",
                             };

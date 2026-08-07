@@ -724,10 +724,6 @@ impl<'a> TransformTask<'a> {
             js_instance: unsafe { bun_ptr::IntrusiveRc::init_ref(transpiler.as_ctx_ptr()) },
         });
 
-        // Re-point the linker's resolver backref into the heap-allocated copy.
-        // Must happen AFTER the move into the Box so the address is stable.
-        let resolver_ptr: *mut _ = &raw mut transform_task.transpiler.resolver;
-        transform_task.transpiler.linker.resolver = resolver_ptr;
         transform_task
             .transpiler
             .set_log(&raw mut transform_task.log);

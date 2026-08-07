@@ -10,6 +10,7 @@ unsafe extern "C" {
 
     fn highway_count_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
 
+    #[cfg(not(miri))]
     fn highway_memmem(
         haystack: *const u8,
         haystack_len: usize,
@@ -19,6 +20,7 @@ unsafe extern "C" {
 
     // These three return `usize::MAX` for not-found (the empty needle matches at
     // 0 / `haystack_len` respectively).
+    #[cfg(not(miri))]
     fn highway_memrmem(
         haystack: *const u8,
         haystack_len: usize,
@@ -26,6 +28,7 @@ unsafe extern "C" {
         needle_len: usize,
     ) -> usize;
 
+    #[cfg(not(miri))]
     fn highway_memmem16(
         haystack: *const u16,
         haystack_len: usize,
@@ -33,6 +36,7 @@ unsafe extern "C" {
         needle_len: usize,
     ) -> usize;
 
+    #[cfg(not(miri))]
     fn highway_memrmem16(
         haystack: *const u16,
         haystack_len: usize,
@@ -157,6 +161,31 @@ unsafe extern "C" {
 /// call into a caller's hot loop (see `pop_last_segment_t` in node/path.rs).
 const SCALAR_CUTOFF: usize = 16;
 
+/// Miri cannot call foreign functions, and the workspace denies std's search
+/// methods everywhere else, so under Miri (`bun run rust:miri`) the search
+/// wrappers below take their scalar path at every length. Kernels with no
+/// scalar form here (hashing, hex, sourcemaps, lexer scans) stay FFI-only:
+/// reaching one from a Miri-tested crate is a loud, immediate error.
+#[inline(always)]
+fn scalar_only(len: usize) -> bool {
+    cfg!(miri) || len < SCALAR_CUTOFF
+}
+
+/// Scalar substring search for Miri. Callers have already handled the empty
+/// needle and `haystack.len() < needle.len()`.
+#[cfg(miri)]
+fn scalar_memmem<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
+    (0..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == *needle)
+}
+
+/// Reverse [`scalar_memmem`]: start index of the last occurrence.
+#[cfg(miri)]
+fn scalar_memrmem<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
+    (0..=haystack.len() - needle.len())
+        .rev()
+        .find(|&i| haystack[i..i + needle.len()] == *needle)
+}
+
 /// The single-byte kernels return `haystack_len` for "not found".
 #[inline(always)]
 fn found_at(result: usize, haystack_len: usize) -> Option<usize> {
@@ -168,6 +197,7 @@ fn found_at(result: usize, haystack_len: usize) -> Option<usize> {
 }
 
 /// The `mem*mem*` kernels return `usize::MAX` for "not found".
+#[cfg(not(miri))]
 #[inline(always)]
 fn match_at(result: usize) -> Option<usize> {
     if result == usize::MAX {
@@ -179,7 +209,7 @@ fn match_at(result: usize) -> Option<usize> {
 
 #[inline(always)]
 pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
-    if haystack.len() < SCALAR_CUTOFF {
+    if scalar_only(haystack.len()) {
         return haystack.iter().position(|&b| b == needle);
     }
     // SAFETY: haystack.ptr/len are a valid readable range.
@@ -191,7 +221,7 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
 
 #[inline(always)]
 pub fn last_index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
-    if haystack.len() < SCALAR_CUTOFF {
+    if scalar_only(haystack.len()) {
         return haystack.iter().rposition(|&b| b == needle);
     }
     // SAFETY: haystack.ptr/len are a valid readable range.
@@ -205,7 +235,7 @@ pub fn last_index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
 /// run of `value`), or `None` if every byte is `value`.
 #[inline(always)]
 pub fn index_of_not_char(haystack: &[u8], value: u8) -> Option<usize> {
-    if haystack.len() < SCALAR_CUTOFF {
+    if scalar_only(haystack.len()) {
         return haystack.iter().position(|&b| b != value);
     }
     // SAFETY: haystack.ptr/len are a valid readable range.
@@ -217,7 +247,7 @@ pub fn index_of_not_char(haystack: &[u8], value: u8) -> Option<usize> {
 
 #[inline(always)]
 pub fn count_char(haystack: &[u8], needle: u8) -> usize {
-    if haystack.len() < SCALAR_CUTOFF {
+    if scalar_only(haystack.len()) {
         return haystack.iter().filter(|&&b| b == needle).count();
     }
     // SAFETY: haystack.ptr/len are a valid readable range.
@@ -232,20 +262,27 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if haystack.len() < needle.len() {
         return None;
     }
-    // SAFETY: both (ptr,len) pairs are valid readable ranges.
-    let p = unsafe {
-        highway_memmem(
-            haystack.as_ptr(),
-            haystack.len(),
-            needle.as_ptr(),
-            needle.len(),
-        )
-    };
-    if p.is_null() {
-        None
-    } else {
-        // SAFETY: highway_memmem returns a pointer within `haystack` on success.
-        Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
+    #[cfg(miri)]
+    {
+        scalar_memmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges.
+        let p = unsafe {
+            highway_memmem(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        if p.is_null() {
+            None
+        } else {
+            // SAFETY: highway_memmem returns a pointer within `haystack` on success.
+            Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
+        }
     }
 }
 
@@ -259,18 +296,25 @@ pub fn memrmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if haystack.len() < needle.len() {
         return None;
     }
-    // SAFETY: both (ptr,len) pairs are valid readable ranges.
-    let result = unsafe {
-        highway_memrmem(
-            haystack.as_ptr(),
-            haystack.len(),
-            needle.as_ptr(),
-            needle.len(),
-        )
-    };
-    let found = match_at(result);
-    debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
-    found
+    #[cfg(miri)]
+    {
+        scalar_memrmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges.
+        let result = unsafe {
+            highway_memrmem(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        let found = match_at(result);
+        debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+        found
+    }
 }
 
 #[inline(always)]
@@ -281,18 +325,25 @@ pub fn memmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
     if haystack.len() < needle.len() {
         return None;
     }
-    // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
-    let result = unsafe {
-        highway_memmem16(
-            haystack.as_ptr(),
-            haystack.len(),
-            needle.as_ptr(),
-            needle.len(),
-        )
-    };
-    let found = match_at(result);
-    debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
-    found
+    #[cfg(miri)]
+    {
+        scalar_memmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
+        let result = unsafe {
+            highway_memmem16(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        let found = match_at(result);
+        debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+        found
+    }
 }
 
 /// Start index of the last occurrence of `needle`. An empty needle matches at
@@ -305,18 +356,25 @@ pub fn memrmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
     if haystack.len() < needle.len() {
         return None;
     }
-    // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
-    let result = unsafe {
-        highway_memrmem16(
-            haystack.as_ptr(),
-            haystack.len(),
-            needle.as_ptr(),
-            needle.len(),
-        )
-    };
-    let found = match_at(result);
-    debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
-    found
+    #[cfg(miri)]
+    {
+        scalar_memrmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
+        let result = unsafe {
+            highway_memrmem16(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        let found = match_at(result);
+        debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+        found
+    }
 }
 
 #[inline(always)]
@@ -461,7 +519,7 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
         return None;
     }
     debug_assert!(chars.len() >= 2 && chars.len() <= 16);
-    if haystack.len() < SCALAR_CUTOFF {
+    if scalar_only(haystack.len()) {
         return haystack.iter().position(|b| chars.contains(b));
     }
 
@@ -503,7 +561,7 @@ pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
         return None;
     }
     debug_assert!(chars.len() >= 2 && chars.len() <= 16);
-    if haystack.len() < SCALAR_CUTOFF {
+    if scalar_only(haystack.len()) {
         return haystack.iter().rposition(|b| chars.contains(b));
     }
 

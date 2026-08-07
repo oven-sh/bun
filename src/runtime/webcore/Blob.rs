@@ -4754,11 +4754,30 @@ pub(crate) fn write_file_with_source_destination(
         }
         #[cfg(not(windows))]
         {
+            let slice_len = |blob: &Blob, store: &StoreRef, is_source: bool| {
+                let size = blob.size.get();
+                let cached = store.data.as_file().max_size;
+                let from_stat = if cached == MAX_SIZE {
+                    is_source && size == 0
+                } else {
+                    is_source && size <= cached
+                };
+                if size == MAX_SIZE || (blob.offset.get() == 0 && (size == cached || from_stat)) {
+                    MAX_SIZE
+                } else {
+                    size
+                }
+            };
+            let max_len = slice_len(source_blob, &source_store, true).min(slice_len(
+                destination_blob,
+                &destination_store,
+                false,
+            ));
             let mut file_copier = copy_file::CopyFile::create(
                 destination_store,
                 source_store,
-                destination_blob.offset.get(),
-                destination_blob.size.get(),
+                source_blob.offset.get(),
+                max_len,
                 ctx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,

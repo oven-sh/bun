@@ -943,4 +943,88 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
     expect(f.name).toBe(filePath);
   });
+
+  describe.skipIf(isWindows)("file to file", () => {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+    // https://github.com/oven-sh/bun/issues/20462
+    it("Bun.write(path, Bun.file(path)) does not truncate the file", async () => {
+      using dir = tempDir("bun-write-self-copy", { "f.txt": alphabet });
+      const p = join(String(dir), "f.txt");
+      const written = await Bun.write(p, Bun.file(p));
+      expect({ written, content: fs.readFileSync(p, "utf8") }).toEqual({ written: 26, content: alphabet });
+    });
+
+    it("Bun.write to the same inode via a hardlink does not truncate the file", async () => {
+      using dir = tempDir("bun-write-self-copy-hardlink", { "a.txt": alphabet });
+      const a = join(String(dir), "a.txt");
+      const b = join(String(dir), "b.txt");
+      fs.linkSync(a, b);
+      await Bun.write(b, Bun.file(a));
+      expect(fs.readFileSync(a, "utf8")).toBe(alphabet);
+    });
+
+    it.each([
+      ["slice(a, b)", 10, 20, "KLMNOPQRST"],
+      ["slice(0, n)", 0, 8, "ABCDEFGH"],
+      ["slice(a)", 20, undefined, "UVWXYZ"],
+    ])("Bun.write(dest, Bun.file(src).%s) writes only the sliced window", async (_, a, b, expected) => {
+      using dir = tempDir("bun-write-file-slice", {
+        "src.txt": alphabet,
+        "dst.txt": Buffer.alloc(100, "x").toString(),
+      });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const written = await Bun.write(dst, Bun.file(src).slice(a, b));
+      expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
+        written: expected.length,
+        content: expected,
+      });
+    });
+
+    // https://github.com/oven-sh/bun/issues/22456
+    it("reusing a BunFile as a destination does not cap the write at its cached size", async () => {
+      using dir = tempDir("bun-write-reused-dest", {});
+      const file1 = Bun.file(join(String(dir), "file1.txt"));
+      const file2 = Bun.file(join(String(dir), "file2.txt"));
+      await Bun.write(file1, "this is a long long long long line");
+      await Bun.write(file2, "short line");
+      await file2.exists();
+      await Bun.write(join(String(dir), "file3.txt"), file2);
+      await Bun.write(file2, file1);
+      expect(fs.readFileSync(join(String(dir), "file2.txt"), "utf8")).toBe("this is a long long long long line");
+    });
+
+    it("a cached stat size on an unsliced source BunFile does not cap the write", async () => {
+      using dir = tempDir("bun-write-stale-src-stat", {});
+      const a = join(String(dir), "a.txt");
+      const f = Bun.file(a);
+      fs.writeFileSync(a, "0123456789");
+      await f.exists();
+      fs.writeFileSync(a, "0123456789ABCDEFGHIJ");
+      await Bun.write(join(String(dir), "b.txt"), f);
+      expect(fs.readFileSync(join(String(dir), "b.txt"), "utf8")).toBe("0123456789ABCDEFGHIJ");
+    });
+
+    it("a source BunFile whose .exists() ran before the file existed copies the whole file", async () => {
+      using dir = tempDir("bun-write-enoent-stat", {});
+      const a = join(String(dir), "a.txt");
+      const f = Bun.file(a);
+      expect(await f.exists()).toBe(false);
+      await Bun.write(f, "hello world");
+      await Bun.write(join(String(dir), "b.txt"), f);
+      expect(fs.readFileSync(join(String(dir), "b.txt"), "utf8")).toBe("hello world");
+    });
+
+    it("a source BunFile whose store was re-stat'd via .lastModified does not cap the write", async () => {
+      using dir = tempDir("bun-write-lastmodified-desync", { "a.txt": "01234" });
+      const a = join(String(dir), "a.txt");
+      const f = Bun.file(a);
+      await f.exists();
+      await Bun.write(f, "0123456789ABCDEFGHIJ");
+      void f.lastModified;
+      await Bun.write(join(String(dir), "b.txt"), f);
+      expect(fs.readFileSync(join(String(dir), "b.txt"), "utf8")).toBe("0123456789ABCDEFGHIJ");
+    });
+  });
 });

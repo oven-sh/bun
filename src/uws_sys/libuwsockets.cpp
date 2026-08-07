@@ -1409,13 +1409,12 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
-      /* Corked: the cork() wrapper's post-uncork gate runs the close check
-       * (nothing here uncorks, so the slot is still held). Uncorked: no later
-       * gate is guaranteed to run, so check now. */
-      if (!uwsRes->AsyncSocket<true>::isCorked())
-      {
-        uwsRes->closeIfDoneAndMarked(data);
-      }
+      /* No close gate here: callers (FileResponseStream::finish,
+       * DevServer/HTMLBundle error paths) keep using the response after this
+       * returns, so closing inside this call would destruct the ext under
+       * them. Corked callers get the cork() wrapper's post-uncork gate;
+       * uncorked ones run uws_res_close_if_done_and_marked themselves once
+       * they are done with the response. */
     }
     else
     {
@@ -1438,13 +1437,7 @@ extern "C"
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
-      /* Corked: the cork() wrapper's post-uncork gate runs the close check
-       * (nothing here uncorks, so the slot is still held). Uncorked: no later
-       * gate is guaranteed to run, so check now. */
-      if (!uwsRes->AsyncSocket<false>::isCorked())
-      {
-        uwsRes->closeIfDoneAndMarked(data);
-      }
+      /* No close gate here; see the SSL arm above. */
     }
   }
 

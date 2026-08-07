@@ -550,6 +550,10 @@ impl FileResponseStream {
             let resp = self.resp.get();
             resp.end_without_body(resp.should_close_connection());
             (self.on_complete.get())(self.ctx.get(), resp);
+            // This end runs uncorked (reader callbacks), so no cork or parser
+            // gate will run the close check; do it here, after `on_complete`
+            // like `end_sendfile`, so the callbacks see a live socket.
+            resp.close_if_done_and_marked();
         }
 
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry

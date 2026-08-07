@@ -604,7 +604,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   // The client never hangs up first (except in "partial" mode), so every
   // observed close below is server-initiated; idleTimeout is long enough that
   // a timeout-driven close would flake the runtime budget long before firing.
-  async function runDrainFixture(mode: "idle" | "inflight" | "force" | "partial") {
+  async function runDrainFixture(mode: "idle" | "inflight" | "inflightHead" | "force" | "partial") {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -647,7 +647,8 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
             // pendingRequests only once parsed, so poll a tick batch).
             for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
           } else {
-            c.write("GET /" + (mode === "idle" ? "fast" : "slow") + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+            const method = mode === "inflightHead" ? "HEAD" : "GET";
+            c.write(method + " /" + (mode === "idle" ? "fast" : "slow") + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
             if (mode === "idle") {
               while (!buf.includes("\\r\\nok")) await new Promise(r => setImmediate(r));
             } else {
@@ -659,12 +660,15 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           await new Promise(r => setImmediate(r));
           const resolvedEarly = resolved;
           let responseAfterStop = false;
-          if (mode === "inflight") {
+          if (mode === "inflight" || mode === "inflightHead") {
             // The held request completes; its full response must reach the
-            // client before the server closes the now-idle connection.
+            // client before the server closes the now-idle connection. A HEAD
+            // response has no body, so its completion goes through the
+            // no-body end path rather than internalEnd.
             release.resolve();
-            while (!buf.includes("\\r\\nok") && !events.includes("close")) await new Promise(r => setImmediate(r));
-            responseAfterStop = buf.includes("\\r\\nok");
+            const doneMark = mode === "inflightHead" ? "\\r\\n\\r\\n" : "\\r\\nok";
+            while (!buf.includes(doneMark) && !events.includes("close")) await new Promise(r => setImmediate(r));
+            responseAfterStop = buf.includes(doneMark);
           } else if (mode === "force") {
             // Escalation cuts the still-held request; release the handler so
             // the aborted request can settle.
@@ -711,6 +715,14 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
 
   test("in-flight request completes across stop(), then its connection is closed", async () => {
     expect(await runDrainFixture("inflight")).toEqual({
+      stderr: "",
+      out: { resolvedEarly: false, responseAfterStop: true, resolved: true, closed: true },
+      exitCode: 0,
+    });
+  });
+
+  test("in-flight HEAD request completes across stop(), then its connection is closed", async () => {
+    expect(await runDrainFixture("inflightHead")).toEqual({
       stderr: "",
       out: { resolvedEarly: false, responseAfterStop: true, resolved: true, closed: true },
       exitCode: 0,

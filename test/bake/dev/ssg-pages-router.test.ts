@@ -155,6 +155,9 @@ devTest("SSG pages router - static, dynamic, nested, and async pages with hot re
     expect(await fetchHtml(dev, "/blog/2")).toContain("<h1>Blog Post <!-- -->2</h1>");
     expect(await fetchHtml(dev, "/blog/categories/tech")).toContain("<h1>Category: <!-- -->tech</h1>");
     expect(await fetchHtml(dev, "/blog/categories/lifestyle")).toContain("<h1>Category: <!-- -->lifestyle</h1>");
+    // The categories/ directory has no index page, so /blog/categories falls
+    // back to the [id] sibling (Next.js parity)
+    expect(await fetchHtml(dev, "/blog/categories")).toContain("<h1>Blog Post <!-- -->categories</h1>");
 
     // Async page components can await data before rendering
     {
@@ -244,7 +247,16 @@ devTest("SSG pages router - Bun.file data loading and named import edge case", {
       console.log(md);
 
       export default function IndexPage() {
-        return <h1>Welcome to SSG</h1>;
+        const bindings =
+          typeof Markdoc === "function" && md.default === Markdoc && typeof Markdoc().parse === "function"
+            ? "bindings agree"
+            : "bindings broken";
+        return (
+          <div>
+            <h1>Welcome to SSG</h1>
+            <p id="bindings">{bindings}</p>
+          </div>
+        );
       }
     `,
     "src/ooga.ts": `var Markdoc = function () {
@@ -289,10 +301,12 @@ export { Markdoc as default };`,
     "posts/second-post.txt": "This is the second post content",
   },
   async test(dev) {
-    // Mixed default + namespace import of the same module must not error
+    // Mixed default + namespace import of the same module: both bindings must
+    // resolve to the same working function
     {
       await using c = await dev.client("/");
       expect(await c.elemText("h1")).toBe("Welcome to SSG");
+      expect(await c.elemText("#bindings")).toBe("bindings agree");
     }
 
     // Page content loaded from disk with Bun.file during render

@@ -130,10 +130,10 @@
     "windows": 3551
   },
   "bake/dev/ssg-pages-router.test.ts": {
-    "default": 35620,
-    "asan": 37048,
-    "musl": 34888,
-    "windows": 40356
+    "default": 14000,
+    "asan": 18000,
+    "musl": 14000,
+    "windows": 18000
   },
   "bake/dev/stress.test.ts": {
     "default": 7079,

@@ -385,8 +385,7 @@ impl SocketAddress {
     }
 
     pub(crate) fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
-        // `OwnedString` releases the +1 from `BunString::from_js` on every
-        // error path below; `into_inner()` transfers it to `_presentation`.
+        // OwnedString releases the from_js +1 on error paths; into_inner() transfers it.
         let mut owned_address = options.address.map(OwnedString::new);
 
         // Checked pre-slice_z: that conversion absorbs one trailing NUL.

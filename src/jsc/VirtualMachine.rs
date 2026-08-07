@@ -1703,10 +1703,14 @@ impl VirtualMachine {
                 "a native close path registered a stoppable resource during teardown"
             );
         }
-        if matches!(kind, Teardown::MainThreadExit) {
-            // The HTTP thread holds a `Box<ThreadlocalAsyncHTTP>` per in-flight
-            // request that will never complete now; have it reclaim them (≤1 s).
-            bun_http::shutdown_for_exit();
+        // The exiting main thread parks the (process-wide) HTTP thread, which
+        // hands back every request it holds; a worker's aborted fetches come
+        // back through their final callbacks instead. If the HTTP thread does
+        // not acknowledge (≤1 s) it may still touch what we would free below:
+        // leave everything to process exit.
+        if matches!(kind, Teardown::MainThreadExit) && !bun_http::shutdown_for_exit() {
+            teardown_log!("teardown: HTTP thread unresponsive; skipping to process exit");
+            return;
         }
         teardown_log!("teardown: stopped");
 
@@ -1747,10 +1751,6 @@ impl VirtualMachine {
         // released here, on this thread with the heap alive. After `close()`
         // below the other thread cannot hand it back; it frees only its own part.
         vm.jobs().release_all_js(&vm.global().js_thread());
-        if let Some(hooks) = hooks {
-            // SAFETY: fn contract.
-            unsafe { (hooks.abandon_fetch_tasklets_for_vm_teardown)(this) };
-        }
         // Pool work stored inside JS-owned objects (transpile slots, zlib
         // streams) must be back before the handle closes: it completes into the
         // still-open queue and is released below, on this thread.
@@ -2108,8 +2108,6 @@ pub struct RuntimeHooks {
     pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
     pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
-    /// Teardown, before the handle closes: release the JS side of live fetches.
-    pub abandon_fetch_tasklets_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
     /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
     /// so the loop close unlinks them before the runtime state is freed.

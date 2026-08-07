@@ -1206,14 +1206,11 @@ impl Task {
                             }
                         }
 
-                        // Rebuilds write into the final path in place, and
-                        // the clone/hardlink/copy walk only visits names
-                        // present in the cache folder, so files from the
-                        // previous build would survive — notably a removed
-                        // patch's `.bun-tag-<hash>` marker, which makes the
-                        // install that re-adds the patch skip this entry as
-                        // already patched. Delete so the rebuild replaces
-                        // instead of merges.
+                        // The clone/hardlink/copy walk only visits names in
+                        // the cache folder, so rebuilding in place merges:
+                        // a removed patch's `.bun-tag-<hash>` marker would
+                        // survive and make the next patched install skip
+                        // this entry. Delete to replace.
                         let mut prev_build = AutoAbsPath::init_top_level_dir();
                         installer.append_real_store_path(
                             &mut prev_build,

@@ -302,7 +302,7 @@ pub(crate) fn list_objects(
         callback: s3_simple_request::Callback::ListObjects(callback),
         headers,
         vm: VirtualMachine::get().handle(),
-            loop_kind: VirtualMachine::get().as_mut().current_loop_kind(),
+        loop_kind: VirtualMachine::get().as_mut().current_loop_kind(),
         response_buffer: MutableString::default(),
         result: bun_http::HTTPClientResult::default(),
         concurrent_task: Default::default(),

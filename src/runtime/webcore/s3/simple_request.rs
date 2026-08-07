@@ -471,7 +471,9 @@ impl S3HttpSimpleTask {
                 let queued = core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
-                if let bun_jsc::vm_handle::Posted::Refused(_) = (*this).vm.post((*this).loop_kind, queued) {
+                if let bun_jsc::vm_handle::Posted::Refused(_) =
+                    (*this).vm.post((*this).loop_kind, queued)
+                {
                     Self::release_off_thread(this);
                 }
             }

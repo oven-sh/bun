@@ -121,9 +121,29 @@ function getValidatedFsPath(p: any, propName: string = "path") {
   throw $ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], p);
 }
 
+// One-shot latch: node:fs and node:fs/promises share it, so it lives here
+// alongside the other helpers both modules pull from internal/fs/utils.
+var nonPortableTemplateWarn = true;
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L883-L893
+// mkdtemp() templates ending in X are handled inconsistently across platforms.
+function warnOnNonPortableTemplate(template: any) {
+  if (
+    nonPortableTemplateWarn &&
+    ((typeof template === "string" && template.endsWith("X")) ||
+      (typeof template !== "string" && template?.at?.(-1) === 0x58))
+  ) {
+    nonPortableTemplateWarn = false;
+    process.emitWarning(
+      "mkdtemp() templates ending with X are not portable. For details see: https://nodejs.org/api/fs.html",
+    );
+  }
+}
+
 hideFromStack(validateLinkHeaderValue);
 hideFromStack(validateString, validateFunction, validateBoolean);
 hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
+hideFromStack(warnOnNonPortableTemplate);
 
 export default {
   /** (value, name) */
@@ -166,4 +186,5 @@ export default {
   getValidatedFsPath,
   /** `(filename)` */
   throwIfNullBytesInFileName,
+  warnOnNonPortableTemplate,
 };

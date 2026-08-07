@@ -306,9 +306,22 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
+extern "C" bool Bun__VM__hasWorkerRequestedTerminate(void*);
+
+bool workerHasRequestedTerminate(JSC::VM& vm)
+{
+    // Not is_shutting_down: that is already true inside a naturally-exiting worker's process.on('exit') listeners.
+    return Bun__VM__hasWorkerRequestedTerminate(Bun::vm(vm));
+}
+
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (vm.hasTerminationRequest()) {
+        if (workerHasRequestedTerminate(vm)) {
+            // Keep worker.terminate()/process.exit() uncatchable: do not convert to ERR_SCRIPT_EXECUTION_*.
+            scope.throwException(globalObject, vm.ensureTerminationException());
+            return true;
+        }
         vm.drainMicrotasksForGlobalObject(globalObject);
         // The termination may have fired inside an afterEvaluate microtask
         // checkpoint, leaving the termination exception pending; clear it so

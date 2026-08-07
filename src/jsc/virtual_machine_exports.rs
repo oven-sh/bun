@@ -31,6 +31,12 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32
 }
 
+// HOST_EXPORT(Bun__VM__hasWorkerRequestedTerminate, c)
+pub fn has_worker_requested_terminate(this: &VirtualMachine) -> bool {
+    this.worker_ref()
+        .is_some_and(|w| w.has_requested_terminate())
+}
+
 // HOST_EXPORT(Bun__getVM, c)
 pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()

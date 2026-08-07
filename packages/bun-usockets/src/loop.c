@@ -497,19 +497,28 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  *   re-reported after the first dispatch cleared sk_err).
                  *   Opening would hand the caller a dead, never-connected
                  *   socket.
-                 * getpeername distinguishes: only a connection that actually
-                 * established has a peer address. */
+                 * Two probes, because each is conclusive on a different
+                 * platform: getpeername succeeding proves establishment, but
+                 * Darwin severs a closed AF_UNIX peer's binding (ENOTCONN for
+                 * the established case too), where peeked pending data still
+                 * proves it. A peek of 0 proves nothing: Linux reads 0 from
+                 * the consumed refused connect as well, so data-less
+                 * ambiguity stays on the error path (as it always was). */
                 int connect_error = 0;
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
                     if (connect_error == 0) {
                         struct bsd_addr_t peer;
                         if (bsd_remote_addr(us_poll_fd(p), &peer)) {
+                            char probe;
+                            ssize_t peeked = bsd_recv(us_poll_fd(p), &probe, 1, MSG_PEEK | MSG_DONTWAIT);
+                            if (peeked <= 0) {
 #ifdef _WIN32
-                            connect_error = WSAECONNRESET;
+                                connect_error = WSAECONNRESET;
 #else
-                            connect_error = ECONNRESET;
+                                connect_error = ECONNRESET;
 #endif
+                            }
                         }
                     }
                 }

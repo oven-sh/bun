@@ -122,6 +122,8 @@ pub(crate) enum ActiveHandle {
     /// A socket over a Windows named pipe: not in any uSockets group either.
     #[cfg(windows)]
     WindowsNamedPipe(ptr::NonNull<crate::socket::WindowsNamedPipeContext>),
+    /// A `dns.Resolver` (or the VM-global one) with a live c-ares channel.
+    DnsResolver(ptr::NonNull<crate::dns_jsc::Resolver>),
 }
 
 pub(crate) type ActiveHandles = bun_collections::ArrayHashMap<ActiveHandle, ()>;
@@ -1746,6 +1748,10 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
             ActiveHandle::WindowsNamedPipe(c) => unsafe {
                 crate::socket::WindowsNamedPipeContext::stop_for_vm_teardown(c.as_ptr())
             },
+            // Live until it unregisters in `destroy_channel`.
+            ActiveHandle::DnsResolver(r) => {
+                let _ = unsafe { r.as_ref() }.close_channel_for_terminate();
+            }
         }
     }
     result

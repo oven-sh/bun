@@ -1901,10 +1901,7 @@ impl Drop for GlobalData {
         // `Resolver::deinit` ends with `heap::take(this)`, which is wrong for a
         // value field — open-code the channel teardown so the c-ares state
         // frees when this box drops in `deinit_runtime_state`.
-        if let Some(channel) = self.resolver.channel.take() {
-            // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
-            unsafe { c_ares::Channel::destroy(channel) };
-        }
+        self.resolver.destroy_channel();
     }
 }
 
@@ -1947,9 +1944,7 @@ impl Resolver {
     /// `ARES_EDESTRUCTION` into their callbacks).
     pub(crate) fn close_channel_for_terminate(&self) -> bun_jsc::virtual_machine::SweepResult {
         use bun_jsc::virtual_machine::SweepResult;
-        let result = if let Some(channel) = self.channel.take() {
-            // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
-            unsafe { c_ares::Channel::destroy(channel) };
+        let result = if self.destroy_channel() {
             SweepResult::Stopped
         } else {
             SweepResult::Idle
@@ -3898,9 +3893,7 @@ impl Resolver {
         // SAFETY: `this` is the heap allocation from `init()`; refcount has hit
         // zero (sole caller is `Self::deref`), so we hold exclusive ownership.
         unsafe {
-            if let Some(channel) = (*this).channel.take() {
-                c_ares::Channel::destroy(channel);
-            }
+            (*this).destroy_channel();
             drop(bun_core::heap::take(this));
         }
     }
@@ -5187,6 +5180,40 @@ impl c_ares::ChannelContainer for Resolver {
     #[inline]
     fn set_channel(&self, channel: *mut c_ares::Channel) {
         self.channel.set(Some(channel));
+        // A live channel has sockets, timers and queries in flight whose
+        // callbacks need this VM: the stop phase closes it (any resolver, not
+        // just the VM-global one) if nobody did before.
+        // SAFETY: this thread's live runtime state; unregistered in `destroy_channel`.
+        unsafe {
+            (*crate::jsc_hooks::runtime_state()).active_handles.insert(
+                crate::jsc_hooks::ActiveHandle::DnsResolver(core::ptr::NonNull::from(self)),
+                (),
+            );
+        }
+    }
+}
+
+impl Resolver {
+    /// The one place a channel is torn down: `ares_destroy` fails every
+    /// pending query with `ARES_EDESTRUCTION` into its callback (releasing the
+    /// request's ref on this resolver) and closes the channel's sockets.
+    /// Returns whether there was a channel.
+    fn destroy_channel(&self) -> bool {
+        let Some(channel) = self.channel.take() else {
+            return false;
+        };
+        let state = crate::jsc_hooks::runtime_state();
+        if !state.is_null() {
+            // SAFETY: this thread's live runtime state; registered in `set_channel`.
+            unsafe {
+                (*state).active_handles.swap_remove(&crate::jsc_hooks::ActiveHandle::DnsResolver(
+                    core::ptr::NonNull::from(self),
+                ));
+            }
+        }
+        // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
+        unsafe { c_ares::Channel::destroy(channel) };
+        true
     }
 }
 

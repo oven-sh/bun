@@ -28,7 +28,6 @@ template<bool> struct HttpResponse;
 struct HttpRequest;
 
 struct HttpFlags {
-    bool isParsingHttp: 1 = false;
     bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
@@ -68,12 +67,11 @@ private:
     /* This is the currently browsed-to router when using SNI */
     HttpRouter<RouterData> *currentRouter = &router;
 
-    /* The socket onData is currently parsing, nullptr outside a parse. The
-     * close gates in internalEnd need the per-socket identity: a DIFFERENT
-     * socket's response can complete inside this window (a microtask drained
-     * during a request dispatch), and the context-wide isParsingHttp bit
-     * alone would wrongly defer its close to a post-parse gate that only
-     * checks the parsed socket. */
+    /* The socket onData is currently parsing, nullptr outside a parse.
+     * Per-socket identity matters: a DIFFERENT socket's response can complete
+     * (internalEnd) or upgrade inside this window, and a context-wide boolean
+     * could not distinguish it from the parsed socket. Nested parses
+     * (node:http read replay) save/restore it. */
     struct us_socket_t *parsingSocket = nullptr;
 
     /* This is the default router for default SNI or non-SSL */

@@ -437,6 +437,12 @@ const result = await sql.unsafe(`
 const result = await sql.unsafe("SELECT " + dangerous + " FROM users WHERE id = $1", [id]);
 ```
 
+With the SQLite adapter, parameters can also be an object of named parameters using `:name`, `$name`, or `@name` placeholders:
+
+```ts
+const result = await sql.unsafe("SELECT * FROM users WHERE id = :id", { id: 1 });
+```
+
 ### Execute and Cancelling Queries
 
 Queries are lazy: they only start executing when awaited or run with `.execute()`.

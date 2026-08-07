@@ -197,9 +197,10 @@ function fatalErrorDispatch(er: any) {
       setActive(active);
     }
     // node updateExceptionCapture(): route only if some domain has an 'error' listener.
+    // d != null: the _stack setter accepts arbitrary userland arrays.
     for (let i = 0; i < stack.length; i++) {
       const d = stack[i];
-      if (typeof d.listenerCount === "function" && d.listenerCount("error") > 0) {
+      if (d != null && typeof d.listenerCount === "function" && d.listenerCount("error") > 0) {
         active._errorHandler(er);
         return true;
       }

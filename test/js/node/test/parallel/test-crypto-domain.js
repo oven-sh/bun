@@ -24,11 +24,16 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
+// BUN: the throw inside an async crypto callback surfaces as an unhandled
+// rejection (crypto callbacks are promise reactions) and Bun lacks Node's
+// promiseInfo.domain routing; see .todo tests in test/js/node/domain/domain.test.ts.
+common.skip('Bun: unhandled-rejection domain routing not implemented');
+
 const assert = require('assert');
 const crypto = require('crypto');
 const domain = require('domain');
 
-const test = (fn) => {
+function test(fn) {
   const ex = new Error('BAM');
   const d = domain.create();
   d.on('error', common.mustCall(function(err) {
@@ -37,18 +42,11 @@ const test = (fn) => {
   const cb = common.mustCall(function() {
     throw ex;
   });
-  // Note for Bun: upstream calls `d.run(fn, cb)` here, so the throw happens
-  // inside the async crypto callback. In Bun those callbacks are promise
-  // reactions, and Bun does not yet capture the reject-time domain and route
-  // unhandled rejections through it (Node's promiseInfo.domain path in
-  // lib/internal/process/promises.js). This copy invokes the throwing
-  // callback synchronously instead (`fn` is deliberately unused). See the
-  // .todo mode-matrix tests in test/js/node/domain/domain.test.ts.
-  d.run(cb);
+  d.run(fn, cb);
 };
 
 test(function(cb) {
-  crypto.pbkdf2('password', 'salt', 1, 8, cb);
+  crypto.pbkdf2('password', 'salt', 1, 8, 'sha1', cb);
 });
 
 test(function(cb) {

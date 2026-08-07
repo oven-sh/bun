@@ -16,7 +16,7 @@ async function run(
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
 
-test("a non-Domain process.domain does not mask the original error in the fatal path", async () => {
+test.concurrent("a non-Domain process.domain does not mask the original error in the fatal path", async () => {
   // Regression: fatalErrorDispatch pushed the raw process.domain value and
   // called .listenerCount on it, so `require('domain'); process.domain = {};
   // throw err` exited 7 with a TypeError instead of 1 with the original.
@@ -26,7 +26,7 @@ test("a non-Domain process.domain does not mask the original error in the fatal 
   expect(r.exitCode).toBe(1);
 });
 
-test("a non-Domain process.domain is never pushed onto the stack by an async pairing", async () => {
+test.concurrent("a non-Domain process.domain is never pushed onto the stack by an async pairing", async () => {
   // Node's init hook stores process.domain[kWeak], undefined for a
   // non-Domain, so before() never enters one; the stack stays [d] -> []
   // after d's throwing handler, and the handler's own throw escapes cleanly
@@ -47,7 +47,7 @@ test("a non-Domain process.domain is never pushed onto the stack by an async pai
   expect(r.exitCode).toBe(7);
 });
 
-test("a non-Domain process.domain is never assigned to a new EventEmitter by init", async () => {
+test.concurrent("a non-Domain process.domain is never assigned to a new EventEmitter by init", async () => {
   // Node's wrapped init reads exports.active (only ever a real Domain), not
   // process.domain, so a non-Domain value never reaches ee.domain and emit
   // takes the original fast path. Without the _errorHandler filter Bun's
@@ -68,7 +68,24 @@ test("a non-Domain process.domain is never assigned to a new EventEmitter by ini
   expect(r.exitCode).toBe(1);
 });
 
-test("patching AsyncLocalStorage.prototype.getStore after loading node:domain does not hijack domain error routing", async () => {
+test.concurrent("a null entry in a userland-assigned _stack does not mask the original error", async () => {
+  // fatalErrorDispatch iterates the stack; without the null guard,
+  // `domain._stack = [null, ...]` turned the routed error into a TypeError
+  // on null.listenerCount and exited 7 instead of letting d claim it.
+  const r = await run(`
+    const domain = require("domain");
+    const d = domain.create();
+    d.on("error", e => console.log("caught:" + e.message));
+    d.enter();
+    domain._stack = [null, d];
+    setTimeout(() => { throw new Error("boom") }, 0);
+  `);
+  expect(r.stdout.trim()).toBe("caught:boom");
+  expect(r.stderr).not.toContain("listenerCount");
+  expect(r.exitCode).toBe(0);
+});
+
+test.concurrent("patching AsyncLocalStorage.prototype.getStore after loading node:domain does not hijack domain error routing", async () => {
   const r = await run(`
     const domain = require("domain");
     const { AsyncLocalStorage } = require("async_hooks");
@@ -81,7 +98,7 @@ test("patching AsyncLocalStorage.prototype.getStore after loading node:domain do
   expect(r.exitCode).toBe(0);
 });
 
-test("child domain added to a parent routes error to the parent's listener without falling through to uncaughtException", async () => {
+test.concurrent("child domain added to a parent routes error to the parent's listener without falling through to uncaughtException", async () => {
   const r = await run(`
     const domain = require("domain");
     const parent = domain.create();
@@ -95,7 +112,7 @@ test("child domain added to a parent routes error to the parent's listener witho
   expect(r.exitCode).toBe(0);
 });
 
-test("process.domain / exports._stack / exports.active accessors are configurable (matches Node)", async () => {
+test.concurrent("process.domain / exports._stack / exports.active accessors are configurable (matches Node)", async () => {
   const r = await run(
     `const d = require("domain");
      console.log(
@@ -108,7 +125,21 @@ test("process.domain / exports._stack / exports.active accessors are configurabl
   expect(r.exitCode).toBe(0);
 });
 
-test("Worker: throwing domain error handler emits parent 'error' and exits 1", async () => {
+test.concurrent("a domain with an 'error' listener claims the error while a capture callback is installed", async () => {
+  // Matches node v26.3.0: the domain handler runs before the uncaught
+  // exception capture callback, so captureFn never fires here.
+  const r = await run(`
+    const domain = require("domain");
+    process.setUncaughtExceptionCaptureCallback(er => console.log("captureFn:" + er.message));
+    const d = domain.create();
+    d.on("error", er => console.log("domain:" + er.message));
+    d.run(() => { process.nextTick(() => { throw new Error("boom"); }); });
+  `);
+  expect(r.stdout.trim()).toBe("domain:boom");
+  expect(r.exitCode).toBe(0);
+});
+
+test.concurrent("Worker: throwing domain error handler emits parent 'error' and exits 1", async () => {
   // Node's workerOnGlobalUncaughtException catches, posts the handler's
   // error to the parent, and exits with kGenericUserError (1) — not 7.
   const r = await run(`
@@ -127,7 +158,7 @@ test("Worker: throwing domain error handler emits parent 'error' and exits 1", a
   expect(r.exitCode).toBe(0);
 });
 
-test("Worker: throwing capture callback emits parent 'error' and exits 1", async () => {
+test.concurrent("Worker: throwing capture callback emits parent 'error' and exits 1", async () => {
   const r = await run(`
     const { Worker } = require("worker_threads");
     const w = new Worker(
@@ -143,7 +174,7 @@ test("Worker: throwing capture callback emits parent 'error' and exits 1", async
   expect(r.exitCode).toBe(0);
 });
 
-test("EventEmitter constructed with captureRejections has no own emit property", async () => {
+test.concurrent("EventEmitter constructed with captureRejections has no own emit property", async () => {
   // events.ts previously installed an own-property emit for
   // captureRejections; that shadowed domain's prototype override and forced
   // per-instance re-wrapping in domain.ts. Now init only flips kCapture.

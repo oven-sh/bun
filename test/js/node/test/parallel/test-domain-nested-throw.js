@@ -35,6 +35,8 @@ function parent() {
   const spawn = require('child_process').spawn;
   const opt = { stdio: 'inherit' };
   const child = spawn(node, [__filename, 'child'], opt);
+  // BUN: mustCall instead of upstream's bare handler + console.log('ok');
+  // asserts the exit handler actually ran.
   child.on('exit', common.mustCall((c) => {
     assert(!c);
   }));

@@ -718,7 +718,6 @@ impl TransformTask {
             output_code: BunString::empty(),
             transpiler: transpiler_copy,
             macro_map: clone_macro_map(&config.macro_map),
-            // SAFETY: points into the wrapper's config, kept alive by `TransformJs`.
             tsconfig: config
                 .tsconfig
                 .as_deref()

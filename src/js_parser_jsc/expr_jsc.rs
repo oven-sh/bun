@@ -23,6 +23,17 @@ pub fn expr_to_js(this: &Expr, global: &JSGlobalObject) -> Result<JSValue, ToJSE
     data_to_js(&this.data, global)
 }
 
+/// The inverse of [`js_err`], for host functions returning a data-format
+/// parse (JSON/XML rows never produce the identifier / macro variants).
+pub fn to_js_error(e: ToJSError, global: &JSGlobalObject) -> JsError {
+    match e {
+        ToJSError::OutOfMemory => JsError::OutOfMemory,
+        ToJSError::JSError => JsError::Thrown,
+        ToJSError::JSTerminated => JsError::Terminated,
+        _ => global.throw(format_args!("Cannot convert value to JS")),
+    }
+}
+
 /// Extension trait providing `Expr.toJS` / `Expr::Data.toJS` as method syntax.
 /// `Expr` lives in `bun_js_parser` (lower tier, no JSC dep), so an inherent
 /// `impl Expr { fn to_js }` is forbidden by orphan rules. Mirrors the
@@ -59,8 +70,8 @@ fn data_to_js_with_check(
     match this {
         ExprData::EArray(e) => array_to_js(e, global, stack_check),
         ExprData::EObject(e) => object_to_js(e, global, stack_check),
-        ExprData::EObjectJSON(e) => object_json_to_js(e, global, stack_check),
-        ExprData::EArrayJSON(e) => array_json_to_js(e, global, stack_check),
+        ExprData::EObjectJSON(e) => object_json_to_js(e, global),
+        ExprData::EArrayJSON(e) => array_json_to_js(e, global),
         ExprData::EString(e) => string_to_js(e, global),
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EUndefined(_) => Ok(JSValue::UNDEFINED),
@@ -171,20 +182,12 @@ fn json_rows_to_js(
     .map_err(js_err)
 }
 
-fn object_json_to_js(
-    this: &E::ObjectJSON,
-    global: &JSGlobalObject,
-    _stack_check: StackCheck,
-) -> Result<JSValue, ToJSError> {
+fn object_json_to_js(this: &E::ObjectJSON, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     let root = E::JsonValue::Object(bun_ast::StoreRef::from_raw(core::ptr::from_ref(this).cast_mut()));
     json_rows_to_js(root, this.tape(), global)
 }
 
-fn array_json_to_js(
-    this: &E::ArrayJSON,
-    global: &JSGlobalObject,
-    _stack_check: StackCheck,
-) -> Result<JSValue, ToJSError> {
+fn array_json_to_js(this: &E::ArrayJSON, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     let root = E::JsonValue::Array(bun_ast::StoreRef::from_raw(core::ptr::from_ref(this).cast_mut()));
     json_rows_to_js(root, this.tape(), global)
 }

@@ -49,7 +49,7 @@ extern "C" size_t bench_expat_parse(const char* data, size_t len)
 #include <libxml/parser.h>
 extern "C" size_t bench_libxml2_parse(const char* data, size_t len)
 {
-    xmlDocPtr doc = xmlReadMemory(data, (int)len, "bench.xml", NULL, XML_PARSE_NONET | XML_PARSE_NOBLANKS * 0);
+    xmlDocPtr doc = xmlReadMemory(data, (int)len, "bench.xml", NULL, XML_PARSE_NONET);
     if (!doc) return 0;
     xmlFreeDoc(doc);
     return 1;

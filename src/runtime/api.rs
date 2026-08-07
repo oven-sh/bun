@@ -226,23 +226,21 @@ fn with_text_format_source<R>(
 
     // A private mi_heap costs microseconds to create, more than parsing a
     // small document: keep one per thread and recycle it between calls.
-    thread_local! {
-        static ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = const { core::cell::Cell::new(None) };
-    }
+    // `#[thread_local]` rather than `thread_local!` so there is no
+    // destructor racing mimalloc's own thread teardown (as in
+    // `ast_memory_allocator.rs`); a parked heap is reclaimed with the thread.
+    #[thread_local]
+    static ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = core::cell::Cell::new(None);
     struct Recycle(Option<bun_alloc::Arena>);
     impl Drop for Recycle {
         fn drop(&mut self) {
             if let Some(mut arena) = self.0.take() {
-                arena.reset_retain_with_limit(8 * 1024 * 1024);
-                ARENA.with(|slot| slot.set(Some(arena)));
+                arena.reset_retain_with_limit(2 * 1024 * 1024);
+                ARENA.set(Some(arena));
             }
         }
     }
-    let recycle = Recycle(Some(
-        ARENA
-            .with(|slot| slot.take())
-            .unwrap_or_else(bun_alloc::Arena::new),
-    ));
+    let recycle = Recycle(Some(ARENA.take().unwrap_or_else(bun_alloc::Arena::new)));
     let arena = recycle.0.as_ref().expect("set above");
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();

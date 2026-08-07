@@ -1,7 +1,6 @@
 //! Throughput benchmark for the XML parser against other Rust and C/C++ parsers.
 //! Run via `scripts/bench-json-rust.sh --xml [criterion args]`. Fixtures: every `*.xml` / `*.svg` in
 //! `$BUN_XML_BENCH_FIXTURES` (default `bench/xml-corpus/`), plus built-in synthetic documents.
-#![allow(unexpected_cfgs)]
 use bun_alloc::Arena as Bump;
 use bun_ast as js_ast;
 use bun_parsers::xml;
@@ -9,13 +8,6 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 
 #[path = "../native_test_shims.rs"]
 mod native_test_shims;
-
-#[cfg(bun_xml_bench_old)]
-#[path = "support/xml_old.rs"]
-#[allow(dead_code, unused_imports, unreachable_pub, clippy::all, warnings)]
-pub mod xml_old;
-#[cfg(bun_xml_bench_old)]
-pub use bun_parsers::{Error, Result};
 
 unsafe extern "C" {
     #[cfg(pugixml)]
@@ -137,19 +129,6 @@ fn maybe_loop() {
                 let e = xml::XML::parse(&source, &mut log, &bump, opts).expect("parse");
                 std::hint::black_box(&e);
             }
-            #[cfg(bun_xml_bench_old)]
-            "bun_old" => {
-                let _store_scope = js_ast::StoreResetGuard::new();
-                let mut log = js_ast::Log::init();
-                bump.reset();
-                let source = js_ast::Source::init_path_string("fixture.xml", &contents[..]);
-                let opts = xml_old::Options {
-                    compact: true,
-                    encoding: xml_old::InputEncoding::Bytes,
-                };
-                let e = xml_old::XML::parse(&source, &mut log, &bump, opts).expect("parse");
-                std::hint::black_box(&e);
-            }
             #[cfg(pugixml)]
             "pugixml" => {
                 std::hint::black_box(unsafe {
@@ -208,23 +187,6 @@ fn bench_xml(c: &mut Criterion) {
                 })
             });
         }
-
-        #[cfg(bun_xml_bench_old)]
-        group.bench_function(BenchmarkId::new("bun_old_compact", &name), |b| {
-            let mut bump = Bump::new();
-            b.iter(|| {
-                let _store_scope = js_ast::StoreResetGuard::new();
-                let mut log = js_ast::Log::init();
-                bump.reset();
-                let source = js_ast::Source::init_path_string("fixture.xml", &contents[..]);
-                let opts = xml_old::Options {
-                    compact: true,
-                    encoding: xml_old::InputEncoding::Bytes,
-                };
-                let e = xml_old::XML::parse(&source, &mut log, &bump, opts).expect("parse");
-                std::hint::black_box(&e);
-            })
-        });
 
         group.bench_function(BenchmarkId::new("stage1_index", &name), |b| {
             b.iter(|| {

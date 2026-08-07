@@ -1,25 +1,34 @@
-//! XML 1.0 (Fifth Edition) parser — a non-validating processor that does not
-//! read external entities (§5.1).
+//! XML 1.0 (Fifth Edition) scanner/parser — a non-validating processor that
+//! does not read external entities (§5.1).
 //!
-//! Stage 1 ([`crate::xml_index`]) is the SIMD structural index of the
-//! document: every `<`, `>`, `&`, `\r` and forbidden control character, plus
-//! the whitespace, quotes and `=` inside tags. Stage 2 is this file: the
-//! scanner walks the document from index entry to index entry — character
-//! data, attribute values, comments, CDATA sections and processing
-//! instructions are never visited byte by byte — and hands tokens to a
-//! recursive-descent parser that checks the grammar and the well-formedness
-//! constraints and writes the result as immutable rows on an `E::JsonTape`
-//! (the same node representation the JSON parser produces).
+//! Architecture (mirrors `yaml.rs`): the scanner turns bytes into tokens and
+//! the parser is recursive descent over tokens, never touching source bytes.
+//! Outside element content XML's lexical grammar is uniform — names, quoted
+//! literals, a handful of punctuation marks and the `<!…` / `<?…` openers —
+//! so a single `Scanner::next` loop serves the XML declaration, the document
+//! type declaration with its internal subset, and tags: it walks byte by
+//! byte, whitespace is just an arm that advances and continues, and every
+//! other byte immediately identifies the token to scan. Where the grammar
+//! makes whitespace required or forbidden (§2.3 `S`, `)*`, `?>`), the parser
+//! checks the token's `spaced` flag. The one context-sensitive lexeme is the
+//! quoted literal (`AttValue`, `EntityValue`, `SystemLiteral` and
+//! `PubidLiteral` decode differently), so `next` takes the `Literal` kind the
+//! parser's grammar position calls for. Element content, where whitespace is
+//! character data, has its own loop (`Scanner::next_content`).
 //!
-//! What stays byte-level: names (they have to be validated character by
-//! character anyway), the document type declaration, and entity replacement
-//! text, which is not part of the indexed buffer — an included entity (§4.4)
-//! is pushed as a new input frame and scanned with the scalar classifier the
-//! index is built from. Tokens carry the id of the frame they came from so
-//! the parser can enforce that elements and declarations start and end in
-//! the same entity.
+//! Entity replacement (§4.4) is character-level substitution, so it lives in
+//! the scanner: an entity reference in a context where the spec says
+//! "included" pushes the replacement text as a new input frame and scanning
+//! continues there. Tokens carry the id of the frame they came from so the
+//! parser can enforce the structural rules (an element or markup declaration
+//! must start and end in the same entity). The parser feeds declarations from
+//! the internal DTD subset back to the scanner's entity tables; per §5.1 those
+//! declarations are used to expand internal entities, supply attribute
+//! defaults, and normalize attribute values, and declarations after a
+//! reference to a parameter entity that is not read are ignored (unless
+//! `standalone="yes"`).
 //!
-//! Two value shapes are built from the same token stream (see `Sink`): the
+//! Two JS value shapes are built from the same token stream (see `Sink`): the
 //! compact object (`{"@attr": .., child: .., "#text": ..}`) used by
 //! `Bun.XML.parse` by default and by the module loader, and the ordered node
 //! tree (`{name, attributes, children}`) for `{ compact: false }`.
@@ -27,19 +36,10 @@
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec;
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::expr::Data;
-use bun_ast::{self as ast, E, Expr, Loc, Log, Source, StoreRef};
-use bun_collections::HashMap;
+use bun_ast::{self as ast, E, Expr, G, Loc, Log, Source};
+use bun_collections::{HashMap, VecExt};
 use bun_core::{StackCheck, strings};
 use bun_simdutf_sys::simdutf;
-
-use crate::xml_index::StructuralIndex;
-use crate::xml_index::byte_class::{CLASS_ALWAYS, CLASS_GT, CLASS_LT, CLASS_TAG, XML_BYTE_CLASS};
-
-/// Scalar stop classes for the contexts that skip ahead (see `Scanner::next_stop`).
-const STOP_CONTENT: u8 = CLASS_LT | CLASS_GT | CLASS_ALWAYS;
-const STOP_ATT_VALUE: u8 = CLASS_LT | CLASS_GT | CLASS_ALWAYS | CLASS_TAG;
-const STOP_SKIPPED: u8 = CLASS_ALWAYS;
 
 // ── public entry point ──────────────────────────────────────────────────────
 
@@ -70,8 +70,6 @@ pub enum InputEncoding {
 }
 
 impl XML {
-    /// Parses `source` into `E::ObjectJSON` / `E::ArrayJSON` rows whose tape
-    /// (and every string that does not borrow the source) lives in `bump`.
     pub fn parse<'a>(
         source: &'a Source,
         log: &mut Log,
@@ -79,11 +77,10 @@ impl XML {
         options: Options,
     ) -> crate::Result<Expr> {
         bun_core::analytics::Features::xml_parse_inc();
-        let tape = Tape::new_in(bump, source.contents.len());
         let result = if options.compact {
-            Parser::new(source, log, bump, options, CompactSink::new(tape)).parse_document()
+            Parser::new(source, log, bump, options, CompactSink::new(bump)).parse_document()
         } else {
-            Parser::new(source, log, bump, options, NodeSink::new(tape)).parse_document()
+            Parser::new(source, log, bump, options, NodeSink::new(bump)).parse_document()
         };
         match result {
             Ok(root) => Ok(root),
@@ -129,29 +126,14 @@ fn is_ws(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | b'\r')
 }
 
-/// Bit 0: an ASCII `NameStartChar`; bit 1: an ASCII `NameChar`. Zero for
-/// bytes >= 0x80, which callers decode separately.
-static NAME_ASCII: [u8; 256] = {
-    let mut t = [0u8; 256];
-    let mut c = 0usize;
-    while c < 0x80 {
-        let b = c as u8;
-        let start = b.is_ascii_alphabetic() || b == b'_' || b == b':';
-        let cont = start || b.is_ascii_digit() || b == b'-' || b == b'.';
-        t[c] = (start as u8) | ((cont as u8) << 1);
-        c += 1;
-    }
-    t
-};
-
 #[inline]
 fn is_name_start_ascii(c: u8) -> bool {
-    NAME_ASCII[c as usize] & 1 != 0
+    c.is_ascii_alphabetic() || c == b'_' || c == b':'
 }
 
 #[inline]
 fn is_name_char_ascii(c: u8) -> bool {
-    NAME_ASCII[c as usize] & 2 != 0
+    is_name_start_ascii(c) || c.is_ascii_digit() || c == b'-' || c == b'.'
 }
 
 /// `NameStartChar` (§2.3 [4]) above ASCII.
@@ -231,48 +213,8 @@ fn is_pubid_char(c: u8) -> bool {
         )
 }
 
-/// `text` with `S` trimmed from both ends.
-#[inline]
-fn trim_ws(text: &[u8]) -> &[u8] {
-    trim_ws_end(trim_ws_start(text))
-}
-
-#[inline]
-fn trim_ws_start(text: &[u8]) -> &[u8] {
-    let mut a = 0;
-    while a < text.len() && is_ws(text[a]) {
-        a += 1;
-    }
-    &text[a..]
-}
-
-#[inline]
-fn trim_ws_end(text: &[u8]) -> &[u8] {
-    let mut b = text.len();
-    while b > 0 && is_ws(text[b - 1]) {
-        b -= 1;
-    }
-    &text[..b]
-}
-
-/// `a == b` for the short slices names are, without a `memcmp` call.
-#[inline]
-fn name_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    if a.len() >= 16 {
-        return a == b;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
+/// The `S` characters, for `strings::trim`.
+const XML_WS: &[u8] = b" \t\n\r";
 
 // ── tokens ──────────────────────────────────────────────────────────────────
 
@@ -314,7 +256,10 @@ enum Kind<'a> {
     /// `<!ENTITY`, a parameter-entity declaration missing its space.
     PercentName(&'a [u8]),
     /// A quoted literal, read as the `Literal` kind the parser asked for.
-    Literal(&'a [u8]),
+    Literal {
+        value: &'a [u8],
+        is_ascii: bool,
+    },
     Eq,
     Gt,
     SlashGt,
@@ -341,7 +286,10 @@ enum Kind<'a> {
     EndTag(&'a [u8]),
     /// Character data with CDATA sections, references and included entities
     /// folded in.
-    Text(&'a [u8]),
+    Text {
+        text: &'a [u8],
+        is_ascii: bool,
+    },
     /// A character that cannot start any token; always an error, which the
     /// parser reports along with what it expected there.
     Unexpected(u32),
@@ -361,7 +309,7 @@ impl core::fmt::Display for Kind<'_> {
             Kind::PeReference(n) => name(f, "%", n, ";"),
             Kind::Percent => f.write_str("'%'"),
             Kind::PercentName(n) => name(f, "%", n, ""),
-            Kind::Literal(_) => f.write_str("a quoted string"),
+            Kind::Literal { .. } => f.write_str("a quoted string"),
             Kind::Eq => f.write_str("'='"),
             Kind::Gt => f.write_str("'>'"),
             Kind::SlashGt => f.write_str("'/>'"),
@@ -380,7 +328,7 @@ impl core::fmt::Display for Kind<'_> {
             Kind::Pi => f.write_str("a processing instruction"),
             Kind::StartTag(n) => name(f, "<", n, ""),
             Kind::EndTag(n) => name(f, "</", n, ""),
-            Kind::Text(_) => f.write_str("text"),
+            Kind::Text { .. } => f.write_str("text"),
             Kind::Unexpected(cp) => match char::from_u32(cp) {
                 Some(c) if c.is_ascii_graphic() => write!(f, "'{}'", c),
                 Some(c) if !c.is_control() => write!(f, "'{}' (U+{:04X})", c, cp),
@@ -388,20 +336,6 @@ impl core::fmt::Display for Kind<'_> {
             },
         }
     }
-}
-
-/// See `Parser::content_step`.
-enum Step {
-    Done,
-    Continue,
-    Slow,
-}
-
-/// See `Scanner::tag_step`.
-enum TagStep<'a> {
-    End { empty: bool },
-    Attr { name: &'a [u8], pos: usize, quote: u8 },
-    Slow,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -552,86 +486,12 @@ struct Scanner<'a, 'log> {
     /// place an XML declaration may stand.
     content_start: usize,
     encoding: InputEncoding,
-
-    /// The structural index of the document buffer (`src` of frame 0), built
-    /// once the encoding is settled and the input validated; `cursor` is the
-    /// scanner's position in it.
-    idx: Option<StructuralIndex<'a>>,
-    cursor: usize,
-    /// The current token: `next` / `next_content` write it in place.
-    tok: Token<'a>,
-    /// A `>` was read as literal data since the last `<`: the index producer
-    /// (which does not track quotes — XML has two quote characters that
-    /// only mean anything inside tags, so quote state and in-tag state are
-    /// circular) took it for the end of the tag, so until markup next
-    /// closes or opens a tag its in-tag entries are missing and attribute
-    /// values are scanned bytewise. Set by every literal scanner
-    /// (`saw_gt_in_literal`), cleared wherever a `<`, `>` or `/>` is
-    /// consumed as markup.
-    tag_degraded: bool,
-
     bump: &'a Bump,
     source: &'a Source,
     log: &'log mut Log,
 }
 
 impl<'a, 'log> Scanner<'a, 'log> {
-    // ── structural index ───────────────────────────────────────────────────
-
-    fn build_index(&mut self) {
-        self.idx = Some(StructuralIndex::new(self.src));
-        self.cursor = 0;
-    }
-
-    /// The next position at or after the cursor that the current context
-    /// has to look at, or the end of the frame. In the document that is the
-    /// next index entry (whatever its class — callers treat an entry they do
-    /// not care about as one ordinary byte); in entity replacement text, the
-    /// next byte whose class is in `scalar_mask`.
-    #[inline(always)]
-    fn next_stop(&mut self, scalar_mask: u8) -> usize {
-        if self.frame_kind == FrameKind::Document
-            && let Some(idx) = self.idx.as_mut()
-        {
-            let (cursor, p) = idx.seek(self.cursor, self.pos);
-            self.cursor = cursor;
-            if !self.tag_degraded {
-                return p;
-            }
-            // The in-tag entries may be missing, but the ones the index
-            // always has (control and non-characters among them) still count.
-            return p.min(self.scalar_stop(scalar_mask));
-        }
-        self.scalar_stop(scalar_mask)
-    }
-
-    #[inline]
-    fn scalar_stop(&self, mask: u8) -> usize {
-        let mut p = self.pos;
-        while p < self.src.len() && XML_BYTE_CLASS[self.src[p] as usize] & mask == 0 {
-            p += 1;
-        }
-        p
-    }
-
-    /// The error for an index entry that is not markup: a control character,
-    /// or the last byte of an encoded U+FFFE / U+FFFF.
-    #[cold]
-    fn err_at_entry(&mut self, c: u8) -> PErr {
-        if c >= 0x80 {
-            self.pos -= 2;
-        }
-        self.err_invalid_char()
-    }
-
-    /// See `tag_degraded`: call for every `>` consumed as literal data.
-    #[inline]
-    fn saw_gt_in_literal(&mut self) {
-        if self.in_document() {
-            self.tag_degraded = true;
-        }
-    }
-
     // ── error helpers ──────────────────────────────────────────────────────
 
     fn loc(&self, pos: usize) -> Loc {
@@ -897,7 +757,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
     }
 
     /// Appends `&name;` for a reference that is kept rather than expanded.
-    fn push_reference(buf: &mut ArenaVec<'a, u8>, name: &[u8]) {
+    fn push_reference(buf: &mut ArenaVec<'a, u8>, name: &[u8], is_ascii: &mut bool) {
+        *is_ascii &= name.is_ascii();
         buf.push(b'&');
         buf.extend_from_slice(name);
         buf.push(b';');
@@ -961,11 +822,6 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// fatal). Run after the XML declaration — whose encoding may first
     /// cause the input to be transcoded — and before anything is decoded.
     fn validate_utf8(&mut self) -> PResult<()> {
-        // Text re-encoded from a JS string, or transcoded here from UTF-16 /
-        // Latin-1, is valid UTF-8 by construction; only raw bytes need it.
-        if self.encoding == InputEncoding::Text || self.transcoded {
-            return Ok(());
-        }
         let result = simdutf::validate::with_errors::utf8(self.src);
         if result.is_successful() {
             Ok(())
@@ -1081,17 +937,13 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// `Name` (§2.3 [5]) at the cursor, where the grammar allows nothing
     /// else (after `<`, `</`, `&`, `%`, `#`, `<?`). `what` phrases the "but
     /// found" error.
-    #[inline(always)]
     fn scan_name(&mut self, what: &'static str) -> PResult<&'a [u8]> {
         let start = self.pos;
-        let c = self.peek();
-        if is_name_start_ascii(c) {
-            self.pos += 1;
-        } else if c >= 0x80 && is_name_start_code_point(self.decode_utf8().0) {
-            self.pos += self.decode_utf8().1;
-        } else {
+        if !self.at_name_start() {
             return Err(self.err_here(what));
         }
+        let (_, len) = self.decode_utf8();
+        self.pos += len;
         self.scan_name_chars();
         Ok(&self.src[start..self.pos])
     }
@@ -1106,7 +958,6 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
     }
 
-    #[inline(always)]
     fn scan_name_chars(&mut self) {
         loop {
             let c = self.peek();
@@ -1205,9 +1056,12 @@ impl<'a, 'log> Scanner<'a, 'log> {
         Ok(value)
     }
 
-    fn push_code_point(buf: &mut ArenaVec<'a, u8>, cp: u32) {
+    fn push_code_point(buf: &mut ArenaVec<'a, u8>, cp: u32, is_ascii: &mut bool) {
         let mut tmp = [0u8; 4];
         let n = strings::encode_wtf8_rune(&mut tmp, cp);
+        if cp >= 0x80 {
+            *is_ascii = false;
+        }
         buf.extend_from_slice(&tmp[..n]);
     }
 
@@ -1230,21 +1084,22 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
     /// A `Plain`, `System` or `Pubid` literal after the opening quote: no
     /// references are recognized; the kinds differ only in the characters
-    /// they admit.
+    /// they admit. Returns (value, is_ascii).
     fn scan_simple_literal(
         &mut self,
         quote: u8,
         open: usize,
         literal: Literal,
-    ) -> PResult<&'a [u8]> {
+    ) -> PResult<(&'a [u8], bool)> {
         let start = self.pos;
+        let mut is_ascii = true;
         loop {
             match self.peek() {
                 _ if self.at_end() => return Err(self.err(open, "Unterminated quoted string")),
                 c if c == quote => {
                     let value = &self.src[start..self.pos];
                     self.pos += 1;
-                    return Ok(value);
+                    return Ok((value, is_ascii));
                 }
                 c if literal == Literal::Pubid && !is_pubid_char(c) => {
                     return Err(self.err_here("Invalid character in a public identifier:"));
@@ -1252,11 +1107,10 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 b'<' | b'>' if literal == Literal::Plain => {
                     return Err(self.err_here("Invalid character in a quoted string:"));
                 }
-                b'>' => {
-                    self.saw_gt_in_literal();
-                    self.pos += 1;
+                c if c >= 0x80 => {
+                    is_ascii = false;
+                    self.pos += self.check_non_ascii_char()?;
                 }
-                c if c >= 0x80 => self.pos += self.check_non_ascii_char()?,
                 c if c < 0x20 && !is_ws(c) => return Err(self.err_invalid_char()),
                 _ => self.pos += 1,
             }
@@ -1267,37 +1121,16 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// a character reference appends the character, an entity reference
     /// appends its (recursively normalized) replacement text, a whitespace
     /// character appends a space; then, for a tokenized type (`collapse`),
-    /// spaces are trimmed and collapsed.
-    #[inline(always)]
-    fn scan_att_value(&mut self, quote: u8, collapse: bool) -> PResult<&'a [u8]> {
-        // Nothing but ordinary characters up to the closing quote: the
-        // overwhelmingly common case, one index hop.
-        if self.in_document() && !self.tag_degraded && self.idx.is_some() && !collapse {
-            let start = self.pos;
-            let stop = self.next_stop(STOP_ATT_VALUE);
-            if stop < self.src.len() && self.src[stop] == quote {
-                self.pos = stop + 1;
-                return Ok(&self.src[start..stop]);
-            }
-        }
-        self.scan_att_value_general(quote, collapse)
-    }
-
-    fn scan_att_value_general(&mut self, quote: u8, collapse: bool) -> PResult<&'a [u8]> {
+    /// spaces are trimmed and collapsed. Returns (value, is_ascii).
+    fn scan_att_value(&mut self, quote: u8, collapse: bool) -> PResult<(&'a [u8], bool)> {
         let literal_frame = self.frame_id;
         let open_pos = self.here();
         // The value borrows `src[start..]` until normalization or a
         // reference forces a copy; once `buf` exists everything is appended.
         let start = self.pos;
         let mut buf: Option<ArenaVec<'a, u8>> = None;
+        let mut is_ascii = true;
         loop {
-            let stop = self.next_stop(STOP_ATT_VALUE);
-            if stop != self.pos {
-                if let Some(b) = buf.as_mut() {
-                    b.extend_from_slice(&self.src[self.pos..stop]);
-                }
-                self.pos = stop;
-            }
             let c = self.peek();
             match c {
                 _ if self.at_end() => {
@@ -1314,11 +1147,12 @@ impl<'a, 'log> Scanner<'a, 'log> {
                         Some(b) => b.into_bump_slice(),
                         None => &self.src[start..end],
                     };
-                    return Ok(if collapse {
+                    let value = if collapse {
                         collapse_spaces(self.bump, value)
                     } else {
                         value
-                    });
+                    };
+                    return Ok((value, is_ascii));
                 }
                 // WFC: No < in Attribute Values (also via replacement text).
                 b'<' => return Err(self.err(self.here(), "'<' is not allowed in attribute values")),
@@ -1329,7 +1163,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     if self.peek() == b'#' {
                         self.pos += 1;
                         let cp = self.scan_char_ref(ref_pos)?;
-                        Self::push_code_point(b, cp);
+                        Self::push_code_point(b, cp, &mut is_ascii);
                     } else {
                         let name = self
                             .scan_reference_name("Expected an entity name after '&' but found")?;
@@ -1338,7 +1172,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                             Resolved::Text(text) => {
                                 self.push_frame(text, FrameKind::Literal, (name, false), ref_pos)?
                             }
-                            Resolved::Unexpanded => Self::push_reference(b, name),
+                            Resolved::Unexpanded => Self::push_reference(b, name, &mut is_ascii),
                         }
                     }
                 }
@@ -1355,17 +1189,18 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     Self::materialize(self.bump, self.src, start, self.pos, &mut buf).push(b' ');
                     self.pos += 1;
                 }
-                _ if c < 0x20 || c >= 0x80 => return Err(self.err_at_entry(c)),
-                // `>`, `=` or the other quote: an index entry that is plain
-                // data here.
+                _ if c < 0x20 => return Err(self.err_invalid_char()),
                 _ => {
-                    if c == b'>' {
-                        self.saw_gt_in_literal();
-                    }
+                    let len = if c >= 0x80 {
+                        is_ascii = false;
+                        self.check_non_ascii_char()?
+                    } else {
+                        1
+                    };
                     if let Some(b) = buf.as_mut() {
-                        b.push(c);
+                        b.extend_from_slice(&self.src[self.pos..self.pos + len]);
                     }
-                    self.pos += 1;
+                    self.pos += len;
                 }
             }
         }
@@ -1376,11 +1211,12 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// literal, which is only legal outside the internal subset proper (WFC:
     /// PEs in Internal Subset); general entity references are bypassed —
     /// checked for form and kept verbatim (§4.4.7).
-    fn scan_entity_value(&mut self, quote: u8) -> PResult<&'a [u8]> {
+    fn scan_entity_value(&mut self, quote: u8) -> PResult<(&'a [u8], bool)> {
         let literal_frame = self.frame_id;
         let in_internal_subset = self.in_document();
         let open_pos = self.here();
         let mut buf: ArenaVec<'a, u8> = ArenaVec::with_capacity_in(32, self.bump);
+        let mut is_ascii = true;
         loop {
             let c = self.peek();
             match c {
@@ -1393,7 +1229,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 }
                 _ if c == quote && self.frame_id == literal_frame => {
                     self.pos += 1;
-                    return Ok(buf.into_bump_slice());
+                    return Ok((buf.into_bump_slice(), is_ascii));
                 }
                 b'%' => {
                     let ref_pos = self.here();
@@ -1433,11 +1269,11 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     if self.peek() == b'#' {
                         self.pos += 1;
                         let cp = self.scan_char_ref(ref_pos)?;
-                        Self::push_code_point(&mut buf, cp);
+                        Self::push_code_point(&mut buf, cp, &mut is_ascii);
                     } else {
                         let name = self
                             .scan_reference_name("Expected an entity name after '&' but found")?;
-                        Self::push_reference(&mut buf, name);
+                        Self::push_reference(&mut buf, name, &mut is_ascii);
                     }
                 }
                 b'\r' if self.in_document() => {
@@ -1449,10 +1285,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 }
                 _ if c < 0x20 && !is_ws(c) => return Err(self.err_invalid_char()),
                 _ => {
-                    if c == b'>' {
-                        self.saw_gt_in_literal();
-                    }
                     let len = if c >= 0x80 {
+                        is_ascii = false;
                         self.check_non_ascii_char()?
                     } else {
                         1
@@ -1464,36 +1298,24 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
     }
 
-    // ── comments, processing instructions, CDATA ─────────────────────────────
-
-    /// Moves the cursor to `limit` over bytes that are dropped (a comment or
-    /// processing instruction body), rejecting invalid characters on the way.
-    fn skip_dropped(&mut self, limit: usize) -> PResult<()> {
-        loop {
-            let stop = self.next_stop(STOP_SKIPPED).min(limit);
-            self.pos = stop;
-            if stop >= limit {
-                return Ok(());
-            }
-            let c = self.peek();
-            if (c < 0x20 && !is_ws(c)) || c >= 0x80 {
-                return Err(self.err_at_entry(c));
-            }
-            self.pos += 1;
-        }
-    }
+    // ── comments and processing instructions ───────────────────────────────
 
     /// The rest of a comment after `<!--` (§2.5 [15]); dropped.
     fn scan_comment(&mut self, start_pos: usize) -> PResult<()> {
-        let dashes = strings::index_of(&self.src[self.pos..], b"--").map(|i| self.pos + i);
-        self.skip_dropped(dashes.unwrap_or(self.src.len()))?;
-        match dashes {
-            None => Err(self.err(start_pos, "Unterminated comment")),
-            Some(d) if self.peek_at(d + 2) == b'>' => {
-                self.pos = d + 3;
-                Ok(())
+        loop {
+            match self.peek() {
+                _ if self.at_end() => return Err(self.err(start_pos, "Unterminated comment")),
+                b'-' if self.peek_at(self.pos + 1) == b'-' => {
+                    if self.peek_at(self.pos + 2) != b'>' {
+                        return Err(self.err(self.here(), "'--' is not allowed inside a comment"));
+                    }
+                    self.pos += 3;
+                    return Ok(());
+                }
+                c if c >= 0x80 => self.pos += self.check_non_ascii_char()?,
+                c if c < 0x20 && !is_ws(c) => return Err(self.err_invalid_char()),
+                _ => self.pos += 1,
             }
-            Some(_) => Err(self.err(self.here(), "'--' is not allowed inside a comment")),
         }
     }
 
@@ -1523,49 +1345,20 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 "Expected whitespace or '?>' after the processing instruction target but found",
             ));
         }
-        let close = strings::index_of(&self.src[self.pos..], b"?>").map(|i| self.pos + i);
-        self.skip_dropped(close.unwrap_or(self.src.len()))?;
-        match close {
-            None => Err(self.err(start_pos, "Unterminated processing instruction")),
-            Some(end) => {
-                self.pos = end + 2;
-                Ok(false)
-            }
-        }
-    }
-
-    /// The body of a CDATA section after `<![CDATA[`, appended to `out` with
-    /// line ends normalized; the cursor ends after `]]>`.
-    fn scan_cdata(&mut self, start_pos: usize, out: &mut ArenaVec<'a, u8>) -> PResult<()> {
-        let close = strings::index_of(&self.src[self.pos..], b"]]>").map(|i| self.pos + i);
-        let limit = close.unwrap_or(self.src.len());
         loop {
-            let stop = self.next_stop(STOP_SKIPPED).min(limit);
-            out.extend_from_slice(&self.src[self.pos..stop]);
-            self.pos = stop;
-            if stop >= limit {
-                break;
-            }
             match self.peek() {
-                b'\r' if self.in_document() => {
-                    out.push(b'\n');
-                    self.pos += 1;
-                    if self.peek() == b'\n' {
-                        self.pos += 1;
-                    }
+                _ if self.at_end() => {
+                    return Err(self.err(start_pos, "Unterminated processing instruction"));
                 }
-                c if (c < 0x20 && !is_ws(c)) || c >= 0x80 => return Err(self.err_at_entry(c)),
-                c => {
-                    out.push(c);
-                    self.pos += 1;
+                b'?' if self.peek_at(self.pos + 1) == b'>' => {
+                    self.pos += 2;
+                    return Ok(false);
                 }
+                c if c >= 0x80 => self.pos += self.check_non_ascii_char()?,
+                c if c < 0x20 && !is_ws(c) => return Err(self.err_invalid_char()),
+                _ => self.pos += 1,
             }
         }
-        if close.is_none() {
-            return Err(self.err(start_pos, "Unterminated CDATA section"));
-        }
-        self.pos = limit + 3;
-        Ok(())
     }
 
     // ── tokens: markup ─────────────────────────────────────────────────────
@@ -1573,7 +1366,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// The next token anywhere outside element content. Whitespace between
     /// tokens is consumed here and reported as `Token::spaced`; a quoted
     /// literal is read the way `literal` says.
-    fn next(&mut self, literal: Literal) -> PResult<()> {
+    fn next(&mut self, literal: Literal) -> PResult<Token<'a>> {
         let mut spaced = false;
         let (kind, pos) = loop {
             let c = self.peek();
@@ -1595,65 +1388,62 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     self.pos += 1;
                     spaced = true;
                 }
-                b'<' => {
-                    self.tag_degraded &= !self.in_document();
-                    match self.peek_at(self.pos + 1) {
-                        b'?' => {
-                            self.pos += 2;
-                            if self.scan_pi(pos)? {
-                                break (Kind::XmlDecl, pos);
-                            }
-                            break (Kind::Pi, pos);
+                b'<' => match self.peek_at(self.pos + 1) {
+                    b'?' => {
+                        self.pos += 2;
+                        if self.scan_pi(pos)? {
+                            break (Kind::XmlDecl, pos);
                         }
-                        b'/' => {
-                            self.pos += 2;
-                            let name =
-                                self.scan_name("Expected an element name after '</' but found")?;
-                            break (Kind::EndTag(name), pos);
-                        }
-                        b'!' => {
-                            if self.starts_with(b"<!--") {
-                                self.pos += 4;
-                                self.scan_comment(pos)?;
-                                break (Kind::Comment, pos);
-                            }
-                            const OPENERS: [(&[u8], DeclKind); 5] = [
-                                (b"<!DOCTYPE", DeclKind::Doctype),
-                                (b"<!ELEMENT", DeclKind::Element),
-                                (b"<!ATTLIST", DeclKind::Attlist),
-                                (b"<!ENTITY", DeclKind::Entity),
-                                (b"<!NOTATION", DeclKind::Notation),
-                            ];
-                            if let Some(&(opener, kind)) =
-                                OPENERS.iter().find(|(opener, _)| self.starts_with(opener))
-                            {
-                                self.pos += opener.len();
-                                break (Kind::Decl(kind), pos);
-                            }
-                            if self.starts_with(b"<![CDATA[") {
-                                return Err(
-                                    self.err(pos, "CDATA sections are only allowed inside elements")
-                                );
-                            }
-                            if self.starts_with(b"<![") {
-                                return Err(self.err(
-                                    pos,
-                                    "Conditional sections are only allowed in the external DTD subset",
-                                ));
-                            }
-                            return Err(self.err(pos, "'<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration"));
-                        }
-                        _ => {
-                            self.pos += 1;
-                            let name =
-                                self.scan_name("Expected an element name after '<' but found")?;
-                            break (Kind::StartTag(name), pos);
-                        }
+                        break (Kind::Pi, pos);
                     }
-                }
+                    b'/' => {
+                        self.pos += 2;
+                        let name =
+                            self.scan_name("Expected an element name after '</' but found")?;
+                        break (Kind::EndTag(name), pos);
+                    }
+                    b'!' => {
+                        if self.starts_with(b"<!--") {
+                            self.pos += 4;
+                            self.scan_comment(pos)?;
+                            break (Kind::Comment, pos);
+                        }
+                        const OPENERS: [(&[u8], DeclKind); 5] = [
+                            (b"<!DOCTYPE", DeclKind::Doctype),
+                            (b"<!ELEMENT", DeclKind::Element),
+                            (b"<!ATTLIST", DeclKind::Attlist),
+                            (b"<!ENTITY", DeclKind::Entity),
+                            (b"<!NOTATION", DeclKind::Notation),
+                        ];
+                        if let Some(&(opener, kind)) =
+                            OPENERS.iter().find(|(opener, _)| self.starts_with(opener))
+                        {
+                            self.pos += opener.len();
+                            break (Kind::Decl(kind), pos);
+                        }
+                        if self.starts_with(b"<![CDATA[") {
+                            return Err(
+                                self.err(pos, "CDATA sections are only allowed inside elements")
+                            );
+                        }
+                        if self.starts_with(b"<![") {
+                            return Err(self.err(
+                                pos,
+                                "Conditional sections are only allowed in the external DTD subset",
+                            ));
+                        }
+                        return Err(self.err(pos, "'<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration"));
+                    }
+                    _ => {
+                        self.pos += 1;
+                        let name =
+                            self.scan_name("Expected an element name after '<' but found")?;
+                        break (Kind::StartTag(name), pos);
+                    }
+                },
                 b'"' | b'\'' => {
                     self.pos += 1;
-                    let value = match literal {
+                    let (value, is_ascii) = match literal {
                         Literal::None => break (Kind::Unexpected(u32::from(c)), pos),
                         Literal::AttValue { collapse } => self.scan_att_value(c, collapse)?,
                         Literal::EntityValue => self.scan_entity_value(c)?,
@@ -1661,7 +1451,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                             self.scan_simple_literal(c, pos, literal)?
                         }
                     };
-                    break (Kind::Literal(value), pos);
+                    break (Kind::Literal { value, is_ascii }, pos);
                 }
                 b'=' => {
                     self.pos += 1;
@@ -1669,7 +1459,6 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 }
                 b'>' => {
                     self.pos += 1;
-                    self.tag_degraded &= !self.in_document();
                     break (Kind::Gt, pos);
                 }
                 b'/' => {
@@ -1678,7 +1467,6 @@ impl<'a, 'log> Scanner<'a, 'log> {
                         return Err(self.err_here("Expected '>' after '/' but found"));
                     }
                     self.pos += 1;
-                    self.tag_degraded &= !self.in_document();
                     break (Kind::SlashGt, pos);
                 }
                 b'(' => {
@@ -1759,91 +1547,12 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 },
             }
         };
-        self.tok = Token {
+        Ok(Token {
             kind,
             pos,
             frame: self.frame_id,
             spaced,
-        };
-        Ok(())
-    }
-
-    // ── tags: the fast path ────────────────────────────────────────────────
-
-    /// One step through a start tag in the document entity, straight off the
-    /// bytes: the end of the tag, or an attribute's `S Name Eq` and opening
-    /// quote (the cursor is left after the quote). Anything else — which
-    /// includes everything that is an error — is `Slow` with the cursor
-    /// unchanged, for the token path to read and report.
-    #[inline(always)]
-    fn tag_step(&mut self) -> TagStep<'a> {
-        let src = self.src;
-        let at = |p: usize| if p < src.len() { src[p] } else { 0 };
-        let mut p = self.pos;
-        let unspaced = p;
-        while is_ws(at(p)) {
-            p += 1;
-        }
-        match at(p) {
-            b'>' => {
-                self.pos = p + 1;
-                self.tag_degraded = false;
-                TagStep::End { empty: false }
-            }
-            b'/' if at(p + 1) == b'>' => {
-                self.pos = p + 2;
-                self.tag_degraded = false;
-                TagStep::End { empty: true }
-            }
-            c if p > unspaced && is_name_start_ascii(c) => {
-                let name_start = p;
-                p += 1;
-                while is_name_char_ascii(at(p)) {
-                    p += 1;
-                }
-                if at(p) >= 0x80 {
-                    return TagStep::Slow;
-                }
-                let name = &src[name_start..p];
-                while is_ws(at(p)) {
-                    p += 1;
-                }
-                if at(p) != b'=' {
-                    return TagStep::Slow;
-                }
-                p += 1;
-                while is_ws(at(p)) {
-                    p += 1;
-                }
-                match at(p) {
-                    quote @ (b'"' | b'\'') => {
-                        self.pos = p + 1;
-                        TagStep::Attr {
-                            name,
-                            pos: name_start,
-                            quote,
-                        }
-                    }
-                    _ => TagStep::Slow,
-                }
-            }
-            _ => TagStep::Slow,
-        }
-    }
-
-    /// Consumes `S? '>'` if that is what comes next.
-    #[inline(always)]
-    fn take_gt(&mut self) -> bool {
-        let mut p = self.pos;
-        while p < self.src.len() && is_ws(self.src[p]) {
-            p += 1;
-        }
-        if p < self.src.len() && self.src[p] == b'>' {
-            self.pos = p + 1;
-            self.tag_degraded &= !self.in_document();
-            return true;
-        }
-        false
+        })
     }
 
     // ── tokens: element content ────────────────────────────────────────────
@@ -1851,13 +1560,14 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// The next token inside an element: one maximal `Text` run (CDATA
     /// sections, references and included entities folded in, comments and
     /// processing instructions dropped), a `StartTag` or `EndTag`, or `Eof`.
-    fn next_content(&mut self) -> PResult<()> {
+    fn next_content(&mut self) -> PResult<Token<'a>> {
         // The run borrows `src[start..pos]` while it is a plain slice of
         // one frame; the first divergence copies it into `buf`, after which
         // everything is appended to `buf` and `start` is kept at `pos`.
         let mut start = self.pos;
         let text_pos = self.here();
         let mut buf: Option<ArenaVec<'a, u8>> = None;
+        let mut is_ascii = true;
 
         // Whether any text has been collected so far.
         macro_rules! have_text {
@@ -1869,35 +1579,14 @@ impl<'a, 'log> Scanner<'a, 'log> {
             };
         }
         // Moves the borrowed run into `buf` (creating it) before the cursor
-        // skips non-text bytes or changes frame. Once `buf` exists, every
-        // arm keeps `start == pos`.
+        // skips non-text bytes or changes frame.
         macro_rules! flush {
             () => {
                 Self::materialize(self.bump, self.src, start, self.pos, &mut buf)
             };
         }
-        // An index entry that is ordinary character data in this context.
-        macro_rules! data_byte {
-            ($c:expr) => {{
-                if let Some(b) = buf.as_mut() {
-                    b.push($c);
-                    start = self.pos + 1;
-                }
-                self.pos += 1;
-            }};
-        }
 
         loop {
-            // Ordinary character data up to the next byte one of the arms
-            // below has to see.
-            let stop = self.next_stop(STOP_CONTENT);
-            if stop != self.pos {
-                self.pos = stop;
-                if let Some(b) = buf.as_mut() {
-                    b.extend_from_slice(&self.src[start..self.pos]);
-                    start = self.pos;
-                }
-            }
             let c = self.peek();
             match c {
                 _ if self.at_end() => {
@@ -1908,19 +1597,16 @@ impl<'a, 'log> Scanner<'a, 'log> {
                         continue;
                     }
                     if have_text!() {
-                        self.finish_text(start, buf, text_pos);
-                        return Ok(());
+                        return Ok(self.finish_text(start, buf, is_ascii, text_pos));
                     }
-                    self.tok = Token {
+                    return Ok(Token {
                         kind: Kind::Eof(self.frame_entity.map(|(name, _)| name)),
                         pos: self.here(),
                         frame: self.frame_id,
                         spaced: false,
-                    };
-                    return Ok(());
+                    });
                 }
                 b'<' => {
-                    self.tag_degraded &= !self.in_document();
                     let pos = self.here();
                     let next = self.peek_at(self.pos + 1);
                     if next == b'!' && self.starts_with(b"<!--") {
@@ -1929,23 +1615,39 @@ impl<'a, 'log> Scanner<'a, 'log> {
                         self.scan_comment(pos)?;
                         start = self.pos;
                     } else if next == b'!' && self.starts_with(b"<![CDATA[") {
-                        let mut b = match buf.take() {
-                            Some(mut b) => {
-                                b.extend_from_slice(&self.src[start..self.pos]);
-                                b
-                            }
-                            None => {
-                                let mut b = ArenaVec::with_capacity_in(
-                                    self.pos - start + 32,
-                                    self.bump,
-                                );
-                                b.extend_from_slice(&self.src[start..self.pos]);
-                                b
-                            }
-                        };
+                        let b = flush!();
                         self.pos += 9;
-                        self.scan_cdata(pos, &mut b)?;
-                        buf = Some(b);
+                        loop {
+                            let c = self.peek();
+                            match c {
+                                _ if self.at_end() => {
+                                    return Err(self.err(pos, "Unterminated CDATA section"));
+                                }
+                                b']' if self.starts_with(b"]]>") => {
+                                    self.pos += 3;
+                                    break;
+                                }
+                                b'\r' if self.frame_kind == FrameKind::Document => {
+                                    b.push(b'\n');
+                                    self.pos += 1;
+                                    if self.peek() == b'\n' {
+                                        self.pos += 1;
+                                    }
+                                }
+                                _ => {
+                                    let len = if c >= 0x80 {
+                                        is_ascii = false;
+                                        self.check_non_ascii_char()?
+                                    } else if c < 0x20 && !is_ws(c) {
+                                        return Err(self.err_invalid_char());
+                                    } else {
+                                        1
+                                    };
+                                    b.extend_from_slice(&self.src[self.pos..self.pos + len]);
+                                    self.pos += len;
+                                }
+                            }
+                        }
                         start = self.pos;
                     } else if next == b'?' {
                         flush!();
@@ -1955,8 +1657,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                         start = self.pos;
                     } else if have_text!() {
                         // A tag ends the run; leave it for the next call.
-                        self.finish_text(start, buf, text_pos);
-                        return Ok(());
+                        return Ok(self.finish_text(start, buf, is_ascii, text_pos));
                     } else if next == b'!' {
                         return Err(self.err(pos, "Expected a comment or CDATA section after '<!'"));
                     } else {
@@ -1972,13 +1673,12 @@ impl<'a, 'log> Scanner<'a, 'log> {
                                 self.scan_name("Expected an element name after '<' but found")?,
                             )
                         };
-                        self.tok = Token {
+                        return Ok(Token {
                             kind,
                             pos,
                             frame,
                             spaced: false,
-                        };
-                        return Ok(());
+                        });
                     }
                 }
                 b'&' => {
@@ -1988,7 +1688,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     if self.peek() == b'#' {
                         self.pos += 1;
                         let cp = self.scan_char_ref(ref_pos)?;
-                        Self::push_code_point(b, cp);
+                        Self::push_code_point(b, cp, &mut is_ascii);
                         start = self.pos;
                     } else {
                         let name = self
@@ -1998,23 +1698,16 @@ impl<'a, 'log> Scanner<'a, 'log> {
                             Resolved::Text(text) => {
                                 self.push_frame(text, FrameKind::Content, (name, false), ref_pos)?
                             }
-                            Resolved::Unexpanded => Self::push_reference(b, name),
+                            Resolved::Unexpanded => Self::push_reference(b, name, &mut is_ascii),
                         }
                         start = self.pos;
                     }
                 }
-                b'>' => {
-                    if self.pos >= 2 && &self.src[self.pos - 2..self.pos] == b"]]" {
-                        let at = if self.in_document() {
-                            self.pos - 2
-                        } else {
-                            self.here()
-                        };
-                        return Err(
-                            self.err(at, "']]>' is only allowed as the end of a CDATA section")
-                        );
-                    }
-                    data_byte!(c);
+                b']' if self.starts_with(b"]]>") => {
+                    return Err(self.err(
+                        self.here(),
+                        "']]>' is only allowed as the end of a CDATA section",
+                    ));
                 }
                 b'\r' if self.frame_kind == FrameKind::Document => {
                     flush!().push(b'\n');
@@ -2024,13 +1717,44 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     }
                     start = self.pos;
                 }
-                b'\r' => data_byte!(c),
-                _ => return Err(self.err_at_entry(c)),
+                _ if c < 0x20 && !is_ws(c) => return Err(self.err_invalid_char()),
+                _ => {
+                    // A run of ordinary character data up to the next byte
+                    // that needs one of the arms above.
+                    let run_start = self.pos;
+                    loop {
+                        let c = self.peek();
+                        if c >= 0x80 {
+                            is_ascii = false;
+                            self.pos += self.check_non_ascii_char()?;
+                        } else if c == b'<'
+                            || c == b'&'
+                            || (c < 0x20 && !is_ws(c))
+                            || (c == b']' && self.starts_with(b"]]>"))
+                            || (c == b'\r' && self.frame_kind == FrameKind::Document)
+                            || (c == 0 && self.at_end())
+                        {
+                            break;
+                        } else {
+                            self.pos += 1;
+                        }
+                    }
+                    if let Some(b) = buf.as_mut() {
+                        b.extend_from_slice(&self.src[run_start..self.pos]);
+                        start = self.pos;
+                    }
+                }
             }
         }
     }
 
-    fn finish_text(&mut self, start: usize, buf: Option<ArenaVec<'a, u8>>, pos: usize) {
+    fn finish_text(
+        &mut self,
+        start: usize,
+        buf: Option<ArenaVec<'a, u8>>,
+        is_ascii: bool,
+        pos: usize,
+    ) -> Token<'a> {
         let text: &'a [u8] = match buf {
             Some(mut b) => {
                 b.extend_from_slice(&self.src[start..self.pos]);
@@ -2038,451 +1762,213 @@ impl<'a, 'log> Scanner<'a, 'log> {
             }
             None => &self.src[start..self.pos],
         };
-        self.tok = Token {
-            kind: Kind::Text(text),
+        Token {
+            kind: Kind::Text { text, is_ascii },
             pos,
             frame: self.frame_id,
             spaced: false,
-        };
+        }
     }
 }
 
-// ── output: rows on a JsonTape ────────────────────────────────────────────
+// ── output sinks ────────────────────────────────────────────────────────────
+
+#[derive(Copy, Clone)]
+struct Attribute<'a> {
+    name: &'a [u8],
+    value: &'a [u8],
+    is_ascii: bool,
+}
 
 /// Receives the document structure from the parser — attributes already
-/// deduplicated, normalized and defaulted — and builds the rows.
+/// deduplicated, normalized and defaulted — and builds the `Expr`.
 trait Sink<'a> {
-    /// `begin_element`, any number of `attribute`s, `end_attributes`; then
-    /// content (`text` and child elements); then `end_element`.
-    fn begin_element(&mut self, name: &'a [u8], loc: Loc);
-    fn attribute(&mut self, name: &'a [u8], value: &'a [u8]);
-    fn text(&mut self, text: &'a [u8], loc: Loc);
+    fn start_element(&mut self, name: &'a [u8], attributes: &[Attribute<'a>], loc: Loc);
+    fn text(&mut self, text: &'a [u8], is_ascii: bool, loc: Loc);
     fn end_element(&mut self);
     /// Called once, after the root element has ended.
     fn finish(&mut self) -> Expr;
 }
 
-/// The document's `E::JsonTape` plus the scratch stacks rows are staged on
-/// until their object or array is complete (a node's rows are contiguous on
-/// the tape, so they can only be appended once all of them are known).
-struct Tape<'a> {
-    tape: core::ptr::NonNull<E::JsonTape>,
-    bump: &'a Bump,
-    props: Vec<E::PropertyJSON>,
-    prop_locs: Vec<Loc>,
-    items: Vec<E::JsonValue>,
-    item_locs: Vec<Loc>,
-    /// `{}` and `[]` are immutable and carry no data, so one row of each
-    /// serves every empty object / array in the document.
-    empty_object: Option<StoreRef<E::ObjectJSON>>,
-    empty_array: Option<StoreRef<E::ArrayJSON>>,
+fn string_expr(bump: &Bump, text: &[u8], is_ascii: bool, loc: Loc) -> Expr {
+    if is_ascii {
+        Expr::init(E::String::init(text), loc)
+    } else {
+        Expr::init(E::String::init_re_encode_utf8(text, bump), loc)
+    }
 }
 
-impl<'a> Tape<'a> {
-    fn new_in(bump: &'a Bump, source_len: usize) -> Self {
-        let alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(bump));
-        let tape = bump.alloc(E::JsonTape::empty_in(alloc));
-        // A first guess so typical documents do not regrow the tape (each
-        // growth step copies it); bounded so a huge text-heavy input does
-        // not reserve memory it will never use.
-        let rows = (source_len / 32).min(1 << 20);
-        tape.reserve(rows, rows / 2);
-        Tape {
-            tape: tape.root_ptr(),
-            bump,
-            props: Vec::with_capacity(rows / 4 + 16),
-            prop_locs: Vec::with_capacity(rows / 4 + 16),
-            items: Vec::with_capacity(rows / 8 + 16),
-            item_locs: Vec::with_capacity(rows / 8 + 16),
-            empty_object: None,
-            empty_array: None,
-        }
-    }
-
-    #[inline]
-    fn str(bytes: &[u8]) -> E::JsonValue {
-        E::JsonValue::String(E::Str::new(bytes))
-    }
-
-    #[inline]
-    fn push_prop(&mut self, key: &[u8], value: E::JsonValue, loc: Loc) {
-        self.props.push(E::PropertyJSON {
-            key: E::Str::new(key),
-            key_loc: loc,
-            value,
-        });
-        self.prop_locs.push(loc);
-    }
-
-    #[inline]
-    fn push_item(&mut self, value: E::JsonValue, loc: Loc) {
-        self.items.push(value);
-        self.item_locs.push(loc);
-    }
-
-    /// Moves the properties staged since `mark` to the tape as one object.
-    #[inline]
-    fn object_from(&mut self, mark: usize, loc: Loc) -> StoreRef<E::ObjectJSON> {
-        let empty = mark == self.props.len();
-        if empty && let Some(row) = self.empty_object {
-            return row;
-        }
-        let row = self.object_from_rows(mark, loc);
-        if empty {
-            self.empty_object = Some(row);
-        }
-        row
-    }
-
-    fn object_from_rows(&mut self, mark: usize, loc: Loc) -> StoreRef<E::ObjectJSON> {
-        // SAFETY: `tape` is the arena allocation's own pointer (`root_ptr`),
-        // written only through here, and the arena outlives the AST.
-        let tape = unsafe { self.tape.as_mut() };
-        let (first, count) = tape.append_props(&self.props[mark..], &self.prop_locs[mark..]);
-        self.props.truncate(mark);
-        self.prop_locs.truncate(mark);
-        // SAFETY: as above — the tape's own pointer, and it outlives the node.
-        let object = unsafe { E::ObjectJSON::new(self.tape, first, count, false, loc) };
-        let Data::EObjectJSON(row) = Expr::init(object, loc).data else {
-            unreachable!()
-        };
-        row
-    }
-
-    /// Moves the items staged since `mark` to the tape as one array.
-    #[inline]
-    fn array_from(&mut self, mark: usize, loc: Loc) -> StoreRef<E::ArrayJSON> {
-        if mark == self.items.len() {
-            if let Some(empty) = self.empty_array {
-                return empty;
-            }
-            let row = Self::array_of(self.tape, &[], &[], loc);
-            self.empty_array = Some(row);
-            return row;
-        }
-        let row = Self::array_of(self.tape, &self.items[mark..], &self.item_locs[mark..], loc);
-        self.items.truncate(mark);
-        self.item_locs.truncate(mark);
-        row
-    }
-
-    fn array_of(
-        mut tape: core::ptr::NonNull<E::JsonTape>,
-        items: &[E::JsonValue],
-        locs: &[Loc],
-        loc: Loc,
-    ) -> StoreRef<E::ArrayJSON> {
-        // SAFETY: see `object_from`.
-        let (first, count) = unsafe { tape.as_mut() }.append_items(items, locs);
-        // SAFETY: see `object_from`.
-        let array = unsafe { E::ArrayJSON::new(tape, first, count, false, loc) };
-        let Data::EArrayJSON(row) = Expr::init(array, loc).data else {
-            unreachable!()
-        };
-        row
-    }
-
-    fn root(object: StoreRef<E::ObjectJSON>, loc: Loc) -> Expr {
-        Expr {
-            data: Data::EObjectJSON(object),
-            loc,
-        }
-    }
+fn name_expr(bump: &Bump, name: &[u8], loc: Loc) -> Expr {
+    string_expr(bump, name, name.is_ascii(), loc)
 }
 
 /// Builds `{ "@attr": .., child: .., "#text": .. }`; the mapping rules are
 /// documented on `Bun.XML.parse` in bun.d.ts.
 struct CompactSink<'a> {
-    tape: Tape<'a>,
+    bump: &'a Bump,
     stack: Vec<CompactFrame<'a>>,
-    /// The text runs of every open element, oldest first; each frame owns
-    /// the tail from its `text_mark`. Concatenated (if more than one
-    /// survives trimming) when the element ends.
-    text_runs: Vec<&'a [u8]>,
-    /// Recently built `@name` keys, direct-mapped by a cheap hash of the
-    /// name: attribute names repeat, their keys need not be rebuilt.
-    key_cache: [Option<E::Str>; KEY_CACHE_SIZE],
-    /// Scratch for `end_element`'s grouping of repeated child names.
-    group_of: Vec<u32>,
-    groups: Vec<Group>,
-    gathered: Vec<E::JsonValue>,
-    gathered_locs: Vec<Loc>,
-    group_index: HashMap<&'a [u8], u32>,
-    root: Option<(&'a [u8], E::JsonValue, Loc)>,
+    root: Option<(&'a [u8], Expr, Loc)>,
 }
 
-/// An open element. Its properties are staged on `Tape::props` from
-/// `props_mark`: the `@`-attributes, then one per child element as each one
-/// ends (repeats are folded when this element ends).
 struct CompactFrame<'a> {
     name: &'a [u8],
     loc: Loc,
-    attribute_count: u32,
-    props_mark: u32,
-    text_mark: u32,
+    /// The `@`-prefixed attribute properties, then one property per distinct
+    /// child element name in order of first occurrence.
+    object: E::Object,
+    /// The names behind the child properties (`object.properties[i +
+    /// attribute_count]` is `child_names[i]`), for grouping repeats.
+    child_names: ArenaVec<'a, &'a [u8]>,
+    attribute_count: usize,
+    /// `child_names` position by name, built once an element has more than
+    /// `LINEAR_CHILD_LIMIT` distinct children.
+    child_index: Option<HashMap<&'a [u8], u32>>,
+    text: TextAcc<'a>,
+    text_is_ascii: bool,
 }
 
-const KEY_CACHE_SIZE: usize = 64;
-
-#[inline]
-fn key_cache_slot(name: &[u8]) -> usize {
-    let n = name.len();
-    if n == 0 {
-        return 0;
-    }
-    (n.wrapping_mul(31) ^ (name[0] as usize).wrapping_mul(7) ^ (name[n - 1] as usize) ^ ((name[n / 2] as usize) << 2))
-        % KEY_CACHE_SIZE
-}
-
-struct Group {
-    /// Index of the name's first property in the frame's child run.
-    first: u32,
-    count: u32,
-    /// While gathering a repeated group: the next free slot of its run in
-    /// `CompactSink::gathered`.
-    cursor: u32,
-}
-
-/// Up to this many child properties, a repeat is found by comparing names
-/// pairwise; beyond it, through a hash map.
+/// Up to this many distinct child names, a repeat is found by comparing
+/// names pairwise; beyond it, through `CompactFrame::child_index`.
 const LINEAR_CHILD_LIMIT: usize = 16;
 
-impl<'a> CompactSink<'a> {
-    fn new(tape: Tape<'a>) -> Self {
-        CompactSink {
-            stack: Vec::with_capacity(64),
-            text_runs: Vec::with_capacity(tape.items.capacity()),
-            tape,
-            key_cache: [None; KEY_CACHE_SIZE],
-            group_of: Vec::new(),
-            groups: Vec::new(),
-            gathered: Vec::new(),
-            gathered_locs: Vec::new(),
-            group_index: HashMap::default(),
-            root: None,
-        }
-    }
-
-    /// The element's character data — the runs from `mark` — concatenated
-    /// and trimmed. Only whitespace that trimming removes is ever scanned,
-    /// and a single surviving run is borrowed, not copied.
-    #[inline]
-    fn take_text(&mut self, mark: usize) -> &'a [u8] {
-        let runs = &self.text_runs[mark..];
-        let text: &'a [u8] = match runs {
-            [] => b"",
-            [one] => trim_ws(one),
-            _ => self.join_text(mark),
+impl<'a> CompactFrame<'a> {
+    /// Adds a child element's value: the first occurrence of a name becomes
+    /// a property, a second turns that property into an array, later ones
+    /// append to it.
+    fn add_child(&mut self, bump: &'a Bump, name: &'a [u8], value: Expr) {
+        let existing = match &self.child_index {
+            Some(index) => index.get(name).map(|&i| i as usize),
+            None => self.child_names.iter().position(|&n| n == name),
         };
-        self.text_runs.truncate(mark);
-        text
-    }
-
-    #[cold]
-    fn join_text(&mut self, mark: usize) -> &'a [u8] {
-        let runs = &mut self.text_runs[mark..];
-        let mut first = 0;
-        let mut last = runs.len();
-        while first < last {
-            let t = trim_ws_start(runs[first]);
-            if t.is_empty() {
-                first += 1;
-            } else {
-                runs[first] = t;
-                break;
-            }
-        }
-        while last > first {
-            let t = trim_ws_end(runs[last - 1]);
-            if t.is_empty() {
-                last -= 1;
-            } else {
-                runs[last - 1] = t;
-                break;
-            }
-        }
-        match &runs[first..last] {
-            [] => b"",
-            [one] => one,
-            kept => {
-                let len = kept.iter().map(|r| r.len()).sum();
-                let mut buf: ArenaVec<'a, u8> = ArenaVec::with_capacity_in(len, self.tape.bump);
-                for r in kept {
-                    buf.extend_from_slice(r);
+        let Some(i) = existing else {
+            if let Some(index) = &mut self.child_index {
+                index.insert(name, self.child_names.len() as u32);
+            } else if self.child_names.len() == LINEAR_CHILD_LIMIT {
+                let mut index = HashMap::default();
+                for (i, &n) in self.child_names.iter().enumerate() {
+                    index.insert(n, i as u32);
                 }
-                buf.into_bump_slice()
+                index.insert(name, LINEAR_CHILD_LIMIT as u32);
+                self.child_index = Some(index);
             }
-        }
-    }
-
-    /// Folds the child properties staged from `mark` so each name keeps one
-    /// property, in order of first occurrence, a repeated name holding the
-    /// array of its values.
-    #[inline]
-    fn fold_repeats(&mut self, mark: usize) {
-        let children = &self.tape.props[mark..];
-        let n = children.len();
-        if n <= LINEAR_CHILD_LIMIT {
-            // Usually every name is distinct: settle that without any
-            // bookkeeping first.
-            let mut repeated = false;
-            'scan: for i in 1..n {
-                let name = children[i].key.slice();
-                for prev in &children[..i] {
-                    if name_eq(prev.key.slice(), name) {
-                        repeated = true;
-                        break 'scan;
-                    }
-                }
-            }
-            if !repeated {
-                return;
-            }
-        }
-        self.fold_repeats_slow(mark);
-    }
-
-    #[cold]
-    fn fold_repeats_slow(&mut self, mark: usize) {
-        let children = &self.tape.props[mark..];
-        let n = children.len();
-        // Group by name.
-        self.groups.clear();
-        self.group_of.clear();
-        if n <= LINEAR_CHILD_LIMIT {
-            'next: for (i, child) in children.iter().enumerate() {
-                let name = child.key.slice();
-                for (g, group) in self.groups.iter_mut().enumerate() {
-                    if name_eq(children[group.first as usize].key.slice(), name) {
-                        group.count += 1;
-                        self.group_of.push(g as u32);
-                        continue 'next;
-                    }
-                }
-                self.group_of.push(self.groups.len() as u32);
-                self.groups.push(Group {
-                    first: i as u32,
-                    count: 1,
-                    cursor: 0,
-                });
-            }
-        } else {
-            let index = &mut self.group_index;
-            index.clear();
-            for (i, child) in children.iter().enumerate() {
-                let next = self.groups.len() as u32;
-                let g = *index.entry(child.key.slice()).or_insert_with(|| next);
-                if g == next {
-                    self.groups.push(Group {
-                        first: i as u32,
-                        count: 0,
-                        cursor: 0,
-                    });
-                }
-                self.groups[g as usize].count += 1;
-                self.group_of.push(g);
-            }
-        }
-        if self.groups.len() == n {
+            self.child_names.push(name);
+            self.object
+                .append_property(name_expr(bump, name, value.loc), value);
             return;
-        }
-        // Lay the values of repeated names out group by group and cut one
-        // array per repeated group.
-        let mut next = 0u32;
-        for g in self.groups.iter_mut() {
-            g.cursor = next;
-            if g.count > 1 {
-                next += g.count;
+        };
+        let prop = &mut self.object.properties.slice_mut()[self.attribute_count + i];
+        let first = prop.value.expect("child property has a value");
+        match first.data {
+            ast::expr::Data::EArray(mut array) => {
+                array
+                    .push(bump, value)
+                    .expect("infallible: AstAlloc append");
             }
-        }
-        self.gathered.clear();
-        self.gathered.resize(next as usize, E::JsonValue::Null);
-        self.gathered_locs.clear();
-        self.gathered_locs.resize(next as usize, Loc::EMPTY);
-        for (i, &g) in self.group_of.iter().enumerate() {
-            let group = &mut self.groups[g as usize];
-            if group.count > 1 {
-                self.gathered[group.cursor as usize] = children[i].value;
-                self.gathered_locs[group.cursor as usize] = self.tape.prop_locs[mark + i];
-                group.cursor += 1;
-            }
-        }
-        // Compact the run to one property per group (a group's first
-        // property is never behind its final slot, so this is in place).
-        for (slot, g) in self.groups.iter().enumerate() {
-            let mut prop = self.tape.props[mark + g.first as usize];
-            if g.count > 1 {
-                let run = (g.cursor - g.count) as usize..g.cursor as usize;
-                prop.value = E::JsonValue::Array(Tape::array_of(
-                    self.tape.tape,
-                    &self.gathered[run.clone()],
-                    &self.gathered_locs[run],
-                    prop.key_loc,
+            _ => {
+                let mut items = ast::ExprNodeList::init_capacity(2);
+                items.push(first);
+                items.push(value);
+                prop.value = Some(Expr::init(
+                    E::Array {
+                        items,
+                        ..Default::default()
+                    },
+                    first.loc,
                 ));
             }
-            self.tape.props[mark + slot] = prop;
-            self.tape.prop_locs[mark + slot] = prop.key_loc;
         }
-        self.tape.props.truncate(mark + self.groups.len());
-        self.tape.prop_locs.truncate(mark + self.groups.len());
+    }
+}
+
+/// All character data of one element, concatenated. A single borrowed run
+/// (the common case) is never copied.
+enum TextAcc<'a> {
+    Empty,
+    One(&'a [u8]),
+    Many(ArenaVec<'a, u8>),
+}
+
+impl<'a> CompactSink<'a> {
+    fn new(bump: &'a Bump) -> Self {
+        CompactSink {
+            bump,
+            stack: Vec::new(),
+            root: None,
+        }
     }
 }
 
 impl<'a> Sink<'a> for CompactSink<'a> {
-    #[inline]
-    fn begin_element(&mut self, name: &'a [u8], loc: Loc) {
+    fn start_element(&mut self, name: &'a [u8], attributes: &[Attribute<'a>], loc: Loc) {
+        let mut object = E::Object {
+            properties: G::PropertyList::init_capacity(attributes.len()),
+            ..Default::default()
+        };
+        for attr in attributes {
+            let mut key: ArenaVec<'a, u8> =
+                ArenaVec::with_capacity_in(attr.name.len() + 1, self.bump);
+            key.push(b'@');
+            key.extend_from_slice(attr.name);
+            object.append_property(
+                name_expr(self.bump, key.into_bump_slice(), loc),
+                string_expr(self.bump, attr.value, attr.is_ascii, loc),
+            );
+        }
         self.stack.push(CompactFrame {
             name,
             loc,
-            attribute_count: 0,
-            props_mark: self.tape.props.len() as u32,
-            text_mark: self.text_runs.len() as u32,
+            object,
+            child_names: ArenaVec::new_in(self.bump),
+            attribute_count: attributes.len(),
+            child_index: None,
+            text: TextAcc::Empty,
+            text_is_ascii: true,
         });
     }
 
-    #[inline]
-    fn attribute(&mut self, name: &'a [u8], value: &'a [u8]) {
-        let frame = self.stack.last_mut().expect("attribute outside a start tag");
-        frame.attribute_count += 1;
-        let loc = frame.loc;
-        let slot = key_cache_slot(name);
-        let key = match self.key_cache[slot] {
-            Some(key) if name_eq(&key.slice()[1..], name) => key,
-            _ => {
-                // SAFETY: see `Tape::object_from`.
-                let key = unsafe { self.tape.tape.as_mut() }.alloc_str_join(b"@", name);
-                self.key_cache[slot] = Some(key);
-                key
+    fn text(&mut self, text: &'a [u8], is_ascii: bool, _loc: Loc) {
+        let frame = self.stack.last_mut().expect("text outside an element");
+        frame.text_is_ascii &= is_ascii;
+        frame.text = match core::mem::replace(&mut frame.text, TextAcc::Empty) {
+            TextAcc::Empty => TextAcc::One(text),
+            TextAcc::One(first) => {
+                let mut buf: ArenaVec<'a, u8> =
+                    ArenaVec::with_capacity_in(first.len() + text.len(), self.bump);
+                buf.extend_from_slice(first);
+                buf.extend_from_slice(text);
+                TextAcc::Many(buf)
+            }
+            TextAcc::Many(mut buf) => {
+                buf.extend_from_slice(text);
+                TextAcc::Many(buf)
             }
         };
-        self.tape.push_prop(key.slice(), Tape::str(value), loc);
-    }
-
-    #[inline]
-    fn text(&mut self, text: &'a [u8], _loc: Loc) {
-        self.text_runs.push(text);
     }
 
     fn end_element(&mut self) {
         let frame = self.stack.pop().expect("end_element without start_element");
-        let trimmed = self.take_text(frame.text_mark as usize);
-        let props_mark = frame.props_mark as usize;
-        let children_mark = props_mark + frame.attribute_count as usize;
-        let has_children = self.tape.props.len() > children_mark;
-        // No attributes and no child elements: the element is its text.
-        let value = if frame.attribute_count == 0 && !has_children {
-            Tape::str(trimmed)
-        } else {
-            if self.tape.props.len() > children_mark + 1 {
-                self.fold_repeats(children_mark);
-            }
-            if !trimmed.is_empty() {
-                self.tape.push_prop(b"#text", Tape::str(trimmed), frame.loc);
-            }
-            E::JsonValue::Object(self.tape.object_from(props_mark, frame.loc))
+        let bump = self.bump;
+        let text: &'a [u8] = match frame.text {
+            TextAcc::Empty => b"",
+            TextAcc::One(one) => one,
+            TextAcc::Many(buf) => buf.into_bump_slice(),
         };
-        match self.stack.last() {
-            Some(_) => self.tape.push_prop(frame.name, value, frame.loc),
+        let trimmed = strings::trim(text, XML_WS);
+        // No attributes and no child elements: the element is its text.
+        let value = if frame.object.properties.is_empty() {
+            string_expr(bump, trimmed, frame.text_is_ascii, frame.loc)
+        } else {
+            let mut object = frame.object;
+            if !trimmed.is_empty() {
+                object.append_property(
+                    name_expr(bump, b"#text", frame.loc),
+                    string_expr(bump, trimmed, frame.text_is_ascii, frame.loc),
+                );
+            }
+            Expr::init(object, frame.loc)
+        };
+        match self.stack.last_mut() {
+            Some(parent) => parent.add_child(bump, frame.name, value),
             None => self.root = Some((frame.name, value, frame.loc)),
         }
     }
@@ -2492,83 +1978,99 @@ impl<'a> Sink<'a> for CompactSink<'a> {
             .root
             .take()
             .expect("finish before the root element ended");
-        let mark = self.tape.props.len();
-        self.tape.push_prop(name, value, loc);
-        Tape::root(self.tape.object_from(mark, loc), loc)
+        let mut object = E::Object::default();
+        object.append_property(name_expr(self.bump, name, loc), value);
+        Expr::init(object, loc)
     }
 }
 
 /// Builds `{ name, attributes: {..}, children: [..] }` per element; text
 /// children are strings, kept exactly (including whitespace-only runs).
 struct NodeSink<'a> {
-    tape: Tape<'a>,
+    bump: &'a Bump,
     stack: Vec<NodeFrame<'a>>,
-    root: Option<StoreRef<E::ObjectJSON>>,
+    root: Option<Expr>,
+    /// The three keys every node has, allocated once and shared (an `Expr` is
+    /// a copyable reference into the AST store; keys are only ever read).
+    keys: [Expr; 3],
 }
 
 struct NodeFrame<'a> {
     name: &'a [u8],
     loc: Loc,
-    /// The attributes are staged on `Tape::props` from here until the
-    /// element ends (nothing else of this element goes on `props`).
-    props_mark: u32,
-    children_mark: u32,
+    attributes: Expr,
+    children: ast::ExprNodeList,
 }
 
 impl<'a> NodeSink<'a> {
-    fn new(tape: Tape<'a>) -> Self {
+    fn new(bump: &'a Bump) -> Self {
         NodeSink {
-            tape,
+            bump,
             stack: Vec::new(),
             root: None,
+            keys: [b"name" as &[u8], b"attributes", b"children"]
+                .map(|key| Expr::init(E::String::init(key), Loc::EMPTY)),
         }
     }
 }
 
 impl<'a> Sink<'a> for NodeSink<'a> {
-    #[inline]
-    fn begin_element(&mut self, name: &'a [u8], loc: Loc) {
+    fn start_element(&mut self, name: &'a [u8], attributes: &[Attribute<'a>], loc: Loc) {
+        let mut object = E::Object {
+            properties: G::PropertyList::init_capacity(attributes.len()),
+            ..Default::default()
+        };
+        for attr in attributes {
+            object.append_property(
+                name_expr(self.bump, attr.name, loc),
+                string_expr(self.bump, attr.value, attr.is_ascii, loc),
+            );
+        }
         self.stack.push(NodeFrame {
             name,
             loc,
-            props_mark: self.tape.props.len() as u32,
-            children_mark: self.tape.items.len() as u32,
+            attributes: Expr::init(object, loc),
+            children: bun_alloc::AstAlloc::vec(),
         });
     }
 
-    #[inline]
-    fn attribute(&mut self, name: &'a [u8], value: &'a [u8]) {
-        let loc = self.stack.last().expect("attribute outside a start tag").loc;
-        self.tape.push_prop(name, Tape::str(value), loc);
-    }
-
-    fn text(&mut self, text: &'a [u8], loc: Loc) {
-        self.tape.push_item(Tape::str(text), loc);
+    fn text(&mut self, text: &'a [u8], is_ascii: bool, loc: Loc) {
+        let frame = self.stack.last_mut().expect("text outside an element");
+        frame
+            .children
+            .push(string_expr(self.bump, text, is_ascii, loc));
     }
 
     fn end_element(&mut self) {
         let frame = self.stack.pop().expect("end_element without start_element");
-        let attributes = self.tape.object_from(frame.props_mark as usize, frame.loc);
-        let children = self.tape.array_from(frame.children_mark as usize, frame.loc);
-        let mark = self.tape.props.len();
-        self.tape.push_prop(b"name", Tape::str(frame.name), frame.loc);
-        self.tape
-            .push_prop(b"attributes", E::JsonValue::Object(attributes), frame.loc);
-        self.tape
-            .push_prop(b"children", E::JsonValue::Array(children), frame.loc);
-        let node = self.tape.object_from(mark, frame.loc);
-        match self.stack.last() {
-            Some(_) => self.tape.push_item(E::JsonValue::Object(node), frame.loc),
+        let [name_key, attributes_key, children_key] = self.keys;
+        let mut object = E::Object {
+            properties: G::PropertyList::init_capacity(3),
+            ..Default::default()
+        };
+        object.append_property(name_key, name_expr(self.bump, frame.name, frame.loc));
+        object.append_property(attributes_key, frame.attributes);
+        object.append_property(
+            children_key,
+            Expr::init(
+                E::Array {
+                    items: frame.children,
+                    ..Default::default()
+                },
+                frame.loc,
+            ),
+        );
+        let node = Expr::init(object, frame.loc);
+        match self.stack.last_mut() {
+            Some(parent) => parent.children.push(node),
             None => self.root = Some(node),
         }
     }
 
     fn finish(&mut self) -> Expr {
-        let root = self
-            .root
+        self.root
             .take()
-            .expect("finish before the root element ended");
-        Tape::root(root, Loc { start: 0 })
+            .expect("finish before the root element ended")
     }
 }
 
@@ -2580,8 +2082,8 @@ impl<'a> Sink<'a> for NodeSink<'a> {
 struct AttDef<'a> {
     name: &'a [u8],
     cdata: bool,
-    /// The default, already normalized.
-    default: Option<&'a [u8]>,
+    /// The default and whether it is ASCII.
+    default: Option<(&'a [u8], bool)>,
 }
 
 /// The ATTLIST declarations for one element type, in declaration order (the
@@ -2606,33 +2108,26 @@ impl<'a> AttList<'a> {
 }
 
 /// Up to this many attributes on one tag, duplicates are found by comparing
-/// names pairwise (`Sink::has_attribute`); beyond it, through
-/// `Parser::attribute_names`.
+/// names pairwise; beyond it, through `Parser::attribute_names`.
 const LINEAR_ATTRIBUTE_LIMIT: usize = 8;
 
-/// Elements open at once. Parsing is iterative, so this is not about the
-/// native stack; it bounds memory on hostile input and keeps the (recursive)
-/// consumers of the result safe. `Bun.XML.parse` reports it as a `RangeError`.
-const MAX_DEPTH: usize = 100_000;
-
-/// Checks the grammar and the structural well-formedness constraints over
-/// the scanner's tokens (and, in the document entity, its fast paths),
-/// applies DTD information to attributes, and drives a `Sink`.
+/// Recursive descent over the scanner's tokens: checks the grammar and the
+/// structural well-formedness constraints, applies DTD information to
+/// attributes, and drives a `Sink`. Never reads source bytes.
 struct Parser<'a, 'log, S: Sink<'a>> {
     scanner: Scanner<'a, 'log>,
+    /// The current token.
+    tok: Token<'a>,
     /// Inside the document type declaration, for diagnostics.
     in_dtd: bool,
-    /// For the content-model parser, which does recurse.
     stack_check: StackCheck,
     sink: S,
     attlists: HashMap<&'a [u8], AttList<'a>>,
-    /// The open elements: name and the input frame the start tag was in.
-    open: Vec<(&'a [u8], u32)>,
-    /// The current start tag's attribute names: the first few in `first`,
-    /// and once there are more than `LINEAR_ATTRIBUTE_LIMIT`, all in `names`.
-    attribute_first: [&'a [u8]; LINEAR_ATTRIBUTE_LIMIT],
+    /// Scratch list reused for every start tag.
+    attributes: Vec<Attribute<'a>>,
+    /// Names in `attributes`, maintained only once a tag has more than
+    /// `LINEAR_ATTRIBUTE_LIMIT` of them.
     attribute_names: HashMap<&'a [u8], ()>,
-    attribute_count: usize,
 }
 
 impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
@@ -2669,34 +2164,29 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 needs_utf16_declaration: false,
                 content_start: 0,
                 encoding: options.encoding,
-                idx: None,
-                cursor: 0,
-                tok: Token {
-                    kind: Kind::Eof(None),
-                    pos: 0,
-                    frame: 0,
-                    spaced: false,
-                },
-                tag_degraded: false,
                 bump,
                 source,
                 log,
+            },
+            tok: Token {
+                kind: Kind::Eof(None),
+                pos: 0,
+                frame: 0,
+                spaced: false,
             },
             in_dtd: false,
             stack_check: StackCheck::init(),
             sink,
             attlists: HashMap::default(),
-            open: Vec::new(),
-            attribute_first: [b""; LINEAR_ATTRIBUTE_LIMIT],
+            attributes: Vec::new(),
             attribute_names: HashMap::default(),
-            attribute_count: 0,
         }
     }
 
     /// Nesting too deep to recurse into. The message is for the module
     /// loader's log; `Bun.XML.parse` throws a `RangeError` regardless.
     fn stack_overflow(&mut self) -> PErr {
-        let _ = self.scanner.err(self.scanner.tok.pos, "Nesting is too deep");
+        let _ = self.scanner.err(self.tok.pos, "Nesting is too deep");
         PErr::StackOverflow
     }
 
@@ -2707,55 +2197,53 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     }
 
     /// `advance`, saying how a quoted literal is to be read if one is next.
-    #[inline]
     fn advance_literal(&mut self, literal: Literal) -> PResult<()> {
-        self.scanner.next(literal)
+        self.tok = self.scanner.next(literal)?;
+        Ok(())
     }
 
-    #[inline]
     fn advance_content(&mut self) -> PResult<()> {
-        self.scanner.next_content()
+        self.tok = self.scanner.next_content()?;
+        Ok(())
     }
 
     /// "Expected {expected} but found {the current token}".
     fn unexpected(&mut self, expected: &str) -> PErr {
         // WFC: PEs in Internal Subset is the likeliest reason for a stray
         // reference inside a declaration, so say that instead.
-        if self.in_dtd && matches!(self.scanner.tok.kind, Kind::PeReference(_)) {
+        if self.in_dtd && matches!(self.tok.kind, Kind::PeReference(_)) {
             return self.scanner.err(
-                self.scanner.tok.pos,
+                self.tok.pos,
                 "Parameter entity references are not allowed inside markup declarations in the internal subset",
             );
         }
-        if let Kind::PercentName(name) = self.scanner.tok.kind {
+        if let Kind::PercentName(name) = self.tok.kind {
             return self.scanner.err_named(
-                self.scanner.tok.pos,
+                self.tok.pos,
                 "Expected ';' to end the parameter entity reference",
                 name,
                 "",
             );
         }
-        let tok = self.scanner.tok;
         self.scanner.err_fmt(
-            tok.pos,
-            format_args!("Expected {} but found {}", expected, tok.kind),
+            self.tok.pos,
+            format_args!("Expected {} but found {}", expected, self.tok.kind),
         )
     }
 
     /// Where the grammar has a required `S` before the current token.
     fn require_spaced(&mut self) -> PResult<()> {
-        if self.scanner.tok.spaced {
+        if self.tok.spaced {
             return Ok(());
         }
-        let tok = self.scanner.tok;
         Err(self.scanner.err_fmt(
-            tok.pos,
-            format_args!("Whitespace is required before {}", tok.kind),
+            self.tok.pos,
+            format_args!("Whitespace is required before {}", self.tok.kind),
         ))
     }
 
     fn expect_name(&mut self, expected: &str) -> PResult<&'a [u8]> {
-        match self.scanner.tok.kind {
+        match self.tok.kind {
             Kind::Name(name) => Ok(name),
             _ => Err(self.unexpected(expected)),
         }
@@ -2763,8 +2251,8 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
 
     /// The `>` ending a declaration or tag; returns the frame it came from.
     fn expect_gt(&mut self, expected: &str) -> PResult<u32> {
-        match self.scanner.tok.kind {
-            Kind::Gt => Ok(self.scanner.tok.frame),
+        match self.tok.kind {
+            Kind::Gt => Ok(self.tok.frame),
             _ => Err(self.unexpected(expected)),
         }
     }
@@ -2780,17 +2268,15 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         if !validation_deferred {
             self.scanner.check_utf16_declaration()?;
             self.scanner.validate_utf8()?;
-            self.scanner.build_index();
         }
         self.advance()?;
-        let has_xml_decl = self.scanner.tok.kind == Kind::XmlDecl;
+        let has_xml_decl = self.tok.kind == Kind::XmlDecl;
         if has_xml_decl {
             self.parse_xml_decl()?;
         }
         if validation_deferred {
             self.scanner.check_utf16_declaration()?;
             self.scanner.validate_utf8()?;
-            self.scanner.build_index();
         }
         if has_xml_decl {
             self.advance()?;
@@ -2799,7 +2285,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         // prolog: Misc* (doctypedecl Misc*)?
         let mut seen_doctype = false;
         loop {
-            match self.scanner.tok.kind {
+            match self.tok.kind {
                 Kind::Comment | Kind::Pi => {}
                 Kind::Decl(DeclKind::Doctype) if !seen_doctype => {
                     seen_doctype = true;
@@ -2807,7 +2293,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 }
                 Kind::Decl(DeclKind::Doctype) => {
                     return Err(self.scanner.err(
-                        self.scanner.tok.pos,
+                        self.tok.pos,
                         "Only one document type declaration is allowed",
                     ));
                 }
@@ -2815,11 +2301,11 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 Kind::Eof(_) => {
                     return Err(self
                         .scanner
-                        .err(self.scanner.tok.pos, "XML document must have a root element"));
+                        .err(self.tok.pos, "XML document must have a root element"));
                 }
                 Kind::Decl(_) | Kind::PeReference(_) | Kind::Percent | Kind::PercentName(_) => {
                     return Err(self.scanner.err(
-                        self.scanner.tok.pos,
+                        self.tok.pos,
                         "Markup declarations and parameter-entity references are only allowed in the document type declaration",
                     ));
                 }
@@ -2828,24 +2314,23 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             self.advance()?;
         }
 
-        self.parse_tree()?;
+        self.parse_element()?;
 
         // Misc*
         loop {
             self.advance()?;
-            match self.scanner.tok.kind {
+            match self.tok.kind {
                 Kind::Comment | Kind::Pi => {}
                 Kind::Eof(_) => break,
                 Kind::StartTag(_) => {
                     return Err(self
                         .scanner
-                        .err(self.scanner.tok.pos, "Only one root element is allowed"));
+                        .err(self.tok.pos, "Only one root element is allowed"));
                 }
                 _ => {
-                    let tok = self.scanner.tok;
                     return Err(self.scanner.err_fmt(
-                        tok.pos,
-                        format_args!("Unexpected {} after the root element", tok.kind),
+                        self.tok.pos,
+                        format_args!("Unexpected {} after the root element", self.tok.kind),
                     ));
                 }
             }
@@ -2861,14 +2346,14 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         // VersionInfo. VersionNum ::= '1.' [0-9]+; a 1.x document other
         // than 1.0 is processed as 1.0 (§2.8, erratum E10).
         let Some((version, pos)) = self.parse_pseudo_attribute(b"version")? else {
-            return Err(match self.scanner.tok.kind {
+            return Err(match self.tok.kind {
                 Kind::Name(b"encoding" | b"standalone") => self.scanner.err(
-                    self.scanner.tok.pos,
+                    self.tok.pos,
                     "The XML declaration must start with version=\"1.0\"",
                 ),
                 Kind::Question => self
                     .scanner
-                    .err(self.scanner.tok.pos, "The XML declaration must specify the version"),
+                    .err(self.tok.pos, "The XML declaration must specify the version"),
                 _ => self.unexpected("version=\"1.0\" in the XML declaration"),
             });
         };
@@ -2918,16 +2403,16 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         }
 
         // S? '?>'
-        match self.scanner.tok.kind {
+        match self.tok.kind {
             Kind::Question => {
                 self.advance()?;
-                if self.scanner.tok.kind != Kind::Gt || self.scanner.tok.spaced {
+                if self.tok.kind != Kind::Gt || self.tok.spaced {
                     return Err(self.unexpected("'?>' to end the XML declaration"));
                 }
             }
             Kind::Name(name @ (b"version" | b"encoding" | b"standalone")) => {
                 return Err(self.scanner.err_named(
-                    self.scanner.tok.pos,
+                    self.tok.pos,
                     "Misplaced",
                     name,
                     " in the XML declaration (the order is version, encoding, standalone)",
@@ -2935,7 +2420,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             }
             Kind::Name(name) => {
                 return Err(self.scanner.err_named(
-                    self.scanner.tok.pos,
+                    self.tok.pos,
                     "Unexpected",
                     name,
                     " in the XML declaration (expected version, encoding or standalone)",
@@ -2944,7 +2429,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             Kind::Eof(_) => {
                 return Err(self
                     .scanner
-                    .err(self.scanner.tok.pos, "Unterminated XML declaration: expected '?>'"));
+                    .err(self.tok.pos, "Unterminated XML declaration: expected '?>'"));
             }
             _ => return Err(self.unexpected("'?>' to end the XML declaration")),
         }
@@ -2962,17 +2447,17 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         &mut self,
         name: &'static [u8],
     ) -> PResult<Option<(&'a [u8], usize)>> {
-        if self.scanner.tok.kind != Kind::Name(name) {
+        if self.tok.kind != Kind::Name(name) {
             return Ok(None);
         }
         self.require_spaced()?;
-        let pos = self.scanner.tok.pos;
+        let pos = self.tok.pos;
         self.advance()?;
-        if self.scanner.tok.kind != Kind::Eq {
+        if self.tok.kind != Kind::Eq {
             return Err(self.unexpected("'=' after the name in the XML declaration"));
         }
         self.advance_literal(Literal::Plain)?;
-        let Kind::Literal(value) = self.scanner.tok.kind else {
+        let Kind::Literal { value, .. } = self.tok.kind else {
             return Err(self.unexpected("a quoted value in the XML declaration"));
         };
         self.advance()?;
@@ -2989,12 +2474,12 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         self.expect_name("the document type name")?;
         self.require_spaced()?;
         self.advance()?;
-        if let Kind::Name(b"SYSTEM" | b"PUBLIC") = self.scanner.tok.kind {
+        if let Kind::Name(b"SYSTEM" | b"PUBLIC") = self.tok.kind {
             self.require_spaced()?;
             self.parse_external_id(false)?;
             self.scanner.has_external_subset = true;
         }
-        match self.scanner.tok.kind {
+        match self.tok.kind {
             Kind::Gt => {}
             Kind::BracketOpen => {
                 self.parse_internal_subset()?;
@@ -3016,21 +2501,21 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// `SYSTEM` or `PUBLIC`. The identifiers are checked and dropped (nothing
     /// external is read). Ends on the token after the last literal.
     fn parse_external_id(&mut self, notation: bool) -> PResult<()> {
-        if let Kind::Name(b"SYSTEM") = self.scanner.tok.kind {
+        if let Kind::Name(b"SYSTEM") = self.tok.kind {
             self.advance_literal(Literal::System)?;
-            if !matches!(self.scanner.tok.kind, Kind::Literal(_)) {
+            if !matches!(self.tok.kind, Kind::Literal { .. }) {
                 return Err(self.unexpected("a quoted system identifier after SYSTEM"));
             }
             self.require_spaced()?;
             return self.advance();
         }
         self.advance_literal(Literal::Pubid)?;
-        if !matches!(self.scanner.tok.kind, Kind::Literal(_)) {
+        if !matches!(self.tok.kind, Kind::Literal { .. }) {
             return Err(self.unexpected("a quoted public identifier after PUBLIC"));
         }
         self.require_spaced()?;
         self.advance_literal(Literal::System)?;
-        if matches!(self.scanner.tok.kind, Kind::Literal(_)) {
+        if matches!(self.tok.kind, Kind::Literal { .. }) {
             self.require_spaced()?;
             return self.advance();
         }
@@ -3052,8 +2537,8 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     fn parse_internal_subset(&mut self) -> PResult<()> {
         loop {
             self.advance()?;
-            let (pos, frame) = (self.scanner.tok.pos, self.scanner.tok.frame);
-            let end_frame = match self.scanner.tok.kind {
+            let (pos, frame) = (self.tok.pos, self.tok.frame);
+            let end_frame = match self.tok.kind {
                 // Only the document's own `]` closes the subset (a frame
                 // holding included declarations has a nonzero id).
                 Kind::BracketClose if frame == 0 => return Ok(()),
@@ -3107,7 +2592,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         self.expect_name("an element name after '<!ELEMENT'")?;
         self.require_spaced()?;
         self.advance()?;
-        match self.scanner.tok.kind {
+        match self.tok.kind {
             Kind::Name(b"EMPTY" | b"ANY") => {
                 self.require_spaced()?;
                 self.advance()?;
@@ -3115,7 +2600,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             Kind::ParenOpen => {
                 self.require_spaced()?;
                 self.advance()?;
-                if let Kind::Hash(b"PCDATA") = self.scanner.tok.kind {
+                if let Kind::Hash(b"PCDATA") = self.tok.kind {
                     self.parse_mixed()?;
                 } else {
                     self.parse_group()?;
@@ -3132,15 +2617,15 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         let mut names = 0usize;
         loop {
             self.advance()?;
-            match self.scanner.tok.kind {
+            match self.tok.kind {
                 Kind::ParenClose => break,
                 Kind::Bar => {
                     self.advance()?;
-                    match self.scanner.tok.kind {
+                    match self.tok.kind {
                         Kind::Name(_) => names += 1,
                         Kind::Hash(_) | Kind::ParenOpen => {
                             return Err(self.scanner.err(
-                                self.scanner.tok.pos,
+                                self.tok.pos,
                                 "Only element names may follow #PCDATA in a mixed content model",
                             ));
                         }
@@ -3149,13 +2634,13 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 }
                 Kind::Comma => {
                     return Err(self.scanner.err(
-                        self.scanner.tok.pos,
+                        self.tok.pos,
                         "A mixed content model is separated by '|', not ','",
                     ));
                 }
-                Kind::Question | Kind::Star | Kind::Plus if !self.scanner.tok.spaced && names > 0 => {
+                Kind::Question | Kind::Star | Kind::Plus if !self.tok.spaced && names > 0 => {
                     return Err(self.scanner.err(
-                        self.scanner.tok.pos,
+                        self.tok.pos,
                         "Names in a mixed content model cannot have occurrence indicators",
                     ));
                 }
@@ -3163,14 +2648,14 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             }
         }
         self.advance()?;
-        match self.scanner.tok.kind {
-            Kind::Star if !self.scanner.tok.spaced => self.advance(),
-            Kind::Question | Kind::Plus if !self.scanner.tok.spaced => Err(self.scanner.err(
-                self.scanner.tok.pos,
+        match self.tok.kind {
+            Kind::Star if !self.tok.spaced => self.advance(),
+            Kind::Question | Kind::Plus if !self.tok.spaced => Err(self.scanner.err(
+                self.tok.pos,
                 "A mixed content model may only be followed by '*'",
             )),
             _ if names > 0 => Err(self.scanner.err(
-                self.scanner.tok.pos,
+                self.tok.pos,
                 "A mixed content model with element names must end with ')*'",
             )),
             _ => Ok(()),
@@ -3184,16 +2669,16 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         self.parse_particle()?;
         let mut separator: Option<Kind<'a>> = None;
         loop {
-            match self.scanner.tok.kind {
+            match self.tok.kind {
                 Kind::ParenClose => {
                     self.advance()?;
                     return self.parse_occurrence();
                 }
                 Kind::Bar | Kind::Comma => {
-                    if *separator.get_or_insert(self.scanner.tok.kind) != self.scanner.tok.kind {
+                    if *separator.get_or_insert(self.tok.kind) != self.tok.kind {
                         return Err(self
                             .scanner
-                            .err(self.scanner.tok.pos, "A content model group cannot mix ',' and '|'"));
+                            .err(self.tok.pos, "A content model group cannot mix ',' and '|'"));
                     }
                     self.advance()?;
                     self.parse_particle()?;
@@ -3209,7 +2694,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.stack_overflow());
         }
-        match self.scanner.tok.kind {
+        match self.tok.kind {
             Kind::Name(_) => {
                 self.advance()?;
                 self.parse_occurrence()
@@ -3219,7 +2704,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 self.parse_group()
             }
             Kind::Hash(b"PCDATA") => Err(self.scanner.err(
-                self.scanner.tok.pos,
+                self.tok.pos,
                 "#PCDATA must come first in a content model, as (#PCDATA|a|b)*",
             )),
             _ => Err(self.unexpected("an element name or '(' in the content model")),
@@ -3229,10 +2714,10 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// An optional occurrence indicator, which must directly follow its
     /// particle.
     fn parse_occurrence(&mut self) -> PResult<()> {
-        match self.scanner.tok.kind {
-            Kind::Question | Kind::Star | Kind::Plus if !self.scanner.tok.spaced => self.advance(),
+        match self.tok.kind {
+            Kind::Question | Kind::Star | Kind::Plus if !self.tok.spaced => self.advance(),
             Kind::Question | Kind::Star | Kind::Plus => Err(self.scanner.err(
-                self.scanner.tok.pos,
+                self.tok.pos,
                 "An occurrence indicator must directly follow the name or ')' it applies to",
             )),
             _ => Ok(()),
@@ -3247,8 +2732,8 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         self.require_spaced()?;
         loop {
             self.advance()?;
-            let name = match self.scanner.tok.kind {
-                Kind::Gt => return Ok(self.scanner.tok.frame),
+            let name = match self.tok.kind {
+                Kind::Gt => return Ok(self.tok.frame),
                 Kind::Name(name) => name,
                 _ => {
                     return Err(
@@ -3261,7 +2746,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             // AttType (§3.3.1): without validation only CDATA versus the
             // rest matters, for attribute-value normalization (§3.3.3).
             self.advance()?;
-            let cdata = match self.scanner.tok.kind {
+            let cdata = match self.tok.kind {
                 Kind::Name(b"CDATA") => {
                     self.require_spaced()?;
                     true
@@ -3276,7 +2761,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 Kind::Name(b"NOTATION") => {
                     self.require_spaced()?;
                     self.advance()?;
-                    if self.scanner.tok.kind != Kind::ParenOpen {
+                    if self.tok.kind != Kind::ParenOpen {
                         return Err(self.unexpected("'(' after NOTATION"));
                     }
                     self.require_spaced()?;
@@ -3295,7 +2780,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             // says, like a specified one (§3.3.3).
             let literal = Literal::AttValue { collapse: !cdata };
             self.advance_literal(literal)?;
-            let default = match self.scanner.tok.kind {
+            let default = match self.tok.kind {
                 Kind::Hash(b"REQUIRED" | b"IMPLIED") => {
                     self.require_spaced()?;
                     None
@@ -3303,15 +2788,15 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 Kind::Hash(b"FIXED") => {
                     self.require_spaced()?;
                     self.advance_literal(literal)?;
-                    let Kind::Literal(value) = self.scanner.tok.kind else {
+                    let Kind::Literal { value, is_ascii } = self.tok.kind else {
                         return Err(self.unexpected("a quoted default value after #FIXED"));
                     };
                     self.require_spaced()?;
-                    Some(value)
+                    Some((value, is_ascii))
                 }
-                Kind::Literal(value) => {
+                Kind::Literal { value, is_ascii } => {
                     self.require_spaced()?;
-                    Some(value)
+                    Some((value, is_ascii))
                 }
                 _ => {
                     return Err(
@@ -3336,14 +2821,14 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     fn parse_enumeration(&mut self, names: bool) -> PResult<()> {
         loop {
             self.advance()?;
-            match self.scanner.tok.kind {
+            match self.tok.kind {
                 Kind::Name(_) => {}
                 Kind::Nmtoken(_) if !names => {}
                 _ if names => return Err(self.unexpected("a notation name")),
                 _ => return Err(self.unexpected("a name token in the enumeration")),
             }
             self.advance()?;
-            match self.scanner.tok.kind {
+            match self.tok.kind {
                 Kind::Bar => {}
                 Kind::ParenClose => return Ok(()),
                 _ => return Err(self.unexpected("'|' or ')' in the enumeration")),
@@ -3355,13 +2840,13 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// the frame of its `>`.
     fn parse_entity_decl(&mut self) -> PResult<u32> {
         self.advance()?;
-        if let Kind::PercentName(_) = self.scanner.tok.kind {
+        if let Kind::PercentName(_) = self.tok.kind {
             return Err(self.scanner.err(
-                self.scanner.tok.pos,
+                self.tok.pos,
                 "Whitespace is required between '%' and the name in a parameter entity declaration",
             ));
         }
-        let parameter = self.scanner.tok.kind == Kind::Percent;
+        let parameter = self.tok.kind == Kind::Percent;
         if parameter {
             self.require_spaced()?;
             self.advance()?;
@@ -3374,8 +2859,8 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         self.require_spaced()?;
 
         self.advance_literal(Literal::EntityValue)?;
-        let value = match self.scanner.tok.kind {
-            Kind::Literal(value) => {
+        let value = match self.tok.kind {
+            Kind::Literal { value, .. } => {
                 self.require_spaced()?;
                 self.advance()?;
                 EntityValue::Internal(value)
@@ -3383,12 +2868,12 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             Kind::Name(b"SYSTEM" | b"PUBLIC") => {
                 self.require_spaced()?;
                 self.parse_external_id(false)?;
-                if let Kind::Name(b"NDATA") = self.scanner.tok.kind {
+                if let Kind::Name(b"NDATA") = self.tok.kind {
                     self.require_spaced()?;
                     if parameter {
                         return Err(self
                             .scanner
-                            .err(self.scanner.tok.pos, "Parameter entities cannot have NDATA"));
+                            .err(self.tok.pos, "Parameter entities cannot have NDATA"));
                     }
                     self.advance()?;
                     self.expect_name("a notation name after NDATA")?;
@@ -3422,7 +2907,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         self.expect_name("a notation name after '<!NOTATION'")?;
         self.require_spaced()?;
         self.advance()?;
-        if !matches!(self.scanner.tok.kind, Kind::Name(b"SYSTEM" | b"PUBLIC")) {
+        if !matches!(self.tok.kind, Kind::Name(b"SYSTEM" | b"PUBLIC")) {
             return Err(self.unexpected("SYSTEM or PUBLIC in the notation declaration"));
         }
         self.require_spaced()?;
@@ -3432,34 +2917,64 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
 
     // ── elements ───────────────────────────────────────────────────────────
 
-    /// The root `element` (§3.1 [39]) and everything inside it; the current
-    /// token is its `<Name`. Iterative: `open` is the element stack.
-    fn parse_tree(&mut self) -> PResult<()> {
-        self.open_element()?;
-        while let Some(&(name, frame)) = self.open.last() {
-            // The common shapes straight off the index; everything else
-            // through `next_content`'s tokens.
-            if self.scanner.in_document() && self.scanner.idx.is_some() {
-                match self.content_step(name, frame)? {
-                    Step::Slow => {}
-                    _ => continue,
-                }
-            }
+    /// `element` (§3.1 [39]); the current token is its `<Name`. Attributes,
+    /// then (unless the tag was empty) content up to the matching end tag.
+    fn parse_element(&mut self) -> PResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.stack_overflow());
+        }
+        let Token {
+            kind: Kind::StartTag(name),
+            pos,
+            frame,
+            ..
+        } = self.tok
+        else {
+            unreachable!("parse_element is called on a start tag");
+        };
+        let loc = self.scanner.loc(pos);
+        let empty = self.parse_attributes(name)?;
+        self.sink.start_element(name, &self.attributes, loc);
+        if empty {
+            self.sink.end_element();
+            return Ok(());
+        }
+        loop {
             self.advance_content()?;
-            match self.scanner.tok.kind {
-                Kind::Text(text) => {
-                    let loc = self.scanner.loc(self.scanner.tok.pos);
-                    self.sink.text(text, loc);
+            match self.tok.kind {
+                Kind::Text { text, is_ascii } => {
+                    let loc = self.scanner.loc(self.tok.pos);
+                    self.sink.text(text, is_ascii, loc);
                 }
-                Kind::StartTag(_) => self.open_element()?,
+                Kind::StartTag(_) => self.parse_element()?,
                 Kind::EndTag(end_name) => {
-                    let pos = self.scanner.tok.pos;
-                    let end_frame = self.scanner.tok.frame;
-                    self.close_element(name, frame, end_name, pos, end_frame)?;
+                    // WFC: Element Type Match.
+                    if end_name != name {
+                        return Err(self.scanner.err_fmt(
+                            self.tok.pos,
+                            format_args!(
+                                "Expected closing tag </{}> but found </{}>",
+                                bstr::BStr::new(name),
+                                bstr::BStr::new(end_name)
+                            ),
+                        ));
+                    }
+                    if self.tok.frame != frame {
+                        return Err(self.scanner.err_named(
+                            self.tok.pos,
+                            "Element",
+                            name,
+                            " must start and end within the same entity",
+                        ));
+                    }
+                    self.advance()?;
+                    self.expect_gt("'>' to end the closing tag")?;
+                    self.sink.end_element();
+                    return Ok(());
                 }
                 Kind::Eof(_) => {
                     return Err(self.scanner.err_named(
-                        self.scanner.tok.pos,
+                        self.tok.pos,
                         "Missing closing tag for element",
                         name,
                         "",
@@ -3468,236 +2983,96 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 _ => unreachable!("next_content produces text, tags and end of input"),
             }
         }
-        Ok(())
     }
 
-    /// The start tag whose `<Name` is the current token: attributes, then
-    /// push the element (or finish it, for an empty-element tag).
-    #[inline]
-    fn open_element(&mut self) -> PResult<()> {
-        let Token {
-            kind: Kind::StartTag(name),
-            pos,
-            frame,
-            ..
-        } = self.scanner.tok
-        else {
-            unreachable!("open_element is called on a start tag");
-        };
-        if self.open.len() >= MAX_DEPTH {
-            return Err(self.stack_overflow());
-        }
-        let loc = self.scanner.loc(pos);
-        self.sink.begin_element(name, loc);
-        let empty = self.parse_attributes(name)?;
-        if empty {
-            self.sink.end_element();
-        } else {
-            self.open.push((name, frame));
-        }
-        Ok(())
-    }
-
-    /// The checks on an end tag `</end_name` at `pos` for the open element
-    /// `name`, its `>`, and pop.
-    fn close_element(
-        &mut self,
-        name: &'a [u8],
-        frame: u32,
-        end_name: &[u8],
-        pos: usize,
-        end_frame: u32,
-    ) -> PResult<()> {
-        // WFC: Element Type Match.
-        if !core::ptr::eq(end_name, name) && end_name != name {
-            return Err(self.scanner.err_fmt(
-                pos,
-                format_args!(
-                    "Expected closing tag </{}> but found </{}>",
-                    bstr::BStr::new(name),
-                    bstr::BStr::new(end_name)
-                ),
-            ));
-        }
-        if end_frame != frame {
-            return Err(self.scanner.err_named(
-                pos,
-                "Element",
-                name,
-                " must start and end within the same entity",
-            ));
-        }
-        if !self.scanner.take_gt() {
-            self.advance()?;
-            self.expect_gt("'>' to end the closing tag")?;
-        }
-        self.sink.end_element();
-        self.open.pop();
-        Ok(())
-    }
-
-    /// One item of element content in the document entity, straight off the
-    /// index: a text run followed by a child's start tag or by the end tag of
-    /// `name`. Everything else (references, comments, CDATA sections,
-    /// processing instructions, line ends to normalize, errors) is `Slow`
-    /// with the cursor back at the start of the run, for `next_content`.
-    #[inline(always)]
-    fn content_step(&mut self, name: &'a [u8], frame: u32) -> PResult<Step> {
-        let sc = &mut self.scanner;
-        let src = sc.src;
-        let start = sc.pos;
-        let stop = sc.next_stop(STOP_CONTENT);
-        if stop + 1 >= src.len() || src[stop] != b'<' {
-            return Ok(Step::Slow);
-        }
-        let next = src[stop + 1];
-        if next == b'!' || next == b'?' {
-            return Ok(Step::Slow);
-        }
-        if stop > start {
-            let loc = sc.loc(start);
-            self.sink.text(&src[start..stop], loc);
-        }
-        if next == b'/' {
-            sc.pos = stop + 2;
-            let n = name.len();
-            let fast_match = src.len() - sc.pos > n
-                && name_eq(&src[sc.pos..sc.pos + n], name)
-                && !is_name_char_ascii(src[sc.pos + n])
-                && src[sc.pos + n] < 0x80;
-            let end_name = if fast_match {
-                sc.pos += n;
-                name
-            } else {
-                sc.scan_name("Expected an element name after '</' but found")?
-            };
-            let end_frame = sc.frame_id;
-            self.close_element(name, frame, end_name, stop, end_frame)?;
-            return Ok(Step::Done);
-        }
-        sc.pos = stop + 1;
-        sc.tag_degraded = false;
-        let child = sc.scan_name("Expected an element name after '<' but found")?;
-        sc.tok = Token {
-            kind: Kind::StartTag(child),
-            pos: stop,
-            frame: sc.frame_id,
-            spaced: false,
-        };
-        self.open_element()?;
-        Ok(Step::Continue)
-    }
-
-    /// The attributes of the start tag of `element`, streamed to the sink:
-    /// duplicates rejected (WFC: Unique Att Spec), values normalized per
-    /// their declared type (§3.3.3), declared defaults supplied (§3.3.2).
-    /// Returns whether the tag was an empty-element tag.
-    #[inline]
+    /// The attributes of a start tag, into `self.attributes`: duplicates
+    /// rejected (WFC: Unique Att Spec), values normalized per their declared
+    /// type (§3.3.3), declared defaults supplied (§3.3.2). Returns whether
+    /// the tag was an empty-element tag.
     fn parse_attributes(&mut self, element: &'a [u8]) -> PResult<bool> {
-        self.attribute_count = 0;
-        // The element's ATTLIST, if any. It is not modified while a start tag
-        // is read (declarations precede the root element), so a raw pointer
-        // sidesteps borrowing `self` for the whole loop.
-        let defs: Option<*const AttList<'a>> = if self.attlists.is_empty() {
-            None
-        } else {
-            self.attlists.get(element).map(core::ptr::from_ref)
-        };
-        let collapse_for = |_: &HashMap<&'a [u8], AttList<'a>>, name: &[u8]| {
-            // SAFETY: see `defs`.
-            defs.is_some_and(|d| unsafe { &*d }.get(name).is_some_and(|def| !def.cdata))
-        };
+        self.attributes.clear();
+        self.attribute_names.clear();
         let empty = loop {
-            // The common shapes straight off the bytes; anything else (and
-            // so every error) goes through the token path below.
-            if self.scanner.in_document() {
-                match self.scanner.tag_step() {
-                    TagStep::End { empty } => break empty,
-                    TagStep::Attr { name, pos, quote } => {
-                        if self.has_attribute(name) {
-                            return Err(self.scanner.err_named(
-                                pos,
-                                "Duplicate attribute",
-                                name,
-                                "",
-                            ));
-                        }
-                        let collapse = collapse_for(&self.attlists, name);
-                        let value = self.scanner.scan_att_value(quote, collapse)?;
-                        self.push_attribute(name, value);
-                        continue;
-                    }
-                    TagStep::Slow => {}
-                }
-            }
-            self.scanner.next(Literal::None)?;
-            let name = match self.scanner.tok.kind {
+            self.advance()?;
+            let name = match self.tok.kind {
                 Kind::Gt => break false,
                 Kind::SlashGt => break true,
                 Kind::Name(name) => name,
                 _ => return Err(self.unexpected("an attribute name, '>' or '/>' in the start tag")),
             };
             self.require_spaced()?;
-            let pos = self.scanner.tok.pos;
-            if self.has_attribute(name) {
+            let pos = self.tok.pos;
+            if Self::has_attribute(&self.attributes, &self.attribute_names, name) {
                 return Err(self.scanner.err_named(pos, "Duplicate attribute", name, ""));
             }
-            self.scanner.next(Literal::None)?;
-            if self.scanner.tok.kind != Kind::Eq {
+            self.advance()?;
+            if self.tok.kind != Kind::Eq {
                 return Err(self.unexpected("'=' after the attribute name"));
             }
-            let collapse = collapse_for(&self.attlists, name);
-            self.scanner.next(Literal::AttValue { collapse })?;
-            let Kind::Literal(value) = self.scanner.tok.kind else {
+            let collapse = self
+                .attlists
+                .get(element)
+                .and_then(|defs| defs.get(name))
+                .is_some_and(|def| !def.cdata);
+            self.advance_literal(Literal::AttValue { collapse })?;
+            let Kind::Literal { value, is_ascii } = self.tok.kind else {
                 return Err(self.unexpected("a quoted attribute value"));
             };
-            self.push_attribute(name, value);
+            Self::push_attribute(
+                &mut self.attributes,
+                &mut self.attribute_names,
+                Attribute {
+                    name,
+                    value,
+                    is_ascii,
+                },
+            );
         };
-        if let Some(defs) = defs {
-            // SAFETY: see `defs`.
-            let defs = unsafe { &*defs };
+        if let Some(defs) = self.attlists.get(element) {
             for def in &defs.defs {
-                if let Some(value) = def.default
-                    && !self.has_attribute(def.name)
-                {
-                    self.push_attribute(def.name, value);
+                if let Some((value, is_ascii)) = def.default {
+                    if !Self::has_attribute(&self.attributes, &self.attribute_names, def.name) {
+                        Self::push_attribute(
+                            &mut self.attributes,
+                            &mut self.attribute_names,
+                            Attribute {
+                                name: def.name,
+                                value,
+                                is_ascii,
+                            },
+                        );
+                    }
                 }
             }
         }
         Ok(empty)
     }
 
-    #[inline(always)]
-    fn has_attribute(&self, name: &[u8]) -> bool {
-        if self.attribute_count <= LINEAR_ATTRIBUTE_LIMIT {
-            self.attribute_first[..self.attribute_count]
-                .iter()
-                .any(|&first| name_eq(first, name))
+    fn has_attribute(
+        attributes: &[Attribute<'a>],
+        names: &HashMap<&'a [u8], ()>,
+        name: &[u8],
+    ) -> bool {
+        if attributes.len() <= LINEAR_ATTRIBUTE_LIMIT {
+            attributes.iter().any(|attr| attr.name == name)
         } else {
-            self.attribute_names.contains_key(name)
+            names.contains_key(name)
         }
     }
 
-    #[inline(always)]
-    fn push_attribute(&mut self, name: &'a [u8], value: &'a [u8]) {
-        self.sink.attribute(name, value);
-        if self.attribute_count < LINEAR_ATTRIBUTE_LIMIT {
-            self.attribute_first[self.attribute_count] = name;
-        } else {
-            self.spill_attribute_name(name);
-        }
-        self.attribute_count += 1;
-    }
-
-    #[cold]
-    fn spill_attribute_name(&mut self, name: &'a [u8]) {
-        if self.attribute_count == LINEAR_ATTRIBUTE_LIMIT {
-            self.attribute_names.clear();
-            for first in self.attribute_first {
-                self.attribute_names.insert(first, ());
+    fn push_attribute(
+        attributes: &mut Vec<Attribute<'a>>,
+        names: &mut HashMap<&'a [u8], ()>,
+        attribute: Attribute<'a>,
+    ) {
+        attributes.push(attribute);
+        if attributes.len() == LINEAR_ATTRIBUTE_LIMIT + 1 {
+            for attr in attributes.iter() {
+                names.insert(attr.name, ());
             }
+        } else if attributes.len() > LINEAR_ATTRIBUTE_LIMIT + 1 {
+            names.insert(attribute.name, ());
         }
-        self.attribute_names.insert(name, ());
     }
 }
 

@@ -58,12 +58,17 @@ struct RowProperty {
 };
 static_assert(sizeof(RowProperty) == 32);
 
-// `ObjectJSON` / `ArrayJSON`: a span of the tape.
+// `ObjectJSON` / `ArrayJSON`: a span of the tape (only the leading fields are read).
 struct RowSpan {
     const void* tape;
     uint32_t first;
     uint32_t count;
 };
+
+// Kept in step with the `offset_of!` assertions next to the Rust definitions.
+static_assert(offsetof(RowValue, tag) == 0 && offsetof(RowValue, string) == 4);
+static_assert(offsetof(RowProperty, key) == 0 && offsetof(RowProperty, keyLoc) == 12 && offsetof(RowProperty, value) == 16);
+static_assert(offsetof(RowSpan, tape) == 0 && offsetof(RowSpan, first) == 8 && offsetof(RowSpan, count) == 12);
 
 class RowsToJS {
 public:
@@ -156,7 +161,8 @@ private:
         return jsString(m_vm, decodeWTF8(s));
     }
 
-    // The parsers hand over WTF-8: UTF-8 that may also encode lone surrogates.
+    // The parsers hand over WTF-8: UTF-8 that may also encode lone surrogates (from JSON
+    // `\uD800`-style escapes). Anything malformed becomes U+FFFD, one per offending byte.
     static String decodeWTF8(std::span<const Latin1Character> bytes)
     {
         String strict = String::fromUTF8(bytes);
@@ -167,23 +173,26 @@ private:
         size_t i = 0;
         while (i < bytes.size()) {
             uint8_t b = bytes[i];
-            uint32_t cp;
-            size_t n;
             if (b < 0x80) {
-                cp = b;
-                n = 1;
-            } else if ((b & 0xE0) == 0xC0) {
-                cp = b & 0x1F;
-                n = 2;
-            } else if ((b & 0xF0) == 0xE0) {
-                cp = b & 0x0F;
-                n = 3;
-            } else {
-                cp = b & 0x07;
-                n = 4;
+                out.append(static_cast<char16_t>(b));
+                i += 1;
+                continue;
             }
-            for (size_t k = 1; k < n && i + k < bytes.size(); ++k)
+            size_t n = (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3 : (b & 0xF8) == 0xF0 ? 4 : 0;
+            uint32_t cp = n == 2 ? (b & 0x1F) : n == 3 ? (b & 0x0F) : (b & 0x07);
+            bool ok = n != 0 && i + n <= bytes.size();
+            for (size_t k = 1; ok && k < n; ++k) {
+                ok = (bytes[i + k] & 0xC0) == 0x80;
                 cp = (cp << 6) | (bytes[i + k] & 0x3F);
+            }
+            // Overlong forms and values past U+10FFFF are malformed; encoded surrogates
+            // (the WTF-8 extension) are kept.
+            ok = ok && (n == 2 ? cp >= 0x80 : n == 3 ? cp >= 0x800 : (cp >= 0x10000 && cp <= 0x10FFFF));
+            if (!ok) {
+                out.append(static_cast<char16_t>(0xFFFD));
+                i += 1;
+                continue;
+            }
             i += n;
             if (cp >= 0x10000) {
                 out.append(U16_LEAD(cp));

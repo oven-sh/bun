@@ -32,6 +32,10 @@ fn main() {
         println!("cargo:rerun-if-changed={}", byte_class.display());
     }
 
+    // cfgs `scripts/bench-json-rust.sh` sets when the comparison C libraries are available.
+    println!("cargo:rustc-check-cfg=cfg(pugixml)");
+    println!("cargo:rustc-check-cfg=cfg(expat)");
+    println!("cargo:rustc-check-cfg=cfg(libxml2)");
     println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
     println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
 }

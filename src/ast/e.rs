@@ -924,6 +924,10 @@ pub struct PropertyJSON {
 }
 
 const _: () = assert!(core::mem::size_of::<PropertyJSON>() == 32);
+// Read from C++ (JSONRowsToJS.cpp), which asserts the same offsets.
+const _: () = assert!(core::mem::offset_of!(PropertyJSON, key) == 0);
+const _: () = assert!(core::mem::offset_of!(PropertyJSON, key_loc) == 12);
+const _: () = assert!(core::mem::offset_of!(PropertyJSON, value) == 16);
 
 /// Where a [`JsonTape`]'s buffers (and, in arena mode, the tape itself) live.
 #[derive(Clone, Copy)]
@@ -1115,6 +1119,11 @@ pub struct ObjectJSON {
     pub close_brace_loc: crate::Loc,
     pub is_single_line: bool,
 }
+
+const _: () = assert!(core::mem::offset_of!(ObjectJSON, first) == 8);
+const _: () = assert!(core::mem::offset_of!(ObjectJSON, count) == 12);
+const _: () = assert!(core::mem::offset_of!(ArrayJSON, first) == 8);
+const _: () = assert!(core::mem::offset_of!(ArrayJSON, count) == 12);
 
 // SAFETY: the tape outlives the AST (`StoreRef`'s contract) and is read-only once parsing returns.
 unsafe impl Send for ObjectJSON {}

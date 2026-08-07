@@ -773,7 +773,11 @@ describe.concurrent("socket", () => {
                   data(tlsSocket, chunk) {
                     tlsSocket.write(chunk);
                   },
-                  close() {},
+                  // Latched once the echo resolves; before that, a close is a
+                  // failure worth a fast diagnosis instead of a timeout.
+                  close() {
+                    onEchoFail(new Error("TLS server socket closed before echo"));
+                  },
                   error(_socket, error) {
                     onEchoFail(error);
                   },
@@ -793,6 +797,9 @@ describe.concurrent("socket", () => {
         client.write("ping");
       });
       client.on("error", onEchoFail);
+      client.once("close", () => {
+        onEchoFail(new Error("TLS client socket closed before echo"));
+      });
       client.on("data", data => {
         onEcho(String(data));
         client.end();

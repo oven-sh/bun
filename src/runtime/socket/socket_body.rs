@@ -5149,7 +5149,7 @@ pub mod testing_apis {
             if syscall == fi::ADOPT_GROW && action != fi::ACTION_SHORT && action != fi::ACTION_NONE
             {
                 return Err(global.throw(format_args!(
-                    "rule.action must be \"short\" for syscall \"adopt_grow\""
+                    "rule.action must be \"short\" or \"none\" for syscall \"adopt_grow\""
                 )));
             }
 

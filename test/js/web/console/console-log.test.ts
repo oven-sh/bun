@@ -143,6 +143,25 @@ NamedError: console.error a named error
 `);
 });
 
+it("console.log(Bun) prints remaining properties when a lazy property fails to initialize", async () => {
+  // With globalThis.Symbol clobbered, lazy Bun properties whose initializers
+  // call Symbol() (like Bun.$) throw while being reified during enumeration.
+  // The pending exception must be cleared so later properties still print.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "globalThis.Symbol = NaN; console.log(Bun)"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toContain("Archive:");
+  expect(stdout).toContain("CryptoHasher:");
+  expect(stdout).toContain("semver:");
+  expect(stdout).toContain("zstdDecompress:");
+  expect(exitCode).toBe(0);
+});
+
 it("console.log with SharedArrayBuffer", () => {
   // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
   expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");

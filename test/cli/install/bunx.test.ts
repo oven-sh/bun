@@ -61,6 +61,7 @@ const packageInvocationCases: PackageInvocationCase[] = [
   { invocation: "bun x", useBunx: false, explicitPackage: false },
   { invocation: "bunx", useBunx: true, explicitPackage: false },
 ];
+const implicitPackageInvocationCases = packageInvocationCases.filter(({ explicitPackage }) => !explicitPackage);
 const linkerCases: LinkerCase[] = [{ linker: "hoisted" }, { linker: "isolated" }];
 
 async function withTestContext(
@@ -337,6 +338,73 @@ it.concurrent("should work for github repository", async () => {
   expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
   expect(exited).toBe(0);
 });
+
+it.concurrent.each(implicitPackageInvocationCases)(
+  "$invocation discovers the bin from an anonymous URL package",
+  async invocationCase => {
+    const { x_dir, env } = setup();
+    const tarball = Bun.gzipSync(
+      await new Bun.Archive({
+        "package/package.json": JSON.stringify({
+          name: "actual-url-package",
+          version: "1.0.0",
+          bin: { "actual-url-cli": "cli.js" },
+        }),
+        "package/cli.js": `#!/usr/bin/env bun
+console.log("url-package:" + process.argv.slice(2).join(","));
+`,
+      }).bytes(),
+    );
+    const requests: string[] = [];
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        requests.push(`${request.method} ${url.pathname}`);
+        return new Response(tarball);
+      },
+    });
+    const run = async (packageUrl: string, argument: string, noInstall = false) => {
+      const command = packageInvocationCommand(invocationCase, packageUrl);
+      if (noInstall) command.cmd.splice(invocationCase.useBunx ? 1 : 2, 0, "--no-install");
+      command.cmd.push(argument);
+      const subprocess = spawn({
+        ...command,
+        cwd: x_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        subprocess.stdout.text(),
+        subprocess.stderr.text(),
+        subprocess.exited,
+      ]);
+      return { stdout, stderr, exitCode };
+    };
+
+    const uncachedUrl = new URL("/opaque/not-cached@8", server.url).href;
+    const uncached = await run(uncachedUrl, "uncached", true);
+    expect(uncached).toEqual({
+      stdout: "",
+      stderr: `error: Could not find an existing installation for package '${uncachedUrl}'. Stopping because --no-install was passed.\n`,
+      exitCode: 1,
+    });
+    expect(requests).toEqual([]);
+
+    const packageUrl = new URL("/opaque/download@8", server.url).href;
+    const cold = await run(packageUrl, "cold");
+    expect(cold).toMatchObject({ stdout: "url-package:cold\n", exitCode: 0 });
+    expect(cold.stderr).not.toContain("unrecognised dependency format");
+    expect(requests).toEqual(["GET /opaque/download@8"]);
+
+    const warm = await run(packageUrl, "warm");
+    expect(warm).toMatchObject({ stdout: "url-package:warm\n", exitCode: 0 });
+    expect(warm.stderr).not.toContain("unrecognised dependency format");
+    expect(requests).toEqual(["GET /opaque/download@8"]);
+  },
+);
 
 it.concurrent("should work for github repository with committish", async () => {
   const { x_dir, env } = setup();

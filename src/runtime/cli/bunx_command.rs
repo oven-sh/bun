@@ -15,7 +15,7 @@ use bun_bundler::Transpiler;
 use bun_collections::BoundedArray;
 use bun_core::{self, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_install::dependency::VersionTag;
+use bun_install::dependency::{URI, VersionTag};
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
 use bun_paths::{self, DELIMITER, PathBuffer};
@@ -887,6 +887,27 @@ impl BunxCommand {
             }
         }
 
+        let display_version: &[u8] = if update_request.version.literal.is_empty() {
+            b"latest"
+        } else {
+            update_request
+                .version
+                .literal
+                .slice(update_request.version_buf())
+        };
+
+        let anonymous_package_alias = if update_request.name.is_empty()
+            && opts.binary_name.is_none()
+            && update_request.version.tag == VersionTag::Tarball
+            && matches!(update_request.version.tarball().uri, URI::Remote(_))
+        {
+            let mut alias = Vec::new();
+            write!(&mut alias, "bunx-url-{:x}", hash(display_version))
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            Some(alias)
+        } else {
+            None
+        };
         // When the user types a scoped package like `@foo/bar`, the initial bin
         // name ("bar") is only a guess — the package's actual bin may be named
         // something else entirely. In that case we must not search the original
@@ -917,6 +938,9 @@ impl BunxCommand {
         } else {
             update_request.name
         };
+        let fallback_package_name = anonymous_package_alias
+            .as_deref()
+            .unwrap_or(initial_bin_name);
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
         // fast path: they're actually using this interchangeably with `bun run`
@@ -985,15 +1009,6 @@ impl BunxCommand {
             };
         // Cloned to avoid borrowck overlap when PATH is reassigned below.
 
-        let display_version: &[u8] = if update_request.version.literal.is_empty() {
-            b"latest"
-        } else {
-            update_request
-                .version
-                .literal
-                .slice(update_request.version_buf())
-        };
-
         // package_fmt is used for the path to install in.
         let package_fmt: Vec<u8> = 'brk: {
             // Includes the delimiters because we use this as a part of $PATH
@@ -1016,7 +1031,7 @@ impl BunxCommand {
                 write!(
                     &mut v,
                     "{}@{}@{}",
-                    BStr::new(initial_bin_name),
+                    BStr::new(fallback_package_name),
                     <&'static str>::from(update_request.version.tag),
                     hash(update_request.name).wrapping_add(hash(display_version)),
                 )
@@ -1048,19 +1063,22 @@ impl BunxCommand {
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 (v, update_request.name)
             } else {
-                // When there is not a clear package name (URL/GitHub/etc), we force the package name
-                // to be the same as the calculated initial bin name. This allows us to have a predictable
-                // node_modules folder structure.
+                // Unnamed sources need a deterministic alias for their node_modules path.
                 let mut v = Vec::new();
                 write!(
                     &mut v,
                     "{}@{}",
-                    BStr::new(initial_bin_name),
+                    BStr::new(fallback_package_name),
                     BStr::new(display_version),
                 )
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-                (v, initial_bin_name)
+                (v, fallback_package_name)
             };
+        let package_name_for_error = if anonymous_package_alias.is_some() {
+            opts.package_name
+        } else {
+            result_package_name
+        };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
         bun_output::scoped_log!(
             bunx,
@@ -1231,7 +1249,7 @@ impl BunxCommand {
                             }
                             PackageBinLookup::BinNotFound => {
                                 Self::exit_package_bin_not_found(
-                                    result_package_name,
+                                    package_name_for_error,
                                     opts.binary_name,
                                 );
                             }
@@ -1250,7 +1268,10 @@ impl BunxCommand {
                             break 'find Some(d);
                         }
                         PackageBinLookup::BinNotFound => {
-                            Self::exit_package_bin_not_found(result_package_name, opts.binary_name);
+                            Self::exit_package_bin_not_found(
+                                package_name_for_error,
+                                opts.binary_name,
+                            );
                         }
                         PackageBinLookup::PackageNotFound => {}
                     }
@@ -1280,6 +1301,9 @@ impl BunxCommand {
                         ) {
                             break 'find Some(d);
                         }
+                    }
+                    if initial_bin_name.is_empty() {
+                        break 'find None;
                     }
                     bun_which::which(
                         &mut path_buf,
@@ -1375,7 +1399,7 @@ impl BunxCommand {
                             if opts.no_install {
                                 bun_core::warn!(
                                     "Using a stale installation of <b>{}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.",
-                                    BStr::new(&update_request.name),
+                                    BStr::new(package_name_for_error),
                                 );
                             } else {
                                 break 'try_run_existing;
@@ -1528,10 +1552,17 @@ impl BunxCommand {
         // Which is not very helpful.
 
         if opts.no_install {
-            Output::err_generic(
-                "Could not find an existing '{}' binary to run. Stopping because --no-install was passed.",
-                format_args!("{}", BStr::new(initial_bin_name)),
-            );
+            if initial_bin_name.is_empty() {
+                Output::err_generic(
+                    "Could not find an existing installation for package '{}'. Stopping because --no-install was passed.",
+                    format_args!("{}", BStr::new(package_name_for_error)),
+                );
+            } else {
+                Output::err_generic(
+                    "Could not find an existing '{}' binary to run. Stopping because --no-install was passed.",
+                    format_args!("{}", BStr::new(initial_bin_name)),
+                );
+            }
             Global::exit(1);
         }
 
@@ -1742,7 +1773,7 @@ impl BunxCommand {
                     }
                 }
                 PackageBinLookup::PackageNotFound | PackageBinLookup::BinNotFound => {
-                    Self::exit_package_bin_not_found(result_package_name, opts.binary_name);
+                    Self::exit_package_bin_not_found(package_name_for_error, opts.binary_name);
                 }
             }
         } else {
@@ -1775,7 +1806,7 @@ impl BunxCommand {
                     }
                 }
                 PackageBinLookup::BinNotFound => {
-                    Self::exit_package_bin_not_found(result_package_name, None);
+                    Self::exit_package_bin_not_found(package_name_for_error, None);
                 }
                 PackageBinLookup::PackageNotFound => {}
             }
@@ -1786,6 +1817,7 @@ impl BunxCommand {
         //  1. Try the bin in the global cache
         //     Do not try $PATH because we already checked it above if we should
         if opts.specified_package.is_none()
+            && !initial_bin_name.is_empty()
             && let Some(destination) = bun_which::which(
                 &mut path_buf,
                 bunx_cache_dir,
@@ -1891,7 +1923,7 @@ impl BunxCommand {
         } else {
             Output::err_generic(
                 "could not determine executable to run for package <b>{}<r>",
-                format_args!("{}", BStr::new(&update_request.name)),
+                format_args!("{}", BStr::new(package_name_for_error)),
             );
         }
         Global::exit(1);

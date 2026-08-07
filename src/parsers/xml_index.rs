@@ -27,6 +27,8 @@ pub struct StructuralIndex<'c, U: crate::xml::Unit = u8> {
     kernel_state: [u64; 3],
     use_scalar: bool,
     s_in_tag: bool,
+    /// Scalar producer, UTF-16: the last unit seen was a lead surrogate.
+    s_pending_lead: bool,
 }
 
 impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
@@ -46,6 +48,7 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
             kernel_state: [0; 3],
             use_scalar,
             s_in_tag: false,
+            s_pending_lead: false,
         }
     }
 
@@ -143,6 +146,10 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
 
     fn finish(&mut self) {
         let len = self.contents.len() as u32;
+        // A lead surrogate as the very last unit never got its verdict.
+        if U::WIDE && (self.kernel_state[1] & 1 != 0 || self.s_pending_lead) {
+            self.win.push(len - 1);
+        }
         self.win.push(len);
         self.win.push(len);
         self.done = true;
@@ -154,6 +161,30 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
             let c = u.low();
             let cls = XML_BYTE_CLASS[c as usize];
             if cls == 0 {
+                if U::WIDE {
+                    let v = u.value();
+                    let lead_before = core::mem::replace(&mut self.s_pending_lead, false);
+                    match v & 0xFC00 {
+                        0xD800 => {
+                            if lead_before {
+                                self.win.push((base + i - 1) as u32);
+                            }
+                            self.s_pending_lead = true;
+                            continue;
+                        }
+                        0xDC00 => {
+                            if !lead_before {
+                                self.win.push((base + i) as u32);
+                            }
+                            continue;
+                        }
+                        _ => {
+                            if lead_before {
+                                self.win.push((base + i - 1) as u32);
+                            }
+                        }
+                    }
+                }
                 let nonchar = if U::WIDE {
                     u.value() | 1 == 0xFFFF
                 } else {
@@ -166,6 +197,9 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
                     self.win.push((base + i) as u32);
                 }
                 continue;
+            }
+            if U::WIDE && core::mem::replace(&mut self.s_pending_lead, false) {
+                self.win.push((base + i - 1) as u32);
             }
             if cls & CLASS_LT != 0 {
                 in_tag = true;
@@ -326,6 +360,27 @@ mod tests {
         let (si, ci) = build_both16(&doc);
         assert_eq!(si, ci);
         assert!(ci.contains(&(doc.iter().position(|&u| u == 0xFFFE).unwrap() as u32)));
+        // Paired surrogates (the emoji) are not entries; lone ones are, wherever they fall.
+        assert!(!ci.contains(&(doc.iter().position(|&u| u == 0xD83D).unwrap() as u32)));
+        for tail in ["\u{10000}", "x"] {
+            for cut in 0..130usize {
+                let mut units: Vec<u16> = "z".repeat(cut).encode_utf16().collect();
+                let lone_lead = units.len();
+                units.push(0xD800);
+                units.extend("ab".encode_utf16());
+                let lone_trail = units.len();
+                units.push(0xDC00);
+                units.extend(tail.encode_utf16());
+                units.push(0xDBFF);
+                let last = units.len() - 1;
+                let (si, ci) = build_both16(&units);
+                assert_eq!(si, ci, "cut {cut} tail {tail:?}");
+                assert!(ci.contains(&(lone_lead as u32)), "lead, cut {cut}: {ci:?}");
+                assert!(ci.contains(&(lone_trail as u32)), "trail, cut {cut}");
+                assert!(ci.contains(&(last as u32)), "final lead, cut {cut}");
+                assert_eq!(ci.iter().filter(|&&p| (units[p as usize] & 0xF800) == 0xD800).count(), 3, "cut {cut}: {ci:?}");
+            }
+        }
         assert!(!ci.contains(&(doc.iter().position(|&u| u == 0xFF1D).unwrap() as u32)));
         // …and random / large / block-straddling input agrees too.
         let mut state = 0x2545F4914F6CDD1Du64;

@@ -218,6 +218,13 @@ describe("well-formedness", () => {
     expect(syntaxError(Buffer.from([0x3c, 0x61, 0x3e, 0xed, 0xa0, 0x80, 0x3c, 0x2f, 0x61, 0x3e])).message).toBe(
       "XML Parse error: Invalid UTF-8",
     );
+    // Nor are lone surrogates characters when they arrive in a string; pairs are.
+    expect(syntaxError("<a>\uD800</a>").message).toBe("XML Parse error: Invalid character in XML: U+D800");
+    expect(syntaxError("<a b='\uDFFF'/>").message).toContain("U+DFFF");
+    expect(syntaxError("<a>x\uD83Dy\uDE00</a>").message).toContain("U+D83D");
+    expect(syntaxError(`<!DOCTYPE a [<!ENTITY e "\uDC00">]><a/>`).message).toContain("U+DC00");
+    expect(syntaxError("<a>ok</a>\uD800").message).toContain("U+D800");
+    expect(XML.parse("<a \u{1F600}='\u{1F600}'>\uD83D\uDE00</a>")).toEqual({ a: { "@\u{1F600}": "\u{1F600}", "#text": "\u{1F600}" } });
   });
 
   test("character references must name a Char", () => {

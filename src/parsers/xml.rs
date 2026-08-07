@@ -1029,7 +1029,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         }
         let (cp, len) = self.decode_utf8();
         if U::WIDE {
-            if cp == 0xFFFE || cp == 0xFFFF {
+            if cp == 0xFFFE || cp == 0xFFFF || (0xD800..0xE000).contains(&cp) {
                 return Err(self.err_invalid_char());
             }
             return Ok(len);
@@ -2344,6 +2344,8 @@ trait Sink<'a, U: Unit> {
     fn attribute(&mut self, name: &'a [U], value: &'a [U]);
     fn text(&mut self, text: &'a [U], loc: Loc);
     fn end_element(&mut self);
+    /// `text` (the element's only content) then `end_element`, in one step.
+    fn end_leaf(&mut self, text: &'a [U], loc: Loc);
     /// Called once, after the root element has ended.
     fn finish(&mut self) -> Expr;
 }
@@ -2611,9 +2613,26 @@ impl<'a, U: Unit> CompactSink<'a, U> {
     fn fold_repeats(&mut self, mark: usize) {
         let children = &self.tape.props[mark..];
         let n = children.len();
+        // Usually every name is distinct: settle that cheaply first. A
+        // 64-slot filter on (length, first, last byte) says "all distinct"
+        // with no comparisons; a collision falls to comparing pairwise.
+        let slot = |key: &[u8]| -> u64 {
+            let h = key.len() ^ (usize::from(key[0]) << 1) ^ (usize::from(key[key.len() - 1]) << 3);
+            1u64 << (h & 63)
+        };
+        if n > 8 {
+            let mut seen = 0u64;
+            let mut collided = false;
+            for child in children {
+                let bit = slot(child.key.slice());
+                collided |= seen & bit != 0;
+                seen |= bit;
+            }
+            if !collided {
+                return;
+            }
+        }
         if n <= LINEAR_CHILD_LIMIT {
-            // Usually every name is distinct: settle that without any
-            // bookkeeping first.
             let mut repeated = false;
             'scan: for i in 1..n {
                 let name = children[i].key.slice();
@@ -2759,6 +2778,24 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
         self.text_runs.push(text);
     }
 
+    #[inline]
+    fn end_leaf(&mut self, text: &'a [U], _loc: Loc) {
+        let frame = self.stack.pop().expect("end_leaf without start_element");
+        let trimmed = trim_ws(text);
+        let value = if frame.attribute_count == 0 {
+            Tape::str(trimmed)
+        } else {
+            if !trimmed.is_empty() {
+                self.tape.push_prop(U::bytes(U::KEY_TEXT), Tape::str(trimmed), frame.loc);
+            }
+            E::JsonValue::Object(self.tape.object_from(frame.props_mark as usize, frame.loc))
+        };
+        match self.stack.last() {
+            Some(_) => self.tape.push_prop(U::bytes(frame.name), value, frame.loc),
+            None => self.root = Some((frame.name, value, frame.loc)),
+        }
+    }
+
     fn end_element(&mut self) {
         let frame = self.stack.pop().expect("end_element without start_element");
         let trimmed = self.take_text(frame.text_mark as usize);
@@ -2845,6 +2882,14 @@ impl<'a, U: Unit> Sink<'a, U> for NodeSink<'a, U> {
 
     fn text(&mut self, text: &'a [U], loc: Loc) {
         self.tape.push_item(Tape::str(text), loc);
+    }
+
+    #[inline]
+    fn end_leaf(&mut self, text: &'a [U], loc: Loc) {
+        if !text.is_empty() {
+            self.tape.push_item(Tape::str(text), loc);
+        }
+        self.end_element();
     }
 
     fn end_element(&mut self) {
@@ -3825,10 +3870,40 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         let empty = self.parse_attributes(name)?;
         if empty {
             self.sink.end_element();
-        } else {
+        } else if !self.leaf_fast(name, frame)? {
             self.open.push((name, frame));
         }
         Ok(())
+    }
+
+    /// The commonest element of all — plain text (or nothing) then its own
+    /// end tag — finished without going round the content loop: `true` if
+    /// that is what followed (and it is consumed), `false` (cursor unmoved)
+    /// for the loop to take over.
+    #[inline]
+    fn leaf_fast(&mut self, name: &'a [U], frame: u32) -> PResult<bool> {
+        let sc = &mut self.scanner;
+        if !sc.in_document() || sc.idx.is_none() || sc.frame_id != frame {
+            return Ok(false);
+        }
+        let src = sc.src;
+        let start = sc.pos;
+        let stop = sc.next_stop(STOP_CONTENT);
+        let n = name.len();
+        let close = stop + 2 + n;
+        if close < src.len()
+            && src[stop].low() == b'<'
+            && src[stop + 1].low() == b'/'
+            && src[close].low() == b'>'
+            && name_eq(&src[stop + 2..close], name)
+        {
+            sc.pos = close + 1;
+            sc.tag_degraded = false;
+            let loc = sc.loc(start);
+            self.sink.end_leaf(&src[start..stop], loc);
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// The checks on an end tag `</end_name` at `pos` for the open element

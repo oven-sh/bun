@@ -123,7 +123,9 @@ size_t XmlIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_o
 }
 
 // The same over UTF-16 code units (`len` and positions in units): a unit classifies as its low
-// byte when its high byte is zero, and 0xFFFE / 0xFFFF are the non-characters.
+// byte when its high byte is zero; 0xFFFE / 0xFFFF are the non-characters, and a surrogate that
+// is not half of a pair is flagged too (a lone lead surrogate ending a block is decided, and
+// emitted first, when the next block sees what follows; the caller settles one that ends the input).
 size_t XmlIndex16Impl(const uint16_t* HWY_RESTRICT input, size_t len, size_t base_offset,
     uint32_t* HWY_RESTRICT out, uint64_t* HWY_RESTRICT inout_state)
 {
@@ -132,8 +134,13 @@ size_t XmlIndex16Impl(const uint16_t* HWY_RESTRICT input, size_t len, size_t bas
     const auto v_zero = hn::Zero(d);
     const auto v_01 = hn::Set(d, (uint8_t)0x01);
     const auto v_ff = hn::Set(d, (uint8_t)0xFF);
+    const auto v_fc = hn::Set(d, (uint8_t)0xFC);
+    const auto v_d8 = hn::Set(d, (uint8_t)0xD8);
+    const auto v_dc = hn::Set(d, (uint8_t)0xDC);
 
     uint64_t carry = inout_state[0];
+    // Bit 0: the previous block's last unit was a lead surrogate (still owed a trail).
+    uint64_t prev_lead = inout_state[1];
     size_t n_out = 0;
 
     for (size_t pos = 0; pos < len; pos += 64) {
@@ -150,6 +157,7 @@ size_t XmlIndex16Impl(const uint16_t* HWY_RESTRICT input, size_t len, size_t bas
         }
 
         BlockMasks m;
+        uint64_t lead = 0, trail = 0;
         // Each pair of byte vectors covers N units: even bytes are the (little-endian) low
         // bytes, odd bytes the high bytes.
         for (size_t v = 0; v < 64 / N; ++v) {
@@ -167,12 +175,24 @@ size_t XmlIndex16Impl(const uint16_t* HWY_RESTRICT input, size_t len, size_t bas
             m.tag |= (unit.tag & ascii) << sh;
             const uint64_t nonchar = hn::BitsFromMask(d, hn::And(hn::Eq(hi, v_ff), hn::Eq(hn::Or(lo, v_01), v_ff)));
             m.nonchar |= nonchar << sh;
+            const auto plane = hn::And(hi, v_fc);
+            lead |= hn::BitsFromMask(d, hn::Eq(plane, v_d8)) << sh;
+            trail |= hn::BitsFromMask(d, hn::Eq(plane, v_dc)) << sh;
         }
+        lead &= valid;
+        trail &= valid;
+        // A trail with no lead before it; a lead with no trail after it (bit 63 waits).
+        const uint64_t lone = (trail & ~((lead << 1) | prev_lead)) | (lead & ~(trail >> 1) & ~(1ull << 63));
+        if (prev_lead && !(trail & 1))
+            out[n_out++] = (uint32_t)(base_offset + pos - 1);
+        prev_lead = lead >> 63;
+        m.nonchar |= lone;
 
         n_out += EmitBlock(m, valid, carry, (uint32_t)(base_offset + pos), out + n_out);
     }
 
     inout_state[0] = carry;
+    inout_state[1] = prev_lead;
     return n_out;
 }
 

@@ -2749,6 +2749,49 @@ test.skipIf(isWindows)("cold cache install from bun.lock with an scp-form git de
   expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
 });
 
+// An scp form whose user is not git takes the ssh scheme fallback at clone
+// time ("ssh://alice@host/path", not a second "git@" prepended), and its
+// lockfile round trip converges the same way as the git@ form.
+test.skipIf(isWindows)("cold cache install of an scp git dependency with a non-git user", async () => {
+  using dir = tempDir("isolated-scp-user-git", {
+    "fake-ssh.sh": fakeSshScript,
+    "upstream/package.json": JSON.stringify({ name: "alice-dep", version: "1.0.0" }),
+  });
+  chmodSync(join(String(dir), "fake-ssh.sh"), 0o755);
+  makeBareRepo(String(dir), "upstream", "repo.git");
+
+  const projectDir = join(String(dir), "project");
+  await write(
+    join(projectDir, "package.json"),
+    JSON.stringify({
+      name: "alice-project",
+      dependencies: {
+        "alice-dep": `alice@localhost:${join(String(dir), "repo.git")}`,
+      },
+    }),
+  );
+
+  const first = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
+  expect(first.exitCode, first.stderr).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "alice-dep", "package.json")).json()).toMatchObject({
+    name: "alice-dep",
+    version: "1.0.0",
+  });
+
+  const lockAfterFirst = await file(join(projectDir, "bun.lock")).text();
+  expect(lockAfterFirst).toContain('"alice-dep@git+ssh://alice@localhost:');
+
+  await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+
+  const second = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
+  expect(second.exitCode, second.stderr).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "alice-dep", "package.json")).json()).toMatchObject({
+    name: "alice-dep",
+    version: "1.0.0",
+  });
+  expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
+});
+
 // A dependency that really is an ssh URL (bracketed IPv6 host here) must keep
 // its ssh:// form: stripping would turn "ssh://git@[::1]/path" into
 // "git@[::1]/path", which git reads as a local path (no scp separator after

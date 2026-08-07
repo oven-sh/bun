@@ -570,77 +570,70 @@ test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file:
 // prefix bun.lock uses, so the migrated resolution must parse it back off the
 // same way or its repo never byte-matches the parsed dependency and a
 // cold-cache isolated install waits forever on a checkout id nothing
-// completes. npm >= 7 also rewrites the package.json spec to the prefixed
-// form; older npm kept the bare scp spec. Both shapes must converge.
-test.skipIf(isWindows)(
-  "migrating an npm lockfile with scp-form git dependencies installs on a cold cache",
-  async () => {
-    using dir = tempDir("migrate-scp-git", {
-      "fake-ssh.sh": fakeSshScript,
-      "upstream-a/package.json": JSON.stringify({ name: "scp-a", version: "1.0.0" }),
-      "upstream-b/package.json": JSON.stringify({ name: "scp-b", version: "1.0.0" }),
-    });
-    fs.chmodSync(join(String(dir), "fake-ssh.sh"), 0o755);
-    const shaA = makeBareRepo(String(dir), "upstream-a", "repo-a.git");
-    const shaB = makeBareRepo(String(dir), "upstream-b", "repo-b.git");
+// completes. npm >= 7 rewrites the package.json spec to the prefixed form,
+// older npm kept the bare scp spec; one test per shape so each install runs
+// a single ssh clone.
+function testScpMigration(shape: string, spec: (repo: string) => string) {
+  test.skipIf(isWindows)(
+    `migrating an npm lockfile with a ${shape} scp git dependency installs on a cold cache`,
+    async () => {
+      using dir = tempDir("migrate-scp-git", {
+        "fake-ssh.sh": fakeSshScript,
+        "upstream/package.json": JSON.stringify({ name: "scp-dep", version: "1.0.0" }),
+      });
+      fs.chmodSync(join(String(dir), "fake-ssh.sh"), 0o755);
+      const sha = makeBareRepo(String(dir), "upstream", "repo.git");
 
-    const specA = `git+ssh://git@localhost:${join(String(dir), "repo-a.git")}`;
-    const specB = `git@localhost:${join(String(dir), "repo-b.git")}`;
-    const projectDir = join(String(dir), "project");
-    fs.mkdirSync(projectDir, { recursive: true });
-    fs.writeFileSync(
-      join(projectDir, "package.json"),
-      JSON.stringify({ name: "migrate-scp", dependencies: { "scp-a": specA, "scp-b": specB } }),
-    );
-    fs.writeFileSync(
-      join(projectDir, "package-lock.json"),
-      JSON.stringify({
-        name: "migrate-scp",
-        lockfileVersion: 3,
-        requires: true,
-        packages: {
-          "": { name: "migrate-scp", dependencies: { "scp-a": specA, "scp-b": specB } },
-          "node_modules/scp-a": {
-            version: "1.0.0",
-            resolved: `git+ssh://git@localhost:${join(String(dir), "repo-a.git")}#${shaA}`,
-          },
-          "node_modules/scp-b": {
-            version: "1.0.0",
-            resolved: `git+ssh://git@localhost:${join(String(dir), "repo-b.git")}#${shaB}`,
-          },
-        },
-      }),
-    );
-
-    const first = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
-    expect(first.exitCode, first.stderr).toBe(0);
-    for (const name of ["scp-a", "scp-b"]) {
-      expect(JSON.parse(fs.readFileSync(join(projectDir, "node_modules", name, "package.json"), "utf8"))).toMatchObject(
-        {
-          name,
-          version: "1.0.0",
-        },
+      const depSpec = spec(join(String(dir), "repo.git"));
+      const projectDir = join(String(dir), "project");
+      fs.mkdirSync(projectDir, { recursive: true });
+      fs.writeFileSync(
+        join(projectDir, "package.json"),
+        JSON.stringify({ name: "migrate-scp", dependencies: { "scp-dep": depSpec } }),
       );
-    }
-
-    // the migrated lockfile pins the locked commits with the ssh:// spelling
-    const lockAfterMigration = fs.readFileSync(join(projectDir, "bun.lock"), "utf8");
-    expect(lockAfterMigration).toContain('"scp-a@git+ssh://git@localhost:');
-    expect(lockAfterMigration).toContain(`#${shaA}`);
-    expect(lockAfterMigration).toContain(`#${shaB}`);
-
-    // and the migrated lockfile itself round-trips on another cold cache
-    fs.rmSync(join(projectDir, "node_modules"), { recursive: true, force: true });
-    const second = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
-    expect(second.exitCode, second.stderr).toBe(0);
-    for (const name of ["scp-a", "scp-b"]) {
-      expect(JSON.parse(fs.readFileSync(join(projectDir, "node_modules", name, "package.json"), "utf8"))).toMatchObject(
-        {
-          name,
-          version: "1.0.0",
-        },
+      fs.writeFileSync(
+        join(projectDir, "package-lock.json"),
+        JSON.stringify({
+          name: "migrate-scp",
+          lockfileVersion: 3,
+          requires: true,
+          packages: {
+            "": { name: "migrate-scp", dependencies: { "scp-dep": depSpec } },
+            "node_modules/scp-dep": {
+              version: "1.0.0",
+              resolved: `git+ssh://git@localhost:${join(String(dir), "repo.git")}#${sha}`,
+            },
+          },
+        }),
       );
-    }
-    expect(fs.readFileSync(join(projectDir, "bun.lock"), "utf8")).toBe(lockAfterMigration);
-  },
-);
+
+      const first = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
+      expect(first.exitCode, first.stderr).toBe(0);
+      expect(
+        JSON.parse(fs.readFileSync(join(projectDir, "node_modules", "scp-dep", "package.json"), "utf8")),
+      ).toMatchObject({
+        name: "scp-dep",
+        version: "1.0.0",
+      });
+
+      // the migrated lockfile pins the locked commit with the ssh:// spelling
+      const lockAfterMigration = fs.readFileSync(join(projectDir, "bun.lock"), "utf8");
+      expect(lockAfterMigration).toContain('"scp-dep@git+ssh://git@localhost:');
+      expect(lockAfterMigration).toContain(`#${sha}`);
+
+      // and the migrated lockfile itself round-trips on another cold cache
+      fs.rmSync(join(projectDir, "node_modules"), { recursive: true, force: true });
+      const second = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
+      expect(second.exitCode, second.stderr).toBe(0);
+      expect(
+        JSON.parse(fs.readFileSync(join(projectDir, "node_modules", "scp-dep", "package.json"), "utf8")),
+      ).toMatchObject({
+        name: "scp-dep",
+        version: "1.0.0",
+      });
+      expect(fs.readFileSync(join(projectDir, "bun.lock"), "utf8")).toBe(lockAfterMigration);
+    },
+  );
+}
+testScpMigration("prefixed-spec", repo => `git+ssh://git@localhost:${repo}`);
+testScpMigration("bare-spec", repo => `git@localhost:${repo}`);

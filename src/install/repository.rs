@@ -589,14 +589,33 @@ impl RepositoryExt for Repository {
         }
 
         if Dependency::is_scp_like_path(url) {
+            let colon_index = strings::index_of_char(url, b':');
+
+            // `user@host:path` already carries its user (the `git@` form took
+            // the early return above); prepend only the scheme and turn the
+            // scp separator into the path slash
+            let has_user = strings::index_of_char_usize(url, b'@')
+                .is_some_and(|at| colon_index.is_none_or(|colon| at < colon as usize));
+            if has_user {
+                const SCHEME: &[u8] = b"ssh://";
+                if SCHEME.len() + url.len() > ssh_path_buf.len() {
+                    return None;
+                }
+                ssh_path_buf[..SCHEME.len()].copy_from_slice(SCHEME);
+                let rest = &mut ssh_path_buf[SCHEME.len()..];
+                rest[..url.len()].copy_from_slice(url);
+                if let Some(colon) = colon_index {
+                    rest[colon as usize] = b'/';
+                }
+                return Some(&ssh_path_buf[..SCHEME.len() + url.len()]);
+            }
+
             const PREFIX: &[u8] = b"ssh://git@";
             if PREFIX.len() + url.len() > ssh_path_buf.len() {
                 return None;
             }
             ssh_path_buf[..PREFIX.len()].copy_from_slice(PREFIX);
             let rest = &mut ssh_path_buf[PREFIX.len()..];
-
-            let colon_index = strings::index_of_char(url, b':');
 
             if let Some(colon) = colon_index {
                 let colon = colon as usize;

@@ -1030,6 +1030,8 @@ it("parses the lockfile's ssh:// spelling of scp-form git repos back to scp form
     ["git+ssh://git@host:22a/path", "git@host:22a/path"], // not a numeric port
     ["git+ssh://git@[::1]:path/repo.git", "git@[::1]:path/repo.git"],
     ["git+ssh://host.com:path", "host.com:path"], // no userinfo
+    ["git+ssh://alice@myhost:team/repo.git", "alice@myhost:team/repo.git"], // non-git user
+    ["git+ssh://git.corp.io:libs/@scope/pkg.git", "git.corp.io:libs/@scope/pkg.git"], // @ in the path
     // real URLs keep it
     ["git+ssh://git@host:22/repo.git", "ssh://git@host:22/repo.git"], // numeric port
     ["git+ssh://git@host:22", "ssh://git@host:22"],

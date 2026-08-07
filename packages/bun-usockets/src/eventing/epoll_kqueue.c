@@ -543,8 +543,15 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     }
 
     if(!is_readable && !is_writable) {
-        if(!(old_events & LIBUS_SOCKET_WRITABLE)) {
-            // if we are not reading or writing, we need to add writable to receive FIN
+        /* 0-event poll: arm a one-shot write filter so a peer teardown still
+         * has an event to ride (EV_EOF on EVFILT_WRITE; epoll gets this for
+         * free via the implicit EPOLLHUP|EPOLLERR). Never for a socket whose
+         * write side WE shut down: our own SS_CANTSENDMORE makes any write
+         * filter report EV_EOF instantly, which read as the connection being
+         * over and closed a paused half-closed socket whose peer was alive. */
+        int own_shutdown = user_data &&
+            us_internal_poll_type((struct us_poll_t *) user_data) == POLL_TYPE_SOCKET_SHUT_DOWN;
+        if(!(old_events & LIBUS_SOCKET_WRITABLE) && !own_shutdown) {
             EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, (uint64_t)(void*)user_data, 0, 0);
         }
     } else if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {

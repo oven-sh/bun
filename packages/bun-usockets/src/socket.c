@@ -840,8 +840,14 @@ void us_socket_pause(struct us_socket_t *s) {
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if (us_socket_is_closed(s)) return;
-    // we are readable and writable so we can just pause readable side
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_WRITABLE);
+    /* Drop readable interest but only KEEP writable interest, never add it:
+     * forcing WRITABLE here dispatched a bogus writable (a JS drain event
+     * with nothing buffered) on every pause, and on a shut-down socket the
+     * fresh kqueue EVFILT_WRITE one-shot reported our own SS_CANTSENDMORE
+     * as EV_EOF immediately, closing a half-closed socket whose peer was
+     * still alive (libuv's uv_read_stop only removes read interest). A
+     * backpressured write keeps its interest; none means nothing to drain. */
+    us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
     s->flags.is_paused = 1;
 }
 

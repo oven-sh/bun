@@ -362,6 +362,76 @@ describe.concurrent("socket", () => {
     expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
   });
 
+  // us_socket_pause armed WRITABLE unconditionally; the always-writable socket
+  // then dispatched a bogus drain with nothing buffered.
+  it("pause() with nothing buffered must not fire a drain event", async () => {
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
+    });
+    let drains = 0;
+    const opened = Promise.withResolvers<any>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open: s => opened.resolve(s),
+        drain() {
+          drains++;
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {},
+      },
+    });
+    const s = await opened.promise;
+    await Bun.sleep(50); // let any connect-time writable settle
+    const before = drains;
+    s.pause();
+    await Bun.sleep(100); // window in which the buggy pause-armed writable fired
+    expect(drains - before).toBe(0);
+    s.terminate();
+  });
+
+  // On kqueue, pause() after shutdown() armed an EVFILT_WRITE one-shot that
+  // reported our own SS_CANTSENDMORE as EV_EOF immediately: the half-closed
+  // socket closed within milliseconds even though the peer was alive and
+  // silent. Linux always kept it open; this pins the behavior on both.
+  it("shutdown() then pause() keeps a half-closed socket open while the peer is silent", async () => {
+    let closedEarly = false;
+    const opened = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.shutdown();
+          s.pause();
+          opened.resolve();
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {
+          closedEarly = true;
+        },
+      },
+    });
+    // allowHalfOpen peer ignores our FIN and stays silently connected.
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
+    });
+    await opened.promise;
+    await Bun.sleep(1000);
+    expect(closedEarly).toBe(false);
+    peer.terminate();
+  });
+
   it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), fileURLToPath(new URL("./socket-reload-fixture.ts", import.meta.url))],

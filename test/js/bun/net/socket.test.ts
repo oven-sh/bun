@@ -3862,11 +3862,84 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
         // (AFD would have reported AFD_POLL_ABORT; select() alone cannot).
         client.terminate();
         await gone.promise;
-        console.log("OK dead connection surfaced");
+        // The RST must surface as a dirty close (the re-peek sees
+        // WSAECONNRESET), not be mistaken for a clean FIN.
+        const dirty = sawError || closeError;
+        console.log(dirty ? "OK dead connection surfaced dirty" : "FAIL clean close on RST");
+        process.exit(dirty ? 0 : 1);
+      `);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK dead connection surfaced dirty");
+    expect(exitCode).toBe(0);
+  }, 15_000);
+
+  it("a backpressured writer parked with unread data drains at full speed", async () => {
+    const { stdout, stderr, exitCode } = await runChild(`
+        // Receive-paused socket with a write backlog: the poll parks
+        // subscribed to UV_WRITABLE | UV_DISCONNECT while the client's
+        // unread byte keeps the socket readable. The slow path must block
+        // on writability here; a version that parked this state with a
+        // 1-second sleep throttles the transfer to one send-buffer per
+        // second and cannot finish 8MB inside the test timeout.
+        const TOTAL = 8 * 1024 * 1024;
+        const CHUNK = 64 * 1024;
+        const payload = Buffer.alloc(CHUNK, "a");
+        let sent = 0;
+        let sawError = null;
+        const opened = Promise.withResolvers();
+        const drained = Promise.withResolvers();
+        function pump(s) {
+          while (sent < TOTAL) {
+            const want = Math.min(CHUNK, TOTAL - sent);
+            const n = s.write(payload.subarray(0, want));
+            sent += n;
+            if (n < want) return; // backpressure: drain() resumes the pump
+          }
+        }
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) {
+              s.pause();
+              opened.resolve(s);
+            },
+            data() {},
+            drain(s) {
+              pump(s);
+            },
+            error(s, e) {
+              sawError = e?.code || String(e);
+            },
+            close() {},
+          },
+        });
+        let received = 0;
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            data(s, buf) {
+              received += buf.length;
+              if (received >= TOTAL) drained.resolve();
+            },
+            error() {},
+            close() {},
+          },
+        });
+        const serverSock = await opened.promise;
+        client.write("x");
+        pump(serverSock);
+        await drained.promise;
+        if (sawError) {
+          console.log("FAIL " + sawError);
+          process.exit(1);
+        }
+        console.log("OK drained");
         process.exit(0);
       `);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK dead connection surfaced");
+    expect(stdout.trim()).toBe("OK drained");
     expect(exitCode).toBe(0);
-  }, 15_000);
+  }, 20_000);
 });

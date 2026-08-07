@@ -3667,3 +3667,396 @@ describe.concurrent("connect() failure promise settlement", () => {
     ).rejects.toBe(boom);
   });
 });
+
+// When a winsock LSP (layered service provider) with a non-IFS protocol chain
+// owns a socket, libuv cannot AFD-poll it and falls back to its slow poll path:
+// a select() on a worker thread. That path historically computed only
+// readable/writable, so the UV_DISCONNECT subscription usockets arms on every
+// poll did nothing there, and a poll subscribed to ONLY UV_DISCONNECT (how a
+// paused or half-closed socket parks on Windows) handed select() three empty
+// fd sets, which fails WSAEINVAL instantly and error-closed the healthy
+// connection. Our libuv patch synthesizes UV_DISCONNECT on the slow path from
+// select() readability plus MSG_PEEK, and adds the BUN_FEATURE_FLAG_UV_FORCE_SLOW_POLL=1 hook
+// so these scenarios can run without installing an LSP. The hook is read once
+// per process at the first poll creation, so every scenario runs in a child.
+describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEATURE_FLAG_UV_FORCE_SLOW_POLL)", () => {
+  const slowPollEnv = { ...bunEnv, BUN_FEATURE_FLAG_UV_FORCE_SLOW_POLL: "1" };
+
+  async function runChild(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: slowPollEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("a paused socket with buffered data survives quiescence and resumes", async () => {
+    const { stdout, stderr, exitCode } = await runChild(`
+        let sawError = null;
+        let closeError = null;
+        let closed = false;
+        const opened = Promise.withResolvers();
+        const gotData = Promise.withResolvers();
+        let paused;
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) {
+              paused = s;
+              s.pause();
+              opened.resolve();
+            },
+            data(s, buf) {
+              gotData.resolve(buf.toString());
+            },
+            error(s, e) {
+              sawError = e?.code || String(e);
+            },
+            close(s, e) {
+              closeError = e?.code || (e ? String(e) : null);
+              closed = true;
+            },
+          },
+        });
+        const clientData = Promise.withResolvers();
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            data(s, buf) {
+              clientData.resolve(buf.toString());
+            },
+            error() {},
+            close() {},
+          },
+        });
+        await opened.promise;
+        client.write("ping");
+        // The paused socket's poll is subscribed to UV_DISCONNECT only, with
+        // the unread byte pending: the state the broken slow path error-closed
+        // with WSAEINVAL within one loop iteration. Nothing observable marks
+        // "poll parked N times", so hold the state across a fixed window.
+        await Bun.sleep(1500);
+        if (sawError || closed) {
+          console.log("FAIL early-death error=" + (sawError || closeError) + " closed=" + closed);
+          process.exit(1);
+        }
+        paused.resume();
+        const got = await gotData.promise;
+        paused.write("pong");
+        const echoed = await clientData.promise;
+        client.end();
+        console.log("OK " + got + " " + echoed);
+        process.exit(0);
+      `);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK ping pong");
+    expect(exitCode).toBe(0);
+  }, 15_000);
+
+  it("a half-closed paused socket sees the peer FIN and closes cleanly", async () => {
+    const { stdout, stderr, exitCode } = await runChild(`
+        let sawError = null;
+        let closeError = null;
+        const serverClosed = Promise.withResolvers();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) {
+              // Half-close (FIN) with reads parked: the poll ends up
+              // subscribed to UV_DISCONNECT only, so the peer's answering FIN
+              // is exactly the event the slow path used to never deliver
+              // (hanging teardown). end() would flush-and-close outright;
+              // shutdown() keeps the socket waiting for that FIN.
+              s.pause();
+              s.shutdown();
+            },
+            data() {},
+            error(s, e) {
+              sawError = e?.code || String(e);
+            },
+            close(s, e) {
+              closeError = e?.code || (e ? String(e) : null);
+              serverClosed.resolve();
+            },
+          },
+        });
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          // Half-open so receiving the server FIN does not auto-answer with
+          // ours: the delayed reply first holds the server socket parked in
+          // the DISCONNECT-only state across loop iterations (the broken path
+          // error-closes it within one), then delivers the FIN it must not
+          // miss.
+          allowHalfOpen: true,
+          socket: {
+            data() {},
+            async end(s) {
+              await Bun.sleep(700);
+              s.end();
+            },
+            error() {},
+            close() {},
+          },
+        });
+        await serverClosed.promise;
+        const bad = sawError || closeError;
+        console.log(bad ? "FAIL " + bad : "OK clean close");
+        process.exit(bad ? 1 : 0);
+      `);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK clean close");
+    expect(exitCode).toBe(0);
+  }, 15_000);
+
+  it("a paused socket with buffered data learns of a peer reset", async () => {
+    const { stdout, stderr, exitCode } = await runChild(`
+        let sawError = null;
+        let closeError = null;
+        let closed = false;
+        const opened = Promise.withResolvers();
+        const gone = Promise.withResolvers();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) {
+              s.pause();
+              opened.resolve();
+            },
+            data() {},
+            error(s, e) {
+              sawError = e?.code || String(e);
+              gone.resolve("error");
+            },
+            close(s, e) {
+              closeError = e?.code || (e ? String(e) : null);
+              closed = true;
+              gone.resolve("close");
+            },
+          },
+        });
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { data() {}, error() {}, close() {} },
+        });
+        await opened.promise;
+        client.write("x");
+        // Same fixed window as above: the paused socket must survive parked
+        // with data pending before the connection dies, or a broken build's
+        // instant error-close would satisfy the later assertion by accident.
+        await Bun.sleep(1200);
+        if (sawError || closed) {
+          console.log("FAIL early-death error=" + (sawError || closeError) + " closed=" + closed);
+          process.exit(1);
+        }
+        // Abortive close: the RST discards the queued byte, so the periodic
+        // slow-path re-peek is the only thing that can discover the death
+        // (AFD would have reported AFD_POLL_ABORT; select() alone cannot).
+        client.terminate();
+        await gone.promise;
+        // The RST must surface as a dirty close (the re-peek sees
+        // WSAECONNRESET), not be mistaken for a clean FIN.
+        const dirty = sawError || closeError;
+        console.log(dirty ? "OK dead connection surfaced dirty" : "FAIL clean close on RST");
+        process.exit(dirty ? 0 : 1);
+      `);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK dead connection surfaced dirty");
+    expect(exitCode).toBe(0);
+  }, 15_000);
+
+  it("a backpressured writer parked with unread data drains at full speed", async () => {
+    const { stdout, stderr, exitCode } = await runChild(`
+        // Receive-paused socket with a write backlog: the poll parks
+        // subscribed to UV_WRITABLE | UV_DISCONNECT while the client's
+        // unread byte keeps the socket readable. The slow path must block
+        // on writability here; a version that parked this state with a
+        // 1-second sleep throttles the transfer to one send-buffer per
+        // second and cannot finish 8MB inside the test timeout.
+        const TOTAL = 8 * 1024 * 1024;
+        const CHUNK = 64 * 1024;
+        const payload = Buffer.alloc(CHUNK, "a");
+        let sent = 0;
+        const opened = Promise.withResolvers();
+        const drained = Promise.withResolvers();
+        function pump(s) {
+          while (sent < TOTAL) {
+            const want = Math.min(CHUNK, TOTAL - sent);
+            const n = s.write(payload.subarray(0, want));
+            if (n < 0) {
+              // Dead socket: fail now instead of waiting out the timeout.
+              console.log("FAIL write returned " + n + " after " + sent + " bytes");
+              process.exit(1);
+            }
+            sent += n;
+            if (n < want) return; // backpressure: drain() resumes the pump
+          }
+        }
+        // Any socket death mid-transfer is a failure: exit with the cause
+        // right away instead of hanging the child until the parent timeout
+        // with nothing on stdout.
+        function die(what) {
+          console.log("FAIL " + what);
+          process.exit(1);
+        }
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) {
+              s.pause();
+              opened.resolve(s);
+            },
+            data() {},
+            drain(s) {
+              pump(s);
+            },
+            error(s, e) {
+              die("server error " + (e?.code || e));
+            },
+            close(s, e) {
+              die("server closed err=" + (e?.code || e));
+            },
+          },
+        });
+        let received = 0;
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            data(s, buf) {
+              received += buf.length;
+              if (received >= TOTAL) drained.resolve();
+            },
+            error(s, e) {
+              die("client error " + (e?.code || e));
+            },
+            close(s, e) {
+              die("client closed err=" + (e?.code || e));
+            },
+          },
+        });
+        const serverSock = await opened.promise;
+        client.write("x");
+        pump(serverSock);
+        await drained.promise;
+        console.log("OK drained");
+        process.exit(0);
+      `);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK drained");
+    expect(exitCode).toBe(0);
+  }, 20_000);
+
+  it("a backpressured write lands while both poll requests are checked out", async () => {
+    // A parked DISCONNECT-only request holds one of the handle's two poll
+    // request slots (sleeping between peeks); resume's request, cycled back
+    // to a blocked readable wait, holds the other. A backpressured write
+    // then re-arms WRITABLE, a subscription bit neither checked-out request
+    // carries, and libuv's slow submit hits its both-slots-busy branch:
+    // historically assert(0), and without the graceful-return + one-second
+    // lap cap the new subscription stayed unarmed until a request
+    // completed, stalling the writer. The full payload must still drain.
+    const { stdout, stderr, exitCode } = await runChild(`
+        const TOTAL = 4 * 1024 * 1024;
+        const CHUNK = 64 * 1024;
+        const payload = Buffer.alloc(CHUNK, "b");
+        let sent = 0;
+        const opened = Promise.withResolvers();
+        const gotData = Promise.withResolvers();
+        const drained = Promise.withResolvers();
+        function pump(s) {
+          while (sent < TOTAL) {
+            const want = Math.min(CHUNK, TOTAL - sent);
+            const n = s.write(payload.subarray(0, want));
+            if (n < 0) {
+              console.log("FAIL write returned " + n + " after " + sent + " bytes");
+              process.exit(1);
+            }
+            sent += n;
+            if (n < want) return; // backpressure: drain() resumes the pump
+          }
+        }
+        // Any socket death is a failure (the broken path error-closes the
+        // parked socket): exit with the cause right away instead of hanging
+        // the child until the parent timeout with nothing on stdout.
+        function die(what) {
+          console.log("FAIL " + what);
+          process.exit(1);
+        }
+        let paused;
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) {
+              paused = s;
+              s.pause();
+              opened.resolve();
+            },
+            data(s, buf) {
+              gotData.resolve(buf.toString());
+            },
+            drain(s) {
+              pump(s);
+            },
+            error(s, e) {
+              die("server error " + (e?.code || e));
+            },
+            close(s, e) {
+              die("server closed err=" + (e?.code || e));
+            },
+          },
+        });
+        let received = 0;
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open(s) {
+              // Not reading yet: the server's flood below must backpressure.
+              s.pause();
+            },
+            data(s, buf) {
+              received += buf.length;
+              if (received >= TOTAL) drained.resolve();
+            },
+            error(s, e) {
+              die("client error " + (e?.code || e));
+            },
+            close(s, e) {
+              die("client closed err=" + (e?.code || e));
+            },
+          },
+        });
+        await opened.promise;
+        client.write("x");
+        // Let the paused server poll park with the byte pending (slot 1
+        // checked out, sleeping between peeks).
+        await Bun.sleep(400);
+        paused.resume();
+        await gotData.promise;
+        // One settled loop turn so resume's request cycles back to a
+        // parked readable wait (slot 2 checked out too).
+        await Bun.sleep(80);
+        // The first partial write re-arms WRITABLE with both slots held:
+        // the submission that used to have no slot to land in.
+        pump(paused);
+        client.resume();
+        await drained.promise;
+        console.log("OK drained " + received);
+        process.exit(0);
+      `);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK drained " + 4 * 1024 * 1024);
+    expect(exitCode).toBe(0);
+  }, 15_000);
+});

@@ -170,16 +170,18 @@ describe.each([
     `Object.defineProperty(require("node:util"), "inspect", { get() { throw new Error("boom"); } });`,
   ],
 ])("console.log with node:util inspect %s", (_label, sabotage) => {
-  it.concurrent("produces a catchable error instead of crashing", async () => {
-    // util.inspect is cached lazily when a custom inspect runs; a tampered
-    // export must produce a catchable error, not a crash.
+  it.concurrent("degrades gracefully instead of crashing", async () => {
+    // util.inspect is cached lazily when a custom inspect runs; with a tampered
+    // export the custom inspect still runs, and only calling the unavailable
+    // inspect argument throws.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `${sabotage}
-try { console.log({ [Bun.inspect.custom]() { return "custom"; } }) } catch (e) {}
-try { console.log(Bun.inspect({ [Bun.inspect.custom](d, o) { return o.stylize("styled", "string"); } }, { colors: true })) } catch (e) {}
+console.log({ [Bun.inspect.custom]() { return "custom"; } });
+console.log(Bun.inspect({ [Bun.inspect.custom](d, o) { return o.stylize("styled", "string"); } }, { colors: true }));
+try { console.log({ [Bun.inspect.custom](d, o, inspect) { return inspect(1); } }) } catch (e) { console.log("caught " + e.constructor.name) }
 console.log("ok")`,
       ],
       env: bunEnv,
@@ -190,6 +192,7 @@ console.log("ok")`,
 
     expect(stdout).toContain("custom");
     expect(stdout).toContain("styled");
+    expect(stdout).toContain("caught TypeError");
     expect(stdout).toContain("ok");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);

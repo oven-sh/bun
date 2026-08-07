@@ -1,7 +1,5 @@
 // This file implements the global state for $rust and $cpp preprocessor macros
-// as well as all the code it generates.
-//
-// For the actual parsing, see replacements.ts
+// as well as all the code it generates. For the actual parsing, see replacements.ts
 
 import path, { basename, sep } from "path";
 import { readdirRecursiveWithExclusionsAndExtensionsSync } from "./helpers";
@@ -38,11 +36,9 @@ const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
   [".cpp", ".bind.ts"],
 );
 
-// The $rust() macro's first argument is an identifier naming the module a
-// native symbol belongs to. The file itself is never opened, but its path
-// under src/ drives both the exported C symbol name (normalizeSymbolPathPrefix)
-// and the Rust crate path (rustTarget). Adding a new $rust() call site
-// requires adding its entry below.
+// Maps the $rust() macro's module identifier to its src/ path, which drives the exported
+// C symbol name (normalizeSymbolPathPrefix) and the Rust crate path (rustTarget).
+// Adding a new $rust() call site requires adding its entry below.
 const rustIdentifierPaths: Record<string, string> = {
   "bun.rs": "bun.rs",
   "ipc.rs": "runtime/ipc_host.rs",
@@ -77,6 +73,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "node_net_binding.rs": "runtime/node/node_net_binding.rs",
   "node_os.rs": "runtime/node/node_os.rs",
   "node_quic_binding.rs": "runtime/node/node_quic_binding.rs",
+  "node_repl_binding.rs": "runtime/node/node_repl_binding.rs",
   "node_util_binding.rs": "runtime/node/node_util_binding.rs",
   "node_zlib_binding.rs": "runtime/node/node_zlib_binding.rs",
   "npm.rs": "install/npm.rs",
@@ -274,20 +271,9 @@ export function getJS2NativeCPP() {
   ].join("\n");
 }
 
-// Rust emitter.
-//
-// Emits, for every $rust() call site, a `#[unsafe(no_mangle)] extern "C"`
-// thunk whose unmangled name and signature is byte-identical to the extern
-// the C++ side declares in GeneratedJS2Native.h. The C++ output is invariant;
-// only the implementer of the symbol changes.
-//
-// Two ABI shapes:
-//   • nativeCalls (type "rust")  → `${sym}_workaround(global) -> JSValue`
-//   • wrapperCalls (type "rust") → `${sym}(global, callframe) -> JSValue`
-//
-// Each thunk calls the Rust function directly at
-// `crate::<derived-from-path>::<snake_case(symbol)>` — no trait, no runtime
-// panic fallback. A missing function is a compile error.
+// Rust emitter: for each $rust() call emits a `#[unsafe(no_mangle)] extern "C"` thunk matching
+// the extern in GeneratedJS2Native.h (nativeCalls → `${sym}_workaround(global)`, wrapperCalls →
+// `${sym}(global, callframe)`), calling `crate::<path>::<snake_case(symbol)>` — missing fn = compile error.
 export function getJS2NativeRust() {
   // Symbols already hand-exported in src/ (via `export_host_fn!` or
   // `#[unsafe(export_name = "JS2Rust__…")]`) — skip emitting a thunk for these
@@ -306,11 +292,8 @@ export function getJS2NativeRust() {
       .replace(/[.\-]/g, "_")
       .toLowerCase();
 
-  // `src/runtime/node/node_util_binding.rs` + `parseEnv`
-  //   → `crate::node::node_util_binding::parse_env`
-  // `src/ini/ini.rs` + `IniTestingAPIs.parse` (outside bun_runtime)
-  //   → `crate::dispatch::js2native::ini_ini_testing_apis_parse` (single
-  //   landing pad; still a compile error if missing).
+  // e.g. `runtime/node/node_util_binding.rs` + `parseEnv` → `crate::node::node_util_binding::parse_env`;
+  // outside bun_runtime → `crate::dispatch::js2native::<flat_name>` (single landing pad).
   const rustTarget = (filename: string, sym: string) => {
     const rel = path.relative(srcRoot, filename).replace(/\.rs$/, "");
     const segs = rel.split(path.sep);

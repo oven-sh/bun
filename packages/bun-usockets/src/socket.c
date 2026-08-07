@@ -720,16 +720,29 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
     if (!us_socket_is_closed(s) && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+        bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
 #ifdef LIBUS_USE_KQUEUE
         /* A socket already at 0 events (paused with nothing buffered) diffs
          * to a no-op above, leaving no kqueue filter at all; arm the
          * read-side teardown watch directly so the peer's FIN/RST still
-         * closes us (epoll's implicit EPOLLHUP|EPOLLERR needs no filter). */
+         * closes us (epoll's implicit EPOLLHUP|EPOLLERR needs no filter).
+         * AFTER the shutdown(2): macOS 26 only delivers the peer's close on
+         * a filter registered after SHUT_WR (node-http-halfclose-midupload
+         * timed out with the watch armed before it), and EV_EOF is level
+         * state, so a FIN landing in the gap is still reported by the fresh
+         * registration. */
         if (us_poll_events(&s->p) == 0) {
             kqueue_change(s->group->loop->fd, us_poll_fd(&s->p), 0, 0, &s->p);
+        } else {
+            /* Still reading: scrub any phantom write one-shot the 0-event
+             * fallback armed during an earlier pause (poll_events never
+             * records it, so the diff above cannot see it; ENOENT is
+             * harmless when none exists). */
+            kqueue_change(s->group->loop->fd, us_poll_fd(&s->p),
+                          LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+                          LIBUS_SOCKET_READABLE, &s->p);
         }
 #endif
-        bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }
 }
 

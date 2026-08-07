@@ -476,6 +476,45 @@ describe.concurrent("socket", () => {
     expect(closed).toBe(false);
   });
 
+  // Third ordering: pause() then resume() leaves the 0-event fallback's
+  // write one-shot armed but unrecorded; shutdown() must scrub it or it
+  // echoes our own SS_CANTSENDMORE.
+  it("pause() then resume() then shutdown() keeps a half-closed socket open while the peer is silent", async () => {
+    let closedEarly = false;
+    const opened = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.pause();
+          s.resume();
+          s.shutdown();
+          opened.resolve();
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {
+          closedEarly = true;
+        },
+      },
+    });
+    // allowHalfOpen peer ignores our FIN and stays silently connected.
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
+    });
+    await opened.promise;
+    // Negative-assertion window, same rationale as the shutdown-then-pause test.
+    await Bun.sleep(250);
+    const closed = closedEarly;
+    peer.terminate();
+    expect(closed).toBe(false);
+  });
+
   // The flip side: with the write filter unusable after our own shutdown()
   // (its EV_EOF echoes SS_CANTSENDMORE), the read-side teardown watch must
   // still deliver the peer's actual termination to a paused half-closed

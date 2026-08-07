@@ -2007,9 +2007,10 @@ __attribute__((callback (corker, ctx)))
   }
 
   void us_socket_sendfile_needs_more(us_socket_r s) {
-    if(us_socket_is_closed(s)) return;
-    s->flags.last_write_failed = 1;
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    /* Same job as the pipelined-response park sites: bytes (the file tail)
+     * held outside the socket's write path need a writable event. The shared
+     * helper respects pause and shut-down instead of forcing READABLE. */
+    us_socket_mark_writable_pending(s);
   }
 
   LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) {

@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
-use bun_jsc::HostReturn as _;
 use bun_core::strings;
+use bun_jsc::HostReturn as _;
 use bun_jsc::js_string::Iterator as JSStringIterator;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
 

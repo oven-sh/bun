@@ -890,7 +890,10 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             }
         }
 
-        return vm.main_resolved_path.to_js(global_this).or_pending_exception();
+        return vm
+            .main_resolved_path
+            .to_js(global_this)
+            .or_pending_exception();
     }
 
     ZigString::init(vm.main()).to_js(global_this)

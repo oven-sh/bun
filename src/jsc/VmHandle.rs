@@ -359,7 +359,6 @@ impl VmHandle {
         // SAFETY: JS thread; no accessor can be inside any more.
         unsafe { *self.0.vm.get() = core::ptr::null_mut() };
     }
-
 }
 
 // ── C++ holds handles as an opaque box of a clone ─────────────────────────

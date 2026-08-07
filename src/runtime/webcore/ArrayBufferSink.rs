@@ -1,6 +1,6 @@
 use crate::webcore::streams::{self, SourceHandle};
-use bun_jsc::HostReturn as _;
 use bun_collections::{ByteVecExt, VecExt};
+use bun_jsc::HostReturn as _;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sys as syscall;
 

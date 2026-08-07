@@ -4242,8 +4242,7 @@ impl Resolver {
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
-            let mut array = (*addr)
-                .to_js_response(prev_global, T::TYPE_NAME);
+            let mut array = (*addr).to_js_response(prev_global, T::TYPE_NAME);
             // SAFETY: addr is the c-ares-allocated reply; freed once after all consumers run.
             let _free_addr = scopeguard::guard(addr, |a| T::destroy(a));
             keep_alive(&array);
@@ -4255,8 +4254,7 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = (*addr)
-                        .to_js_response(new_global, T::TYPE_NAME);
+                    array = (*addr).to_js_response(new_global, T::TYPE_NAME);
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
@@ -4344,36 +4342,36 @@ impl Resolver {
         // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
         let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
-        let mut array: JsResult<JSValue> = match super::options_jsc::result_any_to_js(
-            result,
-            global_object,
-        )
-        .transpose()
-        {
-            Some(a) => a,
-            None => {
-                // SAFETY: `key.lookup` is the heap-allocated request stored in the
-                // pending-cache slot; consumed via `heap::take` below.
-                unsafe {
-                    let mut pending = (*key.lookup).head.next;
-                    // Consume the request and move `head` out by value;
-                    // `ptr::read` + `heap::take` would double-Drop `DNSLookup`.
-                    let owned = *bun_core::heap::take(key.lookup);
-                    let mut head = owned.head;
-                    DNSLookup::process_get_addr_info_native(&raw mut head, err, ptr::null_mut());
-
-                    while let Some(value) = pending {
-                        pending = (*value.as_ptr()).next;
+        let mut array: JsResult<JSValue> =
+            match super::options_jsc::result_any_to_js(result, global_object).transpose() {
+                Some(a) => a,
+                None => {
+                    // SAFETY: `key.lookup` is the heap-allocated request stored in the
+                    // pending-cache slot; consumed via `heap::take` below.
+                    unsafe {
+                        let mut pending = (*key.lookup).head.next;
+                        // Consume the request and move `head` out by value;
+                        // `ptr::read` + `heap::take` would double-Drop `DNSLookup`.
+                        let owned = *bun_core::heap::take(key.lookup);
+                        let mut head = owned.head;
                         DNSLookup::process_get_addr_info_native(
-                            value.as_ptr(),
+                            &raw mut head,
                             err,
                             ptr::null_mut(),
                         );
+
+                        while let Some(value) = pending {
+                            pending = (*value.as_ptr()).next;
+                            DNSLookup::process_get_addr_info_native(
+                                value.as_ptr(),
+                                err,
+                                ptr::null_mut(),
+                            );
+                        }
                     }
+                    return;
                 }
-                return;
-            }
-        };
+            };
         // SAFETY: `key.lookup` is the heap-allocated request stored in the
         // pending-cache slot; consumed via `heap::take` below.
         unsafe {

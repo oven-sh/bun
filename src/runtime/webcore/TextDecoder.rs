@@ -1,8 +1,8 @@
 use crate::webcore::EncodingLabel;
-use bun_jsc::HostReturn as _;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
+use bun_jsc::HostReturn as _;
 use core::cell::Cell;
 use core::ptr::NonNull;
 

@@ -910,17 +910,16 @@ impl Task {
                             // linker's uninstall-before-install. (Lifecycle
                             // scripts re-run on every install for folder
                             // entries, so artifacts they write are recreated.)
-                            //
-                            // Root entries only reach LinkPackage as a
-                            // dependency on the root package (`"x": "file:."`);
-                            // for those `append_store_path` yields the store
-                            // entry's package dir, never the project dir.
-                            debug_assert!(
-                                pkg_res.tag != ResolutionTag::Root
-                                    || dep_id != invalid_dependency_id
-                            );
                             let mut prev_build = AutoPath::init_top_level_dir();
+                            let top_level_len = prev_build.len();
                             installer.append_store_path(&mut prev_build, self.entry_id);
+                            // `append_store_path` appends the entry's package
+                            // dir for everything that reaches LinkPackage
+                            // (Root entries only reach it as a dependency on
+                            // the root package, `"x": "file:."`). Release-mode
+                            // assert: through an unextended path the delete
+                            // below would remove the project directory itself.
+                            assert!(prev_build.len() > top_level_len);
                             if let Some(e) = Fd::cwd().delete_tree(prev_build.slice()).err() {
                                 return Ok(Yield::failure(TaskError::LinkPackage(e)));
                             }

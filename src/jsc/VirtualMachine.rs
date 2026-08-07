@@ -1391,7 +1391,12 @@ impl VirtualMachine {
             return true;
         }
 
-        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+        // The test-runner short-circuit routes errors to jest's reporter and
+        // skips process.on('uncaughtException'). It is a main-thread concept: a
+        // worker VM's `on_unhandled_rejection` is the worker error dispatcher,
+        // not jest's, and the worker's own uncaughtException listeners / exit
+        // code must behave as they do outside `bun test`.
+        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) && self.is_main_thread() {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, err);
             return true;
@@ -3272,7 +3277,10 @@ impl VirtualMachine {
             return;
         }
 
-        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+        // See `uncaught_exception`: the test-runner short-circuit is main-thread
+        // only. A worker's unhandledRejection listeners and exit code must match
+        // standalone behaviour.
+        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) && self.is_main_thread() {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, reason);
             return;

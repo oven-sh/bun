@@ -37,8 +37,7 @@ pub use DeferredTaskQueue as deferred_task_queue;
 
 pub use MiniEventLoop::PipeReadBuffer;
 pub use any_event_loop::{
-    AnyEventLoop, EventLoopHandle, EventLoopTask, JsPoster, JsPosterVTable,
-    Posted,
+    AnyEventLoop, EventLoopHandle, EventLoopTask, JsPoster, JsPosterVTable, Posted,
 };
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`. `bun_event_loop` is

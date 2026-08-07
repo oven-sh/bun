@@ -5,7 +5,9 @@ use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 #[allow(improper_ctypes)] // `VmHandle` is an opaque `BunVmHandle*` to C++ (`Bun__VmHandle__create`)
 unsafe extern "C" {
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
-    safe fn Bun__EventLoopTaskNoContext__vmHandle(task: &EventLoopTaskNoContext) -> *const crate::VmHandle;
+    safe fn Bun__EventLoopTaskNoContext__vmHandle(
+        task: &EventLoopTaskNoContext,
+    ) -> *const crate::VmHandle;
 }
 
 bun_opaque::opaque_ffi! {

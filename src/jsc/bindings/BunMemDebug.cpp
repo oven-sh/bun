@@ -219,7 +219,15 @@ static bool imageEnvIsSet()
 
 static void reexecWithoutASLRIfSlid()
 {
-    if (getenv("BUN_IMAGE_REEXECED"))
+    // Hard cap independent of the environment: the re-exec'd generation is tagged in argv[0] (survives env scrubbing),
+    // and a tagged process never re-execs again.
+    static constexpr const char* kReexecTag = " [image-reexec]";
+#if OS(DARWIN)
+    const bool alreadyReexeced = (*_NSGetArgv())[0] && strstr((*_NSGetArgv())[0], kReexecTag);
+#else
+    const bool alreadyReexeced = false;
+#endif
+    if (getenv("BUN_IMAGE_REEXECED") || alreadyReexeced)
         return;
     bool needEnv = !imageEnvIsSet();
 #if OS(DARWIN)
@@ -234,7 +242,10 @@ static void reexecWithoutASLRIfSlid()
     posix_spawnattr_t attr; posix_spawnattr_init(&attr);
     short flags = 0; posix_spawnattr_getflags(&attr, &flags);
     posix_spawnattr_setflags(&attr, flags | 0x0100 /* _POSIX_SPAWN_DISABLE_ASLR */ | POSIX_SPAWN_SETEXEC);
-    posix_spawn(nullptr, exe, nullptr, &attr, *_NSGetArgv(), *_NSGetEnviron()); // SETEXEC: only returns on failure
+    char** oargv = *_NSGetArgv(); int argc = 0; while (oargv[argc]) argc++;
+    std::vector<char*> nargv(oargv, oargv + argc + 1);
+    std::string tagged = std::string(oargv[0] ? oargv[0] : exe) + kReexecTag; nargv[0] = tagged.data();
+    posix_spawn(nullptr, exe, nullptr, &attr, nargv.data(), *_NSGetEnviron()); // SETEXEC: only returns on failure
     fprintf(stderr, "[image] could not re-exec without ASLR; continuing slid (image build/restore will not work)\n");
 #elif OS(LINUX)
     // Linux: the executable is non-PIE (never slides) and system libraries may slide (extern-library fixups), so ASLR stays on;

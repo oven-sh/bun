@@ -82,8 +82,8 @@ use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
-pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
+pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)

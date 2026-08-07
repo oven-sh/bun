@@ -417,7 +417,9 @@ impl FetchTasklet {
         // `release_queued_work` instead of parking it. If the VM is already
         // gone it abandoned this tasklet's JS side before closing: free the
         // rest here.
-        let task = ConcurrentTask::create(bun_event_loop::Task::init(this.cast::<FetchTaskletDeinitHop>()));
+        let task = ConcurrentTask::create(bun_event_loop::Task::init(
+            this.cast::<FetchTaskletDeinitHop>(),
+        ));
         if let jsc::vm_handle::Posted::Refused(task) = self_.post(task) {
             // SAFETY: refused ⇒ we own the task box; last ref ⇒ exclusive access to `this`.
             unsafe {
@@ -559,7 +561,10 @@ impl FetchTasklet {
         // SAFETY: fn contract.
         unsafe {
             (*this).ref_count.assert_no_refs();
-            debug_assert!((*this).js_state_abandoned, "VM refused a fetch it never abandoned");
+            debug_assert!(
+                (*this).js_state_abandoned,
+                "VM refused a fetch it never abandoned"
+            );
             drop(bun_core::heap::take(this));
         }
     }
@@ -2031,7 +2036,11 @@ impl FetchTasklet {
         // JS thread: the VM releases this tasklet's JS side at teardown if it
         // is still live then (see `abandon_js_state`).
         // SAFETY: this thread's live runtime state.
-        unsafe { (*crate::jsc_hooks::runtime_state()).fetch_tasklets.insert(fetch_tasklet_ptr) };
+        unsafe {
+            (*crate::jsc_hooks::runtime_state())
+                .fetch_tasklets
+                .insert(fetch_tasklet_ptr)
+        };
         // SAFETY: just allocated; exclusive access until returned
         let fetch_tasklet = unsafe { &mut *fetch_tasklet_ptr };
 

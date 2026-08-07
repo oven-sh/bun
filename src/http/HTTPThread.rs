@@ -1398,7 +1398,6 @@ static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
     bun_threading::Condvar::new(),
 );
 
-
 /// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
 /// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight
 /// `ThreadlocalAsyncHTTP` box and waits (with a short timeout) for it to ack.
@@ -1447,7 +1446,6 @@ pub fn shutdown_for_exit() {
         // process is exiting and a leak beats a use-after-free.
         return;
     }
-
 }
 
 // dispatch_deps bridge removed — real impls now live in

@@ -412,7 +412,11 @@ pub(crate) fn run_task(
         }
         task_tag::FetchTaskletDeinit => {
             // SAFETY: posted by `deref_from_thread` with the last ref.
-            unsafe { crate::webcore::fetch::FetchTaskletDeinitHop::run(cast_ptr!(crate::webcore::fetch::FetchTaskletDeinitHop)) };
+            unsafe {
+                crate::webcore::fetch::FetchTaskletDeinitHop::run(cast_ptr!(
+                    crate::webcore::fetch::FetchTaskletDeinitHop
+                ))
+            };
         }
         // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
         // is the sole owner here.

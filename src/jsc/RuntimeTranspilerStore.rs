@@ -614,7 +614,12 @@ impl TranspilerJob {
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         // SAFETY: `vm` outlives the job (the store is a field of it); JS thread.
-        unsafe { (*self.vm).transpiler_store.pool_jobs_in_flight.fetch_add(1, Ordering::SeqCst) };
+        unsafe {
+            (*self.vm)
+                .transpiler_store
+                .pool_jobs_in_flight
+                .fetch_add(1, Ordering::SeqCst)
+        };
         WorkPool::schedule(&raw mut self.work_task);
     }
 

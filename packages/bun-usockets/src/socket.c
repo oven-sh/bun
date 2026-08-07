@@ -418,6 +418,20 @@ static void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+/* See libusockets.h: whether a zero-progress write on a writable event proves
+ * the peer is gone. Only the libuv backend has to ask the kernel. */
+int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
+#ifdef LIBUS_USE_LIBUV
+    if (us_socket_is_closed(s)) {
+        return 1;
+    }
+    return us_socket_get_error(s) != 0 ||
+           us_internal_libuv_peer_reset_probe(us_poll_fd(&s->p));
+#else
+    return 1;
+#endif
+}
+
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;

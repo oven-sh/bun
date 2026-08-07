@@ -20,6 +20,14 @@ unsafe extern "C" {
 // param discharges the non-null obligation at the type level.
 #[unsafe(export_name = "Bun__Process__createArgv0")]
 
+extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
+    let argv0 = bun_core::argv()
+        .get(0)
+        .map(|z| z.as_bytes())
+        .unwrap_or(b"bun");
+    ZigString::from_utf8(argv0).to_js(global_object)
+}
+
 /// The script's own arguments. When the CLI recorded where they start in argv (compiled executables and the plain
 /// `bun entry a b` shape), they are read from the live process argv — recomputed after a heap-image restore —
 /// otherwise from the CLI's parsed passthrough. Entries borrow process-lifetime storage.
@@ -29,14 +37,6 @@ pub(crate) fn passthrough_argv(vm: &bun_jsc::virtual_machine::VirtualMachine) ->
         return bun_core::argv().iter().skip(offset).collect();
     }
     vm.argv.iter().map(|a| &a[..]).collect()
-}
-
-extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
-    let argv0 = bun_core::argv()
-        .get(0)
-        .map(|z| z.as_bytes())
-        .unwrap_or(b"bun");
-    ZigString::from_utf8(argv0).to_js(global_object)
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]

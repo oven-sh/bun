@@ -124,6 +124,9 @@ pub(crate) enum ActiveHandle {
     WindowsNamedPipe(ptr::NonNull<crate::socket::WindowsNamedPipeContext>),
     /// A `fetch()` out on the HTTP thread; stopping it aborts the transport.
     Fetch(ptr::NonNull<crate::webcore::fetch::FetchTasklet>),
+    /// An S3 request / streaming download out on the HTTP thread; same.
+    S3Request(ptr::NonNull<crate::webcore::s3::simple_request::S3HttpSimpleTask>),
+    S3Download(ptr::NonNull<crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask>),
     /// A `dns.Resolver` (or the VM-global one) with a live c-ares channel.
     DnsResolver(ptr::NonNull<crate::dns_jsc::Resolver>),
 }
@@ -1773,6 +1776,13 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
             // SAFETY: live until it unregisters in `deinit`.
             ActiveHandle::Fetch(t) => unsafe {
                 crate::webcore::fetch::FetchTasklet::stop_for_vm_teardown(t.as_ptr())
+            },
+            // SAFETY: live until they unregister in `on_response`.
+            ActiveHandle::S3Request(t) => unsafe {
+                crate::webcore::s3::simple_request::S3HttpSimpleTask::stop_for_vm_teardown(t.as_ptr())
+            },
+            ActiveHandle::S3Download(t) => unsafe {
+                crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask::stop_for_vm_teardown(t.as_ptr())
             },
             // Live until it unregisters in `destroy_channel`.
             // SAFETY: registered ⇒ live; may free itself inside, not touched after.

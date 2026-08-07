@@ -203,6 +203,7 @@ impl S3HttpDownloadStreamingTask {
             unsafe {
                 (*this_ptr).mutex.unlock();
                 if !has_more {
+                    crate::jsc_hooks::ActiveHandle::S3Download(core::ptr::NonNull::new(this_ptr).expect("task")).unregister();
                     drop(bun_core::heap::take(this_ptr));
                 }
             }
@@ -328,41 +329,40 @@ impl S3HttpDownloadStreamingTask {
         // SAFETY: `this` is live for the duration of the HTTP request; HTTPThread holds the only
         // concurrent reference and `mutex` serializes against `on_response`. `async_http` is the
         // live HTTP-thread copy, non-null for the callback's duration. Borrows scoped to the call.
+        let is_done = !result.has_more;
+        // The final callback is where the HTTP thread hands the request back
+        // (`embedded_work_finished` below, after `this` may have been freed).
+        // SAFETY: `this` is live for the duration of the request.
+        let done_handle = is_done.then(|| unsafe { (*this).loop_handle.clone() });
         if unsafe { (*this).process_http_callback(&mut *async_http, result) } {
             // we are always unlocked here and its safe to enqueue
             // SAFETY: same exclusivity as above; `task` is the inline `concurrent_task` field of
-            // this heap request and the queue takes ownership of its `next` link — unless the
-            // VM is gone.
+            // this heap request and the queue takes ownership of its `next` link. The VM waits
+            // for its S3 requests (embedded work) before closing its handle: always queued.
             unsafe {
                 let task = core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
-                if let bun_jsc::vm_handle::Posted::Refused(_) = (*this).loop_handle.post_task(task)
-                {
-                    // Nobody will consume the staged result. If the request is finished
-                    // the HTTP thread holds the last reference: release the task here.
-                    // Otherwise leave it for the final callback, which lands here again.
-                    if !State((*this).state.load(Ordering::Acquire)).has_more() {
-                        Self::release_off_thread(this);
-                    }
-                }
+                let bun_jsc::vm_handle::Posted::Queued = (*this).loop_handle.post_task(task) else {
+                    unreachable!("VM handle closed with an S3 download outstanding on the HTTP thread");
+                };
             }
+        }
+        if let Some(handle) = done_handle {
+            handle.embedded_work_finished();
         }
     }
 
-    /// See `S3HttpSimpleTask::release_off_thread`.
+    /// VM teardown's stop phase (JS thread): abort the transport so the HTTP
+    /// thread fails the request promptly and hands it back.
     ///
     /// # Safety
-    /// HTTP thread holds the only reference; the request is finished.
-    unsafe fn release_off_thread(this: *mut Self) {
-        // SAFETY: fn contract.
+    /// `this` is live (registered ⇒ not yet freed by `on_response`); JS thread.
+    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
+        // SAFETY: fn contract; `http` is initialised before the task is registered.
         unsafe {
-            (*this).release_portable();
-            core::ptr::drop_in_place(&raw mut (*this).reported_response_buffer);
-            core::ptr::drop_in_place(&raw mut (*this).headers);
-            core::ptr::drop_in_place(&raw mut (*this).sign_result);
-            core::ptr::drop_in_place(&raw mut (*this).loop_handle);
-            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+            (*this).signal_store.aborted.store(true, Ordering::Relaxed);
+            bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
         }
     }
 

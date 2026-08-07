@@ -1308,6 +1308,17 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         // The transpiler store's "drain my queue" ping owns nothing; the jobs
         // themselves are released by `release_queued_jobs_for_teardown`.
         task_tag::RuntimeTranspilerStore => true,
+        // An S3 request the HTTP thread handed back during teardown: its native
+        // completion is what frees the caller's context (and settles a promise
+        // nobody can observe — script is forbidden), so run it.
+        task_tag::S3HttpSimpleTask => {
+            let _ = S3HttpSimpleTask::on_response(task.ptr.cast());
+            true
+        }
+        task_tag::S3HttpDownloadStreamingTask => {
+            S3HttpDownloadStreamingTask::on_response(task.ptr.cast());
+            true
+        }
         task_tag::AnyTaskJob => {
             // SAFETY: every queued payload with this tag is a live heap `Job<C>`
             // its `Completion` posted; we own it once popped (JS thread, heap alive).

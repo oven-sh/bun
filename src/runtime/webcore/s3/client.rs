@@ -308,6 +308,7 @@ pub(crate) fn list_objects(
         proxy_url: Box::default(),
         body: Box::default(),
         poll_ref: bun_io::KeepAlive::init(),
+        signal_store: Default::default(),
     }));
     // SAFETY: just allocated, non-null
     let task = unsafe { &mut *task_ptr };
@@ -359,6 +360,7 @@ pub(crate) fn list_objects(
             http_proxy,
             verbose: Some(vm.get_verbose_fetch()),
             reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
+            signals: Some(task.signal_store.to()),
             ..Default::default()
         },
     ));
@@ -368,6 +370,10 @@ pub(crate) fn list_objects(
     let mut batch = bun_threading::thread_pool::Batch::default();
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
+    // Out on the HTTP thread until its final callback: the VM aborts it at
+    // teardown (registry) and waits for it (embedded work).
+    task.loop_handle.embedded_work_scheduled();
+    crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task")).register();
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }
@@ -1305,6 +1311,10 @@ fn download_stream(
     bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
     http.schedule(&mut batch);
+    // Out on the HTTP thread until its final callback: the VM aborts it at
+    // teardown (registry) and waits for it (embedded work).
+    task.loop_handle.embedded_work_scheduled();
+    crate::jsc_hooks::ActiveHandle::S3Download(core::ptr::NonNull::new(task_ptr).expect("task")).register();
     bun_http::HTTPThread::schedule(batch);
     task_ptr
 }

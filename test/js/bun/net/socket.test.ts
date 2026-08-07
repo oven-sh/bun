@@ -663,7 +663,7 @@ describe.concurrent("socket", () => {
   // freed one. Linux-only: the zero-event steady state is epoll's (kqueue
   // keeps no kernel filter on such a socket, so the reset goes unseen there).
   it.skipIf(!isLinux)("upgradeTLS after the peer half-closed survives a subsequent reset", async () => {
-    const { promise: ended, resolve: onEnd } = Promise.withResolvers<Socket<undefined>>();
+    const { promise: ended, resolve: onEnd, reject: onEndFail } = Promise.withResolvers<Socket<undefined>>();
     const { promise: torndown, resolve: onTeardown } = Promise.withResolvers<string>();
     let endCount = 0;
 
@@ -678,14 +678,24 @@ describe.concurrent("socket", () => {
           endCount++;
           onEnd(socket);
         },
-        close() {},
-        error() {},
+        // Latched by the end() resolve on the expected path; these only fire
+        // it when the socket dies early, turning a would-be hang into a
+        // diagnosable failure.
+        close() {
+          onEndFail(new Error("server socket closed before end fired"));
+        },
+        error(_socket, error) {
+          onEndFail(error);
+        },
       },
     });
 
     const client = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
-    client.on("error", () => {});
-    await new Promise<void>(resolve => client.once("connect", resolve));
+    client.on("error", () => {}); // post-connect errors (the reset) are expected
+    await new Promise<void>((resolve, reject) => {
+      client.once("connect", resolve);
+      client.once("error", reject);
+    });
     client.end(); // FIN; the server side stays half-open
 
     const socket = await ended;

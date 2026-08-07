@@ -245,7 +245,10 @@ test.skipIf(!isWindows)(
   "--parallel: a worker dying with a fatal NTSTATUS prints the crash banner and aborts",
   async () => {
     using dir = tempDir("parallel-ntstatus", {
-      "a-ok.test.js": `import {test,expect} from "bun:test"; test("ok", () => expect(1).toBe(1));`,
+      // Hangs forever so its worker is still mid-file when the sibling
+      // crashes: the abort must terminate it (TerminateProcess) rather than
+      // wait for it, or the run would stall past the banner.
+      "a-hang.test.js": `import {test} from "bun:test"; test("hang", async () => { await new Promise(() => {}); }, 999999);`,
       "b-fastfail.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("fastfail", () => { crash_handler.fastfail(); });`,
     });
     await using proc = Bun.spawn({
@@ -266,6 +269,8 @@ test.skipIf(!isWindows)(
     expect(stderr).toContain("(worker crashed: exit code 0xC0000409)");
     expect(stderr).toContain("a test worker process crashed with exit code 0xC0000409");
     expect(stderr).toContain("Aborting");
+    // the hung sibling was torn down and accounted, not waited on
+    expect(stderr).toContain("aborted: sibling worker panicked");
     expect(exitCode).not.toBe(0);
   },
   isASAN || isDebug ? 60_000 : 20_000,

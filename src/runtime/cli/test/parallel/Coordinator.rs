@@ -200,8 +200,11 @@ impl<'a> Coordinator<'a> {
                 }
                 #[cfg(not(unix))]
                 {
+                    // 9 (SIGKILL) → TerminateProcess. libuv-win only maps
+                    // SIGQUIT/SIGTERM/SIGKILL/SIGINT; anything else is ENOSYS
+                    // and would leave the worker running.
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                    let _ = unsafe { (*p).kill(1) };
+                    let _ = unsafe { (*p).kill(9) };
                 }
             }
         }
@@ -719,8 +722,14 @@ impl<'a> Coordinator<'a> {
                 }
                 #[cfg(not(unix))]
                 {
+                    // 9 (SIGKILL) → TerminateProcess; the killed sibling reaps
+                    // as Signaled(9) → "aborted: sibling worker panicked".
+                    // libuv-win returns ENOSYS for signals other than
+                    // SIGQUIT/SIGTERM/SIGKILL/SIGINT, so e.g. kill(1) would
+                    // leave the sibling running and the coordinator waiting on
+                    // it past the banner.
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                    let _ = unsafe { (*p).kill(1) };
+                    let _ = unsafe { (*p).kill(9) };
                 }
             }
         }

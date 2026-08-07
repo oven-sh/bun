@@ -6,6 +6,7 @@ const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapt
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
+const NativeArrayBuffer = ArrayBuffer;
 
 var fetch = Bun.fetch;
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
@@ -379,8 +380,8 @@ const pongChannel = diagnosticsChannel.channel("undici:websocket:pong");
 // undici publishes a Buffer regardless of the socket's binaryType
 function controlFramePayload(data) {
   if (Buffer.isBuffer(data)) return data;
-  if (data instanceof ArrayBuffer) return Buffer.from(data);
-  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  if (data instanceof NativeArrayBuffer) return Buffer.from(data);
+  if ($isTypedArrayView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
   return data;
 }
 

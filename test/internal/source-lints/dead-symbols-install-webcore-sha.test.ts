@@ -71,11 +71,6 @@ test("dead Rust symbols (install, webcore, jsc, leaf crates) do not reappear", (
 
     // react_compiler: zero references.
     ["src/react_compiler/hir/environment_config.rs", /fn default_true\b/],
-
-    // bun_core: byte split helpers with no callers (split_once_char stays).
-    ["src/bun_core/string/immutable.rs", /pub fn rsplit_once_char\b/],
-    ["src/bun_core/string/immutable.rs", /pub fn split_once\b/],
-    ["src/bun_core/string/immutable.rs", /pub fn rsplit_once\b/],
   ];
   expect(resurrected(checks)).toEqual([]);
 });

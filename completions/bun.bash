@@ -53,24 +53,21 @@ _read_scripts_in_package_json() {
         COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
     }
 
-    # when a script is passed as an option, do not show other scripts as part of the completion anymore
-    local re_prev_script="(^| )${prev}($| )";
-    [[
-        ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) || \
-            ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
-    ]] && {
-        local filtered_reply=();
-        local reply_word script_name keep;
-        for reply_word in "${COMPREPLY[@]}"; do
-            keep=1;
-            for script_name in "${package_json_compreply[@]}"; do
-                [[ "${reply_word}" == "${script_name}" ]] && { keep=""; break; };
-            done
-            [[ -n "${keep}" ]] && filtered_reply+=( "${reply_word}" );
+    # Do not offer package.json scripts once a script/file has already been typed. This block used
+    # to be gated on a regex match against an undeclared variable, which made it unconditional under
+    # GNU regex and an "empty (sub)expression" error under BSD regex (#24847); running it
+    # unconditionally preserves the long-standing GNU behaviour portably.
+    local filtered_reply=();
+    local reply_word script_name keep;
+    for reply_word in "${COMPREPLY[@]}"; do
+        keep=1;
+        for script_name in "${package_json_compreply[@]}"; do
+            [[ "${reply_word}" == "${script_name}" ]] && { keep=""; break; };
         done
-        COMPREPLY=( "${filtered_reply[@]}" );
-        replaced_script="${prev}";
-    }
+        [[ -n "${keep}" ]] && filtered_reply+=( "${reply_word}" );
+    done
+    COMPREPLY=( "${filtered_reply[@]}" );
+    replaced_script="${prev}";
 }
 
 

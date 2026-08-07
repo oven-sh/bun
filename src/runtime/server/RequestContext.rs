@@ -428,28 +428,7 @@ mod shim {
         bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
-use bun_options_types::schema::api as Api;
-
-use bun_js_parser::parser::Runtime::Fallback;
-
-/// NOTE: `Api.JsException` is split across two crates —
-/// `bun_jsc::schema_api::JsException` (carries `stack`, used by
-/// `VirtualMachine::run_error_handler`) and `bun_options_types::schema::api::
-/// JsException` (peechy-encodable, `stack` omitted to break the dep cycle).
-/// Bridge the two here so the
-/// fallback page actually carries the captured exceptions instead of an empty
-/// array (react-response.test.ts asserts `exceptions[0].message`).
-fn jsc_exceptions_to_api(list: jsc::ExceptionList) -> Vec<Api::JsException> {
-    list.into_iter()
-        .map(|ex| Api::JsException {
-            name: (!ex.name.is_empty()).then_some(ex.name),
-            message: (!ex.message.is_empty()).then_some(ex.message),
-            runtime_type: Some(ex.runtime_type),
-            // jsc copy widened `code` to u16 (from `u16::from(u8)`); spec is u8.
-            code: Some(ex.code as u8),
-        })
-        .collect()
-}
+use crate::server::DevErrorPage;
 
 bun_core::declare_scope!(RequestContext, visible);
 bun_core::declare_scope!(ReadableStream, visible);
@@ -1111,10 +1090,9 @@ where
 
     pub(crate) fn render_default_error(
         &self,
-        log: &mut bun_ast::Log,
-        err: &crate::Error,
-        exceptions: &[Api::JsException],
-        fmt: core::fmt::Arguments<'_>,
+        log: &bun_ast::Log,
+        exceptions: &[jsc::exception_list::JsException],
+        message: &[u8],
     ) {
         if !self.flags.has_written_status() {
             self.flags.set_has_written_status(true);
@@ -1124,30 +1102,6 @@ where
             }
         }
 
-        let mut message: Vec<u8> = Vec::new();
-        let _ = write!(&mut message, "{}", fmt);
-        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let fallback_container = Box::new(Api::FallbackMessageContainer {
-            message: Some(message.into_boxed_slice()),
-            router: None,
-            reason: Some(Api::FallbackStep::fetch_event_handler),
-            cwd: Some(cwd.to_vec().into_boxed_slice()),
-            problems: Some(Api::Problems {
-                code: 500,
-                name: err.name().as_bytes().to_vec().into_boxed_slice(),
-                exceptions: exceptions.to_vec(),
-                build: {
-                    // `log.to_api()` returns `bun_ast::api::Log`; the schema
-                    // crate has its own `api::Log` (msgs omitted). Map fields.
-                    let api_log = log.to_api();
-                    Api::Log {
-                        warnings: api_log.warnings,
-                        errors: api_log.errors,
-                    }
-                },
-            }),
-        });
-
         Output::flush();
 
         if self.method == Method::HEAD {
@@ -1155,10 +1109,13 @@ where
             return;
         }
 
-        // Explicitly use the global allocator and *not* the arena
-        let mut bb: Vec<u8> = Vec::new();
-
-        Fallback::render_backend(&fallback_container, &mut bb).expect("unreachable");
+        let bb = DevErrorPage {
+            message,
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+            exceptions,
+            log: Some(log),
+        }
+        .render();
         let try_end_ok = match self.resp.get() {
             None => true,
             Some(resp) => resp.try_end(&bb, bb.len(), self.should_close_connection()),
@@ -3046,7 +3003,6 @@ where
                         .vm()
                         .as_mut()
                         .run_error_handler(err, Some(&mut exception_list));
-                    let exception_list = jsc_exceptions_to_api(exception_list);
 
                     // The fallback page below writes into `resp`, which must
                     // not be dereferenced once the sink has already ended the
@@ -3064,29 +3020,13 @@ where
                             }
                         }
 
-                        // Create error message for the stream rejection
-                        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
-                        let fallback_container = Box::new(Api::FallbackMessageContainer {
-                            message: Some(
-                                b"Stream error during server-side rendering"
-                                    .to_vec()
-                                    .into_boxed_slice(),
-                            ),
-                            router: None,
-                            reason: Some(Api::FallbackStep::fetch_event_handler),
-                            cwd: Some(cwd.to_vec().into_boxed_slice()),
-                            problems: Some(Api::Problems {
-                                code: 500,
-                                name: b"StreamError".to_vec().into_boxed_slice(),
-                                exceptions: exception_list,
-                                build: Api::Log::default(),
-                            }),
-                        });
-
-                        let mut bb: Vec<u8> = Vec::new();
-
-                        Fallback::render_backend(&fallback_container, &mut bb)
-                            .expect("unreachable");
+                        let bb = DevErrorPage {
+                            message: b"Stream error during server-side rendering",
+                            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+                            exceptions: &exception_list,
+                            log: None,
+                        }
+                        .render();
 
                         if let Some(resp) = self.resp.get() {
                             // SAFETY: FFI handle
@@ -3628,14 +3568,12 @@ where
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
         if DEBUG_MODE {
-            let mut exception_list_upstream: jsc::ExceptionList = Vec::new();
+            let mut exception_list: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
-            vm.on_unhandled_rejection_exception_list =
-                Some(NonNull::from(&mut exception_list_upstream));
+            vm.on_unhandled_rejection_exception_list = Some(NonNull::from(&mut exception_list));
             (vm.on_unhandled_rejection)(vm, global_this, value);
             vm.on_unhandled_rejection_exception_list = prev_exception_list;
 
-            let exception_list = jsc_exceptions_to_api(exception_list_upstream);
             let log = vm.log_mut().unwrap();
             bun_core::pretty_errorln!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
@@ -3643,12 +3581,7 @@ where
                 self.ensure_pathname()
             );
             let msg = format!("{:?} - {} failed", self.method, self.ensure_pathname());
-            self.render_default_error(
-                log,
-                &crate::Error::ExceptionOcurred,
-                &exception_list,
-                format_args!("{}", msg),
-            );
+            self.render_default_error(log, &exception_list, msg.as_bytes());
             log.reset();
             return;
         }

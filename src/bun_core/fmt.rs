@@ -430,6 +430,29 @@ pub fn format_json_string_utf8(
     JSONFormatterUTF8 { input: text, opts }
 }
 
+/// Replaces each `{[name]s}` placeholder in `template` with the value paired
+/// with `name` in `args`. Anything else, including placeholders whose name is
+/// not in `args`, is copied through unchanged.
+pub fn substitute_named(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(template.len());
+    let mut remaining = template;
+    'scan: while let Some(start) = strings::index_of(remaining, b"{[") {
+        out.extend_from_slice(&remaining[..start]);
+        let after = &remaining[start + 2..];
+        for &(name, value) in args {
+            if after.starts_with(name) && after[name.len()..].starts_with(b"]s}") {
+                out.extend_from_slice(value);
+                remaining = &after[name.len() + 3..];
+                continue 'scan;
+            }
+        }
+        out.extend_from_slice(b"{[");
+        remaining = after;
+    }
+    out.extend_from_slice(remaining);
+    out
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Shared temp buffer (threadlocal)
 // ───────────────────────────────────────────────────────────────────────────

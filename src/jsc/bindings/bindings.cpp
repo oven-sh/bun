@@ -5408,6 +5408,31 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
+// Walks the prototype chain like JSObject::getPropertySlot, but re-reads the
+// prototype after each level and checks for exceptions: reifying Bun's static
+// lazy properties runs JS that can throw or transition the object's structure.
+static bool getPropertySlotForEnumeration(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName property, JSC::PropertySlot& slot)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    while (true) {
+        bool hasSlot = object->methodTable()->getOwnPropertySlot(object, globalObject, property, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (hasSlot)
+            return true;
+        JSValue prototype;
+        if (!object->structure()->typeInfo().overridesGetPrototype()) [[likely]]
+            prototype = object->getPrototypeDirect();
+        else {
+            prototype = object->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        if (!prototype.isObject())
+            return false;
+        object = asObject(prototype);
+    }
+}
+
 template<bool nonIndexedOnly>
 static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
@@ -5558,12 +5583,11 @@ restart:
                 }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-                // getNonIndexPropertySlot tolerates structure transitions from lazy property reification.
                 bool hasProperty;
                 if (std::optional<uint32_t> index = parseIndex(property))
                     hasProperty = object->getPropertySlot(globalObject, index.value(), slot);
                 else
-                    hasProperty = object->getNonIndexPropertySlot(globalObject, property, slot);
+                    hasProperty = getPropertySlotForEnumeration(globalObject, object, property, slot);
                 // Ignore exceptions from "Get" proxy traps and static property reification,
                 // but stop enumerating on a termination exception, which stays pending.
                 CLEAR_IF_EXCEPTION(scope);
@@ -5729,12 +5753,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
             continue;
 
         JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-        // See JSC__JSValue__forEachPropertyImpl for why this is not getPropertySlot(PropertyName).
         bool hasProperty;
         if (std::optional<uint32_t> index = parseIndex(property))
             hasProperty = object->getPropertySlot(globalObject, index.value(), slot);
         else
-            hasProperty = object->getNonIndexPropertySlot(globalObject, property, slot);
+            hasProperty = getPropertySlotForEnumeration(globalObject, object, property, slot);
         // A termination exception survives tryClearException; stop enumerating.
         (void)scope.tryClearException();
         RETURN_IF_EXCEPTION(scope, void());
@@ -6791,7 +6814,6 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
 
     if (!inspectFn || !inspectFn.isCallable()) {
         // Fallback to toString if util.inspect is not available
-        CLEAR_IF_EXCEPTION(scope);
         JSC::JSValue value = JSC::JSValue::decode(valueEncoded);
         JSString* str = value.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));

@@ -53,16 +53,12 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     RETURN_IF_EXCEPTION(scope, {});
 
     JSFunction* inspectFn = globalObject->utilInspectFunction();
-    if (!inspectFn) [[unlikely]] {
-        // node:util failed to load; call the custom inspect without the inspect argument.
-        (void)scope.tryClearException();
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));
     arguments.append(options);
-    arguments.append(inspectFn ? JSValue(inspectFn) : jsUndefined());
+    arguments.append(inspectFn);
 
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});

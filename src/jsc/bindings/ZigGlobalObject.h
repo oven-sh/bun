@@ -298,8 +298,7 @@ public:
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
     JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
-    // Returns null with a pending exception when node:util fails to load.
-    JSC::JSFunction* utilInspectFunction();
+    JSC::JSFunction* utilInspectFunction() const { return m_utilInspectFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeColorFunction() const { return m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
 

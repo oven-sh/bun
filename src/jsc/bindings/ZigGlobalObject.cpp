@@ -3097,18 +3097,6 @@ JSC::JSObject* GlobalObject::navigatorObject()
     return this->m_navigatorObject.get(this);
 }
 
-JSC::JSFunction* GlobalObject::utilInspectFunction()
-{
-    if (!m_utilInspectFunction.isInitialized()) [[unlikely]] {
-        // LazyProperty initializers must not fail; load node:util here where a throw can propagate.
-        auto& vm = JSC::getVM(this);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    }
-    return m_utilInspectFunction.getInitializedOnMainThread(this);
-}
-
 JSC_DEFINE_CUSTOM_GETTER(functionLazyNavigatorGetter,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))

@@ -11,7 +11,6 @@ const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
 const ArrayPrototypePush = Array.prototype.push;
-// Captured so userland prototype/global patches can't hijack dispatch.
 const AlsGetStore = AsyncLocalStorage.prototype.getStore;
 const AlsEnterWith = AsyncLocalStorage.prototype.enterWith;
 const ProcessNextTick = process.nextTick;
@@ -23,10 +22,8 @@ const exports: any = {};
 // Each ALS box snapshots {d: activeDomain, token}; the stack stays global.
 const als = new AsyncLocalStorage();
 
-// node lib/domain.js module-global stack; survives thrown exceptions.
 let stack: any[] = [];
 
-// node lib/domain.js `exports.active`.
 let globalActive: any = null;
 
 // A stale box.token means node's before() hook would have fired for the callback.
@@ -57,8 +54,6 @@ function isCurrentExecution(box: any): boolean {
   return box !== undefined && box.token === currentToken;
 }
 
-// Equivalent of node's before() hook about to enter box.d. Node's init hook
-// stores process.domain[kWeak], undefined for a non-Domain, so filter those.
 function isRestoredPairing(box: any): boolean {
   return box !== undefined && box.token !== currentToken && box.d != null && typeof box.d._errorHandler === "function";
 }
@@ -91,7 +86,6 @@ function currentStack(): any[] {
   if (isCurrentExecution(box)) return stack;
   unadopt();
   if (isRestoredPairing(box)) {
-    // node's before() hook pushes unconditionally on top of the global stack.
     const s = ArrayPrototypeSlice.$call(stack);
     ArrayPrototypePush.$call(s, box.d);
     return s;
@@ -112,7 +106,6 @@ function adopt() {
   }
 }
 
-// node lib/domain.js backs process.domain with _domain[0].
 ObjectDefineProperty(process, "domain", {
   __proto__: null,
   configurable: true,
@@ -126,7 +119,6 @@ ObjectDefineProperty(process, "domain", {
   },
 } as PropertyDescriptor);
 
-// Accessor because the observable stack includes the async pairing.
 ObjectDefineProperty(exports, "_stack", {
   __proto__: null,
   configurable: true,
@@ -153,13 +145,11 @@ ObjectDefineProperty(exports, "active", {
   },
 } as PropertyDescriptor);
 
-// node should_abort_on_uncaught_toggle equivalent (lib/domain.js updateExceptionCapture).
 function domainWouldClaim(): boolean {
   const s = currentStack();
   const len = s.length;
   for (let i = 0; i < len; i++) {
     const d = s[i];
-    // _errorHandler filters non-Domain values; fatalErrorDispatch never routes into one.
     if (
       d != null &&
       typeof d._errorHandler === "function" &&
@@ -179,24 +169,19 @@ function domainUncaughtExceptionClear() {
   setActive(null);
 }
 
-// Called from Bun__handleUncaughtException before the capture callback /
-// 'uncaughtException' listeners (node hooks into process._fatalException).
 function fatalErrorDispatch(er: any) {
   adopt();
   let active = globalActive;
   const stackLen = stack.length;
   if ((active === null || active === undefined) && stackLen > 0) {
-    // Userland nulled process.domain with domains still on the stack.
     active = stack[stackLen - 1];
     setActive(active);
   }
-  // Non-Domain values fall through (node never routes into them either).
   if (active !== null && active !== undefined && typeof active._errorHandler === "function") {
     if (stack.length === 0 || stack[stack.length - 1] !== active) {
       ArrayPrototypePush.$call(stack, active);
       setActive(active);
     }
-    // node updateExceptionCapture(): route only if some domain has an 'error' listener.
     for (let i = 0; i < stack.length; i++) {
       const d = stack[i];
       if (d != null && typeof d.listenerCount === "function" && d.listenerCount("error") > 0) {
@@ -205,7 +190,6 @@ function fatalErrorDispatch(er: any) {
       }
     }
   }
-  // node prepends domainUncaughtExceptionClear as an 'uncaughtException' listener.
   domainUncaughtExceptionClear();
   return false;
 }
@@ -218,7 +202,6 @@ class Domain extends EventEmitter {
     this.members = [];
   }
 
-  // Port of node lib/domain.js Domain.prototype._errorHandler.
   _errorHandler(er: any) {
     let caught = false;
 
@@ -232,12 +215,10 @@ class Domain extends EventEmitter {
       } as PropertyDescriptor);
       er.domainThrown = true;
     }
-    // node: pop adjacent duplicates so the handler doesn't run in its own context.
     while (currentActive() === this) {
       this.exit();
     }
 
-    // node: top-level handler throws escape to the fatal path (exit 7).
     if (stack.length === 0) {
       if (this.listenerCount("error") > 0) {
         caught = this.emit("error", er);
@@ -246,7 +227,6 @@ class Domain extends EventEmitter {
       try {
         caught = this.emit("error", er);
       } catch (er2) {
-        // node: try the next domain on the stack, else re-throw.
         const remaining = stack.length;
         if (remaining) {
           setActive(stack[remaining - 1]);
@@ -282,7 +262,6 @@ class Domain extends EventEmitter {
     if (eeDomain === this) return;
     if (eeDomain) eeDomain.remove(ee);
 
-    // node: reject circular Domain->Domain links (stack overflow on error emit).
     const thisDomain = this.domain;
     if (thisDomain && ee instanceof Domain) {
       for (let d = thisDomain; d; d = d.domain) {
@@ -411,7 +390,6 @@ EventEmitter.prototype.emit = function emit(this: any, ...args: any[]) {
       er.domainThrown = false;
     }
 
-    // node: prune duplicates so the error handler doesn't run in its own context.
     const origDomainsStack = ArrayPrototypeSlice.$call(stack);
     const origActiveDomain = currentActive();
     let idx = stack.length - 1;
@@ -451,7 +429,6 @@ EventEmitter.init = function init(this: any, opts: any) {
     value: null,
     writable: true,
   } as PropertyDescriptor);
-  // node init reads exports.active (always a real Domain or null); filter non-Domains.
   const active = currentActive();
   if (active && typeof active._errorHandler === "function" && !(this instanceof Domain)) {
     this.domain = active;
@@ -460,7 +437,6 @@ EventEmitter.init = function init(this: any, opts: any) {
   return eventInit.$call(this, opts);
 };
 
-// Mirror node registering its createHook init hook / captureFn at load time.
 asyncHooks[Symbol.for("::bunternal::async_hooks.setDomainActiveGetter")](currentActive);
 setDomainErrorHandler(fatalErrorDispatch, domainWouldClaim);
 

@@ -1048,7 +1048,6 @@ test("EventEmitter.name", () => {
 });
 
 test("class-default captureRejections applies to Object.create(EventEmitter.prototype)", async () => {
-  // Mirrors globalSettingNoConstructor in test-event-capture-rejections.js.
   // Run in a subprocess: the class-level toggle is process-global.
   await using proc = Bun.spawn({
     cmd: [
@@ -1076,8 +1075,6 @@ test("class-default captureRejections applies to Object.create(EventEmitter.prot
 // process-wide, so these run in a subprocess.
 describe("node:domain integration", () => {
   test("'error' on a captureRejections emitter routes to its domain", async () => {
-    // Regression: the captureRejections emit path previously bypassed the
-    // domain prototype override.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1108,8 +1105,6 @@ describe("node:domain integration", () => {
   });
 
   test("d.add() routes 'error' from a captureRejections emitter constructed before domain loads", async () => {
-    // Regression: emitters constructed before node:domain loaded were not
-    // observed by the wrapped EventEmitter.init and bypassed domain routing.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1138,8 +1133,6 @@ describe("node:domain integration", () => {
   });
 
   test("a write-first callback does not observe a stale adopted pairing", async () => {
-    // The process.domain setter must clear the previous tick's adopted
-    // entry before it freshens the context token.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1177,10 +1170,6 @@ describe("node:domain integration", () => {
   });
 
   test("domains entered inside async callbacks do not leak onto the global stack", async () => {
-    // The async-context pairing is entered on the module-global stack when
-    // domain state is touched inside a paired callback (node's before()
-    // hook equivalent); it must come back off once the callback is done
-    // instead of accumulating across ticks.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

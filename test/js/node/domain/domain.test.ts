@@ -17,9 +17,6 @@ async function run(
 }
 
 test.concurrent("a non-Domain process.domain does not mask the original error in the fatal path", async () => {
-  // Regression: fatalErrorDispatch pushed the raw process.domain value and
-  // called .listenerCount on it, so `require('domain'); process.domain = {};
-  // throw err` exited 7 with a TypeError instead of 1 with the original.
   const r = await run(`require("domain"); process.domain = {}; setTimeout(() => { throw new Error("boom") }, 0)`);
   expect(r.stderr).toContain("boom");
   expect(r.stderr).not.toContain("listenerCount");
@@ -27,12 +24,6 @@ test.concurrent("a non-Domain process.domain does not mask the original error in
 });
 
 test.concurrent("a non-Domain process.domain is never pushed onto the stack by an async pairing", async () => {
-  // Node's init hook stores process.domain[kWeak], undefined for a
-  // non-Domain, so before() never enters one; the stack stays [d] -> []
-  // after d's throwing handler, and the handler's own throw escapes cleanly
-  // to exit 7. isRestoredPairing without the _errorHandler guard pushed the
-  // non-Domain, so _errorHandler's catch saw stack.length > 0 and recursed
-  // into it: an internal TypeError masked "from handler".
   const r = await run(`
     const domain = require("domain");
     process.domain = { foo: 1 };
@@ -48,11 +39,6 @@ test.concurrent("a non-Domain process.domain is never pushed onto the stack by a
 });
 
 test.concurrent("a non-Domain process.domain is never assigned to a new EventEmitter by init", async () => {
-  // Node's wrapped init reads exports.active (only ever a real Domain), not
-  // process.domain, so a non-Domain value never reaches ee.domain and emit
-  // takes the original fast path. Without the _errorHandler filter Bun's
-  // init assigned the raw value and the domain-aware emit's domain.enter()
-  // threw a TypeError.
   const r = await run(`
     require("domain");
     process.domain = { foo: 1 };
@@ -69,9 +55,6 @@ test.concurrent("a non-Domain process.domain is never assigned to a new EventEmi
 });
 
 test.concurrent("a null entry in a userland-assigned _stack does not mask the original error", async () => {
-  // fatalErrorDispatch iterates the stack; without the null guard,
-  // `domain._stack = [null, ...]` turned the routed error into a TypeError
-  // on null.listenerCount and exited 7 instead of letting d claim it.
   const r = await run(`
     const domain = require("domain");
     const d = domain.create();
@@ -102,9 +85,6 @@ test.concurrent(
 );
 
 test.concurrent("an unbalanced enter() does not leak the previous stack into later callbacks", async () => {
-  // Matches node: A's async pairing is exited at the callback boundary even
-  // though d2.enter() had no exit(), so B sees [d2] and d1's 'error' listener
-  // is never consulted for B's throw.
   const r = await run(`
     const domain = require("domain");
     const d1 = domain.create(); const d2 = domain.create();
@@ -158,8 +138,6 @@ test.concurrent(
 test.concurrent(
   "a domain with an 'error' listener claims the error while a capture callback is installed",
   async () => {
-    // Matches node v26.3.0: the domain handler runs before the uncaught
-    // exception capture callback, so captureFn never fires here.
     const r = await run(`
     const domain = require("domain");
     process.setUncaughtExceptionCaptureCallback(er => console.log("captureFn:" + er.message));
@@ -173,8 +151,6 @@ test.concurrent(
 );
 
 test.concurrent("Worker: throwing domain error handler emits parent 'error' and exits 1", async () => {
-  // Node's workerOnGlobalUncaughtException catches, posts the handler's
-  // error to the parent, and exits with kGenericUserError (1) — not 7.
   const r = await run(`
     const { Worker } = require("worker_threads");
     const w = new Worker(
@@ -208,9 +184,6 @@ test.concurrent("Worker: throwing capture callback emits parent 'error' and exit
 });
 
 test.concurrent("EventEmitter constructed with captureRejections has no own emit property", async () => {
-  // events.ts previously installed an own-property emit for
-  // captureRejections; that shadowed domain's prototype override and forced
-  // per-instance re-wrapping in domain.ts. Now init only flips kCapture.
   const r = await run(`
     const EE = require("events");
     const e = new EE({ captureRejections: true });
@@ -225,10 +198,6 @@ test.concurrent("EventEmitter constructed with captureRejections has no own emit
 });
 
 // Node routes unhandled rejections to domain 'error' via promiseInfo.domain
-// (captured at reject time in lib/internal/process/promises.js), independent
-// of the uncaught-exception capture callback. Bun does not implement this
-// yet — the .todo tests below make the gap visible in CI and pin the target
-// behaviour once it lands.
 describe("unhandled-rejections × domain (promiseInfo.domain)", () => {
   for (const mode of ["strict", "throw", "warn", "warn-with-error-code", "none"] as const) {
     test.todo(`--unhandled-rejections=${mode}: rejection inside d.run() is delivered to domain 'error'`, async () => {

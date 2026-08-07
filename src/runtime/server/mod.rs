@@ -1406,7 +1406,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             HttpResult::Exception(err) | HttpResult::Rejection(err) => {
                 // SAFETY: `vm` is the process-static VirtualMachine; `&mut`
                 // scoped to this call.
-                // Rejection keeps the "unhandledRejection" origin (pre-existing contract).
                 let _ = unsafe {
                     (*vm).uncaught_exception(
                         global,

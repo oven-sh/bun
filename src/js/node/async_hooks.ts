@@ -33,7 +33,6 @@ function sameValue(a, b) {
   return a !== a && b !== b;
 }
 
-// Installed by node:domain on load (node lib/domain.js createHook init hook).
 let domainActiveGetter: (() => any) | null = null;
 
 // Only run during debug
@@ -380,7 +379,6 @@ class AsyncResource {
     this.#snapshot = get();
     this.#triggerAsyncId = triggerAsyncId;
 
-    // node lib/domain.js init hook: tag with a non-enumerable .domain.
     if (domainActiveGetter !== null) {
       const domain = domainActiveGetter();
       if (domain != null) {
@@ -631,7 +629,6 @@ const asyncWrapProviders = {
   INSPECTORJSBINDING: 57,
 };
 
-// Internal node:domain hook; only the informational .domain tag flows through it.
 const kSetDomainActiveGetter = Symbol.for("::bunternal::async_hooks.setDomainActiveGetter");
 
 export default {

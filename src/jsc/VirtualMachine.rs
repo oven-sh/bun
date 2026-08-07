@@ -358,8 +358,6 @@ pub struct TestIsolationState {
 }
 
 /// How an uncaught error reached [`VirtualMachine::uncaught_exception`].
-/// Forwarded to `Bun__handleUncaughtException` (BunProcess.cpp) for
-/// --abort-on-uncaught-exception ordering (node V8 Isolate::Throw / node_errors.cc).
 #[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UncaughtExceptionOrigin {
@@ -1437,7 +1435,6 @@ impl VirtualMachine {
             origin as c_int,
             &raw mut substitute,
         ) > 0;
-        // node workerOnGlobalUncaughtException: route the handler's throw to the parent.
         let err = if substitute.is_empty() {
             err
         } else {
@@ -1459,7 +1456,6 @@ impl VirtualMachine {
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
             }
-            // --abort-on-uncaught-exception already handled in Bun__handleUncaughtException.
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);

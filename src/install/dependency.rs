@@ -409,6 +409,35 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
     false
 }
 
+/// The lockfile serializes an scp-form repo (`git@host:path`) with an
+/// `ssh://` prefix (see `repository::Formatter`). Parsing must strip that
+/// prefix back off, or the loaded resolution's repo never byte-matches a
+/// freshly parsed dependency's repo. Every git task id (clone, checkout)
+/// hashes those exact bytes, so the two spellings enqueue disjoint tasks and
+/// the isolated installer waits forever on a checkout id nothing completes.
+/// Returns the scp-form remainder, or `None` when `repo` is a real URL that
+/// must keep its `ssh://`: no `:` separator before the path, or a numeric
+/// `host:port`.
+pub(crate) fn scp_path_without_ssh_prefix(repo: &[u8]) -> Option<&[u8]> {
+    let rest = strings::without_prefix_if_possible_comptime(repo, b"ssh://")?;
+    if !is_scp_like_path(rest) {
+        return None;
+    }
+    // `is_scp_like_path` also accepts `user@host/path`; without a `:` before
+    // the first `/` the remainder is an ordinary URL path, not scp form.
+    let colon = strings::index_of_char_usize(rest, b':')?;
+    if strings::index_of_char_usize(rest, b'/').is_some_and(|slash| slash < colon) {
+        return None;
+    }
+    let after_colon = &rest[colon + 1..];
+    let port_end = strings::index_of_char_usize(after_colon, b'/').unwrap_or(after_colon.len());
+    let port = &after_colon[..port_end];
+    if !port.is_empty() && port.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    Some(rest)
+}
+
 /// Github allows for the following format of URL:
 /// https://github.com/<org>/<repo>/tarball/<ref>
 /// This is a legacy (but still supported) method of retrieving a tarball of an
@@ -1335,19 +1364,21 @@ pub(crate) fn parse_with_tag(
                 input = &input[b"git+".len()..];
             }
             let hash_index = strings::last_index_of_char(input, b'#');
+            let mut repo = if let Some(index) = hash_index {
+                &input[0..index]
+            } else {
+                input
+            };
+            if let Some(scp) = scp_path_without_ssh_prefix(repo) {
+                repo = scp;
+            }
 
             Some(Version {
                 literal: sliced.value(),
                 value: Value {
                     git: ManuallyDrop::new(Repository {
                         owner: String::from(b""),
-                        repo: sliced
-                            .sub(if let Some(index) = hash_index {
-                                &input[0..index]
-                            } else {
-                                input
-                            })
-                            .value(),
+                        repo: sliced.sub(repo).value(),
                         committish: if let Some(index) = hash_index {
                             sliced.sub(&input[index + 1..]).value()
                         } else {

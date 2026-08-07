@@ -427,17 +427,21 @@ impl RepositoryExt for Repository {
         if remain.starts_with(b"git+") {
             remain = &remain[b"git+".len()..];
         }
-        if let Some(hash) = strings::last_index_of_char(remain, b'#') {
-            return Ok(Repository {
-                repo: buf.append(&remain[..hash])?,
-                committish: buf.append(&remain[hash + 1..])?,
-                ..Default::default()
-            });
-        }
-        Ok(Repository {
-            repo: buf.append(remain)?,
+        let (repo, committish) = match strings::last_index_of_char(remain, b'#') {
+            Some(hash) => (&remain[..hash], Some(&remain[hash + 1..])),
+            None => (remain, None),
+        };
+        // Undo the lockfile's `ssh://` spelling of an scp-form repo so the
+        // loaded resolution's repo byte-matches the parsed dependency's.
+        let repo = Dependency::scp_path_without_ssh_prefix(repo).unwrap_or(repo);
+        let mut result = Repository {
+            repo: buf.append(repo)?,
             ..Default::default()
-        })
+        };
+        if let Some(committish) = committish {
+            result.committish = buf.append(committish)?;
+        }
+        Ok(result)
     }
 
     fn parse_append_github(

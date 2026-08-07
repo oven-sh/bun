@@ -387,7 +387,7 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
-    safe fn Bun__closeAllSQLiteDatabasesForTermination();
+    safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
@@ -531,9 +531,11 @@ impl ExitHandler {
         if vm.script_allowed() {
             Process__dispatchOnExit(vm.global(), exit_code);
         }
+        // Checkpoint + close the sqlite connections this VM opened (main or
+        // worker) while it is still alive, rather than from GC finalizers.
+        Bun__closeAllSQLiteDatabasesForTermination(vm.global());
+        Bun__closeAllNodeSqliteDatabasesForTermination(vm.global());
         if vm.worker.is_none() {
-            Bun__closeAllSQLiteDatabasesForTermination();
-            Bun__closeAllNodeSqliteDatabasesForTermination(vm.global());
             Bun__WebView__closeAllForTermination();
         }
     }

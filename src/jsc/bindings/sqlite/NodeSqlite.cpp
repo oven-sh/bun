@@ -961,8 +961,8 @@ void JSDatabaseSync::finishDeferredClose()
     m_registeredCallbacks.clear();
 }
 
-// Called from ExitHandler::dispatch_on_exit, on the main thread only; entries
-// owned by another VM (a worker) are skipped by the stored-VM comparison
+// Called from ExitHandler::dispatch_on_exit on the exiting VM's thread (main or
+// worker); entries owned by another VM are skipped by the stored-VM comparison
 // without ever touching the foreign cell.
 extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObject* globalObject)
 {

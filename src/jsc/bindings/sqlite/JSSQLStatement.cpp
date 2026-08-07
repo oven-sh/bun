@@ -209,13 +209,17 @@ class VersionSqlite3 {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(VersionSqlite3, VersionSqlite3);
 
 public:
-    explicit VersionSqlite3(sqlite3* db)
+    explicit VersionSqlite3(sqlite3* db, JSC::VM* vm)
         : db(db)
+        , vm(vm)
         , version(0)
         , reference_count(1)
     {
     }
     sqlite3* db;
+    // The VM (main thread or worker) that opened this connection: its exit closes it
+    // (Bun__closeAllSQLiteDatabasesForTermination); other VMs' entries are never touched.
+    JSC::VM* const vm;
     std::atomic<uint64_t> version;
     size_t reference_count;
     WTF::HashSet<WebCore::JSSQLStatement*> statements;
@@ -293,15 +297,20 @@ extern "C" void Bun__sqliteCheckpointForTermination(sqlite3* db)
     sqlite3_wal_checkpoint_v2(db, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
 }
 
-extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
+// Called from ExitHandler::dispatch_on_exit on the exiting VM's thread (main or worker):
+// closes only the connections that VM opened.
+extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* globalObject)
 {
     if (!_instance) {
         return;
     }
+    JSC::VM* exitingVM = &globalObject->vm();
     WTF::Locker locker { databasesLock };
     auto& dbs = _instance->databases;
 
     for (auto& db : dbs) {
+        if (db->vm != exitingVM)
+            continue;
         if (db->db) {
             Bun__sqliteCheckpointForTermination(db->db);
             // close_v2: with unfinalized statements still alive, plain
@@ -1333,7 +1342,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return {};
     }
 
-    auto count = registerDatabase(new VersionSqlite3(db));
+    auto count = registerDatabase(new VersionSqlite3(db, &vm));
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(count)));
 }
 
@@ -1806,7 +1815,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     if (status != SQLITE_OK) {
         // TODO: log a warning here that defensive mode is unsupported.
     }
-    auto* versionDB = new VersionSqlite3(db);
+    auto* versionDB = new VersionSqlite3(db, &vm);
     auto index = registerDatabase(versionDB);
     if (finalizationTarget.isObject()) {
         vm.heap.addFinalizer(finalizationTarget.getObject(), [versionDB](JSC::JSCell* ptr) -> void {

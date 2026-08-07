@@ -5,10 +5,10 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use bstr::ByteSlice;
+use bun_boringssl::c as boring;
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
 use bun_core::{Mutex, ZStr, env_var};
-use bun_boringssl::c as boring;
 use bun_options_types::Format;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_sys::{self as sys, Fd, O};
@@ -760,7 +760,10 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
     let Some(code) = code else {
         // Parse-failure probe: no current code to compare against.
         finish(line, &|| {
-            format!("code hash mismatch: expected 0, actual {}\n", hex(code_hash))
+            format!(
+                "code hash mismatch: expected 0, actual {}\n",
+                hex(code_hash)
+            )
         });
         return;
     };
@@ -795,10 +798,9 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
     // page-aligned (every supported page size is a multiple of 128) and
     // `blob_off` is a multiple of 128 by construction, but a miss here would
     // be a JSC assert or segfault, so verify instead of assuming.
-    let map_is_aligned = map_guard
-        .0
-        .as_ref()
-        .is_some_and(|(base, _)| (base.as_ptr() as usize + blob_off as usize).is_multiple_of(BLOB_ALIGN));
+    let map_is_aligned = map_guard.0.as_ref().is_some_and(|(base, _)| {
+        (base.as_ptr() as usize + blob_off as usize).is_multiple_of(BLOB_ALIGN)
+    });
     let blob = if map_is_aligned {
         let (base, map_len) = map_guard.take().expect("checked above");
         // SAFETY: `blob_off + cache_size == map_len` was just validated.
@@ -961,14 +963,11 @@ fn write_persist_job_locked(
 
     let basename = cache_basename(job.key);
     let mut tmpname_buf = PathBuffer::uninit();
-    let tmpname_zstr: &ZStr = match bun_resolver::fs::FileSystem::tmpname(
-        &basename,
-        &mut tmpname_buf[..],
-        job.key,
-    ) {
-        Ok(z) => z,
-        Err(_) => return Err(()),
-    };
+    let tmpname_zstr: &ZStr =
+        match bun_resolver::fs::FileSystem::tmpname(&basename, &mut tmpname_buf[..], job.key) {
+            Ok(z) => z,
+            Err(_) => return Err(()),
+        };
 
     cclog!("[compile cache] Creating temporary file for cache of {name} ({tname})...");
 

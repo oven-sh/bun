@@ -183,12 +183,16 @@ fn json_rows_to_js(
 }
 
 fn object_json_to_js(this: &E::ObjectJSON, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-    let root = E::JsonValue::Object(bun_ast::StoreRef::from_raw(core::ptr::from_ref(this).cast_mut()));
+    let root = E::JsonValue::Object(bun_ast::StoreRef::from_raw(
+        core::ptr::from_ref(this).cast_mut(),
+    ));
     json_rows_to_js(root, this.tape(), global)
 }
 
 fn array_json_to_js(this: &E::ArrayJSON, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-    let root = E::JsonValue::Array(bun_ast::StoreRef::from_raw(core::ptr::from_ref(this).cast_mut()));
+    let root = E::JsonValue::Array(bun_ast::StoreRef::from_raw(
+        core::ptr::from_ref(this).cast_mut(),
+    ));
     json_rows_to_js(root, this.tape(), global)
 }
 

@@ -50,7 +50,9 @@ fn fixtures() -> Vec<(String, Vec<u8>)> {
 
 /// Atom-like feed: long text runs, entities, some CDATA (~1 MB).
 fn synth_feed() -> Vec<u8> {
-    let mut s = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <title>Example Feed</title>\n");
+    let mut s = String::from(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <title>Example Feed</title>\n",
+    );
     let mut i = 0;
     while s.len() < 1_000_000 {
         s.push_str(&format!(
@@ -111,7 +113,10 @@ fn maybe_loop() {
         parts.next().unwrap(),
         parts.next().unwrap().parse::<usize>().unwrap(),
     );
-    let (_, contents) = fixtures().into_iter().find(|(name, _)| name == fx).expect("fixture");
+    let (_, contents) = fixtures()
+        .into_iter()
+        .find(|(name, _)| name == fx)
+        .expect("fixture");
     bun_ast::initialize_store();
     let mut bump = Bump::new();
     let start = std::time::Instant::now();
@@ -279,7 +284,9 @@ fn bench_xml(c: &mut Criterion) {
         if unsafe { bench_pugixml_parse(contents.as_ptr(), contents.len()) } != 0 {
             group.bench_function(BenchmarkId::new("pugixml_dom", &name), |b| {
                 b.iter(|| {
-                    std::hint::black_box(unsafe { bench_pugixml_parse(contents.as_ptr(), contents.len()) })
+                    std::hint::black_box(unsafe {
+                        bench_pugixml_parse(contents.as_ptr(), contents.len())
+                    })
                 })
             });
         }
@@ -287,7 +294,9 @@ fn bench_xml(c: &mut Criterion) {
         if unsafe { bench_expat_parse(contents.as_ptr(), contents.len()) } != 0 {
             group.bench_function(BenchmarkId::new("expat_sax", &name), |b| {
                 b.iter(|| {
-                    std::hint::black_box(unsafe { bench_expat_parse(contents.as_ptr(), contents.len()) })
+                    std::hint::black_box(unsafe {
+                        bench_expat_parse(contents.as_ptr(), contents.len())
+                    })
                 })
             });
         }
@@ -295,7 +304,9 @@ fn bench_xml(c: &mut Criterion) {
         if unsafe { bench_libxml2_parse(contents.as_ptr(), contents.len()) } != 0 {
             group.bench_function(BenchmarkId::new("libxml2_dom", &name), |b| {
                 b.iter(|| {
-                    std::hint::black_box(unsafe { bench_libxml2_parse(contents.as_ptr(), contents.len()) })
+                    std::hint::black_box(unsafe {
+                        bench_libxml2_parse(contents.as_ptr(), contents.len())
+                    })
                 })
             });
         }

@@ -54,7 +54,8 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 }
             };
 
-            parsed.root
+            parsed
+                .root
                 .to_js(global)
                 .map_err(|e| bun_js_parser_jsc::to_js_error(e, global))
         },

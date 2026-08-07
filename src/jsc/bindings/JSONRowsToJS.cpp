@@ -178,8 +178,11 @@ private:
                 i += 1;
                 continue;
             }
-            size_t n = (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3 : (b & 0xF8) == 0xF0 ? 4 : 0;
-            uint32_t cp = n == 2 ? (b & 0x1F) : n == 3 ? (b & 0x0F) : (b & 0x07);
+            size_t n = (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3
+                : (b & 0xF8) == 0xF0                               ? 4
+                                                                   : 0;
+            uint32_t cp = n == 2 ? (b & 0x1F) : n == 3 ? (b & 0x0F)
+                                                       : (b & 0x07);
             bool ok = n != 0 && i + n <= bytes.size();
             for (size_t k = 1; ok && k < n; ++k) {
                 ok = (bytes[i + k] & 0xC0) == 0x80;
@@ -187,7 +190,8 @@ private:
             }
             // Overlong forms and values past U+10FFFF are malformed; encoded surrogates
             // (the WTF-8 extension) are kept.
-            ok = ok && (n == 2 ? cp >= 0x80 : n == 3 ? cp >= 0x800 : (cp >= 0x10000 && cp <= 0x10FFFF));
+            ok = ok && (n == 2 ? cp >= 0x80 : n == 3 ? cp >= 0x800
+                                                     : (cp >= 0x10000 && cp <= 0x10FFFF));
             if (!ok) {
                 out.append(static_cast<char16_t>(0xFFFD));
                 i += 1;

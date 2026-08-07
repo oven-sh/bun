@@ -11,8 +11,8 @@
 
 use bun_collections::HashMap;
 use bun_core::{OwnedString, String as BunString};
-use bun_js_parser_jsc::ExprJsc;
 use bun_core::{StackCheck, strings};
+use bun_js_parser_jsc::ExprJsc;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::xml::{self, XML};
 
@@ -83,8 +83,7 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 }
             };
 
-            root
-                .to_js(global)
+            root.to_js(global)
                 .map_err(|e| bun_js_parser_jsc::to_js_error(e, global))
         },
     )

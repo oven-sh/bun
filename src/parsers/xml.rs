@@ -399,8 +399,14 @@ enum Step {
 
 /// See `Scanner::tag_step`.
 enum TagStep<'a> {
-    End { empty: bool },
-    Attr { name: &'a [u8], pos: usize, quote: u8 },
+    End {
+        empty: bool,
+    },
+    Attr {
+        name: &'a [u8],
+        pos: usize,
+        quote: u8,
+    },
     Slow,
 }
 
@@ -1631,9 +1637,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
                                 break (Kind::Decl(kind), pos);
                             }
                             if self.starts_with(b"<![CDATA[") {
-                                return Err(
-                                    self.err(pos, "CDATA sections are only allowed inside elements")
-                                );
+                                return Err(self
+                                    .err(pos, "CDATA sections are only allowed inside elements"));
                             }
                             if self.starts_with(b"<![") {
                                 return Err(self.err(
@@ -1935,10 +1940,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
                                 b
                             }
                             None => {
-                                let mut b = ArenaVec::with_capacity_in(
-                                    self.pos - start + 32,
-                                    self.bump,
-                                );
+                                let mut b =
+                                    ArenaVec::with_capacity_in(self.pos - start + 32, self.bump);
                                 b.extend_from_slice(&self.src[start..self.pos]);
                                 b
                             }
@@ -2230,7 +2233,10 @@ fn key_cache_slot(name: &[u8]) -> usize {
     if n == 0 {
         return 0;
     }
-    (n.wrapping_mul(31) ^ (name[0] as usize).wrapping_mul(7) ^ (name[n - 1] as usize) ^ ((name[n / 2] as usize) << 2))
+    (n.wrapping_mul(31)
+        ^ (name[0] as usize).wrapping_mul(7)
+        ^ (name[n - 1] as usize)
+        ^ ((name[n / 2] as usize) << 2))
         % KEY_CACHE_SIZE
 }
 
@@ -2442,7 +2448,10 @@ impl<'a> Sink<'a> for CompactSink<'a> {
 
     #[inline]
     fn attribute(&mut self, name: &'a [u8], value: &'a [u8]) {
-        let frame = self.stack.last_mut().expect("attribute outside a start tag");
+        let frame = self
+            .stack
+            .last_mut()
+            .expect("attribute outside a start tag");
         frame.attribute_count += 1;
         let loc = frame.loc;
         let slot = key_cache_slot(name);
@@ -2538,7 +2547,11 @@ impl<'a> Sink<'a> for NodeSink<'a> {
 
     #[inline]
     fn attribute(&mut self, name: &'a [u8], value: &'a [u8]) {
-        let loc = self.stack.last().expect("attribute outside a start tag").loc;
+        let loc = self
+            .stack
+            .last()
+            .expect("attribute outside a start tag")
+            .loc;
         self.tape.push_prop(name, Tape::str(value), loc);
     }
 
@@ -2549,9 +2562,12 @@ impl<'a> Sink<'a> for NodeSink<'a> {
     fn end_element(&mut self) {
         let frame = self.stack.pop().expect("end_element without start_element");
         let attributes = self.tape.object_from(frame.props_mark as usize, frame.loc);
-        let children = self.tape.array_from(frame.children_mark as usize, frame.loc);
+        let children = self
+            .tape
+            .array_from(frame.children_mark as usize, frame.loc);
         let mark = self.tape.props.len();
-        self.tape.push_prop(b"name", Tape::str(frame.name), frame.loc);
+        self.tape
+            .push_prop(b"name", Tape::str(frame.name), frame.loc);
         self.tape
             .push_prop(b"attributes", E::JsonValue::Object(attributes), frame.loc);
         self.tape
@@ -2696,7 +2712,9 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// Nesting too deep to recurse into. The message is for the module
     /// loader's log; `Bun.XML.parse` throws a `RangeError` regardless.
     fn stack_overflow(&mut self) -> PErr {
-        let _ = self.scanner.err(self.scanner.tok.pos, "Nesting is too deep");
+        let _ = self
+            .scanner
+            .err(self.scanner.tok.pos, "Nesting is too deep");
         PErr::StackOverflow
     }
 
@@ -2813,9 +2831,10 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 }
                 Kind::StartTag(_) => break,
                 Kind::Eof(_) => {
-                    return Err(self
-                        .scanner
-                        .err(self.scanner.tok.pos, "XML document must have a root element"));
+                    return Err(self.scanner.err(
+                        self.scanner.tok.pos,
+                        "XML document must have a root element",
+                    ));
                 }
                 Kind::Decl(_) | Kind::PeReference(_) | Kind::Percent | Kind::PercentName(_) => {
                     return Err(self.scanner.err(
@@ -2866,9 +2885,10 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                     self.scanner.tok.pos,
                     "The XML declaration must start with version=\"1.0\"",
                 ),
-                Kind::Question => self
-                    .scanner
-                    .err(self.scanner.tok.pos, "The XML declaration must specify the version"),
+                Kind::Question => self.scanner.err(
+                    self.scanner.tok.pos,
+                    "The XML declaration must specify the version",
+                ),
                 _ => self.unexpected("version=\"1.0\" in the XML declaration"),
             });
         };
@@ -2942,9 +2962,10 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 ));
             }
             Kind::Eof(_) => {
-                return Err(self
-                    .scanner
-                    .err(self.scanner.tok.pos, "Unterminated XML declaration: expected '?>'"));
+                return Err(self.scanner.err(
+                    self.scanner.tok.pos,
+                    "Unterminated XML declaration: expected '?>'",
+                ));
             }
             _ => return Err(self.unexpected("'?>' to end the XML declaration")),
         }
@@ -3153,7 +3174,9 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                         "A mixed content model is separated by '|', not ','",
                     ));
                 }
-                Kind::Question | Kind::Star | Kind::Plus if !self.scanner.tok.spaced && names > 0 => {
+                Kind::Question | Kind::Star | Kind::Plus
+                    if !self.scanner.tok.spaced && names > 0 =>
+                {
                     return Err(self.scanner.err(
                         self.scanner.tok.pos,
                         "Names in a mixed content model cannot have occurrence indicators",
@@ -3191,9 +3214,10 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 }
                 Kind::Bar | Kind::Comma => {
                     if *separator.get_or_insert(self.scanner.tok.kind) != self.scanner.tok.kind {
-                        return Err(self
-                            .scanner
-                            .err(self.scanner.tok.pos, "A content model group cannot mix ',' and '|'"));
+                        return Err(self.scanner.err(
+                            self.scanner.tok.pos,
+                            "A content model group cannot mix ',' and '|'",
+                        ));
                     }
                     self.advance()?;
                     self.parse_particle()?;

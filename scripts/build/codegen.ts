@@ -42,9 +42,9 @@ import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { generateJsonByteClass } from "./jsonByteClass.ts";
-import { generateXmlByteClass } from "./xmlByteClass.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
+import { generateXmlByteClass } from "./xmlByteClass.ts";
 
 // The individual emit functions take these four params. Bundled to keep
 // signatures short.

@@ -361,7 +361,12 @@ describe("well-formedness", () => {
     expect(syntaxError('<a b=">" c="<"/>').message).toContain("'<' is not allowed in attribute values");
     const pad = Buffer.alloc(20_000, "z").toString();
     expect(XML.parse(`<r><a b=">${pad}" c="v\tw">t</a><a d="q">${pad}</a></r>`)).toEqual({
-      r: { a: [{ "@b": ">" + pad, "@c": "v w", "#text": "t" }, { "@d": "q", "#text": pad }] },
+      r: {
+        a: [
+          { "@b": ">" + pad, "@c": "v w", "#text": "t" },
+          { "@d": "q", "#text": pad },
+        ],
+      },
     });
     expect(XML.parse(`<!DOCTYPE r [<!ATTLIST r x CDATA "1>2" y CDATA "a\tb">]><r/>`)).toEqual({
       r: { "@x": "1>2", "@y": "a b" },

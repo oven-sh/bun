@@ -4788,10 +4788,12 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 Some(HeaderName::ContentType) => {
-                    if strings::starts_with_case_insensitive_ascii(
-                        header.value(),
-                        b"text/event-stream",
-                    ) {
+                    const SSE: &[u8] = b"text/event-stream";
+                    let value = header.value();
+                    // The media type itself, optionally followed by parameters.
+                    if strings::starts_with_case_insensitive_ascii(value, SSE)
+                        && matches!(value.get(SSE.len()), None | Some(b';' | b' ' | b'\t'))
+                    {
                         is_server_sent_events = true;
                     }
                 }

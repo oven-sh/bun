@@ -42,7 +42,8 @@ pub struct Header {
     name_len: usize,
     value_ptr: *const u8,
     value_len: usize,
-    /// `HeaderName as u8`, or [`Header::OTHER`].
+    /// `HeaderName as u8 + 1`, or 0 when not well-known (so `ZERO` stays
+    /// all-zero bytes).
     name_id: u8,
 }
 
@@ -70,11 +71,8 @@ impl Header {
         name_len: 0,
         value_ptr: core::ptr::null(),
         value_len: 0,
-        name_id: Self::OTHER,
+        name_id: 0,
     };
-
-    /// `name_id` for a name outside the well-known set.
-    pub const OTHER: u8 = u8::MAX;
 
     /// Construct a `Header` from borrowed name/value slices. The caller is
     /// responsible for keeping the backing storage alive for as long as the
@@ -87,15 +85,15 @@ impl Header {
             value_ptr: value.as_ptr(),
             value_len: value.len(),
             name_id: match HeaderName::classify(name) {
-                Some(known) => known as u8,
-                None => Self::OTHER,
+                Some(known) => known as u8 + 1,
+                None => 0,
             },
         }
     }
 
     #[inline]
     pub const fn well_known(&self) -> Option<HeaderName> {
-        HeaderName::from_index(self.name_id)
+        HeaderName::from_index(self.name_id.wrapping_sub(1))
     }
 
     #[inline]
@@ -192,7 +190,7 @@ impl<'a> HeaderList<'a> {
     /// First value for a well-known name, by tag rather than string compare.
     #[inline]
     pub fn find(&self, name: HeaderName) -> Option<&'a [u8]> {
-        let id = name as u8;
+        let id = name as u8 + 1;
         self.list
             .iter()
             .find(|h| h.name_id == id)

@@ -2102,7 +2102,7 @@ typedef struct ZigSliceString {
 typedef struct PicoHTTPHeader {
     ZigSliceString name;
     ZigSliceString value;
-    uint8_t name_id; // HTTPHeaderName, or 0xFF when not well-known
+    uint8_t name_id; // HTTPHeaderName + 1, or 0 when not well-known
 } PicoHTTPHeader;
 static_assert(sizeof(PicoHTTPHeader) == 40, "bun_picohttp::Header");
 
@@ -2123,7 +2123,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
         size_t end = pico_headers.len;
         size_t commonCount = 0;
         for (size_t j = 0; j < end; j++)
-            commonCount += pico_headers.ptr[j].name_id < numHTTPHeaderNames;
+            commonCount += pico_headers.ptr[j].name_id != 0;
         map.commonHeaders().reserveInitialCapacity(commonCount);
         map.uncommonHeaders().reserveInitialCapacity(end - commonCount);
         std::bitset<numHTTPHeaderNames> seen;
@@ -2142,12 +2142,14 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
             if (header.value.len > 0)
                 memcpy(data.data(), header.value.ptr, header.value.len);
 
-            if (header.name_id < numHTTPHeaderNames) {
-                auto name = static_cast<HTTPHeaderName>(header.name_id);
+            if (header.name_id != 0) {
+                unsigned index = header.name_id - 1;
+                ASSERT(index < numHTTPHeaderNames);
+                auto name = static_cast<HTTPHeaderName>(index);
                 // First occurrence appends without the map's linear duplicate
                 // scan; repeats go through add() so values combine.
-                if (name != HTTPHeaderName::SetCookie && !seen[header.name_id]) {
-                    seen.set(header.name_id);
+                if (name != HTTPHeaderName::SetCookie && !seen[index]) {
+                    seen.set(index);
                     map.commonHeaders().append(HTTPHeaderMap::CommonHeader { name, WTF::move(value) });
                 } else {
                     map.add(name, value);

@@ -440,6 +440,9 @@ impl HeaderName {
     ];
 }
 
+// `from_index` transmutes anything below `COUNT`.
+const _: () = assert!(HeaderName::COUNT == HeaderName::XXSSProtection as usize + 1);
+
 /// `a` compared ASCII-case-insensitively against already-lowercase `lower`.
 const fn eq_ignore_ascii_case_lower(a: &[u8], lower: &[u8]) -> bool {
     if a.len() != lower.len() {

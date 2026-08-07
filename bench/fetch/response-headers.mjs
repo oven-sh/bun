@@ -8,6 +8,10 @@ const [port, kind = "nginx", mode = "body", total = 200000, conc = 64] = process
 const url = `http://127.0.0.1:${port}/${kind}`;
 const N = Number(total),
   C = Number(conc);
+if (!(port > 0) || !["body", "get", "iter"].includes(mode) || !(N >= 1) || !(C >= 1)) {
+  console.error("usage: response-headers.mjs <port> [small|nginx|cookies] [body|get|iter] [requests] [concurrency]");
+  process.exit(1);
+}
 let sink = 0;
 async function one() {
   const r = await fetch(url);

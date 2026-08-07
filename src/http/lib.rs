@@ -3685,9 +3685,10 @@ impl<'a> HTTPClient<'a> {
             }
             // Don't re-parse an accumulating head from the start on every read
             // unless the new bytes could have completed it (quadratic under a
-            // trickling server otherwise).
+            // trickling server otherwise). Anything stored below the 16-byte
+            // floor above was never parsed, so it doesn't count as seen.
             let seen = core::mem::take(&mut already_seen);
-            if seen != 0 && !picohttp::Response::may_be_complete(to_read, seen) {
+            if seen >= 16 && !picohttp::Response::may_be_complete(to_read, seen) {
                 incomplete_head!();
             }
 

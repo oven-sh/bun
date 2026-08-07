@@ -949,7 +949,7 @@ impl Response {
         // `Body` has NO `Drop`; arm a guard so the
         // `?` below releases the cloned body payload.
         let body = scopeguard::guard(body, |b| b.reset());
-        let init = self.realized_init().clone(global_this)?;
+        let init = self.init_mut().clone(global_this)?;
         // Init's drop glue (HeadersRef + OwnedString)
         // handles cleanup on `?` below
         Ok(Response {
@@ -1461,8 +1461,8 @@ impl Init {
         }
     }
 
-    pub(crate) fn clone(&self, ctx: &JSGlobalObject) -> JsResult<Init> {
-        debug_assert!(self.wire_headers.is_none(), "realize_headers() first");
+    pub(crate) fn clone(&mut self, ctx: &JSGlobalObject) -> JsResult<Init> {
+        self.realize_headers();
         let headers = match &self.headers {
             // `clone_this` does a deep copy on the C++ side and may return
             // null on OOM/throw. Flatten the
@@ -1521,7 +1521,7 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.realized_init().clone(global_this)?));
+                return Ok(Some(resp.init_mut().clone(global_this)?));
             }
         }
 

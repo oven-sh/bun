@@ -35,8 +35,10 @@ const server = Bun.serve({
   port: Number(process.env.PORT || 0),
   reusePort: true,
   fetch(req) {
-    const kind = req.url.slice(req.url.lastIndexOf("/") + 1) || "nginx";
-    return new Response("ok", responses[kind]);
+    const kind = new URL(req.url).pathname.slice(1) || "nginx";
+    const init = responses[kind];
+    if (!init) return new Response(`unknown profile "${kind}"; use one of ${Object.keys(responses)}`, { status: 404 });
+    return new Response("ok", init);
   },
 });
 console.log(server.port);

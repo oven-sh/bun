@@ -3676,11 +3676,11 @@ describe.concurrent("connect() failure promise settlement", () => {
 // paused or half-closed socket parks on Windows) handed select() three empty
 // fd sets, which fails WSAEINVAL instantly and error-closed the healthy
 // connection. Our libuv patch synthesizes UV_DISCONNECT on the slow path from
-// select() readability plus MSG_PEEK, and adds the UV_FORCE_SLOW_POLL=1 hook
+// select() readability plus MSG_PEEK, and adds the BUN_FEATURE_FLAG_UV_FORCE_SLOW_POLL=1 hook
 // so these scenarios can run without installing an LSP. The hook is read once
 // per process at the first poll creation, so every scenario runs in a child.
-describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORCE_SLOW_POLL)", () => {
-  const slowPollEnv = { ...bunEnv, UV_FORCE_SLOW_POLL: "1" };
+describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEATURE_FLAG_UV_FORCE_SLOW_POLL)", () => {
+  const slowPollEnv = { ...bunEnv, BUN_FEATURE_FLAG_UV_FORCE_SLOW_POLL: "1" };
 
   async function runChild(script: string) {
     await using proc = Bun.spawn({
@@ -3947,4 +3947,84 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
     expect(stdout.trim()).toBe("OK drained");
     expect(exitCode).toBe(0);
   }, 20_000);
+
+  it("a backpressured write lands while both poll requests are checked out", async () => {
+    // A parked DISCONNECT-only request holds one of the handle's two poll
+    // request slots (sleeping between peeks); resume's request, cycled back
+    // to a blocked readable wait, holds the other. A backpressured write
+    // then re-arms WRITABLE, a subscription bit neither checked-out request
+    // carries, and libuv's slow submit used to assert(0) on that third
+    // generation (debug abort; in release WRITABLE stayed unarmed until a
+    // request completed). The parked request must instead converge onto
+    // the new subscription within a lap.
+    const { stdout, stderr, exitCode } = await runChild(`
+        let sawError = null;
+        const opened = Promise.withResolvers();
+        const gotData = Promise.withResolvers();
+        const clientGotSome = Promise.withResolvers();
+        let paused;
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) {
+              paused = s;
+              s.pause();
+              opened.resolve();
+            },
+            data(s, buf) {
+              gotData.resolve(buf.toString());
+            },
+            error(s, e) {
+              sawError = e?.code || String(e);
+            },
+            close() {},
+          },
+        });
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open(s) {
+              // Never reads until resumed, so the server's big write below
+              // cannot be absorbed by the kernel buffers and must leave
+              // WRITABLE armed.
+              s.pause();
+            },
+            data(s, buf) {
+              clientGotSome.resolve(buf.length);
+            },
+            error() {},
+            close() {},
+          },
+        });
+        await opened.promise;
+        client.write("x");
+        // Let the paused server poll park with the byte pending (slot 1
+        // checked out, sleeping between peeks).
+        await Bun.sleep(400);
+        paused.resume();
+        const first = await gotData.promise;
+        // One settled loop turn so resume's request cycles back to a
+        // parked readable wait (slot 2 checked out too).
+        await Bun.sleep(80);
+        // 8MB against ~128KB of loopback buffering: the raw send is
+        // necessarily partial, which re-arms WRITABLE; this is the
+        // submission that used to abort the process.
+        const big = Buffer.alloc(8 * 1024 * 1024, 65).toString();
+        paused.write(big);
+        await Bun.sleep(300);
+        if (sawError) {
+          console.log("FAIL " + sawError);
+          process.exit(1);
+        }
+        client.resume();
+        const got = await clientGotSome.promise;
+        console.log("OK " + first + " " + (got > 0));
+        process.exit(0);
+      `);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK x true");
+    expect(exitCode).toBe(0);
+  }, 15_000);
 });

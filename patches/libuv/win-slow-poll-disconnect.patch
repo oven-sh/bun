@@ -1,14 +1,14 @@
 --- a/src/win/poll.c
 +++ b/src/win/poll.c
-@@ -300,58 +300,156 @@ static DWORD WINAPI uv__slow_poll_thread_proc(void* arg) {
+@@ -269,57 +269,150 @@ static DWORD WINAPI uv__slow_poll_thread_proc(void* arg) {
    int r;
    uv_single_fd_set_t rfds, wfds, efds;
    struct timeval timeout;
 +  int events;
 +  int suppress_rfds;
 +  ULONGLONG deadline;
-+  ULONGLONG wake;
 +  ULONGLONG now;
++  ULONGLONG wait;
  
    assert(handle->type == UV_POLL);
    assert(req->type == UV_POLL_REQ);
@@ -19,27 +19,18 @@
 -  } else {
 -    rfds.fd_count = 0;
 -  }
--
--  if (handle->events & UV_WRITABLE) {
--    wfds.fd_count = 1;
--    wfds.fd_array[0] = handle->socket;
--    efds.fd_count = 1;
--    efds.fd_array[0] = handle->socket;
--  } else {
--    wfds.fd_count = 0;
--    efds.fd_count = 0;
--  }
-+  /* Give up after 3 minutes (the original select() timeout): a zero-event
-+   * completion is posted and the processing step submits a fresh request
-+   * if the watcher is still active. */
++  /* Complete with no events after 3 minutes (the original select()
++   * timeout): the processing step submits a fresh request if the watcher
++   * is still active. */
 +  deadline = GetTickCount64() + 3 * 60 * 1000;
 +  suppress_rfds = 0;
 +
 +  for (;;) {
-+    /* Refreshed every lap. uv_poll_start/uv_poll_stop on the loop thread
-+     * change this mid-flight; new events are covered by the second request
-+     * (see uv__poll_set), so this unsynchronized read only lets a stale
-+     * request retire itself early. */
++    /* Refreshed every lap, and each select() below waits at most one
++     * second: uv_poll_start/uv_poll_stop on the loop thread change the
++     * subscription mid-flight, and when both requests are checked out
++     * (see uv__slow_poll_submit_poll_req) this lap refresh is the only
++     * thing that converges a parked request onto the new subscription. */
 +    events = handle->events;
 +
 +    /* Watch readability for UV_DISCONNECT too: winsock select() has no
@@ -49,10 +40,10 @@
 +     * watcher that wants only UV_DISCONNECT: with all three sets empty,
 +     * select() fails WSAEINVAL immediately, which stopped the watcher
 +     * and reported a bogus error for every poll parked in that state.
-+     * suppress_rfds (set at the bottom of the loop) skips the read set
-+     * for one lap when pending data the watcher does not want would
++     * suppress_rfds (set at the bottom of the loop, one lap only) skips
++     * the read set when pending data the watcher does not want would
 +     * otherwise make select() return instantly instead of blocking on
-+     * writability. */
++     * writability; the UV_WRITABLE guard keeps the sets non-empty. */
 +    if ((events & (UV_READABLE | UV_DISCONNECT)) &&
 +        !(suppress_rfds && (events & UV_WRITABLE))) {
 +      rfds.fd_count = 1;
@@ -60,11 +51,17 @@
 +    } else {
 +      rfds.fd_count = 0;
 +    }
++    suppress_rfds = 0;
  
--  /* Make the select() time out after 3 minutes. If select() hangs because the
--   * user closed the socket, we will at least not hang indefinitely. */
--  timeout.tv_sec = 3 * 60;
--  timeout.tv_usec = 0;
+-  if (handle->events & UV_WRITABLE) {
+-    wfds.fd_count = 1;
+-    wfds.fd_array[0] = handle->socket;
+-    efds.fd_count = 1;
+-    efds.fd_array[0] = handle->socket;
+-  } else {
+-    wfds.fd_count = 0;
+-    efds.fd_count = 0;
+-  }
 +    if (events & UV_WRITABLE) {
 +      wfds.fd_count = 1;
 +      wfds.fd_array[0] = handle->socket;
@@ -75,6 +72,16 @@
 +      efds.fd_count = 0;
 +    }
  
+-  /* Make the select() time out after 3 minutes. If select() hangs because the
+-   * user closed the socket, we will at least not hang indefinitely. */
+-  timeout.tv_sec = 3 * 60;
+-  timeout.tv_usec = 0;
++    now = GetTickCount64();
++    if (events == 0 || now >= deadline) {
++      reported_events = 0;
++      break;
++    }
+ 
 -  r = select(1, (fd_set*) &rfds, (fd_set*) &wfds, (fd_set*) &efds, &timeout);
 -  if (r == SOCKET_ERROR) {
 -    /* Queue this req, reporting an error. */
@@ -82,22 +89,11 @@
 -    POST_COMPLETION_FOR_REQ(handle->loop, req);
 -    return 0;
 -  }
-+    now = GetTickCount64();
-+    if (events == 0 || now >= deadline) {
-+      reported_events = 0;
-+      break;
-+    }
- 
--  reported_events = 0;
-+    /* With the read set suppressed, wake within a second anyway so the
-+     * disconnect peek keeps running behind the pending data. */
-+    wake = deadline;
-+    if (suppress_rfds && rfds.fd_count == 0 && now + 1000 < wake)
-+      wake = now + 1000;
-+    suppress_rfds = 0;
-+
-+    timeout.tv_sec = (long) ((wake - now) / 1000);
-+    timeout.tv_usec = (long) (((wake - now) % 1000) * 1000);
++    wait = deadline - now;
++    if (wait > 1000)
++      wait = 1000;
++    timeout.tv_sec = (long) (wait / 1000);
++    timeout.tv_usec = (long) ((wait % 1000) * 1000);
 +
 +    r = select(1, (fd_set*) &rfds, (fd_set*) &wfds, (fd_set*) &efds, &timeout);
 +    if (r == SOCKET_ERROR) {
@@ -107,11 +103,7 @@
 +      return 0;
 +    }
  
--  if (r > 0) {
--    if (rfds.fd_count > 0) {
--      assert(rfds.fd_count == 1);
--      assert(rfds.fd_array[0] == handle->socket);
--      reported_events |= UV_READABLE;
+-  reported_events = 0;
 +    reported_events = 0;
 +
 +    if (r > 0) {
@@ -144,7 +136,12 @@
 +          }
 +        }
 +      }
-+
+ 
+-  if (r > 0) {
+-    if (rfds.fd_count > 0) {
+-      assert(rfds.fd_count == 1);
+-      assert(rfds.fd_array[0] == handle->socket);
+-      reported_events |= UV_READABLE;
 +      if (wfds.fd_count > 0) {
 +        assert(wfds.fd_count == 1);
 +        assert(wfds.fd_array[0] == handle->socket);
@@ -164,67 +161,87 @@
 -      assert(efds.fd_count == 1);
 -      assert(efds.fd_array[0] == handle->socket);
 -      reported_events |= UV_WRITABLE;
-+    /* A suppressed-rfds select() that hit its one-second cap is a re-peek
-+     * tick, not the real deadline: loop so the next lap re-arms the read
-+     * set and runs the peek again. */
-+    if (r == 0 && wake < deadline)
-+      continue;
-+
-+    /* A timeout or anything the watcher subscribed to completes the
-+     * request (the processing step masks and resubmits as needed). What
-+     * remains is data pending on a poll that does not want UV_READABLE
-+     * (a receive-paused socket): completing now would be masked to
-+     * nothing and resubmitted straight back into an instantly-readable
-+     * select(), a hot spin. Park instead and keep re-peeking, so a
-+     * connection that dies behind the pending data is still discovered:
-+     * an RST discards the receive queue and turns the peek into an error
-+     * within a second. A FIN behind data stays invisible to the peek
-+     * until the data is consumed (select() cannot see it; AFD would have
-+     * reported it), so its delivery keeps riding the readable path once
-+     * reads resume. How to park depends on whether the watcher also
-+     * wants UV_WRITABLE: if so, re-select() with the read set suppressed
-+     * so the send-buffer drain still wakes it instantly (sleeping here
-+     * would throttle a backpressured writer to one wake a second); if
-+     * not, there is nothing else to wait on, so just sleep. */
-+    if (r == 0 || (reported_events & events) != 0)
++    /* Anything the watcher subscribed to completes the request (the
++     * processing step masks and resubmits as needed). */
++    if ((reported_events & events) != 0)
 +      break;
 +
-+    if (events & UV_WRITABLE) {
-+      suppress_rfds = 1;
-+      continue;
++    /* r == 0: a quiet tick; lap to pick up subscription changes. r > 0
++     * with nothing deliverable: data pending on a poll that does not
++     * want UV_READABLE (a receive-paused socket). Completing now would
++     * be masked to nothing and resubmitted straight back into an
++     * instantly-readable select(), a hot spin; park instead and keep
++     * re-peeking, so a connection that dies behind the pending data is
++     * still discovered (an RST discards the receive queue and turns the
++     * peek into an error within a tick). A FIN behind data stays
++     * invisible to the peek until the data is consumed (select() cannot
++     * see it; AFD would have reported it), so its delivery keeps riding
++     * the readable path once reads resume. How to park depends on
++     * whether the watcher also wants UV_WRITABLE: if so, re-select()
++     * with the read set suppressed so the send-buffer drain still wakes
++     * it instantly (sleeping here would throttle a backpressured writer
++     * to one wake a second); if not, there is nothing else to wait on,
++     * so just sleep a tick. */
++    if (r > 0) {
++      if (events & UV_WRITABLE) {
++        suppress_rfds = 1;
++        continue;
++      }
++      Sleep(1000);
      }
-+
-+    Sleep(1000);
    }
  
-   SET_REQ_SUCCESS(req);
-@@ -434,6 +532,25 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+@@ -346,7 +439,15 @@ static void uv__slow_poll_submit_poll_req(uv_loop_t* loop, uv_poll_t* handle) {
+     handle->mask_events_1 = handle->events;
+     handle->mask_events_2 = 0;
+   } else {
+-    assert(0);
++    /* Both requests are checked out. The AFD fast path forces one to
++     * return (Exclusive), but a slow request can legitimately be parked
++     * in its select()/peek loop. That loop re-reads handle->events every
++     * lap (at most one second), so the live requests converge on the new
++     * subscription, and the processing step resubmits with correct
++     * accounting when one completes. This used to assert(0): it was
++     * unreachable while a DISCONNECT-only subscription made select()
++     * fail WSAEINVAL instantly, but such polls now genuinely park, so a
++     * third subscription change (e.g. pause, resume, pause) lands here. */
+     return;
+   }
+ 
+@@ -403,6 +504,32 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
  }
  
  
-+static int uv__slow_poll_forced(void) {
-+  /* Test hook: UV_FORCE_SLOW_POLL=1 routes every poll through the slow
-+   * (select-based) path, which is normally reachable only on machines
-+   * where a layered service provider owns the socket, so the path can be
-+   * exercised without installing an LSP. Read once: polls created before
-+   * and after a change would otherwise disagree for the process
-+   * lifetime. */
-+  static int forced = -1;
++static uv_once_t uv__slow_poll_forced_guard_ = UV_ONCE_INIT;
++static int uv__slow_poll_forced_;
++
++static void uv__slow_poll_forced_init(void) {
++  /* Test hook: BUN_FEATURE_FLAG_UV_FORCE_SLOW_POLL=1 routes every poll
++   * through the slow (select-based) path, which is normally reachable
++   * only on machines where a layered service provider owns the socket,
++   * so the path can be exercised without installing an LSP. Read once
++   * under uv_once: uv_poll_init_socket runs on every loop's own thread,
++   * and polls created before and after an env change must agree for the
++   * process lifetime. */
 +  char value[2];
 +
-+  if (forced == -1)
-+    forced = GetEnvironmentVariableA("UV_FORCE_SLOW_POLL",
-+                                     value,
-+                                     sizeof(value)) == 1 &&
-+             value[0] == '1';
-+  return forced;
++  uv__slow_poll_forced_ =
++      GetEnvironmentVariableA("BUN_FEATURE_FLAG_UV_FORCE_SLOW_POLL",
++                              value,
++                              sizeof(value)) == 1 &&
++      value[0] == '1';
++}
++
++static int uv__slow_poll_forced(void) {
++  uv_once(&uv__slow_poll_forced_guard_, uv__slow_poll_forced_init);
++  return uv__slow_poll_forced_;
 +}
 +
 +
  int uv_poll_init(uv_loop_t* loop, uv_poll_t* handle, int fd) {
    return uv_poll_init_socket(loop, handle, (SOCKET) uv__get_osfhandle(fd));
  }
-@@ -488,7 +605,10 @@ int uv_poll_init_socket(uv_loop_t* loop, uv_poll_t* handle,
+@@ -457,7 +584,10 @@ int uv_poll_init_socket(uv_loop_t* loop, uv_poll_t* handle,
    /* Get the peer socket that is needed to enable fast poll. If the returned
     * value is NULL, the protocol is not implemented by MSAFD and we'll have to
     * use slow mode. */

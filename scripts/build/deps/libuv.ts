@@ -61,7 +61,7 @@ export const libuv: Dependency = {
   // the watcher with a bogus error. usockets arms UV_DISCONNECT on every
   // poll and parks paused/half-closed sockets in exactly that state.
   // Synthesize UV_DISCONNECT from select() readability + MSG_PEEK, and add
-  // the UV_FORCE_SLOW_POLL=1 hook so tests reach the path without an LSP.
+  // the BUN_FEATURE_FLAG_UV_FORCE_SLOW_POLL=1 hook so tests reach the path without an LSP.
   // Upstreamable to libuv/libuv (minus the hook).
   //
   // Patch files here must use traditional `--- a/` / `+++ b/` headers, not

@@ -729,61 +729,120 @@ impl RepositoryExt for Repository {
             bun_core::ZStr::from_buf(&folder_name_buf[..], written)
         };
 
-        match bun_sys::Dir::borrow(&cache_dir).open_dir_z(folder_name) {
-            Ok(dir) => {
-                let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                    &PackageManager::get().cache_directory_path,
-                    &[folder_name.as_bytes()],
-                );
+        let repo_dir = 'repo_dir: {
+            match bun_sys::Dir::borrow(&cache_dir).open_dir_z(folder_name) {
+                Ok(dir) => {
+                    // `git clone --bare` populates `HEAD`, `objects/` and
+                    // `refs/` before transferring data; a folder missing any of
+                    // them is a leftover from an interrupted clone that no
+                    // `git fetch` can ever repair. A structurally complete
+                    // mirror that fails to fetch (network, auth) is kept as-is.
+                    let complete = bun_sys::exists_at(dir.fd(), bun_core::zstr!("HEAD"))
+                        && bun_sys::directory_exists_at(dir.fd(), bun_core::zstr!("objects"))
+                            .unwrap_or(false)
+                        && bun_sys::directory_exists_at(dir.fd(), bun_core::zstr!("refs"))
+                            .unwrap_or(false);
+                    if complete {
+                        let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+                            &PackageManager::get().cache_directory_path,
+                            &[folder_name.as_bytes()],
+                        );
 
-                if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
+                        if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"])
+                        {
+                            log.add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
+                            );
+                            return Err(err);
+                        }
+                        break 'repo_dir dir;
+                    }
+                    // Incomplete leftover: rebuild it (the rename below replaces it).
+                    dir.close();
+                }
+                Err(not_found) => {
+                    if not_found.get_errno() != bun_sys::E::ENOENT {
+                        return Err(not_found.into());
+                    }
+                }
+            }
+
+            // Clone into a temporary sibling and rename it into place once
+            // complete, so a kill can't leave a half-built mirror.
+            let mut tmp_name_buf = [0u8; 64];
+            let tmp_name: &[u8] = match bun_resolver::fs::FileSystem::tmpname(
+                b"tmp",
+                &mut tmp_name_buf,
+                bun_core::fast_random(),
+            ) {
+                Ok(name) => name.as_bytes(),
+                // max len is 1+16+1+8+1+3, well below 64
+                Err(_no_space_left) => unreachable!(),
+            };
+
+            let target = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+                &PackageManager::get().cache_directory_path,
+                &[tmp_name],
+            );
+
+            if let Err(err) = exec(
+                env,
+                &[
+                    b"git",
+                    b"clone",
+                    b"-c",
+                    b"core.longpaths=true",
+                    b"--quiet",
+                    b"--bare",
+                    url,
+                    target,
+                ],
+            ) {
+                let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(tmp_name);
+                if err == crate::Error::RepositoryNotFound || attempt > 1 {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
-                        format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
+                        format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
                     );
-                    return Err(err);
                 }
-                Ok(dir)
+                return Err(err);
             }
-            Err(not_found) => {
-                if not_found.get_errno() != bun_sys::E::ENOENT {
-                    return Err(not_found.into());
-                }
 
-                let target = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                    &PackageManager::get().cache_directory_path,
-                    &[folder_name.as_bytes()],
+            if let Err(err) = bun_sys::renameat_concurrently_a(
+                cache_dir,
+                tmp_name,
+                cache_dir,
+                folder_name.as_bytes(),
+                bun_sys::RenameatConcurrentlyOptions {
+                    move_fallback: false,
+                },
+            ) {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "moving the repository for \"{}\" into the cache failed: {}",
+                        BStr::new(name),
+                        err,
+                    ),
                 );
-
-                if let Err(err) = exec(
-                    env,
-                    &[
-                        b"git",
-                        b"clone",
-                        b"-c",
-                        b"core.longpaths=true",
-                        b"--quiet",
-                        b"--bare",
-                        url,
-                        target,
-                    ],
-                ) {
-                    if err == crate::Error::RepositoryNotFound || attempt > 1 {
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
-                        );
-                    }
-                    return Err(err);
-                }
-
-                bun_sys::Dir::borrow(&cache_dir)
-                    .open_dir_z(folder_name)
-                    .map_err(Into::into)
+                let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(tmp_name);
+                return Err(crate::Error::InstallFailed);
             }
-        }
+
+            // A lost rename race (or a replaced stale folder) can leave a
+            // directory at `tmp_name`; drop it.
+            let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(tmp_name);
+
+            bun_sys::Dir::borrow(&cache_dir)
+                .open_dir_z(folder_name)
+                .map_err(Error::from)?
+        };
+
+        Ok(repo_dir)
     }
 
     fn find_commit(

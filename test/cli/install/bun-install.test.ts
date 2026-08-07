@@ -5389,6 +5389,52 @@ describe.concurrent("bun-install", () => {
       version: "2.5.0",
     });
     expect(await file(join(cacheFolder, ".bun-tag")).text()).toBe(sha);
+
+    // A bare mirror left incomplete by an interrupted `git clone --bare`
+    // (named after the URL hash, so it is revisited forever) is rebuilt
+    // instead of failing every later `git fetch`.
+    const mirror = (await readdirSorted(cacheDir)).find(entry => entry.endsWith(".git"));
+    expect(mirror).toBeDefined();
+    await rm(join(cacheDir, mirror!), { recursive: true, force: true });
+    await mkdir(join(cacheDir, mirror!), { recursive: true });
+    await resetProject();
+    await install();
+    expect(await file(join(projectDir, "node_modules", "my-git-dep", "package.json")).json()).toMatchObject({
+      name: "real-dep-name",
+      version: "2.5.0",
+    });
+
+    // A failed `git checkout` (here: the tree object missing from the mirror,
+    // which `git log` during resolution does not notice but checkout cannot
+    // unpack) reports the failure and leaves neither a cache folder nor
+    // temporary junk behind.
+    const treeSha = (await git(["rev-parse", "HEAD^{tree}"], srcDir)).trim();
+    const blobPath = join(cacheDir, mirror!, "objects", treeSha.slice(0, 2), treeSha.slice(2));
+    const blobBytes = await file(blobPath).arrayBuffer();
+    await rm(blobPath, { force: true });
+    await rm(cacheFolder, { recursive: true, force: true });
+    await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: projectDir,
+        env: { ...gitEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      expect(err).toContain(`"git checkout" for "my-git-dep" failed`);
+      expect(exitCode).not.toBe(0);
+    }
+    expect(
+      (await readdirSorted(cacheDir)).filter(entry => entry.startsWith("@G@") || entry.endsWith(".tmp")),
+    ).toEqual([]);
+    await write(blobPath, blobBytes);
+    await install();
+    expect(await file(join(projectDir, "node_modules", "my-git-dep", "package.json")).json()).toMatchObject({
+      name: "real-dep-name",
+      version: "2.5.0",
+    });
   });
 
   it("should fail on invalid Git URL", async () => {

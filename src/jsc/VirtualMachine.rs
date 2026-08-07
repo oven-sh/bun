@@ -1478,8 +1478,9 @@ impl VirtualMachine {
             .as_ref()
             .is_some_and(|r| r.stdio_sinks.iter().any(Option::is_some))
         {
-            // SAFETY: `self` is the live per-thread VM.
-            unsafe { crate::rare_data::__bun_stdio_sink_drain(self) };
+            let vm = core::ptr::from_mut::<VirtualMachine>(self);
+            // SAFETY: `vm` is the live per-thread VM; no `&mut` is held across the call.
+            unsafe { crate::rare_data::__bun_stdio_sink_drain(vm) };
         }
     }
 
@@ -1543,6 +1544,9 @@ impl VirtualMachine {
 
     pub fn global_exit(&mut self) -> ! {
         debug_assert!(self.is_shutting_down());
+        // Paths that get here without `on_exit()` (early CLI/test-runner
+        // exits) still owe the fd whatever process.stdout/stderr queued.
+        self.drain_stdio();
         // FIXME: we should be doing this, but we're not, but unfortunately
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
@@ -4662,8 +4666,9 @@ impl VirtualMachine {
             .as_ref()
             .is_some_and(|r| r.stdio_sinks.iter().any(Option::is_some))
         {
-            // SAFETY: `self` is the live per-thread VM.
-            unsafe { crate::rare_data::__bun_stdio_sink_release_js(self) };
+            let vm = core::ptr::from_mut::<VirtualMachine>(self);
+            // SAFETY: `vm` is the live per-thread VM; no `&mut` is held across the call.
+            unsafe { crate::rare_data::__bun_stdio_sink_release_js(vm) };
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.listening_sockets_for_watch_mode.lock().clear();

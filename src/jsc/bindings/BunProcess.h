@@ -76,7 +76,9 @@ public:
     // `console._stdout = value` / worker stdio rebinding. `value` may be anything.
     void setConsoleStream(JSC::VM&, int fd, JSValue value);
     // The stream the console must deliver through via JS `write()`, or the
-    // empty value when the native stdio sink may be used. Never runs user code.
+    // empty value when the native stdio sink may be used. A structure compare
+    // once resolved; the first (Unresolved) call may run — and throw from — a
+    // user getter installed on `process.stdout`/`stderr`.
     JSValue consoleStream(JSC::JSGlobalObject*, int fd);
     bool consoleStreamIsResolved(int fd) const { return m_consoleStreamState[fd - 1] != ConsoleStreamState::Unresolved; }
     // What `console._stdout` / `console._stderr` evaluate to (may materialise

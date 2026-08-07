@@ -630,28 +630,26 @@ function underscoreWriteFast(this: FSStream, chunk: any, encoding: any, cb: any)
     return;
   }
 
-  settleFastWrite(this, maybePromise, cb);
+  settleFastWrite(this, maybePromise, typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength, cb);
 }
 
-function settleFastWrite(stream, maybePromise, cb) {
+function settleFastWrite(stream, maybePromise, size, cb) {
   if ($isPromise(maybePromise)) {
     const onPending = stream[kOnPendingWrite];
-    if (onPending) {
-      onPending.$call(stream, true);
-      maybePromise.then(
-        () => {
-          onPending.$call(stream, false);
-          cb(null);
-        },
-        err => {
-          onPending.$call(stream, false);
-          cb(err);
-        },
-      );
-    } else {
-      maybePromise.then(() => cb(null), cb);
-    }
+    if (onPending) onPending.$call(stream, true);
+    maybePromise.then(
+      () => {
+        stream.bytesWritten += size;
+        if (onPending) onPending.$call(stream, false);
+        cb(null);
+      },
+      err => {
+        if (onPending) onPending.$call(stream, false);
+        cb(err);
+      },
+    );
   } else {
+    stream.bytesWritten += size;
     cb(null);
   }
 }

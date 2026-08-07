@@ -40,8 +40,9 @@ fn mutex(slot: usize) -> &'static Mutex {
     }
 }
 
-/// RAII guard; no-op for fds other than 1 and 2.
-pub struct StdioLock(Option<usize>);
+/// RAII guard; no-op for fds other than 1 and 2. `!Send`: the depth it
+/// balances is this thread's.
+pub struct StdioLock(Option<usize>, core::marker::PhantomData<*mut ()>);
 
 impl StdioLock {
     #[inline]
@@ -55,7 +56,7 @@ impl StdioLock {
                 d[i].set(d[i].get() + 1);
             });
         }
-        Self(slot)
+        Self(slot, core::marker::PhantomData)
     }
 }
 

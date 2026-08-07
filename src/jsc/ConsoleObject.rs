@@ -319,8 +319,10 @@ impl bun_io::Write for ConsoleWriter<'_> {
 }
 
 /// Format a message with `f` and deliver it. If `f` fails (a JS exception
-/// thrown while formatting — a throwing getter, `toJSON`, ...) nothing further
-/// is written and the exception propagates, as in Node.
+/// thrown while formatting — a throwing getter, `toJSON`, ...) the exception
+/// propagates and nothing further is written, as in Node — except that on the
+/// native path a message already past [`SPILL_AT`] has had its earlier 64 KiB
+/// blocks written, so the reader sees it torn (bounded memory wins there).
 pub fn emit(
     global: &JSGlobalObject,
     stream: ConsoleStream,

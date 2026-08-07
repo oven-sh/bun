@@ -453,12 +453,14 @@ function setupWorkerStdio(stdio) {
   // process.stdout, which in a worker is a port-backed Writable).
   const setConsoleStream = $newCppFunction("BunProcess.cpp", "jsFunctionSetConsoleStream", 2);
   if (stdout) {
-    (process as any).stdout = makePortWritable(stdout);
-    setConsoleStream(1, process.stdout);
+    const stream = makePortWritable(stdout);
+    (process as any).stdout = stream;
+    setConsoleStream(1, stream);
   }
   if (stderr) {
-    (process as any).stderr = makePortWritable(stderr);
-    setConsoleStream(2, process.stderr);
+    const stream = makePortWritable(stderr);
+    (process as any).stderr = stream;
+    setConsoleStream(2, stream);
   }
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which

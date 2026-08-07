@@ -1798,7 +1798,7 @@ describe.concurrent("worker console", () => {
       err = "";
     worker.stdout.setEncoding("utf8").on("data", c => (out += c));
     worker.stderr.setEncoding("utf8").on("data", c => (err += c));
-    await once(worker, "exit");
+    await Promise.all([once(worker, "exit"), once(worker.stdout, "end"), once(worker.stderr, "end")]);
     expect({ out, err }).toEqual({
       out: 'function function\nMap(1) {\n  "k": "v",\n}\nbun-fmt\nraw write\n',
       err: "to stderr\n",

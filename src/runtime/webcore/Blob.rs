@@ -1804,6 +1804,9 @@ impl BlobExt for Blob {
         // reorder or hold separate queues (and never open a second dup / flip
         // the description's flags a second time).
         if let Some(stdio_fd) = stdio_fd_of_store(global_this, &store) {
+            // The shared per-thread stdio sink: one object however many times
+            // it is asked for, so per-call options (`highWaterMark`) can't and
+            // don't apply.
             if let Some(js) = webcore::file_sink::stdio_sink_js(global_this, stdio_fd) {
                 return Ok(js);
             }

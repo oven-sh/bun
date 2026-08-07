@@ -90,6 +90,9 @@ export function getStdioWriteStream(
     this._undestroy();
     updateObserved(this);
 
+    // `_undestroy()` above reset the state before Writable's own close path
+    // ran, so with emitClose off nothing would announce the (transient)
+    // destruction; keep it observable for `finished()` / `pipeline()`.
     if (!this._writableState.emitClose) {
       process.nextTick(() => {
         this.emit("close");
@@ -182,7 +185,7 @@ export function flushStdioWriteStreamOnExit(stream) {
   if (!state || state.corked) return;
   const sink = stream[require("internal/fs/streams").kWriteStreamFastPath];
   if (!sink || sink === true) return;
-  const buffered = require("internal/streams/writable").takeBuffered(state);
+  const buffered = $getByIdDirectPrivate(require("internal/streams/writable"), "takeBuffered")(state);
   for (let i = 0; i < buffered.length; i++) {
     const { chunk, encoding } = buffered[i];
     // A failure here (rejected promise: the sink's latched EPIPE/EIO; throw: a

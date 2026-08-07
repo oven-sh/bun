@@ -410,7 +410,9 @@ function Writable(options): void {
 $toClass(Writable, "Writable", Stream);
 
 Writable.WritableState = WritableState;
-Writable.takeBuffered = takeBuffered;
+// Internal-only (process stdio at exit); a private name keeps it off the public
+// `stream.Writable` surface.
+$putByIdDirectPrivate(Writable, "takeBuffered", takeBuffered);
 
 ObjectDefineProperty(Writable, SymbolHasInstance, {
   __proto__: null,

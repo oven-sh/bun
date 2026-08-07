@@ -130,11 +130,23 @@ export function write(this: Console, input) {
   const observed = consoleStream(1);
   const count = $argumentCount();
   if (observed) {
+    // Same error policy as console.log on this path (`writeToObservedStream`
+    // below, Node's ignoreErrors): a broken stream neither throws out of
+    // console.write nor becomes an unhandled 'error'.
+    const noop = () => {};
+    const isEmitter = typeof observed.listenerCount === "function" && typeof observed.once === "function";
     var wrote = 0;
-    for (var i = 0; i < count; i++) {
-      const chunk = arguments[i];
-      observed.write(chunk);
-      wrote += typeof chunk === "string" ? Buffer.byteLength(chunk) : $toLength(chunk?.byteLength ?? 0);
+    try {
+      if (isEmitter && observed.listenerCount("error") === 0) observed.once("error", noop);
+      for (var i = 0; i < count; i++) {
+        const chunk = arguments[i];
+        observed.write(chunk);
+        wrote += typeof chunk === "string" ? Buffer.byteLength(chunk) : $toLength(chunk?.byteLength ?? 0);
+      }
+    } catch (e: any) {
+      if (e?.name === "RangeError" && e?.message === "Maximum call stack size exceeded.") throw e;
+    } finally {
+      if (isEmitter) observed.removeListener("error", noop);
     }
     return wrote;
   }

@@ -7431,6 +7431,38 @@ pub fn get_fcntl_flags(_fd: Fd) -> Maybe<FcntlInt> {
 pub fn set_nonblocking(fd: Fd) -> Maybe<()> {
     update_nonblocking(fd, true)
 }
+/// Bit `fd` (0–2) is set once something in this process has deliberately put
+/// that stdio description back into blocking mode behind the stdio sinks' back
+/// (spawn handing it to a child). Sinks that had gone non-blocking check it and
+/// stop assuming `EAGAIN` semantics — see `FileSink::refresh_stdio_mode`.
+pub static STDIO_MADE_BLOCKING: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+#[cfg(unix)]
+#[inline]
+fn stdio_bit(fd: Fd) -> u8 {
+    match fd.native() {
+        n @ 0..=2 => 1u8 << n,
+        _ => 0,
+    }
+}
+
+/// Clear `O_NONBLOCK` on one of our stdio fds and record it in
+/// [`STDIO_MADE_BLOCKING`].
+#[cfg(unix)]
+pub fn make_stdio_blocking(fd: Fd) {
+    debug_assert!(stdio_bit(fd) != 0);
+    if update_nonblocking(fd, false).is_ok() {
+        STDIO_MADE_BLOCKING.fetch_or(stdio_bit(fd), core::sync::atomic::Ordering::Release);
+    }
+}
+
+/// See [`STDIO_MADE_BLOCKING`].
+#[cfg(unix)]
+#[inline]
+pub fn stdio_made_blocking(fd: Fd) -> bool {
+    STDIO_MADE_BLOCKING.load(core::sync::atomic::Ordering::Acquire) & stdio_bit(fd) != 0
+}
+
 /// GETFL → toggle O_NONBLOCK → SETFL (only if changed).
 pub fn update_nonblocking(fd: Fd, nonblocking: bool) -> Maybe<()> {
     #[cfg(unix)]

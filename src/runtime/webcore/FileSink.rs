@@ -653,6 +653,22 @@ impl FileSink {
         self.stdio_js.with_mut(|s| s.deinit());
     }
 
+    /// Something (spawn with inherited stdio) put our description back into
+    /// blocking mode after [`stdio_go_nonblocking`](Self::stdio_go_nonblocking):
+    /// stop treating the fd as `EAGAIN`-capable so a full pipe is handled by the
+    /// blocking-pipe strategy (`poll` before `write`) instead of a write that
+    /// was expected to return early. One relaxed load when nothing happened.
+    #[inline]
+    fn refresh_stdio_mode(&self) {
+        #[cfg(not(windows))]
+        if self.nonblocking.get() && self.is_stdio() && sys::stdio_made_blocking(self.stdio.get()) {
+            self.nonblocking.set(false);
+            if let Some(poll) = self.writer.get().get_poll() {
+                poll.clear_flag(bun_io::FilePollFlag::Nonblocking);
+            }
+        }
+    }
+
     /// See [`stdio_js`](Self::stdio_js). FIFO only; sockets get per-call
     /// `MSG_DONTWAIT`, Linux ≥ 6.4 pipes honour `RWF_NOWAIT` on a blocking
     /// description (torvalds/linux@afed6271f5b0, "pipe: set FMODE_NOWAIT on
@@ -730,8 +746,13 @@ impl FileSink {
 
             // Registered with the loop only while backed up (see `start_lazy`).
             if let Err(err) = (*this).writer.with_mut(|w| w.start_lazy(fd, pollable)) {
-                fd.close();
-                (*this).fd.set(Fd::INVALID);
+                // The writer may or may not have adopted `fd`; make teardown the
+                // single owner of closing it.
+                (*this).writer.with_mut(|w| {
+                    if w.get_fd() == Fd::INVALID {
+                        w.handle = bun_io::pipes::PollOrFd::Fd(fd);
+                    }
+                });
                 FileSink::deref(this);
                 return Err(err);
             }
@@ -788,6 +809,7 @@ impl FileSink {
             if !(*this).writer.get().has_pending_data() {
                 return Ok(());
             }
+            (*this).refresh_stdio_mode();
             let _lock = bun_io::StdioLock::acquire((*this).stdio.get());
             let _guard = FileSinkRef::new_ref(this);
 
@@ -892,7 +914,16 @@ impl FileSink {
                 }
                 while !bytes.is_empty() {
                     match sys::write_retrying(fd, bytes) {
-                        Ok(0) => break,
+                        Ok(0) => {
+                            // No progress on a non-empty buffer: report it
+                            // rather than pretend the tail went out.
+                            let e = (*this).stdio_latch_error(sys::Error::from_code(
+                                sys::E::EIO,
+                                sys::Tag::write,
+                            ));
+                            (*this).writer.with_mut(|w| w.fail(e.clone()));
+                            return Err(e);
+                        }
                         Ok(n) => {
                             bytes = &bytes[n..];
                             (*this).written.set((*this).written.get() + n);
@@ -1201,6 +1232,7 @@ impl FileSink {
                 (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                 return false;
             }
+            (*this).refresh_stdio_mode();
 
             let _guard = FileSinkRef::new_ref(this);
 
@@ -1277,6 +1309,7 @@ impl FileSink {
             return sys::Result::Ok(JSValue::UNDEFINED);
         }
 
+        self.refresh_stdio_mode();
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS re-entry while
         // the `&mut IOWriter` is held.
         let rc = self.writer.with_mut(|w| w.flush());
@@ -1412,6 +1445,7 @@ impl FileSink {
         if let Some(err) = self.stdio_error() {
             return (streams::Writable::Err(err), 0);
         }
+        self.refresh_stdio_mode();
         if self.done.get() {
             return (streams::Writable::Done, 0);
         }
@@ -2136,8 +2170,13 @@ pub(crate) fn write_now(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     let _keep = bun_jsc::EnsureStillAlive(data);
     match sink.write_js_value(global, data, true)? {
         Some((result, _)) => Ok(result.to_js(global)),
+        // Same errors as `FileSink.prototype.write` (Sink.rs `js_write`).
         None => Err(global.throw_value(global.to_type_error(
-            bun_jsc::ErrorCode::INVALID_ARG_TYPE,
+            if data.is_empty_or_undefined_or_null() {
+                bun_jsc::ErrorCode::STREAM_NULL_VALUES
+            } else {
+                bun_jsc::ErrorCode::INVALID_ARG_TYPE
+            },
             format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),
         ))),
     }
@@ -2163,6 +2202,10 @@ unsafe fn __bun_stdio_sink_deinit(ptr: *mut ()) {
     // finalizer).
     unsafe {
         (*this).stdio_js.with_mut(|s| s.deinit());
+        // A stdio sink never reaches EOF/close, so a backpressure episode's
+        // keep-alive ref (`to_result` → `must_be_kept_alive_until_eof`) is
+        // still held; drop it with RareData's.
+        FileSink::clear_keep_alive_ref(this);
         FileSink::deref(this);
     }
 }

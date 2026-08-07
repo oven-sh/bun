@@ -187,6 +187,7 @@ using namespace JSC;
     macro(stdout) \
     macro(stream) \
     macro(syscall) \
+    macro(takeBuffered) \
     macro(text) \
     macro(textDecoder) \
     macro(textDecoderStreamDecoder) \

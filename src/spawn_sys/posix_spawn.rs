@@ -618,14 +618,15 @@ pub mod posix_spawn {
         // A child that inherits one of our stdio fds shares its open file
         // description, including an O_NONBLOCK bit our stdio sink may have set
         // on a pipe. Hand it over blocking, like libuv does (state is shared,
-        // so this flips it for us too; our writers tolerate either mode):
+        // so this flips it for us too; `make_stdio_blocking` records that so
+        // the sinks stop expecting EAGAIN):
         // https://github.com/libuv/libuv/blob/v1.51.0/src/unix/process.c#L629-L631
         if let Some(act) = actions {
             for action in act.actions.iter() {
                 if action.kind == bun_spawn::FileActionType::Dup2
                     && (0..=2).contains(&action.fds[0])
                 {
-                    let _ = sys::update_nonblocking(Fd::from_native(action.fds[0]), false);
+                    sys::make_stdio_blocking(Fd::from_native(action.fds[0]));
                 }
             }
         }

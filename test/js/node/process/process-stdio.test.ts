@@ -170,6 +170,8 @@ describe.concurrent("process-stdio", () => {
 // exits — however the reader paces itself.
 // ─────────────────────────────────────────────────────────────────────────────
 describe.skipIf(!isPosix).concurrent("stdio sink", () => {
+  // The describe body runs at collection time even when skipped.
+  if (!isPosix) return;
   // fcntl(2) is variadic; Apple's arm64 ABI passes variadic args on the stack,
   // so a fixed-arity dlopen binding gets F_SETFL wrong there. Compile tiny
   // non-variadic wrappers instead (shared with the spawned children).
@@ -217,7 +219,7 @@ const nonblock = fd => fd_is_nonblock(fd) !== 0;
     fd_set_nonblock(r, 1);
     let wClosed = false;
     try {
-      const proc = spawn({
+      await using proc = spawn({
         cmd: [bunExe(), "-e", prelude + src],
         env: { ...bunEnv, ...opts.env },
         stdio: ["ignore", w, "pipe"],

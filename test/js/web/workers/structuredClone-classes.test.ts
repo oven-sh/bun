@@ -81,8 +81,7 @@ describe("serialize & deserialize", () => {
         import {deserialize, serialize} from "bun:jsc";
         const serialized = deserialize(await Bun.stdin.bytes());
         const cloned = serialize(serialized);
-        // serialize() hands back a SharedArrayBuffer, which Writable rejects (as node does).
-        process.stdout.write(new Uint8Array(cloned));
+        process.stdout.write(cloned);
         `,
         ],
         env: bunEnv,

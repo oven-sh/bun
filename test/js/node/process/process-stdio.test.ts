@@ -539,6 +539,37 @@ const nonblock = fd => fd_is_nonblock(fd) !== 0;
     expect(exitCode).toBe(0);
   });
 
+  test("process.stdout/stderr.write() still accept a bare ArrayBuffer / SharedArrayBuffer (Bun has always allowed it), with no extra prototype or own write", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const ab = new TextEncoder().encode("array ").buffer;
+        const sab = new SharedArrayBuffer(7);
+        new Uint8Array(sab).set(new TextEncoder().encode("shared\\n"));
+        process.stdout.write(ab);
+        process.stdout.write(sab);
+        process.stderr.write(ab);
+        const tty = require("node:tty"), fs = require("node:fs"), { Writable } = require("node:stream");
+        const proto = Object.getPrototypeOf(process.stdout);
+        process.stderr.write(String([
+          Object.prototype.hasOwnProperty.call(process.stdout, "write"),
+          proto === tty.WriteStream.prototype || proto === fs.WriteStream.prototype,
+          process.stdout.write === Writable.prototype.write,
+        ]));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("array shared\n");
+    expect(stderr).toBe("array false,true,true");
+    expect(exitCode).toBe(0);
+  });
+
   test("write after end(): the sync write is ERR_STREAM_WRITE_AFTER_END; after finish the stream is undestroyed and writable again (Node file-stdio semantics)", async () => {
     // https://github.com/nodejs/node/blob/v24.0.0/lib/internal/bootstrap/switches/is_main_thread.js#L114-L128
     // (dummyDestroy -> _undestroy). Over a pipe Node additionally shuts the

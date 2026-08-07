@@ -460,6 +460,11 @@ function _write(stream, chunk, encoding, cb?) {
     } else if (Stream._isArrayBufferView(chunk)) {
       chunk = Stream._uint8ArrayToBuffer(chunk);
       encoding = "buffer";
+    } else if (stream._isStdio === true && (chunk instanceof ArrayBuffer || chunk instanceof SharedArrayBuffer)) {
+      // process.stdout / process.stderr have always taken a bare (Shared)ArrayBuffer
+      // in Bun; keep accepting it there (Node rejects it, so nothing relies on the throw).
+      chunk = new Uint8Array(chunk);
+      encoding = "buffer";
     } else {
       throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk);
     }

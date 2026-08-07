@@ -711,12 +711,7 @@ class Debugger {
       function writeToRemoteClient(message: string) {
         void client.write(message);
       }
-      const backend = this.#createBackend(
-        true,
-        deliverToRemoteAdapter,
-        true,
-        true,
-      );
+      const backend = this.#createBackend(true, deliverToRemoteAdapter, true, true);
       adapter = new (cdpAdapterConstructor())(
         writeToRemoteBackend,
         writeToRemoteClient,

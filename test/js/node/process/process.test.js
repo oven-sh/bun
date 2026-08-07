@@ -234,6 +234,29 @@ it("process.env defineProperty matches assignment semantics", () => {
   expect(process.env[""]).toBeUndefined();
 });
 
+it("process.env refuses [[PreventExtensions]] like node", () => {
+  // Node throws at the [[PreventExtensions]] step (plain TypeError, no code)
+  // and the env stays extensible, so freeze/seal must not leave it locked.
+  for (const op of ["preventExtensions", "freeze", "seal"]) {
+    let err;
+    try {
+      Object[op](process.env);
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.name).toBe("TypeError");
+    expect(err?.code).toBeUndefined();
+  }
+  expect(Object.isExtensible(process.env)).toBe(true);
+  const key = "BUN_TEST_STILL_EXTENSIBLE";
+  try {
+    process.env[key] = "yes";
+    expect(process.env[key]).toBe("yes");
+  } finally {
+    delete process.env[key];
+  }
+});
+
 it("process.env.TZ writes inside a worker do not change the main thread's timezone", async () => {
   // Node does not intercept TZ in workers (only RealEnvStore::Set calls
   // DateTimeConfigurationChangeNotification, and every worker env is a

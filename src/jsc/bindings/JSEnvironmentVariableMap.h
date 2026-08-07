@@ -45,6 +45,12 @@ public:
     static bool putByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
     static bool defineOwnProperty(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
     static bool deleteProperty(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+    // Node's env stores refuse [[PreventExtensions]], so freeze/seal throw and
+    // the map stays extensible.
+    static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*)
+    {
+        return false;
+    }
 
 private:
     JSEnvironmentVariableMap(JSC::VM& vm, JSC::Structure* structure)

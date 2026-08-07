@@ -597,6 +597,11 @@ export function windowsEnv(
       // .slice() because paranoia that there is a way to call this without the engine cloning it for us
       return envMapList.slice();
     },
+    preventExtensions() {
+      // Node's env stores refuse [[PreventExtensions]], so freeze/seal throw
+      // and the env stays extensible (same as the POSIX exotic map).
+      return false;
+    },
   });
 }
 

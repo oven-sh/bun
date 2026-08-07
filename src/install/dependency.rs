@@ -424,8 +424,13 @@ pub(crate) fn scp_path_without_ssh_prefix(repo: &[u8]) -> Option<&[u8]> {
     // bracketed IPv6 host; `is_scp_like_path` alone also matches
     // `user@host/path` and `user@[::1]/path`, which are not scp forms
     let host_start = match strings::index_of_char_usize(rest, b'@') {
-        Some(at) if strings::index_of_any(rest, b":/").is_none_or(|sep| at < sep) => at + 1,
-        _ => 0,
+        // `:` or `/` before the `@` is `user:password@` userinfo or a path,
+        // never scp form
+        Some(at) if strings::index_of_any(rest, b":/").is_some_and(|sep| sep < at) => {
+            return None;
+        }
+        Some(at) => at + 1,
+        None => 0,
     };
     let mut search_from = host_start;
     if rest[search_from..].starts_with(b"[") {

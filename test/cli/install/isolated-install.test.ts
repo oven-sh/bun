@@ -2819,11 +2819,11 @@ exec sh -c "$1"
   expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
 });
 
-// A dependency that really is an ssh URL (bracketed IPv6 host here) must keep
-// its ssh:// form: stripping it would turn "ssh://git@[::1]/path" into
-// "git@[::1]/path", which git reads as a local path (no scp separator after
-// the brackets).
-test.skipIf(isWindows)("cold cache install of a bracketed IPv6 ssh URL git dependency", async () => {
+// Dependencies that really are ssh URLs must keep their ssh:// form:
+// stripping would turn "ssh://git@[::1]/path" into "git@[::1]/path" (a local
+// path to git, no scp separator after the brackets) and
+// "ssh://user:pass@host..." into an scp form split at the userinfo colon.
+test.skipIf(isWindows)("cold cache install of bracketed IPv6 and userinfo ssh URL git dependencies", async () => {
   using dir = tempDir("isolated-ipv6-git", {
     "fake-ssh.sh": `#!/bin/sh
 # "ssh" for tests: skip options, drop the host, run the command locally.
@@ -2838,6 +2838,7 @@ shift
 exec sh -c "$1"
 `,
     "upstream/package.json": JSON.stringify({ name: "v6-dep", version: "1.0.0" }),
+    "upstream-auth/package.json": JSON.stringify({ name: "v6-auth", version: "1.0.0" }),
   });
   const fakeSsh = join(String(dir), "fake-ssh.sh");
   chmodSync(fakeSsh, 0o755);
@@ -2852,13 +2853,18 @@ exec sh -c "$1"
     });
     if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr.toString()}`);
   };
-  git(["init", "-q"], join(String(dir), "upstream"));
-  git(["add", "package.json"], join(String(dir), "upstream"));
-  git(
-    ["-c", "user.email=test@bun.com", "-c", "user.name=bun-test", "commit", "-qm", "init"],
-    join(String(dir), "upstream"),
-  );
-  git(["clone", "-q", "--bare", "upstream", "repo.git"], String(dir));
+  for (const [upstream, bare] of [
+    ["upstream", "repo.git"],
+    ["upstream-auth", "repo-auth.git"],
+  ]) {
+    git(["init", "-q"], join(String(dir), upstream));
+    git(["add", "package.json"], join(String(dir), upstream));
+    git(
+      ["-c", "user.email=test@bun.com", "-c", "user.name=bun-test", "commit", "-qm", "init"],
+      join(String(dir), upstream),
+    );
+    git(["clone", "-q", "--bare", upstream, bare], String(dir));
+  }
 
   const projectDir = join(String(dir), "project");
   await write(
@@ -2868,6 +2874,8 @@ exec sh -c "$1"
       dependencies: {
         // the fake ssh ignores the host, so the URL path carries the repo
         "v6-dep": `ssh://git@[::1]${join(String(dir), "repo.git")}`,
+        // userinfo password: its colon is not an scp separator
+        "v6-auth": `ssh://user:pass@[::1]${join(String(dir), "repo-auth.git")}`,
       },
     }),
   );
@@ -2882,22 +2890,28 @@ exec sh -c "$1"
 
   const first = await runInstall(projectDir, installEnv("cache-fresh"));
   expect(first.exitCode, first.stderr).toBe(0);
-  expect(await file(join(projectDir, "node_modules", "v6-dep", "package.json")).json()).toMatchObject({
-    name: "v6-dep",
-    version: "1.0.0",
-  });
+  for (const name of ["v6-dep", "v6-auth"]) {
+    expect(await file(join(projectDir, "node_modules", name, "package.json")).json()).toMatchObject({
+      name,
+      version: "1.0.0",
+    });
+  }
 
-  // the URL keeps its ssh:// form and its bracketed host in the lockfile
+  // the URLs keep their ssh:// form, bracketed host, and userinfo in the
+  // lockfile
   const lockAfterFirst = await file(join(projectDir, "bun.lock")).text();
   expect(lockAfterFirst).toContain('"v6-dep@git+ssh://git@[::1]');
+  expect(lockAfterFirst).toContain('"v6-auth@git+ssh://user:pass@[::1]');
 
   await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
 
   const second = await runInstall(projectDir, installEnv("cache-cold"));
   expect(second.exitCode, second.stderr).toBe(0);
-  expect(await file(join(projectDir, "node_modules", "v6-dep", "package.json")).json()).toMatchObject({
-    name: "v6-dep",
-    version: "1.0.0",
-  });
+  for (const name of ["v6-dep", "v6-auth"]) {
+    expect(await file(join(projectDir, "node_modules", name, "package.json")).json()).toMatchObject({
+      name,
+      version: "1.0.0",
+    });
+  }
   expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
 });

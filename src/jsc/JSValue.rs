@@ -2514,6 +2514,30 @@ impl JSValue {
         unsafe { crate::TopExceptionScope::destroy(scope) };
         result
     }
+    /// Own-property enumeration in insertion order (no prototype walk, no sort).
+    #[inline(always)]
+    pub(crate) fn for_each_own_property(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__forEachOwnProperty(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            );
+        }
+        let mut scope_storage = core::mem::MaybeUninit::uninit();
+        let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
+        JSC__JSValue__forEachOwnProperty(self, global, ctx, callback);
+        let result = scope.return_if_exception();
+        // SAFETY: `scope` was init'd above and is destroyed exactly once.
+        unsafe { crate::TopExceptionScope::destroy(scope) };
+        result
+    }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
     /// handles non-cells (returns false), so no precondition is asserted.

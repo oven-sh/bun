@@ -2308,8 +2308,12 @@ pub mod formatter {
                 T::WrapForValidIterator
                 | T::RegExpStringIterator
                 | T::JSArrayIterator
+                | T::StringIterator
                 | T::Iterator
                 | T::IteratorHelper
+                | T::Generator
+                | T::AsyncGenerator
+                | T::AsyncFunctionGenerator
                 | T::Object
                 | T::FinalObject
                 | T::ModuleNamespaceObject => TagPayload::Object,
@@ -5445,6 +5449,19 @@ pub mod formatter {
                 return self.print_object_depth_exceeded::<C>(writer_, value);
             }
             let ordered_properties = self.ordered_properties;
+            // Own-only: skip the prototype walk that dumps iterator-helper methods.
+            let own_only = matches!(
+                js_type,
+                jsc::JSType::Generator
+                    | jsc::JSType::AsyncGenerator
+                    | jsc::JSType::AsyncFunctionGenerator
+                    | jsc::JSType::JSArrayIterator
+                    | jsc::JSType::StringIterator
+                    | jsc::JSType::Iterator
+                    | jsc::JSType::IteratorHelper
+                    | jsc::JSType::WrapForValidIterator
+                    | jsc::JSType::RegExpStringIterator
+            );
             let global_this = self.global_this;
             let mut iter = PropertyIteratorCtx::<C> {
                 formatter: self,
@@ -5457,6 +5474,12 @@ pub mod formatter {
 
             if ordered_properties {
                 value.for_each_property_ordered(
+                    global_this,
+                    (&raw mut iter).cast::<c_void>(),
+                    PropertyIteratorCtx::<C>::for_each,
+                )?;
+            } else if own_only {
+                value.for_each_own_property(
                     global_this,
                     (&raw mut iter).cast::<c_void>(),
                     PropertyIteratorCtx::<C>::for_each,

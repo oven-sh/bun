@@ -200,6 +200,109 @@ if (handshakes < 2) {
 console.log("ok");
 `;
 
+// TLS 1.2 server that renegotiates right after the handshake and ends the
+// socket once the renegotiation completes, WITHOUT sending any application
+// data. The client's SSL_read finishes the renegotiated handshake with
+// nothing to deliver, which is the path that used to leave the socket stuck
+// in RENEGOTIATION_PENDING (no second handshake dispatch, and the close was
+// misreported as a pre-handshake ECONNRESET).
+function spawnQuietRenegotiationServer() {
+  return Bun.spawn({
+    cmd: [
+      "node",
+      "-e",
+      `
+        const tls = require("tls");
+        const server = tls.createServer(
+          {
+            cert: process.env.SERVER_CERT,
+            key: process.env.SERVER_KEY,
+            minVersion: "TLSv1.2",
+            maxVersion: "TLSv1.2",
+          },
+          socket => {
+            socket.on("error", () => {});
+            socket.renegotiate({ requestCert: true, rejectUnauthorized: false }, err => {
+              if (err) process.exit(1);
+              socket.end();
+            });
+          },
+        );
+        server.listen(0, () => console.log(server.address().port));
+      `,
+    ],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+  });
+}
+
+async function readPort(proc: Subprocess<"ignore", "pipe", "ignore">) {
+  const { value } = await proc.stdout.getReader().read();
+  return Number(new TextDecoder().decode(value).trim());
+}
+
+it("should dispatch handshake success, not ECONNRESET, when renegotiation completes without app data", async () => {
+  await using server = spawnQuietRenegotiationServer();
+  const port = await readPort(server);
+
+  const events: unknown[] = [];
+  const { promise: closed, resolve } = Promise.withResolvers<void>();
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      open() {},
+      data() {},
+      handshake(_socket, success, authorizationError) {
+        events.push({ success, code: (authorizationError as any)?.code ?? null });
+      },
+      error(_socket, err) {
+        events.push({ error: (err as any)?.code ?? String(err) });
+      },
+      close() {
+        resolve();
+      },
+    },
+  });
+  await closed;
+
+  // One dispatch per completed handshake (initial + renegotiation), both with
+  // the certificate verdict. The renegotiated session completed, so no
+  // "disconnected before secure TLS connection was established" ECONNRESET.
+  expect(events).toEqual([
+    { success: true, code: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+    { success: true, code: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+  ]);
+});
+
+it("should re-emit secure/secureConnect after server-initiated renegotiation like node", async () => {
+  await using server = spawnQuietRenegotiationServer();
+  const port = await readPort(server);
+
+  // Node (verified against v26.3.0) emits 'secure' and 'secureConnect' once
+  // per completed handshake, including the renegotiated one, and closes
+  // cleanly with no error.
+  const { promise, resolve } = Promise.withResolvers<{
+    secure: number;
+    secureConnect: number;
+    errors: string[];
+    hadError: boolean;
+  }>();
+  let secure = 0;
+  let secureConnect = 0;
+  const errors: string[] = [];
+  const socket = require("tls").connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  socket.on("secure", () => secure++);
+  socket.on("secureConnect", () => secureConnect++);
+  socket.on("error", (e: any) => errors.push(e.code ?? e.message));
+  socket.on("close", (hadError: boolean) => resolve({ secure, secureConnect, errors, hadError }));
+
+  expect(await promise).toEqual({ secure: 2, secureConnect: 2, errors: [], hadError: false });
+});
+
 it("should terminate the connection when the peer exceeds the renegotiation limit over a duplex socket", async () => {
   // tls.connect({ socket: <Duplex> }) is encrypted by the SSLWrapper path
   // (UpgradedDuplex) rather than the uSockets C path. It must apply the same

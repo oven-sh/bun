@@ -1321,6 +1321,7 @@ pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
 #[path = "ModuleLoader.rs"]
 pub mod module_loader;
 pub use self::module_loader as ModuleLoader;
+pub use self::module_loader::BunLoaderType;
 
 pub type ErrorableResolvedSource = Errorable<ResolvedSource>;
 pub type ErrorableString = Errorable<bun_core::String>;

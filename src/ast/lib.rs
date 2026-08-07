@@ -75,13 +75,9 @@ pub enum ImportKind {
     Internal = 11,
 }
 
-// E0015: EnumMap indexing isn't const; the lookup table is folded into match
-// arms inside label()/error_label() below — zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
-// when the data is pure const).
-//
-// If these are changed, make sure to update
-// - src/js/builtins/codegen/replacements.ts
-// - packages/bun-types/bun.d.ts
+// src/codegen/replacements.ts derives the JS builtins' `$ImportKindIdToLabel`
+// from the discriminants above and `label()` below; keep `ImportKind` in
+// packages/bun-types/bun.d.ts in sync by hand.
 
 impl ImportKind {
     #[inline]

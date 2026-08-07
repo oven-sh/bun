@@ -2,9 +2,6 @@
 //! `cli/` and other tiers can reference them without depending on `bundler/`.
 //! Aliased back at original locations — call sites unchanged.
 
-use crate::schema::api;
-use bun_ast::Loader;
-
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Format {
@@ -118,11 +115,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-mod sealed {
-    pub trait Sealed {}
-    impl Sealed for bun_ast::Loader {}
-}
-
 /// `--sourcemap` / `sourcemap:` setting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SourceMapOption {
@@ -161,101 +153,6 @@ bun_core::comptime_string_map! {
         b"external" => PackagesOption::External,
         b"bundle" => PackagesOption::Bundle,
     };
-}
-
-// ─── Loader: schema-coupled extension methods ─────────────────────────────
-
-bun_core::comptime_string_map! {
-pub static LOADER_API_NAMES: api::Loader = {
-    b"js" => api::Loader::js,
-    b"mjs" => api::Loader::js,
-    b"cjs" => api::Loader::js,
-    b"cts" => api::Loader::ts,
-    b"mts" => api::Loader::ts,
-    b"jsx" => api::Loader::jsx,
-    b"ts" => api::Loader::ts,
-    b"tsx" => api::Loader::tsx,
-    b"css" => api::Loader::css,
-    b"file" => api::Loader::file,
-    b"json" => api::Loader::json,
-    b"jsonc" => api::Loader::json,
-    b"toml" => api::Loader::toml,
-    b"yaml" => api::Loader::yaml,
-    b"json5" => api::Loader::json5,
-    b"xml" => api::Loader::xml,
-    b"wasm" => api::Loader::wasm,
-    b"node" => api::Loader::napi,
-    b"dataurl" => api::Loader::dataurl,
-    b"base64" => api::Loader::base64,
-    b"txt" => api::Loader::text,
-    b"text" => api::Loader::text,
-    b"sh" => api::Loader::file,
-    b"sqlite" => api::Loader::sqlite,
-    b"html" => api::Loader::html,
-    b"md" => api::Loader::md,
-    b"markdown" => api::Loader::md,
-};
-}
-
-/// Conversions between [`bun_ast::Loader`] and the [`api::Loader`] wire enum.
-pub trait LoaderExt: sealed::Sealed {
-    fn to_api(self) -> api::Loader;
-    fn from_api(loader: api::Loader) -> Loader;
-}
-
-impl LoaderExt for Loader {
-    fn to_api(self) -> api::Loader {
-        match self {
-            Loader::Jsx => api::Loader::jsx,
-            Loader::Js => api::Loader::js,
-            Loader::Ts => api::Loader::ts,
-            Loader::Tsx => api::Loader::tsx,
-            Loader::Css => api::Loader::css,
-            Loader::Html => api::Loader::html,
-            Loader::File | Loader::Bunsh => api::Loader::file,
-            Loader::Json => api::Loader::json,
-            Loader::Jsonc => api::Loader::json,
-            Loader::Toml => api::Loader::toml,
-            Loader::Yaml => api::Loader::yaml,
-            Loader::Json5 => api::Loader::json5,
-            Loader::Xml => api::Loader::xml,
-            Loader::Wasm => api::Loader::wasm,
-            Loader::Napi => api::Loader::napi,
-            Loader::Base64 => api::Loader::base64,
-            Loader::Dataurl => api::Loader::dataurl,
-            Loader::Text => api::Loader::text,
-            Loader::SqliteEmbedded | Loader::Sqlite => api::Loader::sqlite,
-            Loader::Md => api::Loader::md,
-        }
-    }
-
-    fn from_api(loader: api::Loader) -> Loader {
-        match loader {
-            api::Loader::_none => Loader::File,
-            api::Loader::jsx => Loader::Jsx,
-            api::Loader::js => Loader::Js,
-            api::Loader::ts => Loader::Ts,
-            api::Loader::tsx => Loader::Tsx,
-            api::Loader::css => Loader::Css,
-            api::Loader::file => Loader::File,
-            api::Loader::json => Loader::Json,
-            api::Loader::jsonc => Loader::Jsonc,
-            api::Loader::toml => Loader::Toml,
-            api::Loader::yaml => Loader::Yaml,
-            api::Loader::json5 => Loader::Json5,
-            api::Loader::xml => Loader::Xml,
-            api::Loader::wasm => Loader::Wasm,
-            api::Loader::napi => Loader::Napi,
-            api::Loader::base64 => Loader::Base64,
-            api::Loader::dataurl => Loader::Dataurl,
-            api::Loader::text => Loader::Text,
-            api::Loader::bunsh => Loader::Bunsh,
-            api::Loader::html => Loader::Html,
-            api::Loader::sqlite => Loader::Sqlite,
-            api::Loader::sqlite_embedded => Loader::SqliteEmbedded,
-            api::Loader::md => Loader::Md,
-        }
-    }
 }
 
 // ─── move-in: TYPE_ONLY from bun_runtime::bake::framework ──────────────────────────

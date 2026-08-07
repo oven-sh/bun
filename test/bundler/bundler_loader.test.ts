@@ -193,6 +193,29 @@ describe("bundler", async () => {
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
 
+  // A `loader` map entry naming "jsonc" / "json5" must select that loader for
+  // the extension (it used to silently degrade to strict "json").
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`bun/loader-map-jsonc-by-extension-${backend}`, {
+      target: "bun",
+      backend,
+      loader: { ".data": "jsonc", ".data5": "json5" },
+      files: {
+        "/entry.ts": /* js */ `
+    import c from './conf.data';
+    import c5 from './conf.data5';
+    console.write(JSON.stringify([c, c5]));
+  `,
+        "/conf.data": `{
+    // comment
+    "a": 1,
+  }`,
+        "/conf.data5": `{a: 2, /* comment */}`,
+      },
+      run: { stdout: '[{"a":1},{"a":2}]' },
+    });
+  }
+
   itBundled("bun/loader-json-nested-proto-key-is-own-property", {
     target: "bun",
     files: {

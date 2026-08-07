@@ -1,12 +1,11 @@
 //! The option bag the CLI (`Arguments.rs`) and `bunfig.toml` populate and
 //! `BundleOptions::from_transform_options` projects into bundler options.
 
-use bun_ast::Target;
+use bun_ast::{Loader, Target};
 use bun_dotenv::DotEnvBehavior;
 
 use crate::bundle_enums::{PackagesOption, SourceMapOption};
 use crate::jsx;
-use crate::schema::api::LoaderMap;
 
 /// Ordered `(name, value)` pairs, e.g. `--define` entries.
 pub type StringPairs = Vec<(Box<[u8]>, Box<[u8]>)>;
@@ -28,7 +27,8 @@ pub struct TransformOptions {
     pub write: Option<bool>,
     pub output_dir: Option<Box<[u8]>>,
     pub external: Vec<Box<[u8]>>,
-    pub loaders: Option<LoaderMap>,
+    /// `(".ext", loader)` pairs from `--loader` / bunfig `[loader]`.
+    pub loaders: Vec<(Box<[u8]>, Loader)>,
     pub main_fields: Vec<Box<[u8]>>,
     pub target: Option<Target>,
     pub env_files: Vec<Box<[u8]>>,

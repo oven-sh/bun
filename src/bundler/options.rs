@@ -8,7 +8,6 @@ use bun_core::{Global, Output};
 use bun_dotenv as DotEnv;
 use bun_dotenv::DotEnvBehavior;
 use bun_js_parser::parser::Runtime;
-use bun_options_types::schema::api;
 use bun_options_types::{BunInstall, TransformOptions};
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::PathResolverExt as _;
@@ -335,10 +334,8 @@ pub use bun_options_types::WindowsOptions;
 // same nominal type.
 pub(crate) use bun_ast::Loader;
 
-pub use bun_options_types::LOADER_API_NAMES;
-
 /// Bundler-only `Loader` methods. Extension trait per PORTING.md crate-tier
-/// rule — the canonical `Loader` lives in `bun_options_types` (lower tier) and
+/// rule — the canonical `Loader` lives in `bun_ast` (lower tier) and
 /// cannot depend on `bun_http_types::MimeType`. Re-exported through
 /// `bun_bundler::options` so `use bun_bundler::options::LoaderExt;` makes
 /// `.to_mime_type()` etc. available on the single canonical type.
@@ -998,20 +995,10 @@ impl Default for ResolveFileExtensionsGroup {
 }
 
 pub fn loaders_from_transform_options(
-    loaders: Option<&api::LoaderMap>,
+    input_loaders: &[(Box<[u8]>, Loader)],
     target: Target,
 ) -> Result<StringArrayHashMap<Loader>, bun_alloc::AllocError> {
-    // Borrow the caller's `LoaderMap` (a `Vec<u8>` + `Vec<Box<[u8]>>`); this fn
-    // only reads from it, so there's no need to clone it on every call.
-    let empty = api::LoaderMap::default();
-    let input_loaders = loaders.unwrap_or(&empty);
-    let mut loader_values: Vec<Loader> = Vec::with_capacity(input_loaders.loaders.len());
-
-    for input in &input_loaders.loaders {
-        loader_values.push(<Loader as bun_options_types::LoaderExt>::from_api(*input));
-    }
-
-    let total_capacity = input_loaders.extensions.len()
+    let total_capacity = input_loaders.len()
         + if target.is_bun() {
             DEFAULT_LOADER_EXT_BUN.len()
         } else {
@@ -1026,8 +1013,8 @@ pub fn loaders_from_transform_options(
 
     let mut loaders = StringArrayHashMap::<Loader>::default();
     loaders.reserve(u32::try_from(total_capacity).expect("int cast") as usize);
-    for (i, ext) in input_loaders.extensions.iter().enumerate() {
-        loaders.insert(ext, loader_values[i]);
+    for (ext, loader) in input_loaders {
+        loaders.insert(ext, *loader);
     }
 
     // contains+insert (only when absent); `Loader` is not `Default`
@@ -1531,7 +1518,7 @@ impl<'a> BundleOptions<'a> {
         let transform = std::sync::Arc::new(transform);
 
         let target = transform.target.unwrap_or(Target::Browser);
-        let loaders = loaders_from_transform_options(transform.loaders.as_ref(), target)?;
+        let loaders = loaders_from_transform_options(&transform.loaders, target)?;
         let bundler_feature_flags = Runtime::Features::init_bundler_feature_flags(
             &transform
                 .feature_flags
@@ -1650,8 +1637,10 @@ impl<'a> BundleOptions<'a> {
         {
             analytics::features::define
                 .fetch_add(usize::from(!transform.define.is_empty()), Ordering::Relaxed);
-            analytics::features::loaders
-                .fetch_add(usize::from(transform.loaders.is_some()), Ordering::Relaxed);
+            analytics::features::loaders.fetch_add(
+                usize::from(!transform.loaders.is_empty()),
+                Ordering::Relaxed,
+            );
         }
 
         opts.serve_plugins = transform

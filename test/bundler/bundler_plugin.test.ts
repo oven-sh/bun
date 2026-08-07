@@ -276,6 +276,43 @@ describe("bundler", () => {
       },
     };
   });
+  itBundled("plugin/ResolveKind", () => {
+    const kinds: Record<string, string> = {};
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import "./styles.css";
+          const c = require("./c.cjs");
+          import("./d.js").then(d => console.log(c, d.default));
+        `,
+        "styles.css": /* css */ `
+          @import "./other.css";
+          .a { background: url("./img.png"); }
+        `,
+        "other.css": `.b { color: red; }`,
+        "img.png": `png`,
+        "c.cjs": `module.exports = 1;`,
+        "d.js": `export default 2;`,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onResolve({ filter: /.*/ }, args => {
+          kinds[path.basename(args.path)] = args.kind;
+          return undefined;
+        });
+      },
+      onAfterBundle() {
+        expect(kinds).toEqual({
+          "index.ts": "entry-point-build",
+          "styles.css": "import-statement",
+          "c.cjs": "require-call",
+          "d.js": "dynamic-import",
+          "other.css": "import-rule",
+          "img.png": "url-token",
+        });
+      },
+    };
+  });
   itBundled("plugin/ResolveNamespaceFilterIgnored", ({ root }) => {
     let onResolveCountBad = 0;
 

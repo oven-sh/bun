@@ -336,16 +336,13 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
             bstr::BStr::new(value)
         ))?);
     }
-    if let Some(loaders) = &ctx.args.loaders {
-        debug_assert_eq!(loaders.extensions.len(), loaders.loaders.len());
-        for (ext, loader) in loaders.extensions.iter().zip(loaders.loaders.iter()) {
-            argv.push(lit(b"--loader\0"));
-            argv.push(print_z(format_args!(
-                "{}:{}",
-                bstr::BStr::new(ext),
-                api_loader_tag_name(*loader)
-            ))?);
-        }
+    for (ext, loader) in &ctx.args.loaders {
+        argv.push(lit(b"--loader\0"));
+        argv.push(print_z(format_args!(
+            "{}:{}",
+            bstr::BStr::new(ext),
+            <&'static str>::from(loader)
+        ))?);
     }
     if let Some(tsconfig) = &ctx.args.tsconfig_override {
         argv.push(lit(b"--tsconfig-override\0"));
@@ -422,37 +419,6 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     argv.push(core::ptr::null());
     // Callers index by .len(), so keep the trailing null in the boxed slice.
     Ok(argv.into_boxed_slice())
-}
-
-/// Local shim for `@tagName(loader)` — `bun_options_types::schema::api::Loader`
-/// has no `From<Loader> for &str` impl upstream.
-fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static str {
-    use bun_options_types::schema::api::Loader as L;
-    match l {
-        L::jsx => "jsx",
-        L::js => "js",
-        L::ts => "ts",
-        L::tsx => "tsx",
-        L::css => "css",
-        L::file => "file",
-        L::json => "json",
-        L::jsonc => "jsonc",
-        L::toml => "toml",
-        L::wasm => "wasm",
-        L::napi => "napi",
-        L::base64 => "base64",
-        L::dataurl => "dataurl",
-        L::text => "text",
-        L::bunsh => "bunsh",
-        L::sqlite => "sqlite",
-        L::sqlite_embedded => "sqlite_embedded",
-        L::html => "html",
-        L::yaml => "yaml",
-        L::json5 => "json5",
-        L::md => "md",
-        L::xml => "xml",
-        L::_none => "_none",
-    }
 }
 
 /// Local shim for `@tagName(jsx.runtime)`.

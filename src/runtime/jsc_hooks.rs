@@ -21,14 +21,14 @@
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
 use bun_core::WTFStringImplExt as _;
-use bun_options_types::LoaderExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
 
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{
-    ArenaResetGuard, FetchBuiltinResult, FetchFlags, LoaderHooks, TranspileArgs, TranspileExtra,
+    ArenaResetGuard, BunLoaderType, FetchBuiltinResult, FetchFlags, LoaderHooks, TranspileArgs,
+    TranspileExtra,
 };
 use bun_jsc::resolved_source::OwnedResolvedSource;
 use bun_jsc::virtual_machine::{
@@ -3818,45 +3818,8 @@ export default db;
 // `options.getLoaderAndVirtualSource`.
 //
 // Porting the body inline here lets us name `VirtualMachine` directly (no
-// vtable) and look the loader up in `transpiler.options.loaders` (which is
-// already
-// `StringArrayHashMap<bun_ast::Loader>`), so no inter-enum bridge is required.
+// vtable) and look the loader up in `transpiler.options.loaders`.
 // ────────────────────────────────────────────────────────────────────────────
-
-/// Maps the wire `Api::Loader` (`#[repr(u8)]`, `_none = 254`) discriminant that
-/// crosses the C++ boundary as `force_loader: u8` to the runtime
-/// `bun_ast::Loader`. Exhaustive match (any unknown tag — including 0, which
-/// `api::Loader` never uses — collapses to `None`).
-#[inline]
-fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
-    use Loader as L;
-    match api_loader {
-        1 => Some(L::Jsx),
-        2 => Some(L::Js),
-        3 => Some(L::Ts),
-        4 => Some(L::Tsx),
-        5 => Some(L::Css),
-        6 => Some(L::File),
-        7 => Some(L::Json),
-        8 => Some(L::Jsonc),
-        9 => Some(L::Toml),
-        10 => Some(L::Wasm),
-        11 => Some(L::Napi),
-        12 => Some(L::Base64),
-        13 => Some(L::Dataurl),
-        14 => Some(L::Text),
-        15 => Some(L::Bunsh),
-        16 => Some(L::Sqlite),
-        17 => Some(L::SqliteEmbedded),
-        18 => Some(L::Html),
-        19 => Some(L::Yaml),
-        20 => Some(L::Json5),
-        21 => Some(L::Md),
-        22 => Some(L::Xml),
-        // 254 = `_none`; everything else is open-tail.
-        _ => None,
-    }
-}
 
 /// `Fs.Path.loader(&jsc_vm.transpiler.options.loaders)` — re-spelt against
 /// `bun_ast::LoaderHashTable` (= `StringArrayHashMap<bun_ast::Loader>`).
@@ -4170,14 +4133,14 @@ unsafe fn transpile_file(
     ret: *mut ErrorableResolvedSource,
     allow_promise: bool,
     is_commonjs_require: bool,
-    force_loader: u8,
+    force_loader: BunLoaderType,
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
     // SAFETY: per fn contract.
     let global_ref = unsafe { &*global };
 
-    let force_loader_type: Option<Loader> = force_loader_from_api_u8(force_loader);
+    let force_loader_type: Option<Loader> = force_loader.get();
 
     // Create a fresh parse log.
     // Note: per §Allocators the explicit allocator threads are dropped.
@@ -4560,11 +4523,9 @@ unsafe fn transpile_virtual_module(
     specifier_ptr: *const bun_core::String,
     referrer_ptr: *const bun_core::String,
     source_code: *mut bun_core::ZigString,
-    loader_: bun_options_types::schema::api::Loader,
+    loader_: BunLoaderType,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
-    use bun_options_types::schema::api;
-
     // SAFETY: per fn contract — `global` is the live JS-thread global.
     let global_ref = unsafe { &*global };
     // Note: `bun_vm_ptr()` returns the FFI `*mut VirtualMachine` directly;
@@ -4591,11 +4552,9 @@ unsafe fn transpile_virtual_module(
     // `specifier_slice` drops). Same erasure as `transpile_file` above.
     let path: Fs::Path<'static> = unsafe { Fs::Path::init(specifier).into_static() };
 
-    // Pick the loader: the explicit API loader if given, else by file
-    // extension, else `.js` for the main module / `.file` otherwise.
-    let loader = if loader_ != api::Loader::_none {
-        Loader::from_api(loader_)
-    } else {
+    // Pick the loader: the explicit one if given, else by file extension,
+    // else `.js` for the main module / `.file` otherwise.
+    let loader = loader_.get().unwrap_or_else(|| {
         // SAFETY: `jsc_vm` is the live per-thread VM.
         let opt = unsafe { &*jsc_vm }
             .transpiler
@@ -4611,7 +4570,7 @@ unsafe fn transpile_virtual_module(
                 Loader::File
             }
         })
-    };
+    });
 
     // Reset the module loader's arena on scope exit.
     // `jsc_vm` is the live per-thread VM (BackRef invariant).

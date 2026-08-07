@@ -1,6 +1,5 @@
 //! `Bun.build()` plugin host + `BuildArtifact` JS wrapper.
 
-use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
 use crate::webcore::Blob;
@@ -16,7 +15,6 @@ use bun_dotenv::DotEnvBehavior;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::compile_target::CompileTarget;
-use bun_options_types::schema::api;
 use bun_standalone_graph::StandaloneModuleGraph;
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
@@ -110,7 +108,7 @@ pub mod js_bundler {
         pub(crate) react_compiler_parse_test_pragmas: bool,
         pub(crate) react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
         pub(crate) define: StringMap,
-        pub(crate) loaders: Option<api::LoaderMap>,
+        pub(crate) loaders: Vec<(Box<[u8]>, bun_ast::Loader)>,
         pub(crate) dir: OwnedString,
         pub(crate) outdir: OwnedString,
         pub(crate) rootdir: OwnedString,
@@ -165,7 +163,7 @@ pub mod js_bundler {
                 react_compiler_parse_test_pragmas: false,
                 react_compiler_output_mode: None,
                 define: StringMap::init(false),
-                loaders: None,
+                loaders: Vec::new(),
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
                 rootdir: OwnedString::default(),
@@ -1085,18 +1083,7 @@ pub mod js_bundler {
                     },
                 )?;
 
-                // `loader_iter.i` is the property position, not a dense index of yielded
-                // entries. With `skip_empty_name = true` (or a skipped property getter),
-                // writing at `loader_iter.i` would leave earlier slots uninitialized and
-                // later freed as garbage. Use ArrayLists so the stored slice is always
-                // exactly what was appended.
-                let mut loader_names: Vec<Box<[u8]>> = Vec::new();
-                // errdefer: Vec<Box<[u8]>> drops automatically
-                let mut loader_values: Vec<api::Loader> = Vec::new();
-
-                loader_names.reserve_exact(loader_iter.len);
-                loader_values.reserve_exact(loader_iter.len);
-
+                this.loaders.reserve_exact(loader_iter.len);
                 while let Some(prop) = loader_iter.next()? {
                     let prop_slice = prop.to_utf8();
                     if !prop_slice.slice().starts_with(b".") || prop.length() < 2 {
@@ -1106,19 +1093,15 @@ pub mod js_bundler {
                     }
                     drop(prop_slice);
 
-                    loader_values.push(loader_iter.value.to_enum_from_map(
+                    let loader = loader_iter.value.to_enum_from_map(
                         global_this,
                         "loader",
-                        &options::LOADER_API_NAMES,
-                        "\"js\", \"jsx\", \"ts\", \"tsx\", \"css\", \"file\", \"json\", \"toml\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\", \"html\"",
-                    )?);
-                    loader_names.push(prop.to_owned_slice().into_boxed_slice());
+                        &bun_ast::loader::LOADER_NAMES,
+                        "\"js\", \"jsx\", \"ts\", \"tsx\", \"css\", \"file\", \"json\", \"jsonc\", \"json5\", \"toml\", \"yaml\", \"xml\", \"md\", \"html\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\", or \"sqlite\"",
+                    )?;
+                    this.loaders
+                        .push((prop.to_owned_slice().into_boxed_slice(), loader));
                 }
-
-                this.loaders = Some(api::LoaderMap {
-                    extensions: loader_names,
-                    loaders: loader_values,
-                });
             }
 
             if let Some(flag) = config.get_boolean_strict(global_this, "throw")? {
@@ -1583,7 +1566,10 @@ pub mod js_bundler {
                 return;
             }
         } else {
-            let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
+            let loader = u8::try_from(loader_as_int.as_int32())
+                .ok()
+                .and_then(bun_ast::Loader::from_repr)
+                .unwrap_or(bun_ast::Loader::File);
             let global = bv2_plugin(this.bv2).global_object();
             let source_code = match crate::node::StringOrBuffer::from_js_to_owned_slice(
                 global,
@@ -1600,7 +1586,7 @@ pub mod js_bundler {
                 }
             };
             this.value = LoadValue::Success(LoadSuccess {
-                loader: bun_ast::Loader::from_api(loader),
+                loader,
                 source_code: source_code.into(),
             });
         }

@@ -10,14 +10,13 @@ pub mod global_cache;
 pub mod install_config;
 pub mod jsx;
 pub mod offline_mode;
-pub mod schema;
 pub mod transform_options;
 
 pub use error::{Error, Result};
 
 pub use bundle_enums::{
-    BuiltInModule, BundlePackage, ForceNodeEnv, Format, LOADER_API_NAMES, LoaderExt, ModuleType,
-    PackagesOption, SourceMapOption, WindowsOptions,
+    BuiltInModule, BundlePackage, ForceNodeEnv, Format, ModuleType, PackagesOption,
+    SourceMapOption, WindowsOptions,
 };
 pub use install_config::{BunInstall, Ca, NpmRegistry, NpmRegistryMap};
 pub use transform_options::{StringPairs, TransformOptions, UnhandledRejections};

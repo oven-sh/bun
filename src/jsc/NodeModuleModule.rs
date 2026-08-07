@@ -5,30 +5,8 @@ use crate::{
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
 use bun_core::{OwnedString, String as BunString, strings};
-use bun_options_types::LoaderExt as _;
-use bun_options_types::schema::api;
 
-// `bun.schema.api.Loader` — bindgen-emitted schema enum.
-// Mirrored as a transparent `u8` because the schema enum is *open*
-// and the FFI caller may hand us discriminants outside
-// the closed Rust `api::Loader` set; transmuting an unknown tag would be UB.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub(crate) struct ApiLoader(pub u8);
-impl ApiLoader {
-    /// `_none = 254`.
-    const NONE: Self = Self(api::Loader::_none as u8);
-
-    /// Reconstruct the closed schema enum. Only valid when `self != NONE` is
-    /// already established and the C++ caller honoured the `BunLoaderType`
-    /// contract (headers-handwritten.h keeps the discriminants in sync).
-    fn to_schema(self) -> api::Loader {
-        debug_assert_ne!(self, Self::NONE);
-        // C++ caller passes a valid `BunLoaderType` discriminant per
-        // headers-handwritten.h; `from_raw` maps unknowns to `_none`.
-        api::Loader::from_raw(self.0)
-    }
-}
+use crate::module_loader::BunLoaderType;
 
 // The C++ caller (NodeModuleModule.cpp
 // `jsFunctionFindPath`) does the CallFrame → (BunString, JSArray*) extraction itself and
@@ -159,7 +137,7 @@ unsafe extern "C" {
 fn on_require_extension_modify(
     global: &JSGlobalObject,
     str: &[u8],
-    loader: ApiLoader,
+    loader: BunLoaderType,
     value: JSValue,
 ) -> Result<(), bun_alloc::AllocError> {
     // global; we are on the JS thread so a `&mut` view is sound for this scope.
@@ -174,14 +152,14 @@ fn on_require_extension_modify(
             vm.has_mutated_built_in_extensions += 1;
         }
 
-        *gop.value_ptr = if loader != ApiLoader::NONE {
-            CustomLoader::Loader(Loader::from_api(loader.to_schema()))
+        *gop.value_ptr = if let Some(loader) = loader.get() {
+            CustomLoader::Loader(loader)
         } else {
             CustomLoader::Custom(Strong::create(value, global))
         };
-    } else if loader != ApiLoader::NONE {
+    } else if let Some(loader) = loader.get() {
         // Replacing with a built-in loader: drop any held Strong via assignment.
-        *gop.value_ptr = CustomLoader::Loader(Loader::from_api(loader.to_schema()));
+        *gop.value_ptr = CustomLoader::Loader(loader);
     } else {
         match gop.value_ptr {
             CustomLoader::Loader(_) => {
@@ -250,7 +228,7 @@ pub fn find_longest_registered_extension<'a>(
 extern "C" fn NodeModuleModule__onRequireExtensionModify(
     global: &JSGlobalObject,
     str: &BunString,
-    loader: ApiLoader,
+    loader: BunLoaderType,
     value: JSValue,
 ) {
     let str_slice = str.to_utf8();

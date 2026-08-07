@@ -5,8 +5,6 @@
 //! `bun_clap::parse_param!` proc-macro (compile-time spec parsing) plus a
 //! const-fn slice concat (`bun_clap::concat_params!`).
 
-use bun_options_types::LoaderExt as _;
-
 use bstr::BStr;
 use bun_ast::Target;
 use bun_bundler::options;
@@ -21,7 +19,6 @@ use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_options_types::jsx;
-use bun_options_types::schema::api;
 use bun_options_types::{PackagesOption, SourceMapOption, TransformOptions, UnhandledRejections};
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, platform};
@@ -37,11 +34,6 @@ use crate::cli::{DefineColonList, LoaderColonList};
 #[inline]
 fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
-}
-
-pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
-    let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
-    Ok(option_loader.to_api())
 }
 
 fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<jsx::Runtime> {
@@ -869,14 +861,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<Transfor
     };
 
     if !loader_tuple.keys.is_empty() {
-        opts.loaders = Some(api::LoaderMap {
-            extensions: loader_tuple
-                .keys
-                .iter()
-                .map(|s| Box::<[u8]>::from(*s))
-                .collect(),
-            loaders: loader_tuple.values,
-        });
+        opts.loaders = (loader_tuple.keys.iter().zip(loader_tuple.values))
+            .map(|(ext, loader)| (Box::<[u8]>::from(*ext), loader))
+            .collect();
     }
 
     opts.tsconfig_override = if let Some(ts) = args.option(b"--tsconfig-override") {

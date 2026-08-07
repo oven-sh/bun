@@ -498,14 +498,13 @@ static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicB
 
 bun_core::declare_scope!(CLI, hidden);
 
-pub(crate) type LoaderColonList =
-    colon_list_type::ColonListType<bun_options_types::schema::api::Loader>;
+pub(crate) type LoaderColonList = colon_list_type::ColonListType<bun_ast::Loader>;
 pub(crate) type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
 
-impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader {
+impl colon_list_type::ColonListValue for bun_ast::Loader {
     const IS_LOADER: bool = true;
     fn resolve_value(input: &[u8]) -> crate::Result<Self> {
-        arguments::loader_resolver(input)
+        bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)
     }
 }
 impl colon_list_type::ColonListValue for &'static [u8] {

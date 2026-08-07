@@ -9,7 +9,6 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_alloc::Arena as ArenaAllocator;
-use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
@@ -240,7 +239,7 @@ pub struct LoaderHooks {
         specifier: *const bun_core::String,
         referrer: *const bun_core::String,
         source_code: *mut bun_core::ZigString,
-        loader: bun_options_types::schema::api::Loader,
+        loader: BunLoaderType,
         ret: *mut ErrorableResolvedSource,
     ) -> bool,
     /// `Bun__transpileFile` body — needs `options.getLoaderAndVirtualSource`,
@@ -256,8 +255,30 @@ pub struct LoaderHooks {
         ret: *mut ErrorableResolvedSource,
         allow_promise: bool,
         is_commonjs_require: bool,
-        force_loader: u8,
+        force_loader: BunLoaderType,
     ) -> *mut c_void,
+}
+
+/// A [`Loader`](bun_ast::Loader) as it crosses the C++ boundary (`BunLoaderType`
+/// in headers-handwritten.h): the enum's discriminant, or [`Self::NONE`].
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct BunLoaderType(pub u8);
+
+impl BunLoaderType {
+    pub const NONE: Self = Self(255);
+
+    #[inline]
+    pub fn get(self) -> Option<bun_ast::Loader> {
+        bun_ast::Loader::from_repr(self.0)
+    }
+}
+
+impl From<bun_ast::Loader> for BunLoaderType {
+    #[inline]
+    fn from(loader: bun_ast::Loader) -> Self {
+        Self(loader as u8)
+    }
 }
 
 unsafe extern "Rust" {
@@ -343,7 +364,7 @@ unsafe extern "C" fn Bun__transpileFile(
     ret: *mut ErrorableResolvedSource,
     allow_promise: bool,
     is_commonjs_require: bool,
-    force_loader_type: u8, // bun.schema.api.Loader — passed as raw u8 across the cycle
+    force_loader_type: BunLoaderType,
 ) -> *mut c_void {
     jsc::mark_binding();
     let Some(hooks) = loader_hooks() else {
@@ -536,21 +557,17 @@ use bun_bundler::transpiler::PluginRunner;
 extern "C" fn Bun__getDefaultLoader(
     global: &JSGlobalObject,
     str: &bun_core::String,
-) -> bun_options_types::schema::api::Loader {
-    use bun_options_types::schema::api;
-    // SAFETY: C++ passed the live JS-thread global; `bun_vm()` is the
-    // per-thread VM pointer (never null on this path).
+) -> BunLoaderType {
     let jsc_vm = global.bun_vm();
     let filename = str.to_utf8();
     let loader = jsc_vm
         .transpiler
         .options
-        .loader(bun_resolver::fs::PathName::init(filename.slice()).ext)
-        .to_api();
-    if loader == api::Loader::file {
-        return api::Loader::js;
+        .loader(bun_resolver::fs::PathName::init(filename.slice()).ext);
+    match loader {
+        bun_ast::Loader::File | bun_ast::Loader::Bunsh => bun_ast::Loader::Js.into(),
+        _ => loader.into(),
     }
-    loader
 }
 
 /// C++ entry point: transpiles a plugin-provided virtual module's source, writing the result into `ret`.
@@ -560,7 +577,7 @@ unsafe extern "C" fn Bun__transpileVirtualModule(
     specifier: *const bun_core::String,
     referrer: *const bun_core::String,
     source_code: *mut bun_core::ZigString,
-    loader: bun_options_types::schema::api::Loader,
+    loader: BunLoaderType,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();

@@ -1,16 +1,18 @@
 //! `Loader` + `SideEffects`.
 //!
-//! Data-only enum + pure predicates. `to_api()` / `from_api()` / `API_NAMES`
-//! live in `bun_options_types::LoaderExt` (would back-edge into the schema
-//! crate). `to_mime_type` / `from_mime_type` live in `bun_http_types` (would
-//! back-edge into `bun_http::MimeType`).
+//! Data-only enum + pure predicates. `to_mime_type` / `from_mime_type` live in
+//! `bun_http_types` (would back-edge into `bun_http::MimeType`).
 
 use enum_map::Enum;
 
-/// The max integer value in this enum can only be appended to.
-/// It has dependencies in several places:
-/// - bun-native-bundler-plugin-api/bundler_plugin.h
-/// - src/jsc/bindings/headers-handwritten.h
+/// The discriminants are the one loader numbering used everywhere a loader
+/// crosses a language boundary; values can only be appended. Kept in sync
+/// (see test/internal/source-lints/loader-numbering.test.ts) with:
+/// - packages/bun-native-bundler-plugin-api/bundler_plugin.h (`BUN_LOADER_*`, public)
+/// - packages/bun-native-plugin-rs/src/sys.rs (`BunLoader`)
+/// - src/jsc/bindings/headers-handwritten.h (`BunLoaderType*`)
+/// - `$LoaderLabelToId` / `$LoaderIdToLabel` in the JS builtins, which
+///   src/codegen/replacements.ts derives from this file.
 #[repr(u8)]
 #[derive(
     Copy,
@@ -23,6 +25,7 @@ use enum_map::Enum;
     Enum,
     strum::IntoStaticStr,
     strum::VariantNames,
+    strum::FromRepr,
 )]
 // The lower_snake names are exposed to JS (HTMLImportManifest
 // `"loader":`, BuildArtifact.loader) so the strum serialization must match exactly.
@@ -55,9 +58,7 @@ pub enum Loader {
 
 // Crosses FFI as `uint8_t default_loader` / `uint8_t loader` in
 // `OnBeforeParseArguments` / `OnBeforeParseResult` (`bundler_plugin.h`); lock
-// the discriminant width and the values native plugins observe. NB: the C
-// header's `BUN_LOADER_TOML = 7` etc. predate `Jsonc`'s insertion at 7 and are
-// known-stale — this enum is the source of truth.
+// the discriminant width and the values native plugins observe.
 bun_core::assert_ffi_discr!(
     Loader, u8;
     Jsx = 0, Js = 1, Ts = 2, Tsx = 3, Css = 4, File = 5, Json = 6,
@@ -95,6 +96,7 @@ bun_core::comptime_string_map! {
         b"txt" => Loader::Text,
         b"text" => Loader::Text,
         b"sh" => Loader::Bunsh,
+        b"bunsh" => Loader::Bunsh,
         b"sqlite" => Loader::Sqlite,
         b"sqlite_embedded" => Loader::SqliteEmbedded,
         b"html" => Loader::Html,

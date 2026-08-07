@@ -814,7 +814,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.entry_points = config.entry_points.keys().to_vec().into_boxed_slice();
         transpiler.options.no_macros = config.no_macros;
         transpiler.options.loaders =
-            options::loaders_from_transform_options(config.loaders.as_ref(), config.target)?;
+            options::loaders_from_transform_options(&config.loaders, config.target)?;
         transpiler
             .options
             .entry_naming

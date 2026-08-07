@@ -19,13 +19,11 @@ use bun_parsers::toml::TOML;
 use bun_dotenv::DotEnvBehavior;
 use bun_install_types::NodeLinker::FromExprError;
 use bun_install_types::NodeLinker::{NodeLinker, PnpmMatcher};
-use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::jsx;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
-use bun_options_types::schema::api;
 use bun_options_types::{BunInstall, Ca, NpmRegistry, StringPairs};
 
 use bun_options_types::command_tag::Tag as CommandTag;
@@ -1059,8 +1057,7 @@ impl<'a> Parser<'a> {
             self.expect(&expr, ExprTag::EObject)?;
             let obj = expr.data.e_object().expect("infallible: variant checked");
             let properties = obj.properties.slice();
-            let mut loader_names: Vec<Box<[u8]>> = Vec::with_capacity(properties.len());
-            let mut loader_values: Vec<api::Loader> = Vec::with_capacity(properties.len());
+            self.ctx.args.loaders = Vec::with_capacity(properties.len());
             for item in properties {
                 let key_expr = item.key.as_ref().expect("infallible: prop has key");
                 let key = key_expr
@@ -1085,13 +1082,8 @@ impl<'a> Parser<'a> {
                     self.add_error(value.loc, b"Invalid loader")?;
                     continue;
                 };
-                loader_names.push(key.into());
-                loader_values.push(loader.to_api());
+                self.ctx.args.loaders.push((key.into(), loader));
             }
-            self.ctx.args.loaders = Some(api::LoaderMap {
-                extensions: loader_names,
-                loaders: loader_values,
-            });
         }
 
         Ok(())

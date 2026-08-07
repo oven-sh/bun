@@ -808,12 +808,19 @@ it("CustomEvent", () => {
 // leave the exception pending on the VM: debug builds aborted with "Unexpected
 // exception observed" and release builds silently dropped every property that
 // came after the throwing one. Clobbering `process` makes the lazy `Bun.$`
-// getter throw while it is being reified.
+// getter throw while it is being reified; the third check asserts that trigger
+// still holds ($ gets skipped), so the test fails loudly if it ever stops throwing.
 it("Bun.inspect enumeration survives a throwing lazy property getter", async () => {
   const code = `
     globalThis.process = undefined;
     const s = Bun.inspect(Bun);
-    console.log(s.includes("argv: ["), s.includes("gc: [Function: gc]"));
+    console.log(
+      s.includes("argv: ["),
+      s.includes("gc: [Function: gc]"),
+      s.includes("version: \\""),
+      s.includes("semver: "),
+      !s.includes("$: [Function"),
+    );
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", code],
@@ -823,7 +830,7 @@ it("Bun.inspect enumeration survives a throwing lazy property getter", async () 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: "true true",
+    stdout: "true true true true true",
     stderr: "",
     exitCode: 0,
   });

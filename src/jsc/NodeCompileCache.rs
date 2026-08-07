@@ -304,7 +304,7 @@ pub fn init_from_env_once() {
 
 fn init_logging() {
     if let Some(v) = env_var::NODE_DEBUG_NATIVE::get() {
-        let enabled = v.split(|&c| c == b',').any(|item| {
+        let enabled = bun_core::strings::split(v, b",").any(|item| {
             let item = item.trim_ascii();
             item.eq_ignore_ascii_case(b"COMPILE_CACHE") || item == b"*"
         });

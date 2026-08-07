@@ -727,7 +727,7 @@ pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::Atom
 
 /// Node parity: `--cpu-prof-name` supports a `${pid}` placeholder.
 fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
-    if !name.windows(6).any(|w| w == b"${pid}") {
+    if !bun_core::strings::contains(name, b"${pid}") {
         return name.into();
     }
     let pid = std::process::id().to_string();

@@ -76,9 +76,7 @@ fn is_bare_esm_specifier(s: &[u8]) -> bool {
 /// matching Node's ERR_MODULE_NOT_FOUND "Cannot find package '<name>'".
 fn esm_package_name(specifier: &[u8]) -> &[u8] {
     let slash_after = |from: usize| {
-        specifier[from..]
-            .iter()
-            .position(|&b| b == b'/')
+        bun_core::strings::index_of_char_usize(&specifier[from..], b'/')
             .map_or(specifier.len(), |i| from + i)
     };
     let mut end = slash_after(0);

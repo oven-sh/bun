@@ -1,11 +1,13 @@
 --- a/src/win/poll.c
 +++ b/src/win/poll.c
-@@ -269,58 +269,125 @@ static DWORD WINAPI uv__slow_poll_thread_proc(void* arg) {
+@@ -300,58 +300,156 @@ static DWORD WINAPI uv__slow_poll_thread_proc(void* arg) {
    int r;
    uv_single_fd_set_t rfds, wfds, efds;
    struct timeval timeout;
 +  int events;
++  int suppress_rfds;
 +  ULONGLONG deadline;
++  ULONGLONG wake;
 +  ULONGLONG now;
  
    assert(handle->type == UV_POLL);
@@ -31,6 +33,7 @@
 +   * completion is posted and the processing step submits a fresh request
 +   * if the watcher is still active. */
 +  deadline = GetTickCount64() + 3 * 60 * 1000;
++  suppress_rfds = 0;
 +
 +  for (;;) {
 +    /* Refreshed every lap. uv_poll_start/uv_poll_stop on the loop thread
@@ -45,8 +48,13 @@
 +     * consuming anything. This also keeps the fd sets non-empty for a
 +     * watcher that wants only UV_DISCONNECT: with all three sets empty,
 +     * select() fails WSAEINVAL immediately, which stopped the watcher
-+     * and reported a bogus error for every poll parked in that state. */
-+    if (events & (UV_READABLE | UV_DISCONNECT)) {
++     * and reported a bogus error for every poll parked in that state.
++     * suppress_rfds (set at the bottom of the loop) skips the read set
++     * for one lap when pending data the watcher does not want would
++     * otherwise make select() return instantly instead of blocking on
++     * writability. */
++    if ((events & (UV_READABLE | UV_DISCONNECT)) &&
++        !(suppress_rfds && (events & UV_WRITABLE))) {
 +      rfds.fd_count = 1;
 +      rfds.fd_array[0] = handle->socket;
 +    } else {
@@ -81,30 +89,29 @@
 +    }
  
 -  reported_events = 0;
-+    timeout.tv_sec = (long) ((deadline - now) / 1000);
-+    timeout.tv_usec = (long) (((deadline - now) % 1000) * 1000);
- 
--  if (r > 0) {
--    if (rfds.fd_count > 0) {
--      assert(rfds.fd_count == 1);
--      assert(rfds.fd_array[0] == handle->socket);
--      reported_events |= UV_READABLE;
++    /* With the read set suppressed, wake within a second anyway so the
++     * disconnect peek keeps running behind the pending data. */
++    wake = deadline;
++    if (suppress_rfds && rfds.fd_count == 0 && now + 1000 < wake)
++      wake = now + 1000;
++    suppress_rfds = 0;
++
++    timeout.tv_sec = (long) ((wake - now) / 1000);
++    timeout.tv_usec = (long) (((wake - now) % 1000) * 1000);
++
 +    r = select(1, (fd_set*) &rfds, (fd_set*) &wfds, (fd_set*) &efds, &timeout);
 +    if (r == SOCKET_ERROR) {
 +      /* Queue this req, reporting an error. */
 +      SET_REQ_ERROR(req, WSAGetLastError());
 +      POST_COMPLETION_FOR_REQ(handle->loop, req);
 +      return 0;
-     }
++    }
  
--    if (wfds.fd_count > 0) {
--      assert(wfds.fd_count == 1);
--      assert(wfds.fd_array[0] == handle->socket);
--      reported_events |= UV_WRITABLE;
--    } else if (efds.fd_count > 0) {
--      assert(efds.fd_count == 1);
--      assert(efds.fd_array[0] == handle->socket);
--      reported_events |= UV_WRITABLE;
+-  if (r > 0) {
+-    if (rfds.fd_count > 0) {
+-      assert(rfds.fd_count == 1);
+-      assert(rfds.fd_array[0] == handle->socket);
+-      reported_events |= UV_READABLE;
 +    reported_events = 0;
 +
 +    if (r > 0) {
@@ -148,26 +155,50 @@
 +        reported_events |= UV_WRITABLE;
 +      }
      }
+ 
+-    if (wfds.fd_count > 0) {
+-      assert(wfds.fd_count == 1);
+-      assert(wfds.fd_array[0] == handle->socket);
+-      reported_events |= UV_WRITABLE;
+-    } else if (efds.fd_count > 0) {
+-      assert(efds.fd_count == 1);
+-      assert(efds.fd_array[0] == handle->socket);
+-      reported_events |= UV_WRITABLE;
++    /* A suppressed-rfds select() that hit its one-second cap is a re-peek
++     * tick, not the real deadline: loop so the next lap re-arms the read
++     * set and runs the peek again. */
++    if (r == 0 && wake < deadline)
++      continue;
 +
 +    /* A timeout or anything the watcher subscribed to completes the
 +     * request (the processing step masks and resubmits as needed). What
-+     * remains is data pending on a poll that wants only UV_DISCONNECT (a
-+     * receive-paused socket): completing now would be masked to nothing
-+     * and resubmitted straight back into an instantly-readable select(),
-+     * a hot spin. Park instead and re-peek, so a connection that dies
-+     * behind the pending data is still discovered: an RST discards the
-+     * receive queue and turns the peek into an error within one sleep.
-+     * A FIN behind data stays invisible to the peek until the data is
-+     * consumed (select() cannot see it; AFD would have reported it), so
-+     * its delivery keeps riding the readable path once reads resume. */
++     * remains is data pending on a poll that does not want UV_READABLE
++     * (a receive-paused socket): completing now would be masked to
++     * nothing and resubmitted straight back into an instantly-readable
++     * select(), a hot spin. Park instead and keep re-peeking, so a
++     * connection that dies behind the pending data is still discovered:
++     * an RST discards the receive queue and turns the peek into an error
++     * within a second. A FIN behind data stays invisible to the peek
++     * until the data is consumed (select() cannot see it; AFD would have
++     * reported it), so its delivery keeps riding the readable path once
++     * reads resume. How to park depends on whether the watcher also
++     * wants UV_WRITABLE: if so, re-select() with the read set suppressed
++     * so the send-buffer drain still wakes it instantly (sleeping here
++     * would throttle a backpressured writer to one wake a second); if
++     * not, there is nothing else to wait on, so just sleep. */
 +    if (r == 0 || (reported_events & events) != 0)
 +      break;
++
++    if (events & UV_WRITABLE) {
++      suppress_rfds = 1;
++      continue;
+     }
 +
 +    Sleep(1000);
    }
  
    SET_REQ_SUCCESS(req);
-@@ -403,6 +470,25 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+@@ -434,6 +532,25 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
  }
  
  
@@ -193,7 +224,7 @@
  int uv_poll_init(uv_loop_t* loop, uv_poll_t* handle, int fd) {
    return uv_poll_init_socket(loop, handle, (SOCKET) uv__get_osfhandle(fd));
  }
-@@ -457,7 +543,10 @@ int uv_poll_init_socket(uv_loop_t* loop, uv_poll_t* handle,
+@@ -488,7 +605,10 @@ int uv_poll_init_socket(uv_loop_t* loop, uv_poll_t* handle,
    /* Get the peer socket that is needed to enable fast poll. If the returned
     * value is NULL, the protocol is not implemented by MSAFD and we'll have to
     * use slow mode. */

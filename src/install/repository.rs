@@ -431,8 +431,6 @@ impl RepositoryExt for Repository {
             Some(hash) => (&remain[..hash], Some(&remain[hash + 1..])),
             None => (remain, None),
         };
-        // Undo the lockfile's `ssh://` spelling of an scp-form repo so the
-        // loaded resolution's repo byte-matches the parsed dependency's.
         let repo = Dependency::scp_path_without_ssh_prefix(repo).unwrap_or(repo);
         let mut result = Repository {
             repo: buf.append(repo)?,

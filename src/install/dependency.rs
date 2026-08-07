@@ -409,22 +409,17 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
     false
 }
 
-/// The lockfile serializes an scp-form repo (`git@host:path`) with an
-/// `ssh://` prefix (see `repository::Formatter`). Parsing must strip that
-/// prefix back off, or the loaded resolution's repo never byte-matches a
-/// freshly parsed dependency's repo. Every git task id (clone, checkout)
-/// hashes those exact bytes, so the two spellings enqueue disjoint tasks and
-/// the isolated installer waits forever on a checkout id nothing completes.
-/// Returns the scp-form remainder, or `None` when `repo` is a real URL that
-/// must keep its `ssh://`: no `:` separator before the path, or a numeric
-/// `host:port`.
+/// Inverse of the `ssh://` prefix `repository::Formatter` adds when writing
+/// an scp-form repo (`git@host:path`): git task ids, package dedupe, and
+/// store paths key on the exact repo bytes, so a reloaded resolution must
+/// byte-match the parsed dependency. `None` when `repo` is a real URL that
+/// keeps its prefix (no `:` before the path, or a numeric `host:port`).
 pub(crate) fn scp_path_without_ssh_prefix(repo: &[u8]) -> Option<&[u8]> {
     let rest = strings::without_prefix_if_possible_comptime(repo, b"ssh://")?;
     if !is_scp_like_path(rest) {
         return None;
     }
-    // `is_scp_like_path` also accepts `user@host/path`; without a `:` before
-    // the first `/` the remainder is an ordinary URL path, not scp form.
+    // scp form requires the `:`; `is_scp_like_path` also matches `user@host/path`
     let colon = strings::index_of_char_usize(rest, b':')?;
     if strings::index_of_char_usize(rest, b'/').is_some_and(|slash| slash < colon) {
         return None;

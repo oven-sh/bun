@@ -9,7 +9,6 @@ import {
   bunRun,
   expectMaxObjectTypeCount,
   getMaxFD,
-  isDebug,
   isLinux,
   isWindows,
   libcPathForDlopen,
@@ -3680,68 +3679,90 @@ describe.concurrent("connect() failure promise settlement", () => {
 // before the socket is linked to the closed-sockets sweep list, so a
 // synchronous event-loop re-entry inside the close handler (expect().resolves
 // blocks on waitForPromise) lets libuv finish closing the poll handle; the
-// sweep then calls us_poll_free on a CLOSED handle. Unfixed this leaks
-// ~4.8KB per connection; fixed it stays at allocator noise (~0.5KB/round).
+// sweep then frees a CLOSED handle. The probe chains K terminates through
+// close handlers (none of the K sockets is on the sweep list until its
+// handler returns) with one re-entry at the bottom, leaking K pairs (568
+// bytes each) per round when broken: 120 rounds x 25 = ~1.7MB of leak plus
+// allocator overhead (measured 3.4-6.7MB RSS growth unfixed, <= 1.9MB fixed).
 it.skipIf(!isWindows)(
   "socket terminated around a nested event-loop tick does not leak its poll",
   async () => {
-    const rounds = isDebug ? 1000 : 3000;
     using dir = tempDir("uv-poll-free-leak", {
       "poll-free-leak.test.ts": `
         import { test, expect } from "bun:test";
 
-        const ROUNDS = parseInt(process.env.LEAK_ROUNDS!, 10);
-        const WARMUP = 300;
+        const ROUNDS = 120;
+        const DEPTH = 25;
+        const WARMUP = 20;
 
         test(
           "probe",
           async () => {
-            let roundDone: (() => void) | null = null;
+            let pile: any[] = [];
+            let closedCount = 0;
+            let allClosed: (() => void) | null = null;
 
             using server = Bun.listen({
               hostname: "127.0.0.1",
               port: 0,
               socket: {
                 open(s) {
-                  s.terminate();
+                  pile.push(s);
                 },
                 data() {},
                 error() {},
                 close() {
-                  // Synchronous event-loop re-entry from inside the close
-                  // dispatch: .resolves blocks on waitForPromise.
-                  expect(new Promise<void>(r => setImmediate(r))).resolves.toBeUndefined();
-                  roundDone?.();
-                  roundDone = null;
+                  const next = pile.pop();
+                  if (next) {
+                    next.terminate();
+                  } else {
+                    // Bottom of the chain: DEPTH sockets are mid-close-
+                    // dispatch, none on the sweep list yet. Synchronous
+                    // event-loop re-entry (.resolves blocks on
+                    // waitForPromise) lets libuv finish closing their poll
+                    // handles before the sweep frees them.
+                    expect(new Promise<void>(r => setImmediate(r))).resolves.toBeUndefined();
+                  }
+                  closedCount++;
+                  if (closedCount === DEPTH && allClosed) allClosed();
                 },
               },
             });
 
             async function round() {
+              pile = [];
+              closedCount = 0;
               const { promise, resolve } = Promise.withResolvers<void>();
-              roundDone = resolve;
-              try {
-                await Bun.connect({
-                  hostname: "127.0.0.1",
-                  port: server.port,
-                  socket: { data() {}, error() {}, close() {} },
-                });
-              } catch {
-                // The server terminates on open; connect may observe the
-                // reset before the client-side open handler runs.
+              allClosed = resolve;
+
+              const clients = await Promise.all(
+                Array.from({ length: DEPTH }, () =>
+                  Bun.connect({
+                    hostname: "127.0.0.1",
+                    port: server.port,
+                    socket: { data() {}, error() {}, close() {} },
+                  }),
+                ),
+              );
+              while (pile.length < DEPTH) {
+                await new Promise(r => setImmediate(r));
               }
+
+              pile.pop()!.terminate();
               await promise;
+              allClosed = null;
+
+              for (const c of clients) c.terminate();
             }
 
             for (let i = 0; i < WARMUP; i++) await round();
             Bun.gc(true);
             const rss0 = process.memoryUsage.rss();
-
             for (let i = 0; i < ROUNDS; i++) await round();
             Bun.gc(true);
             const rss1 = process.memoryUsage.rss();
 
-            console.log(JSON.stringify({ perRound: Math.round((rss1 - rss0) / ROUNDS) }));
+            console.log(JSON.stringify({ deltaBytes: rss1 - rss0 }));
           },
           110_000,
         );
@@ -3750,19 +3771,20 @@ it.skipIf(!isWindows)(
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "poll-free-leak.test.ts"],
-      env: { ...bunEnv, LEAK_ROUNDS: String(rounds) },
+      env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const line = stdout.split("\n").find(l => l.includes("perRound"));
+    const line = stdout.split("\n").find(l => l.includes("deltaBytes"));
     expect(line, `probe produced no measurement.\nstdout: ${stdout}\nstderr: ${stderr}`).toBeDefined();
-    const { perRound } = JSON.parse(line!);
-    // Unfixed, every round leaks the socket + uv_poll_t blocks (~4.8KB
-    // measured). Allocator/GC noise stays well under 2KB/round.
-    expect(perRound).toBeLessThan(2048);
+    const { deltaBytes } = JSON.parse(line!);
+    // Unfixed leaks 120 x 25 x 568B = 1.7MB plus allocator overhead: measured
+    // >= 3.4MB on debug, ~6.7MB on release. Fixed stays at churn noise:
+    // <= 1.9MB on debug, less on release.
+    expect(deltaBytes).toBeLessThan(2_600_000);
     expect(exitCode).toBe(0);
   },
   120_000,

@@ -2007,9 +2007,8 @@ __attribute__((callback (corker, ctx)))
   }
 
   void us_socket_sendfile_needs_more(us_socket_r s) {
-    /* Same job as the pipelined-response park sites: bytes (the file tail)
-     * held outside the socket's write path need a writable event. The shared
-     * helper respects pause and shut-down instead of forcing READABLE. */
+    /* The pending file tail lives outside the socket's write path; see
+     * us_socket_mark_writable_pending in libusockets.h. */
     us_socket_mark_writable_pending(s);
   }
 

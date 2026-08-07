@@ -362,6 +362,47 @@ describe.concurrent("socket", () => {
     expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
   });
 
+  // Deterministic checkpoint for the negative assertions below: an echo round
+  // trip through an independent pair on the SAME event loop cannot complete
+  // before events that were already ready for other sockets have dispatched,
+  // so N round trips prove N full poll cycles ran.
+  async function loopCycles(n: number) {
+    using echo = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {},
+        data(s, d) {
+          s.write(d);
+        },
+        end() {},
+        error() {},
+        close() {},
+      },
+    });
+    const done = Promise.withResolvers<void>();
+    let count = 0;
+    const opened = Promise.withResolvers<any>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: echo.port,
+      socket: {
+        open: s => opened.resolve(s),
+        data(s) {
+          if (++count >= n) done.resolve();
+          else s.write("p");
+        },
+        end() {},
+        error() {},
+        close() {},
+      },
+    });
+    const probe = await opened.promise;
+    probe.write("p");
+    await done.promise;
+    probe.terminate();
+  }
+
   // us_socket_pause armed WRITABLE unconditionally; the always-writable socket
   // then dispatched a bogus drain with nothing buffered.
   it("pause() with nothing buffered must not fire a drain event", async () => {
@@ -387,12 +428,12 @@ describe.concurrent("socket", () => {
       },
     });
     const s = await opened.promise;
-    await Bun.sleep(50); // let any connect-time writable settle
+    await loopCycles(2); // any connect-time writable has dispatched
     const before = drains;
     s.pause();
-    await Bun.sleep(100); // window in which the buggy pause-armed writable fired
+    await loopCycles(3); // the buggy pause-armed writable would have fired
     s.resume();
-    await Bun.sleep(100); // resume() manufacturing WRITABLE fired one too
+    await loopCycles(3); // resume() manufacturing WRITABLE would have too
     const delta = drains - before;
     s.terminate(); // release before asserting so a failure does not leak the socket
     expect(delta).toBe(0);
@@ -430,9 +471,9 @@ describe.concurrent("socket", () => {
       socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
     });
     await opened.promise;
-    // Negative-assertion window: the buggy kqueue EV_EOF closed within ~2ms,
-    // so 250ms is >100x margin without spending the whole per-test budget.
-    await Bun.sleep(250);
+    // The buggy kqueue EV_EOF close dispatched in the first poll cycle after
+    // the pause; several full cycles prove it is not coming.
+    await loopCycles(3);
     const closed = closedEarly;
     peer.terminate(); // release before asserting so a failure does not leak the socket
     expect(closed).toBe(false);
@@ -469,8 +510,8 @@ describe.concurrent("socket", () => {
       socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
     });
     await opened.promise;
-    // Negative-assertion window, same rationale as the shutdown-then-pause test.
-    await Bun.sleep(250);
+    // Same checkpoint rationale as the shutdown-then-pause test.
+    await loopCycles(3);
     const closed = closedEarly;
     peer.terminate();
     expect(closed).toBe(false);
@@ -508,8 +549,8 @@ describe.concurrent("socket", () => {
       socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
     });
     await opened.promise;
-    // Negative-assertion window, same rationale as the shutdown-then-pause test.
-    await Bun.sleep(250);
+    // Same checkpoint rationale as the shutdown-then-pause test.
+    await loopCycles(3);
     const closed = closedEarly;
     peer.terminate();
     expect(closed).toBe(false);

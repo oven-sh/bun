@@ -641,7 +641,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         return Ok(());
     }
 
+    // For git/github/tarball dependencies `realname()` is the name from the
+    // extracted package's package.json, which stays empty until the first
+    // extract completes. Fall back to the alias so a re-resolution can find
+    // the package already loaded from the lockfile (`package_index` is keyed
+    // by real package names) instead of re-downloading it.
     let mut name = dependency.realname();
+    if name.is_empty() {
+        name = dependency.name;
+    }
     let mut name_hash = match dependency.version.tag {
         dependency::version::Tag::DistTag
         | dependency::version::Tag::Git

@@ -336,7 +336,12 @@ pub fn emit(
     let mut buf = ConsoleObject::take_scratch(console);
     let mut writer = ConsoleWriter {
         buf: &mut buf,
-        spill: native.then(|| (global.bun_vm().as_mut() as *mut VirtualMachine, stream.fd())),
+        spill: native.then(|| {
+            (
+                std::ptr::from_mut::<VirtualMachine>(global.bun_vm().as_mut()),
+                stream.fd(),
+            )
+        }),
     };
     let result = match f(&mut writer) {
         Ok(()) => deliver_to(global, stream, target, &buf),
@@ -552,7 +557,7 @@ fn message_with_type_and_level_(
                 .get(global, b"isTTY")?
                 .is_some_and(|v| v.to_boolean())
         };
-        if is_tty && bun_core::env_var::TERM::get().map_or(true, |t| t != b"dumb") {
+        if is_tty && bun_core::env_var::TERM::get().is_none_or(|t| t != b"dumb") {
             return deliver(global, ConsoleStream::Stdout, b"\x1b[1;1H\x1b[0J");
         }
         return Ok(());
@@ -6174,6 +6179,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
 ) {
     // SAFETY: caller passes valid (ptr, len) pairs.
     let label = unsafe { bun_core::ffi::slice(chars, len) };
+    // SAFETY: as above.
     let args = unsafe { bun_core::ffi::slice(args, args_len) };
     time_log_impl(global, "console.timeLog()", label, false, args);
 }

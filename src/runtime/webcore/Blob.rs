@@ -5084,9 +5084,8 @@ pub(crate) fn write_file_internal(
                 let vm = global_this.bun_vm().as_mut();
                 if let Some(sink) = webcore::file_sink::stdio_sink_for(vm, stdio_fd) {
                     // SAFETY: canonical live pointer held by RareData.
-                    if let Some((result, accepted)) =
-                        unsafe { (*sink).write_js_value(global_this, data, true)? }
-                    {
+                    let wrote = unsafe { (*sink).write_js_value(global_this, data, true)? };
+                    if let Some((result, accepted)) = wrote {
                         // `Bun.write` resolves once the bytes are written, with
                         // *this* call's byte count — not whenever (and with
                         // whatever total) the shared sink's queue drains.

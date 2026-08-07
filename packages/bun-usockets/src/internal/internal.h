@@ -51,6 +51,13 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
                                                  int new_events);
 #endif
 
+#ifdef LIBUS_USE_KQUEUE
+/* Defined in eventing/epoll_kqueue.c. Applies an interest-set transition as
+ * kevent changes; a 0->0 transition on a shut-down socket's poll arms the
+ * read-side teardown watch (see us_internal_socket_raw_shutdown). */
+int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_data);
+#endif
+
 /* We only have one networking implementation so far */
 #include "internal/networking/bsd.h"
 

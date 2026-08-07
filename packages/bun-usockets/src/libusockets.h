@@ -725,6 +725,12 @@ int us_socket_set_tos(us_socket_r s, int tos);
 int us_socket_get_tos(us_socket_r s);
 void us_socket_resume(us_socket_r s);
 void us_socket_pause(us_socket_r s);
+/* Arm writable interest for bytes the caller holds OUTSIDE the socket's own
+ * write path (uws's queued pipelined responses sit in the AsyncSocket buffer
+ * without any send having been attempted, so no write failure ever armed the
+ * poll). The next writable event flushes them. Respects pause: readable
+ * interest is not re-added. */
+void us_socket_mark_writable_pending(us_socket_r s);
 
 #ifdef __cplusplus
 }

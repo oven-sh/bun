@@ -391,8 +391,9 @@ describe.concurrent("socket", () => {
     const before = drains;
     s.pause();
     await Bun.sleep(100); // window in which the buggy pause-armed writable fired
-    expect(drains - before).toBe(0);
-    s.terminate();
+    const delta = drains - before;
+    s.terminate(); // release before asserting so a failure does not leak the socket
+    expect(delta).toBe(0);
   });
 
   // On kqueue, pause() after shutdown() armed an EVFILT_WRITE one-shot that
@@ -427,9 +428,49 @@ describe.concurrent("socket", () => {
       socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
     });
     await opened.promise;
-    await Bun.sleep(1000);
-    expect(closedEarly).toBe(false);
-    peer.terminate();
+    // Negative-assertion window: the buggy kqueue EV_EOF closed within ~2ms,
+    // so 250ms is >100x margin without spending the whole per-test budget.
+    await Bun.sleep(250);
+    const closed = closedEarly;
+    peer.terminate(); // release before asserting so a failure does not leak the socket
+    expect(closed).toBe(false);
+  });
+
+  // The flip side: with the write filter unusable after our own shutdown()
+  // (its EV_EOF echoes SS_CANTSENDMORE), the read-side teardown watch must
+  // still deliver the peer's actual termination to a paused half-closed
+  // socket (epoll gets this via the implicit EPOLLHUP|EPOLLERR).
+  it("shutdown() then pause() still closes when the peer terminates", async () => {
+    const closed = Promise.withResolvers<void>();
+    const opened = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.shutdown();
+          s.pause();
+          opened.resolve();
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {
+          closed.resolve();
+        },
+      },
+    });
+    const peerOpened = Promise.withResolvers<any>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: { open: s => peerOpened.resolve(s), data() {}, end() {}, error() {}, close() {} },
+    });
+    const peer = await peerOpened.promise;
+    await opened.promise;
+    peer.terminate(); // RST; the victim's close must still fire while paused
+    await closed.promise;
   });
 
   it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {

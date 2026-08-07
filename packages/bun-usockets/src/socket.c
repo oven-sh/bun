@@ -418,6 +418,17 @@ static void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+/* See libusockets.h. last_write_failed makes the writable dispatch keep the
+ * interest armed until a flush succeeds (it is cleared at writable-event
+ * entry and re-set by any failing write). */
+void us_socket_mark_writable_pending(struct us_socket_t *s) {
+    if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+        return;
+    }
+    s->flags.last_write_failed = 1;
+    us_internal_rearm_writable(s);
+}
+
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;
@@ -709,6 +720,15 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
     if (!us_socket_is_closed(s) && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+#ifdef LIBUS_USE_KQUEUE
+        /* A socket already at 0 events (paused with nothing buffered) diffs
+         * to a no-op above, leaving no kqueue filter at all; arm the
+         * read-side teardown watch directly so the peer's FIN/RST still
+         * closes us (epoll's implicit EPOLLHUP|EPOLLERR needs no filter). */
+        if (us_poll_events(&s->p) == 0) {
+            kqueue_change(s->group->loop->fd, us_poll_fd(&s->p), 0, 0, &s->p);
+        }
+#endif
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }
 }

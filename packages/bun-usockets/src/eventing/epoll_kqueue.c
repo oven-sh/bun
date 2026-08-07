@@ -538,19 +538,32 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     /* Do they differ in readable? */
     int is_readable =  (new_events & LIBUS_SOCKET_READABLE);
     int is_writable =  (new_events & LIBUS_SOCKET_WRITABLE);
-    if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
+    /* 0-event polls need a filter for peer teardown to ride (epoll gets this
+     * for free via the implicit EPOLLHUP|EPOLLERR). For a socket whose write
+     * side WE shut down, a write filter is useless: our own SS_CANTSENDMORE
+     * makes it report EV_EOF instantly, which read as the connection being
+     * over and closed a paused half-closed socket whose peer was alive. The
+     * read filter has no such echo - its EV_EOF is the PEER's FIN/RST - so
+     * keep one armed (EV_CLEAR: buffered data fires once and is masked by the
+     * dispatcher, instead of level-triggering every tick). */
+    int own_shutdown = user_data &&
+        us_internal_poll_type((struct us_poll_t *) user_data) == POLL_TYPE_SOCKET_SHUT_DOWN;
+    int teardown_watch = !is_readable && !is_writable && own_shutdown;
+    if (teardown_watch) {
+        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        if (old_events & LIBUS_SOCKET_WRITABLE) {
+            /* A still-armed write one-shot would report our own
+             * SS_CANTSENDMORE; nothing can ever be sent again anyway. */
+            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        }
+    } else if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
         EV_SET64(&change_list[change_length++], fd, EVFILT_READ, is_readable ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
 
     if(!is_readable && !is_writable) {
-        /* 0-event poll: arm a one-shot write filter so a peer teardown still
-         * has an event to ride (EV_EOF on EVFILT_WRITE; epoll gets this for
-         * free via the implicit EPOLLHUP|EPOLLERR). Never for a socket whose
-         * write side WE shut down: our own SS_CANTSENDMORE makes any write
-         * filter report EV_EOF instantly, which read as the connection being
-         * over and closed a paused half-closed socket whose peer was alive. */
-        int own_shutdown = user_data &&
-            us_internal_poll_type((struct us_poll_t *) user_data) == POLL_TYPE_SOCKET_SHUT_DOWN;
+        /* One-shot write filter as the teardown ride for 0-event polls that
+         * did not shut down themselves (see above; their read side may be
+         * gone entirely, e.g. half-open after on_end). */
         if(!(old_events & LIBUS_SOCKET_WRITABLE) && !own_shutdown) {
             EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, (uint64_t)(void*)user_data, 0, 0);
         }

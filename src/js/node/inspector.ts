@@ -485,30 +485,18 @@ class Session extends EventEmitter {
 
     const result = this.#handleMethod(method, params as object | undefined);
 
-    if (callback) {
-      // Callback API - async
-      queueMicrotask(() => {
-        if (result instanceof Error) {
-          callback(result, undefined);
-        } else if (result !== null && typeof result === "object" && kProtocolError in result) {
-          callback(result[kProtocolError], undefined);
-        } else {
-          callback(null, result);
-        }
-      });
-    } else {
-      // Sync throw for errors when no callback
+    // Node: without a callback the reply (including command errors) is dropped.
+    if (!callback) return;
+
+    queueMicrotask(() => {
       if (result instanceof Error) {
-        throw result;
+        callback(result, undefined);
+      } else if (result !== null && typeof result === "object" && kProtocolError in result) {
+        callback(result[kProtocolError], undefined);
+      } else {
+        callback(null, result);
       }
-      if (result !== null && typeof result === "object" && kProtocolError in result) {
-        const protocolError = result[kProtocolError];
-        const error = new Error(protocolError.message);
-        error.code = protocolError.code;
-        throw error;
-      }
-      return result;
-    }
+    });
   }
 
   #handleMethod(method: string, params?: object): any {

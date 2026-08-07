@@ -632,12 +632,42 @@ test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its
   expect(() => session.post("Runtime.enable", (() => {}) as any, () => {})).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
   );
-  expect(() => session.post("Nonexistent.domain")).toThrow(expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }));
   session.disconnect();
 
   // connectToMainThread() throws ERR_INSPECTOR_NOT_WORKER on the main thread.
   const s2 = new inspector.Session();
   expect(() => s2.connectToMainThread()).toThrow(expect.objectContaining({ code: "ERR_INSPECTOR_NOT_WORKER" }));
+});
+
+// Node's Session.post() returns undefined and, when called without a callback,
+// drops the command reply entirely: a failed or unsupported command must not
+// turn into a synchronous throw. Only argument validation and
+// ERR_INSPECTOR_NOT_CONNECTED throw synchronously.
+test("Session.post() without a callback is fire-and-forget: it returns undefined and never throws a command error", async () => {
+  const session = new inspector.Session();
+  session.connect();
+  try {
+    // An unsupported method reaches the default -32601 branch; Node drops it.
+    let ret: unknown = "not undefined";
+    expect(() => (ret = session.post("HeapProfiler.enable"))).not.toThrow();
+    expect(ret).toBeUndefined();
+
+    // A supported method that succeeds: Node still returns undefined, not {}.
+    expect(session.post("Profiler.enable")).toBeUndefined();
+
+    // A supported method whose precondition fails (no Profiler.start yet):
+    // Node drops the -32000 error instead of throwing it.
+    expect(() => (ret = session.post("Profiler.stop"))).not.toThrow();
+    expect(ret).toBeUndefined();
+
+    // The same command with a callback still delivers the error there.
+    const { promise, resolve } = Promise.withResolvers<any>();
+    session.post("Nonexistent.domain", err => resolve(err));
+    const err = await promise;
+    expect(err).toEqual(expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }));
+  } finally {
+    session.disconnect();
+  }
 });
 
 test("the method-specific event fires before inspectorNotification, like Node", () => {

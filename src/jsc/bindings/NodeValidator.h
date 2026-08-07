@@ -11,11 +11,8 @@ namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_validateInteger);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_validateNumber);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_validateString);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_validateFiniteNumber);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_validateFunction);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_validateBoolean);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_validatePort);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_validateAbortSignal);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_validateArray);

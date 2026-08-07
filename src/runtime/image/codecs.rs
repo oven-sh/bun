@@ -173,7 +173,7 @@ impl Format {
     /// final dotted segment is considered; case-insensitive. Returns `None`
     /// when there's no extension or it's not one we recognise.
     pub(crate) fn from_extension(path: &[u8]) -> Option<Format> {
-        let dot = path.iter().rposition(|&b| b == b'.')?;
+        let dot = bun_core::strings::last_index_of_char(path, b'.')?;
         let mut buf = [0u8; 5];
         let src = &path[dot + 1..];
         let n = src.len().min(buf.len());

@@ -982,32 +982,6 @@ impl Assets {
         Self::create_full_with_contents(asset_name, contents, "", is_template, args)
     }
 
-    /// Substitutes named placeholders `{[key]s}` in `template` with the
-    /// corresponding value from `args`.
-    fn substitute(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(template.len());
-        let mut i = 0;
-        'outer: while i < template.len() {
-            if template[i] == b'{' && template.get(i + 1) == Some(&b'[') {
-                for &(key, value) in args {
-                    // "{[" + key + "]s}"
-                    let placeholder_len = 2 + key.len() + 3;
-                    if i + placeholder_len <= template.len()
-                        && &template[i + 2..i + 2 + key.len()] == key
-                        && &template[i + 2 + key.len()..i + placeholder_len] == b"]s}"
-                    {
-                        out.extend_from_slice(value);
-                        i += placeholder_len;
-                        continue 'outer;
-                    }
-                }
-            }
-            out.push(template[i]);
-            i += 1;
-        }
-        out
-    }
-
     fn create_new(filename: &ZStr, contents: &[u8]) -> Result<(), Error> {
         // Create parent dirs then open.
         if let Some(dir) = bun_core::dirname(filename.as_bytes()) {
@@ -1058,7 +1032,7 @@ impl Assets {
 
         // Write contents of known assets to the new file. Template assets get formatted.
         if is_template {
-            let buf = Self::substitute(asset, args);
+            let buf = bun_fmt::substitute_named(asset, args);
             file.write_all(&buf)?;
         } else {
             file.write_all(asset)?;
@@ -1091,7 +1065,7 @@ impl Assets {
         )?;
 
         if is_template {
-            let buf = Self::substitute(contents, args);
+            let buf = bun_fmt::substitute_named(contents, args);
             file.write_all(&buf)?;
         } else {
             file.write_all(contents)?;
@@ -1943,10 +1917,7 @@ fn exists(path: &[u8]) -> bool {
 /// (absolute paths or any `..` segment), so `bun init` only creates files
 /// inside the current working directory.
 fn is_safe_entry_point_path(path: &[u8]) -> bool {
-    !bun_paths::is_absolute_loose(path)
-        && !path
-            .split(|&c| c == b'/' || c == b'\\')
-            .any(|seg| seg == b"..")
+    !bun_paths::is_absolute_loose(path) && !strings::split_any(path, b"/\\").any(|seg| seg == b"..")
 }
 
 #[inline]

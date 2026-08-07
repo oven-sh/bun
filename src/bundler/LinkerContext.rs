@@ -2970,6 +2970,7 @@ impl<'a> LinkerContext<'a> {
                         | Loader::Json
                         | Loader::Jsonc
                         | Loader::Json5
+                        | Loader::Xml
                         | Loader::Yaml
                         | Loader::Html
                         | Loader::SqliteEmbedded

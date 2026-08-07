@@ -1,7 +1,7 @@
 use core::ptr;
 use core::ptr::NonNull;
 
-use crate::schema_api as api;
+use crate::exception_list;
 use bun_core::String as BunString;
 use bun_core::ZigStringSlice;
 use bun_url::URL as ZigURL;
@@ -45,40 +45,32 @@ impl ZigStackTrace {
         }
     }
 
-    pub(crate) fn to_api(
+    /// Owned copy of the frames and source lines, with source URLs remapped
+    /// relative to `root_path` / `origin`.
+    pub(crate) fn snapshot(
         &self,
         root_path: &[u8],
         origin: Option<&ZigURL<'_>>,
-    ) -> Result<api::StackTrace, bun_alloc::AllocError> {
-        let mut stack_trace = api::StackTrace::default();
-        {
-            let mut source_lines_iter = self.source_line_iterator();
-
-            let source_line_len = source_lines_iter.get_length();
-
-            if source_line_len > 0 {
-                let n_lines = usize::try_from((source_lines_iter.i + 1).max(0)).expect("int cast");
-                let mut source_lines: Vec<api::SourceLine> = Vec::with_capacity(n_lines);
-                source_lines_iter = self.source_line_iterator();
-                while let Some(source) = source_lines_iter.next() {
-                    source_lines.push(api::SourceLine { line: source.line });
-                }
-                stack_trace.source_lines = source_lines;
-            }
-        }
-        {
-            let frames = self.frames();
-            if !frames.is_empty() {
-                let mut stack_frames: Vec<api::StackFrame> = Vec::with_capacity(frames.len());
-
-                for frame in frames {
-                    stack_frames.push(frame.to_api(root_path, origin)?);
-                }
-                stack_trace.frames = stack_frames;
+    ) -> exception_list::StackTrace {
+        let mut source_lines = Vec::new();
+        let mut iter = self.source_line_iterator();
+        if iter.get_length() > 0 {
+            while let Some(source) = iter.next() {
+                source_lines.push(exception_list::SourceLine {
+                    line: source.line,
+                    text: Box::from(source.trimmed_text()),
+                });
             }
         }
 
-        Ok(stack_trace)
+        exception_list::StackTrace {
+            source_lines,
+            frames: self
+                .frames()
+                .iter()
+                .map(|frame| frame.snapshot(root_path, origin))
+                .collect(),
+        }
     }
 
     pub fn frames(&self) -> &[ZigStackFrame] {
@@ -129,6 +121,15 @@ pub(crate) struct SourceLineIterator<'a> {
 pub(crate) struct SourceLine {
     pub line: i32,
     pub text: ZigStringSlice,
+}
+
+impl SourceLine {
+    /// The line as it should be displayed: surrounding newlines and trailing
+    /// indentation removed.
+    pub(crate) fn trimmed_text(&self) -> &[u8] {
+        let text = bun_core::trim(self.text.slice(), b"\n");
+        bun_core::trim_right(text, b"\t ")
+    }
 }
 
 impl<'a> SourceLineIterator<'a> {

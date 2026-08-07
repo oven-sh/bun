@@ -2241,7 +2241,11 @@ mod _async_tasks {
         pub(crate) promise: JSPromiseStrong,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<args::Readdir>,
+        /// JS thread only.
         pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
+        /// How the last subtask's thread delivers the completion.
+        pub(crate) vm: bun_jsc::VmHandle,
+        pub(crate) loop_kind: bun_jsc::LoopKind,
         pub task: WorkPoolTask,
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
@@ -2364,19 +2368,6 @@ mod _async_tasks {
             Box::new(init)
         }
 
-        /// Borrow the owning `JSGlobalObject`.
-        ///
-        /// SAFETY: `global_object` is set from a live `&JSGlobalObject` in
-        /// `create()` (never null) and the JSC_BORROW invariant (LIFETIMES.tsv)
-        /// guarantees the global outlives every task it spawns. The pointee is a
-        /// pinned JSC heap object; `bun_vm_concurrently()` is the only method we
-        /// call off-thread and it reads init-immutable state, so a shared borrow
-        /// is sound from both the JS thread and the work pool.
-        #[inline]
-        pub(crate) fn global_object(&self) -> &JSGlobalObject {
-            self.global_object.get()
-        }
-
         /// Free `root_path` — paired with the NUL-terminated duplication in
         /// `create()`. Idempotent (empty `Box` after first call).
         fn free_root_path(&mut self) {
@@ -2437,6 +2428,8 @@ mod _async_tasks {
                 args: FsArgument::into_thread_safe(args),
                 has_result: AtomicBool::new(false),
                 global_object: bun_ptr::BackRef::new(global_object),
+                vm: vm.handle(),
+                loop_kind: vm.current_loop_kind(),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -2623,17 +2616,22 @@ mod _async_tasks {
                 }
             }
 
-            // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
-            // documented accessor for off-thread (work-pool) callers.
-            let vm = self.global_object().bun_vm_concurrently();
-            // `ConcurrentTask::create` heap-allocates a fresh task; the
-            // queue takes ownership of it.
-            // SAFETY: `vm` is the process-singleton VM (LIFETIMES.tsv); the
-            // concurrent queue is MPSC-safe and the borrow is scoped to the call.
-            unsafe {
-                (*vm).enqueue_task_concurrent(ConcurrentTask::create(Task::init(
-                    std::ptr::from_mut::<Self>(self),
-                )));
+            // `ConcurrentTask::create` heap-allocates a fresh task; the queue
+            // takes ownership of it — unless the VM has been torn down.
+            let this: *mut Self = self;
+            let ct = ConcurrentTask::create(Task::init(this));
+            if let bun_jsc::vm_handle::Posted::Refused(ct) = self.vm.post(self.loop_kind, ct) {
+                // Nobody will settle the promise: drop the collected results, the
+                // arguments' own storage and the task; forget the JS-side members.
+                // SAFETY: refused ⇒ we own `ct`; subtask count hit zero ⇒ exclusive `this`.
+                unsafe {
+                    drop(bun_core::heap::take(ct.as_ptr()));
+                    (*this).clear_result_list();
+                    core::ptr::drop_in_place(&raw mut (*this).result_list);
+                    drop(core::ptr::read(&raw const (*this).args).into_inner_without_unprotect());
+                    core::ptr::drop_in_place(&raw mut (*this).vm);
+                    std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+                }
             }
         }
 

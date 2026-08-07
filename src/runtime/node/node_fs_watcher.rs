@@ -44,7 +44,11 @@ use super::win_watcher as path_watcher;
 #[bun_jsc::JsClass(no_constructor)]
 pub struct FSWatcher {
     // codegen: jsc.Codegen.JSFSWatcher provides toJS/fromJS/fromJSDirect
+    /// JS-thread uses only.
     ctx: *mut VirtualMachine,
+    /// How the watcher thread delivers event batches to the VM.
+    vm_handle: bun_jsc::VmHandle,
+    loop_kind: bun_jsc::LoopKind,
     verbose: bool,
 
     mutex: Mutex,
@@ -76,29 +80,17 @@ pub mod js {
 
 impl FSWatcher {
     #[inline]
-    fn vm(&self) -> &'static mut VirtualMachine {
-        // SAFETY: BACKREF — `ctx` is the per-thread `VirtualMachine` singleton
-        // (set in `init` from `globalThis.bunVM()`); it outlives every
-        // FSWatcher and all access is on the JS thread.
-        unsafe { &mut *self.ctx }
-    }
-
-    #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
         // SAFETY: `self.ctx` is the live per-thread VM singleton backref.
         unsafe { VirtualMachine::event_loop_ctx(self.ctx) }
     }
 
-    /// `task` must point to a live heap-allocated `ConcurrentTask` node that
-    /// the caller releases ownership of; the concurrent queue takes ownership
-    /// and frees it on the JS thread after dispatch.
+    /// Watcher thread → JS thread. `task` is the intrusive node of a heap batch
+    /// task; the queue takes ownership unless the VM has been torn down, in
+    /// which case the caller gets it back.
     #[cfg(not(windows))]
-    pub(crate) fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) {
-        // `vm()` is the BACKREF accessor; `event_loop_shared()` is the audited
-        // safe `&EventLoop` accessor. `enqueue_task_concurrent` is the
-        // documented cross-thread entry point and only touches the lock-free
-        // queue.
-        self.vm().event_loop_shared().enqueue_task_concurrent(task);
+    pub(crate) fn post(&self, task: core::ptr::NonNull<ConcurrentTask>) -> bun_jsc::vm_handle::Posted {
+        self.vm_handle.post(self.loop_kind, task)
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
@@ -223,10 +215,14 @@ impl FSWatchTaskPosix {
             // until the JS thread drains and `heap::take`s it in `dispatch`.
             unsafe {
                 (*that).concurrent_task.task = Task::init(that);
-                self.ctx()
-                    .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
-                        core::ptr::addr_of_mut!((*that).concurrent_task),
-                    ));
+                let node = core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!((*that).concurrent_task));
+                if let bun_jsc::vm_handle::Posted::Refused(_) = self.ctx().post(node) {
+                    // VM torn down: nobody will emit these events. Free the batch
+                    // (its entries own their paths) and drop the activity ref.
+                    let mut task = bun_core::heap::take(that);
+                    task.clean_entries();
+                    self.ctx().unref_task();
+                }
             }
             return;
         }
@@ -1100,6 +1096,8 @@ impl FSWatcher {
 
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
+            vm_handle: vm_ref.handle(),
+            loop_kind: vm_ref.as_mut().current_loop_kind(),
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,
                 ..Default::default()

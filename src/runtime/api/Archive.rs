@@ -693,7 +693,9 @@ pub trait TaskContext: Send {
 pub struct AsyncTask<C: TaskContext> {
     ctx: C,
     promise: JSPromiseStrong,
-    vm: *mut VirtualMachine,
+    /// How the pool thread delivers the completion.
+    vm: bun_jsc::VmHandle,
+    loop_kind: bun_jsc::LoopKind,
     task: WorkPoolTask,
     concurrent_task: ConcurrentTask,
     keep_alive: KeepAlive,
@@ -713,7 +715,9 @@ impl<C: TaskContext> AsyncTask<C> {
         let this = Box::new(AsyncTask {
             ctx,
             promise: JSPromiseStrong::init(global),
-            vm,
+            // SAFETY: `vm` is the live per-thread VM (JS thread).
+            vm: unsafe { (*vm).handle() },
+            loop_kind: unsafe { (*vm).current_loop_kind() },
             task: WorkPoolTask {
                 callback: Self::run_callback,
                 node: Default::default(),
@@ -757,12 +761,20 @@ impl<C: TaskContext> AsyncTask<C> {
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, work_task) };
         // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
         unsafe { (*this).ctx.run() };
-        // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
+        // SAFETY: concurrent_task is intrusive on the same allocation; the pool
+        // thread owns `this` until the post hands it to the JS thread.
         unsafe {
             let ct = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            (*(*this).vm).enqueue_task_concurrent(ct);
+            if let bun_jsc::vm_handle::Posted::Refused(_) = (*this).vm.post((*this).loop_kind, ct) {
+                // VM torn down: nobody will settle the promise. Release the
+                // context (portable) and the task's storage; the promise handle
+                // and keep-alive belong to a heap/loop that are gone.
+                core::ptr::drop_in_place(&raw mut (*this).ctx);
+                core::ptr::drop_in_place(&raw mut (*this).vm);
+                std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+            }
         }
     }
 

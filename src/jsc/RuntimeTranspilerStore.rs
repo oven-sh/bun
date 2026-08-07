@@ -321,6 +321,9 @@ impl RuntimeTranspilerStore {
                 global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: OwnedString::new(referrer),
                 vm,
+                // SAFETY: `vm` is the live per-thread VM (this is its JS thread).
+                vm_handle: unsafe { (*vm).handle() },
+                loop_kind: unsafe { (*vm).current_loop_kind() },
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
@@ -377,6 +380,11 @@ pub struct TranspilerJob {
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
     pub(crate) vm: *mut VirtualMachine,
+    /// The pool thread runs this job under `vm_handle.borrow()`: the job's
+    /// own slot, the transpiler it copies and the store queue it pushes to are
+    /// all VM-owned, and the VM's teardown waits for the borrow to end.
+    pub(crate) vm_handle: crate::VmHandle,
+    pub(crate) loop_kind: crate::LoopKind,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) fetcher: Fetcher,
     pub(crate) poll_ref: KeepAlive,
@@ -486,16 +494,21 @@ impl TranspilerJob {
 
     fn dispatch_to_main_thread(&mut self) {
         let vm = self.vm;
+        let handle = self.vm_handle.clone();
+        let loop_kind = self.loop_kind;
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
         let job = NonNull::from(&mut *self);
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
         unsafe { (*transpiler_store).queue.push(job) };
-        // Another thread may free `self` at any time after .push, so we cannot use it any more.
-        // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
-        unsafe { &*(*vm).event_loop() }
-            .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+        // Another thread may free `self` at any time after .push, so we cannot use it any more
+        // (the handle was cloned out above for exactly this reason).
+        let posted = handle.post(loop_kind, ConcurrentTask::create_from(transpiler_store));
+        // Runs under the borrow taken in `run_from_worker_thread`, so the VM
+        // cannot have closed: the post is always accepted.
+        debug_assert!(matches!(posted, crate::vm_handle::Posted::Queued));
+        let _ = posted;
     }
 
     fn run_from_js_thread(&mut self) -> JsResult<()> {
@@ -566,9 +579,19 @@ impl TranspilerJob {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `work_task` field initialised in
         // `transpile`; the WorkPool calls back with exactly that field, so
-        // `from_field_ptr!` recovers the live heap `TranspilerJob` parent.
-        let this = unsafe { &mut *bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
-        this.run();
+        // `from_field_ptr!` recovers the live `TranspilerJob` parent.
+        let this = unsafe { bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
+        // The job lives inside the VM (`transpiler_store.store`) and reads VM
+        // state while it runs, so all of it happens under a borrow the VM's
+        // teardown waits for. If the VM is already closed there is nothing to
+        // touch or release: the slot went with the VM.
+        // SAFETY: the one access before the borrow: `schedule` (JS thread)
+        // wrote the handle before handing the job to the pool, and the teardown
+        // joins/waits on pool work it owns before freeing the store.
+        let handle = unsafe { (*this).vm_handle.clone() };
+        let Some(_vm_alive) = handle.borrow() else { return };
+        // SAFETY: borrow held ⇒ VM (and this slot) alive for the rest of this fn.
+        unsafe { (*this).run() };
     }
 
     fn run(&mut self) {

@@ -3625,15 +3625,6 @@ impl VirtualMachine {
         self.event_loop_mut().enqueue_immediate_task(task);
     }
 
-    /// Enqueues a task from another thread onto this VM's event loop.
-    #[inline]
-    pub fn enqueue_task_concurrent(
-        &mut self,
-        task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
-    ) {
-        self.event_loop_mut().enqueue_task_concurrent(task);
-    }
-
     /// Ticks the event loop until no tasks keep it alive.
     pub fn wait_for_tasks(&mut self) {
         while self.is_event_loop_alive() {

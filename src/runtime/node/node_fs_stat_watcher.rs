@@ -59,10 +59,11 @@ pub struct StatWatcherScheduler {
     is_shutdown: AtomicBool,
     task: WorkPoolTask,
     main_thread: ThreadId,
-    // JSC_BORROW per LIFETIMES.tsv — VM outlives the scheduler. `BackRef` gives
-    // safe `&VirtualMachine` projection (Deref) at every read site;
-    // `event_loop_shared()` / `enqueue_task_concurrent` take `&self`.
+    /// JS-thread uses only (`timer_callback`).
     vm: BackRef<VirtualMachine>,
+    /// How the pool thread asks the JS thread to (re)arm the timer.
+    vm_handle: bun_jsc::VmHandle,
+    loop_kind: bun_jsc::LoopKind,
     watchers: WatcherQueue,
 
     pub(crate) event_loop_timer: EventLoopTimer,
@@ -187,6 +188,9 @@ impl StatWatcherScheduler {
             main_thread: thread::current().id(),
             // JSC_BORROW: `vm` is the live per-thread VM (never null).
             vm: BackRef::from(core::ptr::NonNull::new(vm).expect("vm")),
+            // SAFETY: `vm` is the live per-thread VM; this runs on its thread.
+            vm_handle: unsafe { (*vm).handle() },
+            loop_kind: unsafe { (*vm).current_loop_kind() },
             watchers: WatcherQueue::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::StatWatcherScheduler),
             ref_count: ThreadSafeRefCount::init(),
@@ -292,12 +296,18 @@ impl StatWatcherScheduler {
             // `set_timer`), kept alive across the hop by the watcher's RefPtr.
             scheduler: unsafe { ParentRef::from_raw_mut(this) },
         });
-        // SAFETY: `vm` is the live per-thread VM (JSC_BORROW).
+        // SAFETY: `this` is live (kept by the watcher's RefPtr across the hop).
         unsafe {
-            (*this)
-                .vm
-                .event_loop_shared()
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::from_boxed(holder)));
+            let holder = bun_core::heap::into_raw(holder);
+            let ct = ConcurrentTask::create(Task::new(
+                <StatWatcherTimerUpdate as bun_event_loop::Taskable>::TAG,
+                holder.cast::<()>(),
+            ));
+            if let bun_jsc::vm_handle::Posted::Refused(ct) = (*this).vm_handle.post((*this).loop_kind, ct) {
+                // VM torn down: no timer will be armed. Free the hop and its payload.
+                drop(bun_core::heap::take(ct.as_ptr()));
+                drop(bun_core::heap::take(holder));
+            }
         }
     }
 
@@ -501,8 +511,11 @@ impl StatWatcherScheduler {
 pub struct StatWatcher {
     pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
-    // JSC_BORROW per LIFETIMES.tsv — VM outlives the watcher.
+    /// JS-thread uses only.
     ctx: BackRef<VirtualMachine, bun_ptr::Mut>,
+    /// How the pool thread delivers stat results to the VM.
+    vm_handle: bun_jsc::VmHandle,
+    loop_kind: bun_jsc::LoopKind,
 
     ref_count: ThreadSafeRefCount<StatWatcher>,
 
@@ -656,14 +669,15 @@ impl StatWatcher {
         std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
-    /// # Safety
-    /// `task` must be a fresh heap-allocated `ConcurrentTask` not yet enqueued
-    /// elsewhere; the queue takes ownership of it.
-    fn enqueue_task_concurrent(
-        &self,
-        task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
-    ) {
-        self.ctx.event_loop_shared().enqueue_task_concurrent(task);
+    /// Pool thread → JS thread. `task` is a fresh heap `ConcurrentTask` whose
+    /// callback consumes one ref on `self`; if the VM has been torn down the
+    /// task is freed here and that ref released.
+    fn post_to_js_thread(&self, task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>) {
+        if let bun_jsc::vm_handle::Posted::Refused(task) = self.vm_handle.post(self.loop_kind, task) {
+            // SAFETY: refused ⇒ we own the task box; `self` is live (ref held for the callback).
+            unsafe { drop(bun_core::heap::take(task.as_ptr())) };
+            StatWatcher::deref(self.as_ctx_ptr());
+        }
     }
 
     /// Copy the last stat by value.
@@ -917,7 +931,7 @@ impl StatWatcher {
         // shared (`&*const`), so no write provenance is required.
         let this_ptr: *mut StatWatcher = self.as_ctx_ptr();
         Self::ref_(this_ptr);
-        self.enqueue_task_concurrent(ConcurrentTask::from_callback(
+        self.post_to_js_thread(ConcurrentTask::from_callback(
             this_ptr,
             Self::swap_and_call_listener_on_main_thread,
         ));
@@ -993,6 +1007,9 @@ impl StatWatcher {
             // for the `rare_data()` call in `deinit`.
             // SAFETY: `bun_vm_ptr()` is the live per-thread VM, non-null, outlives the watcher.
             ctx: unsafe { BackRef::from_raw_mut(vm) },
+            // SAFETY: `vm` is the live per-thread VM; this runs on its thread.
+            vm_handle: unsafe { (*vm).handle() },
+            loop_kind: unsafe { (*vm).current_loop_kind() },
             ref_count: ThreadSafeRefCount::init(),
             closed: AtomicBool::new(false),
             path: alloc_file_path,
@@ -1193,7 +1210,7 @@ impl InitialStatTask {
             Ok(ref res) => {
                 // we store the stat, but do not call the callback
                 this_ref.set_last_stat(res);
-                this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
+                this_ref.post_to_js_thread(ConcurrentTask::from_callback(
                     this,
                     StatWatcher::initial_stat_success_on_main_thread,
                 ));
@@ -1203,7 +1220,7 @@ impl InitialStatTask {
                 // and store previous stat as a zeroed stat object, and then call the callback.
                 // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
                 this_ref.set_last_stat(&bun_core::ffi::zeroed::<PosixStat>());
-                this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
+                this_ref.post_to_js_thread(ConcurrentTask::from_callback(
                     this,
                     StatWatcher::initial_stat_error_on_main_thread,
                 ));

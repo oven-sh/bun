@@ -2111,7 +2111,9 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    // Small enough that the serial awaited inserts stay under the default
+    // timeout on a debug + ASAN build.
+    const iterations = 1000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;
@@ -2132,8 +2134,7 @@ describe("Memory and resource management", () => {
     expect(finalCount[0].count).toBe(iterations - 300);
 
     await sql.close();
-    // 10k awaited inserts need more than the 5s default under debug + ASAN
-  }, 60_000);
+  });
 
   test("handles many concurrent prepared statements", async () => {
     const sql = new SQL("sqlite://:memory:");

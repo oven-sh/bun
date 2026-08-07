@@ -429,9 +429,9 @@ impl Route {
             config.public_path.append_char(b'/')?;
         }
 
-        if xform.serve_env_behavior != bun_options_types::schema::api::DotEnvBehavior::_none {
-            config.env_behavior = xform.serve_env_behavior;
-            if config.env_behavior == bun_options_types::schema::api::DotEnvBehavior::Prefix {
+        if let Some(env_behavior) = xform.serve_env_behavior {
+            config.env_behavior = env_behavior;
+            if config.env_behavior == bun_dotenv::DotEnvBehavior::Prefix {
                 config
                     .env_prefix
                     .append_slice(xform.serve_env_prefix.as_deref().unwrap_or(b""))?;
@@ -478,13 +478,8 @@ impl Route {
         config.define.put(b"import.meta.env.SSR", b"false")?;
         config.define.put(b"import.meta.env.STATIC", b"false")?;
 
-        if let Some(define) = &cli.args.serve_define {
-            debug_assert_eq!(define.keys.len(), define.values.len());
-            // `StringMap` exposes only put/insert (no bulk re-index);
-            // profile if hot.
-            for (k, v) in define.keys.iter().zip(define.values.iter()) {
-                config.define.put(k, v)?;
-            }
+        for (k, v) in &cli.args.serve_define {
+            config.define.put(k, v)?;
         }
 
         if !is_development {

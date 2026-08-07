@@ -245,7 +245,6 @@ pub mod options {
     pub use super::output_file::Value as OutputFileValue;
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;
-    pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
 
     /// Output kind of a build artifact (`OutputFile.output_kind`).
     ///

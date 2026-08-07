@@ -1,5 +1,4 @@
 #![feature(adt_const_params)]
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 pub mod bundle_enums;
 pub mod code_coverage_options;
@@ -8,23 +7,19 @@ pub mod compile_target;
 pub mod context;
 pub mod error;
 pub mod global_cache;
+pub mod install_config;
 pub mod jsx;
 pub mod offline_mode;
-pub mod schema;
+pub mod transform_options;
 
 pub use error::{Error, Result};
 
-pub use jsx as JSX;
-
-// ─── crate-root re-exports for dependents ────────────────────────────────
-// `ImportKind` / `ImportRecord` / `Loader` / `Target` / `Index` / `SideEffects`
-// are now canonical in `bun_ast` — callers import from there directly.
-// Only the `schema::api`-coupled extension traits and option-only types
-// (`Format`, `ModuleType`, …) are surfaced from this crate.
 pub use bundle_enums::{
-    BuiltInModule, BundlePackage, ForceNodeEnv, Format, LOADER_API_NAMES, LoaderExt, ModuleType,
-    TargetExt, WindowsOptions,
+    BuiltInModule, BundlePackage, ForceNodeEnv, Format, ModuleType, PackagesOption,
+    SourceMapOption, WindowsOptions,
 };
+pub use install_config::{BunInstall, Ca, NpmRegistry, NpmRegistryMap};
+pub use transform_options::{StringPairs, TransformOptions, UnhandledRejections};
 
 /// Compiled-standalone-binary virtual filesystem path prefix + predicate.
 ///

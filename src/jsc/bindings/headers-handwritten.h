@@ -252,23 +252,32 @@ inline constexpr JSErrorCode JSErrorCodeOutOfMemoryError = 8;
 inline constexpr JSErrorCode JSErrorCodeStackOverflow = 253;
 inline constexpr JSErrorCode JSErrorCodeUserErrorCode = 254;
 
-// Must be kept in sync with Loader in src/options_types/schema.rs
+// `bun_ast::Loader` discriminants (src/ast/loader.rs); `bun_jsc::BunLoaderType`
+// on the Rust side. Checked by test/internal/source-lints/loader-numbering.test.ts.
 typedef uint8_t BunLoaderType;
-inline constexpr BunLoaderType BunLoaderTypeNone = 254;
-inline constexpr BunLoaderType BunLoaderTypeJSX = 1;
-inline constexpr BunLoaderType BunLoaderTypeJS = 2;
-inline constexpr BunLoaderType BunLoaderTypeTS = 3;
-inline constexpr BunLoaderType BunLoaderTypeTSX = 4;
-inline constexpr BunLoaderType BunLoaderTypeCSS = 5;
-inline constexpr BunLoaderType BunLoaderTypeFILE = 6;
-inline constexpr BunLoaderType BunLoaderTypeJSON = 7;
-inline constexpr BunLoaderType BunLoaderTypeJSONC = 8;
-inline constexpr BunLoaderType BunLoaderTypeTOML = 9;
-inline constexpr BunLoaderType BunLoaderTypeWASM = 10;
-inline constexpr BunLoaderType BunLoaderTypeNAPI = 11;
-inline constexpr BunLoaderType BunLoaderTypeYAML = 19;
-inline constexpr BunLoaderType BunLoaderTypeMD = 21;
-inline constexpr BunLoaderType BunLoaderTypeXML = 22;
+inline constexpr BunLoaderType BunLoaderTypeNone = 255;
+inline constexpr BunLoaderType BunLoaderTypeJSX = 0;
+inline constexpr BunLoaderType BunLoaderTypeJS = 1;
+inline constexpr BunLoaderType BunLoaderTypeTS = 2;
+inline constexpr BunLoaderType BunLoaderTypeTSX = 3;
+inline constexpr BunLoaderType BunLoaderTypeCSS = 4;
+inline constexpr BunLoaderType BunLoaderTypeFILE = 5;
+inline constexpr BunLoaderType BunLoaderTypeJSON = 6;
+inline constexpr BunLoaderType BunLoaderTypeJSONC = 7;
+inline constexpr BunLoaderType BunLoaderTypeTOML = 8;
+inline constexpr BunLoaderType BunLoaderTypeWASM = 9;
+inline constexpr BunLoaderType BunLoaderTypeNAPI = 10;
+inline constexpr BunLoaderType BunLoaderTypeBASE64 = 11;
+inline constexpr BunLoaderType BunLoaderTypeDATAURL = 12;
+inline constexpr BunLoaderType BunLoaderTypeTEXT = 13;
+inline constexpr BunLoaderType BunLoaderTypeBUNSH = 14;
+inline constexpr BunLoaderType BunLoaderTypeSQLITE = 15;
+inline constexpr BunLoaderType BunLoaderTypeSQLITE_EMBEDDED = 16;
+inline constexpr BunLoaderType BunLoaderTypeHTML = 17;
+inline constexpr BunLoaderType BunLoaderTypeYAML = 18;
+inline constexpr BunLoaderType BunLoaderTypeJSON5 = 19;
+inline constexpr BunLoaderType BunLoaderTypeMD = 20;
+inline constexpr BunLoaderType BunLoaderTypeXML = 21;
 
 #pragma mark - Stream
 

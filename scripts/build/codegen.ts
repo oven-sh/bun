@@ -707,6 +707,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // ($makeErrorWithCode(N, ...)); without this dep an ErrorCode.ts edit leaves
   // stale error numbers in the JS bundles while the C++ enum regenerates.
   const errorCodeInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts");
+  // replacements.ts derives the $Loader*/$ImportKind* id tables from these Rust enums.
+  const rustEnumInputs = [resolve(cfg.cwd, "src", "ast", "loader.rs"), resolve(cfg.cwd, "src", "ast", "lib.rs")];
 
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
@@ -733,7 +735,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput, ...rustEnumInputs],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

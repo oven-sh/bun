@@ -1,6 +1,5 @@
 //! `Bun.build()` plugin host + `BuildArtifact` JS wrapper.
 
-use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
 use crate::webcore::Blob;
@@ -12,10 +11,10 @@ use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::{String as BunString, ZigString};
+use bun_dotenv::DotEnvBehavior;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::compile_target::CompileTarget;
-use bun_options_types::schema::api; // bun.schema.api
 use bun_standalone_graph::StandaloneModuleGraph;
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
@@ -29,17 +28,6 @@ pub mod js_bundler {
     use bun_sys::FdExt;
 
     type OwnedString = MutableString;
-
-    /// `options::JSX::Runtime` → `api::JsxRuntime` (only the reverse `From`
-    /// exists upstream).
-    fn jsx_runtime_to_api(r: options::JSX::Runtime) -> api::JsxRuntime {
-        match r {
-            options::JSX::Runtime::_None => api::JsxRuntime::_none,
-            options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
-            options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
-            options::JSX::Runtime::Solid => api::JsxRuntime::Solid,
-        }
-    }
 
     /// A map of file paths to their in-memory contents.
     /// LAYERING: the data-only struct (`map: StringHashMap<Box<[u8]>>`) and
@@ -120,11 +108,11 @@ pub mod js_bundler {
         pub(crate) react_compiler_parse_test_pragmas: bool,
         pub(crate) react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
         pub(crate) define: StringMap,
-        pub(crate) loaders: Option<api::LoaderMap>,
+        pub(crate) loaders: Vec<(Box<[u8]>, bun_ast::Loader)>,
         pub(crate) dir: OwnedString,
         pub(crate) outdir: OwnedString,
         pub(crate) rootdir: OwnedString,
-        pub(crate) jsx: api::Jsx,
+        pub(crate) jsx: options::jsx::Options,
         pub(crate) force_node_env: options::ForceNodeEnv,
         pub(crate) code_splitting: bool,
         pub(crate) minify: Minify,
@@ -151,7 +139,7 @@ pub mod js_bundler {
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
-        pub(crate) env_behavior: api::DotEnvBehavior,
+        pub(crate) env_behavior: DotEnvBehavior,
         pub(crate) env_prefix: OwnedString,
         pub(crate) compile: Option<CompileOptions>,
         /// In-memory files that can be used as entrypoints or imported.
@@ -175,15 +163,11 @@ pub mod js_bundler {
                 react_compiler_parse_test_pragmas: false,
                 react_compiler_output_mode: None,
                 define: StringMap::init(false),
-                loaders: None,
+                loaders: Vec::new(),
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
                 rootdir: OwnedString::default(),
-                jsx: api::Jsx {
-                    factory: Box::default(),
-                    fragment: Box::default(),
-                    runtime: api::JsxRuntime::Automatic,
-                    import_source: Box::default(),
+                jsx: options::jsx::Options {
                     development: true, // Default to development mode like old Pragma
                     ..Default::default()
                 },
@@ -211,7 +195,7 @@ pub mod js_bundler {
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
-                env_behavior: api::DotEnvBehavior::Disable,
+                env_behavior: DotEnvBehavior::Disable,
                 env_prefix: OwnedString::default(),
                 compile: None,
                 files: FileMap::default(),
@@ -671,12 +655,12 @@ pub mod js_bundler {
                         || env == JSValue::FALSE
                         || (env.is_number() && env.as_number() == 0.0)
                     {
-                        this.env_behavior = api::DotEnvBehavior::Disable;
+                        this.env_behavior = DotEnvBehavior::Disable;
                     } else if env == JSValue::TRUE || (env.is_number() && env.as_number() == 1.0) {
-                        this.env_behavior = api::DotEnvBehavior::LoadAll;
+                        this.env_behavior = DotEnvBehavior::LoadAll;
                     } else if env.is_string() {
                         let slice = env.to_slice(global_this)?;
-                        match api::DotEnvBehavior::parse_str(slice.slice()) {
+                        match DotEnvBehavior::parse_str(slice.slice()) {
                             Ok((behavior, prefix)) => {
                                 this.env_behavior = behavior;
                                 if let Some(prefix) = prefix {
@@ -719,7 +703,7 @@ pub mod js_bundler {
                     let _ =
                         bun_core::copy_lowercase(&slice.slice()[0..len], &mut str_lower[0..len]);
                     if let Some(runtime) = options::JSX::RUNTIME_MAP.get(&str_lower[0..len]) {
-                        this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
+                        this.jsx.runtime = runtime.runtime;
                         if let Some(dev) = runtime.development {
                             this.jsx.development = dev;
                         }
@@ -1099,18 +1083,7 @@ pub mod js_bundler {
                     },
                 )?;
 
-                // `loader_iter.i` is the property position, not a dense index of yielded
-                // entries. With `skip_empty_name = true` (or a skipped property getter),
-                // writing at `loader_iter.i` would leave earlier slots uninitialized and
-                // later freed as garbage. Use ArrayLists so the stored slice is always
-                // exactly what was appended.
-                let mut loader_names: Vec<Box<[u8]>> = Vec::new();
-                // errdefer: Vec<Box<[u8]>> drops automatically
-                let mut loader_values: Vec<api::Loader> = Vec::new();
-
-                loader_names.reserve_exact(loader_iter.len);
-                loader_values.reserve_exact(loader_iter.len);
-
+                this.loaders.reserve_exact(loader_iter.len);
                 while let Some(prop) = loader_iter.next()? {
                     let prop_slice = prop.to_utf8();
                     if !prop_slice.slice().starts_with(b".") || prop.length() < 2 {
@@ -1120,19 +1093,15 @@ pub mod js_bundler {
                     }
                     drop(prop_slice);
 
-                    loader_values.push(loader_iter.value.to_enum_from_map(
+                    let loader = loader_iter.value.to_enum_from_map(
                         global_this,
                         "loader",
-                        &options::LOADER_API_NAMES,
-                        "\"js\", \"jsx\", \"ts\", \"tsx\", \"css\", \"file\", \"json\", \"toml\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\", \"html\"",
-                    )?);
-                    loader_names.push(prop.to_owned_slice().into_boxed_slice());
+                        &bun_ast::loader::LOADER_NAMES,
+                        "\"js\", \"jsx\", \"ts\", \"tsx\", \"css\", \"file\", \"json\", \"jsonc\", \"json5\", \"toml\", \"yaml\", \"xml\", \"md\", \"html\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\", or \"sqlite\"",
+                    )?;
+                    this.loaders
+                        .push((prop.to_owned_slice().into_boxed_slice(), loader));
                 }
-
-                this.loaders = Some(api::LoaderMap {
-                    extensions: loader_names,
-                    loaders: loader_values,
-                });
             }
 
             if let Some(flag) = config.get_boolean_strict(global_this, "throw")? {
@@ -1597,7 +1566,10 @@ pub mod js_bundler {
                 return;
             }
         } else {
-            let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
+            let loader = u8::try_from(loader_as_int.as_int32())
+                .ok()
+                .and_then(bun_ast::Loader::from_repr)
+                .unwrap_or(bun_ast::Loader::File);
             let global = bv2_plugin(this.bv2).global_object();
             let source_code = match crate::node::StringOrBuffer::from_js_to_owned_slice(
                 global,
@@ -1614,7 +1586,7 @@ pub mod js_bundler {
                 }
             };
             this.value = LoadValue::Success(LoadSuccess {
-                loader: bun_ast::Loader::from_api(loader),
+                loader,
                 source_code: source_code.into(),
             });
         }

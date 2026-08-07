@@ -1,7 +1,6 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
 use bun_alloc::ArenaVecExt as _;
-use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::Error;
@@ -10,9 +9,11 @@ use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec r
 use bun_ast::Expr;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
-use bun_bundler::options::{self, PackagesOption, SourceMapOption};
+use bun_bundler::options::{self, SourceMapOption};
 use bun_bundler::transpiler::{MacroJSCtx, ParseOptions, ParseResult};
 use bun_bundler::{self as Transpiler};
+use bun_collections::ArrayHashMapExt;
+use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
@@ -26,12 +27,9 @@ use bun_jsc::{
     JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc,
     StringJsc,
 };
+use bun_options_types::TransformOptions;
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
-// `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
-use bun_collections::ArrayHashMapExt;
-use bun_core::{OwnedString, String as BunString, ZigString};
-use bun_options_types::schema::api;
 
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `JsCell` (= `UnsafeCell` projector). `JsCell` is
@@ -56,16 +54,15 @@ pub struct JSTranspiler {
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
-fn default_transform_options() -> api::TransformOptions {
-    api::TransformOptions {
-        disable_hmr: true,
-        target: Some(api::Target::Browser),
+fn default_transform_options() -> TransformOptions {
+    TransformOptions {
+        target: Some(bun_ast::Target::Browser),
         ..Default::default()
     }
 }
 
 pub struct Config {
-    pub(crate) transform: api::TransformOptions,
+    pub(crate) transform: TransformOptions,
     pub(crate) default_loader: Loader,
     pub(crate) macro_map: MacroMap,
     pub(crate) tsconfig: Option<Box<TSConfigJSON>>,
@@ -188,14 +185,7 @@ impl Config {
                     JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
                 // `defer define_iter.deinit()` → Drop
 
-                // `define_iter.i` is the property position, not a dense index of yielded
-                // entries. With `skip_empty_name = true` (or a skipped property getter),
-                // writing at `define_iter.i` would leave earlier slots uninitialized.
-                // Use Vecs so the stored slice is always exactly what was appended.
-                let mut names: Vec<Box<[u8]>> = Vec::new();
-                let mut values: Vec<Box<[u8]>> = Vec::new();
-                names.reserve_exact(define_iter.len);
-                values.reserve_exact(define_iter.len);
+                let mut define = bun_options_types::StringPairs::with_capacity(define_iter.len);
 
                 while let Some(prop) = define_iter.next()? {
                     let property_value = define_iter.value;
@@ -208,7 +198,7 @@ impl Config {
                         )));
                     }
 
-                    names.push(prop.to_owned_slice().into());
+                    let name: Box<[u8]> = prop.to_owned_slice().into();
                     let mut val = ZigString::init(b"");
                     property_value.to_zig_string(&mut val, global)?;
                     if val.len == 0 {
@@ -216,13 +206,10 @@ impl Config {
                     }
                     let mut buf = Vec::new();
                     write!(&mut buf, "{}", val).expect("unreachable");
-                    values.push(buf.into_boxed_slice());
+                    define.push((name, buf.into_boxed_slice()));
                 }
 
-                self.transform.define = Some(api::StringMap {
-                    keys: names,
-                    values,
-                });
+                self.transform.define = define;
             }
         }
 
@@ -292,7 +279,7 @@ impl Config {
 
         if let Some(target) = object.get(global, "target")? {
             if let Some(resolved) = target_from_js(global, target)? {
-                self.transform.target = Some(resolved.to_api());
+                self.transform.target = Some(resolved);
             }
         }
 
@@ -431,13 +418,13 @@ impl Config {
         if let Some(flag) = object.get(global, "sourcemap")? {
             if flag.is_boolean() || flag.is_undefined_or_null() {
                 if flag.to_boolean() {
-                    self.transform.source_map = Some(api::SourceMapMode::Inline);
+                    self.transform.source_map = Some(SourceMapOption::Inline);
                 } else {
-                    self.transform.source_map = Some(api::SourceMapMode::None);
+                    self.transform.source_map = Some(SourceMapOption::None);
                 }
             } else {
                 if let Some(source) = source_map_option_from_js(global, flag)? {
-                    self.transform.source_map = Some(SourceMapOption::to_api(Some(source)));
+                    self.transform.source_map = Some(source);
                 } else {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "sourcemap must be one of \"inline\", \"linked\", \"external\", or \"none\"",
@@ -452,7 +439,7 @@ impl Config {
             &options::PACKAGES_OPTION_MAP,
             "\"bundle\" or \"external\"",
         )? {
-            self.transform.packages = Some(PackagesOption::to_api(Some(packages)));
+            self.transform.packages = Some(packages);
         }
 
         let mut tree_shaking: Option<bool> = None;
@@ -1049,7 +1036,7 @@ impl JSTranspiler {
 
         transpiler.options.no_macros = config.no_macros;
         transpiler.configure_linker_with_auto_jsx(false);
-        transpiler.options.env.behavior = options::EnvBehavior::disable;
+        transpiler.options.env.behavior = bun_dotenv::DotEnvBehavior::Disable;
         if let Err(err) = transpiler.configure_defines() {
             let log = &mut config.log;
             if (log.warnings + log.errors) > 0 {

@@ -112,7 +112,7 @@ impl ReplCommand {
         b.options.global_cache = b.resolver.opts.global_cache;
         b.options.install_preference = offline;
         b.resolver.env_loader = NonNull::new(b.env);
-        b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
+        b.options.env.behavior = DotEnvBehavior::LoadAllWithoutInlining;
         b.options.dead_code_elimination = false; // REPL needs all code
 
         if b.configure_defines().is_err() {
@@ -293,5 +293,5 @@ unsafe extern "C" {
     ) -> bool;
 }
 
-use bun_bundler::options::EnvBehavior;
+use bun_dotenv::DotEnvBehavior;
 use bun_options_types::offline_mode::OfflineMode;

@@ -451,7 +451,7 @@ impl hooks::AutoInstaller for PackageManager {
 #[unsafe(no_mangle)]
 unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
-    install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
+    install: Option<core::ptr::NonNull<bun_options_types::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader>,
 ) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_errno::SystemErrno> {
     // ABI: the resolver-side `extern "Rust"` declaration names
@@ -462,9 +462,9 @@ unsafe fn __bun_resolver_init_package_manager(
     // Idempotent.
     bun_http::http_thread::init(&Default::default());
 
-    // SAFETY: when `Some`, `install` points at a live `Api::BunInstall`
+    // SAFETY: when `Some`, `install` points at a live `BunInstall`
     // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.
-    let bun_install: Option<&crate::bun_schema::api::BunInstall> =
+    let bun_install: Option<&bun_options_types::BunInstall> =
         install.map(|p| unsafe { p.as_ref() });
     // SAFETY: caller guarantees `log` / `env` point at process-lifetime
     // Transpiler-owned storage with no aliasing `&mut` live across this call.

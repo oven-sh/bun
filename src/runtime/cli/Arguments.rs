@@ -1,24 +1,25 @@
 //! `parse()` runs `clap::parse()` against the per-tag table, handles
-//! `--help`/`-v`/`--revision`, and populates the full `api::TransformOptions`
+//! `--help`/`-v`/`--revision`, and populates the full `TransformOptions`
 //! / `Context` from every recognised flag. All param tables — leaf and
 //! concatenated — are const `&'static [ParamType]` via the
 //! `bun_clap::parse_param!` proc-macro (compile-time spec parsing) plus a
 //! const-fn slice concat (`bun_clap::concat_params!`).
 
-use bun_options_types::LoaderExt as _;
-
 use bstr::BStr;
+use bun_ast::Target;
 use bun_bundler::options;
 use bun_clap as clap;
 use bun_clap::parse_param;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, Global, Output, env_var};
+use bun_dotenv::DotEnvBehavior;
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
-use bun_options_types::schema::api;
+use bun_options_types::jsx;
+use bun_options_types::{PackagesOption, SourceMapOption, TransformOptions, UnhandledRejections};
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, platform};
 
@@ -29,24 +30,19 @@ use crate::cli::concat_params;
 use crate::cli::{DefineColonList, LoaderColonList};
 
 /// Clone borrowed argv slices into the owning `Vec<Box<[u8]>>` shape used by
-/// `api::TransformOptions` / `Context` fields.
+/// `TransformOptions` / `Context` fields.
 #[inline]
 fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
-pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
-    let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
-    Ok(option_loader.to_api())
-}
-
-fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
+fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<jsx::Runtime> {
     if s == b"automatic" {
-        Ok(api::JsxRuntime::Automatic)
+        Ok(jsx::Runtime::Automatic)
     } else if s == b"fallback" || s == b"classic" {
-        Ok(api::JsxRuntime::Classic)
+        Ok(jsx::Runtime::Classic)
     } else if s == b"solid" {
-        Ok(api::JsxRuntime::Solid)
+        Ok(jsx::Runtime::Solid)
     } else {
         Err(crate::Error::InvalidJSXRuntime)
     }
@@ -739,12 +735,12 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // `crate::cli::arguments::load_config*` callers are unaffected.
 pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
 
-/// Parse `argv` into `api::TransformOptions` for the given subcommand.
+/// Parse `argv` into `TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
 /// param table, and the per-`cmd` blocks below are guarded by
 /// `if matches!(cmd, …)`.
-pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
+pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<TransformOptions> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 
@@ -789,7 +785,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
-    // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
+    // `TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
         let mut outbuf = PathBuffer::uninit();
@@ -862,23 +858,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         load_config_with_cmd_args(cmd, &args, ctx)?;
     }
 
-    let mut opts: api::TransformOptions = ctx.args.clone();
+    let mut opts: TransformOptions = ctx.args.clone();
 
     let defines_tuple = DefineColonList::resolve(args.options(b"--define"))?;
 
     if !defines_tuple.keys.is_empty() {
-        opts.define = Some(api::StringMap {
-            keys: defines_tuple
-                .keys
-                .iter()
-                .map(|s| Box::<[u8]>::from(*s))
-                .collect(),
-            values: defines_tuple
-                .values
-                .iter()
-                .map(|s| Box::<[u8]>::from(*s))
-                .collect(),
-        });
+        opts.define = (defines_tuple.keys.iter().zip(&defines_tuple.values))
+            .map(|(k, v)| (Box::<[u8]>::from(*k), Box::<[u8]>::from(*v)))
+            .collect();
     }
 
     opts.drop = slice_to_owned(args.options(b"--drop"));
@@ -896,14 +883,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     };
 
     if !loader_tuple.keys.is_empty() {
-        opts.loaders = Some(api::LoaderMap {
-            extensions: loader_tuple
-                .keys
-                .iter()
-                .map(|s| Box::<[u8]>::from(*s))
-                .collect(),
-            loaders: loader_tuple.values,
-        });
+        opts.loaders = (loader_tuple.keys.iter().zip(loader_tuple.values))
+            .map(|(ext, loader)| (Box::<[u8]>::from(*ext), loader))
+            .collect();
     }
 
     opts.tsconfig_override = if let Some(ts) = args.option(b"--tsconfig-override") {
@@ -1028,9 +1010,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
-            opts.unhandled_rejections = match api::UnhandledRejections::MAP
-                .get(unhandled_rejections)
-            {
+            opts.unhandled_rejections = match UnhandledRejections::MAP.get(unhandled_rejections) {
                 Some(v) => Some(*v),
                 None => {
                     Output::err_generic(
@@ -1468,11 +1448,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        if let Some(define) = &opts.define {
-            if !define.keys.is_empty() {
-                bun_jsc::runtime_transpiler_cache::IS_DISABLED
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-            }
+        if !opts.define.is_empty() {
+            bun_jsc::runtime_transpiler_cache::IS_DISABLED
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -1495,21 +1473,21 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let default_fragment: &[u8] = b"";
         let default_import_source: &[u8] = b"";
         if opts.jsx.is_none() {
-            opts.jsx = Some(api::Jsx {
+            opts.jsx = Some(jsx::Options {
                 factory: jsx_factory.unwrap_or(default_factory).into(),
                 fragment: jsx_fragment.unwrap_or(default_fragment).into(),
                 import_source: jsx_import_source.unwrap_or(default_import_source).into(),
                 runtime: if let Some(runtime) = jsx_runtime {
                     resolve_jsx_runtime(runtime)?
                 } else {
-                    api::JsxRuntime::Automatic
+                    jsx::Runtime::Automatic
                 },
                 development: false,
                 side_effects: jsx_side_effects,
             });
         } else {
             let prev = opts.jsx.take().unwrap();
-            opts.jsx = Some(api::Jsx {
+            opts.jsx = Some(jsx::Options {
                 factory: jsx_factory.map(Box::<[u8]>::from).unwrap_or(prev.factory),
                 fragment: jsx_fragment.map(Box::<[u8]>::from).unwrap_or(prev.fragment),
                 import_source: jsx_import_source
@@ -1560,12 +1538,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     if let Some(log_level) = opts.log_level {
-        bun_ast::DEFAULT_LOG_LEVEL.store(match log_level {
-            api::MessageLevel::Debug => bun_ast::Level::Debug,
-            api::MessageLevel::Err => bun_ast::Level::Err,
-            api::MessageLevel::Warn => bun_ast::Level::Warn,
-            _ => bun_ast::Level::Err,
-        });
+        bun_ast::DEFAULT_LOG_LEVEL.store(log_level);
         // SAFETY: `ctx.log` is the CLI log, owned by the caller and not yet
         // shared with another thread.
         unsafe {
@@ -1925,7 +1898,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
 fn parse_build_command_options(
     cmd: CommandTag,
     args: &clap::Args<clap::Help>,
-    opts: &mut api::TransformOptions,
+    opts: &mut TransformOptions,
     ctx: Context<'_>,
     diag: &mut clap::Diagnostic,
 ) {
@@ -1952,7 +1925,7 @@ fn parse_build_command_options(
 
     if ctx.bundler_options.bytecode {
         ctx.bundler_options.output_format = options::Format::Cjs;
-        ctx.args.target = Some(api::Target::Bun);
+        ctx.args.target = Some(Target::Bun);
     }
 
     if let Some(public_path) = args.option(b"--public-path") {
@@ -2005,9 +1978,9 @@ fn parse_build_command_options(
 
     if let Some(packages) = args.option(b"--packages") {
         if packages == b"bundle" {
-            opts.packages = Some(api::PackagesMode::Bundle);
+            opts.packages = Some(PackagesOption::Bundle);
         } else if packages == b"external" {
-            opts.packages = Some(api::PackagesMode::External);
+            opts.packages = Some(PackagesOption::External);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid packages setting: \"{}\"",
@@ -2020,15 +1993,15 @@ fn parse_build_command_options(
     if let Some(env) = args.option(b"--env") {
         if let Some(asterisk) = strings::index_of_char(env, b'*') {
             if asterisk == 0 {
-                ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAll;
+                ctx.bundler_options.env_behavior = DotEnvBehavior::LoadAll;
             } else {
-                ctx.bundler_options.env_behavior = options::EnvBehavior::Prefix;
+                ctx.bundler_options.env_behavior = DotEnvBehavior::Prefix;
                 ctx.bundler_options.env_prefix = Box::<[u8]>::from(&env[..asterisk as usize]);
             }
         } else if env == b"inline" || env == b"1" {
-            ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAll;
+            ctx.bundler_options.env_behavior = DotEnvBehavior::LoadAll;
         } else if env == b"disable" || env == b"0" {
-            ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAllWithoutInlining;
+            ctx.bundler_options.env_behavior = DotEnvBehavior::LoadAllWithoutInlining;
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Expected 'env' to be 'inline', 'disable', or a prefix with a '*' character"
@@ -2051,38 +2024,33 @@ fn parse_build_command_options(
                             );
                             Global::exit(1);
                         }
-                        opts.target = Some(api::Target::Bun);
+                        opts.target = Some(Target::Bun);
                         break 'brk;
                     }
                 }
             }
 
             opts.target = Some(opts.target.unwrap_or_else(|| match target {
-                b"browser" => api::Target::Browser,
-                b"node" => api::Target::Node,
+                b"browser" => Target::Browser,
+                b"node" => Target::Node,
                 b"macro" => {
                     if cmd == CommandTag::BuildCommand {
-                        api::Target::BunMacro
+                        Target::BunMacro
                     } else {
-                        api::Target::Bun
+                        Target::Bun
                     }
                 }
-                b"bun" => api::Target::Bun,
+                b"bun" => Target::Bun,
                 _ => cli::invalid_target(diag, target),
             }));
 
-            if opts.target.unwrap() == api::Target::Bun {
-                ctx.debug.run_in_bun = opts.target.unwrap() == api::Target::Bun;
+            if opts.target.unwrap() == Target::Bun {
+                ctx.debug.run_in_bun = opts.target.unwrap() == Target::Bun;
             } else {
                 if ctx.bundler_options.bytecode {
                     Output::err_generic(
                         "target must be 'bun' when bytecode is true. Received: {}",
-                        format_args!(
-                            "{:?}",
-                            <bun_ast::Target as bun_options_types::TargetExt>::from_api(
-                                opts.target
-                            )
-                        ),
+                        format_args!("{}", BStr::new(target)),
                     );
                     Global::exit(1);
                 }
@@ -2090,12 +2058,7 @@ fn parse_build_command_options(
                 if ctx.bundler_options.bake {
                     Output::err_generic(
                         "target must be 'bun' when using --app. Received: {}",
-                        format_args!(
-                            "{:?}",
-                            <bun_ast::Target as bun_options_types::TargetExt>::from_api(
-                                opts.target
-                            )
-                        ),
+                        format_args!("{}", BStr::new(target)),
                     );
                 }
             }
@@ -2406,7 +2369,7 @@ fn parse_build_command_options(
             }
             options::Format::Cjs => {
                 if ctx.args.target.is_none() {
-                    ctx.args.target = Some(api::Target::Node);
+                    ctx.args.target = Some(Target::Node);
                 }
             }
             _ => {}
@@ -2464,19 +2427,17 @@ fn parse_build_command_options(
     if args.flag(b"--server-components") {
         ctx.bundler_options.server_components = true;
         if let Some(target) = opts.target {
-            if !<bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                .is_server_side()
-            {
+            if !target.is_server_side() {
                 Output::err_generic(
                     "Cannot use client-side --target={} with --server-components",
                     format_args!(
-                        "{:?}",
-                        <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
+                        "{}",
+                        BStr::new(args.option(b"--target").unwrap_or(b"browser"))
                     ),
                 );
                 Global::crash();
             } else {
-                opts.target = Some(api::Target::Bun);
+                opts.target = Some(Target::Bun);
             }
         }
     }
@@ -2492,15 +2453,15 @@ fn parse_build_command_options(
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
             // In the future, Bun is going to make this default to .linked
-            opts.source_map = Some(api::SourceMapMode::Linked);
+            opts.source_map = Some(SourceMapOption::Linked);
         } else if setting == b"inline" {
-            opts.source_map = Some(api::SourceMapMode::Inline);
+            opts.source_map = Some(SourceMapOption::Inline);
         } else if setting == b"none" {
-            opts.source_map = Some(api::SourceMapMode::None);
+            opts.source_map = Some(SourceMapOption::None);
         } else if setting == b"external" {
-            opts.source_map = Some(api::SourceMapMode::External);
+            opts.source_map = Some(SourceMapOption::External);
         } else if setting == b"linked" {
-            opts.source_map = Some(api::SourceMapMode::Linked);
+            opts.source_map = Some(SourceMapOption::Linked);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid sourcemap setting: \"{}\"",

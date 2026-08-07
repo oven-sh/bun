@@ -7,7 +7,6 @@ use crate::Error;
 use crate::bun_fs as fs;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
-use crate::bun_schema::api as Api;
 use bun_alloc::AllocError;
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
 use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
@@ -20,6 +19,7 @@ use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
+use bun_options_types::BunInstall;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
 use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
 use bun_semver as Semver;
@@ -1755,11 +1755,9 @@ pub fn init(
         let mut buf = PathBuffer::uninit();
         let parts = [b"./.npmrc" as &[u8]];
 
-        let install_ref = ctx.install.get_or_insert_with(|| {
-            // `Api::BunInstall` derives `Default` (all fields `None`/empty).
-            // Own via `Box` — never `Box::leak`.
-            Box::new(Api::BunInstall::default())
-        });
+        let install_ref = ctx
+            .install
+            .get_or_insert_with(|| Box::new(BunInstall::default()));
         let npmrc_local = ZBox::from_bytes(b".npmrc");
         ini::load_npmrc_config(
             &mut **install_ref,
@@ -1771,11 +1769,9 @@ pub fn init(
             ],
         );
     } else {
-        let install_ref = ctx.install.get_or_insert_with(|| {
-            // `Api::BunInstall` derives `Default` (all fields `None`/empty).
-            // Own via `Box` — never `Box::leak`.
-            Box::new(Api::BunInstall::default())
-        });
+        let install_ref = ctx
+            .install
+            .get_or_insert_with(|| Box::new(BunInstall::default()));
         let npmrc_local = ZBox::from_bytes(b".npmrc");
         ini::load_npmrc_config(&mut **install_ref, env, true, &[&*npmrc_local]);
     }
@@ -2178,10 +2174,10 @@ pub fn init(
 pub(crate) fn init_with_runtime(
     log: &mut bun_ast::Log,
     // Used read-only (`Options::load` only ever reads `config.*`).
-    // Upstream storage is `Option<NonNull<api::BunInstall>>` (bundler + resolver
+    // Upstream storage is `Option<NonNull<BunInstall>>` (bundler + resolver
     // opts); taking `&mut` here would force a const→mut provenance launder at
     // the resolver call site.
-    bun_install: Option<&Api::BunInstall>,
+    bun_install: Option<&BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader,
 ) -> crate::Result<*mut PackageManager> {
@@ -2205,7 +2201,7 @@ pub(crate) fn init_with_runtime(
 
 fn init_with_runtime_once(
     log: &mut bun_ast::Log,
-    bun_install: Option<&Api::BunInstall>,
+    bun_install: Option<&BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader,
 ) -> crate::Result<()> {

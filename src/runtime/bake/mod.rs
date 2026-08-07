@@ -190,12 +190,9 @@ impl Framework {
         )
     }
 
-    /// Sets up a per-graph
-    /// `Transpiler` in place. The full body lives in
+    /// Sets up a per-graph `Transpiler` in place. The full body lives in
     /// `bake_body::Framework::init_transpiler_with_options`; this keystone
-    /// version operates on the keystone `BuildConfigSubset` (which omits
-    /// `conditions`/`env`/`define`/`drop` until the schema types are
-    /// const-constructible — those paths default).
+    /// version operates on the keystone `BuildConfigSubset`.
     /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
     pub(crate) fn init_transpiler<'a>(
         &mut self,
@@ -206,15 +203,13 @@ impl Framework {
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
     ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
-        use bun_options_types::schema as bun_schema;
-
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
-            bun_schema::api::TransformOptions::default(),
+            bun_options_types::TransformOptions::default(),
             None,
         )?);
 
@@ -288,8 +283,8 @@ impl Framework {
                 bun_bundler::options::SourceMapOption::None
             }
         };
-        if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
-            out.options.env.behavior = bundler_options.env;
+        if let Some(env) = bundler_options.env {
+            out.options.env.behavior = env;
             out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
         }
         // The resolver crate carries a FORWARD_DECL subset of `BundleOptions`, so
@@ -309,18 +304,9 @@ impl Framework {
             },
         )?;
 
-        if (bundler_options.define.keys.len() + bundler_options.drop.count()) > 0 {
-            debug_assert_eq!(
-                bundler_options.define.keys.len(),
-                bundler_options.define.values.len()
-            );
+        if (bundler_options.define.len() + bundler_options.drop.count()) > 0 {
             use bun_bundler::DefineDataExt;
-            for (k, v) in bundler_options
-                .define
-                .keys
-                .iter()
-                .zip(bundler_options.define.values.iter())
-            {
+            for (k, v) in &bundler_options.define {
                 let parsed =
                     bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
                 out.options.define.insert(k, parsed)?;
@@ -580,9 +566,9 @@ pub struct BuildConfigSubset {
     pub(crate) ignore_dce_annotations: Option<bool>,
     pub(crate) conditions: bun_collections::ArrayHashMap<&'static [u8], ()>,
     pub(crate) drop: bun_collections::ArrayHashMap<&'static [u8], ()>,
-    pub(crate) env: bun_options_types::schema::api::DotEnvBehavior,
+    pub(crate) env: Option<bun_dotenv::DotEnvBehavior>,
     pub(crate) env_prefix: Option<&'static [u8]>,
-    pub(crate) define: bun_options_types::schema::api::StringMap,
+    pub(crate) define: bun_options_types::StringPairs,
     // `source_map` intentionally omitted — only
     // `init_transpiler_with_options` (bake_body) honours it, and DevServer
     // never calls that path.

@@ -160,10 +160,8 @@ pub use crate::scan::scan_side_effects::SideEffects;
 
 pub(crate) use bun_ast::base::Ref;
 
-// `runtime.rs` (full port) is path-gated in lib.rs as `runtime_full`. Until
-// its bun_core/bun_schema deps are wired, the *real* type surface — the parts
-// `P`/`visitStmt`/`visitExpr` actually consume — lives here so dependents can
-// drop their bool-placeholder guards.
+// The data-only runtime pieces live in `bun_ast::runtime`; the parts that
+// `P`/`visitStmt`/`visitExpr` consume (`Features` etc.) live here.
 #[allow(non_snake_case)]
 pub mod Runtime {
     use bun_collections::StringSet;

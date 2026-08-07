@@ -534,7 +534,7 @@ impl<'a> Transpiler<'a> {
         }
 
         if self.options.target == options::Target::BunMacro {
-            self.options.env.behavior = bun_options_types::schema::api::DotEnvBehavior::Prefix;
+            self.options.env.behavior = bun_dotenv::DotEnvBehavior::Prefix;
             self.options.env.prefix = Box::from(b"BUN_".as_slice());
         }
 
@@ -547,16 +547,8 @@ impl<'a> Transpiler<'a> {
         // explicit sources first so that default isn't mistaken for user intent
         // and `force_node_env` stays `Unspecified` (tsconfig jsx stays in control).
         let had_explicit_node_env = env_loader.get_node_env().is_some()
-            || self
-                .options
-                .transform_options
-                .define
-                .as_ref()
-                .is_some_and(|m| {
-                    m.keys
-                        .iter()
-                        .any(|k| &**k == options::default_user_defines::node_env::KEY)
-                });
+            || (self.options.transform_options.define.iter())
+                .any(|(k, _)| &**k == options::default_user_defines::node_env::KEY);
 
         // `parse_env_json` needs a thread-local AST store to build
         // `E::String` nodes in. That work
@@ -717,15 +709,15 @@ impl<'a> Transpiler<'a> {
     /// Load `.env` files into the env loader according to
     /// `options.env.behavior`.
     pub fn run_env_loader(&mut self, skip_default_env: bool) -> crate::Result<()> {
-        use bun_options_types::schema::api::DotEnvBehavior;
+        use bun_dotenv::DotEnvBehavior;
         // Derived once up front; no other live `&mut` to this `Loader` exists
         // for the duration of this call.
         let env: &mut dot_env::Loader = self.env_mut();
 
         match self.options.env.behavior {
-            DotEnvBehavior::prefix
-            | DotEnvBehavior::load_all
-            | DotEnvBehavior::load_all_without_inlining => {
+            DotEnvBehavior::Prefix
+            | DotEnvBehavior::LoadAll
+            | DotEnvBehavior::LoadAllWithoutInlining => {
                 // Process always has highest priority. Load process env vars
                 // unconditionally before attempting directory traversal, so
                 // that inherited environment variables are always available
@@ -783,7 +775,7 @@ impl<'a> Transpiler<'a> {
                 };
                 env.load(dir, &env_files, suffix, skip_default_env)?;
             }
-            DotEnvBehavior::disable => {
+            DotEnvBehavior::Disable => {
                 env.load_process()?;
                 if env.is_production() {
                     self.options.set_production(true);
@@ -791,7 +783,6 @@ impl<'a> Transpiler<'a> {
                     self.resolver.opts.set_production(true);
                 }
             }
-            DotEnvBehavior::_none => {}
         }
 
         if env.get(b"BUN_DISABLE_TRANSPILER").unwrap_or(b"0") == b"1" {
@@ -966,7 +957,7 @@ pub struct ParseOptions<'a, 'b> {
     pub allow_bytecode_cache: bool,
 }
 
-use bun_options_types::schema::api;
+use bun_options_types::TransformOptions;
 
 // ── type unification (parse_maybe Js/Ts arm) ─────────────────────────────
 // `ModuleType`, `Define`, `RuntimeTranspilerCache` are single nominal types
@@ -974,23 +965,7 @@ use bun_options_types::schema::api;
 // lower-tier crate; bundler re-exports). There are no by-value conversion
 // shims — `to_parser_module_type` is an identity fn and `parse_maybe`
 // threads `self.options.define` / `runtime_transpiler_cache` directly.
-//
-// D042 UNIFIED: `crate::options_impl::jsx::Pragma` IS
-// `js_ast::parser::options::JSX::Pragma` (both re-export
-// `bun_options_types::jsx::Pragma`). Only the `_None → Automatic` fold is
-// applied so parser-side `== Automatic` checks in visitExpr/parseJSXElement
-// keep their pre-unification semantics (parser only ever sees a resolved
-// runtime).
-#[inline]
-pub(crate) fn to_parser_jsx_pragma(
-    mut p: crate::options_impl::jsx::Pragma,
-) -> js_ast::parser::options::JSX::Pragma {
-    use crate::options_impl::jsx::Runtime;
-    if p.runtime == Runtime::_None {
-        p.runtime = Runtime::Automatic;
-    }
-    p
-}
+// `crate::options_impl::jsx::Pragma` IS `js_ast::parser::options::JSX::Pragma`.
 
 // `crate::options_impl::ModuleType` IS `js_ast::parser::options::ModuleType`
 // (both re-export `bun_options_types::bundle_enums::ModuleType`). Identity shim
@@ -1059,7 +1034,7 @@ fn resolver_bundle_options_subset(
         jsx: src.jsx.clone(),
         // Spec `options.ResolveFileExtensions` — clone all four owned slices so
         // the resolver honours user `--extension-order` and the per-target
-        // `.node` augmentation `from_api` applied.
+        // `.node` augmentation `from_transform_options` applied.
         extension_order: ropts::ExtensionOrder {
             default: ropts::ExtensionOrderGroup {
                 default: src.extension_order.default.default.clone(),
@@ -1102,15 +1077,13 @@ fn resolver_bundle_options_subset(
             }
         }),
         global_cache: src.global_cache,
-        // Both sides store
-        // `Option<NonNull<api::BunInstall>>`, so this is a straight copy.
         install: src.install,
         load_package_json: src.load_package_json,
         load_tsconfig_json: src.load_tsconfig_json,
         main_field_extension_order: ropts::owned_string_list(src.main_field_extension_order),
         // `auto_main` is projected as a
         // bool: it's "default" iff the user did not pass `--main-fields`
-        // (`from_api` overwrites `main_fields` only when
+        // (`from_transform_options` overwrites `main_fields` only when
         // `transform.main_fields` is non-empty — options.rs:2231).
         main_fields: src.main_fields.clone(),
         main_fields_is_default: src.transform_options.main_fields.is_empty(),
@@ -1138,7 +1111,7 @@ fn resolver_bundle_options_subset(
 impl<'a> Transpiler<'a> {
     /// Called by [`init_runtime_state`](../runtime/jsc_hooks.rs)
     /// to write `vm.transpiler`. Builds on:
-    ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
+    ///   * [`options::BundleOptions::from_transform_options`] — `bun_bundler::options`
     ///   * [`Resolver::init1`] — `bun_resolver`
     ///
     /// `log` / `env_loader_` are raw pointers (not `&'a mut`) to
@@ -1147,7 +1120,7 @@ impl<'a> Transpiler<'a> {
     pub fn init(
         arena: &'a Arena,
         log: *mut bun_ast::Log,
-        opts: api::TransformOptions,
+        opts: TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
         let mut slot = core::mem::MaybeUninit::<Transpiler<'a>>::uninit();
@@ -1170,7 +1143,7 @@ impl<'a> Transpiler<'a> {
         dst: &mut core::mem::MaybeUninit<Transpiler<'a>>,
         arena: &'a Arena,
         log: *mut bun_ast::Log,
-        opts: api::TransformOptions,
+        opts: TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<()> {
         // Caller contract: `log` is the freshly-boxed per-VM `Log` from
@@ -1182,7 +1155,7 @@ impl<'a> Transpiler<'a> {
         bun_ast::stmt::data::Store::create();
         // These two `create()`s are eager (not deferred to the first `parse()`)
         // because option setup below needs the AST stores *unconditionally*:
-        // `from_api` → `defines_from_transform_options` always materialises at
+        // `from_transform_options` → `defines_from_transform_options` always materialises at
         // least `process.env.NODE_ENV` via `parse_env_json`, whose `E::String`
         // payload lands in the thread-local Expr store (then a `StoreResetGuard`
         // resets it — which `expect()`s the store exists). So there is no
@@ -1244,15 +1217,16 @@ impl<'a> Transpiler<'a> {
         //     .arena = arena,
         // });
 
-        // `log` stays raw — `from_api` stores it in `BundleOptions.log: *mut`
+        // `log` stays raw — `from_transform_options` stores it in `BundleOptions.log: *mut`
         // and the same pointer is aliased into `Resolver::init1` / `Linker`
         // / the struct field below. No `&'a
         // mut Log` is materialized here, so the sibling raw pointers don't
         // invalidate a long-lived unique borrow under stacked borrows.
         // SAFETY: `fs` is the process-lifetime `Fs::FileSystem` singleton from
         // `init_file_system` above; this short `&mut *fs` is the only live
-        // borrow for the duration of `from_api`.
-        let bundle_options = options::BundleOptions::from_api(unsafe { &mut *fs }, log, opts)?;
+        // borrow for the duration of `from_transform_options`.
+        let bundle_options =
+            options::BundleOptions::from_transform_options(unsafe { &mut *fs }, log, opts)?;
 
         // `Resolver.opts` is the resolver-crate subset
         // (`bun_resolver::options::BundleOptions`), nominally distinct from this
@@ -1531,7 +1505,7 @@ impl<'a> Transpiler<'a> {
                 use js_ast::parser::options as p_opts;
                 let mut opts = js_ast::ParserOptions::<'_> {
                     ts: loader.is_typescript(),
-                    jsx: to_parser_jsx_pragma(jsx),
+                    jsx,
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
                     preserve_unused_imports_ts: false,
@@ -2677,7 +2651,7 @@ impl<'a> Transpiler<'a> {
     pub fn transform(
         &mut self,
         log: *mut bun_ast::Log,
-        _opts: api::TransformOptions,
+        _opts: TransformOptions,
     ) -> crate::Result<options::TransformResult> {
         let _ = self.enqueue_entry_points::<true>();
 

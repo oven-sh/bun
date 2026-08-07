@@ -6,16 +6,7 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import filenamify from "filenamify";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -617,7 +608,9 @@ function expectBundled(
   }
   if (!ESBUILD && loader) {
     const loaderValues = [...new Set(Object.values(loader))];
-    const supportedLoaderTypes = ["js", "jsx", "ts", "tsx", "css", "json", "text", "file", "wtf", "toml"];
+    const supportedLoaderTypes = ["js", "jsx", "ts", "tsx", "css", "text", "file", "wtf"].concat(
+      ["json", "jsonc", "json5", "toml", "yaml", "xml", "md"], // data formats
+    );
     const unsupportedLoaderTypes = loaderValues.filter(x => !supportedLoaderTypes.includes(x));
     if (unsupportedLoaderTypes.length > 0) {
       throw new Error(`loader '${unsupportedLoaderTypes.join("', '")}' not implemented in bun build`);

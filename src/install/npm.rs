@@ -3,13 +3,13 @@ use std::io::Write as _;
 
 use crate::Error;
 use crate::bun_json as JSON;
-use crate::bun_schema::api;
 use bun_alloc::AllocError;
 use bun_collections::{HashMap, IdentityContext, StringSet};
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, AsyncHTTP, HeaderBuilder};
+use bun_options_types::NpmRegistry;
 use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File};
@@ -334,9 +334,9 @@ pub mod registry {
             &name[1..]
         }
 
-        pub(crate) fn from_api(
+        pub(crate) fn from_registry(
             name: &[u8],
-            registry_: api::NpmRegistry,
+            registry_: NpmRegistry,
             env: &mut DotEnv,
         ) -> Result<Scope, AllocError> {
             let mut registry = registry_;

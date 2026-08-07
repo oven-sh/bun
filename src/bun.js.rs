@@ -15,11 +15,11 @@ pub(crate) fn apply_standalone_runtime_flags(
     b: &mut bun_bundler::Transpiler,
     graph: &StandaloneModuleGraph,
 ) {
-    use bun_options_types::schema::api::DotEnvBehavior;
+    use bun_dotenv::DotEnvBehavior;
     let disable_env = graph.flags.contains(GraphFlags::DISABLE_DEFAULT_ENV_FILES);
     b.options.env.disable_default_env_files = disable_env;
     b.options.env.behavior = if disable_env {
-        DotEnvBehavior::disable
+        DotEnvBehavior::Disable
     } else {
         DotEnvBehavior::LoadAllWithoutInlining
     };

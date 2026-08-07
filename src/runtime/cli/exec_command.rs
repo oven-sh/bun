@@ -2,7 +2,6 @@ use bstr::BStr;
 
 use bun_bundler::Transpiler;
 use bun_core::{Global, Output};
-use bun_options_types::schema::api;
 
 use crate::shell::Interpreter;
 use bun_paths::{self, PathBuffer};
@@ -44,7 +43,7 @@ impl ExecCommand {
             {
                 let mut args = ctx.args.clone();
                 args.write = Some(false);
-                args.target = Some(api::Target::Bun);
+                args.target = Some(bun_ast::Target::Bun);
                 args
             },
             None,

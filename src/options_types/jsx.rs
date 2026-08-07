@@ -1,39 +1,35 @@
-//! JSX options (`Runtime`, `ImportSource`, `Pragma`, `RuntimeDevelopmentPair`,
-//! `RuntimeMap`, `Defaults`).
+//! JSX options: the raw user-facing [`Options`] (CLI flags, bunfig,
+//! `Bun.build`) and the resolved [`Pragma`] the parser consumes, plus
+//! `Runtime`, `ImportSource`, `RuntimeDevelopmentPair`, `RuntimeMap`, `Defaults`.
 //!
-//! Canonical home (D042): previously triplicated across
-//! `bundler/options.rs`, `js_parser/parser.rs`, and
-//! `resolver/tsconfig_json.rs` with hand-rolled `From<>` bridges between the
-//! nominal copies. All three crates already depend on `bun_options_types`,
-//! and `api::Jsx`/`api::JsxRuntime` (the only upward refs) live in this
-//! crate's `schema` module — so the type sits cleanly at this tier.
+//! Shared by `bundler/options.rs`, `js_parser/parser.rs` and
+//! `resolver/tsconfig_json.rs`, which all depend on this crate.
 
-use crate::schema::api;
 use bun_core::strings;
 use std::borrow::Cow;
 
-/// 4-state including `_None` so `Pragma.runtime` preserves the zero value
-/// when an `api.Jsx` arrives with `runtime == _none`. `#[default]` is
-/// `Automatic`.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Runtime {
-    _None,
+    // Discriminants feed `Pragma::hash_for_runtime_transpiler`; keep them stable.
     #[default]
-    Automatic,
-    Classic,
-    Solid,
+    Automatic = 1,
+    Classic = 2,
+    Solid = 3,
 }
 
-impl From<api::JsxRuntime> for Runtime {
-    fn from(r: api::JsxRuntime) -> Self {
-        match r {
-            api::JsxRuntime::_none => Runtime::_None,
-            api::JsxRuntime::Classic => Runtime::Classic,
-            api::JsxRuntime::Solid => Runtime::Solid,
-            api::JsxRuntime::Automatic => Runtime::Automatic,
-        }
-    }
+/// JSX settings as given on the command line, in bunfig.toml or to `Bun.build`,
+/// before validation. [`Pragma::from_options`] resolves them.
+#[derive(Clone, Debug, Default)]
+pub struct Options {
+    /// e.g. `React.createElement`
+    pub factory: Box<[u8]>,
+    /// e.g. `React.Fragment`
+    pub fragment: Box<[u8]>,
+    pub runtime: Runtime,
+    pub development: bool,
+    pub import_source: Box<[u8]>,
+    pub side_effects: bool,
 }
 
 /// Port of `options.JSX.RuntimeDevelopmentPair`.
@@ -295,7 +291,7 @@ impl Pragma {
         Ok(MemberList::Owned(out.into_boxed_slice()))
     }
 
-    pub fn from_api(jsx: api::Jsx) -> Result<Pragma, crate::Error> {
+    pub fn from_options(jsx: Options) -> Result<Pragma, crate::Error> {
         let mut pragma = Pragma::default();
 
         if !jsx.fragment.is_empty() {
@@ -312,7 +308,7 @@ impl Pragma {
             )?;
         }
 
-        pragma.runtime = Runtime::from(jsx.runtime);
+        pragma.runtime = jsx.runtime;
         pragma.side_effects = jsx.side_effects;
 
         if !jsx.import_source.is_empty() {

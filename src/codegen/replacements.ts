@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import NodeErrors from "../jsc/bindings/ErrorCode.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
@@ -88,46 +90,42 @@ replacements.push({
   to: "extends __no_intrinsic__%1",
 });
 
-// These enums map to $<enum>IdToLabel and $<enum>LabelToId (ids start at 1)
+/**
+ * The labels of a `#[repr(u8)]` Rust enum, indexed by discriminant. Each
+ * variant's label comes from `labelOf`, or by default from the variant name the
+ * way strum's `serialize_all = "snake_case"` spells it.
+ */
+function rustEnumLabels(file: string, enumName: string, labelOf?: (variant: string) => string): string[] {
+  const source = readFileSync(join(import.meta.dir, file), "utf8");
+  const body = source.match(new RegExp(`pub enum ${enumName} \\{([^}]*)\\}`))?.[1];
+  if (!body) throw new Error(`replacements.ts: could not find \`pub enum ${enumName}\` in ${file}`);
+  labelOf ??= variant => variant.replace(/(?<=[a-z0-9])([A-Z])/g, "_$1").toLowerCase();
+  const labels: string[] = [];
+  for (const [, variant, id] of body.matchAll(/^\s*([A-Z][A-Za-z0-9]*)\s*=\s*(\d+),/gm)) {
+    labels[Number(id)] = labelOf(variant);
+  }
+  if (labels.length === 0 || labels.includes(undefined!)) {
+    throw new Error(`replacements.ts: \`${enumName}\` discriminants in ${file} must be dense and start at 0`);
+  }
+  return labels;
+}
+
+/** `bun_ast::ImportKind::label()`: `ImportKind::Stmt => b"import-statement"`, … */
+function importKindLabel(variant: string): string {
+  const source = readFileSync(join(import.meta.dir, "../ast/lib.rs"), "utf8");
+  const arms = source.match(/pub fn label\(self\) -> &'static \[u8\] \{\s*match self \{([^}]*)\}/)?.[1];
+  const label = arms?.match(new RegExp(`ImportKind::${variant} => b"([^"]*)"`))?.[1];
+  if (label === undefined)
+    throw new Error(`replacements.ts: no ImportKind::label() arm for ${variant} in src/ast/lib.rs`);
+  return label;
+}
+
+// These enums map to $<enum>IdToLabel and $<enum>LabelToId, id == Rust discriminant.
 // Make sure to define in ./builtins.d.ts
 export const enums = {
-  // Ids are the `bun_options_types::schema::api::Loader` discriminants
-  // (JSBundler passes those numbers to BundlerPlugin.ts).
-  Loader: [
-    "jsx",
-    "js",
-    "ts",
-    "tsx",
-    "css",
-    "file",
-    "json",
-    "jsonc",
-    "toml",
-    "wasm",
-    "napi",
-    "base64",
-    "dataurl",
-    "text",
-    "bunsh",
-    "sqlite",
-    "sqlite_embedded",
-    "html",
-    "yaml",
-    "json5",
-    "md",
-    "xml",
-  ],
-  ImportKind: [
-    "entry-point-run",
-    "entry-point-build",
-    "import-statement",
-    "require-call",
-    "dynamic-import",
-    "require-resolve",
-    "import-rule",
-    "url-token",
-    "internal",
-  ],
+  // JSBundler passes these to BundlerPlugin.ts (and gets loaders back) as numbers.
+  Loader: rustEnumLabels("../ast/loader.rs", "Loader"),
+  ImportKind: rustEnumLabels("../ast/lib.rs", "ImportKind", importKindLabel),
 };
 
 // These are passed to --define to the bundler
@@ -151,7 +149,7 @@ export const define: Record<string, string> = {
 
 for (const [name, keys] of Object.entries(enums)) {
   define[`$${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
-  define[`$${name}LabelToId`] = "{" + keys.map((k, i) => `"${k}": ${i + 1}`).join(", ") + "}";
+  define[`$${name}LabelToId`] = "{" + keys.map((k, i) => `"${k}": ${i}`).join(", ") + "}";
 }
 
 for (const name of globalsToPrefix) {

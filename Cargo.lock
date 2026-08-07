@@ -163,15 +163,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_api"
-version = "0.0.0"
-dependencies = [
- "bun_alloc",
- "bun_options_types",
- "bun_url",
-]
-
-[[package]]
 name = "bun_ast"
 version = "0.0.0"
 dependencies = [
@@ -399,12 +390,12 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
- "bun_api",
  "bun_ast",
  "bun_bundler",
  "bun_clap",
  "bun_collections",
  "bun_core",
+ "bun_dotenv",
  "bun_install_types",
  "bun_io",
  "bun_js_parser",
@@ -884,7 +875,6 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
- "bun_api",
  "bun_ast",
  "bun_base64",
  "bun_collections",
@@ -892,6 +882,7 @@ dependencies = [
  "bun_dotenv",
  "bun_install_types",
  "bun_js_parser",
+ "bun_options_types",
  "bun_parsers",
  "bun_sys",
  "bun_url",
@@ -969,7 +960,6 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
- "bun_api",
  "bun_ast",
  "bun_ast_jsc",
  "bun_core",
@@ -978,6 +968,7 @@ dependencies = [
  "bun_install",
  "bun_js_parser_jsc",
  "bun_jsc",
+ "bun_options_types",
  "bun_paths",
  "bun_semver",
  "bun_sys",
@@ -1136,7 +1127,6 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
- "bun_api",
  "bun_ast",
  "bun_base64",
  "bun_boringssl",

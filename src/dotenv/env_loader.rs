@@ -37,49 +37,37 @@ pub trait DirEntryProbe {
 // is provided there — see src/resolver/lib.rs. No impl here; that would be a
 // dep-cycle.
 
-/// Canonical definition; re-exported as
-/// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
-#[repr(u32)]
+/// How `process.env.*` values are exposed to bundled code.
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-#[allow(non_camel_case_types)]
 pub enum DotEnvBehavior {
     #[default]
-    _none = 0,
-    disable = 1,
-    prefix = 2,
-    load_all = 3,
-    load_all_without_inlining = 4,
+    Disable,
+    /// Only inline variables starting with a configured prefix.
+    Prefix,
+    LoadAll,
+    LoadAllWithoutInlining,
 }
 
-#[allow(non_upper_case_globals)]
 impl DotEnvBehavior {
-    // PascalCase aliases — downstream callers (bundler/options.rs, bundler/defines.rs,
-    // runtime/api/JSBundler.rs) name the variants both ways.
-    pub const None: Self = Self::_none;
-    pub const Disable: Self = Self::disable;
-    pub const Prefix: Self = Self::prefix;
-    pub const LoadAll: Self = Self::load_all;
-    pub const LoadAllWithoutInlining: Self = Self::load_all_without_inlining;
-
     /// String-branch classifier shared by bunfig (serve.env) and
     /// JSBundler (Bun.build env). Only the *string* arm is common to
     /// both specs — the surrounding null/bool/number dispatch and the error
     /// reporting intentionally diverge per call site, so they stay inline there.
     ///
     /// Returns `Ok((behavior, prefix))` where `prefix` is `Some(&s[..idx])` only for
-    /// `DotEnvBehavior::prefix`; `Err(())` means the string is none of
+    /// `DotEnvBehavior::Prefix`; `Err(())` means the string is none of
     /// `"inline"` / `"disable"` / contains-`*`, and the caller emits its own
     /// site-specific diagnostic.
     pub fn parse_str(s: &[u8]) -> Result<(Self, Option<&[u8]>), ()> {
         if s == b"inline" {
-            Ok((Self::load_all, None))
+            Ok((Self::LoadAll, None))
         } else if s == b"disable" {
-            Ok((Self::disable, None))
+            Ok((Self::Disable, None))
         } else if let Some(asterisk) = strings::index_of_char_usize(s, b'*') {
             if asterisk > 0 {
-                Ok((Self::prefix, Some(&s[..asterisk])))
+                Ok((Self::Prefix, Some(&s[..asterisk])))
             } else {
-                Ok((Self::load_all, None))
+                Ok((Self::LoadAll, None))
             }
         } else {
             Err(())

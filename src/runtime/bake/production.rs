@@ -16,7 +16,7 @@ use crate::bake::framework_router::{self, FrameworkRouter, OpaqueFileId};
 use bun_alloc::Arena;
 use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
-use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption};
+use bun_bundler::options::OutputFile;
 use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
@@ -159,7 +159,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         // Note: `bun_resolver::options::BundleOptions` has no
         // `minify_identifiers`/`minify_whitespace` fields; resolver.opts does
         // not carry them (the resolver never reads them).
-        b.options.env.behavior = bundler_options::EnvBehavior::LoadAllWithoutInlining;
+        b.options.env.behavior = bun_dotenv::DotEnvBehavior::LoadAllWithoutInlining;
     }
     vm.event_loop_ref().ensure_waker();
     match &ctx.debug.macros {
@@ -429,7 +429,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         bake_body::Graph::Server,
         &mut server_transpiler,
         &options.bundler_options.server,
-        SourceMapOption::from_api(Some(options.bundler_options.server.source_map)),
+        options.bundler_options.server.source_map,
         options.bundler_options.server.minify_whitespace,
         options.bundler_options.server.minify_syntax,
         options.bundler_options.server.minify_identifiers,
@@ -441,7 +441,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         bake_body::Graph::Client,
         &mut client_transpiler,
         &options.bundler_options.client,
-        SourceMapOption::from_api(Some(options.bundler_options.client.source_map)),
+        options.bundler_options.client.source_map,
         options.bundler_options.client.minify_whitespace,
         options.bundler_options.client.minify_syntax,
         options.bundler_options.client.minify_identifiers,
@@ -454,7 +454,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             bake_body::Graph::Ssr,
             &mut ssr_transpiler,
             &options.bundler_options.ssr,
-            SourceMapOption::from_api(Some(options.bundler_options.ssr.source_map)),
+            options.bundler_options.ssr.source_map,
             options.bundler_options.ssr.minify_whitespace,
             options.bundler_options.ssr.minify_syntax,
             options.bundler_options.ssr.minify_identifiers,

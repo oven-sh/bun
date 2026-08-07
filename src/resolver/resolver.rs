@@ -34,7 +34,7 @@ unsafe extern "Rust" {
     /// unreadable); the failure is sticky across calls.
     fn __bun_resolver_init_package_manager(
         log: NonNull<bun_ast::Log>,
-        install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
+        install: Option<NonNull<bun_options_types::BunInstall>>,
         env: NonNull<bun_dotenv::Loader>,
     ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_errno::SystemErrno>;
 }

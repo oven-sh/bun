@@ -511,14 +511,13 @@ static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicB
 
 bun_core::declare_scope!(CLI, hidden);
 
-pub(crate) type LoaderColonList =
-    colon_list_type::ColonListType<bun_options_types::schema::api::Loader>;
+pub(crate) type LoaderColonList = colon_list_type::ColonListType<bun_ast::Loader>;
 pub(crate) type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
 
-impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader {
+impl colon_list_type::ColonListValue for bun_ast::Loader {
     const IS_LOADER: bool = true;
     fn resolve_value(input: &[u8]) -> crate::Result<Self> {
-        arguments::loader_resolver(input)
+        bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)
     }
 }
 impl colon_list_type::ColonListValue for &'static [u8] {
@@ -1215,7 +1214,7 @@ pub mod command {
         // (`which()` + its `RootCommandMatcher` name table / rodata) or walk
         // the per-tag dispatch `match`. `bun --version` also skips
         // `create_context_data` entirely (`arguments::parse` builds-and-drops
-        // a full `api::TransformOptions` and forces two `LazyLock`s for what
+        // a full `TransformOptions` and forces two `LazyLock`s for what
         // is a no-op). Keeps `command::which`'s code/rodata and `arguments`'s
         // clap tables out of the `--version` / `bun <file>` working set.
         //
@@ -1398,7 +1397,7 @@ pub mod command {
             break 'brk write_context_no_parse(log);
         };
 
-        ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
+        ctx.args.target = Some(bun_ast::Target::Bun);
         use bun_options_types::global_cache::GlobalCache;
         if ctx.debug.global_cache == GlobalCache::auto {
             ctx.debug.global_cache = GlobalCache::disable;
@@ -1432,7 +1431,7 @@ pub mod command {
             }
             Err(e) => return Err(e),
         };
-        ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
+        ctx.args.target = Some(bun_ast::Target::Bun);
 
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.

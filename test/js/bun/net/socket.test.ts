@@ -3688,7 +3688,10 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
       allowHalfOpen: true,
       socket: {
         open(s) {
-          s.write(big);
+          // Write until the kernel refuses a full chunk so the reset is
+          // guaranteed to land behind pending writes (the peer is paused, so
+          // this terminates once its receive buffer and our send buffer fill).
+          while (s.write(big) === big.byteLength) {}
           issued.resolve();
         },
         data() {},

@@ -748,6 +748,29 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 }
 
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+
+// Called from src/js/node/worker_threads.ts to implement parentPort.ref()/unref()/close().
+// The fake parentPort forwards listeners to the WorkerGlobalScope, which refs the event loop
+// automatically while any "message" listener is installed (BunWorkerGlobalScope.cpp). That
+// auto-ref can't express Node's ref/unref semantics (messages still delivered while unref'd),
+// so the JS layer uses this to add or remove a compensating ref on the worker's event loop.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeWorkerIncRef, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    // Only meaningful inside a worker; parentPort is null on the main thread.
+    if (WebWorker__getParentWorker(globalObject->bunVM()) == nullptr)
+        return JSValue::encode(jsUndefined());
+
+    int32_t delta = callFrame->argument(0).toInt32(lexicalGlobalObject);
+    if (delta != 0)
+        Bun__eventLoop__incrementRefConcurrently(globalObject->bunVM(), delta);
+
+    return JSValue::encode(jsUndefined());
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {

@@ -795,6 +795,16 @@ impl VirtualMachine {
         self.handle.script_allowed()
     }
 
+    /// From here no script runs on this VM: JS entry is refused at the
+    /// native→JS boundary (`Bun__JSValue__call`, `EventLoop::run_callback*`,
+    /// WebCore's `JSEventListener`) and JSC discards microtasks. Both the
+    /// ordinary teardown (after the stop phase) and a parent-terminated
+    /// worker's exit (before it) go through here.
+    pub fn forbid_script(&self) {
+        Zig__GlobalObject__forbidExecution(self.global());
+        self.handle.forbid_script();
+    }
+
     /// Which loop is current (`event_loop` points at the regular loop except
     /// while a macro runs). Off-thread completions carry this so they land on
     /// the loop that was current when their work started.
@@ -1534,14 +1544,20 @@ impl VirtualMachine {
         // Node's EmitProcessExit does under a TryCatch), or after
         // `worker.terminate()` / a termination request (script must not run at
         // all: no 'exit' handlers or close events for a forcefully terminated
-        // worker, matching Node and WebCore's terminate()). Everything below and
-        // the teardown's stop phase consult `script_allowed()`.
+        // worker, matching Node and WebCore's terminate()).
         {
             let global = self.global();
-            let termination_pending = !global.clear_exception_except_termination()
-                || self.jsc_vm().has_termination_request();
-            if termination_pending {
-                self.handle.forbid_script();
+            // A worker stopped by its parent (worker.terminate()) runs no exit
+            // handlers or close events. A worker exiting on its own —
+            // process.exit(), or an uncaught exception — does, even though Bun
+            // stops its script with the same termination trap: that trap's
+            // leftover exception is cleared along with any ordinary one.
+            let stopped_by_parent = self.worker_ref().is_some_and(|w| w.stopped_by_parent());
+            if stopped_by_parent {
+                self.forbid_script();
+            } else if !global.clear_exception_except_termination() {
+                self.jsc_vm().clear_has_termination_request();
+                global.clear_termination_exception();
             }
         }
 
@@ -1654,10 +1670,18 @@ impl VirtualMachine {
         // ---- A. stop phase; script may still run ------------------------------
         vm.handle.set_stopping();
         Zig__GlobalObject__prepareForDestruction(vm.global());
-        if let Some(hooks) = hooks {
-            // SAFETY: fn contract; JSC heap alive.
-            unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) };
-        }
+        // Each sweep below dispatches close handlers, and a handler may open
+        // something an earlier sweep already emptied (a socket from a DNS
+        // rejection, a server from an on_close). Repeat until a whole round
+        // finds nothing to stop, so nothing survives into B — bounded, so a
+        // handler that reopens forever cannot wedge teardown.
+        let mut rounds = 0u8;
+        loop {
+            let mut stopped_any = false;
+            if let Some(hooks) = hooks {
+                // SAFETY: fn contract; JSC heap alive.
+                stopped_any |= unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) };
+            }
         // A worker's uv loop is closed in D, so every pipe / tty / child-process
         // handle open on it closes now — through whoever drives it (reader,
         // writer, IPC channel, named pipe, Process), or directly if nothing
@@ -1665,21 +1689,23 @@ impl VirtualMachine {
         // and no request on them can hold up the loop drain in B. The exiting
         // main thread keeps its loop (the OS reclaims the handles); sweeping them
         // there only re-enters stream owners under still-running script.
-        #[cfg(windows)]
-        if matches!(kind, Teardown::Worker) {
-            bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
-        }
-        if let Some(rare) = vm.rare_data.as_deref_mut() {
-            // `close_all_socket_groups` walks the loop's group list through the
-            // VM and never touches `rare_data`, so the re-derived shared borrow
-            // is disjoint. SAFETY: fn contract.
-            rare.close_all_socket_groups(unsafe { &*this });
-        }
-        // After the socket sweep: an `on_close` handler may call `dns.*`, and a
-        // channel re-created after this would outlive the runtime state that
-        // `ares_destroy`'s callbacks dereference.
-        if let Some(hooks) = hooks {
-            (hooks.stop_dns_for_vm_teardown)();
+            #[cfg(windows)]
+            if matches!(kind, Teardown::Worker) {
+                bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
+            }
+            if let Some(rare) = vm.rare_data.as_deref_mut() {
+                // `close_all_socket_groups` walks the loop's group list through
+                // the VM and never touches `rare_data`, so the re-derived shared
+                // borrow is disjoint. SAFETY: fn contract.
+                stopped_any |= rare.close_all_socket_groups(unsafe { &*this });
+            }
+            if let Some(hooks) = hooks {
+                stopped_any |= (hooks.stop_dns_for_vm_teardown)();
+            }
+            rounds += 1;
+            if !stopped_any || rounds == 8 {
+                break;
+            }
         }
         if matches!(kind, Teardown::MainThreadExit) {
             // The HTTP thread holds a `Box<ThreadlocalAsyncHTTP>` per in-flight
@@ -1689,8 +1715,7 @@ impl VirtualMachine {
         teardown_log!("teardown: stopped");
 
         // ---- B. no more script -----------------------------------------------
-        Zig__GlobalObject__forbidExecution(vm.global());
-        vm.handle.forbid_script();
+        vm.forbid_script();
         // After the stop phase (its close handlers may still have used them),
         // before finalizers could: sqlite connections checkpoint and close.
         vm.close_sqlite_databases_for_exit();
@@ -1709,6 +1734,12 @@ impl VirtualMachine {
             // this heap and keep being scheduled until ~VM returns.
             // SAFETY: fn contract.
             unsafe { (hooks.cancel_all_timers)(this) };
+            // And unlink every other kind of EventLoopTimer (socket timeouts,
+            // reconnect/lifetime timers, schedulers): their owners stay valid
+            // and find them CANCELLED, but nothing fires again even where the
+            // loop still turns (Windows request drain below, JSC's timers).
+            // SAFETY: fn contract.
+            unsafe { (hooks.disarm_all_timers_for_vm_teardown)(this) };
         }
         vm.gc_controller.deinit();
         crate::web_worker::join_child_workers(vm);
@@ -1989,14 +2020,18 @@ pub struct RuntimeHooks {
     /// runs those callbacks against freed state. No-op when the resolver was
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
-    pub stop_dns_for_vm_teardown: fn(),
+    /// Returns whether it had anything to stop.
+    pub stop_dns_for_vm_teardown: fn() -> bool,
     /// Stop every registered native handle behind a JS object (servers,
     /// listeners, fs watchers) — the stop phase for Rust-side JS classes, run
     /// with the VM alive right after the WebCore stop phase.
     ///
     /// # Safety
     /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-    pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
+    /// Returns whether it had anything to stop.
+    pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> bool,
+    /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
+    pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
     /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
     /// so the loop close unlinks them before the runtime state is freed.

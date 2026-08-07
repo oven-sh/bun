@@ -1204,6 +1204,41 @@ impl All {
     /// BEFORE `runtime_state` is nulled — the GC sweep frees the
     /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
     /// alias.
+    /// VM teardown, after `cancel_all_timeout_objects`: unlink every timer still
+    /// in either heap, whatever its kind. Owners keep their nodes (now
+    /// `CANCELLED`, which their own `state == ACTIVE` checks respect); nothing
+    /// can fire afterwards even if the loop turns again.
+    ///
+    /// # Safety
+    /// `this` is the live per-thread `All`; JS thread; never on a VM that keeps running.
+    pub(crate) unsafe fn disarm_all_for_vm_teardown(this: *mut Self) {
+        let mut nodes: Vec<*mut EventLoopTimer> = Vec::new();
+        let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
+        // SAFETY: fn contract.
+        let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
+        for root in roots {
+            if !root.is_null() {
+                stack.push(root);
+            }
+        }
+        while let Some(node) = stack.pop() {
+            // SAFETY: intrusive-heap invariant — reachable nodes are live while linked.
+            let (child, next) = unsafe { ((*node).heap.child, (*node).heap.next) };
+            if !child.is_null() {
+                stack.push(child);
+            }
+            if !next.is_null() {
+                stack.push(next);
+            }
+            nodes.push(node);
+        }
+        for node in nodes {
+            // SAFETY: collected from the live heap above; `remove` relinks the
+            // others but every node stays a valid allocation owned elsewhere.
+            unsafe { (*this).remove(node) };
+        }
+    }
+
     pub(crate) unsafe fn cancel_all_timeout_objects(
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,

@@ -1503,6 +1503,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cancel_all_timers,
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
+    disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
 };
 
@@ -1645,29 +1646,41 @@ unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) 
 ///
 /// # Safety
 /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) {
+unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> bool {
     // SAFETY: per the contract above.
-    stop_active_handles_for_vm_teardown(unsafe { &mut *vm });
+    stop_active_handles_for_vm_teardown(unsafe { &mut *vm })
+}
+
+/// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
+unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
+    let all = timer_all();
+    if all.is_null() {
+        return;
+    }
+    // SAFETY: live per-thread `All`; JS thread; teardown has forbidden script.
+    unsafe { crate::timer::All::disarm_all_for_vm_teardown(all) };
 }
 
 /// `RuntimeHooks::stop_dns_for_vm_teardown` — destroy the per-VM global DNS
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
 /// are all still live. See `Resolver::close_channel_for_terminate`.
-fn stop_dns_for_vm_teardown() {
+fn stop_dns_for_vm_teardown() -> bool {
     let state = runtime_state();
     if state.is_null() {
-        return;
+        return false;
     }
+    let mut stopped_any = false;
     // SAFETY: `state` is the live per-thread `RuntimeState` box; shared borrow
     // of the `OnceCell` only (the resolver's own state is interior-mutable).
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
-        gd.resolver.close_channel_for_terminate();
+        stopped_any |= gd.resolver.close_channel_for_terminate();
         #[cfg(windows)]
         gd.resolver.cancel_pending_uv_requests_for_teardown();
     }
     #[cfg(target_os = "macos")]
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
+    stopped_any
 }
 
 /// `--isolate` swap: a microtask still pending at end-of-file (queued by
@@ -1677,14 +1690,16 @@ fn stop_dns_for_vm_teardown() {
 /// prepareForDestruction discards the pre-exit queues.)
 pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = vm.event_loop_mut().drain_microtasks();
-    stop_active_handles_for_vm_teardown(vm);
+    let _ = stop_active_handles_for_vm_teardown(vm);
 }
 
-pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) {
+/// Returns whether anything was registered (and therefore stopped).
+pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> bool {
     let state = runtime_state();
     if state.is_null() {
-        return;
+        return false;
     }
+    let mut stopped_any = false;
     // Fake-timer state lives in the per-thread `timer::All`, not the JS
     // global, so a file that leaves it active routes every later file's
     // `setTimeout` into the never-driven fake heap. Leave the heap itself
@@ -1709,6 +1724,7 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) {
         let Some(kv) = (unsafe { &mut (*state).active_handles }).pop() else {
             break;
         };
+        stopped_any = true;
         match kv.key {
             // SAFETY: live until it unregisters in `detach`.
             ActiveHandle::FsWatcher(w) => unsafe { w.as_ref() }.close_for_isolation(),
@@ -1732,6 +1748,7 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) {
             },
         }
     }
+    stopped_any
 }
 
 /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent, next_test_id)`.

@@ -3953,15 +3953,31 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
     // request slots (sleeping between peeks); resume's request, cycled back
     // to a blocked readable wait, holds the other. A backpressured write
     // then re-arms WRITABLE, a subscription bit neither checked-out request
-    // carries, and libuv's slow submit used to assert(0) on that third
-    // generation (debug abort; in release WRITABLE stayed unarmed until a
-    // request completed). The parked request must instead converge onto
-    // the new subscription within a lap.
+    // carries, and libuv's slow submit hits its both-slots-busy branch:
+    // historically assert(0), and without the graceful-return + one-second
+    // lap cap the new subscription stayed unarmed until a request
+    // completed, stalling the writer. The full payload must still drain.
     const { stdout, stderr, exitCode } = await runChild(`
+        const TOTAL = 4 * 1024 * 1024;
+        const CHUNK = 64 * 1024;
+        const payload = Buffer.alloc(CHUNK, "b");
+        let sent = 0;
         let sawError = null;
         const opened = Promise.withResolvers();
         const gotData = Promise.withResolvers();
-        const clientGotSome = Promise.withResolvers();
+        const drained = Promise.withResolvers();
+        function pump(s) {
+          while (sent < TOTAL) {
+            const want = Math.min(CHUNK, TOTAL - sent);
+            const n = s.write(payload.subarray(0, want));
+            if (n < 0) {
+              console.log("FAIL write returned " + n + " after " + sent + " bytes");
+              process.exit(1);
+            }
+            sent += n;
+            if (n < want) return; // backpressure: drain() resumes the pump
+          }
+        }
         let paused;
         using server = Bun.listen({
           hostname: "127.0.0.1",
@@ -3975,24 +3991,27 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
             data(s, buf) {
               gotData.resolve(buf.toString());
             },
+            drain(s) {
+              pump(s);
+            },
             error(s, e) {
               sawError = e?.code || String(e);
             },
             close() {},
           },
         });
+        let received = 0;
         const client = await Bun.connect({
           hostname: "127.0.0.1",
           port: server.port,
           socket: {
             open(s) {
-              // Never reads until resumed, so the server's big write below
-              // cannot be absorbed by the kernel buffers and must leave
-              // WRITABLE armed.
+              // Not reading yet: the server's flood below must backpressure.
               s.pause();
             },
             data(s, buf) {
-              clientGotSome.resolve(buf.length);
+              received += buf.length;
+              if (received >= TOTAL) drained.resolve();
             },
             error() {},
             close() {},
@@ -4004,27 +4023,25 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
         // checked out, sleeping between peeks).
         await Bun.sleep(400);
         paused.resume();
-        const first = await gotData.promise;
+        await gotData.promise;
         // One settled loop turn so resume's request cycles back to a
         // parked readable wait (slot 2 checked out too).
         await Bun.sleep(80);
-        // 8MB against ~128KB of loopback buffering: the raw send is
-        // necessarily partial, which re-arms WRITABLE; this is the
-        // submission that used to abort the process.
-        const big = Buffer.alloc(8 * 1024 * 1024, 65).toString();
-        paused.write(big);
-        await Bun.sleep(300);
+        // The first partial write re-arms WRITABLE with both slots held:
+        // the submission that used to have no slot to land in.
+        pump(paused);
+        await Bun.sleep(200);
         if (sawError) {
           console.log("FAIL " + sawError);
           process.exit(1);
         }
         client.resume();
-        const got = await clientGotSome.promise;
-        console.log("OK " + first + " " + (got > 0));
+        await drained.promise;
+        console.log("OK drained " + received);
         process.exit(0);
       `);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK x true");
+    expect(stdout.trim()).toBe("OK drained " + 4 * 1024 * 1024);
     expect(exitCode).toBe(0);
   }, 15_000);
 });

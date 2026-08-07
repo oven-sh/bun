@@ -153,12 +153,13 @@ it("console.log(Bun) prints remaining properties when a lazy property fails to i
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("Archive:");
   expect(stdout).toContain("CryptoHasher:");
   expect(stdout).toContain("semver:");
   expect(stdout).toContain("zstdDecompress:");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 

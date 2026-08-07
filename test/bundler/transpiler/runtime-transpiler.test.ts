@@ -67,6 +67,23 @@ describe("// @bun", () => {
     expect(text).toBe(nonAscii);
   });
 
+  test("entry point with pragma keeps unknown-extension imports on the file loader", async () => {
+    using dir = tempDir("bun-pragma-file-loader", {
+      "asset.hbs": "<!DOCTYPE html>\n<html></html>\n",
+      "entry.js": `// @bun\nimport asset from "./asset.hbs";\nconsole.log(typeof asset);\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("string\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("raw utf-8 decodes as utf-8, not latin-1 (entry point)", async () => {
     using dir = tempDir("bun-pragma-utf8-entry", {
       "pragma.js": `// @bun\nconst DASH = "\u2014";\nconsole.log([...DASH].map(c => c.codePointAt(0).toString(16)).join(" "));\n`,

@@ -2787,6 +2787,13 @@ fn transpile_source_code_inner(
                         }
                         _ => (core::ptr::null_mut(), 0),
                     };
+                    if is_main {
+                        // Same as the transpiler-cache-hit return below: leaving
+                        // `has_loaded` false sends unknown-extension imports to
+                        // the `Loader::Tsx` fallback instead of `Loader::File`.
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                        unsafe { (*jsc_vm).has_loaded = true };
+                    }
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code: bun_core::String::clone_utf8(&source.contents),
                         specifier: input_specifier.dupe_ref(),

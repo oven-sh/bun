@@ -743,7 +743,9 @@ if (
   _isNodeWorker &&
   workerData &&
   typeof workerData === "object" &&
-  (BUN_WORKER_STDIO_KEY in workerData || BUN_WORKER_MESSAGING_KEY in workerData || BUN_WORKER_PARENT_PORT_KEY in workerData)
+  (BUN_WORKER_STDIO_KEY in workerData ||
+    BUN_WORKER_MESSAGING_KEY in workerData ||
+    BUN_WORKER_PARENT_PORT_KEY in workerData)
 ) {
   const stdioPorts = workerData[BUN_WORKER_STDIO_KEY];
   const controlPort = workerData[BUN_WORKER_MESSAGING_KEY];

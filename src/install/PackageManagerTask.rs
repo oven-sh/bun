@@ -450,30 +450,22 @@ impl<'a> Task<'a> {
                         None => {
                             let fallback = match Repository::try_ssh(url) {
                                 Some(ssh) => ssh,
-                                // URL-shaped specifiers neither rewrite
-                                // recognizes (file://, git://) are ones git
-                                // clones as written. Bare strings must not
-                                // reach git: it would resolve them as
-                                // filesystem paths relative to the current
-                                // directory. `attempt > 1` means an https
-                                // clone of the verbatim URL already failed
-                                // (`try_https` returns http(s) URLs
-                                // unchanged); don't repeat it.
+                                // git clones file:// and git:// URLs as
+                                // written. Bare strings are excluded (git
+                                // treats them as cwd-relative paths), as are
+                                // http(s) URLs whose verbatim clone already
+                                // failed (attempt > 1).
                                 None if attempt == 1
                                     && bun_core::strings::contains(url, b"://") =>
                                 {
-                                    // Sole attempt for this URL: mark it final
-                                    // so `download` logs a clone failure
-                                    // (attempt 1 stays quiet expecting a
-                                    // fallback retry).
+                                    // Final attempt: have `download` log it.
                                     attempt = 2;
                                     url
                                 }
                                 None => {
-                                    // No clone candidate: fail the task instead
-                                    // of completing without a repository. A
-                                    // failed https attempt already set its own
-                                    // error; keep it.
+                                    // No candidate: fail rather than complete
+                                    // without a repository, keeping an earlier
+                                    // https error if one was set.
                                     if this.status != Status::Fail {
                                         this.err =
                                             Some(crate::Error::RepositoryNotFound);

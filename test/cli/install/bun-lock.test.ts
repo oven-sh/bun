@@ -1240,7 +1240,10 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
   await git(["fetch", "-q", branchSrc, "+refs/heads/*:refs/heads/*"], join(packageDir, "branch-dep.git"));
   await git(["update-server-info"], join(packageDir, "branch-dep.git"));
 
+  // Drop every git dependency except the one under test so the cold install
+  // runs a single clone chain (see the staging note above).
   delete memberDeps["dummy"];
+  delete memberDeps["bare-dep"];
   await writeMember();
   await rm(installEnv.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true });
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });

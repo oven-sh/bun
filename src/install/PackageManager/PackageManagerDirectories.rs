@@ -759,12 +759,18 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
 /// without it is a leftover from an interrupted checkout; installing it would
 /// produce an empty package.
 pub fn is_git_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
+    is_git_folder_in_cache_at(get_cache_directory(this), folder_path.as_bytes())
+}
+
+/// [`is_git_folder_in_cache`] for call sites that hold the cache dir `Fd` and
+/// folder subpath directly (the hoisted and isolated installers).
+pub fn is_git_folder_in_cache_at(cache_dir: Fd, folder_subpath: &[u8]) -> bool {
     let mut buf = PathBuffer::uninit();
     let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
         &mut buf.0,
-        &[folder_path.as_bytes(), b".bun-tag"],
+        &[folder_subpath, b".bun-tag"],
     );
-    sys::exists_at(get_cache_directory(this), tag_path)
+    sys::exists_at(cache_dir, tag_path)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────

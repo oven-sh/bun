@@ -979,22 +979,32 @@ impl RepositoryExt for Repository {
             };
             let _ = dir.delete_tree(b".git");
 
-            if !resolved.is_empty() {
-                'insert_tag: {
-                    let Ok(git_tag) = dir.create_file_z(
-                        bun_core::zstr!(".bun-tag"),
-                        bun_sys::CreateFlags {
-                            truncate: true,
-                            ..Default::default()
-                        },
-                    ) else {
-                        break 'insert_tag;
-                    };
-                    if git_tag.write_all(resolved).is_err() {
-                        let _ = dir.delete_file_z(bun_core::zstr!(".bun-tag"));
-                    }
+            // `.bun-tag` marks the folder complete (`is_safe_resolved_tag`
+            // above guarantees `resolved` is non-empty). Publishing the folder
+            // without it would make every later install re-clone it.
+            let tag_written = match dir.create_file_z(
+                bun_core::zstr!(".bun-tag"),
+                bun_sys::CreateFlags {
+                    truncate: true,
+                    ..Default::default()
+                },
+            ) {
+                Ok(git_tag) => {
+                    let written = git_tag.write_all(resolved);
                     let _ = git_tag.close(); // close error is non-actionable
+                    written.is_ok()
                 }
+                Err(_) => false,
+            };
+            if !tag_written {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("writing \".bun-tag\" for \"{}\" failed", BStr::new(name)),
+                );
+                dir.close();
+                let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(tmp_name);
+                return Err(crate::Error::InstallFailed);
             }
 
             // Close before the rename: Windows can't move a directory while a

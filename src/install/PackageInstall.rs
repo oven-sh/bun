@@ -2351,14 +2351,10 @@ impl<'a> PackageInstall<'a> {
                             break 'package_json_exists sys::exists_at(self.cache_dir, subpath);
                         }
                         resolution::Tag::Git => {
-                            // See `is_git_folder_in_cache`: `.bun-tag` marks a
-                            // git checkout complete.
-                            let mut join_buf = PathBuffer::uninit();
-                            let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-                                &mut join_buf.0,
-                                &[self.cache_dir_subpath.as_bytes(), b".bun-tag"],
-                            );
-                            sys::exists_at(self.cache_dir, tag_path)
+                            crate::package_manager::directories::is_git_folder_in_cache_at(
+                                self.cache_dir,
+                                self.cache_dir_subpath.as_bytes(),
+                            )
                         }
                         _ => sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath)
                             .unwrap_or(false),
@@ -2374,16 +2370,14 @@ impl<'a> PackageInstall<'a> {
                     });
                 let cache_dir_subpath_without_patch_hash =
                     &self.cache_dir_subpath.as_bytes()[..idx];
-                // Use a stack PathBuffer (no shared state).
-                let mut join_buf = PathBuffer::uninit();
                 let exists = if matches!(resolution_tag, resolution::Tag::Git) {
-                    // Same `.bun-tag` probe as the unpatched Git arm above.
-                    let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-                        &mut join_buf.0,
-                        &[cache_dir_subpath_without_patch_hash, b".bun-tag"],
-                    );
-                    sys::exists_at(self.cache_dir, tag_path)
+                    crate::package_manager::directories::is_git_folder_in_cache_at(
+                        self.cache_dir,
+                        cache_dir_subpath_without_patch_hash,
+                    )
                 } else {
+                    // Use a stack PathBuffer (no shared state).
+                    let mut join_buf = PathBuffer::uninit();
                     join_buf[..cache_dir_subpath_without_patch_hash.len()]
                         .copy_from_slice(cache_dir_subpath_without_patch_hash);
                     join_buf[cache_dir_subpath_without_patch_hash.len()] = 0;

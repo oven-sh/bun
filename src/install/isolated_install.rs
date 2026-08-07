@@ -2371,16 +2371,10 @@ pub(crate) fn install_isolated_packages(
                                         exists
                                     }
                                     ResolutionTag::Git => {
-                                        // See `is_git_folder_in_cache`: `.bun-tag`
-                                        // marks a git checkout complete.
-                                        let cache_dir_path_save = pkg_cache_dir_subpath.len();
-                                        pkg_cache_dir_subpath.append(b".bun-tag").assume_ok();
-                                        let exists = sys::exists_at(
+                                        package_manager::directories::is_git_folder_in_cache_at(
                                             cache_dir,
-                                            pkg_cache_dir_subpath.slice_z(),
-                                        );
-                                        pkg_cache_dir_subpath.set_length(cache_dir_path_save);
-                                        exists
+                                            pkg_cache_dir_subpath.slice_z().as_bytes(),
+                                        )
                                     }
                                     _ => sys::directory_exists_at(
                                         cache_dir,

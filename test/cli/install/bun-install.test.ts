@@ -5309,12 +5309,13 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      const [err, exitCode, out] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
       // A loaded CI machine can OOM-kill the spawned git child; that is
       // environmental, not the behavior under test. Retry once.
       if (retries > 0 && err.includes("git failed with signal 9")) return install(cwd, args, retries - 1);
       expect(err).not.toContain("error:");
-      expect(exitCode).toBe(0);
+      // The object form surfaces both streams when the exit code is wrong.
+      expect({ out, err, exitCode }).toMatchObject({ exitCode: 0 });
     }
     async function resetProject(): Promise<void> {
       await rm(join(projectDir, "node_modules"), { recursive: true, force: true });

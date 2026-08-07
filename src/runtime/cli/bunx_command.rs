@@ -539,6 +539,34 @@ impl BunxCommand {
         }
     }
 
+    /// A probe failure must not abort bunx; the install fallback repairs or bypasses whatever the probe tripped over.
+    fn probe_bin_from_installed_package<'a>(
+        transpiler: &mut Transpiler,
+        package_name: &[u8],
+        bin_name: Option<&[u8]>,
+        install_root: &[u8],
+        executable_buf: &'a mut PathBuffer,
+    ) -> PackageBinLookup<'a> {
+        match Self::link_bin_from_installed_package(
+            transpiler,
+            package_name,
+            bin_name,
+            install_root,
+            executable_buf,
+        ) {
+            Ok(lookup) => lookup,
+            Err(err) => {
+                bun_output::scoped_log!(
+                    bunx,
+                    "package bin probe failed in {}: {}",
+                    BStr::new(install_root),
+                    err
+                );
+                PackageBinLookup::PackageNotFound
+            }
+        }
+    }
+
     fn get_bin_name_from_temp_directory(
         transpiler: &mut Transpiler,
         tempdir_name: &[u8],
@@ -1190,13 +1218,13 @@ impl BunxCommand {
                 let mut is_package_owned_bin = false;
                 let dest_or_cache: Option<&ZStr> = 'find: {
                     if update_request.version.literal.is_empty() {
-                        match Self::link_bin_from_installed_package(
+                        match Self::probe_bin_from_installed_package(
                             this_transpiler,
                             result_package_name,
                             opts.binary_name,
                             top_level_dir,
                             &mut package_bin_abs_buf,
-                        )? {
+                        ) {
                             PackageBinLookup::Found(d) => {
                                 is_package_owned_bin = true;
                                 break 'find Some(d);
@@ -1210,13 +1238,13 @@ impl BunxCommand {
                             PackageBinLookup::PackageNotFound => {}
                         }
                     }
-                    match Self::link_bin_from_installed_package(
+                    match Self::probe_bin_from_installed_package(
                         this_transpiler,
                         result_package_name,
                         opts.binary_name,
                         bunx_cache_dir,
                         &mut package_bin_abs_buf,
-                    )? {
+                    ) {
                         PackageBinLookup::Found(d) => {
                             is_package_owned_bin = true;
                             break 'find Some(d);
@@ -1705,6 +1733,12 @@ impl BunxCommand {
                             passthrough,
                             None,
                         )?;
+                    } else {
+                        bun_output::scoped_log!(
+                            bunx,
+                            "refusing untrusted cached binary: {}",
+                            BStr::new(out)
+                        );
                     }
                 }
                 PackageBinLookup::PackageNotFound | PackageBinLookup::BinNotFound => {
@@ -1732,6 +1766,12 @@ impl BunxCommand {
                             passthrough,
                             None,
                         )?;
+                    } else {
+                        bun_output::scoped_log!(
+                            bunx,
+                            "refusing untrusted cached binary: {}",
+                            BStr::new(out)
+                        );
                     }
                 }
                 PackageBinLookup::BinNotFound => {

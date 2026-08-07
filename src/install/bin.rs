@@ -974,7 +974,6 @@ impl<'a> Linker<'a> {
             self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
             return false;
         }
-        // Detached like `abs_dest_buf_ptr` in `link`; same SAFETY invariant.
         let abs_dest_buf_ptr: *mut u8 = self.abs_dest_buf.as_mut_ptr();
 
         let abs_target = {
@@ -2205,7 +2204,12 @@ fn resolve_installed_native_binlink_target(
         let package_dir_z = resolve_path::z(package_dir.slice(), &mut *package_dir_z_buf);
         let mut real_package_dir_buf = path::path_buffer_pool::get();
         let real_package_dir = sys::realpath(package_dir_z, &mut *real_package_dir_buf).ok()?;
-        AbsPath::from(resolve_path::dirname::<PlatformAuto>(real_package_dir)).ok()?
+        let mut parent = resolve_path::dirname::<PlatformAuto>(real_package_dir);
+        // `node_modules/@scope/name` nests one level deeper than `node_modules/name`.
+        if strings::contains_char(package_name, b'/') {
+            parent = resolve_path::dirname::<PlatformAuto>(parent);
+        }
+        AbsPath::from(parent).ok()?
     };
 
     let node_modules_paths = [nested_node_modules, real_node_modules, root_node_modules];

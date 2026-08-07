@@ -1057,10 +1057,12 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
           expect(await Bun.file(join(xDir, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
           await rm(join(xDir, "what-bin.txt"));
 
-          const cacheEntry = (await readdirSorted(env.BUN_TMPDIR)).find(entry => entry.startsWith("bunx-"));
-          expect(cacheEntry).toBeDefined();
+          const cacheEntries = (await readdirSorted(env.BUN_TMPDIR)).filter(entry => entry.startsWith("bunx-"));
+          // beforeEach gives each case its own BUN_TMPDIR.
+          expect(cacheEntries).toHaveLength(1);
+          const cacheEntry = cacheEntries[0];
           const sharedBin = Bun.which("what-bin", {
-            PATH: join(env.BUN_TMPDIR, cacheEntry!, "node_modules", ".bin"),
+            PATH: join(env.BUN_TMPDIR, cacheEntry, "node_modules", ".bin"),
           });
           expect(sharedBin).not.toBeNull();
           const shared = spawn({

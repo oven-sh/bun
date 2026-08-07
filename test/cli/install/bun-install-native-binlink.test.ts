@@ -137,6 +137,67 @@ describe.concurrent("native binlink optimization", () => {
       await expectPlatformBin();
     });
 
+    // With the isolated linker the platform package is only reachable through the realpath-derived
+    // node_modules candidate, which must strip an extra path component for a scoped package name.
+    test("bunx resolves the platform bin of a scoped native package", async () => {
+      const env = { ...bunEnv };
+      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+      env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+
+      await writeFile(
+        join(packageDir, "bunfig.toml"),
+        toTOMLString({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: verdaccio.registryUrl(),
+            linker,
+          },
+        }),
+      );
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: { "@binlink-scope/test-native-binlink": "1.0.0" },
+          nativeDependencies: ["@binlink-scope/test-native-binlink"],
+          trustedDependencies: ["@binlink-scope/test-native-binlink"],
+        }),
+      );
+
+      await using install = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [, installStderr, installExitCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
+      expect(installStderr).not.toContain("error:");
+      expect(installExitCode).toBe(0);
+
+      await using bunx = spawn({
+        cmd: [bunExe(), "x", "--package", "@binlink-scope/test-native-binlink", "test-binlink-scoped-cmd"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([bunx.stdout.text(), bunx.stderr.text(), bunx.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "SUCCESS: Using platform-specific bin (test-native-binlink-scoped-target)\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test("ignores an installed native package that does not satisfy the optional dependency", async () => {
       const env = { ...bunEnv };
       const { packageDir, packageJson } = await verdaccio.createTestDir();

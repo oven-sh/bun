@@ -51,8 +51,8 @@ describe.if(!isWindows)("uv stubs", () => {
 
   beforeAll(async () => {
     tempdir = tempDirWithFiles("uv-stubs", {});
-    const cc = Bun.which("cc");
-    if (!cc) throw new Error("uv_stub.test.ts requires a C compiler (cc) on PATH");
+    const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
+    if (!cc) throw new Error("uv_stub.test.ts: no C compiler (cc/clang/gcc) found in $PATH");
 
     // The addons are plain C using only stable napi v1 declarations, so they
     // compile against bun's own copy of the node headers: no node-gyp, no

@@ -618,7 +618,11 @@ impl IsolatedPosterInner {
             el.wakeup();
         }
         self.active.fetch_sub(1, Ordering::SeqCst);
-        if open { Posted::Queued } else { Posted::Refused(task) }
+        if open {
+            Posted::Queued
+        } else {
+            Posted::Refused(task)
+        }
     }
 
     pub(crate) fn to_js_poster(this: &Arc<Self>) -> bun_event_loop::JsPoster {

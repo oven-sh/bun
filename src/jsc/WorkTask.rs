@@ -142,7 +142,9 @@ impl<Context: WorkTaskContext> crate::Postable for WorkTask<Context> {
     unsafe fn concurrent_task(this: *mut Self) -> core::ptr::NonNull<ConcurrentTask> {
         // The embedded task, re-initialised in place (`from` only stores `this`).
         // SAFETY: fn contract.
-        core::ptr::NonNull::from(unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) })
+        core::ptr::NonNull::from(unsafe {
+            (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit)
+        })
     }
     /// The context's portable resources and the carrier. The JS-thread-only
     /// members (`ref_` keep-alive on a loop that no longer counts, the inspector

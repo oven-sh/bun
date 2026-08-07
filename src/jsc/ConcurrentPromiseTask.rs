@@ -69,7 +69,9 @@ impl<Context: ConcurrentPromiseTaskContext> crate::Postable for ConcurrentPromis
     unsafe fn concurrent_task(this: *mut Self) -> core::ptr::NonNull<ConcurrentTask> {
         // The embedded task, re-initialised in place (`from` only stores `this`).
         // SAFETY: fn contract.
-        core::ptr::NonNull::from(unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) })
+        core::ptr::NonNull::from(unsafe {
+            (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit)
+        })
     }
     /// The context (an owned `Box<Context>`, portable by this type's `Send`
     /// contract) and the carrier's storage; the promise handle and keep-alive

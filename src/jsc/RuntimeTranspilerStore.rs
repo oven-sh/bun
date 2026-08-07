@@ -203,11 +203,6 @@ pub struct RuntimeTranspilerStore {
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
-    /// Jobs handed to the WorkPool whose pool-side part has not finished. The
-    /// job storage is inside this VM, so teardown waits for this to drain
-    /// ([`Self::wait_for_pool_jobs`]) before the VM can be freed; a job that
-    /// starts after `close()` sees the closed handle and finishes at once.
-    pub(crate) pool_jobs_in_flight: AtomicU32,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -216,7 +211,6 @@ impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
-            pool_jobs_in_flight: AtomicU32::new(0),
             store: TranspilerJobStore::init(),
             enabled: true,
             queue: Queue::new(),
@@ -238,18 +232,8 @@ impl RuntimeTranspilerStore {
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
-    /// VM teardown, after `handle.close()`: wait until no pool thread can still
-    /// touch a job slot (they live in this VM). Jobs that start now see the
-    /// closed handle and finish immediately, so this is bounded by jobs already
-    /// mid-transpile.
-    pub fn wait_for_pool_jobs(&self) {
-        while self.pool_jobs_in_flight.load(Ordering::SeqCst) != 0 {
-            std::thread::yield_now();
-        }
-    }
-
-    /// VM teardown (JS thread, heap alive, script forbidden, handle closed so
-    /// no job is mid-flight): jobs whose completion arrived too late to run —
+    /// VM teardown (JS thread, heap alive, script forbidden, embedded work
+    /// waited for so no job is mid-flight): jobs whose completion will not run —
     /// queued after the last tick, or posted after `close()` began — release
     /// their source, log and module promise here instead of running.
     pub fn release_queued_jobs_for_teardown(&mut self) {
@@ -538,18 +522,13 @@ impl TranspilerJob {
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
         unsafe { (*transpiler_store).queue.push(job) };
         // Another thread may free `self` at any time after .push, so we cannot use it any more
-        // (the handle was cloned out above for exactly this reason).
-        // Runs under the borrow taken in `run_from_worker_thread`, so the VM is
-        // alive — but `close()` may already have begun (it publishes Closed,
-        // then waits for this borrow), in which case the post is refused. The
-        // job stays on the store's queue either way; teardown releases whatever
-        // is still there on the JS thread (`release_queued_jobs_for_teardown`).
-        if let crate::vm_handle::Posted::Refused(task) =
+        // (the handle was cloned out above for exactly this reason). The VM
+        // waits for embedded work before closing its handle, so this is queued.
+        let crate::vm_handle::Posted::Queued =
             loop_handle.post_task(ConcurrentTask::create_from(transpiler_store))
-        {
-            // SAFETY: just created above and handed back unqueued.
-            unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task) };
-        }
+        else {
+            unreachable!("VM handle closed with embedded transpile work outstanding");
+        };
     }
 
     fn run_from_js_thread(&mut self) -> JsResult<()> {
@@ -613,13 +592,9 @@ impl TranspilerJob {
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
-        // SAFETY: `vm` outlives the job (the store is a field of it); JS thread.
-        unsafe {
-            (*self.vm)
-                .transpiler_store
-                .pool_jobs_in_flight
-                .fetch_add(1, Ordering::SeqCst)
-        };
+        // The job is a slot inside this VM: counted, so teardown waits for it
+        // (see `VmHandle::embedded_work_scheduled`).
+        self.loop_handle.embedded_work_scheduled();
         WorkPool::schedule(&raw mut self.work_task);
     }
 
@@ -629,29 +604,21 @@ impl TranspilerJob {
         // `transpile`; the WorkPool calls back with exactly that field, so
         // `from_field_ptr!` recovers the live `TranspilerJob` parent.
         let this = unsafe { bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
-        // The job lives inside the VM (`transpiler_store.store`) and reads VM
-        // state while it runs. The VM cannot have been freed yet: teardown
-        // waits for `pool_jobs_in_flight` (raised in `schedule`) to drain, and
-        // we lower it last. Whether the VM is still *open* is what the borrow
-        // decides; if not, there is nothing to touch or release — the slot and
-        // its queue entry go with the VM (`release_queued_jobs_for_teardown`).
-        // SAFETY: as above — the slot is live until we decrement.
-        let (handle, in_flight) = unsafe {
-            (
-                (*this).loop_handle.clone(),
-                &(*(*this).vm).transpiler_store.pool_jobs_in_flight,
-            )
-        };
-        {
-            // Held (RAII) for the block: `close()` cannot complete while the
-            // job reads VM-owned memory.
-            if let Some(_borrow) = handle.borrow() {
-                // SAFETY: borrow held ⇒ VM open and this slot alive.
-                unsafe { (*this).run() };
-            }
+        // The slot lives inside the VM and the VM waits for us (embedded work),
+        // so it is alive throughout. Transpile only while the VM is still
+        // running; either way hand the job back to the JS thread, which
+        // completes or releases it.
+        // SAFETY: as above.
+        let handle = unsafe { (*this).loop_handle.clone() };
+        if let Some(_vm) = handle.borrow_if_running() {
+            // SAFETY: live slot, exclusively ours until dispatched.
+            unsafe { (*this).run() };
+        } else {
+            // SAFETY: as above.
+            unsafe { (*this).dispatch_to_main_thread() };
         }
-        // Last touch of VM memory from this thread.
-        in_flight.fetch_sub(1, Ordering::SeqCst);
+        // Last touch of the slot from this thread was the dispatch.
+        handle.embedded_work_finished();
     }
 
     fn run(&mut self) {

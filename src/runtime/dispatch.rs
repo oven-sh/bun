@@ -1337,6 +1337,26 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         }
         // Queue presence means the work-pool phase finished and the queue
         // owned the job; parking it would strand the ctx's native resources.
+        // An async zlib/brotli/zstd write whose completion will not run:
+        // unpin, unref, drop the write's ref — no callbacks.
+        task_tag::NativeZlib => {
+            // SAFETY: `task.ptr` is the stream the pool posted (write's ref held).
+            unsafe { node_zlib_binding::CompressionStream::<NativeZlib>::release_unrun(task.ptr.cast()) };
+            true
+        }
+        task_tag::NativeBrotli => {
+            // SAFETY: as above.
+            unsafe { node_zlib_binding::CompressionStream::<NativeBrotli>::release_unrun(task.ptr.cast()) };
+            true
+        }
+        task_tag::NativeZstd => {
+            // SAFETY: as above.
+            unsafe { node_zlib_binding::CompressionStream::<NativeZstd>::release_unrun(task.ptr.cast()) };
+            true
+        }
+        // The transpiler store's "drain my queue" ping owns nothing; the jobs
+        // themselves are released by `release_queued_jobs_for_teardown`.
+        task_tag::RuntimeTranspilerStore => true,
         task_tag::AnyTaskJob => {
             // SAFETY: every queued payload with this tag is a live heap `Job<C>`
             // its `Completion` posted; we own it once popped (JS thread, heap alive).

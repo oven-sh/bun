@@ -69,8 +69,12 @@ pub struct Inner {
     /// Threads currently inside `post`/`wake`/`ref`/`unref` or holding a
     /// [`Borrow`]. `close()` waits for zero after publishing `Closed`.
     active: AtomicU32,
-    /// Only for `close()` to sleep on while `active` drains (borrows may be long).
+    /// For `close()` to sleep on while `active` drains (borrows may be long),
+    /// and `wait_for_embedded_work()` while `embedded` drains.
     drained: (Mutex, Condvar),
+    /// Pool work scheduled with storage inside a JS-owned object (see
+    /// [`VmHandle::embedded_work_scheduled`]); teardown waits for zero.
+    embedded: AtomicU32,
     /// Dereferenced only while an `Access` guard is held and `state != Closed`,
     /// or on the JS thread. Nulled by `close()`.
     vm: core::cell::UnsafeCell<*mut VirtualMachine>,
@@ -128,6 +132,7 @@ impl VmHandle {
             state: AtomicU8::new(State::Open as u8),
             active: AtomicU32::new(0),
             drained: (Mutex::new(), Condvar::new()),
+            embedded: AtomicU32::new(0),
             vm: core::cell::UnsafeCell::new(vm),
             #[cfg(debug_assertions)]
             js_thread: std::thread::current().id(),
@@ -263,6 +268,55 @@ impl VmHandle {
             _access: a,
             handle: self.clone(),
         })
+    }
+
+    /// As [`borrow`](Self::borrow), but only while the VM is still running
+    /// (not yet stopping): what a pool body checks before doing work whose
+    /// only consumer is script.
+    pub fn borrow_if_running(&self) -> Option<Borrow> {
+        let b = self.borrow()?;
+        (self.0.state.load(Ordering::SeqCst) == State::Open as u8).then_some(b)
+    }
+
+    // ── embedded work ─────────────────────────────────────────────────────
+    //
+    // Pool work whose storage is a field of a JS-owned object (a transpile
+    // slot inside the VM, a zlib stream's native part) cannot be boxed into a
+    // `Job` and cannot outlive the VM. It is counted instead: teardown waits
+    // for the count before the handle closes, so such work always posts its
+    // completion into a live queue and is released on the JS thread — the
+    // pool side never sees a dead VM. Bodies check `borrow_if_running` so a
+    // stopping VM only waits for the pool to *reach* the work, not to do it.
+
+    /// JS thread, before handing embedded work to the pool.
+    pub fn embedded_work_scheduled(&self) {
+        self.0.embedded.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Pool thread, after its last touch of the embedded storage (i.e. after
+    /// posting the completion).
+    pub fn embedded_work_finished(&self) {
+        if self.0.embedded.fetch_sub(1, Ordering::SeqCst) == 1
+            && self.0.state.load(Ordering::SeqCst) != State::Open as u8
+        {
+            self.0.drained.0.lock();
+            self.0.drained.1.notify_all();
+            self.0.drained.0.unlock();
+        }
+    }
+
+    /// Teardown (JS thread, stopping, before `close()`): wait until the pool
+    /// holds no embedded work of this VM.
+    pub(crate) fn wait_for_embedded_work(&self) {
+        self.assert_js_thread();
+        debug_assert!(self.0.state.load(Ordering::SeqCst) != State::Open as u8);
+        if self.0.embedded.load(Ordering::SeqCst) != 0 {
+            self.0.drained.0.lock();
+            while self.0.embedded.load(Ordering::SeqCst) != 0 {
+                self.0.drained.1.wait(&self.0.drained.0);
+            }
+            self.0.drained.0.unlock();
+        }
     }
 
     // ── JS-thread API ─────────────────────────────────────────────────────
@@ -573,6 +627,15 @@ impl LoopHandle {
     }
     pub fn borrow(&self) -> Option<Borrow> {
         self.vm.borrow()
+    }
+    pub fn borrow_if_running(&self) -> Option<Borrow> {
+        self.vm.borrow_if_running()
+    }
+    pub fn embedded_work_scheduled(&self) {
+        self.vm.embedded_work_scheduled()
+    }
+    pub fn embedded_work_finished(&self) {
+        self.vm.embedded_work_finished()
     }
     pub fn is_open(&self) -> bool {
         self.vm.is_open()

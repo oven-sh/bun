@@ -1751,14 +1751,14 @@ impl VirtualMachine {
             // SAFETY: fn contract.
             unsafe { (hooks.abandon_fetch_tasklets_for_vm_teardown)(this) };
         }
+        // Pool work stored inside JS-owned objects (transpile slots, zlib
+        // streams) must be back before the handle closes: it completes into the
+        // still-open queue and is released below, on this thread.
+        vm.handle.wait_for_embedded_work();
         // From here no other thread reaches this VM: posts are refused (the
         // poster releases its task itself), wake/keep-alive are no-ops, and any
         // job still using VM-owned memory has finished (close waits for it).
         vm.handle.close();
-        // Transpiler jobs are stored inside this VM: none may still be on a
-        // pool thread when it is freed (started-late ones bail on the closed
-        // handle).
-        vm.transpiler_store.wait_for_pool_jobs();
         // A worker closes its uv loop below (D), so requests still in flight
         // must complete first, against this live VM. Their handles were closed
         // in A, so what remains completes on its own (threadpool work). The

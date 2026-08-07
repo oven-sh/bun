@@ -758,12 +758,10 @@ pub struct RewriterPipe {
 
     // ── allocation lifetime ──────────────────────────────────────────────
     /// Owners that may still dispatch into this allocation: the Transform
-    /// cell (until [`Self::finalize`]), the JS-pump controller's raw
-    /// `m_sinkPtr` (until `__controllerDetached`), and a parked suspension's
-    /// reaction/abandon task (until the promise settles or
-    /// [`Self::abandon_suspension`] runs). GC sweeps cells in unspecified
-    /// order within one cycle, so the Box is freed by whichever owner
-    /// releases last, never by cell-destructor position.
+    /// cell (releases in [`Self::finalize`]), the JS-pump controller's raw
+    /// `m_sinkPtr` (releases via `__controllerDetached`), and a parked
+    /// suspension's reaction/abandon task. GC sweeps cells in unspecified
+    /// order within a cycle, so whichever owner releases last frees the Box.
     claims: Cell<u8>,
     /// `claims` includes a JS-pump controller entry; consumed exactly once by
     /// [`Self::release_pump_claim`].
@@ -771,17 +769,12 @@ pub struct RewriterPipe {
 }
 
 impl RewriterPipe {
-    /// `JSHTMLRewriterTransform` finalizer: release the cell's claim on the
-    /// pipe. Runs during GC sweep, so nothing here may touch other GC cells
-    /// — and for the same reason the pipe must outlive the JS-pump
-    /// controller cell (whose destructor calls `__controllerDetached` /
-    /// `__finalize` on its raw `m_sinkPtr`) and a parked suspension (whose
-    /// `NativePromiseContext` destructor queues
-    /// [`Self::abandon_suspension`]). Those owners hold `claims`; leak the
-    /// Box here and the last of them frees it. At VM shutdown the other
-    /// owners' deferred releases never run, so a still-claimed pipe leaks —
-    /// the safe side of that teardown race, since their destructors can still
-    /// dispatch into the allocation.
+    /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
+    /// here may touch other GC cells, and the other `claims` holders may
+    /// still dispatch into the pipe after this cell is swept. So only
+    /// release the cell's claim; the last holder frees the Box. At VM
+    /// shutdown deferred releases never run, so a still-claimed pipe leaks
+    /// instead of being freed under a live claim.
     pub fn finalize(this: Box<Self>) {
         this.cell.set(JSValue::ZERO);
         if this.release_claim() {
@@ -809,13 +802,11 @@ impl RewriterPipe {
         n > 0
     }
 
-    /// The JS-pump controller detached — stream close/end, explicit
-    /// detach, or its GC destructor — and can never dispatch into the pipe
+    /// The JS-pump controller detached and can never dispatch into the pipe
     /// again: release its claim. A last-owner free is deferred to the event
-    /// loop instead of happening inline because the C++ caller keeps using
-    /// the allocation within the same frame (the destructor calls
-    /// `__finalize` next; the close/end host fns call `__close` /
-    /// `__endWithSink` on the saved pointer).
+    /// loop because the C++ caller keeps using the allocation in the same
+    /// frame (the destructor's trailing `__finalize`, the close/end host
+    /// fns' `__close`/`__endWithSink` on the saved pointer).
     fn release_pump_claim(&self) {
         if !self.pump_controller_attached.replace(false) {
             return;

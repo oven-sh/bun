@@ -79,9 +79,18 @@ const patterns = {
    * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
    * `rust-toolchain.toml` is included so a nightly bump invalidates the
    * staticlib (cargo's own fingerprinting then forces a full rebuild).
+   * `.html` under `src/runtime/` is embedded with `include_bytes!` (e.g. the
+   * dev error page template), so edits to it must re-run cargo too.
    */
   rust: {
-    paths: ["src/**/*.rs", "src/**/Cargo.toml", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"],
+    paths: [
+      "src/**/*.rs",
+      "src/**/Cargo.toml",
+      "src/runtime/**/*.html",
+      "Cargo.toml",
+      "Cargo.lock",
+      "rust-toolchain.toml",
+    ],
   },
   /** all `*.cpp` compiled into bun (bindings, webcore, v8 shim, usockets) */
   cxx: {

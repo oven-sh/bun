@@ -107,7 +107,7 @@ test("orphaned files stay deleted", () => {
     // unreferenced fixtures from the 2021-era inline zlib tests
     "src/zlib.test.txt",
     "src/zlib.test.gz",
-    // only fallback-backend.html is embedded (js_parser/parser.rs include_bytes!)
+    // the dev error page template lives at src/runtime/server/dev-error-page.html
     "src/fallback.html",
     "src/fixtures_example.com.html",
     "src/logo.svg",

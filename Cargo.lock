@@ -1050,7 +1050,6 @@ dependencies = [
  "bun_crash_handler",
  "bun_dispatch",
  "bun_highway",
- "bun_io",
  "bun_options_types",
  "bun_paths",
  "bun_ptr",
@@ -1255,6 +1254,9 @@ dependencies = [
 [[package]]
 name = "bun_lsquic_sys"
 version = "0.0.0"
+dependencies = [
+ "bun_core",
+]
 
 [[package]]
 name = "bun_md"
@@ -2005,7 +2007,6 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "memchr",
  "rustix",
  "scopeguard",
  "strum",

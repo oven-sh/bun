@@ -192,21 +192,21 @@ impl WindowsNamedPipeContext {
         // Only the TLS wrapper parks sessions; the TCP arm can never get here.
         // SAFETY: see `on_open`.
         if let SocketType::Tls(s) = unsafe { (*this).socket } {
-            let _ = TLSSocket::on_session(s, session);
+            TLSSocket::on_session(s, session);
         }
     }
 
     fn on_keylog(this: *mut Self, line: &[u8]) {
         // SAFETY: see `on_open`.
         if let SocketType::Tls(s) = unsafe { (*this).socket } {
-            let _ = TLSSocket::on_keylog(s, line);
+            TLSSocket::on_keylog(s, line);
         }
     }
 
     fn on_handshake(this: *mut Self, success: bool, ssl_error: us_bun_verify_error_t) {
         // SAFETY: see `on_open`.
         let (socket, pipe) = unsafe { ((*this).socket, ptr::addr_of_mut!((*this).named_pipe)) };
-        match_socket!(socket, |s: NewSocket<SSL>| _ = NewSocket::on_handshake(
+        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_handshake(
             s,
             socket_from_named_pipe::<SSL>(pipe),
             success as i32,
@@ -243,8 +243,11 @@ impl WindowsNamedPipeContext {
                 s.handle_error(js_err);
             });
         } else {
-            match_socket!(socket, |s: NewSocket<SSL>| _ =
-                NewSocket::handle_connect_error(s, err.errno as i32, 0));
+            match_socket!(socket, |s: NewSocket<SSL>| NewSocket::handle_connect_error(
+                s,
+                err.errno as i32,
+                0
+            ));
         }
     }
 
@@ -266,7 +269,7 @@ impl WindowsNamedPipeContext {
             (socket, ptr::addr_of_mut!((*this).named_pipe))
         };
         match_socket!(socket, |s: NewSocket<SSL>| {
-            _ = NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, None);
+            NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, None);
             // Release the +1 ref taken in `create()`.
             s.get().deref();
         });
@@ -302,8 +305,9 @@ impl WindowsNamedPipeContext {
     fn fail_and_release(this: *mut Self) {
         // SAFETY: `this` is live; `create()` returned it and no deref has fired yet.
         // +1 ref held on the inner socket; live until `Self::deref` below.
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| _ =
-            NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32, 0));
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| {
+            NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32, 0)
+        });
         // SAFETY: `this` was just returned from `create()` (refcount==1);
         // release the only ref on the errdefer path.
         unsafe { Self::deref(this) };

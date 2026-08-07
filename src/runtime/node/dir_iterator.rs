@@ -396,7 +396,7 @@ mod platform {
                 // instead of dereferencing the raw `*const dirent64`.
                 let name_off = entry_idx + offset_of!(libc::dirent64, d_name);
                 let region = &self.buf.0[name_off..next_index];
-                let nul = region.iter().position(|&b| b == 0).unwrap_or(region.len());
+                let nul = bun_core::strings::index_of_char_usize(region, 0).unwrap_or(region.len());
                 let name = &region[..nul];
 
                 // skip . and .. entries

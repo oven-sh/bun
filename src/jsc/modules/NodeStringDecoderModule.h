@@ -6,7 +6,7 @@ namespace Zig {
 
 DEFINE_NATIVE_MODULE(NodeStringDecoder)
 {
-    INIT_NATIVE_MODULE(1);
+    INIT_NATIVE_MODULE(NodeStringDecoder, 1);
 
     put(JSC::Identifier::fromString(vm, "StringDecoder"_s),
         globalObject->JSStringDecoder());

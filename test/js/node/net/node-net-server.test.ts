@@ -1,5 +1,5 @@
 import { realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -636,21 +636,24 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
 // uv_loop_alive and the process never exited. TCP and unix-socket listeners go
 // through usockets, which unrefs its uv handles up front.
 it("server.unref() on a pipe/unix-socket listener lets the process exit", async () => {
+  // The child exits without close() (natural exit is the observable), so the
+  // unix socket file must live in a tempDir the parent disposes.
+  using dir = tempDir("server-unref", {});
+  const listenPath =
+    process.platform === "win32"
+      ? "\\\\.\\pipe\\bun-server-unref-" + process.pid + "-" + Math.random().toString(36).slice(2)
+      : join(String(dir), "server-unref.sock");
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-      const net = require("net");
-      const path = process.platform === "win32"
-        ? "\\\\\\\\.\\\\pipe\\\\bun-server-unref-" + process.pid
-        : require("os").tmpdir() + "/bun-server-unref-" + process.pid + ".sock";
-      const server = net.createServer();
-      server.listen(path, () => server.unref());
+      const server = require("net").createServer();
+      server.listen(process.env.SERVER_UNREF_LISTEN_PATH, () => server.unref());
       setTimeout(() => { process.stdout.write("HUNG"); process.exit(1); }, 4000).unref();
       `,
     ],
-    env: bunEnv,
+    env: { ...bunEnv, SERVER_UNREF_LISTEN_PATH: listenPath },
     stdout: "pipe",
     stderr: "pipe",
   });

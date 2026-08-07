@@ -438,7 +438,7 @@ fn trim_ws_end<U: Unit>(text: &[U]) -> &[U] {
 
 /// `a == b` for the short slices names are, without a `memcmp` call.
 #[inline]
-fn name_eq(a: &[u8], b: &[u8]) -> bool {
+fn name_eq<T: Copy + Eq>(a: &[T], b: &[T]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -3895,7 +3895,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             sc.pos = stop + 2;
             let n = name.len();
             let fast_match = src.len() - sc.pos > n
-                && src[sc.pos..sc.pos + n] == *name
+                && name_eq(&src[sc.pos..sc.pos + n], name)
                 && !is_name_char_ascii(src[sc.pos + n].low())
                 && src[sc.pos + n].low() < 0x80;
             let end_name = if fast_match {
@@ -4003,7 +4003,9 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     #[inline(always)]
     fn has_attribute(&self, name: &[U]) -> bool {
         if self.attribute_count <= LINEAR_ATTRIBUTE_LIMIT {
-            self.attribute_first[..self.attribute_count].contains(&name)
+            self.attribute_first[..self.attribute_count]
+                .iter()
+                .any(|&first| name_eq(first, name))
         } else {
             self.attribute_names.contains_key(name)
         }

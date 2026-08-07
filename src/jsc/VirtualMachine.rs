@@ -1780,8 +1780,7 @@ pub struct RuntimeHooks {
     /// the caller writes the returned bool back into
     /// `transform_options.allow_addons` so the override semantics
     /// ("override the existing even if it was set") match.
-    pub parse_worker_exec_argv_allow_addons:
-        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<bool>,
+    pub parse_worker_exec_argv_allow_addons: fn(exec_argv: &[Box<[u8]>]) -> Option<bool>,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub cron_clear_all_teardown: fn(vm: &mut VirtualMachine),
@@ -2327,16 +2326,7 @@ impl VirtualMachine {
             || self
                 .worker_ref()
                 .and_then(crate::web_worker::WebWorker::exec_argv)
-                .is_some_and(|exec_argv| {
-                    use bun_core::WTFStringImplExt as _;
-                    exec_argv.iter().any(|&arg| {
-                        // SAFETY: each entry borrows the C++ `WorkerOptions`
-                        // array, kept alive by the owning `WebCore::Worker`
-                        // for the worker's lifetime (see `WebWorker::argv`).
-                        !arg.is_null()
-                            && is_bootstrap_flag(unsafe { &*arg }.to_owned_slice_z().as_bytes())
-                    })
-                });
+                .is_some_and(|exec_argv| exec_argv.iter().any(|arg| is_bootstrap_flag(arg)));
         if needs_pre_execution {
             // The C++ side catches and reports any JS exception thrown while
             // evaluating `internal/process/pre_execution`.

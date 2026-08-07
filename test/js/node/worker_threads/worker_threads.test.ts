@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -343,6 +343,94 @@ describe("execArgv option", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
   });
   // TODO(@190n) get our handling of non-string array elements in line with Node's
+});
+
+// The worker thread used to receive the parent's argv/execArgv WTF::StringImpls
+// by pointer. Using one as a property key atomizes it in the worker's
+// thread-local atom table, and when the parent GC'd the Worker wrapper while
+// the worker thread was still exiting, the parent-side final deref aborted in
+// AtomStringImpl::remove ("The string being removed is an atom in the string
+// table of an other thread!") - on Windows a silent 0xC0000409 fastfail that
+// took down `bun test --parallel` workers. The fixture forces that exact
+// interleaving: pin the process to one CPU, idle-schedule the dying worker
+// thread so it cannot reach its thread-local destructors, and run a full GC
+// from the first microtask after the exit event. taskset/chrt are best-effort;
+// without them (non-Linux) the fixture still exercises the path.
+test("argv/execArgv atomized inside the worker don't abort when the parent collects the Worker first", async () => {
+  using dir = tempDir("worker-argv-atom", {
+    "repro.js": `
+      const { Worker } = require("worker_threads");
+      const { readdirSync, readFileSync } = require("fs");
+      const { spawnSync } = require("child_process");
+
+      function pinAllThreadsToOneCpu() {
+        try {
+          const m = readFileSync("/proc/self/status", "utf8").match(/Cpus_allowed_list:\\s*(\\d+)/);
+          if (m) spawnSync("taskset", ["-a", "-pc", m[1], String(process.pid)]);
+        } catch {}
+      }
+      function idleSchedule(threadName) {
+        try {
+          for (const t of readdirSync("/proc/self/task")) {
+            if (readFileSync("/proc/self/task/" + t + "/comm", "utf8").trim() === threadName) {
+              spawnSync("chrt", ["-i", "-p", "0", t]);
+              return;
+            }
+          }
+        } catch {}
+      }
+
+      const victimCode = \`
+        const { parentPort } = require("worker_threads");
+        const sink = {};
+        for (const a of process.argv) sink[a] = 1;
+        for (const a of process.execArgv) sink[a] = 1;
+        parentPort.postMessage("ready");
+        setInterval(() => {}, 1000);
+      \`;
+
+      (async () => {
+        pinAllThreadsToOneCpu();
+        for (let r = 0; r < 3; r++) {
+          const name = "atomvictim" + r;
+          let w = new Worker(victimCode, {
+            eval: true,
+            name,
+            argv: ["--atom-argv-a-" + r, "--atom-argv-b-" + r],
+            execArgv: ["--no-addons"],
+          });
+          await new Promise(res => w.once("message", res));
+          idleSchedule(name);
+          const exited = new Promise(res => {
+            w.once("exit", () => {
+              // First microtask after the exit event: the wrapper is off the
+              // dispatch stack and the thread-held ref is gone, so this full
+              // GC destroys the WebCore::Worker and derefs the option strings.
+              queueMicrotask(() => {
+                Bun.gc(true);
+                res();
+              });
+            });
+          });
+          w.terminate();
+          w = null;
+          await exited;
+        }
+        console.log("OK");
+        process.exit(0);
+      })();
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "repro.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
 });
 
 test("eval does not leak source code", async () => {

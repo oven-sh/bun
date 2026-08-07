@@ -234,8 +234,8 @@ mod _impl {
         if let Some(worker) = vm.worker_ref() {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
-                return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    BunString::init(wtf).to_js(global_object)
+                return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |arg| {
+                    BunString::borrow_utf8(arg).to_js(global_object)
                 });
             }
         }
@@ -402,8 +402,8 @@ mod _impl {
         }
 
         if let Some(worker) = worker {
-            for &arg in worker.argv() {
-                args_list.push(BunString::init(arg));
+            for arg in worker.argv() {
+                args_list.push(BunString::borrow_utf8(arg));
             }
         } else {
             for arg in &vm.argv {

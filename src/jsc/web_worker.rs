@@ -64,7 +64,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_core::{String as BunString, WTFStringImpl};
+use bun_core::{String as BunString, WTFStringImpl, WTFStringImplExt as _};
 use bun_io::KeepAlive;
 use bun_threading::{Futex, Mutex};
 
@@ -97,12 +97,16 @@ pub struct WebWorker {
     mini: bool,
     eval_mode: bool,
     store_fd: bool,
-    /// Borrowed from C++ `WorkerOptions` (kept alive by the owning `Worker`).
-    argv_ptr: *const WTFStringImpl,
-    argv_len: usize,
-    exec_argv_ptr: *const WTFStringImpl,
-    exec_argv_len: usize,
-    inherit_exec_argv: bool,
+    /// Owned UTF-8 copies of the `WorkerOptions` argv/execArgv strings, made
+    /// on the parent thread in [`Self::create`]. The worker thread must never
+    /// see the parent's `WTF::StringImpl`s: wrapping one in a worker-heap
+    /// `JSString` lets worker-side atomization insert the shared impl into the
+    /// worker's thread-local atom table, and the parent's final deref (GC
+    /// sweep of the `Worker` wrapper) then aborts in `AtomStringImpl::remove`
+    /// ("the atom is in the string table of an other thread").
+    argv: Vec<Box<[u8]>>,
+    /// `None` when the worker inherits the parent's execArgv.
+    exec_argv: Option<Vec<Box<[u8]>>>,
     /// Heap-owned by this struct; freed in `destroy()`.
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
@@ -436,26 +440,17 @@ impl WebWorker {
         self.eval_mode
     }
 
-    /// Borrowed from the C++ `WorkerOptions` (kept alive by the owning
-    /// `WebCore::Worker`).
+    /// Worker-owned UTF-8 copies of the `WorkerOptions` argv strings.
     #[inline]
-    pub fn argv(&self) -> &[WTFStringImpl] {
-        // SAFETY: `argv_ptr[..argv_len]` is borrowed from C++ WorkerOptions
-        // (BACKREF — kept alive by the owning Worker for `self`'s lifetime).
-        // `(null, 0)` is tolerated by `ffi::slice`.
-        unsafe { bun_core::ffi::slice(self.argv_ptr, self.argv_len) }
+    pub fn argv(&self) -> &[Box<[u8]>] {
+        &self.argv
     }
 
-    /// `None` when
-    /// `inherit_exec_argv` (the worker inherits the parent's execArgv),
-    /// otherwise `Some(slice)` (possibly empty) borrowed from C++ WorkerOptions.
+    /// `None` when the worker inherits the parent's execArgv, otherwise
+    /// `Some(slice)` (possibly empty) of worker-owned UTF-8 copies.
     #[inline]
-    pub fn exec_argv(&self) -> Option<&[WTFStringImpl]> {
-        if self.inherit_exec_argv {
-            return None;
-        }
-        // SAFETY: see `argv()`.
-        Some(unsafe { bun_core::ffi::slice(self.exec_argv_ptr, self.exec_argv_len) })
+    pub fn exec_argv(&self) -> Option<&[Box<[u8]>]> {
+        self.exec_argv.as_deref()
     }
 
     fn set_requested_terminate(&self) -> bool {
@@ -541,6 +536,28 @@ impl WebWorker {
         // SAFETY: `parent` is live (see above); borrow ends at `;`.
         let store_fd = unsafe { (*parent).transpiler.resolver.store_fd };
 
+        // Copy argv/execArgv to worker-owned UTF-8 while still on the parent
+        // thread; see the `argv` field doc for why the `WTF::StringImpl`s must
+        // not cross into the worker thread.
+        let copy_args = |ptr: *const WTFStringImpl, len: usize| -> Vec<Box<[u8]>> {
+            // SAFETY: caller passed a valid (ptr, len) pair (or `(null, 0)`,
+            // tolerated by `ffi::slice`) of live `WTF::StringImpl*`s kept
+            // alive by `Worker::create` across this call.
+            unsafe { bun_core::ffi::slice(ptr, len) }
+                .iter()
+                .map(|&s| {
+                    // SAFETY: each element is a live `WTF::StringImpl*` (see above).
+                    unsafe { &*s }.to_utf8().slice().to_vec().into_boxed_slice()
+                })
+                .collect()
+        };
+        let argv = copy_args(argv_ptr, argv_len);
+        let exec_argv = if inherit_exec_argv {
+            None
+        } else {
+            Some(copy_args(exec_argv_ptr, exec_argv_len))
+        };
+
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             cpp_worker,
             // `parent` is the calling thread's live VM; non-null by FFI contract.
@@ -549,11 +566,8 @@ impl WebWorker {
             mini,
             eval_mode,
             store_fd,
-            argv_ptr,
-            argv_len,
-            exec_argv_ptr,
-            exec_argv_len,
-            inherit_exec_argv,
+            argv,
+            exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             preloads,
             name: if name_str.is_empty() {
@@ -861,14 +875,9 @@ impl WebWorker {
             // RunCommand param table. The param table lives in
             // `bun_runtime::cli` (forward-dep), so dispatch through
             // `RuntimeHooks::parse_worker_exec_argv_allow_addons`. Currently
-            // only honours `--no-addons`; the hook owns the temporary UTF-8
-            // alloc + clap parse + `args.deinit()`. `None` on parse failure
+            // only honours `--no-addons`. `None` on parse failure
             // (the parent's setting is kept).
-
-            // SAFETY: `exec_argv` borrows C++ `WorkerOptions` kept alive by the
-            // owning `WebCore::Worker` for `self`'s lifetime; the hook only
-            // reads the slice and owns its own temporary allocations.
-            let parsed = unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) };
+            let parsed = (hooks.parse_worker_exec_argv_allow_addons)(exec_argv);
             if let Some(allow_addons) = parsed {
                 let parent_allows = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows && allow_addons);

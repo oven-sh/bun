@@ -20,7 +20,6 @@
 //!   4. `__bun_get_vm_ctx` / `__bun_stdio_blob_store_new` /
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
-use bun_core::WTFStringImplExt as _;
 use bun_options_types::LoaderExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -1513,27 +1512,16 @@ unsafe fn apply_standalone_runtime_flags(
 ///
 /// Note: the Rust `bun_clap::parse_ex` port currently constrains
 /// `ArgIter<'static>` (parsed values are stored by reference), which would
-/// force leaking the per-call UTF-8 copies of `exec_argv`. Spec only ever
+/// force leaking a copy of `exec_argv`. Spec only ever
 /// reads the single `--no-addons` flag from the result (per the in-tree
 /// `// TODO: currently this only checks for --no-addons`), so this body scans
-/// the converted argv directly with the same `stop_after_positional_at = 1`
+/// the argv directly with the same `stop_after_positional_at = 1`
 /// short-circuit. Full clap routing can return when `ComptimeClap` grows a
 /// borrowed-lifetime variant.
-///
-/// # Safety
-/// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
-/// `Worker::create` array, kept alive for the worker's lifetime).
-unsafe fn parse_worker_exec_argv_allow_addons(
-    exec_argv: &[bun_core::WTFStringImpl],
-) -> Option<bool> {
+fn parse_worker_exec_argv_allow_addons(exec_argv: &[Box<[u8]>]) -> Option<bool> {
     let mut no_addons = false;
-    for &arg in exec_argv {
-        if arg.is_null() {
-            continue;
-        }
-        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        let owned = unsafe { &*arg }.to_owned_slice_z();
-        let bytes = owned.as_bytes();
+    for arg in exec_argv {
+        let bytes: &[u8] = arg;
         // `stop_after_positional_at = 1` — first non-flag token ends parsing.
         if bytes.first() != Some(&b'-') {
             break;

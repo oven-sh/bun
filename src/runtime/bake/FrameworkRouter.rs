@@ -304,6 +304,8 @@ impl EncodedPattern {
     }
 
     fn matches(&self, path: &[u8], params: &mut MatchedParams) -> bool {
+        // Discard captures left by a previous candidate that failed partway.
+        params.params.clear();
         let mut param_num: usize = 0;
         let mut it = self.iterate();
         let mut i: usize = 1;
@@ -375,8 +377,7 @@ impl EncodedPattern {
                             };
                         }
                     }
-                    // A required catch-all ([...name]) must capture at least
-                    // one segment; only [[...name]] matches zero segments.
+                    // Only the optional form may match zero segments.
                     return matches!(part, Part::CatchAllOptional(_)) || param_num > params_before;
                 }
                 Part::Group(_) => continue,
@@ -1871,8 +1872,6 @@ impl JSFrameworkRouter {
         };
         if let Some(index) = self.router.match_slow(path.slice(), &mut params_out) {
             let obj = JSValue::create_empty_object(global, 2);
-            // Use the same conversion as the dev server so repeated catch-all
-            // keys aggregate into arrays instead of overwriting each other.
             obj.put(global, b"params", params_out.to_js(global));
             obj.put(global, b"route", self.route_to_json_inverse(global, index)?);
             return Ok(obj);

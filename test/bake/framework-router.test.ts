@@ -210,9 +210,19 @@ describe("url matching", () => {
     });
   });
 
+  test("a failed candidate's captures don't leak into a later zero-segment match", () => {
+    // The [category] directory is scanned before blog/ (deterministic hash
+    // order), so the three-param pattern runs first, captures
+    // category="blog", then fails on [year]. The optional catch-all then
+    // matches /blog with zero segments and must not report that capture.
+    using r = makeMatcher("[category]/[year]/[slug].tsx", "blog/[[...slug]].tsx");
+    expect(r.match("/blog")).toEqual({ file: "blog/[[...slug]].tsx", params: null });
+  });
+
   test("optional catch-all matches zero segments", () => {
     using r = makeMatcher("blog/[[...slug]].tsx");
     expect(r.match("/blog")).toEqual({ file: "blog/[[...slug]].tsx", params: null });
+    expect(r.match("/blog/")).toEqual({ file: "blog/[[...slug]].tsx", params: null });
     expect(r.match("/blog/a")).toEqual({
       file: "blog/[[...slug]].tsx",
       params: { slug: "a" },

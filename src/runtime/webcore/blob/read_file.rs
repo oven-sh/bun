@@ -133,7 +133,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
 // Type aliases / result types
 // ──────────────────────────────────────────────────────────────────────────
 
-pub type ReadFileOnReadFileCallback = fn(ctx: *mut c_void, bytes: ReadFileResultType);
+type ReadFileOnReadFileCallback = fn(ctx: *mut c_void, bytes: ReadFileResultType);
 
 pub struct ReadFileRead {
     /// Always a `Box::<[u8]>::into_raw` from the producer's read buffer

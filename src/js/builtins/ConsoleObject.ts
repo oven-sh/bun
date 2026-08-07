@@ -673,11 +673,6 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       const mapIter = isMapIterator(tabularData);
       let isKeyValue = false;
       let i = 0;
-      // if (mapIter) {
-      //   const res = previewEntries(tabularData, true);
-      //   tabularData = res[0];
-      //   isKeyValue = res[1];
-      // }
 
       if (isKeyValue || $isMap(tabularData)) {
         const keys = [];

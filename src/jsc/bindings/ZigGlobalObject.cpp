@@ -68,6 +68,7 @@
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"
+#include "NodeV8.h"
 #include "ProcessIdentifier.h"
 #include "BunWorkerGlobalScope.h"
 #include "CallSite.h"
@@ -323,10 +324,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useAsyncStackTrace() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;
-            // Upstream enabled Temporal by default; keep it off in Bun until
-            // the remaining integration work lands. BUN_JSC_useTemporal=1
-            // re-enables it for opt-in testing.
-            JSC::Options::useTemporal() = false;
+            JSC::Options::useTemporal() = true;
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
@@ -581,6 +579,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             auto& options = worker.options();
 
             if (options.env.has_value()) {
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                 HashMap<String, String> map = *std::exchange(options.env, std::nullopt);
                 auto size = map.size();
 
@@ -592,12 +591,21 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     strings.append(jsString(vm, value));
                 }
 
-                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+#if OS(WINDOWS)
+                JSC::JSObject* env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+#else
+                // Same exotic object as the main thread so writes inside the
+                // worker coerce to string, reject symbol keys, and validate
+                // defineProperty like Node's EnvSetter/EnvDefiner.
+                auto* envStructure = Bun::JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+                JSC::JSObject* env = Bun::JSEnvironmentVariableMap::create(vm, envStructure);
+#endif
                 size_t i = 0;
                 for (auto k : map) {
-                    // They can have environment variables with numbers as keys.
-                    // So we must use putDirectMayBeIndex to handle that.
+                    // Numeric env keys hit putDirectIndex → defineOwnProperty (declares a
+                    // ThrowScope). Seeded values are JSStrings so only OOM can throw.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+                    scope.assertNoException();
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             } else if (options.sharedEnvStore) {
@@ -1155,11 +1163,21 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 
 #pragma mark - Globals
 
+// onmessage/onerror are CustomValue properties, so JSC invokes these callbacks
+// with the property receiver as thisValue, which is not necessarily the global
+// object: `new Proxy(globalThis, {}).onmessage = fn` passes the Proxy.
+static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue)
+{
+    if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(JSValue::decode(thisValue)))
+        return globalObject;
+    return defaultGlobalObject(lexicalGlobalObject);
+}
+
 JSC_DEFINE_CUSTOM_GETTER(globalOnMessage,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    Zig::GlobalObject* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().messageEvent, thisObject->world()));
 }
 
@@ -1167,7 +1185,7 @@ JSC_DEFINE_CUSTOM_GETTER(globalOnError,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    Zig::GlobalObject* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().errorEvent, thisObject->world()));
 }
 
@@ -1177,7 +1195,7 @@ JSC_DEFINE_CUSTOM_SETTER(setGlobalOnMessage,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSValue value = JSValue::decode(encodedValue);
-    auto* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().messageEvent, value, *thisObject);
     vm.writeBarrier(thisObject, value);
     ensureStillAliveHere(value);
@@ -1190,7 +1208,7 @@ JSC_DEFINE_CUSTOM_SETTER(setGlobalOnError,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSValue value = JSValue::decode(encodedValue);
-    auto* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().errorEvent, value, *thisObject);
     vm.writeBarrier(thisObject, value);
     ensureStillAliveHere(value);
@@ -3383,8 +3401,7 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     auto& vm = JSC::getVM(globalObject);
 
     if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
-        WTF::timeZoneDidChange();
-        vm.dateCache.clearForTimeZoneChange();
+        Bun::resetDateCachesAfterTimeZoneChange(vm);
         return true;
     }
 

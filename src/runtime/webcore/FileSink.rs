@@ -1557,11 +1557,15 @@ impl FileSink {
             |src| self.source.set(src),
         ) {
             readable_stream::NativeWireResult::Wired => {
-                self.writer
-                    .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
-                if !self.must_be_kept_alive_until_eof.get() {
-                    self.must_be_kept_alive_until_eof.set(true);
-                    self.ref_();
+                // A synchronous producer may have driven `end_from_stream`
+                // (clears `source`) inline; no keepalive then.
+                if !matches!(self.source.get(), streams::SourceHandle::None) {
+                    self.writer
+                        .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
+                    if !self.must_be_kept_alive_until_eof.get() {
+                        self.must_be_kept_alive_until_eof.set(true);
+                        self.ref_();
+                    }
                 }
                 return JSValue::UNDEFINED;
             }

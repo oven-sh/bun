@@ -1580,6 +1580,9 @@ impl<'a> Parser<'a> {
                     .map_err(remap)?,
             );
         }
+        if let Some(v) = install_obj.get(b"hoist").and_then(|e| e.as_bool()) {
+            install.hoist = Some(v);
+        }
 
         Ok(())
     }

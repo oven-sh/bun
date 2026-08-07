@@ -37,7 +37,7 @@ pub trait DirEntryProbe {
 // is provided there — see src/resolver/lib.rs. No impl here; that would be a
 // dep-cycle.
 
-/// schema.peechy — `enum(u32)`. Canonical definition; re-exported as
+/// Canonical definition; re-exported as
 /// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -54,8 +54,7 @@ pub enum DotEnvBehavior {
 #[allow(non_upper_case_globals)]
 impl DotEnvBehavior {
     // PascalCase aliases — downstream callers (bundler/options.rs, bundler/defines.rs,
-    // runtime/api/JSBundler.rs) name the variants both ways while the snake_case enum
-    // body above stays the schema ground truth.
+    // runtime/api/JSBundler.rs) name the variants both ways.
     pub const None: Self = Self::_none;
     pub const Disable: Self = Self::disable;
     pub const Prefix: Self = Self::prefix;
@@ -76,7 +75,7 @@ impl DotEnvBehavior {
             Ok((Self::load_all, None))
         } else if s == b"disable" {
             Ok((Self::disable, None))
-        } else if let Some(asterisk) = s.iter().position(|&b| b == b'*') {
+        } else if let Some(asterisk) = strings::index_of_char_usize(s, b'*') {
             if asterisk > 0 {
                 Ok((Self::prefix, Some(&s[..asterisk])))
             } else {
@@ -352,7 +351,7 @@ impl Loader {
             return false;
         }
 
-        for no_proxy_item in no_proxy_text.split(|&b| b == b',') {
+        for no_proxy_item in strings::split(no_proxy_text, b",") {
             let mut no_proxy_entry = strings::trim(no_proxy_item, &strings::WHITESPACE_CHARS);
             if no_proxy_entry.is_empty() {
                 continue;
@@ -372,7 +371,7 @@ impl Loader {
             // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
             // Bracketed IPv6 with port: "[::1]:8080"
             // Host with port: "localhost:8080" (single colon)
-            let colon_count = no_proxy_entry.iter().filter(|&&b| b == b':').count();
+            let colon_count = strings::count_char(no_proxy_entry, b':');
             let is_bracketed_ipv6 = strings::starts_with_char(no_proxy_entry, b'[');
             let has_port = 'blk: {
                 if is_bracketed_ipv6 {
@@ -659,7 +658,7 @@ impl Loader {
             let arg_value = strings::trim(env_files[i - 1], b" ");
             if !arg_value.is_empty() {
                 // ignore blank args
-                for file_path in arg_value.rsplit(|&b| b == b',') {
+                for file_path in strings::rsplit(arg_value, b",") {
                     if !file_path.is_empty() {
                         self.load_env_file_dynamic::<false>(file_path, value_buffer)?;
                         analytics::Features::dotenv_inc();

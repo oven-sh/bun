@@ -1158,7 +1158,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         (path, b"path"),
     ] {
         let entry = entry.slice();
-        if !entry.is_empty() && entry.contains(&0) {
+        if !entry.is_empty() && strings::contains_char(entry, 0) {
             drop(options_buf);
             // tls_config / secure released by the errdefer above.
             return Err(global_object.throw_invalid_arguments(format_args!(

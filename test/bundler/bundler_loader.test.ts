@@ -65,6 +65,22 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
+      itBundled("bun/loader-xml-file", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import doc from './hello.notxml' with {type: "xml"};
+        import byExtension, { greeting } from './hello.xml';
+        console.write(JSON.stringify([doc, byExtension, greeting]));
+      `,
+          "/hello.notxml": `<hello to="world">hi <b>there</b></hello>`,
+          "/hello.xml": `<?xml version="1.0"?><!DOCTYPE greeting [<!ENTITY w "world">]><greeting __proto__="1"><to>&w;</to><to>you</to></greeting>`,
+        },
+        run: {
+          stdout:
+            '[{"hello":{"@to":"world","b":"there","#text":"hi"}},{"greeting":{"@__proto__":"1","to":["world","you"]}},{"@__proto__":"1","to":["world","you"]}]',
+        },
+      });
     });
   }
 
@@ -230,6 +246,61 @@ describe("bundler", async () => {
       "/data.yaml": `{__proto__: {x: 1}, a: 2}\n`,
     },
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  itBundled("bun/loader-xml-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.xml';
+    const out = [
+      Object.getPrototypeOf(data.r) === Object.prototype,
+      Object.hasOwn(data.r, "__proto__"),
+      data.r.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.xml": `<r><__proto__><x>1</x></__proto__><a>2</a></r>`,
+    },
+    run: { stdout: '[true,true,null,"{\\"r\\":{\\"__proto__\\":{\\"x\\":\\"1\\"},\\"a\\":\\"2\\"}}"]' },
+  });
+
+  itBundled("bun/loader-xml-entry-point", {
+    target: "bun",
+    outfile: "",
+    outdir: "/out",
+    files: {
+      "/feed.xml": `<?xml version="1.0"?><feed><entry id="1">one</entry><entry id="2">two</entry></feed>`,
+    },
+    entryPoints: ["/feed.xml"],
+    entryNaming: "[dir]/[name]-[hash].[ext]",
+    onAfterBundle(api) {
+      const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+      const module = require(join(api.outdir, jsFile));
+      expect(module.default).toStrictEqual({
+        feed: {
+          entry: [
+            { "@id": "1", "#text": "one" },
+            { "@id": "2", "#text": "two" },
+          ],
+        },
+      });
+    },
+  });
+
+  itBundled("bun/loader-xml-syntax-error", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './bad.xml';
+    console.log(data);
+  `,
+      "/bad.xml": `<config>\n  <port>8080</bad>\n</config>`,
+    },
+    bundleErrors: {
+      "/bad.xml": ["Expected closing tag </port> but found </bad>"],
+    },
   });
 
   // The CSS-modules lazy export builds its object through `E::Object::put`.

@@ -14,7 +14,6 @@
 
 #include "JSAbortSignal.h"
 #include "JSBufferEncodingType.h"
-#include "BunProcess.h"
 #include "ErrorCode.h"
 #include "NodeValidator.h"
 
@@ -141,16 +140,6 @@ JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-    return V::validateString(scope, globalObject, value, name);
-}
-
 JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
 {
     if (!value.isString()) {
@@ -231,34 +220,6 @@ JSC::EncodedJSValue V::validateFunction(JSC::ThrowScope& scope, JSC::JSGlobalObj
         return ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
     }
 
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-
-    if (!value.isCallable()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
-    }
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBoolean, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-
-    if (!value.isBoolean()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "boolean"_s, value);
-    }
     return JSValue::encode(jsUndefined());
 }
 
@@ -544,28 +505,6 @@ JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateSignalName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto signal = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-
-    if (name.isUndefined()) name = jsString(vm, String("signal"_s));
-
-    V::validateString(scope, globalObject, signal, name);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto signal_str = signal.getString(globalObject);
-    if (isSignalName(signal_str)) return JSValue::encode(jsUndefined());
-
-    auto signal_upper = signal_str.convertToUppercaseWithoutLocale();
-    RETURN_IF_EXCEPTION(scope, {});
-    if (isSignalName(signal_str)) return Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, signal, true);
-    return Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, signal);
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -596,33 +535,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encoding, makeString("is invalid for data of length "_s, length));
         }
     }
-
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePlainFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-
-    if (!value.isCallable()) {
-        auto name = callFrame->argument(1);
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
-    }
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUndefined, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-
-    if (!value.isUndefined()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "undefined"_s, value);
 
     return JSValue::encode(jsUndefined());
 }

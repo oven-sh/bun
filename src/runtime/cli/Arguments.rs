@@ -242,6 +242,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB"
     ),
     parse_param!(
+        "--insecure-http-parser            Use an insecure HTTP parser that accepts invalid HTTP headers"
+    ),
+    parse_param!(
         "--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"
     ),
     parse_param!(
@@ -255,6 +258,16 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!(
         "--throw-deprecation               Determine whether or not deprecation warnings result in errors."
+    ),
+    parse_param!("--no-warnings                     Silence all process warnings"),
+    parse_param!("--trace-warnings                  Show stack traces on process warnings"),
+    parse_param!("--trace-deprecation               Show stack traces on deprecations"),
+    parse_param!("--pending-deprecation             Emit pending deprecation warnings"),
+    parse_param!(
+        "--redirect-warnings <STR>         Write process warnings to the given file instead of printing to stderr"
+    ),
+    parse_param!(
+        "--disable-warning <STR>...        Silence specific process warnings by code or type"
     ),
     parse_param!("--title <STR>                     Set the process title"),
     parse_param!(
@@ -696,6 +709,18 @@ static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
 #[unsafe(no_mangle)]
 static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessNoWarnings: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessTraceWarnings: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessTraceDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1059,6 +1084,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             bun_http::set_max_http_header_size(if size == 0 { 1024 * 1024 * 1024 } else { size });
         }
 
+        if args.flag(b"--insecure-http-parser") {
+            bun_http::set_insecure_http_parser(true);
+        }
+
         if let Some(user_agent) = args.option(b"--user-agent") {
             // argv slices returned by `clap::Args::option` borrow
             // process-lifetime `argv` storage.
@@ -1290,6 +1319,28 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--throw-deprecation") {
             Bun__Node__ProcessThrowDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
+        if args.flag(b"--no-warnings") {
+            Bun__Node__ProcessNoWarnings.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--trace-warnings") {
+            Bun__Node__ProcessTraceWarnings.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--trace-deprecation") {
+            Bun__Node__ProcessTraceDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--pending-deprecation") {
+            Bun__Node__ProcessPendingDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(path) = args.option(b"--redirect-warnings") {
+            let _ = cli::Bun__Node__RedirectWarnings.set(path.into());
+        }
+        {
+            let disabled = args.options(b"--disable-warning");
+            if !disabled.is_empty() {
+                let _ = cli::Bun__Node__DisabledWarnings
+                    .set(disabled.iter().map(|e| Box::from(*e)).collect());
+            }
+        }
         if let Some(title) = args.option(b"--title") {
             // Static is `Mutex<Option<Box<[u8]>>>` so `process.title = "..."`
             // can drop the previous value; box the argv-borrowed slice up
@@ -1437,8 +1488,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.debug.run_in_bun = true;
         }
     }
-
-    opts.resolve = Some(api::ResolveMode::Lazy);
 
     if jsx_factory.is_some()
         || jsx_fragment.is_some()
@@ -1963,9 +2012,9 @@ fn parse_build_command_options(
 
     if let Some(packages) = args.option(b"--packages") {
         if packages == b"bundle" {
-            opts.packages = Some(api::Packages::Bundle);
+            opts.packages = Some(api::PackagesMode::Bundle);
         } else if packages == b"external" {
-            opts.packages = Some(api::Packages::External);
+            opts.packages = Some(api::PackagesMode::External);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid packages setting: \"{}\"",
@@ -2450,15 +2499,15 @@ fn parse_build_command_options(
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
             // In the future, Bun is going to make this default to .linked
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else if setting == b"inline" {
-            opts.source_map = Some(api::SourceMap::Inline);
+            opts.source_map = Some(api::SourceMapMode::Inline);
         } else if setting == b"none" {
-            opts.source_map = Some(api::SourceMap::None);
+            opts.source_map = Some(api::SourceMapMode::None);
         } else if setting == b"external" {
-            opts.source_map = Some(api::SourceMap::External);
+            opts.source_map = Some(api::SourceMapMode::External);
         } else if setting == b"linked" {
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid sourcemap setting: \"{}\"",

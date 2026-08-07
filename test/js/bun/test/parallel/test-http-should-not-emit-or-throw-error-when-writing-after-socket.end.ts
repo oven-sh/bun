@@ -30,8 +30,12 @@ await fetch(url, {
   .then(res => res.bytes())
   .catch(err => {});
 
-const result = await promise;
 // The half-closed connection may never close on its own (node matches);
-// destroy it before asserting or the server disposal above hangs.
-socket?.destroy();
+// destroy it whichever way the promise settles or the disposal above hangs.
+let result;
+try {
+  result = await promise;
+} finally {
+  socket?.destroy();
+}
 expect(result).toBeTrue();

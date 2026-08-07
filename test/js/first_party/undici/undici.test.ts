@@ -209,7 +209,7 @@ describe("undici.request maxRedirections", () => {
   });
 });
 
-describe("undici WebSocket ping", () => {
+describe.concurrent("undici WebSocket ping", () => {
   function serveWebSocket(handlers: Partial<Bun.WebSocketHandler> = {}) {
     return Bun.serve({
       port: 0,
@@ -236,12 +236,14 @@ describe("undici WebSocket ping", () => {
       },
     });
 
+    const ws = new UndiciWebSocket(`ws://localhost:${server.port}/`);
     const pongMessage = Promise.withResolvers<{ payload: Buffer; websocket: unknown }>();
     const pongChannel = diagnosticsChannel.channel("undici:websocket:pong");
-    const onPong = (message: any) => pongMessage.resolve(message);
+    // the channel is process-global, so only accept messages for this socket
+    const onPong = (message: any) => {
+      if (message.websocket === ws) pongMessage.resolve(message);
+    };
     pongChannel.subscribe(onPong);
-
-    const ws = new UndiciWebSocket(`ws://localhost:${server.port}/`);
     try {
       const opened = Promise.withResolvers<void>();
       ws.addEventListener("open", () => opened.resolve());
@@ -270,13 +272,19 @@ describe("undici WebSocket ping", () => {
       },
     });
 
+    const ws = new UndiciWebSocket(`ws://localhost:${server.port}/`);
     const pingMessage = Promise.withResolvers<{ payload: Buffer; websocket: unknown }>();
     const pingChannel = diagnosticsChannel.channel("undici:websocket:ping");
-    const onPing = (message: any) => pingMessage.resolve(message);
+    // the channel is process-global, so only accept messages for this socket
+    const onPing = (message: any) => {
+      if (message.websocket === ws) pingMessage.resolve(message);
+    };
     pingChannel.subscribe(onPing);
-
-    const ws = new UndiciWebSocket(`ws://localhost:${server.port}/`);
     try {
+      ws.addEventListener("error", (e: any) => pingMessage.reject(e.error ?? new Error(e.message)));
+      ws.addEventListener("close", (e: any) =>
+        pingMessage.reject(new Error(`socket closed before ping: ${e.code} ${e.reason}`)),
+      );
       const message = await pingMessage.promise;
       expect(Buffer.isBuffer(message.payload)).toBe(true);
       expect(message.payload.toString()).toBe("from server");
@@ -291,10 +299,16 @@ describe("undici WebSocket ping", () => {
     await using server = serveWebSocket();
     const ws = new UndiciWebSocket(`ws://localhost:${server.port}/`);
     try {
+      expect(() => ping(undefined as any)).toThrow(TypeError);
+      expect(() => ping(null as any)).toThrow(TypeError);
       expect(() => ping({} as any)).toThrow(TypeError);
       expect(() => ping(ws, "not a buffer" as any)).toThrow("Expected buffer payload");
+      expect(() => ping(ws, null as any)).toThrow("Expected buffer payload");
+      expect(() => ping(ws, new Uint8Array(4) as any)).toThrow("Expected buffer payload");
       expect(() => ping(ws, Buffer.alloc(126))).toThrow("A PING frame cannot have a body larger than 125 bytes.");
       // a ping on a socket that is not open is a no-op, not an error
+      // (matches undici 7.x: ping() only sends while OPEN and never throws on state)
+      expect(ws.readyState).toBe(UndiciWebSocket.CONNECTING);
       expect(() => ping(ws, Buffer.alloc(125))).not.toThrow();
       expect(() => ping(ws)).not.toThrow();
     } finally {

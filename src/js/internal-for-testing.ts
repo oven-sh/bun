@@ -123,6 +123,7 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   rootError: () => void;
   outOfMemory: () => void;
   abort: () => void;
+  fastfail: () => void;
   trap: () => void;
   raiseIgnoringPanicHandler: () => void;
 };

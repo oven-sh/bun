@@ -124,6 +124,15 @@ pub struct Process {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) pidfd: PidFdType,
     pub status: Status,
+    /// Untruncated `GetExitCodeProcess` DWORD captured in `on_exit_uv`.
+    /// `Exited::code` is `u8`, which collapses NTSTATUS crash codes into
+    /// small integers indistinguishable from `process.exit(N)` (e.g.
+    /// `0xC0000409`, `__fastfail`, becomes 9). Consumers that must tell a
+    /// native fault from a deliberate exit read this instead. 0 until the
+    /// process exits with a status (stays 0 when it was signaled via
+    /// `uv_process_kill` or the wait itself failed).
+    #[cfg(windows)]
+    pub windows_raw_exit_code: u32,
     pub poller: Poller,
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Process>,
     pub exit_handler: ProcessExitHandler,
@@ -513,6 +522,7 @@ impl Process {
         } else if exit_status >= 0 {
             // The check is on the signed libuv `exit_status`, so a negative
             // `-UV_E*` reaches the Err arm.
+            this.windows_raw_exit_code = exit_status as u32;
             this.close();
             this.on_exit(
                 Status::Exited(Exited {
@@ -2015,6 +2025,7 @@ mod spawn_process_body {
             event_loop: options.windows.loop_,
             pid: 0,
             status: Status::Running,
+            windows_raw_exit_code: 0,
             poller: Poller::Detached,
             exit_handler: ProcessExitHandler::default(),
         }));

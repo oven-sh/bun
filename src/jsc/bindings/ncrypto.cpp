@@ -132,28 +132,24 @@ DataPointer DataPointer::Copy(const Buffer<const void>& buffer)
     return DataPointer(OPENSSL_memdup(buffer.data, buffer.len), buffer.len);
 }
 
-DataPointer::DataPointer(void* data, size_t length, bool secure)
+DataPointer::DataPointer(void* data, size_t length)
     : data_(data)
     , len_(length)
-    , secure_(secure)
 {
 }
 
-DataPointer::DataPointer(const Buffer<void>& buffer, bool secure)
+DataPointer::DataPointer(const Buffer<void>& buffer)
     : data_(buffer.data)
     , len_(buffer.len)
-    , secure_(secure)
 {
 }
 
 DataPointer::DataPointer(DataPointer&& other) noexcept
     : data_(other.data_)
     , len_(other.len_)
-    , secure_(other.secure_)
 {
     other.data_ = nullptr;
     other.len_ = 0;
-    other.secure_ = false;
 }
 
 DataPointer& DataPointer::operator=(DataPointer&& other) noexcept
@@ -177,11 +173,7 @@ void DataPointer::zero()
 void DataPointer::reset(void* data, size_t length)
 {
     if (data_ != nullptr) {
-        if (secure_) {
-            OPENSSL_secure_clear_free(data_, len_);
-        } else {
-            OPENSSL_clear_free(data_, len_);
-        }
+        OPENSSL_clear_free(data_, len_);
     }
     data_ = data;
     len_ = length;

@@ -473,8 +473,8 @@ public:
     }
 
     DataPointer() = default;
-    explicit DataPointer(void* data, size_t len, bool secure = false);
-    explicit DataPointer(const Buffer<void>& buffer, bool secure = false);
+    explicit DataPointer(void* data, size_t len);
+    explicit DataPointer(const Buffer<void>& buffer);
     DataPointer(DataPointer&& other) noexcept;
     DataPointer& operator=(DataPointer&& other) noexcept;
     NCRYPTO_DISALLOW_COPY(DataPointer)
@@ -516,7 +516,6 @@ public:
 private:
     void* data_ = nullptr;
     size_t len_ = 0;
-    bool secure_ = false;
 };
 
 class BIOPointer final {

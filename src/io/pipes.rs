@@ -128,6 +128,16 @@ impl PollOrFd {
     {
         self.close_impl(ctx, on_close_fn, true);
     }
+
+    /// Unregister and free the `FilePoll` (releasing its event-loop active
+    /// ref) without closing the fd. For owners that cleared `CLOSE_HANDLE`
+    /// and close the fd themselves; the reader/writer teardown skips the
+    /// handle in that mode. No-op unless currently `Poll`.
+    pub fn release_poll_keep_fd(&mut self) {
+        if matches!(self, PollOrFd::Poll(_)) {
+            self.close_impl(None, None::<fn(*mut c_void)>, false);
+        }
+    }
 }
 
 // Sunk to `bun_io` so `FilePoll::file_type()` needs no aio→io edge; re-export

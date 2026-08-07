@@ -605,16 +605,10 @@ impl Drop for FileResponseStream {
     fn drop(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "deinit");
         // `start()` cleared CLOSE_HANDLE, so the reader's own `Drop` skips the
-        // handle: free the FilePoll (it holds the event loop's active ref)
-        // without closing the fd, which `auto_close` below owns.
+        // handle; `auto_close` below owns the fd.
         #[cfg(unix)]
-        self.reader.with_mut(|reader| {
-            if matches!(reader.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                reader
-                    .handle
-                    .close_impl(None, None::<fn(*mut c_void)>, false);
-            }
-        });
+        self.reader
+            .with_mut(|reader| reader.handle.release_poll_keep_fd());
         if self.auto_close.get() {
             #[cfg(windows)]
             Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());

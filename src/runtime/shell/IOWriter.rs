@@ -14,8 +14,6 @@
 
 use bun_collections::VecExt;
 use core::cell::UnsafeCell;
-#[cfg(not(windows))]
-use core::ffi::c_void;
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -386,11 +384,7 @@ impl IOWriter {
                     s.flags.pollable = false;
                     s.flags.nonblock = false;
                     s.flags.is_socket = false;
-                    if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                        s.writer
-                            .handle
-                            .close_impl(None, None::<fn(*mut c_void)>, false);
-                    }
+                    s.writer.handle.release_poll_keep_fd();
                     s.writer.handle = bun_io::pipes::PollOrFd::Closed;
                     return self.__start();
                 }
@@ -402,11 +396,7 @@ impl IOWriter {
                         s.flags.pollable = false;
                         s.flags.nonblock = false;
                         s.flags.is_socket = false;
-                        if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                            s.writer
-                                .handle
-                                .close_impl(None, None::<fn(*mut c_void)>, false);
-                        }
+                        s.writer.handle.release_poll_keep_fd();
                         s.writer.handle = bun_io::pipes::PollOrFd::Closed;
                         return self.__start();
                     }
@@ -1210,13 +1200,7 @@ impl Drop for IOWriter {
         let s = self.state.get_mut();
         crate::shell_log!("IOWriter(fd={}) deinit", s.fd);
         #[cfg(not(windows))]
-        {
-            if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                s.writer
-                    .handle
-                    .close_impl(None, None::<fn(*mut c_void)>, false);
-            }
-        }
+        s.writer.handle.release_poll_keep_fd();
         #[cfg(windows)]
         {
             s.writer.close();

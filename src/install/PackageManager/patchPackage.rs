@@ -667,11 +667,8 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
         Newline,
         CarriageReturn,
         Tab,
-        // Reserved in Windows filenames. Git and github resolution labels put
-        // `:` in the patch filename (`pkg@github:owner/repo#sha.patch`), and
-        // an unescaped name both fails the rename into patches/ on NTFS and
-        // makes a patches/ dir committed from another OS uncheckoutable on
-        // Windows.
+        // Reserved in Windows filenames; escaped on every OS so a committed
+        // patches/ dir stays checkoutable on Windows.
         Colon,
         Question,
         Asterisk,

@@ -208,11 +208,12 @@ console.log("survived", require("./late.js"));`,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("7");
-    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
     const files = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })];
     expect(files.length).toBe(2);
     const modes = files.map(f => (fs.statSync(path.join(cacheDir, f)).mode & 0o777).toString(8));
     expect(modes).toEqual(["600", "600"]);
+    expect(exitCode).toBe(0);
   });
 
   test("native module functions are not constructors", () => {

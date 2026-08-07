@@ -6,8 +6,10 @@ use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_dotenv as DotEnv;
+use bun_dotenv::DotEnvBehavior;
 use bun_js_parser::parser::Runtime;
 use bun_options_types::schema::api;
+use bun_options_types::{BunInstall, TransformOptions};
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
@@ -828,13 +830,7 @@ pub(crate) mod default_user_defines {
 
 pub(crate) fn defines_from_transform_options(
     log: &mut bun_ast::Log,
-    // PERF: borrowed, not owned — the caller (`load_defines`) holds
-    // `transform_options` behind an `Arc`, so taking the `StringMap` by value
-    // forced a full deep clone of the `--define` map *every* VM init even though
-    // each value gets cloned again below on insert. Reading it through `&` keeps
-    // the per-value clone (the owned `RawDefines` map needs `Box<[u8]>`s) but
-    // drops the redundant outer `keys.clone() + values.clone()`.
-    maybe_input_define: Option<&api::StringMap>,
+    input_define: &[(Box<[u8]>, Box<[u8]>)],
     target: Target,
     env_loader: Option<&mut DotEnv::Loader>,
     framework_env: Option<&Env>,
@@ -843,20 +839,15 @@ pub(crate) fn defines_from_transform_options(
     omit_unused_global_calls: bool,
     bump: &bun_alloc::Arena,
 ) -> Result<Box<defines::Define>, crate::Error> {
-    let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
-        Some(m) => (&m.keys, &m.values),
-        None => (&[], &[]),
-    };
-
     let mut user_defines: defines::RawDefines = defines::RawDefines::default();
-    user_defines.reserve(input_keys.len() + 4);
-    for (i, key) in input_keys.iter().enumerate() {
-        user_defines.insert(key.as_ref(), input_values[i].clone());
+    user_defines.reserve(input_define.len() + 4);
+    for (key, value) in input_define {
+        user_defines.insert(key.as_ref(), value.clone());
     }
 
     let mut environment_defines = defines::UserDefinesArray::default();
 
-    let mut behavior = api::DotEnvBehavior::disable;
+    let mut behavior = DotEnvBehavior::Disable;
 
     'load_env: {
         let Some(env) = env_loader else {
@@ -866,11 +857,8 @@ pub(crate) fn defines_from_transform_options(
             break 'load_env;
         };
 
-        debug_assert!(framework.behavior != api::DotEnvBehavior::None);
-
         behavior = framework.behavior;
-        if behavior == api::DotEnvBehavior::LoadAllWithoutInlining
-            || behavior == api::DotEnvBehavior::disable
+        if behavior == DotEnvBehavior::LoadAllWithoutInlining || behavior == DotEnvBehavior::Disable
         {
             break 'load_env;
         }
@@ -884,7 +872,7 @@ pub(crate) fn defines_from_transform_options(
         )?;
     }
 
-    if behavior != api::DotEnvBehavior::LoadAllWithoutInlining {
+    if behavior != DotEnvBehavior::LoadAllWithoutInlining {
         let quoted_node_env: Box<[u8]> = 'brk: {
             if let Some(node_env) = node_env {
                 if !node_env.is_empty() {
@@ -1070,48 +1058,9 @@ pub fn loaders_from_transform_options(
     Ok(loaders)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SourceMapOption {
-    #[default]
-    None,
-    Inline,
-    External,
-    Linked,
-}
-
-impl SourceMapOption {
-    pub fn from_api(source_map: Option<api::SourceMapMode>) -> SourceMapOption {
-        match source_map.unwrap_or(api::SourceMapMode::None) {
-            api::SourceMapMode::External => SourceMapOption::External,
-            api::SourceMapMode::Inline => SourceMapOption::Inline,
-            api::SourceMapMode::Linked => SourceMapOption::Linked,
-            _ => SourceMapOption::None,
-        }
-    }
-
-    pub fn to_api(source_map: Option<SourceMapOption>) -> api::SourceMapMode {
-        match source_map.unwrap_or(SourceMapOption::None) {
-            SourceMapOption::External => api::SourceMapMode::External,
-            SourceMapOption::Inline => api::SourceMapMode::Inline,
-            SourceMapOption::Linked => api::SourceMapMode::Linked,
-            SourceMapOption::None => api::SourceMapMode::None,
-        }
-    }
-
-    pub(crate) fn has_external_files(self) -> bool {
-        matches!(self, SourceMapOption::Linked | SourceMapOption::External)
-    }
-}
-
-// hoisted from `impl SourceMapOption` — Rust forbids `static` in inherent impls.
-bun_core::comptime_string_map! {
-    pub static SOURCE_MAP_OPTION_MAP: SourceMapOption = {
-        b"none" => SourceMapOption::None,
-        b"inline" => SourceMapOption::Inline,
-        b"external" => SourceMapOption::External,
-        b"linked" => SourceMapOption::Linked,
-    };
-}
+pub use bun_options_types::bundle_enums::{
+    PACKAGES_OPTION_MAP, PackagesOption, SOURCE_MAP_OPTION_MAP, SourceMapOption,
+};
 
 /// What `--compile` resolved to for this bundle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1131,36 +1080,6 @@ impl CompileMode {
     pub const fn is_standalone_html(self) -> bool {
         matches!(self, CompileMode::StandaloneHtml)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PackagesOption {
-    Bundle,
-    External,
-}
-
-impl PackagesOption {
-    pub(crate) fn from_api(packages: Option<api::PackagesMode>) -> PackagesOption {
-        match packages.unwrap_or(api::PackagesMode::Bundle) {
-            api::PackagesMode::External => PackagesOption::External,
-            api::PackagesMode::Bundle => PackagesOption::Bundle,
-        }
-    }
-
-    pub fn to_api(packages: Option<PackagesOption>) -> api::PackagesMode {
-        match packages.unwrap_or(PackagesOption::Bundle) {
-            PackagesOption::External => api::PackagesMode::External,
-            PackagesOption::Bundle => api::PackagesMode::Bundle,
-        }
-    }
-}
-
-// hoisted from `impl PackagesOption` — Rust forbids `static` in inherent impls.
-bun_core::comptime_string_map! {
-    pub static PACKAGES_OPTION_MAP: PackagesOption = {
-        b"external" => PackagesOption::External,
-        b"bundle" => PackagesOption::Bundle,
-    };
 }
 
 /// BundleOptions is effectively webpack + babel
@@ -1232,13 +1151,13 @@ pub struct BundleOptions<'a> {
     pub import_path_format: ImportPathFormat,
     pub(crate) defines_loaded: bool,
     pub env: Env,
-    /// The raw `TransformOptions` as passed to `from_api`. Kept around because a
+    /// The raw `TransformOptions` as passed to `from_transform_options`. Kept around because a
     /// handful of places (jsx auto-detect, resolver `main_fields_is_default`,
     /// `configure_defines`, runtime VM/server config) re-read the original
     /// user-supplied flags after projection. `Arc` so `for_worker` is a
     /// pointer-clone instead of a deep clone of the (large) struct —
     /// workers never mutate it.
-    pub transform_options: std::sync::Arc<api::TransformOptions>,
+    pub transform_options: std::sync::Arc<TransformOptions>,
     pub(crate) polyfill_node_globals: bool,
     pub transform_only: bool,
     pub load_tsconfig_json: bool,
@@ -1267,7 +1186,7 @@ pub struct BundleOptions<'a> {
     /// lifetime-extension cast at every call site (PORTING.md §Forbidden).
     /// The sole consumer (`PackageManager::init_with_runtime` via the resolver's
     /// `BundleOptions.install`) only reads through it.
-    pub install: Option<core::ptr::NonNull<api::BunInstall>>,
+    pub install: Option<core::ptr::NonNull<BunInstall>>,
 
     pub inlining: bool,
     pub inline_entrypoint_import_meta_main: bool,
@@ -1489,14 +1408,14 @@ impl<'a> BundleOptions<'a> {
     ///
     /// SAFETY: `self.log` is non-null: `Transpiler::init_in_place` validates
     /// the pointer via `NonNull::new(log).expect(..)` before storing it and
-    /// before calling `from_api` (which has no other callers).
+    /// before calling `from_transform_options` (which has no other callers).
     /// The pointee is the caller-owned arena `Log` which outlives `self`. The
     /// same allocation is aliased into `Transpiler.log` / `Resolver.log` /
     /// `Linker.log` as raw `*mut`; a `&` here is sound so long as no caller
     /// holds a live `&mut Log` from one of those aliases concurrently.
     #[inline]
     pub(crate) fn log(&self) -> &bun_ast::Log {
-        // SAFETY: `self.log` is non-null after `from_api` and the caller-owned
+        // SAFETY: `self.log` is non-null after `from_transform_options` and the caller-owned
         // arena `Log` it points to outlives `self`; see method doc.
         unsafe { &*self.log }
     }
@@ -1579,7 +1498,7 @@ impl<'a> BundleOptions<'a> {
             // No other `&mut Log` is live across this call (see `log_mut`
             // caller contract).
             self.log_mut(),
-            self.transform_options.define.as_ref(),
+            &self.transform_options.define,
             self.target,
             loader_,
             Some(&self.env),
@@ -1598,10 +1517,10 @@ impl<'a> BundleOptions<'a> {
         self.loaders.get(ext).copied().unwrap_or(Loader::File)
     }
 
-    pub(crate) fn from_api(
+    pub(crate) fn from_transform_options(
         fs: &mut Fs::FileSystem,
         log: *mut bun_ast::Log,
-        transform: api::TransformOptions,
+        transform: TransformOptions,
     ) -> Result<BundleOptions<'a>, crate::Error> {
         use core::sync::atomic::Ordering;
 
@@ -1611,7 +1530,7 @@ impl<'a> BundleOptions<'a> {
         // than recursive `drop_in_place` over every `Box<[u8]>`/`Vec`.
         let transform = std::sync::Arc::new(transform);
 
-        let target = <Target as bun_options_types::TargetExt>::from_api(transform.target);
+        let target = transform.target.unwrap_or(Target::Browser);
         let loaders = loaders_from_transform_options(transform.loaders.as_ref(), target)?;
         let bundler_feature_flags = Runtime::Features::init_bundler_feature_flags(
             &transform
@@ -1730,7 +1649,7 @@ impl<'a> BundleOptions<'a> {
 
         {
             analytics::features::define
-                .fetch_add(usize::from(transform.define.is_some()), Ordering::Relaxed);
+                .fetch_add(usize::from(!transform.define.is_empty()), Ordering::Relaxed);
             analytics::features::loaders
                 .fetch_add(usize::from(transform.loaders.is_some()), Ordering::Relaxed);
         }
@@ -1754,7 +1673,7 @@ impl<'a> BundleOptions<'a> {
         }
 
         if let Some(jsx_opts) = &transform.jsx {
-            opts.jsx = jsx::Pragma::from_api(jsx_opts.clone())?;
+            opts.jsx = jsx::Pragma::from_options(jsx_opts.clone())?;
         }
 
         if !transform.extension_order.is_empty() {
@@ -1766,7 +1685,7 @@ impl<'a> BundleOptions<'a> {
         }
 
         if let Some(t) = transform.target {
-            opts.target = <Target as bun_options_types::TargetExt>::from_api(Some(t));
+            opts.target = t;
             opts.main_fields = owned_string_list(Target::default_main_fields_map()[opts.target]);
         }
 
@@ -1799,7 +1718,7 @@ impl<'a> BundleOptions<'a> {
                         ImportPathFormat::AbsolutePath
                     };
 
-                opts.env.behavior = api::DotEnvBehavior::LoadAll;
+                opts.env.behavior = DotEnvBehavior::LoadAll;
                 if transform.extension_order.is_empty() {
                     // we must also support require'ing .node files
                     static EXT_WITH_NODE: &[&[u8]] = &[
@@ -1841,9 +1760,9 @@ impl<'a> BundleOptions<'a> {
         );
         opts.out_extensions = opts.target.out_extensions();
 
-        opts.source_map = SourceMapOption::from_api(transform.source_map);
+        opts.source_map = transform.source_map.unwrap_or_default();
 
-        opts.packages = PackagesOption::from_api(transform.packages);
+        opts.packages = transform.packages.unwrap_or_default();
 
         opts.tree_shaking = opts.target.is_bun() || opts.production;
         opts.inlining = opts.tree_shaking;
@@ -1997,7 +1916,7 @@ impl TransformResult {
 
 #[derive(Clone, Debug)]
 pub struct Env {
-    pub behavior: api::DotEnvBehavior,
+    pub behavior: DotEnvBehavior,
     pub prefix: Box<[u8]>,
     /// List of explicit env files to load (e..g specified by --env-file args)
     pub(crate) files: Box<[Box<[u8]>]>,
@@ -2009,7 +1928,7 @@ pub struct Env {
 impl Default for Env {
     fn default() -> Self {
         Env {
-            behavior: api::DotEnvBehavior::disable,
+            behavior: DotEnvBehavior::Disable,
             prefix: Box::default(),
             files: Box::default(),
             disable_default_env_files: false,

@@ -199,7 +199,6 @@ mod draft {
     use core::ptr;
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
-    use bun_api::{self, BunInstall, NpmRegistry, npm_registry};
     use bun_ast::E::Rope;
     use bun_ast::{E, Expr, ExprData, StoreRef};
     use bun_ast::{Loc, Log, Source};
@@ -207,6 +206,7 @@ mod draft {
     use bun_core::ZStr;
     use bun_core::{Global, Output};
     use bun_dotenv::Loader as DotEnvLoader;
+    use bun_options_types::{BunInstall, Ca, NpmRegistry};
     use bun_url::URL;
 
     use super::{
@@ -1152,9 +1152,6 @@ mod draft {
 
     pub struct ScopeIterator<'a> {
         pub(crate) config: &'a E::Object,
-        pub(crate) source: &'a Source,
-        pub(crate) log: &'a mut Log,
-
         pub(crate) prop_idx: usize,
         pub(crate) count: bool,
     }
@@ -1165,9 +1162,9 @@ mod draft {
     }
 
     impl<'a> ScopeIterator<'a> {
-        pub(crate) fn next(&mut self) -> OOM<Option<IniOption<ScopeItem>>> {
+        pub(crate) fn next(&mut self) -> Option<IniOption<ScopeItem>> {
             if self.prop_idx >= self.config.properties.len_u32() as usize {
-                return Ok(None);
+                return None;
             }
             let prop_idx = self.prop_idx;
             self.prop_idx += 1;
@@ -1183,25 +1180,21 @@ mod draft {
                             let registry = 'brk: {
                                 if let Some(value) = prop.value {
                                     if let Some(str_) = value.as_utf8_string_literal() {
-                                        let mut parser = npm_registry::Parser {
-                                            log: &mut *self.log,
-                                            source: self.source,
-                                        };
-                                        break 'brk parser.parse_registry_url_string_impl(str_)?;
+                                        break 'brk NpmRegistry::from_url(str_);
                                     }
                                 }
-                                return Ok(Some(IniOption::None));
+                                return Some(IniOption::None);
                             };
-                            return Ok(Some(IniOption::Some(ScopeItem {
+                            return Some(IniOption::Some(ScopeItem {
                                 scope: Box::<[u8]>::from(&key[1..key.len() - b":registry".len()]),
                                 registry,
-                            })));
+                            }));
                         }
                     }
                 }
             }
 
-            Ok(Some(IniOption::None))
+            Some(IniOption::None)
         }
     }
 
@@ -1285,12 +1278,7 @@ mod draft {
 
         if let Some(query) = out.as_property(b"registry") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
-                let mut p = bun_api::npm_registry::Parser {
-                    log: &mut *log,
-                    source,
-                };
-                install.default_registry =
-                    Some(p.parse_registry_url_string_impl(&Box::<[u8]>::from(str_))?);
+                install.default_registry = Some(NpmRegistry::from_url(str_));
             }
         }
 
@@ -1312,7 +1300,7 @@ mod draft {
 
         if let Some(query) = out.as_property(b"ca") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
-                install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
+                install.ca = Some(Ca::Str(Box::<[u8]>::from(str_)));
             } else if let ExprData::EArray(arr) = &query.expr.data {
                 let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len_u32() as usize);
                 for item in arr.items.slice() {
@@ -1320,7 +1308,7 @@ mod draft {
                         list.push(Box::<[u8]>::from(s));
                     }
                 }
-                install.ca = Some(bun_api::Ca::List(list.into_boxed_slice()));
+                install.ca = Some(Ca::List(list.into_boxed_slice()));
             }
         }
 
@@ -1471,14 +1459,12 @@ mod draft {
             let mut iter = ScopeIterator {
                 config: out_obj,
                 count: true,
-                source,
-                log,
                 prop_idx: 0,
             };
 
             let scope_count = {
                 let mut count: usize = 0;
-                while let Some(o) = iter.next()? {
+                while let Some(o) = iter.next() {
                     if matches!(o, IniOption::Some(_)) {
                         count += 1;
                     }
@@ -1494,7 +1480,7 @@ mod draft {
             iter.prop_idx = 0;
             iter.count = false;
 
-            while let Some(val) = iter.next()? {
+            while let Some(val) = iter.next() {
                 if let Some(result) = val.get() {
                     let registry = result.registry.clone();
                     registry_map.scopes.put(&*result.scope, registry)?;

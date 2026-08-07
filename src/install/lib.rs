@@ -16,11 +16,6 @@ extern crate self as bun_install;
 extern crate bun_analytics as analytics;
 extern crate bun_core as bun_output;
 
-/// `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
-pub(crate) mod bun_schema {
-    pub(crate) use bun_options_types::schema::api;
-}
-
 /// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
 pub(crate) mod bun_json {
@@ -803,8 +798,7 @@ impl RunCommand {
         )?);
         // SAFETY: fully written on the line above.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
-        this_transpiler.options.env.behavior =
-            bun_options_types::schema::api::DotEnvBehavior::load_all;
+        this_transpiler.options.env.behavior = bun_dotenv::DotEnvBehavior::LoadAll;
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = store_root_fd;

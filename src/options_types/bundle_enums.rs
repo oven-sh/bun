@@ -1,13 +1,9 @@
 //! Pure enum/struct bundler option types, kept here so
 //! `cli/` and other tiers can reference them without depending on `bundler/`.
 //! Aliased back at original locations — call sites unchanged.
-//!
-//! `Loader` / `Target` / `SideEffects` / `Index` are now canonical in
-//! `bun_ast`; only the `schema::api`-coupled extension methods (`to_api`,
-//! `from_api`, `API_NAMES`) remain here as sealed extension traits.
 
 use crate::schema::api;
-use bun_ast::{Loader, Target};
+use bun_ast::Loader;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -122,40 +118,49 @@ bun_core::comptime_string_map! {
     };
 }
 
-// ─── Target: schema-coupled extension methods ─────────────────────────────
-
 mod sealed {
     pub trait Sealed {}
-    impl Sealed for bun_ast::Target {}
     impl Sealed for bun_ast::Loader {}
 }
 
-/// `schema::api`-coupled methods on [`bun_ast::Target`]. Import alongside
-/// `Target` where `to_api`/`from(api)` are needed.
-pub trait TargetExt: sealed::Sealed {
-    fn to_api(self) -> api::Target;
-    fn from_api(plat: Option<api::Target>) -> Target;
+/// `--sourcemap` / `sourcemap:` setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SourceMapOption {
+    #[default]
+    None,
+    Inline,
+    External,
+    Linked,
 }
 
-impl TargetExt for Target {
-    fn to_api(self) -> api::Target {
-        match self {
-            Target::Node => api::Target::node,
-            Target::Browser => api::Target::browser,
-            Target::Bun | Target::ServerComponentsSsr => api::Target::bun,
-            Target::BunMacro => api::Target::bun_macro,
-        }
+impl SourceMapOption {
+    pub fn has_external_files(self) -> bool {
+        matches!(self, SourceMapOption::Linked | SourceMapOption::External)
     }
+}
 
-    fn from_api(plat: Option<api::Target>) -> Target {
-        match plat.unwrap_or(api::Target::_none) {
-            api::Target::node => Target::Node,
-            api::Target::browser => Target::Browser,
-            api::Target::bun => Target::Bun,
-            api::Target::bun_macro => Target::BunMacro,
-            _ => Target::Browser,
-        }
-    }
+bun_core::comptime_string_map! {
+    pub static SOURCE_MAP_OPTION_MAP: SourceMapOption = {
+        b"none" => SourceMapOption::None,
+        b"inline" => SourceMapOption::Inline,
+        b"external" => SourceMapOption::External,
+        b"linked" => SourceMapOption::Linked,
+    };
+}
+
+/// `--packages` / `packages:` setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PackagesOption {
+    #[default]
+    Bundle,
+    External,
+}
+
+bun_core::comptime_string_map! {
+    pub static PACKAGES_OPTION_MAP: PackagesOption = {
+        b"external" => PackagesOption::External,
+        b"bundle" => PackagesOption::Bundle,
+    };
 }
 
 // ─── Loader: schema-coupled extension methods ─────────────────────────────
@@ -192,7 +197,7 @@ pub static LOADER_API_NAMES: api::Loader = {
 };
 }
 
-/// `schema::api`-coupled methods on [`bun_ast::Loader`].
+/// Conversions between [`bun_ast::Loader`] and the [`api::Loader`] wire enum.
 pub trait LoaderExt: sealed::Sealed {
     fn to_api(self) -> api::Loader;
     fn from_api(loader: api::Loader) -> Loader;

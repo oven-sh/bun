@@ -18,6 +18,30 @@ describe.concurrent(
       );
     });
 
+    test.each([
+      ["error", false],
+      ["warn", true],
+      ["info", true],
+      ["debug", true],
+    ])(`bunfig logLevel = "%s" shows build warnings: %p`, async (logLevel, showsWarnings) => {
+      using dir = tempDir("bun-build-loglevel", {
+        "bunfig.toml": `logLevel = "${logLevel}"`,
+        "index.jsx": `console.log(<div {...props} key={"123"} />);`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "index.jsx", "--packages=external"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const warning = 'warn: "key" prop after a {...spread} is deprecated in JSX.';
+      if (showsWarnings) expect(stderr).toContain(warning);
+      else expect(stderr).not.toContain(warning);
+      expect(exitCode).toBe(0);
+    });
+
     async function testCompile(outfile: string) {
       const { exited } = Bun.spawn({
         cmd: [

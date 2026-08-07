@@ -1,6 +1,7 @@
-use crate::bun_schema::api as Api;
 use bun_core::ZStr;
 use bun_core::{Output, env_var};
+use bun_install_types::NodeLinker::PnpmMatcher;
+use bun_options_types::{BunInstall, Ca, NpmRegistry};
 use bun_paths::PathBuffer;
 
 use super::Subcommand;
@@ -72,8 +73,8 @@ pub struct Options {
     /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
     pub(crate) node_linker: NodeLinker,
 
-    pub(crate) public_hoist_pattern: Option<Api::PnpmMatcher>,
-    pub(crate) hoist_pattern: Option<Api::PnpmMatcher>,
+    pub(crate) public_hoist_pattern: Option<PnpmMatcher>,
+    pub(crate) hoist_pattern: Option<PnpmMatcher>,
 
     /// Isolated linker: `false` skips the `node_modules/.bun/node_modules`
     /// fallback (pnpm's `hoist=false`); takes precedence over `hoist_pattern`.
@@ -339,7 +340,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
     Err(crate::Error::NoGlobalDirectoryFound)
 }
 
-pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {
+pub(crate) fn open_global_bin_dir(opts_: Option<&BunInstall>) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
@@ -403,11 +404,11 @@ impl Options {
         maybe_cli: Option<CommandLineArguments>,
         // Every access below is a read of `config.*`; no field is ever written.
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
-        // resolver storage (`Option<NonNull<api::BunInstall>>`).
-        bun_install_: Option<&Api::BunInstall>,
+        // resolver storage (`Option<NonNull<BunInstall>>`).
+        bun_install_: Option<&BunInstall>,
         subcommand: Subcommand,
     ) -> Result<(), bun_alloc::AllocError> {
-        let mut base = Api::NpmRegistry::default();
+        let mut base = NpmRegistry::default();
         let bun_install_ref = bun_install_;
         if let Some(config) = bun_install_ref {
             if let Some(registry) = &config.default_registry {
@@ -423,7 +424,7 @@ impl Options {
         }
         // Clone so the
         // `base.url` fallback below in the scoped-registry loop stays valid.
-        self.scope = Npm::registry::Scope::from_api(b"", base.clone(), env)?;
+        self.scope = Npm::registry::Scope::from_registry(b"", base.clone(), env)?;
         // `did_override_default_scope` is set at the end of this fn;
         // on the OOM error path the field is irrelevant (process aborts).
 
@@ -441,17 +442,17 @@ impl Options {
                     }
                     self.registries.put(
                         Npm::registry::Scope::hash(name),
-                        Npm::registry::Scope::from_api(name, registry, env)?,
+                        Npm::registry::Scope::from_registry(name, registry, env)?,
                     )?;
                 }
             }
 
             if let Some(ca) = &config.ca {
                 match ca {
-                    Api::Ca::List(ca_list) => {
+                    Ca::List(ca_list) => {
                         self.ca.clone_from(ca_list);
                     }
-                    Api::Ca::Str(ca_str) => {
+                    Ca::Str(ca_str) => {
                         // Single-element slice; own it (no `Box::leak`).
                         self.ca = vec![ca_str.clone()].into_boxed_slice();
                     }
@@ -459,7 +460,6 @@ impl Options {
             }
 
             if let Some(node_linker) = config.node_linker {
-                // `Api::NodeLinker` is a re-export of `bun_install_types::NodeLinker`.
                 self.node_linker = node_linker;
             }
 
@@ -614,13 +614,12 @@ impl Options {
                         } else {
                             Box::default()
                         };
-                        // Default (empty strings) is the zero value for Api::NpmRegistry.
-                        let api_registry = Api::NpmRegistry {
+                        let registry = NpmRegistry {
                             url: registry_.into(),
                             token,
                             ..Default::default()
                         };
-                        self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                        self.scope = Npm::registry::Scope::from_registry(b"", registry, env)?;
                         break;
                     }
                 }

@@ -2425,14 +2425,7 @@ pub mod parse_worker {
 
         let output_format = topts.output_format;
 
-        // D042: `crate::options::jsx::Pragma` IS `bun_js_parser::options::JSX::Pragma`
-        // (both re-export `bun_options_types::jsx::Pragma`). `to_parser_jsx_pragma`
-        // applies the `_None → Automatic` runtime fold the old `From` bridge did so
-        // parser-side `== Automatic` checks keep their semantics.
-        let mut opts = ParserOptions::init(
-            crate::transpiler::to_parser_jsx_pragma(task.jsx.clone()),
-            loader,
-        );
+        let mut opts = ParserOptions::init(task.jsx.clone(), loader);
         opts.bundle = true;
         opts.warn_about_unbundled_modules = false;
         // `AllowUnresolved` is the same nominal type on

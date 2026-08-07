@@ -14,11 +14,11 @@ use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
+use bun_dotenv::DotEnvBehavior;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
-use bun_options_types::schema::api;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
@@ -591,7 +591,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
         // SAFETY: fully written on the line above.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
-        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
+        this_transpiler.options.env.behavior = DotEnvBehavior::LoadAll;
         let env_loader = this_transpiler.env_mut();
         env_loader.quiet = true;
         this_transpiler.options.env.prefix = Box::default();
@@ -879,7 +879,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Dummy transpiler so we can load .env.
         let mut args = ctx.args.clone();
         args.write = Some(false);
-        args.target = Some(api::Target::Bun);
+        args.target = Some(bun_ast::Target::Bun);
         let mut bundle = Transpiler::init(runner_arena(), ctx.log, args, None)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
 
@@ -1037,7 +1037,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let defines_ok = {
             let b = &mut vm.transpiler;
             Self::wire_transpiler_from_ctx(b, ctx);
-            b.options.env.behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
+            b.options.env.behavior = DotEnvBehavior::LoadAllWithoutInlining;
             b.configure_defines().is_ok()
         };
         if !defines_ok {
@@ -3590,7 +3590,7 @@ impl RunCommand {
         let Ok(mut this_transpiler) = Transpiler::init(runner_arena(), ctx.log, args, None) else {
             return Ok(shell_out);
         };
-        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
+        this_transpiler.options.env.behavior = DotEnvBehavior::LoadAll;
         this_transpiler.options.env.prefix = Box::default();
         // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
         unsafe { (*this_transpiler.env).quiet = true };

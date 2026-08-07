@@ -3041,11 +3041,9 @@ macro_rules! __runtime_embed_impl {
 // `StringPointer` stays here as the layered #[repr(C)] ABI type re-exported by
 // `bun_string` et al.
 
-/// `bun.schema.api.StringPointer` — `(offset, length)` span into an external
-/// buffer. Canonical definition; re-exported by `bun_string`, `bun_http_types`,
-/// and `bun_url` (formerly each had a structurally-identical copy). Layout MUST
-/// match `extern struct { offset: u32, length: u32 }` — C++ (`WebCore::FetchHeaders`)
-/// and on-disk formats (lockfile, npm manifest cache) read it directly.
+/// `(offset, length)` span into an external buffer. Layout MUST match
+/// `struct { uint32_t offset, length; }` — C++ (`WebCore::FetchHeaders`) and
+/// on-disk formats (lockfile, npm manifest cache) read it directly.
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct StringPointer {

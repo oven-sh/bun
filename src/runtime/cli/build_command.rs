@@ -1,6 +1,7 @@
 use std::io::Write as _;
 
 use crate::cli::command::{Context, HotReload};
+use bun_ast::Target;
 use bun_bundler::bundle_v2::{self, BundleV2};
 use bun_bundler::linker_context::metafile_builder as MetafileBuilder;
 use bun_bundler::options;
@@ -9,8 +10,8 @@ use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
+use bun_options_types::PackagesOption;
 use bun_options_types::context::MacroOptions;
-use bun_options_types::schema::api;
 use bun_paths::{PathBuffer, resolve_path};
 use bun_sys::{self, Fd, FdExt as _};
 
@@ -66,11 +67,10 @@ impl BuildCommand {
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
         // and never freed for the duration of the command body.
         let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
-        let user_requested_browser_target =
-            ctx.args.target.is_some() && ctx.args.target.unwrap() == api::Target::Browser;
+        let user_requested_browser_target = ctx.args.target == Some(Target::Browser);
         if ctx.bundler_options.compile || ctx.bundler_options.bytecode {
             // set this early so that externals are set up correctly and define is right
-            ctx.args.target = Some(api::Target::Bun);
+            ctx.args.target = Some(Target::Bun);
         }
 
         if ctx.bundler_options.bake {
@@ -78,40 +78,20 @@ impl BuildCommand {
         }
 
         if fetcher.is_some() {
-            ctx.args.packages = Some(api::PackagesMode::External);
+            ctx.args.packages = Some(PackagesOption::External);
             ctx.bundler_options.compile = false;
         }
 
         let compile_target = &ctx.bundler_options.compile_target;
 
         if ctx.bundler_options.compile {
-            let compile_define_keys = compile_target.define_keys();
-            let compile_define_values = compile_target.define_values();
-
-            if let Some(define) = ctx.args.define.as_mut() {
-                let mut keys: Vec<Box<[u8]>> =
-                    Vec::with_capacity(compile_define_keys.len() + define.keys.len());
-                keys.extend(compile_define_keys.iter().map(|s| Box::<[u8]>::from(*s)));
-                keys.append(&mut define.keys);
-                let mut values: Vec<Box<[u8]>> =
-                    Vec::with_capacity(compile_define_values.len() + define.values.len());
-                values.extend(compile_define_values.iter().map(|s| Box::<[u8]>::from(*s)));
-                values.append(&mut define.values);
-
-                define.keys = keys;
-                define.values = values;
-            } else {
-                ctx.args.define = Some(api::StringMap {
-                    keys: compile_define_keys
-                        .iter()
-                        .map(|s| Box::<[u8]>::from(*s))
-                        .collect(),
-                    values: compile_define_values
-                        .iter()
-                        .map(|s| Box::<[u8]>::from(*s))
-                        .collect(),
-                });
-            }
+            // Compile-target defines go first so user `--define`s override them.
+            let user_defines = core::mem::take(&mut ctx.args.define);
+            ctx.args.define = (compile_target.define_keys().iter())
+                .zip(compile_target.define_values())
+                .map(|(k, v)| (Box::<[u8]>::from(*k), Box::<[u8]>::from(v)))
+                .collect();
+            ctx.args.define.extend(user_defines);
         }
 
         // Note: `Transpiler::init` now takes an arena. Process-lifetime —
@@ -151,8 +131,7 @@ impl BuildCommand {
             .cloned()
             .unwrap_or_default();
 
-        this_transpiler.options.source_map =
-            options::SourceMapOption::from_api(ctx.args.source_map);
+        this_transpiler.options.source_map = ctx.args.source_map.unwrap_or_default();
 
         this_transpiler.options.compile_mode = if ctx.bundler_options.compile {
             options::CompileMode::Executable
@@ -274,7 +253,7 @@ impl BuildCommand {
 
             if user_requested_browser_target && has_all_html_entrypoints {
                 // --compile --target=browser with all HTML entrypoints: produce self-contained HTML
-                ctx.args.target = Some(api::Target::Browser);
+                ctx.args.target = Some(Target::Browser);
                 if ctx.bundler_options.code_splitting {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> cannot use --compile --target browser with --splitting"
@@ -520,19 +499,18 @@ impl BuildCommand {
                 use bun_bundler::DefineExt as _;
                 // Feed `--define` entries into
                 // the client transpiler's Define table.
-                let user_defines = match &ctx.args.define {
-                    Some(input) => {
-                        let mut raw = bun_bundler::defines::RawDefines::default();
-                        raw.reserve(input.keys.len() + 4);
-                        for (key, value) in input.keys.iter().zip(input.values.iter()) {
-                            raw.insert(key.as_ref(), value.clone());
-                        }
-                        let drop: Vec<&[u8]> = ctx.args.drop.iter().map(|d| d.as_ref()).collect();
-                        Some(bun_bundler::defines::DefineData::from_input(
-                            &raw, &drop, log_ref, arena,
-                        )?)
+                let user_defines = if ctx.args.define.is_empty() {
+                    None
+                } else {
+                    let mut raw = bun_bundler::defines::RawDefines::default();
+                    raw.reserve(ctx.args.define.len() + 4);
+                    for (key, value) in &ctx.args.define {
+                        raw.insert(key.as_ref(), value.clone());
                     }
-                    None => None,
+                    let drop: Vec<&[u8]> = ctx.args.drop.iter().map(|d| d.as_ref()).collect();
+                    Some(bun_bundler::defines::DefineData::from_input(
+                        &raw, &drop, log_ref, arena,
+                    )?)
                 };
                 ct.options.define = options::Define::init(
                     user_defines,

@@ -76,9 +76,9 @@ pub struct EntryPointResult {
 /// live in `bun_options_types` (already a dep of `bun_jsc`), so they thread
 /// through here instead of being dropped at the CLI call-site.
 pub struct InitOptions {
-    /// The CLI's `api.TransformOptions`. Consumed by `RuntimeHooks::init_runtime_state`
+    /// The CLI's `TransformOptions`. Consumed by `RuntimeHooks::init_runtime_state`
     /// → `Transpiler::init(.., configureTransformOptionsForBunVM(args), ..)`.
-    pub transform_options: bun_options_types::schema::api::TransformOptions,
+    pub transform_options: bun_options_types::TransformOptions,
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
     pub debugger: bun_options_types::context::Debugger,
     /// When `Some`, [`init`] adopts
@@ -2771,7 +2771,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 /// `allocator` dropped per §Allocators (global mimalloc).
 #[derive(Default)]
 pub struct Options {
-    pub args: bun_options_types::schema::api::TransformOptions,
+    pub args: bun_options_types::TransformOptions,
     pub log: Option<NonNull<bun_ast::Log>>,
     // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
     // outlives the VM, so the inner lifetime is erased to `'static`.
@@ -3050,15 +3050,13 @@ impl VirtualMachine {
     /// Whether to warn when a previously-unhandled rejection later gains a handler.
     #[unsafe(export_name = "Bun__VM__allowRejectionHandledWarning")]
     pub(crate) extern "C" fn allow_rejection_handled_warning(this: &VirtualMachine) -> bool {
-        use bun_options_types::schema::api::UnhandledRejections;
+        use bun_options_types::UnhandledRejections;
         this.unhandled_rejections_mode() != UnhandledRejections::Bun
     }
 
     /// The configured `--unhandled-rejections` mode (defaults to Bun's behavior).
-    pub(crate) fn unhandled_rejections_mode(
-        &self,
-    ) -> bun_options_types::schema::api::UnhandledRejections {
-        use bun_options_types::schema::api::UnhandledRejections;
+    pub(crate) fn unhandled_rejections_mode(&self) -> bun_options_types::UnhandledRejections {
+        use bun_options_types::UnhandledRejections;
         self.transpiler
             .options
             .transform_options
@@ -3229,7 +3227,7 @@ impl VirtualMachine {
         reason: JSValue,
         promise: JSValue,
     ) {
-        use bun_options_types::schema::api::UnhandledRejections as Mode;
+        use bun_options_types::UnhandledRejections as Mode;
 
         if self.is_shutting_down() {
             bun_core::debug_warn!("unhandledRejection during shutdown.");

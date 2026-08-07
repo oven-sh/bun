@@ -1047,7 +1047,7 @@ impl ServerConfig {
             {
                 if args.development.is_hmr_enabled() {
                     use crate::bake::bake_body as bb;
-                    use bun_options_types::schema::api::DotEnvBehavior;
+                    use bun_dotenv::DotEnvBehavior;
 
                     // NOTE: the arena is created here and moved into
                     // `UserOptions` (lives until `args.bake` is dropped).
@@ -1088,7 +1088,7 @@ impl ServerConfig {
                     let o = &vm.transpiler.options.transform_options;
 
                     match o.serve_env_behavior {
-                        DotEnvBehavior::prefix => {
+                        Some(DotEnvBehavior::Prefix) => {
                             // NOTE: `serve_env_prefix` is `Option<Box<[u8]>>`
                             // owned by the long-lived `transform_options`; dupe
                             // into the arena so the `&'static [u8]` field is
@@ -1097,21 +1097,19 @@ impl ServerConfig {
                                 .serve_env_prefix
                                 .as_deref()
                                 .map(|p| bb::arena_dupe_z(&user_options.arena, p).as_bytes());
-                            user_options.bundler_options.client.env = DotEnvBehavior::prefix;
+                            user_options.bundler_options.client.env = Some(DotEnvBehavior::Prefix);
                         }
-                        DotEnvBehavior::load_all => {
-                            user_options.bundler_options.client.env = DotEnvBehavior::load_all;
+                        Some(behavior @ (DotEnvBehavior::LoadAll | DotEnvBehavior::Disable)) => {
+                            user_options.bundler_options.client.env = Some(behavior);
                         }
-                        DotEnvBehavior::disable => {
-                            user_options.bundler_options.client.env = DotEnvBehavior::disable;
-                        }
-                        _ => {}
+                        Some(DotEnvBehavior::LoadAllWithoutInlining) | None => {}
                     }
 
-                    if let Some(define) = &o.serve_define {
-                        user_options.bundler_options.client.define = define.clone();
-                        user_options.bundler_options.server.define = define.clone();
-                        user_options.bundler_options.ssr.define = define.clone();
+                    if !o.serve_define.is_empty() {
+                        let bundler_options = &mut user_options.bundler_options;
+                        bundler_options.client.define.clone_from(&o.serve_define);
+                        bundler_options.server.define.clone_from(&o.serve_define);
+                        bundler_options.ssr.define.clone_from(&o.serve_define);
                     }
 
                     args.bake = Some(user_options);

@@ -174,9 +174,6 @@ pub fn if_none_match(
 //   - `to_fetch_headers`         — extension-trait in bun_http_jsc
 // ═══════════════════════════════════════════════════════════════════════
 
-/// `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
-/// (T0, already a dep). Re-exported so `HeaderEntry`'s field type and
-/// `bun_http::headers::api::StringPointer` keep resolving.
 pub use bun_core::StringPointer;
 
 #[derive(Copy, Clone, Default)]

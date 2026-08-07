@@ -11,8 +11,9 @@ use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
 use bun_core::{ZStr, strings};
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
-use bun_options_types::schema as bun_schema;
+use bun_jsc::{
+    ComptimeStringMapExt as _, JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice,
+};
 use bun_paths::{self as paths, PathBuffer};
 
 // `jsc.API.JSBundler.Plugin` — opaque FFI handle for the C++ JSBundlerPlugin.
@@ -91,8 +92,6 @@ fn get_function(
         _ => Ok(None),
     }
 }
-
-use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 
 /// Convert a `crate::Error` into a thrown JS exception in a `JsResult`
 /// context.
@@ -390,10 +389,10 @@ pub struct BuildConfigSubset {
     pub ignore_dce_annotations: Option<bool>,
     pub conditions: ArrayHashMap<&'static [u8], ()>,
     pub drop: ArrayHashMap<&'static [u8], ()>,
-    pub env: bun_schema::api::DotEnvBehavior,
+    pub env: Option<bun_dotenv::DotEnvBehavior>,
     pub env_prefix: Option<&'static [u8]>,
-    pub define: bun_schema::api::StringMap,
-    pub source_map: bun_schema::api::SourceMapMode,
+    pub define: bun_options_types::StringPairs,
+    pub source_map: bun_bundler::options::SourceMapOption,
 
     pub minify_syntax: Option<bool>,
     pub minify_identifiers: Option<bool>,
@@ -408,7 +407,9 @@ impl BuildConfigSubset {
             let Some(val) = get_optional_value(js_options, global, b"sourcemap")? else {
                 break 'brk;
             };
-            if let Some(sourcemap) = source_map_mode_from_js(global, val)? {
+            if let Some(sourcemap) =
+                bun_bundler::options::SOURCE_MAP_OPTION_MAP.from_js(global, val)?
+            {
                 options.source_map = sourcemap;
                 break 'brk;
             }
@@ -455,10 +456,10 @@ impl Default for BuildConfigSubset {
             ignore_dce_annotations: None,
             conditions: ArrayHashMap::new(),
             drop: ArrayHashMap::new(),
-            env: bun_schema::api::DotEnvBehavior::_none,
+            env: None,
             env_prefix: None,
-            define: bun_schema::api::StringMap::EMPTY,
-            source_map: bun_schema::api::SourceMapMode::External,
+            define: bun_options_types::StringPairs::new(),
+            source_map: bun_bundler::options::SourceMapOption::External,
 
             minify_syntax: None,
             minify_identifiers: None,
@@ -1159,9 +1160,7 @@ impl Framework {
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
-            // `TransformOptions::default()`: every `Option` is `None`, every
-            // slice empty, every scalar zero/false.
-            bun_schema::api::TransformOptions::default(),
+            bun_options_types::TransformOptions::default(),
             None,
         )?);
 
@@ -1230,8 +1229,8 @@ impl Framework {
         }
 
         out.options.source_map = source_map;
-        if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
-            out.options.env.behavior = bundler_options.env;
+        if let Some(env) = bundler_options.env {
+            out.options.env.behavior = env;
             out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
         }
         // The resolver crate carries a FORWARD_DECL subset of
@@ -1253,18 +1252,9 @@ impl Framework {
             },
         )?;
 
-        if (bundler_options.define.keys.len() + bundler_options.drop.count()) > 0 {
-            debug_assert_eq!(
-                bundler_options.define.keys.len(),
-                bundler_options.define.values.len()
-            );
+        if (bundler_options.define.len() + bundler_options.drop.count()) > 0 {
             use bun_bundler::DefineDataExt;
-            for (k, v) in bundler_options
-                .define
-                .keys
-                .iter()
-                .zip(bundler_options.define.values.iter())
-            {
+            for (k, v) in &bundler_options.define {
                 let parsed =
                     bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
                 out.options.define.insert(k, parsed)?;

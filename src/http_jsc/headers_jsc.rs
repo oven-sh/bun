@@ -6,7 +6,7 @@ use core::sync::atomic::Ordering;
 
 use bun_core::{StringPointer, ZigString};
 use bun_http::Headers;
-use bun_http::headers::{EntryList, api};
+use bun_http::headers::EntryList;
 use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
 
 /// Moved up from `bun_http` so it can
@@ -68,9 +68,9 @@ pub fn from_fetch_headers(
     let sliced = headers.entries.slice();
     // SAFETY: `Name`/`Value` columns are both `StringPointer`; `Slice::items_raw`
     // contract is satisfied. Disjoint backing memory ⇒ no aliasing.
-    let names_ptr: *mut api::StringPointer = sliced.items_raw::<"name", api::StringPointer>();
+    let names_ptr: *mut StringPointer = sliced.items_raw::<"name", StringPointer>();
     // SAFETY: same `items_raw` contract as above; `value` column is a disjoint allocation.
-    let values_ptr: *mut api::StringPointer = sliced.items_raw::<"value", api::StringPointer>();
+    let values_ptr: *mut StringPointer = sliced.items_raw::<"value", StringPointer>();
     // Zero-init so any slot `copy_to` fails to write (iterator skip, count
     // desync) reads as `{0, 0}` — a valid empty slice — rather than garbage.
     // SAFETY: both columns hold exactly `header_count` `StringPointer` slots.
@@ -91,7 +91,7 @@ pub fn from_fetch_headers(
         // SAFETY: header_count >= 1 (incremented above); names_ptr points to a
         // live column of `header_count` slots.
         unsafe {
-            *names_ptr.add(header_count as usize - 1) = api::StringPointer {
+            *names_ptr.add(header_count as usize - 1) = StringPointer {
                 offset: buf_len_before_content_type,
                 length: u32::try_from(ct.len()).unwrap(),
             };
@@ -101,7 +101,7 @@ pub fn from_fetch_headers(
             .copy_from_slice(body_ct);
         // SAFETY: see above.
         unsafe {
-            *values_ptr.add(header_count as usize - 1) = api::StringPointer {
+            *values_ptr.add(header_count as usize - 1) = StringPointer {
                 offset: buf_len_before_content_type + u32::try_from(ct.len()).unwrap(),
                 length: u32::try_from(body_ct.len()).unwrap(),
             };

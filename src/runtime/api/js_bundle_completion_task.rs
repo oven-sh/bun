@@ -8,9 +8,7 @@
 //! through the `bun_bundler::bundle_v2::CompletionStruct` trait
 //! (layout-agnostic).
 
-use bun_options_types::TargetExt as _;
 use core::ptr::{self, NonNull};
-use std::io::Write as _;
 
 use bun_alloc::Arena;
 use bun_bundler::bundle_v2::{
@@ -26,8 +24,8 @@ use bun_io::KeepAlive;
 use bun_jsc::WorkPool;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
+use bun_options_types::TransformOptions;
 use bun_options_types::WindowsOptions;
-use bun_options_types::schema::api;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
 use bun_paths::{self as paths, PathBuffer, SEP};
 use bun_ptr::BackRef;
@@ -814,56 +812,6 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
 
         transpiler.options.entry_points = config.entry_points.keys().to_vec().into_boxed_slice();
-        // Convert API JSX config back to options.JSX.Pragma
-        let jsx_import = &config.jsx.import_source;
-        transpiler.options.jsx = options::jsx::Pragma {
-            factory: if !config.jsx.factory.is_empty() {
-                options::jsx::Pragma::member_list_to_components_if_different(
-                    options::jsx::MemberList::Static(options::jsx::defaults::FACTORY),
-                    &config.jsx.factory,
-                )?
-            } else {
-                options::jsx::MemberList::Static(options::jsx::defaults::FACTORY)
-            },
-            fragment: if !config.jsx.fragment.is_empty() {
-                options::jsx::Pragma::member_list_to_components_if_different(
-                    options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT),
-                    &config.jsx.fragment,
-                )?
-            } else {
-                options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT)
-            },
-            runtime: options::jsx::Runtime::from(config.jsx.runtime),
-            development: config.jsx.development,
-            package_name: if !jsx_import.is_empty() {
-                std::borrow::Cow::Owned(jsx_import.to_vec())
-            } else {
-                std::borrow::Cow::Borrowed(b"react".as_slice())
-            },
-            classic_import_source: if !jsx_import.is_empty() {
-                std::borrow::Cow::Owned(jsx_import.to_vec())
-            } else {
-                std::borrow::Cow::Borrowed(b"react".as_slice())
-            },
-            side_effects: config.jsx.side_effects,
-            parse: true,
-            import_source: options::jsx::ImportSource {
-                development: if !jsx_import.is_empty() {
-                    let mut v = Vec::with_capacity(jsx_import.len() + 16);
-                    let _ = write!(&mut v, "{}/jsx-dev-runtime", bstr::BStr::new(jsx_import));
-                    std::borrow::Cow::Owned(v)
-                } else {
-                    std::borrow::Cow::Borrowed(options::jsx::defaults::IMPORT_SOURCE_DEV)
-                },
-                production: if !jsx_import.is_empty() {
-                    let mut v = Vec::with_capacity(jsx_import.len() + 12);
-                    let _ = write!(&mut v, "{}/jsx-runtime", bstr::BStr::new(jsx_import));
-                    std::borrow::Cow::Owned(v)
-                } else {
-                    std::borrow::Cow::Borrowed(options::jsx::defaults::IMPORT_SOURCE)
-                },
-            },
-        };
         transpiler.options.no_macros = config.no_macros;
         transpiler.options.loaders =
             options::loaders_from_transform_options(config.loaders.as_ref(), config.target)?;
@@ -1032,32 +980,22 @@ impl CompletionStruct for JSBundleCompletionTask {
         bump: &'a Arena,
     ) -> bun_bundler::Result<&'a mut Transpiler<'a>> {
         let config = &self.config;
-        let opts = api::TransformOptions {
-            define: if config.define.count() > 0 {
-                Some(api::StringMap {
-                    keys: config.define.keys().to_vec(),
-                    values: config.define.values().to_vec(),
-                })
-            } else {
-                None
-            },
+        let opts = TransformOptions {
+            define: (config.define.keys().iter().cloned())
+                .zip(config.define.values().iter().cloned())
+                .collect(),
             entry_points: config.entry_points.keys().to_vec(),
-            target: Some(config.target.to_api()),
+            target: Some(config.target),
             absolute_working_dir: if !config.dir.list.is_empty() {
                 Some(Box::from(config.dir.list.as_slice()))
             } else {
                 None
             },
-            inject: Vec::new(),
             external: config.external.keys().to_vec(),
-            main_fields: Vec::new(),
-            extension_order: Vec::new(),
-            env_files: Vec::new(),
             conditions: config.conditions.keys().to_vec(),
             // Use the config value, which `configure_bundler` reapplies anyway.
             ignore_dce_annotations: config.ignore_dce_annotations,
             drop: config.drop.keys().to_vec(),
-            bunfig_path: Box::default(),
             jsx: Some(config.jsx.clone()),
             ..Default::default()
         };

@@ -620,11 +620,11 @@ impl NetworkTask {
                 DEFAULT_HEADERS_BUF
             };
             header_builder.entries.append(http::headers::Entry {
-                name: http::headers::api::StringPointer {
+                name: bun_core::StringPointer {
                     offset: 0,
                     length: "Accept".len() as u32,
                 },
-                value: http::headers::api::StringPointer {
+                value: bun_core::StringPointer {
                     offset: "Accept".len() as u32,
                     length: (header_buf.len() - "Accept".len()) as u32,
                 },

@@ -1,11 +1,6 @@
 use bun_picohttp as picohttp;
 
-// `bun.schema.api.StringPointer` — canonical type is `bun_core::StringPointer`;
-// `bun_http_types` re-exports it. Public: downstream crates (e.g.
-// bun_install::NetworkTask) build raw `Entry` records and need the field type.
-pub mod api {
-    pub use bun_http_types::ETag::StringPointer;
-}
+use bun_core::StringPointer;
 
 // LAYERING: `Headers` (and its tier-safe inherent methods: `memory_cost`,
 // `get`, `append`, `get_content_*`, `as_str`, `Clone`) is owned by
@@ -54,11 +49,11 @@ impl HeadersExt for Headers {
 
             // Capacity was reserved above so `append_assume_capacity` is safe.
             result.entries.append_assume_capacity(Entry {
-                name: api::StringPointer {
+                name: StringPointer {
                     offset: name_offset,
                     length: name.len() as u32,
                 },
-                value: api::StringPointer {
+                value: StringPointer {
                     offset: value_offset,
                     length: value.len() as u32,
                 },

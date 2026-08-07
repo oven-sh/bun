@@ -12,10 +12,11 @@ use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::{String as BunString, ZigString};
+use bun_dotenv::DotEnvBehavior;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::compile_target::CompileTarget;
-use bun_options_types::schema::api; // bun.schema.api
+use bun_options_types::schema::api;
 use bun_standalone_graph::StandaloneModuleGraph;
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
@@ -29,17 +30,6 @@ pub mod js_bundler {
     use bun_sys::FdExt;
 
     type OwnedString = MutableString;
-
-    /// `options::JSX::Runtime` → `api::JsxRuntime` (only the reverse `From`
-    /// exists upstream).
-    fn jsx_runtime_to_api(r: options::JSX::Runtime) -> api::JsxRuntime {
-        match r {
-            options::JSX::Runtime::_None => api::JsxRuntime::_none,
-            options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
-            options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
-            options::JSX::Runtime::Solid => api::JsxRuntime::Solid,
-        }
-    }
 
     /// A map of file paths to their in-memory contents.
     /// LAYERING: the data-only struct (`map: StringHashMap<Box<[u8]>>`) and
@@ -124,7 +114,7 @@ pub mod js_bundler {
         pub(crate) dir: OwnedString,
         pub(crate) outdir: OwnedString,
         pub(crate) rootdir: OwnedString,
-        pub(crate) jsx: api::Jsx,
+        pub(crate) jsx: options::jsx::Options,
         pub(crate) force_node_env: options::ForceNodeEnv,
         pub(crate) code_splitting: bool,
         pub(crate) minify: Minify,
@@ -151,7 +141,7 @@ pub mod js_bundler {
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
-        pub(crate) env_behavior: api::DotEnvBehavior,
+        pub(crate) env_behavior: DotEnvBehavior,
         pub(crate) env_prefix: OwnedString,
         pub(crate) compile: Option<CompileOptions>,
         /// In-memory files that can be used as entrypoints or imported.
@@ -179,11 +169,7 @@ pub mod js_bundler {
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
                 rootdir: OwnedString::default(),
-                jsx: api::Jsx {
-                    factory: Box::default(),
-                    fragment: Box::default(),
-                    runtime: api::JsxRuntime::Automatic,
-                    import_source: Box::default(),
+                jsx: options::jsx::Options {
                     development: true, // Default to development mode like old Pragma
                     ..Default::default()
                 },
@@ -211,7 +197,7 @@ pub mod js_bundler {
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
-                env_behavior: api::DotEnvBehavior::Disable,
+                env_behavior: DotEnvBehavior::Disable,
                 env_prefix: OwnedString::default(),
                 compile: None,
                 files: FileMap::default(),
@@ -671,12 +657,12 @@ pub mod js_bundler {
                         || env == JSValue::FALSE
                         || (env.is_number() && env.as_number() == 0.0)
                     {
-                        this.env_behavior = api::DotEnvBehavior::Disable;
+                        this.env_behavior = DotEnvBehavior::Disable;
                     } else if env == JSValue::TRUE || (env.is_number() && env.as_number() == 1.0) {
-                        this.env_behavior = api::DotEnvBehavior::LoadAll;
+                        this.env_behavior = DotEnvBehavior::LoadAll;
                     } else if env.is_string() {
                         let slice = env.to_slice(global_this)?;
-                        match api::DotEnvBehavior::parse_str(slice.slice()) {
+                        match DotEnvBehavior::parse_str(slice.slice()) {
                             Ok((behavior, prefix)) => {
                                 this.env_behavior = behavior;
                                 if let Some(prefix) = prefix {
@@ -719,7 +705,7 @@ pub mod js_bundler {
                     let _ =
                         bun_core::copy_lowercase(&slice.slice()[0..len], &mut str_lower[0..len]);
                     if let Some(runtime) = options::JSX::RUNTIME_MAP.get(&str_lower[0..len]) {
-                        this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
+                        this.jsx.runtime = runtime.runtime;
                         if let Some(dev) = runtime.development {
                             this.jsx.development = dev;
                         }

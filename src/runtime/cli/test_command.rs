@@ -2319,8 +2319,7 @@ impl TestCommand {
             ctx.runtime_options.experimental_http3_fetch,
             core::sync::atomic::Ordering::Relaxed,
         );
-        vm.transpiler.options.env.behavior =
-            bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
+        vm.transpiler.options.env.behavior = bun_dotenv::DotEnvBehavior::LoadAllWithoutInlining;
 
         let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;
         if !node_env_entry.found_existing {

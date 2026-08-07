@@ -1202,7 +1202,7 @@ pub mod command {
         // (`which()` + its `RootCommandMatcher` name table / rodata) or walk
         // the per-tag dispatch `match`. `bun --version` also skips
         // `create_context_data` entirely (`arguments::parse` builds-and-drops
-        // a full `api::TransformOptions` and forces two `LazyLock`s for what
+        // a full `TransformOptions` and forces two `LazyLock`s for what
         // is a no-op). Keeps `command::which`'s code/rodata and `arguments`'s
         // clap tables out of the `--version` / `bun <file>` working set.
         //
@@ -1385,7 +1385,7 @@ pub mod command {
             break 'brk write_context_no_parse(log);
         };
 
-        ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
+        ctx.args.target = Some(bun_ast::Target::Bun);
         use bun_options_types::global_cache::GlobalCache;
         if ctx.debug.global_cache == GlobalCache::auto {
             ctx.debug.global_cache = GlobalCache::disable;
@@ -1419,7 +1419,7 @@ pub mod command {
             }
             Err(e) => return Err(e),
         };
-        ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
+        ctx.args.target = Some(bun_ast::Target::Bun);
 
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.

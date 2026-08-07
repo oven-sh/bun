@@ -7,9 +7,6 @@
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_jsc::{ErrorableString, JSGlobalObject, JSValue, JsError, JsResult, VM};
 
-#[path = "source_map_mode_jsc.rs"]
-pub mod source_map_mode_jsc;
-
 #[path = "options_jsc.rs"]
 pub mod options_jsc;
 

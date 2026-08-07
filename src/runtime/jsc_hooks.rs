@@ -377,7 +377,6 @@ unsafe fn init_runtime_state(
     // cwd → `getcwd` ENOENT). The `ptr::write` shape is load-bearing: do not
     // replace with `(*vm).transpiler = ...` (drops zeroed bytes → UB).
     {
-        use bun_options_types::schema::api;
         // Move (not clone) the caller's `TransformOptions` into the
         // `Transpiler::init` call. `InitOptions` is consumed once per VM and
         // the only post-hook reader of `transform_options` is the
@@ -388,7 +387,7 @@ unsafe fn init_runtime_state(
         let mut args = core::mem::take(&mut opts.transform_options);
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
         args.write = Some(false);
-        args.target = Some(api::Target::Bun);
+        args.target = Some(bun_ast::Target::Bun);
         // The arena lives on
         // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it
         // alongside `timer`/`entry_point` on Worker teardown. The `Box`

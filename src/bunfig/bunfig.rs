@@ -3,7 +3,7 @@
 //! `Bunfig::parse` and the inner `Parser` route through the real
 //! `bun_parsers::{toml,json}` parsers (which produce the value-shaped
 //! `bun_ast::Expr` tree) and write into `ctx.args`
-//! (`api::TransformOptions`), `ctx.install` (`api::BunInstall`), and the rest
+//! (`TransformOptions`), `ctx.install` (`BunInstall`), and the rest
 //! of `ContextData`.
 
 #![allow(clippy::collapsible_if, clippy::needless_return)]
@@ -16,13 +16,17 @@ use bun_ast::{E, Expr, ExprTag, expr::Data as ExprData};
 use bun_parsers::json as json_parser;
 use bun_parsers::toml::TOML;
 
+use bun_dotenv::DotEnvBehavior;
 use bun_install_types::NodeLinker::FromExprError;
+use bun_install_types::NodeLinker::{NodeLinker, PnpmMatcher};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
 use bun_options_types::global_cache::GlobalCache;
+use bun_options_types::jsx;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
+use bun_options_types::{BunInstall, Ca, NpmRegistry, StringPairs};
 
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
@@ -228,10 +232,10 @@ impl<'a> Parser<'a> {
     fn load_log_level(&mut self, expr: &Expr) -> crate::Result<()> {
         self.expect_string(expr)?;
         let level = match expr.as_string(self.bump).unwrap_or(b"") {
-            b"debug" => api::MessageLevel::Debug,
-            b"error" => api::MessageLevel::Err,
-            b"warn" => api::MessageLevel::Warn,
-            b"info" => api::MessageLevel::Info,
+            b"debug" => bun_ast::Level::Debug,
+            b"error" => bun_ast::Level::Err,
+            b"warn" => bun_ast::Level::Warn,
+            b"info" => bun_ast::Level::Info,
             _ => {
                 return self.add_error(
                     expr.loc,
@@ -312,7 +316,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_define_map(&mut self, expr: &Expr) -> crate::Result<api::StringMap> {
+    fn parse_define_map(&mut self, expr: &Expr) -> crate::Result<StringPairs> {
         self.expect(expr, ExprTag::EObject)?;
         let obj = expr.data.e_object().expect("infallible: variant checked");
         let properties = obj.properties.slice();
@@ -320,8 +324,7 @@ impl<'a> Parser<'a> {
             .iter()
             .filter(|p| matches!(p.value.as_ref().unwrap().data, ExprData::EString(_)))
             .count();
-        let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
-        let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
+        let mut map = StringPairs::with_capacity(valid_count);
         for prop in properties {
             let ExprData::EString(v) = &prop
                 .value
@@ -335,10 +338,12 @@ impl<'a> Parser<'a> {
             else {
                 continue;
             };
-            keys.push(estring_to_owned(k, self.bump));
-            values.push(estring_to_owned(v, self.bump));
+            map.push((
+                estring_to_owned(k, self.bump),
+                estring_to_owned(v, self.bump),
+            ));
         }
-        Ok(api::StringMap { keys, values })
+        Ok(map)
     }
 
     // `cmd` is a runtime arg rather than a const generic —
@@ -360,7 +365,7 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(expr) = json.get(b"define") {
-            self.ctx.args.define = Some(self.parse_define_map(&expr)?);
+            self.ctx.args.define = self.parse_define_map(&expr)?;
         }
 
         if let Some(expr) = json.get(b"origin") {
@@ -717,9 +722,8 @@ impl<'a> Parser<'a> {
         {
             if let Some(install_obj) = json.get_object(b"install") {
                 // Ensure ctx.install is allocated so later passes can write into it
-                // once api::BunInstall fields land.
                 if self.ctx.install.is_none() {
-                    self.ctx.install = Some(Box::new(api::BunInstall::default()));
+                    self.ctx.install = Some(Box::new(BunInstall::default()));
                 }
 
                 if let Some(auto_install_expr) = install_obj.get(b"auto") {
@@ -947,20 +951,20 @@ impl<'a> Parser<'a> {
         let mut jsx_factory: Box<[u8]> = Box::default();
         let mut jsx_fragment: Box<[u8]> = Box::default();
         let mut jsx_import_source: Box<[u8]> = Box::default();
-        let mut jsx_runtime = api::JsxRuntime::Automatic;
+        let mut jsx_runtime = jsx::Runtime::Automatic;
         let mut jsx_dev = true;
 
         if let Some(expr) = json.get(b"jsx") {
             if let Some(value) = expr.as_string(self.bump) {
                 if value == b"react" {
-                    jsx_runtime = api::JsxRuntime::Classic;
+                    jsx_runtime = jsx::Runtime::Classic;
                 } else if value == b"solid" {
-                    jsx_runtime = api::JsxRuntime::Solid;
+                    jsx_runtime = jsx::Runtime::Solid;
                 } else if value == b"react-jsx" {
-                    jsx_runtime = api::JsxRuntime::Automatic;
+                    jsx_runtime = jsx::Runtime::Automatic;
                     jsx_dev = false;
                 } else if value == b"react-jsxDEV" {
-                    jsx_runtime = api::JsxRuntime::Automatic;
+                    jsx_runtime = jsx::Runtime::Automatic;
                     jsx_dev = true;
                 } else {
                     self.add_error(
@@ -999,7 +1003,7 @@ impl<'a> Parser<'a> {
                 jsx.runtime = jsx_runtime;
                 jsx.development = jsx_dev;
             } else {
-                self.ctx.args.jsx = Some(api::Jsx {
+                self.ctx.args.jsx = Some(jsx::Options {
                     factory: jsx_factory,
                     fragment: jsx_fragment,
                     import_source: jsx_import_source,
@@ -1181,20 +1185,12 @@ impl Bunfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl<'a> Parser<'a> {
-    fn parse_registry_url_string(&mut self, str: &E::EString) -> crate::Result<api::NpmRegistry> {
-        // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
-        // The api `Parser` is generic over log/source and never reads them for
-        // this path, so we just hand it our reborrowed handles.
-        let bytes = str.string(self.bump)?;
-        Ok(bun_api::npm_registry::Parser {
-            log: &mut *self.log,
-            source: self.source,
-        }
-        .parse_registry_url_string_impl(bytes)?)
+    fn parse_registry_url_string(&mut self, str: &E::EString) -> crate::Result<NpmRegistry> {
+        Ok(NpmRegistry::from_url(str.string(self.bump)?))
     }
 
-    fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
-        let mut registry = api::NpmRegistry::default();
+    fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<NpmRegistry> {
+        let mut registry = NpmRegistry::default();
 
         if let Some(url) = obj.get(b"url") {
             self.expect_string(&url)?;
@@ -1228,7 +1224,7 @@ impl<'a> Parser<'a> {
         Ok(registry)
     }
 
-    fn parse_registry(&mut self, expr: &Expr) -> crate::Result<api::NpmRegistry> {
+    fn parse_registry(&mut self, expr: &Expr) -> crate::Result<NpmRegistry> {
         match &expr.data {
             ExprData::EString(s) => self.parse_registry_url_string(s),
             ExprData::EObject(o) => self.parse_registry_object(o),
@@ -1237,7 +1233,7 @@ impl<'a> Parser<'a> {
                     expr.loc,
                     b"Expected registry to be a URL string or an object",
                 )?;
-                Ok(api::NpmRegistry::default())
+                Ok(NpmRegistry::default())
             }
         }
     }
@@ -1256,7 +1252,7 @@ impl<'a> Parser<'a> {
 
     fn parse_install_inner(
         &mut self,
-        install: &mut api::BunInstall,
+        install: &mut BunInstall,
         install_obj: &Expr,
     ) -> crate::Result<()> {
         if let Some(cafile) = install_obj.get(b"cafile") {
@@ -1283,10 +1279,10 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
-                    install.ca = Some(api::Ca::List(list.into()));
+                    install.ca = Some(Ca::List(list.into()));
                 }
                 ExprData::EString(s) => {
-                    install.ca = Some(api::Ca::Str(estring_to_owned(s, self.bump)));
+                    install.ca = Some(Ca::Str(estring_to_owned(s, self.bump)));
                 }
                 _ => {
                     self.add_error(
@@ -1357,7 +1353,7 @@ impl<'a> Parser<'a> {
         if let Some(node_linker_expr) = install_obj.get(b"linker") {
             self.expect_string(&node_linker_expr)?;
             if let Some(s) = node_linker_expr.as_string(self.bump) {
-                install.node_linker = api::NodeLinker::from_str(s);
+                install.node_linker = NodeLinker::from_str(s);
                 if install.node_linker.is_none() {
                     self.add_error(
                         node_linker_expr.loc,
@@ -1387,18 +1383,6 @@ impl<'a> Parser<'a> {
             }
             if let Some(v) = lockfile_expr.get(b"save").and_then(|e| e.as_bool()) {
                 install.save_lockfile = Some(v);
-            }
-            if let Some(v) = lockfile_expr
-                .get(b"path")
-                .and_then(|e| e.as_string(self.bump))
-            {
-                install.lockfile_path = Some(v.into());
-            }
-            if let Some(v) = lockfile_expr
-                .get(b"savePath")
-                .and_then(|e| e.as_string(self.bump))
-            {
-                install.save_lockfile_path = Some(v.into());
             }
         }
 
@@ -1536,13 +1520,13 @@ impl<'a> Parser<'a> {
         };
         if let Some(public_hoist_pattern_expr) = install_obj.get(b"publicHoistPattern") {
             install.public_hoist_pattern = Some(
-                api::PnpmMatcher::from_expr(&public_hoist_pattern_expr, self.log, self.source)
+                PnpmMatcher::from_expr(&public_hoist_pattern_expr, self.log, self.source)
                     .map_err(remap)?,
             );
         }
         if let Some(hoist_pattern_expr) = install_obj.get(b"hoistPattern") {
             install.hoist_pattern = Some(
-                api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)
+                PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)
                     .map_err(remap)?,
             );
         }
@@ -1615,7 +1599,7 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(expr) = serve_obj.get(b"define") {
-            self.ctx.args.serve_define = Some(self.parse_define_map(&expr)?);
+            self.ctx.args.serve_define = self.parse_define_map(&expr)?;
         }
         self.ctx.args.bunfig_path = Box::<[u8]>::from(self.source.path.text);
 
@@ -1628,23 +1612,23 @@ impl<'a> Parser<'a> {
         if let Some(env) = serve_obj.get(b"env") {
             match &env.data {
                 ExprData::ENull(_) => {
-                    self.ctx.args.serve_env_behavior = api::DotEnvBehavior::disable;
+                    self.ctx.args.serve_env_behavior = Some(DotEnvBehavior::Disable);
                 }
                 ExprData::EBoolean(b) => {
-                    self.ctx.args.serve_env_behavior = if b.value {
-                        api::DotEnvBehavior::load_all
+                    self.ctx.args.serve_env_behavior = Some(if b.value {
+                        DotEnvBehavior::LoadAll
                     } else {
-                        api::DotEnvBehavior::disable
-                    };
+                        DotEnvBehavior::Disable
+                    });
                 }
                 ExprData::EString(str) => {
                     let slice = str.string(self.bump)?;
-                    match api::DotEnvBehavior::parse_str(slice) {
+                    match DotEnvBehavior::parse_str(slice) {
                         Ok((behavior, prefix)) => {
                             if let Some(prefix) = prefix {
                                 self.ctx.args.serve_env_prefix = Some(Box::<[u8]>::from(prefix));
                             }
-                            self.ctx.args.serve_env_behavior = behavior;
+                            self.ctx.args.serve_env_behavior = Some(behavior);
                         }
                         Err(()) => {
                             self.add_error(

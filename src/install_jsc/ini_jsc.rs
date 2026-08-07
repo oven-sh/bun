@@ -25,12 +25,12 @@ impl IniTestingAPIs {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        use bun_api::BunInstall;
         use bun_ast::{Log, Source};
         use bun_core::String as BunString;
         use bun_dotenv as dotenv;
         use bun_ini::{config_iterator, load_npmrc};
         use bun_install::npm::Registry;
+        use bun_options_types::BunInstall;
 
         let arg = frame.argument(0);
         let npmrc_contents = bun_core::OwnedString::new(arg.to_bun_string(global)?);

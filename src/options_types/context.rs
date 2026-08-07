@@ -5,21 +5,22 @@
 //! `create()` (which calls `Arguments.parse`) and the `global_cli_ctx`/
 //! `context_data` storage stay in `cli.rs`.
 
-use crate::schema::api;
 use bun_collections::ArrayHashMap;
+use bun_dotenv::DotEnvBehavior;
 
 use crate::bundle_enums;
 use crate::code_coverage_options::CodeCoverageOptions;
 use crate::compile_target::CompileTarget;
 use crate::global_cache::GlobalCache;
 use crate::offline_mode::OfflineMode;
+use crate::{BunInstall, TransformOptions};
 
 // Every `Box<[u8]>` / `Vec<Box<[u8]>>` struct field below is a proc-lifetime
 // CLI string: populated once from argv/bunfig during startup and never freed.
 
 pub struct ContextData {
     pub start_time: i128,
-    pub args: api::TransformOptions,
+    pub args: TransformOptions,
     /// Raw pointer (not `&mut`) so `Default` works and so the
     /// process-global `CONTEXT_DATA` static can be zero-initialized before
     /// `create_context_data()` writes the real `&mut Log` into it.
@@ -28,7 +29,7 @@ pub struct ContextData {
     pub log: *mut bun_ast::Log,
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
-    pub install: Option<Box<api::BunInstall>>,
+    pub install: Option<Box<BunInstall>>,
 
     pub debug: DebugOptions,
     pub test_options: TestOptions,
@@ -67,7 +68,7 @@ impl Default for ContextData {
     fn default() -> Self {
         Self {
             start_time: 0,
-            args: api::TransformOptions::default(),
+            args: TransformOptions::default(),
             log: core::ptr::null_mut(),
             positionals: Vec::new(),
             passthrough: Vec::new(),
@@ -216,7 +217,7 @@ pub struct BundlerOptions {
 
     pub production: bool,
 
-    pub env_behavior: api::DotEnvBehavior,
+    pub env_behavior: DotEnvBehavior,
     pub env_prefix: Box<[u8]>,
     pub elide_lines: Option<usize>,
     // Compile options
@@ -268,7 +269,7 @@ impl Default for BundlerOptions {
             bake_debug_dump_server: false,
             bake_debug_disable_minify: false,
             production: false,
-            env_behavior: api::DotEnvBehavior::disable,
+            env_behavior: DotEnvBehavior::Disable,
             env_prefix: Box::default(),
             elide_lines: None,
             compile: false,

@@ -1,7 +1,4 @@
 //! Bundle target platform.
-//!
-//! Data-only enum + pure predicates. `to_api()` / `from(api::Target)` live in
-//! `bun_options_types::TargetExt` (would back-edge into the schema crate).
 
 use enum_map::Enum;
 
@@ -34,7 +31,6 @@ impl Target {
     pub const MAP: __ComptimeStringMap_TARGET_MAP = __ComptimeStringMap_TARGET_MAP(());
 
     // `from_js` lives in bundler_jsc as an extension trait — see PORTING.md.
-    // `to_api`/`from(api)` live in `bun_options_types::TargetExt`.
 
     #[inline]
     pub fn is_server_side(self) -> bool {

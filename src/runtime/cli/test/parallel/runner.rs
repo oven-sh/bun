@@ -328,16 +328,13 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         argv.push(lit(b"--preload\0"));
         argv.push(dupe_z(preload));
     }
-    if let Some(define) = &ctx.args.define {
-        debug_assert_eq!(define.keys.len(), define.values.len());
-        for (key, value) in define.keys.iter().zip(define.values.iter()) {
-            argv.push(lit(b"--define\0"));
-            argv.push(print_z(format_args!(
-                "{}={}",
-                bstr::BStr::new(key),
-                bstr::BStr::new(value)
-            ))?);
-        }
+    for (key, value) in &ctx.args.define {
+        argv.push(lit(b"--define\0"));
+        argv.push(print_z(format_args!(
+            "{}={}",
+            bstr::BStr::new(key),
+            bstr::BStr::new(value)
+        ))?);
     }
     if let Some(loaders) = &ctx.args.loaders {
         debug_assert_eq!(loaders.extensions.len(), loaders.loaders.len());
@@ -459,13 +456,12 @@ fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static st
 }
 
 /// Local shim for `@tagName(jsx.runtime)`.
-fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'static str {
-    use bun_options_types::schema::api::JsxRuntime as J;
+fn jsx_runtime_tag_name(r: bun_options_types::jsx::Runtime) -> &'static str {
+    use bun_options_types::jsx::Runtime as J;
     match r {
         J::Automatic => "automatic",
         J::Classic => "classic",
         J::Solid => "solid",
-        J::_none => "_none",
     }
 }
 

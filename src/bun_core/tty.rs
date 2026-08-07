@@ -89,7 +89,9 @@ impl RawModeGuard {
 impl Drop for RawModeGuard {
     #[inline]
     fn drop(&mut self) {
-        let _ = self.state.set_mode(self.fd, Mode::Normal, SetAttrWhen::Drain);
+        let _ = self
+            .state
+            .set_mode(self.fd, Mode::Normal, SetAttrWhen::Drain);
     }
 }
 

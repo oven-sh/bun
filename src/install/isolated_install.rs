@@ -32,7 +32,7 @@ use bun_collections::{
     ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
     StringArrayHashMap,
 };
-use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt};
+use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt, strings};
 use bun_paths::path_options::AssumeOk as _;
 use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
 use bun_semver as semver;
@@ -2356,37 +2356,61 @@ pub(crate) fn install_isolated_packages(
                     {
                         install::PreinstallState::Done => false,
                         _ => 'missing_from_cache: {
-                            if matches!(patch_info, installer::PatchInfo::None) {
-                                let exists = match pkg_res_tag {
-                                    ResolutionTag::Npm => {
-                                        // Reshaped for borrowck — capture length
-                                        // instead of `save()` so the path stays unborrowed.
-                                        let cache_dir_path_save = pkg_cache_dir_subpath.len();
-                                        pkg_cache_dir_subpath.append(b"package.json").assume_ok();
-                                        let exists = sys::exists_at(
-                                            cache_dir,
-                                            pkg_cache_dir_subpath.slice_z(),
-                                        );
-                                        pkg_cache_dir_subpath.set_length(cache_dir_path_save);
-                                        exists
-                                    }
-                                    _ => sys::directory_exists_at(
-                                        cache_dir,
-                                        pkg_cache_dir_subpath.slice_z(),
+                            // For a patched dependency the subpath ends in
+                            // `_patch_hash=<hash>`, but downloads only ever
+                            // extract the unpatched folder; the patched folder
+                            // is derived from it by `apply_package_patch`
+                            // below. Check for the unpatched folder here (like
+                            // the hoisted installer's
+                            // `package_missing_from_cache`): when the resolve
+                            // phase already downloaded this tarball,
+                            // re-enqueueing it would push this entry onto that
+                            // completed task's already-drained callback list
+                            // and hang the install.
+                            let full_len = pkg_cache_dir_subpath.len();
+                            if matches!(patch_info, installer::PatchInfo::Patch(_)) {
+                                let idx = strings::last_index_of(
+                                    pkg_cache_dir_subpath.slice(),
+                                    b"_patch_hash=",
+                                )
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "Patched dependency cache dir subpath does not have the \
+                                         \"_patch_hash=HASH\" suffix. This is a bug, please file \
+                                         a GitHub issue."
                                     )
-                                    .unwrap_or(false),
-                                };
-                                if exists {
-                                    installer.manager_mut().set_preinstall_state(
-                                        pkg_id,
-                                        install::PreinstallState::Done,
-                                    );
-                                }
-                                break 'missing_from_cache !exists;
+                                });
+                                pkg_cache_dir_subpath.set_length(idx);
                             }
-
-                            // TODO: why does this look like it will never work?
-                            break 'missing_from_cache true;
+                            let exists = match pkg_res_tag {
+                                // `Remove` also lands here: its subpath is
+                                // already the unpatched folder
+                                // (`contents_hash()` is None).
+                                ResolutionTag::Npm
+                                    if !matches!(patch_info, installer::PatchInfo::Patch(_)) =>
+                                {
+                                    // Reshaped for borrowck — capture length
+                                    // instead of `save()` so the path stays unborrowed.
+                                    let cache_dir_path_save = pkg_cache_dir_subpath.len();
+                                    pkg_cache_dir_subpath.append(b"package.json").assume_ok();
+                                    let exists =
+                                        sys::exists_at(cache_dir, pkg_cache_dir_subpath.slice_z());
+                                    pkg_cache_dir_subpath.set_length(cache_dir_path_save);
+                                    exists
+                                }
+                                _ => sys::directory_exists_at(
+                                    cache_dir,
+                                    pkg_cache_dir_subpath.slice_z(),
+                                )
+                                .unwrap_or(false),
+                            };
+                            pkg_cache_dir_subpath.set_length(full_len);
+                            if exists {
+                                installer
+                                    .manager_mut()
+                                    .set_preinstall_state(pkg_id, install::PreinstallState::Done);
+                            }
+                            break 'missing_from_cache !exists;
                         }
                     };
 

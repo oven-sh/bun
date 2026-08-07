@@ -542,10 +542,8 @@ impl FileResponseStream {
             self.detach_resp();
             let resp = self.resp.get();
             // EOF with no trailing data (e.g. a FIFO writer that closed after
-            // the last chunk was streamed). Empty-body `end` completes the
-            // framing: the terminating 0-chunk when chunked, `Content-Length:
-            // 0` when nothing was written. `end_without_body` completes
-            // neither.
+            // the last chunk). Empty-body `end` completes the framing (0-chunk
+            // when chunked, `Content-Length: 0` otherwise); `end_without_body` does not.
             resp.end(b"", resp.should_close_connection());
             (self.on_complete.get())(self.ctx.get(), resp);
         }

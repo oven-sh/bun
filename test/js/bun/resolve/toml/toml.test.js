@@ -1,4 +1,5 @@
 import { expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import emptyToml from "./toml-empty.toml";
 import tomlFromCustomTypeAttribute from "./toml-fixture.toml.txt" with { type: "toml" };
 
@@ -111,4 +112,97 @@ it("Bun.TOML.parse throws on deeply nested inline tables instead of crashing", (
   const deepToml =
     "a = " + Buffer.alloc(depth * 6, "{ b = ").toString() + "1" + Buffer.alloc(depth * 2, " }").toString();
   expect(() => Bun.TOML.parse(deepToml)).toThrow(RangeError);
+});
+
+// Dotted paths (table headers and keys) nest iteratively in the parser, so the
+// depth limit is only hit when the parsed AST is converted to a JS object at
+// import time.
+const deepDottedToml = "[" + Buffer.alloc(250_000 * 2, "a.").toString() + "a]\nd = 1\n";
+const deepDottedKeyToml = Buffer.alloc(250_000 * 2, "a.").toString() + "a = 1\n";
+
+it.concurrent("importing a deeply nested table header throws instead of crashing", async () => {
+  using dir = tempDir("toml-deep-import", {
+    "deep.toml": deepDottedToml,
+    "main.js": `import d from "./deep.toml";\nconsole.log("unreachable");`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("RangeError: Maximum call stack size exceeded");
+  expect(exitCode).toBe(1);
+});
+
+it.concurrent("dynamic import of a deeply nested table header is catchable", async () => {
+  using dir = tempDir("toml-deep-dynamic", {
+    "deep.toml": deepDottedToml,
+    "main.js": `
+      try {
+        await import("./deep.toml");
+        console.log("no-throw");
+      } catch (e) {
+        console.log("caught:", e.name);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("caught: RangeError\n");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("importing a deeply nested dotted key throws instead of crashing", async () => {
+  using dir = tempDir("toml-deep-key", {
+    "deep.toml": deepDottedKeyToml,
+    "main.js": `import d from "./deep.toml";\nconsole.log("unreachable");`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("RangeError: Maximum call stack size exceeded");
+  expect(exitCode).toBe(1);
+});
+
+it.concurrent("a moderately nested table header imports correctly", async () => {
+  // 1000 segments: comfortably below every stack limit, far above any real
+  // document. Pins the success side so a future parse-time cap can't regress
+  // legitimate depth.
+  const depth = 1000;
+  using dir = tempDir("toml-deep-ok", {
+    "deep.toml": "[" + Buffer.alloc((depth - 1) * 2, "a.").toString() + "a]\nd = 1\n",
+    "main.js": `
+      import root from "./deep.toml";
+      let o = root;
+      let hops = 0;
+      while (o.a !== undefined) {
+        o = o.a;
+        hops++;
+      }
+      console.log(hops, o.d);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`${depth} 1\n`);
+  expect(exitCode).toBe(0);
 });

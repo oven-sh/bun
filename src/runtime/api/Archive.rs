@@ -6,7 +6,7 @@ use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_core::{self, Output, ZBox};
+use bun_core::{self, Output, ZBox, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_glob as glob;
 use bun_io::KeepAlive;
@@ -1393,12 +1393,12 @@ pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
     }
 
     // Reject paths with ".." components
-    for component in pathname.split(|b| *b == b'/') {
+    for component in strings::split(pathname, b"/") {
         if component == b".." {
             return false;
         }
         // Also check Windows-style separators
-        for win_component in component.split(|b| *b == b'\\') {
+        for win_component in strings::split(component, b"\\") {
             if win_component == b".." {
                 return false;
             }

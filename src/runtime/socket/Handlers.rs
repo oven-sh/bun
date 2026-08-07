@@ -547,7 +547,7 @@ impl SocketConfig {
             }
             result.hostname_or_unix = hostname.to_utf8();
             let slice = result.hostname_or_unix.slice();
-            if slice.contains(&0) {
+            if bun_core::strings::contains_char(slice, 0) {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "\"hostname\" must not contain null bytes"
                 )));

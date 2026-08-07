@@ -72,7 +72,7 @@ pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
         return None;
     }
     // A `%zone` suffix belongs to a numeric v6 host; resolving the zone is the caller's business.
-    let head = input.iter().position(|b| *b == b'%').unwrap_or(input.len());
+    let head = crate::strings::index_of_char_usize(input, b'%').unwrap_or(input.len());
     buf[..head].copy_from_slice(&input[..head]);
     let mut v6 = [0u8; 16];
     if pton(AF_INET6, &buf[..=head], &mut v6) {

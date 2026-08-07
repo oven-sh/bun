@@ -1112,10 +1112,18 @@ impl WebWorker {
         unsafe {
             let status = (*promise).status();
             if status == jsc::js_promise::Status::Rejected {
+                // Same rule as the main thread (run_command): a CJS worker
+                // entry's top-level throw is an uncaughtException; only an
+                // ESM entry rejection reports origin "unhandledRejection".
+                let origin = if vm.as_mut().entry_point_result.evaluated_as_cjs {
+                    crate::virtual_machine::UncaughtExceptionOrigin::Exception
+                } else {
+                    crate::virtual_machine::UncaughtExceptionOrigin::EntryPointRejection
+                };
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
-                    crate::virtual_machine::UncaughtExceptionOrigin::EntryPointRejection,
+                    origin,
                 );
                 if !handled {
                     // exit_code is already 1 from uncaught_exception; re-setting it here

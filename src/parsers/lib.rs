@@ -24,3 +24,6 @@ pub mod toml;
 
 #[path = "yaml.rs"]
 pub mod yaml;
+
+#[path = "xml.rs"]
+pub mod xml;

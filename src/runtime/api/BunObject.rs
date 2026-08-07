@@ -92,7 +92,7 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
 
 use crate::api::csrf_jsc;
-use crate::api::{HashObject, JSON5Object, TOMLObject, UnsafeObject, YAMLObject};
+use crate::api::{HashObject, JSON5Object, TOMLObject, UnsafeObject, XMLObject, YAMLObject};
 use crate::crypto as Crypto;
 use crate::node;
 use crate::test_runner::jest::Jest;
@@ -341,6 +341,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_markdown => super::get_markdown_object,
         BunObject_lazyPropCb_TOML => super::get_toml_object,
         BunObject_lazyPropCb_JSON5 => super::get_json5_object,
+        BunObject_lazyPropCb_XML => super::get_xml_object,
         BunObject_lazyPropCb_YAML => super::get_yaml_object,
         BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
         BunObject_lazyPropCb_argv => super::get_argv,
@@ -712,18 +713,6 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     let ret = out.to_js(global_this);
 
     Ok(ret)
-}
-
-// HOST_EXPORT(Bun__inspect, c)
-pub fn bun_inspect(global_this: &JSGlobalObject, value: JSValue) -> BunString {
-    // very stable memory address
-    let mut array: Vec<u8> = Vec::new();
-
-    let mut formatter = ConsoleObject::Formatter::new(global_this);
-    if write!(&mut array, "{}", value.to_fmt(&mut formatter)).is_err() {
-        return BunString::empty();
-    }
-    BunString::clone_utf8(&array)
 }
 
 // HOST_EXPORT(Bun__inspect_singleline, c)
@@ -1861,6 +1850,10 @@ fn get_toml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 fn get_json5_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     JSON5Object::create(global_this)
+}
+
+fn get_xml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    XMLObject::create(global_this)
 }
 
 fn get_yaml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

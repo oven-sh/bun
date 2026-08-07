@@ -30,7 +30,6 @@ bun_ptr.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_highway.workspace = true
-bun_io.workspace = true
 bun_ast.workspace = true
 bun_react_compiler = { path = "../react_compiler" }
 bun_options_types.workspace = true

@@ -405,6 +405,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
     });
+
+    it("napi_detach_arraybuffer defers finalize_cb to the event loop instead of running it synchronously", async () => {
+      const result = await checkSameOutput("test_detach_external_arraybuffer_finalizer", []);
+      // Not during detach:
+      expect(result).toContain("detach status=0 finalize_count during detach=0");
+      expect(result).toContain("is_detached=true");
+      expect(result).toContain("second detach status=0 finalize_count after second detach=0");
+      // Still 0 synchronously after returning to JS (no event-loop turn yet):
+      expect(result).toContain("before tick count = 0");
+      // Fired exactly once after an event-loop turn, while the wrapper is still reachable:
+      expect(result).toContain("after tick count = 1");
+      expect(result).toContain("wrapper is ArrayBuffer = true byteLength = 0");
+    });
   });
 
   describe("pending-exception gate", () => {

@@ -50,6 +50,21 @@ nativeTests.test_napi_handle_scope_finalizer = async () => {
   await gcUntil(() => nativeTests.was_finalize_called());
 };
 
+nativeTests.test_detach_external_arraybuffer_finalizer = async () => {
+  // Keep the detached wrapper reachable the whole time: Node fires the
+  // finalizer on the next event-loop turn regardless, so reachability must
+  // not gate it.
+  const ab = nativeTests.create_and_detach_external_arraybuffer();
+  console.log("before tick count =", nativeTests.get_detach_finalize_count());
+  // Node posts via SetImmediateThreadsafe; one setImmediate is enough there,
+  // but allow a few turns so both engines' task queues have drained.
+  for (let i = 0; i < 10 && nativeTests.get_detach_finalize_count() === 0; i++) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("after tick count =", nativeTests.get_detach_finalize_count());
+  console.log("wrapper is ArrayBuffer =", ab instanceof ArrayBuffer, "byteLength =", ab.byteLength);
+};
+
 nativeTests.test_napi_async_work_execute_null_check = () => {
   const res = nativeTests.create_async_work_with_null_execute();
   if (res) {

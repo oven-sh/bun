@@ -2303,9 +2303,10 @@ public:
 
     void run(void* data) override
     {
-        if (m_armed) {
+        if (m_armed && m_cb) {
             NAPI_LOG("external buffer finalizer");
-            m_env->doFinalizer(m_cb, data, m_hint);
+            // Node's BackingStore deleter posts via SetImmediateThreadsafe, so finalize_cb never runs inside detach/GC.
+            napi_internal_enqueue_finalizer(m_env.ptr(), m_cb, data, m_hint);
         }
     }
 

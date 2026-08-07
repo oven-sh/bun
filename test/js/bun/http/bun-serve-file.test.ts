@@ -1560,19 +1560,27 @@ test.skipIf(!isLinux)(
             FILE_SIZE: String(FILE_SIZE),
             ITERATIONS: String(ITERATIONS_PER_CLIENT),
           },
-          stderr: "inherit",
+          stderr: "pipe",
         }),
       );
       const results = await Promise.all(
         procs.map(async proc => {
-          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-          return { stdout: stdout.trim(), exitCode };
+          const [stdout, stderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          return { stdout: stdout.trim(), stderr, exitCode };
         }),
       );
-      for (const { stdout, exitCode } of results) {
-        // Raw output alongside the exit code, so a crashed client reports
-        // what it printed instead of a JSON parse error.
-        expect({ exitCode, stdout }).toMatchObject({ exitCode: 0 });
+      for (const { stdout, stderr, exitCode } of results) {
+        // Combined assert first, so a crashed client reports its exit code
+        // and raw output instead of a JSON parse error. stderr rides along
+        // for diagnostics but is not required to be empty.
+        expect({ exitCode, stdout, stderr }).toMatchObject({
+          exitCode: 0,
+          stdout: expect.stringContaining("{"),
+        });
         const verdict = JSON.parse(stdout);
         if (verdict.failures.length > 0 || verdict.ok !== ITERATIONS_PER_CLIENT) {
           problems.push(verdict);
@@ -1586,3 +1594,26 @@ test.skipIf(!isLinux)(
   },
   90_000,
 );
+
+// Unix-socket listeners reach the same Linux sendfile path as TCP (the
+// response handle is transport-agnostic), so pin body integrity for a >=1MB
+// file over AF_UNIX too.
+test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket listener", async () => {
+  using dir = tempDir("serve-sendfile-unix", {});
+  const data = Buffer.alloc(2 * 1024 * 1024, 0xee);
+  await Bun.write(join(String(dir), "file.bin"), data);
+
+  const unix = join(String(dir), "s.sock");
+  await using server = Bun.serve({
+    unix,
+    fetch() {
+      return new Response(Bun.file(join(String(dir), "file.bin")));
+    },
+  });
+
+  const res = await fetch("http://localhost/file", { unix });
+  expect(res.status).toBe(200);
+  const body = Buffer.from(await res.arrayBuffer());
+  expect(body.length).toBe(data.length);
+  expect(body.compare(data)).toBe(0);
+});

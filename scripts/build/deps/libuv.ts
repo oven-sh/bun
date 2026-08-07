@@ -53,7 +53,21 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
+  //
+  // win-slow-poll-disconnect: the select()-based slow poll path (taken when
+  // a winsock LSP with a non-IFS protocol chain owns the socket) never
+  // reported UV_DISCONNECT, and a poll subscribed to only UV_DISCONNECT
+  // handed select() three empty fd sets, which fails WSAEINVAL and killed
+  // the watcher with a bogus error. usockets arms UV_DISCONNECT on every
+  // poll and parks paused/half-closed sockets in exactly that state.
+  // Synthesize UV_DISCONNECT from select() readability + MSG_PEEK, and add
+  // the UV_FORCE_SLOW_POLL=1 hook so tests reach the path without an LSP.
+  // Upstreamable to libuv/libuv (minus the hook).
+  patches: [
+    "patches/libuv/win-poll-rearm-before-callback.patch",
+    "patches/libuv/win-poll-abort-with-disconnect.patch",
+    "patches/libuv/win-slow-poll-disconnect.patch",
+  ],
 
   build: () => ({
     kind: "direct",

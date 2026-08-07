@@ -3,7 +3,10 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "ddea71318fec9b923465c7c45ded8fa713ca3251";
+// oven-sh/WebKit#391: JSModuleLoader::hostLoadImportedModule propagates a
+// TerminationException from resolve() instead of treating it as a module
+// resolution failure. One commit past the previous pin (ddea71318fec).
+export const WEBKIT_VERSION = "171babe26c3b330ac0263d1bed3550571908c838";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

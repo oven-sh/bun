@@ -13,7 +13,6 @@ use crate::webcore;
 use bun_core::Environment;
 use bun_core::{String as BunString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
@@ -1523,88 +1522,67 @@ mod _async_tasks {
                 .cp_on_copy(src.as_ref(), dest.as_ref());
         }
 
+        /// `fs.cp` / `fs.promises.cp` (JS thread): a promise, an async-stack
+        /// tracker, and this VM's loop.
         pub(crate) fn create(
             global_object: &JSGlobalObject,
             _binding: &Binding,
             cp_args: args::Cp,
             vm: &mut VirtualMachine,
         ) -> JSValue {
-            let task = Self::create_with_shell_task(
-                global_object,
+            let tracker = AsyncTaskTracker::init(vm);
+            tracker.did_schedule(global_object);
+            let task = Self::schedule_new(
+                JSPromiseStrong::init(global_object),
                 cp_args,
-                vm,
+                EventLoopHandle::init(vm.event_loop.cast()),
+                bun_jsc::ConcurrentPoster::Js(vm.js_poster()),
+                tracker,
                 core::ptr::null_mut(),
-                true,
             );
-            // SAFETY: create_with_shell_task returns a Box::leak'd pointer; valid until destroy()
+            // SAFETY: `schedule_new` returns a Box::leak'd pointer; valid until destroy()
             unsafe { &*task }.promise.value()
         }
 
-        pub(crate) fn create_with_shell_task(
-            global_object: &JSGlobalObject,
+        /// The shell's `cp` builtin, from its pool task (any thread): no VM or
+        /// global is touched — the loop and poster are the ones the shell task
+        /// already captured on its own thread.
+        pub(crate) fn create_for_shell(
             cp_args: args::Cp,
-            vm: &mut VirtualMachine,
+            evtloop: EventLoopHandle,
+            poster: bun_jsc::ConcurrentPoster,
             shelltask: *mut ShellCpTask,
-            enable_promise: bool,
         ) -> *mut Self {
-            let mut task = Box::new(Self {
-                promise: if enable_promise {
-                    JSPromiseStrong::init(global_object)
-                } else {
-                    JSPromiseStrong::default()
-                },
-                args: cp_args.into_thread_safe(),
-                has_result: AtomicBool::new(false),
-                // Sentinel — overwritten by `finish_concurrently` (gated by the
-                // `has_result` CAS) before any read on the JS thread.
-                result: core::cell::Cell::new(Ok(())),
-                // `vm.event_loop` is the live per-thread `jsc::EventLoop` field.
-                evtloop: EventLoopHandle::init(vm.event_loop.cast()),
-                poster: bun_jsc::ConcurrentPoster::Js(vm.js_poster()),
-                task: work_pool_task(Self::work_pool_callback),
-                r#ref: KeepAlive::default(),
-                tracker: AsyncTaskTracker::init(vm),
-                subtask_count: AtomicUsize::new(1),
-                // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
-                // that owns and outlives this task; pointer carries write provenance.
-                shelltask: unsafe { bun_ptr::ParentRef::from_nullable_mut(shelltask) },
-            });
-            if !IS_SHELL {
-                task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
-            }
-            task.tracker.did_schedule(global_object);
-            // Its arguments may point into JS buffers and its promise lives on
-            // the JS heap: counted, so the VM waits for it (embedded work).
-            task.poster.embedded_work_scheduled();
-
-            let raw = bun_core::heap::release(task);
-            WorkPool::schedule(&raw mut raw.task);
-            raw
+            Self::schedule_new(
+                JSPromiseStrong::default(),
+                cp_args,
+                evtloop,
+                poster,
+                AsyncTaskTracker { id: 0 },
+                shelltask,
+            )
         }
 
-        pub(crate) fn create_mini(
+        fn schedule_new(
+            promise: JSPromiseStrong,
             cp_args: args::Cp,
-            // `EventLoopHandle::Mini` stores `*mut MiniEventLoop` (a
-            // non-owning erased backref, see `bun_event_loop::AnyEventLoop`). Taking the
-            // raw pointer here avoids forcing every caller's `MiniEventLoop` borrow to be
-            // `'static`; the task never outlives the loop.
-            mini: *mut MiniEventLoop,
+            evtloop: EventLoopHandle,
+            poster: bun_jsc::ConcurrentPoster,
+            tracker: AsyncTaskTracker,
             shelltask: *mut ShellCpTask,
         ) -> *mut Self {
             let mut task = Box::new(Self {
-                promise: JSPromiseStrong::default(),
+                promise,
                 args: cp_args.into_thread_safe(),
                 has_result: AtomicBool::new(false),
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
-                evtloop: EventLoopHandle::init_mini(mini),
-                poster: bun_jsc::ConcurrentPoster::from_event_loop_handle(
-                    &EventLoopHandle::init_mini(mini),
-                ),
+                evtloop,
+                poster,
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
-                tracker: AsyncTaskTracker { id: 0 },
+                tracker,
                 subtask_count: AtomicUsize::new(1),
                 // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
                 // that owns and outlives this task; pointer carries write provenance.
@@ -1613,6 +1591,8 @@ mod _async_tasks {
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
             }
+            // Its arguments may point into JS buffers and its promise lives on
+            // the JS heap: counted, so the VM waits for it (embedded work).
             task.poster.embedded_work_scheduled();
 
             let raw = bun_core::heap::release(task);

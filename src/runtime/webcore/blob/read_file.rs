@@ -184,9 +184,10 @@ impl bun_jsc::JobContext for ReadFile {
 }
 
 impl ReadFile {
-    /// JS thread: hand a prepared `ReadFile` to the work pool.
-    pub fn schedule(this: Box<ReadFile>, global: &JSGlobalObject) {
-        bun_jsc::Job::<ReadFile>::schedule(&global.js_thread(), *this, ());
+    /// JS thread: hand a prepared `ReadFile` to the work pool (the job is
+    /// its one heap allocation).
+    pub fn schedule(this: ReadFile, global: &JSGlobalObject) {
+        bun_jsc::Job::<ReadFile>::schedule(&global.js_thread(), this, ());
     }
 }
 
@@ -361,10 +362,10 @@ impl ReadFile {
         on_complete_callback: ReadFileOnReadFileCallback,
         off: SizeType,
         max_len: SizeType,
-    ) -> Result<Box<ReadFile>, Error> {
+    ) -> Result<ReadFile, Error> {
         // store.ref() — `StoreRef` carries the +1; held in `self.store`.
         let file_store = store.data.as_file().clone();
-        let read_file = Box::new(ReadFile {
+        let read_file = ReadFile {
             file_store,
             byte_store: ByteStore::default(),
             store: Some(store),
@@ -394,7 +395,7 @@ impl ReadFile {
             could_block: false,
             close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
-        });
+        };
         Ok(read_file)
     }
 
@@ -404,7 +405,7 @@ impl ReadFile {
         off: SizeType,
         max_len: SizeType,
         context: *mut C,
-    ) -> Result<Box<ReadFile>, Error> {
+    ) -> Result<ReadFile, Error> {
         // `ReadFileCompletion`
         // monomorphizes per `C`, so `handler_run::<C>` calls `C::run` directly
         // and `on_complete_ctx` is the unwrapped `*mut C` — no extra heap box,

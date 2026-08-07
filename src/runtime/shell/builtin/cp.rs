@@ -716,36 +716,14 @@ impl ShellCpTask {
             },
         };
 
-        match self.task.event_loop {
-            EventLoopHandle::Js { .. } => {
-                let vm_ptr = self
-                    .task
-                    .event_loop
-                    .bun_vm()
-                    .cast::<bun_jsc::virtual_machine::VirtualMachine>();
-                // SAFETY: `Js` arm always has a live VM (set at interpreter
-                // construction); accessed read-only here for the
-                // global-object handle and event-loop pointer.
-                // Read the raw `global`
-                // field instead of `vm.global()` so the `&mut VirtualMachine`
-                // passed below doesn't overlap a `&JSGlobalObject` borrow.
-                let (global, vm) = unsafe { (&*(*vm_ptr).global, &mut *vm_ptr) };
-                let _ = crate::node::fs::ShellAsyncCpTask::create_with_shell_task(
-                    global,
-                    args,
-                    vm,
-                    std::ptr::from_mut::<ShellCpTask>(self),
-                    false,
-                );
-            }
-            EventLoopHandle::Mini(mini) => {
-                let _ = crate::node::fs::ShellAsyncCpTask::create_mini(
-                    args,
-                    mini.as_ptr(),
-                    std::ptr::from_mut::<ShellCpTask>(self),
-                );
-            }
-        }
+        // Pool thread: hand the copy to an fs.cp task bound to the loop and
+        // poster this shell task captured on its own thread.
+        let _ = crate::node::fs::ShellAsyncCpTask::create_for_shell(
+            args,
+            self.task.event_loop,
+            self.task.poster.clone(),
+            std::ptr::from_mut::<ShellCpTask>(self),
+        );
 
         None
     }

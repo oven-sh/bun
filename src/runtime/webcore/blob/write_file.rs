@@ -61,9 +61,10 @@ impl bun_jsc::JobContext for WriteFile {
 }
 
 impl WriteFile {
-    /// JS thread: hand a prepared `WriteFile` to the work pool.
-    pub fn schedule(this: Box<WriteFile>, global: &JSGlobalObject) {
-        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(), *this, ());
+    /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
+    /// its one heap allocation).
+    pub fn schedule(this: WriteFile, global: &JSGlobalObject) {
+        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(), this, ());
     }
 }
 
@@ -298,8 +299,8 @@ impl WriteFile {
         on_write_file_context: *mut c_void,
         on_complete_callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
-    ) -> Result<Box<WriteFile>, Error> {
-        let write_file = Box::new(WriteFile {
+    ) -> Result<WriteFile, Error> {
+        let write_file = WriteFile {
             file_blob,
             bytes_blob,
             opened_fd: Fd::INVALID,
@@ -319,7 +320,7 @@ impl WriteFile {
             could_block: false,
             close_after_io: false,
             mkdirp_if_not_exists,
-        });
+        };
         // No explicit store ref bump: the caller passes a `+1` Blob (via
         // `borrowed_view()`'s `StoreRef::clone`) and dropping the `WriteFile`
         // in `then` runs `StoreRef::drop`, so the ref/deref pair is RAII.
@@ -333,7 +334,7 @@ impl WriteFile {
         context: *mut C,
         callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
-    ) -> Result<Box<WriteFile>, Error> {
+    ) -> Result<WriteFile, Error> {
         // The caller supplies a
         // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`),
         // so this is just a `.cast()` on `context`.

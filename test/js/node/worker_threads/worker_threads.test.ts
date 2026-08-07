@@ -2059,7 +2059,8 @@ describe("terminate with work in flight", () => {
            'for (let i = 0; ; i++) { ins.run(i); b.run("INSERT INTO t VALUES (?)", [i]); }',
            { eval: true },
          );
-         w.once("message", () => setTimeout(() => process.exit(0), 20));`,
+         // Posted right before the worker enters its endless insert loop.
+         w.once("message", () => process.exit(0));`,
       ],
       env: bunEnv,
       cwd: String(dir),
@@ -2159,9 +2160,9 @@ test("terminating a worker mid-Bun.build (plugin pending) does not wedge the bun
       const { parentPort } = require("worker_threads");
       Bun.build({
         entrypoints: ["./entry.js"],
-        plugins: [{ name: "hang", setup(b) { b.onLoad({ filter: /dep\\.js$/ }, () => new Promise(() => {})); } }],
+        // onLoad never answers; it tells the parent once the bundler is waiting on it.
+        plugins: [{ name: "hang", setup(b) { b.onLoad({ filter: /dep\\.js$/ }, () => { parentPort.postMessage("pending"); return new Promise(() => {}); }); } }],
       }).then(() => parentPort.postMessage("built"), e => parentPort.postMessage("failed"));
-      setTimeout(() => parentPort.postMessage("pending"), 100);
     `,
   });
   await using proc = Bun.spawn({

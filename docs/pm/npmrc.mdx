@@ -242,4 +242,9 @@ public-hoist-pattern[]=*prettier*
 
 # control general hoisting behavior
 hoist-pattern=*
+
+# isolated linker only: disable the node_modules/.bun/node_modules fallback,
+# so store packages only resolve declared deps (plus the root node_modules).
+# Hoisted installs ignore this setting.
+hoist=false
 ```

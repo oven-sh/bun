@@ -139,6 +139,71 @@ describe("hash", () => {
         ).toThrow();
       });
 
+      test("cost values are range-checked before ToInt32 narrowing", () => {
+        // These used to wrap modulo 2^32 (cost: 2^32 + 4 hashed with cost 4)
+        // or truncate (cost: 4.5 hashed with cost 4) instead of throwing.
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: 2 ** 32 + 4,
+          }),
+        ).toThrow("Rounds must be an integer between 4 and 31");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: 4.5,
+          }),
+        ).toThrow("Rounds must be an integer between 4 and 31");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 2 ** 32 + 2,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 1.5,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            memoryCost: 2 ** 32 + 4608,
+          }),
+        ).toThrow("Memory cost must be an integer between 8 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            memoryCost: 8.5,
+          }),
+        ).toThrow("Memory cost must be an integer between 8 and 4294967295");
+
+        // Non-finite values: NaN and -Infinity fail the lower-bound check,
+        // +Infinity fails the integer/upper-bound check.
+        for (const timeCost of [NaN, -Infinity]) {
+          expect(() => hash(placeholder, { algorithm: "argon2id", timeCost })).toThrow(
+            "Time cost must be greater than 0",
+          );
+        }
+        expect(() => hash(placeholder, { algorithm: "argon2id", timeCost: Infinity })).toThrow(
+          "Time cost must be an integer between 1 and 4294967295",
+        );
+        for (const memoryCost of [NaN, -Infinity]) {
+          expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost })).toThrow(
+            "Memory cost must be at least 8",
+          );
+        }
+        expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost: Infinity })).toThrow(
+          "Memory cost must be an integer between 8 and 4294967295",
+        );
+      });
+
       test("coercion throwing doesn't crash", () => {
         // @ts-expect-error
         expect(() => hash(Symbol())).toThrow();
@@ -425,6 +490,18 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   expect(hugeParallelism).not.toBe(hashed);
   expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
   await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
+
+  // The argon2 decoder accepts a leading `+` on the cost fields (Rust's integer
+  // grammar), so the ceiling check must too rather than skipping the field.
+  const plusMemory = hashed.replace("$m=8,", "$m=+4294967294,");
+  expect(plusMemory).not.toBe(hashed);
+  expect(() => password.verifySync("correct horse", plusMemory)).toThrow("WeakParameters");
+  await expect(password.verify("correct horse", plusMemory)).rejects.toThrow("WeakParameters");
+
+  // A cost field the decoder can't parse is rejected up front as well.
+  const junkMemory = hashed.replace("$m=8,", "$m=8x,");
+  expect(() => password.verifySync("correct horse", junkMemory)).toThrow("InvalidEncoding");
+  await expect(password.verify("correct horse", junkMemory)).rejects.toThrow("InvalidEncoding");
 });
 
 test("verifySync reads the password buffer only after every argument has been coerced", () => {

@@ -88,11 +88,46 @@ describe("udpSocket()", () => {
 
   // Out-of-range connect.port used to be silently rewritten to 0, so send()
   // returned true while every datagram was dropped. The bind path already
-  // rejected the same values; connect must too.
-  test.each([-1, 0, 65536, 99999, NaN, Infinity, "abc"] as const)("connect with out-of-range port %p rejects", port => {
-    expect(() => udpSocket({ connect: { hostname: "127.0.0.1", port: port as number } })).toThrow(
-      'Expected "connect.port" to be an integer between 1 and 65535',
-    );
+  // rejected the same values; connect must too. Values beyond the i32 range
+  // (4294967377 = 2^32 + 81) used to wrap through ToInt32 and dodge the
+  // check entirely, connecting to port 81.
+  test.each([-1, 0, 65536, 99999, NaN, Infinity, "abc", 4294967377, -4294967215, 2 ** 53, 443.5] as const)(
+    "connect with out-of-range port %p rejects",
+    port => {
+      expect(() => udpSocket({ connect: { hostname: "127.0.0.1", port: port as number } })).toThrow(
+        'Expected "connect.port" to be an integer between 1 and 65535',
+      );
+    },
+  );
+
+  // Same ToInt32 wrap on the bind path: { port: 4294967377 } used to bind
+  // port 81, and non-integers were silently truncated.
+  test.each([4294967377, -4294967215, 2 ** 53, 80.5, NaN, Infinity])("bind with out-of-range port %p rejects", port => {
+    expect(() => udpSocket({ port })).toThrow('Expected "port" to be an integer between 0 and 65535');
+  });
+
+  test("send/sendMany reject out-of-range ports", async () => {
+    const server = await udpSocket({ port: 0, hostname: "127.0.0.1" });
+    try {
+      const client = await udpSocket({ port: 0, hostname: "127.0.0.1" });
+      try {
+        // Under ToInt32, 2^32 + server.port wraps to exactly server.port, so
+        // this send() used to succeed and deliver the datagram there. The
+        // unwrapped value is out of range and must throw instead.
+        const wrapped = 2 ** 32 + server.port;
+        const message = 'Expected "port" to be an integer between 1 and 65535';
+        expect(() => client.send("boom", wrapped, "127.0.0.1")).toThrow(message);
+        expect(() => client.sendMany(["boom", wrapped, "127.0.0.1"])).toThrow(message);
+        for (const port of [0, 70000, 80.5, NaN, Infinity]) {
+          expect(() => client.send("boom", port, "127.0.0.1")).toThrow(message);
+          expect(() => client.sendMany(["boom", port, "127.0.0.1"])).toThrow(message);
+        }
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
   });
 
   test("connect with valid port at range boundaries is accepted", async () => {

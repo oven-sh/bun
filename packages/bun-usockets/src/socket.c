@@ -360,6 +360,15 @@ __attribute__((always_inline)) struct us_socket_t *us_socket_close(struct us_soc
 // - does not emit on_close event
 // - does not close
 struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
+#ifdef LIBUS_USE_LIBUV
+    /* The fd leaves usockets' management, so the sweep must forget it
+     * (mirrors us_internal_socket_close_raw; a stale flag would leak
+     * fin_deferred_count and keep the sweep walking forever). */
+    if (s->fin_deferred) {
+        s->fin_deferred = 0;
+        s->group->loop->data.fin_deferred_count--;
+    }
+#endif
     if (!us_socket_is_closed(s)) {
         struct us_loop_t *loop = s->group->loop;
 

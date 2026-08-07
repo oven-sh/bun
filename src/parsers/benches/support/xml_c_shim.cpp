@@ -7,8 +7,14 @@
 
 #ifdef HAVE_PUGIXML
 #include "pugixml.hpp"
+extern "C" void* mi_malloc(size_t);
+extern "C" void mi_free(void*);
 extern "C" size_t bench_pugixml_parse(const char* data, size_t len)
 {
+    // Same allocator as the Rust side (glibc's mmap threshold otherwise makes pugixml's
+    // numbers depend on heap history more than on pugixml).
+    static bool init = (pugi::set_memory_management_functions(mi_malloc, mi_free), true);
+    (void)init;
     pugi::xml_document doc;
     // load_buffer copies; pugixml parses in situ on its own copy (its normal mode of use).
     pugi::xml_parse_result r = doc.load_buffer(data, len, pugi::parse_default | pugi::parse_ws_pcdata, pugi::encoding_utf8);

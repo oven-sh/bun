@@ -107,7 +107,76 @@ fn synth_soup() -> Vec<u8> {
     s.into_bytes()
 }
 
+/// `BUN_XML_BENCH_LOOP=impl:fixture:iterations` runs one parser in a plain loop and exits, for
+/// `perf stat` (instruction counts are stable where wall time on a shared box is not).
+fn maybe_loop() {
+    let Ok(spec) = std::env::var("BUN_XML_BENCH_LOOP") else {
+        return;
+    };
+    let mut parts = spec.split(':');
+    let (imp, fx, n) = (
+        parts.next().unwrap(),
+        parts.next().unwrap(),
+        parts.next().unwrap().parse::<usize>().unwrap(),
+    );
+    let (_, contents) = fixtures().into_iter().find(|(name, _)| name == fx).expect("fixture");
+    bun_ast::initialize_store();
+    let mut bump = Bump::new();
+    let start = std::time::Instant::now();
+    for _ in 0..n {
+        match imp {
+            "bun_compact" | "bun_tree" => {
+                let _store_scope = js_ast::StoreResetGuard::new();
+                let mut log = js_ast::Log::init();
+                bump.reset();
+                let source = js_ast::Source::init_path_string("fixture.xml", &contents[..]);
+                let opts = xml::Options {
+                    compact: imp == "bun_compact",
+                    encoding: xml::InputEncoding::Bytes,
+                };
+                let e = xml::XML::parse(&source, &mut log, &bump, opts).expect("parse");
+                std::hint::black_box(&e);
+            }
+            #[cfg(bun_xml_bench_old)]
+            "bun_old" => {
+                let _store_scope = js_ast::StoreResetGuard::new();
+                let mut log = js_ast::Log::init();
+                bump.reset();
+                let source = js_ast::Source::init_path_string("fixture.xml", &contents[..]);
+                let opts = xml_old::Options {
+                    compact: true,
+                    encoding: xml_old::InputEncoding::Bytes,
+                };
+                let e = xml_old::XML::parse(&source, &mut log, &bump, opts).expect("parse");
+                std::hint::black_box(&e);
+            }
+            #[cfg(pugixml)]
+            "pugixml" => {
+                std::hint::black_box(unsafe {
+                    bench_pugixml_parse(contents.as_ptr(), contents.len())
+                });
+            }
+            "stage1" => {
+                let mut x = bun_parsers::xml_index::StructuralIndex::new(&contents);
+                let mut i = 0usize;
+                while x.at(i) != contents.len() {
+                    i += 1;
+                }
+                std::hint::black_box(i);
+            }
+            _ => panic!("unknown impl {imp}"),
+        }
+    }
+    let secs = start.elapsed().as_secs_f64();
+    eprintln!(
+        "{imp}/{fx}: {n} iterations, {:.1} MiB/s wall",
+        (contents.len() * n) as f64 / secs / 1048576.0
+    );
+    std::process::exit(0);
+}
+
 fn bench_xml(c: &mut Criterion) {
+    maybe_loop();
     bun_ast::initialize_store();
     let mut group = c.benchmark_group("xml_parse");
     group.sample_size(20);

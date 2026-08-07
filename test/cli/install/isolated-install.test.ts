@@ -788,7 +788,7 @@ test("adding and removing a patch for a github dependency in a workspace complet
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
     expect(err).not.toContain("error:");
     expect(exitCode).toBe(0);
   }
@@ -839,13 +839,143 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
   await install();
   expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 
+  // Cold cache with the patch still in the lockfile: the install phase itself
+  // downloads the tarball and applies the patch after extraction.
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "packages", "member", "node_modules"), { recursive: true, force: true });
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
+
   // Removing the patch re-resolves again and rebuilds the store entry from
   // the unpatched cache folder (the PatchInfo::Remove path, which hung the
   // same way).
   await write(packageJson, JSON.stringify(rootPackageJson));
   await install();
   expect(await installedIndexJs.text()).toBe('console.log("original");\n');
-}, 90_000);
+});
+
+// Same deadlock through the git: task-id space (clone + checkout tasks
+// instead of a tarball download). The repo is served over git's dumb HTTP
+// protocol: after `git update-server-info`, a bare repo is plain static
+// files.
+test("adding and removing a patch for a git dependency in a workspace completes", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  const srcDir = join(packageDir, "git-src");
+  const bareDir = join(packageDir, "repo.git");
+  // Isolate git from system/global config (e.g. core.autocrlf on Windows
+  // would rewrite the checked-out file contents this test asserts on).
+  const gitConfigEnv = {
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: join(packageDir, "gitconfig"),
+  };
+  const gitEnv = {
+    ...bunEnv,
+    ...gitConfigEnv,
+    GIT_AUTHOR_NAME: "bun-test",
+    GIT_AUTHOR_EMAIL: "test@bun.sh",
+    GIT_COMMITTER_NAME: "bun-test",
+    GIT_COMMITTER_EMAIL: "test@bun.sh",
+  };
+  async function git(args: string[], cwd: string): Promise<string> {
+    await using proc = spawn({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("fatal:");
+    expect(exitCode).toBe(0);
+    return out;
+  }
+
+  await write(join(packageDir, "gitconfig"), "[core]\n\tautocrlf = false\n");
+  await write(join(srcDir, "package.json"), JSON.stringify({ name: "git-dep", version: "1.0.0" }));
+  await write(join(srcDir, "index.js"), 'console.log("original");\n');
+  await git(["init", "-q"], srcDir);
+  await git(["add", "-A"], srcDir);
+  await git(["commit", "-qm", "init"], srcDir);
+  const sha = (await git(["rev-parse", "HEAD"], srcDir)).trim();
+  await git(["clone", "-q", "--bare", srcDir, bareDir], packageDir);
+  await git(["update-server-info"], bareDir);
+
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (!pathname.startsWith("/repo.git/")) return new Response("not found", { status: 404 });
+      const f = file(join(bareDir, pathname.slice("/repo.git/".length)));
+      return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
+    },
+  });
+  const repoUrl = `git+http://127.0.0.1:${server.port}/repo.git`;
+
+  const env = {
+    ...bunEnv,
+    ...gitConfigEnv,
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+  };
+
+  async function install() {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  const rootPackageJson = {
+    name: "patched-git-workspace",
+    workspaces: ["packages/*"],
+  };
+  await write(packageJson, JSON.stringify(rootPackageJson));
+  await write(
+    join(packageDir, "packages", "member", "package.json"),
+    JSON.stringify({
+      name: "member",
+      version: "1.0.0",
+      dependencies: {
+        "git-dep": repoUrl,
+      },
+    }),
+  );
+  await write(
+    join(packageDir, "patches", "git-dep.patch"),
+    `diff --git a/index.js b/index.js
+index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1d 100644
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-console.log("original");
++console.log("patched");
+`,
+  );
+
+  const installedIndexJs = file(join(packageDir, "packages", "member", "node_modules", "git-dep", "index.js"));
+
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("original");\n');
+
+  // The patchedDependencies key must carry the resolved commit; a key without
+  // it is silently ignored, which the patched-content assertion would catch.
+  await write(
+    packageJson,
+    JSON.stringify({
+      ...rootPackageJson,
+      patchedDependencies: {
+        [`git-dep@${repoUrl}#${sha}`]: "patches/git-dep.patch",
+      },
+    }),
+  );
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
+
+  await write(packageJson, JSON.stringify(rootPackageJson));
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("original");\n');
+});
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test(`isolated install with backend: ${backend}`, async () => {

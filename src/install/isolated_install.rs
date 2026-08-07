@@ -2356,18 +2356,11 @@ pub(crate) fn install_isolated_packages(
                     {
                         install::PreinstallState::Done => false,
                         _ => 'missing_from_cache: {
-                            // For a patched dependency the subpath ends in
-                            // `_patch_hash=<hash>`, but downloads only ever
-                            // extract the unpatched folder; the patched folder
-                            // is derived from it by `apply_package_patch`
-                            // below. Check for the unpatched folder here (like
-                            // the hoisted installer's
-                            // `package_missing_from_cache`): when the resolve
-                            // phase already downloaded this tarball,
-                            // re-enqueueing it would push this entry onto that
-                            // completed task's already-drained callback list
-                            // and hang the install.
-                            let full_len = pkg_cache_dir_subpath.len();
+                            // Downloads only produce the unpatched folder
+                            // (`apply_package_patch` derives the `_patch_hash=`
+                            // one), so check for that. Re-enqueueing a tarball
+                            // the resolve phase already extracted deadlocks the
+                            // install (#37136).
                             if matches!(patch_info, installer::PatchInfo::Patch(_)) {
                                 let idx = strings::last_index_of(
                                     pkg_cache_dir_subpath.slice(),
@@ -2383,9 +2376,7 @@ pub(crate) fn install_isolated_packages(
                                 pkg_cache_dir_subpath.set_length(idx);
                             }
                             let exists = match pkg_res_tag {
-                                // `Remove` also lands here: its subpath is
-                                // already the unpatched folder
-                                // (`contents_hash()` is None).
+                                // `Remove`'s subpath is already unpatched.
                                 ResolutionTag::Npm
                                     if !matches!(patch_info, installer::PatchInfo::Patch(_)) =>
                                 {
@@ -2404,7 +2395,6 @@ pub(crate) fn install_isolated_packages(
                                 )
                                 .unwrap_or(false),
                             };
-                            pkg_cache_dir_subpath.set_length(full_len);
                             if exists {
                                 installer
                                     .manager_mut()

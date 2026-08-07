@@ -8,7 +8,7 @@ const [port, kind = "nginx", mode = "body", total = 200000, conc = 64] = process
 const url = `http://127.0.0.1:${port}/${kind}`;
 const N = Number(total),
   C = Number(conc);
-const isCount = n => Number.isInteger(n) && n >= 1;
+const isCount = n => Number.isSafeInteger(n) && n >= 1;
 if (
   !(isCount(Number(port)) && port <= 65535) ||
   !["body", "get", "iter"].includes(mode) ||

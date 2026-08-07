@@ -372,32 +372,33 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         if (bits.send_eof && !(wanted & LIBUS_SOCKET_WRITABLE)) {
             const int kind = us_internal_poll_type(poll);
             if (kind == POLL_TYPE_SOCKET || kind == POLL_TYPE_SOCKET_SHUT_DOWN) {
-                const struct us_socket_t *s = (const struct us_socket_t *) poll;
                 if (bits.send_eof_err) {
                     /* A pending socket error (a TCP reset) is the poll error,
                      * routed exactly like epoll's implicit EPOLLERR. */
                     error = 1;
                     eof = bits.eof;
-                } else if (kind == POLL_TYPE_SOCKET_SHUT_DOWN && !s->flags.is_paused && wanted == 0) {
-                    /* Both directions are done: the only route to zero events
-                     * without pause consumed the peer's FIN already (and
-                     * deleted the read knote with it), and our own shutdown
-                     * answered it, so this echo is the close signal. eof
-                     * stays set (bits.eof | bits.send_eof) and the shut-down
-                     * branch in loop.c clean-closes, exactly like epoll's
-                     * EPOLLHUP for the same both-directions-shut state. */
+                } else if (kind == POLL_TYPE_SOCKET_SHUT_DOWN && wanted == 0) {
+                    /* A shut-down socket with no read knote has no other way
+                     * to learn the connection is over: eof stays set
+                     * (bits.eof | bits.send_eof) and the shut-down branch in
+                     * loop.c clean-closes. For the half-open path that is
+                     * exact epoll parity (the peer's FIN was consumed before
+                     * the read knote was deleted, and EPOLLHUP would fire for
+                     * the same both-directions-shut state). For a paused
+                     * socket it means closing on our own shutdown's echo,
+                     * which node:http's half-close-with-unread-body depends
+                     * on (nothing ever resumes that socket), where epoll
+                     * waits for the peer's FIN to complete SHUTDOWN_MASK. */
                 } else {
-                    /* Stay silent. A paused socket's disconnect may have
-                     * readable data queued ahead of it, which resume()'s
-                     * re-armed EVFILT_READ drains before the real
-                     * end-of-stream. A resumed reader (wanted == READABLE)
+                    /* Stay silent. A resumed reader (wanted == READABLE)
                      * hears the peer through the read filter, so a stale
                      * shutdown echo must not clean-close it first. And on a
                      * not-shut-down socket, a unix peer's graceful close
                      * (SS_CANTSENDMORE with so_error 0) must not fabricate
                      * the ECONNRESET the error path would clamp to, nor
                      * re-run on_end via eof, for a disconnect epoll reports
-                     * as a mere EPOLLHUP. */
+                     * as a mere EPOLLHUP; a paused one keeps its queued data
+                     * readable for resume(). */
                     eof = bits.eof;
                 }
             }

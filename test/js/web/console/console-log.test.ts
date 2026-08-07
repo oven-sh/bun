@@ -179,6 +179,7 @@ describe.each([
         "-e",
         `${sabotage}
 try { console.log({ [Bun.inspect.custom]() { return "custom"; } }) } catch (e) {}
+try { console.log(Bun.inspect({ [Bun.inspect.custom](d, o) { return o.stylize("styled", "string"); } }, { colors: true })) } catch (e) {}
 console.log("ok")`,
       ],
       env: bunEnv,
@@ -188,6 +189,7 @@ console.log("ok")`,
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toContain("custom");
+    expect(stdout).toContain("styled");
     expect(stdout).toContain("ok");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);

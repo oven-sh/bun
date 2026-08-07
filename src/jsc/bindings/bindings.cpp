@@ -5408,8 +5408,7 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
-// Like JSObject::getPropertySlot, but checks exceptions and re-reads the prototype
-// per level: static lazy property reification can run JS that throws or transitions.
+// Per-level exception checks and prototype re-reads; lazy property reification can run JS.
 static bool getPropertySlotForEnumeration(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName property, JSC::PropertySlot& slot)
 {
     auto& vm = JSC::getVM(globalObject);

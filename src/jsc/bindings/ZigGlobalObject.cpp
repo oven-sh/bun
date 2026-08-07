@@ -2328,8 +2328,12 @@ void GlobalObject::finishCreation(VM& vm)
                     inspect = dynamicDowncast<JSFunction>(prop);
             }
             (void)scope.tryClearException();
-            if (!inspect) [[unlikely]]
+            if (!inspect) [[unlikely]] {
                 inspect = JSC::JSFunction::create(init.vm, init.owner, 2, "inspect"_s, functionUtilInspectUnavailable, ImplementationVisibility::Public);
+                // Empty styles/colors make getStylizeWithColor's stylize an identity function.
+                inspect->putDirect(init.vm, Identifier::fromString(init.vm, "styles"_s), JSC::constructEmptyObject(init.owner), 0);
+                inspect->putDirect(init.vm, Identifier::fromString(init.vm, "colors"_s), JSC::constructEmptyObject(init.owner), 0);
+            }
             init.set(inspect);
         });
 

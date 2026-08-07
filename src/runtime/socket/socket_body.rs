@@ -1127,13 +1127,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             } else {
                 errno
             };
-            // Connect errors with a defined node meaning keep their real code:
-            // unix-path errors (a non-socket file is ENOTSOCK, a
-            // permission-denied path is EACCES, a missing one is ENOENT, an
-            // inexpressible path is EINVAL) and the network-failure class
-            // libuv reports verbatim (ETIMEDOUT, EHOSTUNREACH, ENETUNREACH —
-            // retry/backoff logic distinguishes these from refusal).
-            // Everything else stays ECONNREFUSED.
+            // Connect errnos node reports verbatim (unix-path errors and the
+            // unreachable/timeout class); everything else stays ECONNREFUSED.
             let known: &[(sys::SystemErrno, &'static str)] = &[
                 (sys::SystemErrno::ENOENT, "ENOENT"),
                 (sys::SystemErrno::ENOTSOCK, "ENOTSOCK"),

@@ -702,7 +702,11 @@ impl FileResponseStream {
         // Abort/timeout can land while the reader is still waiting for its
         // first byte (e.g. a FIFO with no writer), before any of the
         // dispatches that normally adopt the in-flight read ref have run.
-        // Release it here or the stream (and its fd) never drops.
+        // Release it here or the stream (and its fd) never drops. POSIX only:
+        // on Windows a pending uv read still points at the reader, and its
+        // completion dispatch both needs the stream alive and releases the
+        // ref itself.
+        #[cfg(unix)]
         drop(self.take_read_ref());
         if self.state.get().contains(State::FINISHED) {
             return;

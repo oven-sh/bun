@@ -2,6 +2,10 @@
 #include <JavaScriptCore/VM.h>
 #include "JSCTaskScheduler.h"
 #include "BunClientData.h"
+#include <JavaScriptCore/JSFinalizationRegistry.h>
+#include <JavaScriptCore/StrongInlines.h>
+#include <JavaScriptCore/WeakMapImplInlines.h>
+#include <JavaScriptCore/JSCInlines.h>
 
 using Ticket = JSC::DeferredWorkTimer::Ticket;
 using Task = JSC::DeferredWorkTimer::Task;
@@ -96,6 +100,26 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
         Bun__eventLoop__incrementRefConcurrently(bunVM, -1);
 }
 
+void JSCTaskScheduler::rootFinalizationRegistry(JSC::VM& vm, JSC::JSFinalizationRegistry* registry)
+{
+    ASSERT(vm.currentThreadIsHoldingAPILock());
+    auto result = m_rootedFinalizationRegistries.add(registry, JSC::Strong<JSC::JSObject>());
+    if (result.isNewEntry)
+        result.iterator->value.set(vm, registry);
+}
+
+void JSCTaskScheduler::unrootFinalizationRegistryIfDrained(JSC::JSFinalizationRegistry* registry)
+{
+    if (!m_rootedFinalizationRegistries.contains(registry))
+        return;
+    {
+        Locker cellLocker { registry->cellLock() };
+        if (registry->liveCount(cellLocker) || registry->deadCount(cellLocker))
+            return;
+    }
+    m_rootedFinalizationRegistries.remove(registry);
+}
+
 static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
 {
     Locker<Lock> holder { scheduler.m_lock };
@@ -109,6 +133,8 @@ static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDef
 
     if (pendingTicket && !pendingTicket->isCancelled()) {
         job->task(job->ticket.get());
+        if (auto* registry = dynamicDowncast<JSC::JSFinalizationRegistry>(job->ticket->target()))
+            scheduler.unrootFinalizationRegistryIfDrained(registry);
     }
 
     delete job;
@@ -127,8 +153,78 @@ extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
 // has its enqueue visible to the drain; any that serializes after drops.
 extern "C" void Bun__JSCTaskScheduler__markShuttingDown(JSC::JSGlobalObject* globalObject)
 {
-    if (auto* clientData = WebCore::clientData(JSC::getVM(globalObject)))
+    if (auto* clientData = WebCore::clientData(JSC::getVM(globalObject))) {
+        clientData->deferredWorkTimer.m_rootedFinalizationRegistries.clear();
         clientData->deferredWorkTimer.markShuttingDown();
+    }
+}
+
+ALWAYS_INLINE static JSFinalizationRegistry* getFinalizationRegistry(VM& vm, JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!value.isObject()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Called FinalizationRegistry function on non-object"_s);
+        return nullptr;
+    }
+    if (auto* registry = dynamicDowncast<JSFinalizationRegistry>(asObject(value))) [[likely]]
+        return registry;
+    throwTypeError(globalObject, scope, "Called FinalizationRegistry function on a non-FinalizationRegistry object"_s);
+    return nullptr;
+}
+
+JSC_DEFINE_HOST_FUNCTION(bunProtoFuncFinalizationRegistryRegister, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* registry = getFinalizationRegistry(vm, globalObject, callFrame->thisValue());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue target = callFrame->argument(0);
+    if (!canBeHeldWeakly(target)) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "register requires an object or a non-registered symbol as the target"_s);
+
+    JSValue holdings = callFrame->argument(1);
+    if (target == holdings) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "register expects the target object and the holdings parameter are not the same. Otherwise, the target can never be collected"_s);
+
+    JSValue unregisterToken = callFrame->argument(2);
+    if (!unregisterToken.isUndefined() && !canBeHeldWeakly(unregisterToken)) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "register requires an object or a non-registered symbol as the unregistration token"_s);
+
+    registry->registerTarget(vm, target.asCell(), holdings, unregisterToken);
+
+    if (auto* clientData = WebCore::clientData(vm))
+        clientData->deferredWorkTimer.rootFinalizationRegistry(vm, registry);
+    return encodedJSUndefined();
+}
+
+JSC_DEFINE_HOST_FUNCTION(bunProtoFuncFinalizationRegistryUnregister, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* registry = getFinalizationRegistry(vm, globalObject, callFrame->thisValue());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue token = callFrame->argument(0);
+    if (!canBeHeldWeakly(token)) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "unregister requires an object or a non-registered symbol as the unregistration token"_s);
+
+    bool result = registry->unregister(vm, token.asCell());
+    if (result) {
+        if (auto* clientData = WebCore::clientData(vm))
+            clientData->deferredWorkTimer.unrootFinalizationRegistryIfDrained(registry);
+    }
+    return JSValue::encode(jsBoolean(result));
+}
+
+void installFinalizationRegistryPrototypeHooks(JSC::JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    JSObject* prototype = globalObject->finalizationRegistryStructure()->storedPrototypeObject();
+    prototype->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "register"_s), 2, bunProtoFuncFinalizationRegistryRegister, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    prototype->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "unregister"_s), 1, bunProtoFuncFinalizationRegistryUnregister, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
 // Reclaim a queued-but-never-dispatched job during shutdown. Called while the

@@ -5206,9 +5206,11 @@ impl Resolver {
         if !state.is_null() {
             // SAFETY: this thread's live runtime state; registered in `set_channel`.
             unsafe {
-                (*state).active_handles.swap_remove(&crate::jsc_hooks::ActiveHandle::DnsResolver(
-                    core::ptr::NonNull::from(self),
-                ));
+                (*state)
+                    .active_handles
+                    .swap_remove(&crate::jsc_hooks::ActiveHandle::DnsResolver(
+                        core::ptr::NonNull::from(self),
+                    ));
             }
         }
         // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.

@@ -2350,6 +2350,17 @@ impl<'a> PackageInstall<'a> {
                                 ZStr::from_buf(&buf[..], subpath_len + 1 + b"package.json".len());
                             break 'package_json_exists sys::exists_at(self.cache_dir, subpath);
                         }
+                        resolution::Tag::Git => {
+                            // Git checkouts can legitimately lack `package.json`;
+                            // the `.bun-tag` written last by `Repository::checkout`
+                            // marks the folder complete.
+                            let mut join_buf = PathBuffer::uninit();
+                            let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                                &mut join_buf.0,
+                                &[self.cache_dir_subpath.as_bytes(), b".bun-tag"],
+                            );
+                            sys::exists_at(self.cache_dir, tag_path)
+                        }
                         _ => sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath)
                             .unwrap_or(false),
                     };

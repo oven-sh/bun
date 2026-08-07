@@ -421,6 +421,23 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     Err(crate::Error::InstallFailed)
 }
 
+/// `.bun-tag` (containing `resolved`) is written as the last step of
+/// populating a per-commit cache folder, so it doubles as the completeness
+/// marker: a folder without a matching tag is a leftover from an install that
+/// was killed or failed between `git clone` and `git checkout` (git cannot
+/// clean up after SIGKILL). Such a folder has no `package.json`, and the
+/// missing-`package.json` fallback in `checkout` would silently resolve the
+/// dependency as an empty package.
+fn cached_checkout_is_complete(dir: &bun_sys::Dir, resolved: &[u8]) -> bool {
+    match bun_sys::File::read_file_from(dir.fd(), b".bun-tag") {
+        Ok((file, contents)) => {
+            let _ = file.close(); // close error is non-actionable
+            contents == resolved
+        }
+        Err(_) => false,
+    }
+}
+
 impl RepositoryExt for Repository {
     fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError> {
         let mut remain = input;
@@ -874,92 +891,150 @@ impl RepositoryExt for Repository {
         )
         .as_bytes();
 
-        let package_dir = match bun_sys::Dir::borrow(&cache_dir)
-            .open_at(folder_name)
-            .map_err(Error::from)
-        {
-            Ok(d) => d,
-            Err(not_found) => 'brk: {
-                if not_found != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                    return Err(not_found);
+        let package_dir = 'package_dir: {
+            match bun_sys::Dir::borrow(&cache_dir).open_at(folder_name) {
+                Ok(dir) => {
+                    if cached_checkout_is_complete(&dir, resolved) {
+                        break 'package_dir dir;
+                    }
+                    // Leftover from an interrupted or failed clone/checkout.
+                    // Rebuild it; the rename below replaces it.
+                    dir.close();
                 }
-
-                let target = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                    &PackageManager::get().cache_directory_path,
-                    &[folder_name],
-                );
-
-                let repo_path = bun_sys::get_fd_path(
-                    repo_dir,
-                    // Per-field accessor — disjoint from `folder_name_buf`
-                    // borrow above. See `TlBufs` accessor doc.
-                    TlBufs::final_path_buf(),
-                )?;
-
-                if let Err(err) = exec(
-                    env,
-                    &[
-                        b"git",
-                        b"clone",
-                        b"-c",
-                        b"core.longpaths=true",
-                        b"--quiet",
-                        b"--no-checkout",
-                        repo_path,
-                        target,
-                    ],
-                ) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
-                    );
-                    return Err(err);
-                }
-
-                let folder = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                    &PackageManager::get().cache_directory_path,
-                    &[folder_name],
-                );
-
-                if let Err(err) = exec(
-                    env,
-                    // `is_safe_resolved_tag` above rejects a leading `-`, so
-                    // `resolved` cannot be parsed as a git option.
-                    &[b"git", b"-C", folder, b"checkout", b"--quiet", resolved],
-                ) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("\"git checkout\" for \"{}\" failed", BStr::new(name)),
-                    );
-                    return Err(err);
-                }
-                let dir = bun_sys::Dir::borrow(&cache_dir)
-                    .open_at(folder_name)
-                    .map_err(Error::from)?;
-                let _ = dir.delete_tree(b".git");
-
-                if !resolved.is_empty() {
-                    'insert_tag: {
-                        let Ok(git_tag) = dir.create_file_z(
-                            bun_core::zstr!(".bun-tag"),
-                            bun_sys::CreateFlags {
-                                truncate: true,
-                                ..Default::default()
-                            },
-                        ) else {
-                            break 'insert_tag;
-                        };
-                        if git_tag.write_all(resolved).is_err() {
-                            let _ = dir.delete_file_z(bun_core::zstr!(".bun-tag"));
-                        }
-                        let _ = git_tag.close(); // close error is non-actionable
+                Err(err) => {
+                    if err.get_errno() != bun_sys::E::ENOENT {
+                        return Err(err.into());
                     }
                 }
-
-                break 'brk dir;
             }
+
+            // Clone + checkout into a temporary sibling and only rename it to
+            // `folder_name` once fully populated, so a killed install can't
+            // leave a half-built folder at the name later installs trust.
+            let mut tmp_name_buf = [0u8; 64];
+            let tmp_name: &[u8] = match bun_resolver::fs::FileSystem::tmpname(
+                b"tmp",
+                &mut tmp_name_buf,
+                bun_core::fast_random(),
+            ) {
+                Ok(name) => name.as_bytes(),
+                // max len is 1+16+1+8+1+3, well below 64
+                Err(_no_space_left) => unreachable!(),
+            };
+
+            let target = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+                &PackageManager::get().cache_directory_path,
+                &[tmp_name],
+            );
+
+            let repo_path = bun_sys::get_fd_path(
+                repo_dir,
+                // Per-field accessor — disjoint from `folder_name_buf`
+                // borrow above. See `TlBufs` accessor doc.
+                TlBufs::final_path_buf(),
+            )?;
+
+            if let Err(err) = exec(
+                env,
+                &[
+                    b"git",
+                    b"clone",
+                    b"-c",
+                    b"core.longpaths=true",
+                    b"--quiet",
+                    b"--no-checkout",
+                    repo_path,
+                    target,
+                ],
+            ) {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
+                );
+                let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(tmp_name);
+                return Err(err);
+            }
+
+            let folder = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+                &PackageManager::get().cache_directory_path,
+                &[tmp_name],
+            );
+
+            if let Err(err) = exec(
+                env,
+                // `is_safe_resolved_tag` above rejects a leading `-`, so
+                // `resolved` cannot be parsed as a git option.
+                &[b"git", b"-C", folder, b"checkout", b"--quiet", resolved],
+            ) {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("\"git checkout\" for \"{}\" failed", BStr::new(name)),
+                );
+                let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(tmp_name);
+                return Err(err);
+            }
+            let dir = match bun_sys::Dir::borrow(&cache_dir).open_at(tmp_name) {
+                Ok(d) => d,
+                Err(err) => {
+                    let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(tmp_name);
+                    return Err(err.into());
+                }
+            };
+            let _ = dir.delete_tree(b".git");
+
+            if !resolved.is_empty() {
+                'insert_tag: {
+                    let Ok(git_tag) = dir.create_file_z(
+                        bun_core::zstr!(".bun-tag"),
+                        bun_sys::CreateFlags {
+                            truncate: true,
+                            ..Default::default()
+                        },
+                    ) else {
+                        break 'insert_tag;
+                    };
+                    if git_tag.write_all(resolved).is_err() {
+                        let _ = dir.delete_file_z(bun_core::zstr!(".bun-tag"));
+                    }
+                    let _ = git_tag.close(); // close error is non-actionable
+                }
+            }
+
+            // Close before the rename: Windows can't move a directory while a
+            // handle into it is open.
+            dir.close();
+
+            if let Err(err) = bun_sys::renameat_concurrently_a(
+                cache_dir,
+                tmp_name,
+                cache_dir,
+                folder_name,
+                bun_sys::RenameatConcurrentlyOptions {
+                    move_fallback: false,
+                },
+            ) {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "moving git checkout of \"{}\" into the cache failed: {}",
+                        BStr::new(name),
+                        err,
+                    ),
+                );
+                let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(tmp_name);
+                return Err(crate::Error::InstallFailed);
+            }
+
+            // If a concurrent install won the rename race, the swap left its
+            // folder (or the stale one it replaced) at `tmp_name`; drop it.
+            let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(tmp_name);
+
+            bun_sys::Dir::borrow(&cache_dir)
+                .open_at(folder_name)
+                .map_err(Error::from)?
         };
 
         let (json_file, json_buf) =

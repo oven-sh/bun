@@ -754,6 +754,20 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
     sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
 }
 
+/// Git checkouts can legitimately lack `package.json`, so their completeness
+/// marker is the `.bun-tag` that `Repository::checkout` writes as the last
+/// step of populating the folder. A bare folder without it is a leftover from
+/// an install that was killed mid-checkout; treating it as cached would
+/// silently install an empty package.
+pub fn is_git_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
+    let mut buf = PathBuffer::uninit();
+    let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+        &mut buf.0,
+        &[folder_path.as_bytes(), b".bun-tag"],
+    );
+    sys::exists_at(get_cache_directory(this), tag_path)
+}
+
 // ─────────────────────────── global directories ───────────────────────────────
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {

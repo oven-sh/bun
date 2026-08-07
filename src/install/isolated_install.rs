@@ -2370,6 +2370,20 @@ pub(crate) fn install_isolated_packages(
                                         pkg_cache_dir_subpath.set_length(cache_dir_path_save);
                                         exists
                                     }
+                                    ResolutionTag::Git => {
+                                        // Git checkouts can legitimately lack
+                                        // `package.json`; the `.bun-tag` written
+                                        // last by `Repository::checkout` marks
+                                        // the folder complete.
+                                        let cache_dir_path_save = pkg_cache_dir_subpath.len();
+                                        pkg_cache_dir_subpath.append(b".bun-tag").assume_ok();
+                                        let exists = sys::exists_at(
+                                            cache_dir,
+                                            pkg_cache_dir_subpath.slice_z(),
+                                        );
+                                        pkg_cache_dir_subpath.set_length(cache_dir_path_save);
+                                        exists
+                                    }
                                     _ => sys::directory_exists_at(
                                         cache_dir,
                                         pkg_cache_dir_subpath.slice_z(),

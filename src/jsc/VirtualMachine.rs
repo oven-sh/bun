@@ -491,6 +491,34 @@ impl VMHolder {
     extern "C" fn Bun__thisThreadHasVM() -> bool {
         VM.get().is_some()
     }
+
+    /// Node parity: `process.kill(self, sig)` with no JS handler for `sig`
+    /// flushes the CPU and heap profiles before sending the (likely fatal)
+    /// signal, mirroring node's `Kill` binding. Idempotent via `Option::take`.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__writeProfilesBeforeSelfKill() {
+        let Some(vm_ptr) = VM.get() else { return };
+        // SAFETY: called on the JS thread that owns this VM (process._kill).
+        let vm = unsafe { &mut *vm_ptr };
+        if let Some(config) = vm.cpu_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_cpu_profiler::stop_and_write_profile(vm.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
+            }
+        }
+        if let Some(config) = vm.heap_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_heap_profiler::generate_and_write_profile(vm.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(e, "Failed to write heap profile", ());
+            }
+        }
+        // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
+        // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
+        // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
+        crate::node_compile_cache::persist_now();
+    }
 }
 
 #[thread_local]
@@ -1540,6 +1568,12 @@ impl VirtualMachine {
         }
         // `mem::take` above leaves an empty `Vec` (capacity already freed by drop).
         self.has_run_cleanup_hooks = true;
+
+        // Persist the Node compile cache (NODE_COMPILE_CACHE /
+        // module.enableCompileCache()) after user exit handlers ran.
+        if self.is_main_thread() {
+            crate::node_compile_cache::persist_at_exit();
+        }
     }
 
     pub fn global_exit(&mut self) -> ! {
@@ -1625,13 +1659,11 @@ impl VirtualMachine {
             // a terminal state. Ask it to reclaim them now (waits up to 1s).
             bun_http::shutdown_for_exit();
 
-            // The HTTP daemon is parked. Release any task it posted to our
-            // queue before observing `is_shutting_down` (the read is
-            // non-atomic and can lag the JS-thread store) — `FetchTasklet`'s
-            // `on_progress_update` would have dropped the JS-side ref, and
-            // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
-            // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
-            // JSC `Strong`/`Weak` handles against a live heap.
+            // Release tasks the HTTP daemon posted before observing `is_shutting_down` (else the
+            // tasklet ⇄ `Box<AsyncHTTP>` cycle leaks); must precede `destructOnExit`. Wait for
+            // work-pool fs completions first — they post without a shutdown check, so a post
+            // landing after the drain leaks.
+            self.event_loop_mut().wait_for_concurrent_posters();
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
             if let Some(rare) = self.rare_data.as_deref_mut() {
@@ -3460,6 +3492,22 @@ impl VirtualMachine {
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+        if self.hot_reload == HOT_RELOAD_WATCH {
+            // Watch reload replaces the process: never defer on a pending
+            // entry promise (node restarts regardless of child state), and
+            // emit the --watch-kill-signal JS handlers first, like node.
+            crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
+            let should_clear_terminal =
+                !self.env_loader().has_set_no_clear_terminal_on_reload(
+                    !bun_core::Output::enable_ansi_colors_stdout(),
+                );
+            // execve will not reach on_exit; flush the compile cache here like
+            // node's child does via AtExit(FlushCompileCache) on every restart.
+            crate::node_compile_cache::persist_now();
+            bun_core::Output::flush();
+            bun_core::reload_process(should_clear_terminal, false);
+        }
+
         if let Some(p) = self.pending_internal_promise {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
@@ -3482,11 +3530,6 @@ impl VirtualMachine {
         let should_clear_terminal = !self
             .env_loader()
             .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
-        if self.hot_reload == HOT_RELOAD_WATCH {
-            bun_core::Output::flush();
-            bun_core::reload_process(should_clear_terminal, false);
-        }
-
         if should_clear_terminal {
             bun_core::Output::flush();
             bun_core::Output::disable_buffering();

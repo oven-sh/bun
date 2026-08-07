@@ -130,9 +130,9 @@ omit-lockfile-registry-resolved=true
 An empty URL resolves against whichever registry the reader has configured.
 Integrity hashes are unaffected and still pin package contents.
 
-Packages without a supported integrity hash keep their absolute URL, so a reader
-without this registry configured fails loudly instead of silently resolving a
-private package from the default registry.
+Packages without a supported integrity hash keep their absolute URL, so they stay
+pinned to the registry that served them rather than silently resolving against
+whichever registry the reader has configured.
 
 ### `ignore-scripts`: Skip lifecycle scripts
 

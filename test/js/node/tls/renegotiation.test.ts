@@ -373,7 +373,11 @@ async function nextLine() {
     buffered += decoder.decode(value);
   }
 }
-const port = Number(await nextLine());
+const portLine = await nextLine();
+const port = Number(portLine);
+if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  throw new Error("server printed an invalid port: " + JSON.stringify(portLine));
+}
 
 // Drain also fires for earlier writable events (connect, handshake
 // completion); only the one that completes the backpressured flood counts.
@@ -384,6 +388,11 @@ const { promise: drained, resolve: resolveDrained } = Promise.withResolvers();
 // can deliver it.
 let handshakes = 0;
 const { promise: renegotiated, resolve: resolveRenegotiated } = Promise.withResolvers();
+// Rejected on socket failure so the awaits below fail fast instead of riding
+// out the kill timeout; no-op once the scenario completed.
+let finished = false;
+const { promise: failed, reject: rejectFailed } = Promise.withResolvers();
+failed.catch(() => {});
 const socket = await Bun.connect({
   hostname: "127.0.0.1",
   port,
@@ -397,8 +406,12 @@ const socket = await Bun.connect({
     drain() {
       if (awaitingDrain) resolveDrained();
     },
-    error() {},
-    close() {},
+    error(s, err) {
+      if (!finished) rejectFailed(new Error("socket error before completion: " + (err?.code ?? err)));
+    },
+    close() {
+      if (!finished) rejectFailed(new Error("socket closed before drain/renegotiation completed"));
+    },
   },
 });
 
@@ -422,8 +435,9 @@ awaitingDrain = true;
 
 // Resuming the server drains the flood; the socket must report drain.
 server.stdin.write("resume\\n");
-await drained;
-await renegotiated;
+await Promise.race([drained, failed]);
+await Promise.race([renegotiated, failed]);
+finished = true;
 socket.terminate();
 server.kill();
 console.log("drained-ok");
@@ -455,7 +469,6 @@ it.concurrent(
       stderr: expect.any(String),
     });
   },
-  30_000,
 );
 
 it.concurrent("should complete a quiet renegotiation over a duplex socket (SSLWrapper path)", async () => {

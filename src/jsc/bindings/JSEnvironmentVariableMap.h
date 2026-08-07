@@ -55,6 +55,14 @@ private:
 
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
+#if OS(WINDOWS)
+// Wrap a populated env target (uppercased keys) + original-case key array in
+// the windowsEnv Proxy that carries the case-insensitivity and
+// set/defineProperty validation. `syncOSEnv` false keeps writes thread-local
+// (worker env snapshots, node semantics).
+JSC::JSValue wrapInWindowsEnvProxy(Zig::GlobalObject* globalObject, JSC::JSObject* object, JSC::JSArray* keyArray, bool syncOSEnv);
+#endif
+
 // Setting TZ must make *existing* Date instances recompute local time. JSC's DateCache
 // reset only clears shared slots; live DateInstances keep a Ref to DateInstanceData
 // whose gregorian cache still matches, so walk the heap and invalidate those.

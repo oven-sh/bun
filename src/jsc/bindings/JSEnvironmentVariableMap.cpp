@@ -960,6 +960,10 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
+#if OS(WINDOWS)
+JSValue wrapInWindowsEnvProxy(Zig::GlobalObject* globalObject, JSC::JSObject* object, JSC::JSArray* keyArray, bool syncOSEnv);
+#endif
+
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -1113,7 +1117,25 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     }
 
 #if OS(WINDOWS)
-    auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);
+    RELEASE_AND_RETURN(scope, wrapInWindowsEnvProxy(globalObject, object, keyArray, /* syncOSEnv */ true));
+#else
+    return object;
+#endif
+}
+
+#if OS(WINDOWS)
+JSC_DEFINE_HOST_FUNCTION(jsNoopEditWindowsEnvVar, (JSGlobalObject*, JSC::CallFrame*))
+{
+    return JSValue::encode(jsUndefined());
+}
+
+JSValue wrapInWindowsEnvProxy(Zig::GlobalObject* globalObject, JSC::JSObject* object, JSC::JSArray* keyArray, bool syncOSEnv)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A worker's env is a thread-local snapshot (node semantics): its writes
+    // must not reach the process-wide OS env block, so the sink is a no-op.
+    auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), syncOSEnv ? jsEditWindowsEnvVar : jsNoopEditWindowsEnvVar, ImplementationVisibility::Public);
 
     JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1135,8 +1157,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     }
 
     RELEASE_AND_RETURN(scope, result);
-#else
-    return object;
-#endif
 }
+#endif
 }

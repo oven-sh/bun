@@ -245,8 +245,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const stmt = db.prepare(sql);
         let result: unknown[] | undefined;
 
-        // Arrays are positional parameters and spread into arguments; a plain
-        // object is a single named-parameters binding (:name, $name, @name).
+        // Named-parameter objects need $call: $apply would treat them as an empty array-like.
         if (mode === SQLQueryResultMode.values) {
           result = $isArray(values) ? stmt.values.$apply(stmt, values) : stmt.values.$call(stmt, values);
         } else if (mode === SQLQueryResultMode.raw) {

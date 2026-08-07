@@ -85,8 +85,10 @@ test.concurrent("a null entry in a userland-assigned _stack does not mask the or
   expect(r.exitCode).toBe(0);
 });
 
-test.concurrent("patching AsyncLocalStorage.prototype.getStore after loading node:domain does not hijack domain error routing", async () => {
-  const r = await run(`
+test.concurrent(
+  "patching AsyncLocalStorage.prototype.getStore after loading node:domain does not hijack domain error routing",
+  async () => {
+    const r = await run(`
     const domain = require("domain");
     const { AsyncLocalStorage } = require("async_hooks");
     const d = domain.create();
@@ -94,12 +96,15 @@ test.concurrent("patching AsyncLocalStorage.prototype.getStore after loading nod
     AsyncLocalStorage.prototype.getStore = function () { throw new Error("hijacked"); };
     d.run(() => setTimeout(() => { throw new Error("boom") }, 0));
   `);
-  expect(r.stdout.trim()).toBe("caught:boom");
-  expect(r.exitCode).toBe(0);
-});
+    expect(r.stdout.trim()).toBe("caught:boom");
+    expect(r.exitCode).toBe(0);
+  },
+);
 
-test.concurrent("child domain added to a parent routes error to the parent's listener without falling through to uncaughtException", async () => {
-  const r = await run(`
+test.concurrent(
+  "child domain added to a parent routes error to the parent's listener without falling through to uncaughtException",
+  async () => {
+    const r = await run(`
     const domain = require("domain");
     const parent = domain.create();
     parent.on("error", e => console.log("parent-handled:" + e.message));
@@ -108,36 +113,43 @@ test.concurrent("child domain added to a parent routes error to the parent's lis
     process.on("uncaughtException", e => console.log("UNCAUGHT:" + e.message));
     parent.run(() => child.run(() => { throw new Error("boom"); }));
   `);
-  expect(r.stdout.trim()).toBe("parent-handled:boom");
-  expect(r.exitCode).toBe(0);
-});
+    expect(r.stdout.trim()).toBe("parent-handled:boom");
+    expect(r.exitCode).toBe(0);
+  },
+);
 
-test.concurrent("process.domain / exports._stack / exports.active accessors are configurable (matches Node)", async () => {
-  const r = await run(
-    `const d = require("domain");
+test.concurrent(
+  "process.domain / exports._stack / exports.active accessors are configurable (matches Node)",
+  async () => {
+    const r = await run(
+      `const d = require("domain");
      console.log(
        Object.getOwnPropertyDescriptor(process, "domain").configurable,
        Object.getOwnPropertyDescriptor(d, "_stack").configurable,
        Object.getOwnPropertyDescriptor(d, "active").configurable,
      );`,
-  );
-  expect(r.stdout.trim()).toBe("true true true");
-  expect(r.exitCode).toBe(0);
-});
+    );
+    expect(r.stdout.trim()).toBe("true true true");
+    expect(r.exitCode).toBe(0);
+  },
+);
 
-test.concurrent("a domain with an 'error' listener claims the error while a capture callback is installed", async () => {
-  // Matches node v26.3.0: the domain handler runs before the uncaught
-  // exception capture callback, so captureFn never fires here.
-  const r = await run(`
+test.concurrent(
+  "a domain with an 'error' listener claims the error while a capture callback is installed",
+  async () => {
+    // Matches node v26.3.0: the domain handler runs before the uncaught
+    // exception capture callback, so captureFn never fires here.
+    const r = await run(`
     const domain = require("domain");
     process.setUncaughtExceptionCaptureCallback(er => console.log("captureFn:" + er.message));
     const d = domain.create();
     d.on("error", er => console.log("domain:" + er.message));
     d.run(() => { process.nextTick(() => { throw new Error("boom"); }); });
   `);
-  expect(r.stdout.trim()).toBe("domain:boom");
-  expect(r.exitCode).toBe(0);
-});
+    expect(r.stdout.trim()).toBe("domain:boom");
+    expect(r.exitCode).toBe(0);
+  },
+);
 
 test.concurrent("Worker: throwing domain error handler emits parent 'error' and exits 1", async () => {
   // Node's workerOnGlobalUncaughtException catches, posts the handler's

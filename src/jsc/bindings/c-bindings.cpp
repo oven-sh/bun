@@ -268,9 +268,67 @@ extern "C" void windows_enable_stdio_inheritance()
 #define __NR_close_range 436
 #endif
 
-// close_range is glibc > 2.33, which is very new
+#include <setjmp.h>
+#include <atomic>
+#include <mutex>
+
+// Android's zygote seccomp filter traps close_range(2) with SIGSYS instead of
+// returning ENOSYS, killing the process before any errno fallback can run
+// (https://github.com/oven-sh/bun/issues/30766). Probe once with a scoped
+// SIGSYS handler; the cached result is inherited across fork/vfork, so the
+// spawn-child callers in bun-spawn.cpp and BunProcess.cpp never re-probe.
+namespace {
+std::atomic<bool> g_close_range_supported { true };
+std::once_flag g_close_range_probe_once;
+sigjmp_buf g_close_range_probe_jmp;
+
+void close_range_sigsys_handler(int, siginfo_t*, void*)
+{
+    siglongjmp(g_close_range_probe_jmp, 1);
+}
+
+void run_close_range_probe()
+{
+    struct sigaction sa {};
+    sa.sa_sigaction = close_range_sigsys_handler;
+    // SA_RESETHAND bounds the handler to one shot.
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER | SA_RESETHAND;
+    sigemptyset(&sa.sa_mask);
+    struct sigaction old {};
+    if (sigaction(SIGSYS, &sa, &old) != 0) {
+        return; // keep the default (supported) so any SIGSYS propagates
+    }
+
+    bool supported;
+    if (sigsetjmp(g_close_range_probe_jmp, 1) == 0) {
+        // first > last is EINVAL before any fdtable traversal; old kernels
+        // return ENOSYS; a trapping seccomp filter raises SIGSYS.
+        long r = syscall(__NR_close_range, ~0U, 0U, 0U);
+        supported = (r == 0) || (errno != ENOSYS);
+    } else {
+        supported = false; // SIGSYS trapped
+    }
+
+    sigaction(SIGSYS, &old, nullptr);
+
+    g_close_range_supported.store(supported, std::memory_order_release);
+}
+
+bool close_range_supported()
+{
+    std::call_once(g_close_range_probe_once, run_close_range_probe);
+    return g_close_range_supported.load(std::memory_order_acquire);
+}
+} // namespace
+
+// close_range is glibc > 2.33 and Linux 5.9+; returns ENOSYS when the probe
+// found it seccomp-trapped so callers use their close()/fcntl() fallbacks.
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
+    if (!close_range_supported()) [[unlikely]] {
+        errno = ENOSYS;
+        return -1;
+    }
     return syscall(__NR_close_range, start, end, flags);
 }
 #else // OS(FREEBSD)
@@ -299,10 +357,16 @@ extern "C" void on_before_reload_process_linux()
     unset_cloexec(STDOUT_FILENO);
     unset_cloexec(STDERR_FILENO);
 
-    // close all file descriptors except stdin, stdout, stderr and possibly IPC.
-    // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
-    // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
-    bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+    // Best-effort: mark every fd above stderr close-on-exec, via fcntl loop
+    // when close_range is unavailable (old kernels, seccomp-trapped Android).
+    if (bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC) != 0) {
+        int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
+        if (maxfd < 0 || maxfd > 65536) maxfd = 65536;
+        for (int fd = 3; fd < maxfd; fd++) {
+            int flags = fcntl(fd, F_GETFD);
+            if (flags >= 0) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+        }
+    }
 
     // reset all signals to default
     sigset_t signal_set;

@@ -124,10 +124,6 @@ impl ConsoleObject {
         }
     }
 
-    /// Largest scratch capacity kept between calls; a one-off huge message
-    /// shouldn't pin its buffer for the life of the VM.
-    const SCRATCH_KEEP: usize = 64 * 1024;
-
     #[inline]
     fn take_scratch(this: *mut ConsoleObject) -> Vec<u8> {
         // SAFETY: `this` is the live per-VM console (see [`vm_console`]);
@@ -138,8 +134,11 @@ impl ConsoleObject {
     #[inline]
     fn put_scratch(this: *mut ConsoleObject, mut buf: Vec<u8>) {
         buf.clear();
-        if buf.capacity() > Self::SCRATCH_KEEP {
-            buf.shrink_to(Self::SCRATCH_KEEP);
+        // The native path never holds more than `SPILL_AT`; only a message that
+        // had to be handed to JS whole (or one oversized chunk) grows past it,
+        // and that one shouldn't pin its buffer for the life of the VM.
+        if buf.capacity() > SPILL_AT {
+            buf.shrink_to(SPILL_AT);
         }
         // SAFETY: as above. If a re-entrant call left its (smaller) buffer
         // here, keep whichever is larger.
@@ -299,8 +298,10 @@ pub struct ConsoleWriter<'a> {
     spill: Option<(*mut VirtualMachine, bun_sys::Fd)>,
 }
 
-/// Big enough that ordinary messages are one `write(2)`, small enough that a
-/// runaway one doesn't matter.
+/// How much of one message to accumulate before writing it out on the native
+/// path (and so the most scratch capacity kept between calls): the default
+/// pipe capacity on Linux and macOS, so each spill is at most one pipe-full and
+/// anything shorter is still a single `write(2)`.
 const SPILL_AT: usize = 64 * 1024;
 
 impl bun_io::Write for ConsoleWriter<'_> {

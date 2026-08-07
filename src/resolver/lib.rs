@@ -200,6 +200,20 @@ pub mod fs {
             buf: &'b mut [u8],
             hash: u64,
         ) -> crate::CrateResult<&'b mut ZStr> {
+            Self::tmpname_with_stem(b"", extname, buf, hash)
+        }
+
+        /// [`Self::tmpname`], but keeps a caller-supplied stem in the
+        /// generated name: `.{stem}.{hex}-{N}.{ext}` instead of
+        /// `.{hex}-{N}.{ext}`. Embedded native libraries extracted for
+        /// dlopen use this so a crash report naming the faulting module
+        /// names the addon rather than a random hash.
+        pub fn tmpname_with_stem<'b>(
+            stem: &[u8],
+            extname: &[u8],
+            buf: &'b mut [u8],
+            hash: u64,
+        ) -> crate::CrateResult<&'b mut ZStr> {
             // bun_core has no `time` module yet; use std directly.
             let nanos: u128 = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -209,13 +223,25 @@ pub mod fs {
 
             let len = buf.len();
             let mut cursor = &mut buf[..];
-            write!(
-                &mut cursor,
-                ".{:x}-{:X}.{}",
-                hex_value,
-                TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
-                bstr::BStr::new(extname),
-            )
+            let id = TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed);
+            if stem.is_empty() {
+                write!(
+                    &mut cursor,
+                    ".{:x}-{:X}.{}",
+                    hex_value,
+                    id,
+                    bstr::BStr::new(extname),
+                )
+            } else {
+                write!(
+                    &mut cursor,
+                    ".{}.{:x}-{:X}.{}",
+                    bstr::BStr::new(stem),
+                    hex_value,
+                    id,
+                    bstr::BStr::new(extname),
+                )
+            }
             .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let written = len - cursor.len();
             if written >= len {

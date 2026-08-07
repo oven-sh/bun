@@ -4700,6 +4700,41 @@ unsafe fn transpile_virtual_module(
     }
 }
 
+/// Stem kept in the temp filename an embedded native library is extracted to
+/// (`.{stem}.{hex}-{N}.{ext}`), so a crash report that names the faulting
+/// module names the addon instead of a random hash. Conservative charset:
+/// bytes outside `[A-Za-z0-9._-]` become `_`; leading dots are dropped (the
+/// generated name supplies the single leading dot) and so are trailing ones;
+/// may be empty, in which case the name degrades to the hash-only form.
+fn embedded_library_stem<'a>(virtual_path: &[u8], buf: &'a mut [u8; 64]) -> &'a [u8] {
+    let base = bun_paths::resolve_path::basename(virtual_path);
+    // Drop the extension; the temp name appends the canonical one.
+    let stem = match bun_core::strings::last_index_of_char(base, b'.') {
+        Some(0) | None => base,
+        Some(i) => &base[..i],
+    };
+    let mut n = 0;
+    for &c in stem {
+        if n == buf.len() {
+            break;
+        }
+        let mapped = if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.') {
+            c
+        } else {
+            b'_'
+        };
+        if n == 0 && mapped == b'.' {
+            continue;
+        }
+        buf[n] = mapped;
+        n += 1;
+    }
+    while n > 0 && buf[n - 1] == b'.' {
+        n -= 1;
+    }
+    &buf[..n]
+}
+
 /// Core of `ModuleLoader.resolveEmbeddedFile`:
 /// finds an embedded file in the standalone module graph, materializes it to
 /// a real on-disk temp file with `extname`, and writes the resulting absolute
@@ -4735,9 +4770,16 @@ pub(crate) fn resolve_embedded_file_to_buf(
     let file_name: &[u8] = file.name;
     let file_contents: &[u8] = file.contents.as_bytes();
 
+    let mut stem_buf = [0u8; 64];
+    let stem = embedded_library_stem(file_name, &mut stem_buf);
     let mut tmpname_buf = bun_paths::path_buffer_pool::get();
-    let tmpfilename =
-        Fs::FileSystem::tmpname(extname, &mut tmpname_buf[..], bun_wyhash::hash(file_name)).ok()?;
+    let tmpfilename = Fs::FileSystem::tmpname_with_stem(
+        stem,
+        extname,
+        &mut tmpname_buf[..],
+        bun_wyhash::hash(file_name),
+    )
+    .ok()?;
 
     // SAFETY: `FileSystem::instance()` returns the process-global singleton
     // pointer (initialized at startup).

@@ -77,6 +77,52 @@ describe("bundler", () => {
     },
     run: { exitCode: 0 },
   });
+  // An embedded .node addon is extracted to a temp file before dlopen. The
+  // temp name must keep the addon's basename (`.my_native_addon.{hex}-{N}.node`)
+  // so crash reports attribute a fault inside the addon to the addon instead
+  // of a random hash. dlerror() echoes the path, which makes the name
+  // observable through the load-failure message. Windows formats LoadLibrary
+  // errors from GetLastError() without the path, so this is POSIX-only.
+  test.skipIf(isWindows)("compile/EmbeddedNodeAddonTempNameKeepsAddonName", async () => {
+    using dir = tempDir("compile-addon-temp-name", {
+      "entry.ts": `
+        try {
+          require("./my_native_addon.node");
+          console.log("unexpectedly loaded");
+        } catch (e) {
+          console.log(e.message);
+        }
+      `,
+      "my_native_addon.node": "not actually a shared library",
+    });
+    const outfile = join(String(dir), "out");
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "./entry.ts", "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // dlopen failed on the extracted temp file; the message carries its path,
+    // which must embed the addon name (plus the bundler's content-hash asset
+    // suffix) ahead of the per-run random part.
+    expect(stdout).toMatch(/\.my_native_addon[-\w]*\.[0-9a-f]+-[0-9A-F]+\.node/);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
   itBundled("compile/HelloWorldWithProcessVersionsBunAPI", {
     compile: true,
     backend: "api",

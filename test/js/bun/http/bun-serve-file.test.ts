@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, openSync, readdirSync, unlinkSync, writeSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -1441,3 +1441,64 @@ test.skipIf(isWindows)(
     }
   },
 );
+
+// Aborting (or idle-timing-out) a FIFO response that is still waiting for its
+// first writer must drop the stream and close its fd: the abort path is the
+// only terminal one for a FIFO whose producer never connects, and it used to
+// leave the in-flight read ref held forever, leaking the fd and poll.
+test.skipIf(isWindows)("aborted Response(Bun.file(FIFO)) with no writer releases its fd", async () => {
+  using dir = tempDir("serve-fifo-abort-leak", {});
+  const fifoPath = join(String(dir), "unwritten.fifo");
+  mkfifo(fifoPath);
+
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      return new Response(Bun.file(fifoPath));
+    },
+  });
+
+  const fdDir = process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";
+  const countFds = () => readdirSync(fdDir).length;
+  const baseline = countFds();
+
+  const rounds = 16;
+  for (let i = 0; i < rounds; i++) {
+    const { promise: sawBytes, resolve } = Promise.withResolvers<void>();
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          s.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        },
+        // First response bytes prove the server opened the FIFO and is
+        // waiting on it.
+        data() {
+          resolve();
+        },
+        close() {
+          resolve();
+        },
+        error() {
+          resolve();
+        },
+      },
+    });
+    await sawBytes;
+    client.terminate();
+  }
+
+  // Each aborted stream closes its FIFO fd when it drops, shortly after the
+  // server observes the hangup; poll for the count to return toward the
+  // baseline. The unfixed build kept one fd per request (+16 here).
+  const slack = 4;
+  const deadline = Date.now() + 5000;
+  let current = countFds();
+  while (current > baseline + slack && Date.now() < deadline) {
+    await Bun.sleep(10);
+    current = countFds();
+  }
+  expect(current).toBeLessThanOrEqual(baseline + slack);
+});

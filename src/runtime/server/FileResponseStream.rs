@@ -699,6 +699,11 @@ impl FileResponseStream {
             self.state.get().contains(State::FINISHED)
         );
         self.cancel_fifo_probe();
+        // Abort/timeout can land while the reader is still waiting for its
+        // first byte (e.g. a FIFO with no writer), before any of the
+        // dispatches that normally adopt the in-flight read ref have run.
+        // Release it here or the stream (and its fd) never drops.
+        drop(self.take_read_ref());
         if self.state.get().contains(State::FINISHED) {
             return;
         }

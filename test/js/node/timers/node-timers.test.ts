@@ -318,3 +318,84 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
 });
+
+it("setImmediate fires between chained thread-pool completions (no mid-tick re-drain)", async () => {
+  // Node's event loop takes one snapshot of thread-pool completions per poll
+  // iteration and runs the check phase (setImmediate) before the next poll.
+  // So a chain of `threadpool cb -> nextTick -> threadpool op -> ...` (the
+  // fs.ReadStream pattern) observes a setImmediate fire between every pair of
+  // callbacks. When Bun's tick() re-drained the concurrent queue mid-tick, a
+  // fast completion that landed while tasks were still being processed ran
+  // before immediates and timers, so a due setInterval (the writer in
+  // test-fs-read-stream-pos.js) could be starved for the duration of a
+  // stream's read chain.
+  //
+  // crypto.pbkdf2 completes via enqueue_task_concurrent on every platform; on
+  // Windows fs.read goes through libuv's own callback and would not exercise
+  // the mid-tick re-drain path.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const crypto = require('crypto');
+        let immediateTicks = 0;
+        let lastTicks = -1;
+        let calls = 0;
+        let sameTick = 0;
+        (function imm() { immediateTicks++; setImmediate(imm); })();
+        function go() {
+          crypto.pbkdf2('a', 'b', 1, 8, 'sha256', () => {
+            calls++;
+            if (immediateTicks === lastTicks) sameTick++;
+            lastTicks = immediateTicks;
+            if (calls >= 200) {
+              console.log(JSON.stringify({ calls, sameTick }));
+              process.exit(0);
+            }
+            process.nextTick(go);
+          });
+        }
+        setImmediate(go);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ calls: 200, sameTick: 0 });
+  expect(exitCode).toBe(0);
+});
+
+it("a chain of awaited WebCrypto operations keeps the event loop alive", async () => {
+  // ConcurrentCppTask refs the loop on the JS thread and unrefs on the pool
+  // thread after postTaskTo'ing the result back. If the JS thread's
+  // is_event_loop_alive() runs between that unref and the next tick()'s
+  // concurrent-queue drain, it must still count the posted-but-not-yet-popped
+  // result as work; otherwise the process exits with the promise pending.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { subtle } = globalThis.crypto;
+        (async () => {
+          const key = await subtle.generateKey({ name: 'HMAC', hash: 'SHA-256' }, true, ['sign', 'verify']);
+          const data = Buffer.from('x');
+          const sig = await subtle.sign('HMAC', key, data);
+          for (let i = 0; i < 50; i++) {
+            if (!(await subtle.verify('HMAC', key, sig, data))) throw new Error('bad');
+          }
+          console.log('DONE');
+        })();
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("DONE");
+  expect(exitCode).toBe(0);
+});

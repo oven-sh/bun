@@ -630,7 +630,18 @@ impl EventLoop {
         // The scope/counter cleanup is inlined at each return site below (a
         // scopeguard closure would alias `&mut self`).
 
+        // Same guard as after `drain_microtasks` below: a prior tick() that
+        // aborted mid-batch on termination can leave tasks queued with the
+        // exception pending, and some callers re-enter without checking.
+        if scope.has_exception() {
+            self.entered_event_loop_count -= 1;
+            return;
+        }
+
         let ctx = self.vm();
+        // One snapshot of thread-pool completions per tick (libuv's
+        // `uv__work_done`); new arrivals wait for the next iteration so a
+        // self-feeding chain can't starve the check/timer phases.
         self.tick_concurrent();
         self.process_gc_timer();
 
@@ -641,7 +652,6 @@ impl EventLoop {
 
         loop {
             while self.tick_with_count(ctx) > 0 {
-                self.tick_concurrent();
                 self.global_ref().handle_rejected_promises();
             }
             if self
@@ -652,15 +662,10 @@ impl EventLoop {
                 self.entered_event_loop_count -= 1;
                 return;
             }
-            self.tick_concurrent();
             if self.tasks.readable_length() > 0 {
                 continue;
             }
             break;
-        }
-
-        while self.tick_with_count(ctx) > 0 {
-            self.tick_concurrent();
         }
 
         self.global_ref().handle_rejected_promises();

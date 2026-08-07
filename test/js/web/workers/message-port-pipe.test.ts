@@ -363,6 +363,32 @@ describe("MessagePort pipe", () => {
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
   });
+
+  test("collecting a listening port after its peer closes releases the listener loop ref", async () => {
+    // hasPendingActivity() is false once the peer is closed and no messages are
+    // queued, so the wrapper can be collected before the deferred peerClosed()
+    // task runs. ~MessagePort must release the listener ref itself or the loop
+    // never idles.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { MessageChannel } = require('node:worker_threads');
+          const { port1, port2 } = new MessageChannel();
+          port2.once('message', () => {});
+          port1.close();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // worker.postMessage / parentPort.postMessage go through the same coalesced

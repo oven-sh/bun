@@ -1673,8 +1673,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
-        // is nothing to dispatch to.
-        if !this.has_handlers() {
+        // is nothing to dispatch to. Nor from the GC finalizer's own close
+        // (an SSL shutdown reports the never-finished handshake): a finalizer
+        // dispatches nothing and may not inspect other cells mid-sweep.
+        if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {
             return;
         }
         this.update_flags(|f| f.insert(Flags::HANDSHAKE_COMPLETE));
@@ -4554,7 +4556,29 @@ impl DuplexUpgradeContext {
     /// hold a `&`/`&mut Self` across this call (taking `&mut self` here would
     /// be a Stacked Borrows protector violation when the backing `Box` is
     /// reclaimed below).
+    /// VM stop phase: close the upgraded duplex now (its 'close'/error
+    /// handlers run while script is still allowed), so the TLS wrapper's GC
+    /// finalizer finds a closed socket and dispatches nothing.
+    ///
+    /// # Safety
+    /// `this` is a registered live context (see `js_upgrade_duplex_to_tls`).
+    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
+        // SAFETY: fn contract; `close` may re-enter and free `this` through
+        // the normal on_close → deinit path, so nothing is touched afterwards.
+        unsafe { (*this).upgrade.close() };
+    }
+
     unsafe fn deinit(this: *mut Self) {
+        let state = crate::jsc_hooks::runtime_state();
+        if !state.is_null() {
+            // SAFETY: this thread's live runtime state; `this` was registered
+            // in `js_upgrade_duplex_to_tls`.
+            unsafe {
+                (*state).active_handles.swap_remove(&crate::jsc_hooks::ActiveHandle::DuplexUpgrade(
+                    core::ptr::NonNull::new_unchecked(this),
+                ));
+            }
+        }
         {
             // SAFETY: `this` is live; each field access is scoped to its own
             // statement, so nothing spans the `heap::take` free below.
@@ -4862,6 +4886,16 @@ pub fn js_upgrade_duplex_to_tls(
     // dangling still exits. If the underlying stream is a real socket, that
     // socket's own handle keeps the loop alive.
 
+    // A TLS socket over a JS duplex is in no uSockets group, so the VM's stop
+    // phase closes it through this owner (see `stop_for_vm_teardown`) rather
+    // than leaving it to a GC finalizer.
+    // SAFETY: `runtime_state()` is this thread's live state; `duplex_context`
+    // is the fully-initialised allocation, unregistered again in `deinit`.
+    unsafe {
+        (*crate::jsc_hooks::runtime_state())
+            .active_handles
+            .insert(crate::jsc_hooks::ActiveHandle::DuplexUpgrade(core::ptr::NonNull::new_unchecked(duplex_context)), ());
+    }
     // SAFETY: `duplex_context` is the freshly built live allocation.
     unsafe { DuplexUpgradeContext::start_tls(duplex_context) };
 

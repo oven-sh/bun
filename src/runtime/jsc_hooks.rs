@@ -110,11 +110,14 @@ pub(crate) struct RuntimeState {
 /// registered while open, removed by its own close, and closed by
 /// [`stop_active_handles_for_vm_teardown`] in every teardown's stop phase and at the
 /// `bun test --isolate` global swap.
-pub enum ActiveHandle {
+pub(crate) enum ActiveHandle {
     FsWatcher(ptr::NonNull<crate::node::node_fs_watcher::FSWatcher>),
     StatWatcher(ptr::NonNull<crate::node::node_fs_stat_watcher::StatWatcher>),
     Server(crate::server::AnyServer),
     Listener(ptr::NonNull<crate::socket::Listener>),
+    /// TLS over a JS duplex (`tls.connect({ socket })`, `new TLSSocket(duplex)`):
+    /// not in any uSockets group, so closed through its owner.
+    DuplexUpgrade(ptr::NonNull<crate::socket::DuplexUpgradeContext>),
 }
 
 pub(crate) type ActiveHandles = bun_collections::ArrayHashMap<ActiveHandle, ()>;
@@ -1715,6 +1718,10 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) {
             ActiveHandle::Listener(l) => {
                 crate::socket::Listener::stop_for_vm_teardown(unsafe { l.as_ref() })
             }
+            // Live until it unregisters in `deinit`.
+            ActiveHandle::DuplexUpgrade(c) => unsafe {
+                crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c.as_ptr())
+            },
         }
     }
 }

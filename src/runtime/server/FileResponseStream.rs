@@ -400,6 +400,26 @@ impl FileResponseStream {
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // The header write can leave a partially-sent tail in the userspace
+            // buffer when the kernel send buffer is full (AsyncSocket::uncork's
+            // partial-send path). sendfile() bypasses that buffer and writes
+            // straight to the socket fd, so if the kernel drains in between,
+            // file bytes overtake the header tail on the wire. Defer to the
+            // writable path: HttpContext::onWritable flushes the userspace
+            // buffer and only calls back in here once it is empty.
+            let buffered = self.resp.get().get_buffered_amount();
+            if buffered > 0 {
+                bun_output::scoped_log!(
+                    FileResponseStream,
+                    "deferring sendfile behind {} buffered bytes",
+                    buffered
+                );
+                return self.arm_sendfile_writable();
+            }
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         loop {
             let (errno, sent, remain) = self.sendfile.with_mut(|sf| {
                 let adjusted = sf.remain.min(i32::MAX as u64);

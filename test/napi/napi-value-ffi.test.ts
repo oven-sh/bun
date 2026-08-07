@@ -26,6 +26,11 @@ const symbols = {
   },
 };
 
+// cc()-compiled napi code doesn't run on Windows (TCC can't link the napi_
+// functions there) or under ASan (TinyCC's setjmp/longjmp error handling
+// conflicts with it), so skip the setup those tests need too.
+const skipCC = isWindows || isASAN;
+
 let cc1, cc2;
 
 const nodeApiHeadersInclude = join(__dirname, "napi-app/node_modules/node-api-headers/include");
@@ -35,12 +40,14 @@ function needsInstall(): boolean {
 }
 
 beforeAll(() => {
-  if (isFFIUnavailable) return;
+  if (isFFIUnavailable || skipCC) return;
 
   if (needsInstall()) {
-    // build gyp
+    // The cc() calls below only need node-api-headers. Skip napi-app's
+    // install script, which is a full node-gyp rebuild of every addon target
+    // in binding.gyp (napi.test.ts runs it for the tests that need those).
     const install = spawnSync({
-      cmd: [bunExe(), "install", "--verbose"],
+      cmd: [bunExe(), "install", "--ignore-scripts"],
       cwd: join(__dirname, "napi-app"),
       stderr: "inherit",
       env: bunEnv,
@@ -48,32 +55,26 @@ beforeAll(() => {
       stdin: "inherit",
     });
     if (!install.success) {
-      throw new Error("build failed");
+      throw new Error("bun install --ignore-scripts failed in napi-app");
     }
   }
-  // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-  // Skip cc() calls on ASan, and catch errors on Windows.
-  if (!isASAN) {
-    try {
-      cc1 = cc({
-        source,
-        symbols,
-        flags: `-I${nodeApiHeadersInclude}`,
-      }).symbols;
-      cc2 = cc({
-        source,
-        symbols,
-        flags: `-I${nodeApiHeadersInclude}`,
-      }).symbols;
-    } catch (e) {
-      // ignore compilation failure on Windows
-      if (!isWindows) throw e;
-    }
-  }
-});
+  // Identical compilations on purpose: "has a different napi_env for each cc
+  // invocation" needs two separate cc() instances.
+  cc1 = cc({
+    source,
+    symbols,
+    flags: `-I${nodeApiHeadersInclude}`,
+  }).symbols;
+  cc2 = cc({
+    source,
+    symbols,
+    flags: `-I${nodeApiHeadersInclude}`,
+  }).symbols;
+  // A cache-cold package fetch can outlast the default 5s hook timeout.
+}, 300_000);
 
 describe.skipIf(isFFIUnavailable)("cc() bundled N-API headers", () => {
-  it.todoIf(isWindows || isASAN)("resolves <node_api.h> without any -I flag", () => {
+  it.todoIf(skipCC)("resolves <node_api.h> without any -I flag", () => {
     const { symbols } = cc({
       source: join(__dirname, "napi-app/bundled_napi_headers.c"),
       symbols: { passthrough: { args: ["napi_env", "napi_value"], returns: "napi_value" } },
@@ -82,7 +83,7 @@ describe.skipIf(isFFIUnavailable)("cc() bundled N-API headers", () => {
     expect(symbols.passthrough(undefined, marker)).toBe(marker);
   });
 
-  it.todoIf(isWindows || isASAN)("provides the Node 26 type surface and NAPI_MODULE_INIT()", () => {
+  it.todoIf(skipCC)("provides the Node 26 type surface and NAPI_MODULE_INIT()", () => {
     const { symbols } = cc({
       source: join(__dirname, "napi-app/bundled_napi_headers_node26.c"),
       symbols: {
@@ -94,7 +95,7 @@ describe.skipIf(isFFIUnavailable)("cc() bundled N-API headers", () => {
     expect(symbols.use_node26_types(undefined)).toBe(10);
   });
 
-  it.todoIf(isWindows || isASAN)("compiles with NAPI_EXPERIMENTAL defined", () => {
+  it.todoIf(skipCC)("compiles with NAPI_EXPERIMENTAL defined", () => {
     const { symbols } = cc({
       source: join(__dirname, "napi-app/bundled_napi_headers_experimental.c"),
       symbols: { passthrough: { args: ["napi_env", "napi_value"], returns: "napi_value" } },
@@ -155,19 +156,35 @@ describe.skipIf(isWindows || !systemCC)("in-tree N-API headers", () => {
 });
 
 describe.skipIf(isFFIUnavailable)("cc napi integration", () => {
-  // fails on windows as TCC can't link the napi_ functions
-  // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-  it.todoIf(isWindows || isASAN)("has a different napi_env for each cc invocation", () => {
+  it.todoIf(skipCC)("has a different napi_env for each cc invocation", () => {
     cc1.set_instance_data(undefined, 5);
     cc2.set_instance_data(undefined, 6);
     expect(cc1.get_instance_data()).toBe(5);
     expect(cc2.get_instance_data()).toBe(6);
   });
 
-  // broken
-  it.todo("passes values correctly", () => {
-    expect(cc1.get_type(undefined, 123).toString()).toBe("number");
-    expect(cc1.get_type(undefined, "hello").toString()).toBe("string");
-    expect(cc1.get_type(undefined, 190n).toString()).toBe("bigint");
+  it.todoIf(skipCC)("passes values correctly", () => {
+    const typeOf = (value: unknown) => cc1.get_type(undefined, value)?.toString();
+    expect({
+      undefined: typeOf(undefined),
+      null: typeOf(null),
+      booleans: [typeOf(true), typeOf(false)],
+      numbers: [typeOf(123), typeOf(1.5)],
+      string: typeOf("hello"),
+      symbol: typeOf(Symbol("tag")),
+      objects: [typeOf({}), typeOf([])],
+      function: typeOf(() => {}),
+      bigint: typeOf(190n),
+    }).toEqual({
+      undefined: "undefined",
+      null: "null",
+      booleans: ["boolean", "boolean"],
+      numbers: ["number", "number"],
+      string: "string",
+      symbol: "symbol",
+      objects: ["object", "object"],
+      function: "function",
+      bigint: "bigint",
+    });
   });
 });

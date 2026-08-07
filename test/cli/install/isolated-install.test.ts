@@ -5,6 +5,7 @@ import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { dirname, join } from "path";
+import { fakeSshScript, makeBareRepo, runIsolatedInstall, sshInstallEnv } from "./git-ssh-helpers";
 
 const registry = new VerdaccioRegistry();
 
@@ -2688,83 +2689,6 @@ describe("hoist", () => {
   });
 });
 
-// Isolated install with stdout/stderr drained concurrently, and the exit
-// bounded by a deadline instead of the test timeout: the regressions covered
-// below make the install never exit on its own. Returns stderr alongside the
-// exit code so failures can surface git's diagnostics.
-async function runInstall(
-  cwd: string,
-  env: Record<string, string | undefined>,
-): Promise<{ exitCode: number | "install hung"; stderr: string }> {
-  await using proc = spawn({
-    cmd: [bunExe(), "install", "--linker", "isolated"],
-    cwd,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const stdout = proc.stdout.text();
-  const stderr = proc.stderr.text();
-  let deadline: ReturnType<typeof setTimeout> | undefined;
-  const hung = new Promise<"install hung">(resolve => {
-    deadline = setTimeout(() => resolve("install hung"), 60_000);
-  });
-  const exitCode = await Promise.race([proc.exited, hung]);
-  clearTimeout(deadline);
-  if (exitCode === "install hung") {
-    proc.kill();
-    await proc.exited;
-  }
-  await stdout;
-  return { exitCode, stderr: await stderr };
-}
-
-// The stand-in ssh transport for the git dependency tests below: logs the
-// call, skips options, drops the host, and runs the command locally. git for
-// Windows cannot run a shell script transport, hence the skips.
-const fakeSshScript = `#!/bin/sh
-echo "$*" >> "$(dirname "$0")/ssh.log"
-while [ $# -gt 1 ]; do
-  case "$1" in
-    -o|-p) shift 2 ;;
-    -*) shift ;;
-    *) break ;;
-  esac
-done
-shift
-exec sh -c "$1"
-`;
-
-function gitIn(cwd: string, ...args: string[]) {
-  const { exitCode, stderr } = Bun.spawnSync({
-    cmd: ["git", ...args],
-    cwd,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr.toString()}`);
-}
-
-// Commits `upstream` (which already holds a package.json) and clones it to
-// the bare repo the fake ssh serves.
-function makeBareRepo(dir: string, upstream: string, bare: string) {
-  gitIn(join(dir, upstream), "init", "-q");
-  gitIn(join(dir, upstream), "add", "package.json");
-  gitIn(join(dir, upstream), "-c", "user.email=test@bun.com", "-c", "user.name=bun-test", "commit", "-qm", "init");
-  gitIn(dir, "clone", "-q", "--bare", upstream, bare);
-}
-
-function sshInstallEnv(dir: string, cache: string): Record<string, string | undefined> {
-  return {
-    ...bunEnv,
-    BUN_INSTALL_CACHE_DIR: join(dir, cache),
-    GIT_SSH_COMMAND: join(dir, "fake-ssh.sh"),
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_ASKPASS: "echo",
-  };
-}
-
 // bun.lock writes an scp-form git repo ("git@host:path") with an "ssh://"
 // prefix, and every git task id hashes the exact repo bytes. If parsing does
 // not strip that prefix back off, the loaded resolution ("ssh://git@host:path")
@@ -2795,7 +2719,7 @@ test.skipIf(isWindows)("cold cache install from bun.lock with an scp-form git de
   // stderr content is not asserted (the https attempt that precedes the ssh
   // fallback fails with a git error even on the happy path); it is the
   // failure message so a broken install surfaces git's diagnostics
-  const first = await runInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
+  const first = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
   expect(first.exitCode, first.stderr).toBe(0);
   expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
     name: "scp-dep",
@@ -2810,7 +2734,7 @@ test.skipIf(isWindows)("cold cache install from bun.lock with an scp-form git de
   await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
   await rm(join(String(dir), "ssh.log"), { force: true });
 
-  const second = await runInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
+  const second = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
   expect(second.exitCode, second.stderr).toBe(0);
   expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
     name: "scp-dep",
@@ -2825,19 +2749,18 @@ test.skipIf(isWindows)("cold cache install from bun.lock with an scp-form git de
   expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
 });
 
-// Dependencies that really are ssh URLs must keep their ssh:// form:
-// stripping would turn "ssh://git@[::1]/path" into "git@[::1]/path" (a local
-// path to git, no scp separator after the brackets) and
-// "ssh://user:pass@host..." into an scp form split at the userinfo colon.
-test.skipIf(isWindows)("cold cache install of bracketed IPv6 and userinfo ssh URL git dependencies", async () => {
+// A dependency that really is an ssh URL (bracketed IPv6 host here) must keep
+// its ssh:// form: stripping would turn "ssh://git@[::1]/path" into
+// "git@[::1]/path", which git reads as a local path (no scp separator after
+// the brackets). The full keep-or-strip boundary matrix is pinned at parse
+// level in bun-lock.test.ts.
+test.skipIf(isWindows)("cold cache install of a bracketed IPv6 ssh URL git dependency", async () => {
   using dir = tempDir("isolated-ipv6-git", {
     "fake-ssh.sh": fakeSshScript,
     "upstream/package.json": JSON.stringify({ name: "v6-dep", version: "1.0.0" }),
-    "upstream-auth/package.json": JSON.stringify({ name: "v6-auth", version: "1.0.0" }),
   });
   chmodSync(join(String(dir), "fake-ssh.sh"), 0o755);
   makeBareRepo(String(dir), "upstream", "repo.git");
-  makeBareRepo(String(dir), "upstream-auth", "repo-auth.git");
 
   const projectDir = join(String(dir), "project");
   await write(
@@ -2847,36 +2770,28 @@ test.skipIf(isWindows)("cold cache install of bracketed IPv6 and userinfo ssh UR
       dependencies: {
         // the fake ssh ignores the host, so the URL path carries the repo
         "v6-dep": `ssh://git@[::1]${join(String(dir), "repo.git")}`,
-        // userinfo password: its colon is not an scp separator
-        "v6-auth": `ssh://user:pass@[::1]${join(String(dir), "repo-auth.git")}`,
       },
     }),
   );
 
-  const first = await runInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
+  const first = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
   expect(first.exitCode, first.stderr).toBe(0);
-  for (const name of ["v6-dep", "v6-auth"]) {
-    expect(await file(join(projectDir, "node_modules", name, "package.json")).json()).toMatchObject({
-      name,
-      version: "1.0.0",
-    });
-  }
+  expect(await file(join(projectDir, "node_modules", "v6-dep", "package.json")).json()).toMatchObject({
+    name: "v6-dep",
+    version: "1.0.0",
+  });
 
-  // the URLs keep their ssh:// form, bracketed host, and userinfo in the
-  // lockfile
+  // the URL keeps its ssh:// form and its bracketed host in the lockfile
   const lockAfterFirst = await file(join(projectDir, "bun.lock")).text();
   expect(lockAfterFirst).toContain('"v6-dep@git+ssh://git@[::1]');
-  expect(lockAfterFirst).toContain('"v6-auth@git+ssh://user:pass@[::1]');
 
   await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
 
-  const second = await runInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
+  const second = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
   expect(second.exitCode, second.stderr).toBe(0);
-  for (const name of ["v6-dep", "v6-auth"]) {
-    expect(await file(join(projectDir, "node_modules", name, "package.json")).json()).toMatchObject({
-      name,
-      version: "1.0.0",
-    });
-  }
+  expect(await file(join(projectDir, "node_modules", "v6-dep", "package.json")).json()).toMatchObject({
+    name: "v6-dep",
+    version: "1.0.0",
+  });
   expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
 });

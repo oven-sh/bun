@@ -1,7 +1,8 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, pack, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, pack, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
+import { fakeSshScript, makeBareRepo, runIsolatedInstall, sshInstallEnv } from "../git-ssh-helpers";
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -564,3 +565,82 @@ test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file:
   expect(exitCode).toBe(0);
   expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
 });
+
+// npm writes scp-form git repos ("git@host:path") with the same "ssh://"
+// prefix bun.lock uses, so the migrated resolution must parse it back off the
+// same way or its repo never byte-matches the parsed dependency and a
+// cold-cache isolated install waits forever on a checkout id nothing
+// completes. npm >= 7 also rewrites the package.json spec to the prefixed
+// form; older npm kept the bare scp spec. Both shapes must converge.
+test.skipIf(isWindows)(
+  "migrating an npm lockfile with scp-form git dependencies installs on a cold cache",
+  async () => {
+    using dir = tempDir("migrate-scp-git", {
+      "fake-ssh.sh": fakeSshScript,
+      "upstream-a/package.json": JSON.stringify({ name: "scp-a", version: "1.0.0" }),
+      "upstream-b/package.json": JSON.stringify({ name: "scp-b", version: "1.0.0" }),
+    });
+    fs.chmodSync(join(String(dir), "fake-ssh.sh"), 0o755);
+    const shaA = makeBareRepo(String(dir), "upstream-a", "repo-a.git");
+    const shaB = makeBareRepo(String(dir), "upstream-b", "repo-b.git");
+
+    const specA = `git+ssh://git@localhost:${join(String(dir), "repo-a.git")}`;
+    const specB = `git@localhost:${join(String(dir), "repo-b.git")}`;
+    const projectDir = join(String(dir), "project");
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(
+      join(projectDir, "package.json"),
+      JSON.stringify({ name: "migrate-scp", dependencies: { "scp-a": specA, "scp-b": specB } }),
+    );
+    fs.writeFileSync(
+      join(projectDir, "package-lock.json"),
+      JSON.stringify({
+        name: "migrate-scp",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "migrate-scp", dependencies: { "scp-a": specA, "scp-b": specB } },
+          "node_modules/scp-a": {
+            version: "1.0.0",
+            resolved: `git+ssh://git@localhost:${join(String(dir), "repo-a.git")}#${shaA}`,
+          },
+          "node_modules/scp-b": {
+            version: "1.0.0",
+            resolved: `git+ssh://git@localhost:${join(String(dir), "repo-b.git")}#${shaB}`,
+          },
+        },
+      }),
+    );
+
+    const first = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
+    expect(first.exitCode, first.stderr).toBe(0);
+    for (const name of ["scp-a", "scp-b"]) {
+      expect(JSON.parse(fs.readFileSync(join(projectDir, "node_modules", name, "package.json"), "utf8"))).toMatchObject(
+        {
+          name,
+          version: "1.0.0",
+        },
+      );
+    }
+
+    // the migrated lockfile pins the locked commits with the ssh:// spelling
+    const lockAfterMigration = fs.readFileSync(join(projectDir, "bun.lock"), "utf8");
+    expect(lockAfterMigration).toContain('"scp-a@git+ssh://git@localhost:');
+    expect(lockAfterMigration).toContain(`#${shaA}`);
+    expect(lockAfterMigration).toContain(`#${shaB}`);
+
+    // and the migrated lockfile itself round-trips on another cold cache
+    fs.rmSync(join(projectDir, "node_modules"), { recursive: true, force: true });
+    const second = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
+    expect(second.exitCode, second.stderr).toBe(0);
+    for (const name of ["scp-a", "scp-b"]) {
+      expect(JSON.parse(fs.readFileSync(join(projectDir, "node_modules", name, "package.json"), "utf8"))).toMatchObject(
+        {
+          name,
+          version: "1.0.0",
+        },
+      );
+    }
+    expect(fs.readFileSync(join(projectDir, "bun.lock"), "utf8")).toBe(lockAfterMigration);
+  },
+);

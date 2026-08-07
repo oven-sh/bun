@@ -1246,9 +1246,18 @@ fn migrate_npm_lockfile<'a>(
 
                                             let commit =
                                                 str.sub(&str.slice[hash_index + 1..]).value();
+                                            // npm writes scp-form repos with the same ssh://
+                                            // prefix the lockfile formatter uses; parse it back
+                                            // off so the resolution byte-matches the dependency
+                                            let mut repo = &str.slice[..hash_index];
+                                            if let Some(scp) =
+                                                dependency::scp_path_without_ssh_prefix(repo)
+                                            {
+                                                repo = scp;
+                                            }
                                             Resolution::init(ResTagged::Git(Repository {
                                                 owner: res_version_git_owner,
-                                                repo: str.sub(&str.slice[..hash_index]).value(),
+                                                repo: str.sub(repo).value(),
                                                 committish: commit,
                                                 resolved: commit,
                                                 package_name: dep_name,

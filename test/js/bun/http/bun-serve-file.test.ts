@@ -1565,11 +1565,7 @@ test.skipIf(!isLinux)(
       );
       const results = await Promise.all(
         procs.map(async proc => {
-          const [stdout, stderr, exitCode] = await Promise.all([
-            proc.stdout.text(),
-            proc.stderr.text(),
-            proc.exited,
-          ]);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           return { stdout: stdout.trim(), stderr, exitCode };
         }),
       );

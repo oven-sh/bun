@@ -75,11 +75,9 @@ impl ColumnFlags {
 /// ("uuid", "inet4", ...), 1 carries a storage format name ("json").
 const EXTENDED_METADATA_FORMAT: u8 = 1;
 
-/// Walks a MariaDB extended-metadata blob, a sequence of (int<1> kind,
-/// string<lenenc> value) pairs, and reports whether it marks the column as
-/// format=json.
-/// Unrecognized kinds and values are skipped; MariaDB stores those columns
-/// as plain strings, which is how the rest of the decoder already treats them.
+/// Walks a MariaDB extended-metadata blob ((int<1> kind, string<lenenc> value)
+/// pairs) and reports whether it marks the column as format=json. Other kinds
+/// and values ("uuid", "inet4", ...) keep their string decoding; skip them.
 fn extended_metadata_is_json(mut bytes: &[u8]) -> Result<bool, AnyMySQLError> {
     let mut is_json = false;
     while let Some((&kind, rest)) = bytes.split_first() {
@@ -144,9 +142,9 @@ impl ColumnDefinition41 {
             BStr::new(self.org_name.slice())
         );
 
-        // With MARIADB_CLIENT_EXTENDED_TYPE_INFO negotiated, MariaDB inserts a
-        // lenenc blob of extended metadata between org_name and the
-        // fixed-length fields: https://mariadb.com/kb/en/result-set-packets/
+        // With MARIADB_CLIENT_EXTENDED_TYPE_INFO negotiated, a lenenc blob of
+        // extended metadata sits between org_name and the fixed-length
+        // fields: https://mariadb.com/kb/en/result-set-packets/
         let mut json_format = false;
         if extended_type_info {
             let extended = reader.encode_len_string()?;
@@ -163,11 +161,11 @@ impl ColumnDefinition41 {
         let type_byte = reader.int::<u8>()?;
         self.column_type =
             FieldType::from_raw(type_byte).ok_or(AnyMySQLError::UnsupportedColumnType)?;
-        // MariaDB has no MYSQL_TYPE_JSON; JSON columns (and JSON function
-        // results) arrive as TEXT/BLOB types marked format=json. Remap them so
-        // both row decoders parse the value like MySQL's native JSON type. The
-        // type gate keeps the remap to types whose wire values are
-        // length-encoded strings, the same shape MYSQL_TYPE_JSON decodes.
+        // MariaDB has no MYSQL_TYPE_JSON: JSON columns and JSON function
+        // results arrive as TEXT/BLOB marked format=json, so remap them onto
+        // the MySQL JSON decode path. Only types whose wire values are
+        // length-encoded strings (the shape MYSQL_TYPE_JSON decodes) remap,
+        // keeping the row reader aligned.
         if json_format
             && matches!(
                 self.column_type,

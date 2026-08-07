@@ -81,10 +81,9 @@ impl HandshakeV10 {
         // Length of auth plugin data
         let auth_plugin_data_len = reader.int::<u8>()?.max(21);
 
-        // Reserved bytes: 6 bytes of filler, then 4 bytes a MariaDB 10.2+
-        // server uses for its extended capability flags. MariaDB identifies
-        // itself by leaving CLIENT_LONG_PASSWORD (CLIENT_MYSQL in MariaDB's
-        // dialect) unset; MySQL sets that bit and zero-fills all 10 bytes.
+        // Reserved bytes: 6 filler, then 4 a MariaDB 10.2+ server uses for
+        // its extended capability flags. MariaDB marks itself by leaving
+        // CLIENT_LONG_PASSWORD (its CLIENT_MYSQL) unset; MySQL zero-fills all 10.
         // https://mariadb.com/kb/en/connection/#initial-handshake-packet
         reader.skip(6);
         let mariadb_flags = reader.int::<u32>()?;

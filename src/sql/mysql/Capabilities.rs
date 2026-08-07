@@ -87,10 +87,9 @@ capabilities! { Capabilities {
     CLIENT_REMEMBER_OPTIONS                = 31,
 } }
 
-// MariaDB extended capability flags (MariaDB 10.2+). Conceptually bits 32..63
-// of the combined capability value; the handshake carries them in a separate
-// 4-byte field (the tail of the reserved/filler bytes), so bit positions here
-// are relative to that field.
+// MariaDB extended capability flags (MariaDB 10.2+): bits 32..63 of the
+// combined capability value, carried as their own 4-byte handshake field, so
+// bit positions here are relative to that field.
 capabilities! { MariaDBCapabilities {
     MARIADB_CLIENT_PROGRESS                = 0,
     MARIADB_CLIENT_COM_MULTI               = 1,
@@ -103,10 +102,8 @@ capabilities! { MariaDBCapabilities {
 impl MariaDBCapabilities {
     pub fn get_default_capabilities() -> MariaDBCapabilities {
         MariaDBCapabilities {
-            // Without this, MariaDB has no way to distinguish a JSON column
-            // from the LONGTEXT it is stored as: it reports both as
-            // MYSQL_TYPE_BLOB with a text charset. The extended column
-            // metadata this negotiates carries the "format=json" marker.
+            // MariaDB serves JSON columns as plain LONGTEXT/BLOB; the extended
+            // column metadata this negotiates carries their format=json marker.
             MARIADB_CLIENT_EXTENDED_TYPE_INFO: true,
             ..Default::default()
         }

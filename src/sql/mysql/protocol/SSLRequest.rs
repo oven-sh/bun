@@ -55,9 +55,8 @@ impl SSLRequest {
         // Write character set (1 byte)
         writer.int1(self.character_set.to_int())?;
 
-        // 23 bytes of padding: 19 reserved, then 4 for the MariaDB extended
-        // client capabilities, mirroring HandshakeResponse41 (the SSLRequest
-        // is that packet's prefix and the server parses it the same way).
+        // Same padding layout as HandshakeResponse41: the SSLRequest is that
+        // packet's prefix and the server reads its capability bytes the same way.
         writer.write(&[0u8; 19])?;
         writer.int4(self.mariadb_capability_flags.to_int())?;
 

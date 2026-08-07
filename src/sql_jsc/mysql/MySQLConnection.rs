@@ -650,8 +650,6 @@ impl MySQLConnection {
             !self.database.is_empty(),
         )
         .intersect(handshake.capability_flags);
-        // MariaDB servers advertise extended capabilities of their own
-        // (HandshakeV10 leaves them zeroed for MySQL), negotiated the same way.
         self.mariadb_capabilities = MariaDBCapabilities::get_default_capabilities()
             .intersect(handshake.mariadb_capability_flags);
 

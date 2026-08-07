@@ -49,9 +49,8 @@ impl HandshakeResponse41 {
         // Write character set (1 byte)
         writer.int1(self.character_set.to_int())?;
 
-        // 23 bytes of padding: 19 reserved, then 4 that carry the extended
-        // client capabilities when talking to a MariaDB 10.2+ server (all
-        // zero otherwise, matching MySQL's filler).
+        // 23 bytes of padding; the last 4 carry the MariaDB extended client
+        // capabilities (zero for MySQL servers, identical to plain filler).
         // https://mariadb.com/kb/en/connection/#handshake-response-packet
         writer.write(&[0u8; 19])?;
         writer.int4(self.mariadb_capability_flags.to_int())?;

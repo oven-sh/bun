@@ -305,7 +305,6 @@ impl ByteStream {
         }
 
         if self.buffer_action.get().is_some() {
-            self.signal_drained();
             if let streams::Result::Err(err) = &stream {
                 // Explicit post-reject cleanup; runs after `action.reject`
                 // (`?` would skip it).
@@ -313,8 +312,10 @@ impl ByteStream {
 
                 let global = self.parent_const().global_this();
                 // R-2: move the action out of the cell *before* calling
-                // `reject` (which resolves a JS promise and may re-enter).
+                // `signal_drained` or `reject` (both can re-enter `on_data` /
+                // `on_cancel` and consume the slot).
                 let mut action = self.buffer_action.replace(None).unwrap();
+                self.signal_drained();
                 let res = action.reject(global, err);
 
                 self.buffer.with_mut(|b| {
@@ -330,9 +331,18 @@ impl ByteStream {
                 return res;
             }
 
+            // R-2: `signal_drained` dispatches to the producer, which can run
+            // JS or synchronously deliver more data, re-entering `on_data` /
+            // `on_cancel`; either consumes `buffer_action`, so re-take it with
+            // `let`-`else` below instead of `unwrap`.
+            self.signal_drained();
+
             if self.has_received_last_chunk.get() {
                 // `defer { this.buffer_action = null; }` — handled by `replace(None)` below.
-                let mut action = self.buffer_action.replace(None).unwrap();
+                let Some(mut action) = self.buffer_action.replace(None) else {
+                    // Consumed re-entrantly during `signal_drained`.
+                    return Ok(());
+                };
 
                 if self.buffer.get().capacity() == 0 && matches!(stream, streams::Result::Done) {
                     bun_output::scoped_log!(

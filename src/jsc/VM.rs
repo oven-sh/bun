@@ -118,6 +118,12 @@ impl VM {
         JSC__VM__notifyNeedTermination(self)
     }
 
+    /// Has termination been requested on this VM (worker.terminate(), or
+    /// teardown's forbidExecution)? JS thread.
+    pub fn has_termination_request(&self) -> bool {
+        crate::cpp::JSC__VM__hasTerminationRequest(self)
+    }
+
     pub(crate) fn clear_has_termination_request(&self) {
         crate::cpp::JSC__VM__clearHasTerminationRequest(self)
     }

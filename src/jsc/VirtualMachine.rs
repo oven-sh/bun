@@ -527,7 +527,10 @@ impl ExitHandler {
     /// reference instead; the body re-enters JS so no `&mut` is held.
     pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) {
         let exit_code = vm.exit_handler.exit_code;
-        Process__dispatchOnExit(vm.global(), exit_code);
+        // `process.on('exit')` handlers are user script (see `on_exit`).
+        if vm.script_allowed() {
+            Process__dispatchOnExit(vm.global(), exit_code);
+        }
         if vm.worker.is_none() {
             Bun__closeAllSQLiteDatabasesForTermination();
             Bun__closeAllNodeSqliteDatabasesForTermination(vm.global());
@@ -538,6 +541,9 @@ impl ExitHandler {
     /// See [`dispatch_on_exit`] for the `&mut self → &VirtualMachine`
     /// signature change.
     pub(crate) fn dispatch_on_before_exit(vm: &VirtualMachine) {
+        if !vm.script_allowed() {
+            return;
+        }
         let exit_code = vm.exit_handler.exit_code;
         let global = vm.global();
         let _ = jsc::from_js_host_call_generic(global, || {
@@ -1512,6 +1518,23 @@ impl VirtualMachine {
     }
 
     pub fn on_exit(&mut self) {
+        // Decide once whether the exit sequence may run script. It can be
+        // entered with an exception pending: `process.exit()` from inside a
+        // throwing/catching callback (an ordinary exception — cleared here, as
+        // Node's EmitProcessExit does under a TryCatch), or after
+        // `worker.terminate()` / a termination request (script must not run at
+        // all: no 'exit' handlers or close events for a forcefully terminated
+        // worker, matching Node and WebCore's terminate()). Everything below and
+        // the teardown's stop phase consult `script_allowed()`.
+        {
+            let global = self.global();
+            let termination_pending =
+                !global.clear_exception_except_termination() || self.jsc_vm().has_termination_request();
+            if termination_pending {
+                self.handle.forbid_script();
+            }
+        }
+
         // Write CPU profile if profiling was enabled - do this FIRST before any
         // shutdown begins. Grab the config and null it out to make this
         // idempotent.

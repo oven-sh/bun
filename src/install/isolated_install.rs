@@ -2356,11 +2356,9 @@ pub(crate) fn install_isolated_packages(
                     {
                         install::PreinstallState::Done => false,
                         _ => 'missing_from_cache: {
-                            // Downloads only produce the unpatched folder
-                            // (`apply_package_patch` derives the `_patch_hash=`
-                            // one), so check for that. Re-enqueueing a tarball
-                            // the resolve phase already extracted deadlocks the
-                            // install (#37136).
+                            // Downloads only produce the unpatched folder;
+                            // re-enqueueing one the resolve phase already
+                            // extracted deadlocks the install (#37136).
                             if matches!(patch_info, installer::PatchInfo::Patch(_)) {
                                 let idx = strings::last_index_of(
                                     pkg_cache_dir_subpath.slice(),

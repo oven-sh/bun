@@ -834,9 +834,19 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c1, c2);
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
-    isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c2, c1);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+    // The swapped call only exists to catch "c2 is special, c1 is not". Under
+    // checkPrototypes the Set/Map/ArrayBuffer/Date/RegExp arms break out after
+    // a content match (own properties still need comparing), so a same-typed
+    // pair would rerun the whole content comparison here for nothing.
+    bool skipSwappedSpecialCheck = false;
+    if constexpr (checkPrototypes) {
+        skipSwappedSpecialCheck = c1->type() == c2->type();
+    }
+    if (!skipSwappedSpecialCheck) {
+        isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c2, c1);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+    }
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
 

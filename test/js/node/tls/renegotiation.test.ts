@@ -443,33 +443,30 @@ server.kill();
 console.log("drained-ok");
 `;
 
-it.concurrent(
-  "should dispatch drain for a backpressured write after a quiet renegotiation",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", drainAfterRenegotiationFixture],
-      env: {
-        ...bunEnv,
-        SERVER_JS: QUIET_RENEG_SERVER_JS,
-        SERVER_CERT: tls.cert,
-        SERVER_KEY: tls.key,
-        RENEG_MODE: "pause",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-      timeout: 20_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode, stderr }).toEqual({
-      stdout: "drained-ok",
-      exitCode: 0,
-      signalCode: null,
-      stderr: expect.any(String),
-    });
-  },
-);
+it.concurrent("should dispatch drain for a backpressured write after a quiet renegotiation", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", drainAfterRenegotiationFixture],
+    env: {
+      ...bunEnv,
+      SERVER_JS: QUIET_RENEG_SERVER_JS,
+      SERVER_CERT: tls.cert,
+      SERVER_KEY: tls.key,
+      RENEG_MODE: "pause",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode, stderr }).toEqual({
+    stdout: "drained-ok",
+    exitCode: 0,
+    signalCode: null,
+    stderr: expect.any(String),
+  });
+});
 
 it.concurrent("should complete a quiet renegotiation over a duplex socket (SSLWrapper path)", async () => {
   // tls.connect({ socket: <Duplex> }) is encrypted by the SSLWrapper path

@@ -52,10 +52,6 @@ impl Default for ExhaustiveEffectDepsMode {
     }
 }
 
-fn default_true() -> bool {
-    true
-}
-
 /// Compiler environment configuration. Contains feature flags and settings.
 ///
 /// Fields that would require passing JS functions across the JS/Rust boundary

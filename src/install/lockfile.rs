@@ -1502,7 +1502,6 @@ impl Lockfile {
                         cache_ctx,
                         scope,
                         pkg_name_hash,
-                        Install::ManifestLoad::LoadFromMemoryFallbackToDisk,
                         false,
                     ) else {
                         continue;

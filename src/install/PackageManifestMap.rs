@@ -26,12 +26,6 @@ impl Value {
 type ManifestHashMap =
     HashMap<PackageNameHash, Value, bun_collections::IdentityContext<PackageNameHash>>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CacheBehavior {
-    LoadFromMemory,
-    LoadFromMemoryFallbackToDisk,
-}
-
 /// By-value snapshot of the `PackageManager` fields the disk-fallback path of
 /// [`PackageManifestMap::by_name_hash_allow_expired`] reads.
 ///
@@ -61,14 +55,12 @@ impl PackageManifestMap {
         ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
         name: &[u8],
-        cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
         self.by_name_hash(
             ctx,
             scope,
             StringBuilder::string_hash(name),
-            cache_behavior,
             needs_extended_manifest,
         )
     }
@@ -87,21 +79,13 @@ impl PackageManifestMap {
         ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
         name_hash: PackageNameHash,
-        cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
-        self.by_name_hash_allow_expired(
-            ctx,
-            scope,
-            name_hash,
-            None,
-            cache_behavior,
-            needs_extended_manifest,
-        )
+        self.by_name_hash_allow_expired(ctx, scope, name_hash, None, needs_extended_manifest)
     }
 
-    /// Memory-only lookup — equivalent to `by_name_hash` with
-    /// `CacheBehavior::LoadFromMemory`, but without the `ctx`/`scope`
+    /// Memory-only lookup — like `by_name_hash`, but without consulting the
+    /// disk cache and without the `ctx`/`scope`
     /// parameters: the memory-only arm never reads them. Exposed separately so callers
     /// holding `&mut PackageManager` can borrow only the disjoint
     /// `pm.manifests` field.
@@ -121,7 +105,6 @@ impl PackageManifestMap {
         scope: &npm::registry::Scope,
         name: &[u8],
         is_expired: Option<&mut bool>,
-        cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
         self.by_name_hash_allow_expired(
@@ -129,7 +112,6 @@ impl PackageManifestMap {
             scope,
             StringBuilder::string_hash(name),
             is_expired,
-            cache_behavior,
             needs_extended_manifest,
         )
     }
@@ -145,25 +127,8 @@ impl PackageManifestMap {
         scope: &npm::registry::Scope,
         name_hash: PackageNameHash,
         is_expired: Option<&mut bool>,
-        cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
-        if cache_behavior == CacheBehavior::LoadFromMemory {
-            let entry = self.hash_map.get_mut(&name_hash)?;
-            return match entry {
-                Value::Manifest(m) => Some(m),
-                Value::Expired(m) => {
-                    if let Some(expiry) = is_expired {
-                        *expiry = true;
-                        Some(m)
-                    } else {
-                        None
-                    }
-                }
-                Value::NotFound => None,
-            };
-        }
-
         match self.hash_map.entry(name_hash) {
             Entry::Occupied(occ) => {
                 let value_ptr = occ.into_mut();

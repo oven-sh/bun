@@ -108,7 +108,6 @@ pub enum ReadDuringJSOnPullResult {
     // TODO(refactor): `&'static mut` forge — sibling `static-widen-mut` pattern;
     // see note on `FileReader::pending_view`.
     Js(&'static mut [u8]),
-    AmountRead(usize),
     /// Borrows the reader/JS buffer for the duration of one `on_pull` call
     /// only. Holder-lifetime, not process-lifetime — `RawSlice<u8>` per
     /// `bun_ptr::Interned` Population-B triage.
@@ -1066,17 +1065,14 @@ impl FileReader {
                     }
                     return streams::Result::Owned(Vec::<u8>::move_from_list(buffered));
                 }
-                _ => {
+                ReadDuringJSOnPullResult::None => {
                     // Falls through to set
-                    // `pending_view = buffer`. The only variants reaching this arm
-                    // are `None` (impossible — we just stored `Js(buffer)` above and
-                    // `on_read_chunk` never sets `None`) and `AmountRead` (never
-                    // produced by `on_read_chunk`). Unreachable in the current state
+                    // `pending_view = buffer`. The only variant reaching this arm
+                    // is `None` (impossible — we just stored `Js(buffer)` above and
+                    // `on_read_chunk` never sets `None`). Unreachable in the current state
                     // machine; if that invariant ever changes, the buffer slice must
                     // be recovered from a captured raw ptr+len before the move.
-                    unreachable!(
-                        "on_read_chunk never yields None/AmountRead while read_inside_on_pull == Js"
-                    );
+                    unreachable!("on_read_chunk never yields None while read_inside_on_pull == Js");
                 }
             }
         }

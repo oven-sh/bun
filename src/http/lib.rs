@@ -186,7 +186,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum HTTPUpgradeState {
+enum HTTPUpgradeState {
     #[default]
     None = 0,
     Pending = 1,
@@ -208,7 +208,7 @@ pub struct Flags {
     pub reject_unauthorized: bool,
     pub(crate) is_preconnect_only: bool,
     pub is_streaming_request_body: bool,
-    pub(crate) defer_fail_until_connecting_is_complete: bool,
+    pub(crate) defer_terminal_dispatch_until_connecting_is_complete: bool,
     pub(crate) upgrade_state: HTTPUpgradeState,
     pub(crate) protocol: Protocol,
     pub forced_protocol: Option<Protocol>,
@@ -229,7 +229,7 @@ impl Default for Flags {
             reject_unauthorized: true,
             is_preconnect_only: false,
             is_streaming_request_body: false,
-            defer_fail_until_connecting_is_complete: false,
+            defer_terminal_dispatch_until_connecting_is_complete: false,
             upgrade_state: HTTPUpgradeState::None,
             protocol: Protocol::Http1_1,
             forced_protocol: None,
@@ -365,21 +365,21 @@ pub(crate) fn strip_port_from_host(host: &[u8]) -> &[u8] {
     }
     // IPv6 with brackets: "[::1]:port"
     if host[0] == b'[' {
-        if let Some(bracket) = host.iter().rposition(|&b| b == b']') {
+        if let Some(bracket) = strings::last_index_of_char(host, b']') {
             // Return everything up to and including ']'
             return &host[0..bracket + 1];
         }
         return host;
     }
     // IPv4 or hostname: find last colon
-    if let Some(colon) = host.iter().rposition(|&b| b == b':') {
+    if let Some(colon) = strings::last_index_of_char(host, b':') {
         return &host[0..colon];
     }
     host
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ShouldContinue {
+enum ShouldContinue {
     ContinueStreaming,
     Finished,
 }
@@ -625,7 +625,7 @@ impl<'a> ThreadlocalAsyncHTTP<'a> {
 }
 
 /// `socket: anytype` in `set_timeout` — minimal trait for what the body calls.
-pub trait SocketTimeout {
+trait SocketTimeout {
     /// Seconds-granularity idle timer. Values >240s are routed onto uSockets'
     /// minute-granularity long-timeout wheel; ≤240s use the short-tick timer.
     fn set_timeout(&self, seconds: core::ffi::c_uint);
@@ -734,7 +734,7 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
     if hostname.is_empty() {
         return false;
     }
-    for item in no_proxy_text.split(|&b| b == b',') {
+    for item in strings::split(no_proxy_text, b",") {
         let mut entry = strings::trim(item, &strings::WHITESPACE_CHARS);
         if entry.is_empty() {
             continue;
@@ -751,7 +751,7 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
 
         // IPv6 literals contain multiple colons (e.g., "::1"); bracketed IPv6
         // with port is "[::1]:8080"; host:port has a single colon.
-        let colon_count = entry.iter().filter(|&&b| b == b':').count();
+        let colon_count = strings::count_char(entry, b':');
         let has_port = if strings::starts_with_char(entry, b'[') {
             strings::index_of(entry, b"]:").is_some()
         } else {
@@ -2061,7 +2061,10 @@ impl<'a> HTTPClient<'a> {
             self.state.response_stage = ResponseStage::Fail;
             self.state.fail = Some(err);
             self.state.stage = Stage::Fail;
-            if self.flags.defer_fail_until_connecting_is_complete {
+            if self
+                .flags
+                .defer_terminal_dispatch_until_connecting_is_complete
+            {
                 return;
             }
             self.dispatch_result_and_reset(false);
@@ -2719,12 +2722,16 @@ impl<'a> HTTPClient<'a> {
     fn start_<const IS_SSL: bool>(&mut self) {
         self.unregister_abort_tracker();
 
-        // mark that we are connecting
-        self.flags.defer_fail_until_connecting_is_complete = true;
-        // this will call .fail() if the connection fails in the middle of the function avoiding UAF with can happen when the connection is aborted
+        // Mark that we are connecting: a terminal result reached inside this
+        // function (synchronous failure, or preconnect completing on a pooled
+        // socket) is recorded and dispatched by `complete_connecting_process()`
+        // instead, since the dispatch frees the AsyncHTTP clone embedding
+        // `self` while these frames still use it.
         // `complete_connecting_process()` cannot be a Drop guard here
         // (it needs `&mut self`, which would alias every other `self.*` call in the body),
         // so it is called explicitly before each return.
+        self.flags
+            .defer_terminal_dispatch_until_connecting_is_complete = true;
 
         // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
@@ -3922,10 +3929,17 @@ impl<'a> HTTPClient<'a> {
     }
 
     fn complete_connecting_process(&mut self) {
-        if self.flags.defer_fail_until_connecting_is_complete {
-            self.flags.defer_fail_until_connecting_is_complete = false;
+        if self
+            .flags
+            .defer_terminal_dispatch_until_connecting_is_complete
+        {
+            self.flags
+                .defer_terminal_dispatch_until_connecting_is_complete = false;
             if self.state.stage == Stage::Fail {
                 self.dispatch_result_and_reset(true);
+            } else if self.flags.is_preconnect_only && self.state.stage == Stage::Done {
+                // Deferred preconnect success (see `on_preconnect`).
+                self.dispatch_preconnect_result();
             }
         }
     }
@@ -3989,7 +4003,10 @@ impl<'a> HTTPClient<'a> {
             self.state.fail = Some(err);
             self.state.stage = Stage::Fail;
 
-            if !self.flags.defer_fail_until_connecting_is_complete {
+            if !self
+                .flags
+                .defer_terminal_dispatch_until_connecting_is_complete
+            {
                 self.dispatch_result_and_reset(true);
             }
         }
@@ -4409,6 +4426,20 @@ impl<'a> HTTPClient<'a> {
         self.state.request_stage = RequestStage::Done;
         self.state.stage = Stage::Done;
         self.flags.proxy_tunneling = false;
+        // True when pooled-socket reuse reached here synchronously inside
+        // `start_`/`connect`; `complete_connecting_process` dispatches then.
+        if self
+            .flags
+            .defer_terminal_dispatch_until_connecting_is_complete
+        {
+            return;
+        }
+        self.dispatch_preconnect_result();
+    }
+
+    /// Terminal result for a preconnect-only request. Frees the HTTP-thread
+    /// AsyncHTTP clone embedding `self`; nothing may touch `self` afterwards.
+    fn dispatch_preconnect_result(&mut self) {
         self.result_callback.run(
             self.parent_async_http(),
             HTTPClientResult {

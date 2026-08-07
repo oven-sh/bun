@@ -388,6 +388,41 @@ it("Readable.fromWeb", async () => {
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
 });
 
+// fromWeb assigns stream.$bunNativePtr on the node Readable. When user code grafts
+// ReadableStream.prototype into the node stream prototype chain, that put used to
+// reach ReadableStream's private custom setter with the Readable as the receiver,
+// writing a JSValue through a type-confused pointer into the Readable's own
+// property storage (observable below as a clobbered Symbol(kCapture) slot).
+it("Readable.fromWeb with ReadableStream.prototype grafted into the prototype chain", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Readable } = require("node:stream");
+        const { EventEmitter } = require("node:events");
+        const snap = o => Object.fromEntries(Reflect.ownKeys(o).map(k => [String(k), Object.prototype.toString.call(o[k])]));
+        const before = snap(Readable.fromWeb(new Response("x").body));
+        Object.setPrototypeOf(EventEmitter.prototype, ReadableStream.prototype);
+        const stream = Readable.fromWeb(new Response("y").body);
+        const after = snap(stream);
+        for (const key in before) {
+          if (before[key] !== after[key]) throw new Error("clobbered own slot " + key + ": " + before[key] + " -> " + after[key]);
+        }
+        const chunks = [];
+        for await (const chunk of stream) chunks.push(chunk);
+        console.log("read:" + Buffer.concat(chunks).toString());
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("read:y\n");
+  expect(exitCode).toBe(0);
+});
+
 // An error from the underlying web stream must surface on the node Readable as an
 // 'error' event (and destroy it), not as a global unhandled rejection.
 it("Readable.fromWeb propagates web stream errors to 'error' and destroys", async () => {

@@ -195,7 +195,7 @@ unsafe extern "C" {
 }
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
-pub enum EscapeError {
+enum EscapeError {
     #[error("escape called twice")]
     EscapeCalledTwice,
 }

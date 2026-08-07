@@ -4,12 +4,41 @@
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
 
+    fn highway_last_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
+
+    fn highway_index_of_not_char(haystack: *const u8, haystack_len: usize, value: u8) -> usize;
+
+    fn highway_count_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
+
     fn highway_memmem(
         haystack: *const u8,
         haystack_len: usize,
         needle: *const u8,
         needle_len: usize,
     ) -> *const u8;
+
+    // These three return `usize::MAX` for not-found (the empty needle matches at
+    // 0 / `haystack_len` respectively).
+    fn highway_memrmem(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: *const u8,
+        needle_len: usize,
+    ) -> usize;
+
+    fn highway_memmem16(
+        haystack: *const u16,
+        haystack_len: usize,
+        needle: *const u16,
+        needle_len: usize,
+    ) -> usize;
+
+    fn highway_memrmem16(
+        haystack: *const u16,
+        haystack_len: usize,
+        needle: *const u16,
+        needle_len: usize,
+    ) -> usize;
 
     fn highway_index_of_interesting_character_in_string_literal(
         text: *const u8,
@@ -43,6 +72,13 @@ unsafe extern "C" {
     ) -> usize;
 
     fn highway_index_of_any_char(
+        text: *const u8,
+        text_len: usize,
+        chars: *const u8,
+        chars_len: usize,
+    ) -> usize;
+
+    fn highway_last_index_of_any_char(
         text: *const u8,
         text_len: usize,
         chars: *const u8,
@@ -105,7 +141,8 @@ unsafe extern "C" {
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
-// ptr/len shims around the `extern "C"` highway_* dispatch stubs; inlining
+// ptr/len shims around the `extern "C"` highway_* dispatch stubs (plus, for the
+// single-byte scans, a <16-byte scalar prologue — see `SCALAR_CUTOFF`); inlining
 // them puts the FFI call directly at the hot lexer/printer call site so that
 // (a) the Rust-side frame disappears unconditionally, and (b) cross-language
 // LTO (`--profile=btg`, crossLangLto=true) can fold the C dispatch shim
@@ -113,22 +150,78 @@ unsafe extern "C" {
 // distinct hot leaf (e.g. `highway_index_of_newline_or_non_ascii` self-samples
 // in lint/create-vue benches).
 
+/// Below the narrowest vector the kernels dispatch to (16 lanes: NEON, SSE4)
+/// they do at most one (masked) vector op or just their scalar tail, so for
+/// haystacks this short the FFI hop plus the dispatch-table call dominates —
+/// do those bytes inline. Also keeps cold call sites from dragging an FFI
+/// call into a caller's hot loop (see `pop_last_segment_t` in node/path.rs).
+const SCALAR_CUTOFF: usize = 16;
+
+/// The single-byte kernels return `haystack_len` for "not found".
+#[inline(always)]
+fn found_at(result: usize, haystack_len: usize) -> Option<usize> {
+    if result == haystack_len {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+/// The `mem*mem*` kernels return `usize::MAX` for "not found".
+#[inline(always)]
+fn match_at(result: usize) -> Option<usize> {
+    if result == usize::MAX {
+        None
+    } else {
+        Some(result)
+    }
+}
+
 #[inline(always)]
 pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
-    if haystack.is_empty() {
-        return None;
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().position(|&b| b == needle);
     }
-
     // SAFETY: haystack.ptr/len are a valid readable range.
     let result = unsafe { highway_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] == needle));
+    found
+}
 
-    if result == haystack.len() {
-        return None;
+#[inline(always)]
+pub fn last_index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().rposition(|&b| b == needle);
     }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    let result = unsafe { highway_last_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] == needle));
+    found
+}
 
-    debug_assert!(haystack[result] == needle);
+/// Index of the first byte that is not `value` (i.e. the length of the leading
+/// run of `value`), or `None` if every byte is `value`.
+#[inline(always)]
+pub fn index_of_not_char(haystack: &[u8], value: u8) -> Option<usize> {
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().position(|&b| b != value);
+    }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    let result = unsafe { highway_index_of_not_char(haystack.as_ptr(), haystack.len(), value) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] != value));
+    found
+}
 
-    Some(result)
+#[inline(always)]
+pub fn count_char(haystack: &[u8], needle: u8) -> usize {
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().filter(|&&b| b == needle).count();
+    }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    unsafe { highway_count_char(haystack.as_ptr(), haystack.len(), needle) }
 }
 
 #[inline(always)]
@@ -154,6 +247,76 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         // SAFETY: highway_memmem returns a pointer within `haystack` on success.
         Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
     }
+}
+
+/// Start index of the last occurrence of `needle` in `haystack`. An empty
+/// needle matches at `haystack.len()`.
+#[inline(always)]
+pub fn memrmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(haystack.len());
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    // SAFETY: both (ptr,len) pairs are valid readable ranges.
+    let result = unsafe {
+        highway_memrmem(
+            haystack.as_ptr(),
+            haystack.len(),
+            needle.as_ptr(),
+            needle.len(),
+        )
+    };
+    let found = match_at(result);
+    debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+    found
+}
+
+#[inline(always)]
+pub fn memmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
+    let result = unsafe {
+        highway_memmem16(
+            haystack.as_ptr(),
+            haystack.len(),
+            needle.as_ptr(),
+            needle.len(),
+        )
+    };
+    let found = match_at(result);
+    debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+    found
+}
+
+/// Start index of the last occurrence of `needle`. An empty needle matches at
+/// `haystack.len()`.
+#[inline(always)]
+pub fn memrmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(haystack.len());
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
+    let result = unsafe {
+        highway_memrmem16(
+            haystack.as_ptr(),
+            haystack.len(),
+            needle.as_ptr(),
+            needle.len(),
+        )
+    };
+    let found = match_at(result);
+    debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+    found
 }
 
 #[inline(always)]
@@ -294,8 +457,12 @@ pub fn index_of_needs_escape_for_javascript_string(slice: &[u8], quote_char: u8)
 
 #[inline(always)]
 pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
-    if haystack.is_empty() || chars.is_empty() {
+    if chars.is_empty() {
         return None;
+    }
+    debug_assert!(chars.len() >= 2 && chars.len() <= 16);
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().position(|b| chars.contains(b));
     }
 
     // SAFETY: haystack and chars ptr/len are valid readable ranges.
@@ -327,6 +494,32 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     }
 
     Some(result)
+}
+
+/// `chars.len()` must be in 2..=16 (single-byte callers use [`last_index_of_char`]).
+#[inline(always)]
+pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
+    if chars.is_empty() {
+        return None;
+    }
+    debug_assert!(chars.len() >= 2 && chars.len() <= 16);
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().rposition(|b| chars.contains(b));
+    }
+
+    // SAFETY: haystack and chars ptr/len are valid readable ranges.
+    let result = unsafe {
+        highway_last_index_of_any_char(
+            haystack.as_ptr(),
+            haystack.len(),
+            chars.as_ptr(),
+            chars.len(),
+        )
+    };
+
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| chars.contains(&haystack[i])));
+    found
 }
 
 // `&[u16]` requires

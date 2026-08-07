@@ -268,6 +268,59 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug!("  DONE {} source maps (quoted contents)", chunks.len());
         }
 
+        // A part that failed to print (e.g. the recursion guard tripped on a
+        // deeply nested AST) must fail the build instead of joining the chunk
+        // as silently truncated output. Dev server excluded: its callers turn
+        // any `Err` here into an OOM panic (see `finish_from_bake_dev_server`),
+        // so unprintable parts keep the old dropped-code behavior there.
+        if !IS_DEV_SERVER {
+            let mut had_print_error = false;
+            // Without code splitting a failing file is printed once per chunk
+            // that includes it; report each file once.
+            let mut reported_sources = AutoBitSet::init_empty(c.parse_graph().input_files.len())?;
+            for chunk in chunks.iter() {
+                for compile_result in chunk.compile_results_for_chunk.iter() {
+                    let message: Cow<'static, [u8]> = match compile_result {
+                        crate::CompileResult::Javascript {
+                            result: bun_js_printer::PrintResult::Err(err),
+                            ..
+                        } => match err {
+                            bun_js_printer::Error::StackOverflow => Cow::Borrowed(
+                                b"Maximum call stack size exceeded while generating code for this file"
+                                    .as_slice(),
+                            ),
+                            err => Cow::Owned(
+                                format!("Failed to generate code for this file ({})", err.name())
+                                    .into_bytes(),
+                            ),
+                        },
+                        crate::CompileResult::Css {
+                            result: Err(err), ..
+                        } => Cow::Owned(
+                            format!("Failed to generate CSS for this file ({})", err.name())
+                                .into_bytes(),
+                        ),
+                        _ => continue,
+                    };
+                    had_print_error = true;
+                    let source_index = compile_result.source_index();
+                    let source = if source_index != Index::INVALID.get() {
+                        if reported_sources.is_set(source_index as usize) {
+                            continue;
+                        }
+                        reported_sources.set(source_index as usize);
+                        Some(c.get_source(source_index))
+                    } else {
+                        None
+                    };
+                    c.log_mut().add_error(source, bun_ast::Loc::EMPTY, message);
+                }
+            }
+            if had_print_error {
+                return Err(crate::Error::PrintError);
+            }
+        }
+
         // For dev server, only post-process CSS + HTML chunks.
         let chunks_to_do: &mut [Chunk] = if IS_DEV_SERVER {
             &mut chunks[1..]

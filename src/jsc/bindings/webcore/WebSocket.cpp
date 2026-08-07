@@ -1234,13 +1234,6 @@ void WebSocket::didReceiveMessage(String&& message)
         return;
     }
 
-    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
-    //     if (auto* inspector = m_channel->channelInspector()) {
-    //         auto utf8Message = message.utf8();
-    //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(utf8Message.dataAsUInt8Ptr(), utf8Message.length(), WebSocketFrame::OpCode::OpCodeText));
-    //     }
-    // }
-
     if (this->hasEventListeners("message"_s)) {
         // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
         this->incPendingActivityCount();
@@ -1481,17 +1474,6 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
         return;
 
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, unhandledBufferedAmount, closingHandshakeCompletion, code, reason] {
-    // if (!m_channel)
-    //     return;
-
-    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
-    //     if (auto* inspector = m_channel->channelInspector()) {
-    //         WebSocketFrame closingFrame(WebSocketFrame::OpCodeClose, true, false, false);
-    //         inspector->didReceiveWebSocketFrame(closingFrame);
-    //         inspector->didCloseWebSocket();
-    //     }
-    // }
-
     bool wasClean = m_state == CLOSING && !unhandledBufferedAmount && code != 0; // WebSocketChannel::CloseEventCodeAbnormalClosure;
     m_bufferedAmount = unhandledBufferedAmount;
     ASSERT(scriptExecutionContext());

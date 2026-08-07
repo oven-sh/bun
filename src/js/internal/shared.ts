@@ -330,7 +330,6 @@ const kInternalAssertionSuffix =
 
 export default {
   kInternalAssertionSuffix,
-  NotImplementedError,
   throwNotImplemented,
   hideFromStack,
   warnNotImplementedOnce,

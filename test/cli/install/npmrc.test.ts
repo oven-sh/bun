@@ -1,7 +1,7 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, stderrForInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunExe, bunEnv as env, tempDir } from "harness";
 import { join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -40,7 +40,7 @@ describe("npmrc", async () => {
     env.BUN_INSTALL_CACHE_DIR = originalCacheDir;
 
     const out = await stdout.text();
-    const err = stderrForInstall(await stderr.text());
+    const err = await stderr.text();
     console.log({ out, err });
     expect(err).toBeEmpty();
     expect(out.endsWith("hi!")).toBeTrue();

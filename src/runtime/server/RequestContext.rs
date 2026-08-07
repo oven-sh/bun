@@ -69,14 +69,14 @@ pub type DeferDeinitFlag = bun_ptr::BackRef<core::cell::Cell<bool>>;
 
 pub(crate) type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> =
     crate::webcore::streams::HTTPServerWritable<SSL_ENABLED, HTTP3>;
-pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
+type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
     crate::webcore::streams::HTTPServerWritableJSSink<SSL_ENABLED, HTTP3>;
 
 /// This pre-allocates up to 2,048 RequestContext structs.
 /// It costs about 655,632 bytes.
 // Capacity 0 when heap-breakdown is enabled routes every allocation through
 // the fallback heap path so the per-type malloc zones can attribute them.
-pub const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
+const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
     0
 } else {
     2048
@@ -222,6 +222,7 @@ where
 // stream handling, error handling.
 use bun_collections::VecExt;
 use bun_core::Output;
+use bun_core::strings;
 use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
 use bun_paths::PathBuffer;
@@ -3899,10 +3900,7 @@ where
             // we may not know the content-type when streaming
             && (!blob.is_detached()
                 || content_type.value.as_ptr() != bun_http_types::MimeType::OTHER.value.as_ptr())
-            && !content_type
-                .value
-                .iter()
-                .any(|&b| matches!(b, b'\r' | b'\n' | 0))
+            && !strings::contains_any(&content_type.value, b"\r\n\0")
         {
             resp.write_header(b"content-type", &content_type.value);
         }
@@ -3925,10 +3923,7 @@ where
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
-                    if !truncated
-                        .iter()
-                        .any(|&b| matches!(b, b'\r' | b'\n' | 0 | b'"'))
-                    {
+                    if !strings::contains_any(truncated, b"\r\n\0\"") {
                         let header_value = {
                             let mut w = &mut filename_buf[..];
                             if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
@@ -4635,18 +4630,17 @@ request_ctx_exports! {
         Bun__HTTPRequestContextDebugH3__onRejectStream;
 }
 
-pub struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
+struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, H3>,
     pub stream: WebCore::ReadableStream,
 }
 
-pub struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool>
-{
+struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, H3>,
     pub(crate) size: usize,
 }
 
-pub struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
+struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, H3>,
     /// The JS wrapper's cell pointer, not a `&mut Response`: the receiving
     /// frame hands it to `set_response`, which stores it in a `WeakPtr` that
@@ -4654,7 +4648,7 @@ pub struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, 
     pub(crate) response: *mut Response,
 }
 
-pub struct PathnameFormatter<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
+struct PathnameFormatter<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
     ctx: &'a RequestContext<ThisServer, SSL, DBG, H3>,
 }
 
@@ -4708,7 +4702,7 @@ pub struct SendfileContext {
 // accessors on the const params.
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
-    pub struct FlagsBits: u32 {
+    struct FlagsBits: u32 {
         const HAS_MARKED_COMPLETE         = 1 << 0;
         const HAS_MARKED_PENDING          = 1 << 1;
         const HAS_ABORT_HANDLER           = 1 << 2;

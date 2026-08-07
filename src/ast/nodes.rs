@@ -4,7 +4,6 @@
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-pub use bun_collections::VecExt as _VecExtReexport;
 use bun_collections::{ArrayHashMap, AutoContext, MultiArrayList, StringHashMap};
 use bun_core::Output;
 

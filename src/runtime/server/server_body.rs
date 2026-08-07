@@ -436,10 +436,11 @@ type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
 // `version`, enums emitted as `@tagName` strings).
 pub mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
-    use bun_analytics::schema::analytics::{Architecture, OperatingSystem, Platform};
+    use bun_analytics::{OperatingSystem, Platform};
     use bun_ast::Loc;
     use bun_ast::e::EString;
     use bun_ast::{E, Expr, G};
+    use bun_core::Environment::Architecture;
     use bun_core::Global;
 
     pub(crate) struct BunInfo {
@@ -449,7 +450,6 @@ pub mod BunInfo {
 
     fn os_tag_name(os: OperatingSystem) -> &'static [u8] {
         match os {
-            OperatingSystem::None => b"_none",
             OperatingSystem::Linux => b"linux",
             OperatingSystem::Macos => b"macos",
             OperatingSystem::Windows => b"windows",
@@ -461,9 +461,9 @@ pub mod BunInfo {
 
     fn arch_tag_name(arch: Architecture) -> &'static [u8] {
         match arch {
-            Architecture::None => b"_none",
             Architecture::X64 => b"x64",
-            Architecture::Arm => b"arm",
+            Architecture::Arm64 => b"arm",
+            Architecture::Wasm => b"wasm",
         }
     }
 
@@ -492,7 +492,7 @@ pub mod BunInfo {
         // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
         let platform_props = bun_alloc::AstAlloc::vec_from_iter([
             prop(b"os", str_expr(os_tag_name(info.platform.os))),
-            prop(b"arch", str_expr(arch_tag_name(info.platform.arch))),
+            prop(b"arch", str_expr(arch_tag_name(bun_core::Environment::ARCH))),
             prop(b"version", str_expr(info.platform.version)),
         ]);
         let platform_expr = Expr::init(
@@ -1762,16 +1762,11 @@ where
             return Ok(JSValue::FALSE);
         }
 
-        // After a graceful stop() has drained to idle, `deinit_if_we_can`
-        // downgrades the wrapper and clears `handler.server` / `handler.app`.
-        // `js_value_for_dispatch` still lets a late keep-alive request reach
-        // `fetch()` while the wrapper is `Weak`, but accepting a new websocket
-        // there would create a `ServerWebSocket` whose `init`/`on_open` skip
-        // the `m_server` trace edge and `on_websocket_opened()` (because
-        // `handler.server` is `None`), so `has_active_web_sockets()` would
-        // stay false and the next idle pass could free the `NewServer` box
-        // under a live socket. Refuse the upgrade once idle; the caller sees
-        // `false` and can fall through to a regular response.
+        // `deinit_if_we_can` only clears `handler.server` once every
+        // connection has closed, so this is defensive for the `Finalized`
+        // window between the wrapper's `finalize()` and the next-tick
+        // `schedule_deinit`: accepting an upgrade there would create a
+        // `ServerWebSocket` whose open/close accounting is skipped.
         if self
             .config
             .websocket
@@ -2041,9 +2036,7 @@ where
         // A request that does not name "websocket" in its |Upgrade| token list,
         // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
         // WebSocket handshake; fall through so the caller's fetch() can respond.
-        if !upgrade_header
-            .slice()
-            .split(|&c| c == b',')
+        if !strings::split(upgrade_header.slice(), b",")
             .any(|t| strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true))
         {
             return Ok(JSValue::FALSE);
@@ -2610,25 +2603,31 @@ where
         _global: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.app.is_none() {
+        if self.app.is_none() || self.deinit_running.get() {
             return Ok(JSValue::UNDEFINED);
         }
+        // On a Bun.serve server each close reaches `on_connection_filter(-1)`
+        // synchronously; hold the guard so it cannot re-derive `&mut self`
+        // while this frame owns it.
+        self.deinit_running.set(true);
         self.app_mut().close_idle_connections();
+        self.deinit_running.set(false);
+        self.deinit_if_we_can();
         Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
         let rc = self.get_all_closed_promise(&self.global());
 
-        if self.has_listener() {
-            let abrupt = 'brk: {
-                if let Some(val) = abruptly {
-                    if val.is_boolean() && val.to_boolean() {
-                        break 'brk true;
-                    }
-                }
-                false
-            };
+        let abrupt = matches!(abruptly, Some(v) if v.is_boolean() && v.to_boolean());
+        // `!deinit_running`: a `server.stop()` reached from a close callback
+        // that an outer `stop()`'s drain fired would re-enter `stop_listening`
+        // with a fresh `&mut self` under the outer frame's borrow.
+        if self.has_listener()
+            || (abrupt
+                && !self.flags.contains(ServerFlags::TERMINATED)
+                && !self.deinit_running.get())
+        {
             self.stop(abrupt);
         }
 
@@ -2636,7 +2635,9 @@ where
     }
 
     pub(crate) fn dispose_from_js(&mut self) -> JSValue {
-        if self.has_listener() {
+        if self.has_listener()
+            || (!self.flags.contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
+        {
             self.stop(true);
         }
         JSValue::UNDEFINED
@@ -2825,7 +2826,11 @@ where
     }
 
     pub(crate) fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {
-        if !self.has_listener() && self.pending_requests.get() == 0 {
+        if !self.has_listener()
+            && self.pending_requests.get() == 0
+            && !self.has_active_connections()
+            && !self.has_active_web_sockets()
+        {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
         if self.all_closed_promise.has_value() {

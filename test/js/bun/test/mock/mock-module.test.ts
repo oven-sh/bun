@@ -9,6 +9,7 @@
 
 import { expect, mock, spyOn, test } from "bun:test";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
+import * as getterThrowFixture from "./mock-module-getter-throw-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
 test("mock.module async", async () => {
@@ -154,6 +155,23 @@ test("mocking a package", async () => {
 
   expect(hahaha.wow()).toBe(43);
   expect(require("ha-ha-ha").wow()).toBe(43);
+});
+
+test("mock.module propagates a throwing getter on the factory's return value", () => {
+  expect({ a: getterThrowFixture.a, b: getterThrowFixture.b }).toEqual({ a: "original-a", b: "original-b" });
+
+  const sentinel = new Error("GETTER-THROW");
+  const mockExports: { a: string; b: string } = { a: "mock-a" } as any;
+  Object.defineProperty(mockExports, "b", {
+    enumerable: true,
+    get: () => {
+      throw sentinel;
+    },
+  });
+
+  expect(() => mock.module("./mock-module-getter-throw-fixture", () => mockExports)).toThrow(sentinel);
+  // All values are read before any override is written, so a throwing getter leaves the namespace untouched.
+  expect({ a: getterThrowFixture.a, b: getterThrowFixture.b }).toEqual({ a: "original-a", b: "original-b" });
 });
 
 test("mocking a builtin", async () => {

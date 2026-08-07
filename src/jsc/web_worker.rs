@@ -1021,7 +1021,8 @@ impl WebWorker {
     /// its own (process.exit / uncaught error) — Node's "stopped" case: no exit
     /// handlers run and the exit code was not the worker's choice.
     pub fn stopped_by_parent(&self) -> bool {
-        self.terminated_by_parent.load(Ordering::Relaxed) && !self.exit_called.load(Ordering::Relaxed)
+        self.terminated_by_parent.load(Ordering::Relaxed)
+            && !self.exit_called.load(Ordering::Relaxed)
     }
 
     /// process.exit() inside the worker. Worker-thread only.

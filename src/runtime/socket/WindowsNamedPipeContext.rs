@@ -306,9 +306,11 @@ impl WindowsNamedPipeContext {
                 if !state.is_null() {
                     // SAFETY: this thread's live runtime state; registered in create().
                     unsafe {
-                        (*state).active_handles.swap_remove(&crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(
-                            core::ptr::NonNull::new_unchecked(this),
-                        ));
+                        (*state).active_handles.swap_remove(
+                            &crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(
+                                core::ptr::NonNull::new_unchecked(this),
+                            ),
+                        );
                     }
                 }
                 // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
@@ -419,7 +421,9 @@ impl WindowsNamedPipeContext {
             // SAFETY: this thread's live runtime state; `this` fully initialised.
             unsafe {
                 (*crate::jsc_hooks::runtime_state()).active_handles.insert(
-                    crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(core::ptr::NonNull::new_unchecked(this)),
+                    crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(
+                        core::ptr::NonNull::new_unchecked(this),
+                    ),
                     (),
                 );
             }

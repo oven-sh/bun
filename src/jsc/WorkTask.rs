@@ -4,7 +4,6 @@ use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
 use crate::JSGlobalObject;
 use crate::debugger::AsyncTaskTracker;
-use crate::event_loop::EventLoop;
 use bun_ptr::BackRef;
 
 /// A generic task that runs work on a thread pool and executes a callback on the main JavaScript thread.
@@ -29,15 +28,28 @@ pub trait WorkTaskContext: Sized {
     /// because the context is heap-allocated, crosses threads, and is mutated.
     fn run(this: *mut Self, task: *mut WorkTask<Self>);
     fn then(this: *mut Self, global_this: &JSGlobalObject) -> Result<(), crate::JsTerminated>;
+
+    /// The VM was torn down before this task's completion could be delivered:
+    /// release whatever `this` owns that is safe to release **off the JS
+    /// thread** (its own buffers/allocations). JSC handles are not touched here.
+    /// Default: leak, loudly in debug — implement for each context.
+    fn release_off_thread(this: *mut Self) {
+        let _ = this;
+        #[cfg(debug_assertions)]
+        bun_core::Output::debug_warn(&format_args!(
+            "WorkTask<{}> refused after VM teardown; context leaked (implement release_off_thread)",
+            core::any::type_name::<Self>()
+        ));
+    }
 }
 
 pub struct WorkTask<Context: WorkTaskContext> {
     pub ctx: *mut Context,
     pub(crate) task: WorkPoolTask,
-    /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
-    /// `EventLoop`) outlives every task scheduled on it.
-    pub(crate) event_loop: BackRef<EventLoop>,
-    // allocator field dropped — global mimalloc (see PORTING.md §Allocators)
+    /// How the pool thread reaches the VM to deliver the completion.
+    pub(crate) vm: crate::VmHandle,
+    pub(crate) loop_kind: crate::LoopKind,
+    /// JS thread only (`then`/`run_from_js`); never dereferenced off-thread.
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) concurrent_task: ConcurrentTask,
     pub(crate) async_task_tracker: AsyncTaskTracker,
@@ -61,9 +73,9 @@ impl<Context: WorkTaskContext> Taskable for WorkTask<Context> {
 impl<Context: WorkTaskContext> WorkTask<Context> {
     pub fn create_on_js_thread(global_this: &JSGlobalObject, value: *mut Context) -> *mut Self {
         let vm = global_this.bun_vm().as_mut();
-        let event_loop = BackRef::new(vm.event_loop_shared());
         let mut this = Box::new(Self {
-            event_loop,
+            vm: vm.handle(),
+            loop_kind: vm.current_loop_kind(),
             ctx: value,
             global_this: BackRef::new(global_this),
             task: WorkPoolTask {
@@ -124,19 +136,36 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         WorkPool::schedule(&raw mut this.task);
     }
 
+    /// Pool thread: deliver the completion to the VM, or — if the VM has been
+    /// torn down meanwhile — release the task here.
     pub fn on_finish(this: &mut Self) {
         // `concurrent_task` is an intrusive field of `*this`; `from`
         // re-initializes it in place and returns the same address. Passing
         // `this_ptr` while holding `&mut *this` is sound because `from` only
         // stores the pointer (does not dereference it).
-        let event_loop = this.event_loop;
         let this_ptr: *mut Self = this;
         let task = core::ptr::NonNull::from(
             this.concurrent_task
                 .from(this_ptr, AutoDeinit::ManualDeinit),
         );
-        // `task` is the inline `concurrent_task` field of the live
-        // heap-allocated `*this`; `event_loop` is the JS-thread loop stored at init.
-        event_loop.enqueue_task_concurrent(task);
+        if let crate::vm_handle::Posted::Refused(_) = this.vm.post(this.loop_kind, task) {
+            // SAFETY: the queue refused it, so the pool thread still owns `this`.
+            unsafe { Self::release_off_thread(this_ptr) };
+        }
+    }
+
+    /// Off the JS thread, VM gone: release the context's portable resources and
+    /// the carrier. The JS-thread-only members (`ref_` keep-alive on a loop that
+    /// no longer counts, the inspector tracker, `global_this`) are inert now and
+    /// are forgotten rather than run.
+    ///
+    /// # Safety
+    /// `this` is the live heap carrier and no queue holds it.
+    unsafe fn release_off_thread(this: *mut Self) {
+        // SAFETY: fn contract.
+        let this = core::mem::ManuallyDrop::new(unsafe { bun_core::heap::take(this) });
+        Context::release_off_thread(this.ctx);
+        // SAFETY: reclaim the carrier's storage without running member Drops.
+        unsafe { std::alloc::dealloc((&**this as *const Self).cast_mut().cast(), std::alloc::Layout::new::<Self>()) };
     }
 }

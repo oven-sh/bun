@@ -3,7 +3,7 @@ use bun_io::KeepAlive;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
 use crate::event_loop::ConcurrentTask;
-use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
+use crate::{JSGlobalObject, JsResult};
 
 /// Per-job payload trait. Implementors own the off-thread work body and the
 /// JS-thread completion; the surrounding heap/queue/keep-alive plumbing is
@@ -29,6 +29,11 @@ pub trait AnyTaskJobCtx: Sized {
     /// loop, unless the VM is already shutting down. Any `Err` is surfaced as
     /// the completion callback's result (i.e. propagated to the tick loop).
     fn then(&mut self, global: &JSGlobalObject) -> JsResult<()>;
+
+    /// The VM was torn down before the completion could be delivered: release
+    /// what `self` owns that is safe to release off the JS thread (own buffers,
+    /// C library state). `Drop` is **not** run afterwards. Default: nothing.
+    fn release_off_thread(&mut self) {}
 }
 
 /// Heap-allocated offload job; created via [`AnyTaskJob::create`] and freed in
@@ -37,7 +42,12 @@ pub trait AnyTaskJobCtx: Sized {
 #[repr(C)]
 pub struct AnyTaskJob<C> {
     run_from_js_erased: fn(*mut ()) -> JsResult<()>,
-    vm: bun_ptr::BackRef<VirtualMachine>,
+    /// How the pool thread reaches the VM to deliver the completion.
+    vm: crate::VmHandle,
+    loop_kind: crate::LoopKind,
+    /// Raw creating global, forwarded to `run` per the trait contract (not
+    /// dereferenced off-thread) and used on the JS thread in `then`.
+    global: *mut JSGlobalObject,
     task: WorkPoolTask,
     poll: KeepAlive,
     pub ctx: C,
@@ -79,10 +89,12 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     /// (running `Drop for C`). The returned pointer is owned by the caller
     /// until handed to [`Self::schedule`].
     pub fn create(global: &JSGlobalObject, ctx: C) -> JsResult<*mut Self> {
-        let vm = bun_ptr::BackRef::new(global.bun_vm());
+        let vm = global.bun_vm();
         let job = bun_core::heap::into_raw(Box::new(Self {
             run_from_js_erased: |p| Self::run_from_js(p.cast::<Self>()),
-            vm,
+            vm: vm.handle(),
+            loop_kind: vm.as_mut().current_loop_kind(),
+            global: core::ptr::from_ref(global).cast_mut(),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_task,
@@ -140,22 +152,45 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // in `create`; `task` points to `Self.task` and the job is live until
         // `run_from_js` reclaims it.
         let job = unsafe { &mut *Self::from_task_ptr(task) };
-        let vm = job.vm;
-        job.ctx.run(vm.global);
+        job.ctx.run(job.global);
         // `ConcurrentTask::create` heap-allocates a fresh task; the queue takes
-        // ownership of it.
-        vm.event_loop_shared()
-            .enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut(job))));
+        // ownership of it — unless the VM was torn down meanwhile, in which case
+        // both the task and the job are released here.
+        let ct = ConcurrentTask::create(Task::init(std::ptr::from_mut(job)));
+        if let crate::vm_handle::Posted::Refused(ct) = job.vm.post(job.loop_kind, ct) {
+            // SAFETY: refused ⇒ we still own both allocations.
+            unsafe {
+                drop(bun_core::heap::take(ct.as_ptr()));
+                Self::release_off_thread(job);
+            }
+        }
+    }
+
+    /// Off the JS thread, VM gone: let the context release its portable
+    /// resources, then free the job without running `Drop` (its keep-alive and
+    /// any JS handles inside `ctx` belong to a loop/heap that no longer exist).
+    ///
+    /// # Safety
+    /// `this` is the live job and nothing else references it.
+    unsafe fn release_off_thread(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).ctx.release_off_thread();
+            core::ptr::drop_in_place(&raw mut (*this).vm);
+            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+        }
     }
 
     fn run_from_js(this: *mut Self) -> JsResult<()> {
         // SAFETY: `this` was produced by `heap::into_raw` in `create` and is
         // uniquely owned here (the task fires exactly once).
         let mut this = unsafe { bun_core::heap::take(this) };
-        let vm = this.vm;
-        if vm.is_shutting_down() {
+        // SAFETY: JS thread; the job was created against this global's VM,
+        // which is alive while it dispatches tasks.
+        let global = unsafe { &*this.global };
+        if global.bun_vm().is_shutting_down() {
             return Ok(());
         }
-        this.ctx.then(vm.global())
+        this.ctx.then(global)
     }
 }

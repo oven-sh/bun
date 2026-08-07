@@ -1210,6 +1210,8 @@ it("re-resolving reuses a git package from the lockfile instead of re-fetching",
   await install();
   expect(gitRequests).toBe(requestsAfterFirstInstall);
 
-  expect(await file(join(packageDir, "bun.lock")).text()).toContain(`git-dep@git+http://127.0.0.1:${server.port}/repo.git#${sha}`);
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain(
+    `git-dep@git+http://127.0.0.1:${server.port}/repo.git#${sha}`,
+  );
   expect(await file(join(packageDir, "node_modules", "git-dep", "index.js")).text()).toBe("module.exports = 'git';\n");
 });

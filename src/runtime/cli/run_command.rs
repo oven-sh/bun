@@ -1848,6 +1848,10 @@ pub extern "C" fn Bun__imageContinueEventLoop() -> ! {
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
     // SAFETY: `vm_ptr` is the image's main-thread VM, now installed for this thread.
     let vm = unsafe { &mut *vm_ptr };
+    // The 'restore' listeners just ran synchronously; continuations of anything that awaited them are microtasks and
+    // may be the only pending work (a skeleton image parks on such an await with every timer cancelled). Run one
+    // tick unconditionally so they execute and get the chance to make the loop alive again.
+    vm.tick();
     while vm.is_event_loop_alive() {
         vm.tick();
         vm.auto_tick_active();

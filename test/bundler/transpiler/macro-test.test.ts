@@ -243,3 +243,22 @@ describe("--no-macros", () => {
     expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
   });
 });
+
+// Temporal values (like Date) have no AST representation; a macro returning
+// one fails the build with the coercion error instead of emitting `{}`.
+test("returning a Temporal value from a macro fails with the coercion error", async () => {
+  using dir = tempDir("macro-temporal", {
+    "when.ts": `export function when() {\n  return Temporal.PlainDate.from("2020-01-02");\n}\n`,
+    "index.ts": `import { when } from "./when.ts" with { type: "macro" };\nconsole.log(when());\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("cannot coerce Temporal.PlainDate to Bun's AST");
+  expect(exitCode).not.toBe(0);
+});

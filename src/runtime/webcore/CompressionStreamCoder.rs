@@ -11,6 +11,7 @@
 
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::work_task::{WorkTask, WorkTaskContext};
@@ -74,6 +75,12 @@ enum Backend {
 
 pub struct CompressionStreamCoder {
     backend: Backend,
+    /// Shared-ownership count: 1 for the JS cell (released by its finalizer /
+    /// `nativeTransformReleaseState` via `__destroy`), plus 1 per in-flight
+    /// `CompressionAsyncCtx`. VM teardown (`lastChanceToFinalize`) runs the
+    /// cell's finalizer even while a pool thread is inside `transform` — the
+    /// ctx's reference is what keeps the coder alive through that.
+    refs: AtomicU32,
     /// DecompressionStream only: the codec has reported end-of-stream. Any
     /// further input is the spec's "trailing junk" TypeError.
     ended: bool,
@@ -201,6 +208,7 @@ impl CompressionStreamCoder {
         };
         Ok(Box::new(Self {
             backend,
+            refs: AtomicU32::new(1),
             ended: false,
             zstd_head: [0; 4],
             zstd_head_len: 0,
@@ -647,13 +655,31 @@ pub extern "C" fn CompressionStreamCoder__create(
     }
 }
 
+/// Drops one reference; frees the coder when it was the last. See
+/// [`CompressionStreamCoder::refs`].
+unsafe fn release(this: *mut CompressionStreamCoder) {
+    // SAFETY: the caller holds one of the coder's references, so `this` is
+    // live. `Release`/`Acquire` pair so the freeing thread observes every
+    // write made under the other references before the backend is torn down.
+    if unsafe { &(*this).refs }.fetch_sub(1, Ordering::Release) == 1 {
+        core::sync::atomic::fence(Ordering::Acquire);
+        // SAFETY: `this` came from `Box::into_raw` in `__create` and the last
+        // reference is gone; no other thread can reach the coder now.
+        drop(unsafe { Box::from_raw(this) });
+    }
+}
+
+/// Releases the C++ cell's reference (the finalizer / eager
+/// `nativeTransformReleaseState` path; the cell clears its pointer before
+/// calling). An in-flight async transform holds its own reference, so the
+/// backend stays alive until that task's ctx drops.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
-        // has not been freed (the C++ cell clears its pointer before calling).
-        drop(unsafe { Box::from_raw(this) });
+        // the cell's reference has not been released yet.
+        unsafe { release(this) };
     }
 }
 
@@ -791,15 +817,28 @@ unsafe extern "C" {
 }
 
 pub struct CompressionAsyncCtx {
+    /// Holds one of the coder's references (`refs`), taken in
+    /// `__transformAsync` and released by `Drop`. The cell's finalizer can
+    /// run at VM teardown while the pool thread is still inside `transform`;
+    /// this reference is what keeps the coder alive through that.
     coder: *mut CompressionStreamCoder,
     input: AsyncInput,
     finish: bool,
     /// GC root for the `JSTransformStream` cell that owns `coder`; its
-    /// `m_asyncCodecInFlight` flag defers `m_coder` teardown while this task
-    /// holds it, and its `m_asyncCodecPromise` WriteBarrier keeps the pending
-    /// transform-algorithm promise alive.
+    /// `m_asyncCodecInFlight` flag defers the eager ClearAlgorithms release
+    /// while this task holds it, and its `m_asyncCodecPromise` WriteBarrier
+    /// keeps the pending transform-algorithm promise alive.
     stream: Strong,
     error: Option<CodecError>,
+}
+
+impl Drop for CompressionAsyncCtx {
+    fn drop(&mut self) {
+        // SAFETY: `coder` was ref'd in `__transformAsync`; this ctx owns that
+        // reference and drops exactly once (JS thread, in `then` or the
+        // shutdown drain).
+        unsafe { release(self.coder) };
+    }
 }
 
 pub type CompressionStreamCoderTask = WorkTask<CompressionAsyncCtx>;
@@ -810,8 +849,9 @@ impl WorkTaskContext for CompressionAsyncCtx {
 
     fn run(this: *mut Self, task: *mut WorkTask<Self>) {
         // SAFETY: work-pool hand-off; `this`/`task` are live and exclusive.
-        // `coder` is kept alive by `m_asyncCodecInFlight` on the rooted stream
-        // cell, and TransformStream serializes writes so nothing else aliases it.
+        // `coder` is kept alive by the reference this ctx holds (the cell's
+        // finalizer only releases its own), and TransformStream serializes
+        // writes so nothing else aliases it.
         unsafe {
             let ctx = &mut *this;
             ctx.error = (*ctx.coder).transform(ctx.input.slice(), ctx.finish).err();
@@ -826,8 +866,9 @@ impl WorkTaskContext for CompressionAsyncCtx {
         let stream = ctx.stream.get();
         let (out, out_len, err) = match ctx.error {
             None => {
-                // SAFETY: `m_asyncCodecInFlight` still holds; `coder` (and its
-                // `out` buffer) stay live until `deliverAsync` copies and clears it.
+                // SAFETY: `ctx` holds a coder reference until it drops at the
+                // end of this fn, so `coder` (and its `out` buffer) stay live
+                // while `deliverAsync` copies.
                 let coder = unsafe { &*ctx.coder };
                 (coder.out.as_ptr(), coder.out.len(), JSValue::ZERO)
             }
@@ -862,6 +903,11 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
         // `fallback` is ignored) or copied into an owned Vec.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
+    // The ctx shares ownership of the coder (released in its `Drop`): VM
+    // teardown runs the cell's finalizer regardless of the `Strong` below,
+    // so the cell's reference alone cannot cover the pool-thread `transform`.
+    // SAFETY: `this` is the live coder owned by the calling JS cell.
+    unsafe { &(*this).refs }.fetch_add(1, Ordering::Relaxed);
     let ctx = bun_core::heap::into_raw(Box::new(CompressionAsyncCtx {
         coder: this,
         input: AsyncInput::new(global, chunk, fallback),

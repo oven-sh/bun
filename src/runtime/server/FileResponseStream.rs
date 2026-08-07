@@ -776,9 +776,23 @@ bun_io::impl_buffered_reader_parent! {
 impl Drop for FileResponseStream {
     fn drop(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "deinit");
-        // `self.reader` (BufferedReader) is torn down by its own `Drop` as a
-        // field — closes the poll handle. `bun.destroy(this)` is owned by
-        // `heap::take` in `deref`, not here.
+        #[cfg(not(windows))]
+        {
+            // We cleared CLOSE_HANDLE in start(), so the reader's own Drop
+            // will not tear down the FilePoll. Do it explicitly (without
+            // closing the fd — `auto_close` below owns that), while the fd is
+            // still open so the kernel deregistration works: this unregisters
+            // the poll and returns it to the pool, so an event for it that
+            // the loop already fetched is ignored instead of dispatched into
+            // freed memory, and the poll slot is not leaked.
+            let reader = self.reader_mut();
+            if matches!(reader.handle, bun_io::pipes::PollOrFd::Poll(_)) {
+                reader
+                    .handle
+                    .close_impl(None, None::<fn(*mut c_void)>, false);
+            }
+        }
+        // `bun.destroy(this)` is owned by `heap::take` in `deref`, not here.
         if self.auto_close.get() {
             #[cfg(windows)]
             Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());

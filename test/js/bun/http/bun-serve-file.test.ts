@@ -1502,3 +1502,68 @@ test.skipIf(isWindows)("aborted Response(Bun.file(FIFO)) with no writer releases
   }
   expect(current).toBeLessThanOrEqual(baseline + slack);
 });
+
+// After an abort frees a pollable file response, an event the loop already
+// has (or later gets) for that stream's poll must not be dispatched into the
+// freed stream. Regression: aborting a fd-backed FIFO response (auto_close
+// off, so the fd outlives the stream) and then making the FIFO readable
+// dispatched into freed memory. The repro runs in a child so the ASAN crash
+// of an unfixed build fails the test instead of taking down the runner.
+test.skipIf(isWindows || !isASAN)("aborted fd-backed FIFO response does not dispatch into freed memory", async () => {
+  using dir = tempDir("serve-fifo-fd-abort", {
+    "repro.ts": `
+        import fs from "node:fs";
+        const fifoPath = "./fd.fifo";
+        const fd = fs.openSync(fifoPath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch() {
+            return new Response(Bun.file(fd));
+          },
+        });
+        const { promise: sawBytes, resolve } = Promise.withResolvers();
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open(s) {
+              s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+            },
+            data() {
+              resolve();
+            },
+            close() {
+              resolve();
+            },
+            error() {
+              resolve();
+            },
+          },
+        });
+        await sawBytes; // head bytes: the stream is waiting on the FIFO
+        client.terminate();
+        await Bun.sleep(200); // let the abort free the stream
+        const wfd = fs.openSync(fifoPath, "w");
+        fs.writeSync(wfd, "BOOM");
+        fs.closeSync(wfd);
+        await Bun.sleep(300); // let the loop dispatch whatever it thinks is armed
+        console.log("survived");
+        process.exit(0);
+      `,
+  });
+  mkfifo(join(String(dir), "fd.fifo"));
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "repro.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr.slice(-800) }).toEqual({
+    stdout: expect.stringContaining("survived"),
+    exitCode: 0,
+    stderr: "",
+  });
+});

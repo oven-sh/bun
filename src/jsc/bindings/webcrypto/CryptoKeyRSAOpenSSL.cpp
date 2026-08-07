@@ -228,8 +228,7 @@ void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgor
         return;
     }
 
-    // Like the CommonCrypto port, generate the platform keys off-thread; the
-    // CryptoKey wrappers must be created on the context's thread.
+    // The CryptoKey wrappers must be created on the context's thread.
     auto workQueue = Bun::PhonyWorkQueue::create("RSA key generation"_s);
     workQueue->dispatch(context->globalObject(), [algorithm, hash, hasHash, modulusLength, publicExponent = publicExponent, extractable, usages, callback = WTF::move(callback), failureCallback = WTF::move(failureCallback), contextIdentifier = context->identifier()]() mutable {
         auto platformKeys = generatePlatformKeyPair(modulusLength, publicExponent);

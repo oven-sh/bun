@@ -3855,12 +3855,47 @@ fn argv_storage() -> &'static [ZBox] {
     })
 }
 
+/// Options a `--compile`d executable carries (its `compile_exec_argv`); spliced after argv[0] like BUN_OPTIONS.
+/// Invariant for the executable, so a plain static (set once by `boot_standalone`, before `argv()` is derived).
+static COMPILE_EXEC_ARGV: RacyCell<&'static [u8]> = RacyCell::new(b"");
+static COMPILE_EXEC_ARGC: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+/// # Safety
+/// Single-threaded startup, before the first `argv()` read that should see the splice.
+pub unsafe fn set_compile_exec_argv(opts: &'static [u8]) {
+    // SAFETY: see fn doc.
+    unsafe { COMPILE_EXEC_ARGV.write(opts) };
+}
+/// Number of argv tokens that came from the executable's `compile_exec_argv` (valid after `argv()` was read).
+pub fn compile_exec_argc() -> usize {
+    let _ = argv_view();
+    COMPILE_EXEC_ARGC.load(core::sync::atomic::Ordering::Relaxed)
+}
+/// For a `--compile`d executable: index in `argv()` where the user's own arguments begin (0 = not standalone).
+/// Everything JS sees as "its" argv (`process.argv.slice(2)`, `Bun.argv`) is derived from `argv()[offset..]`, so it
+/// follows the launch context of the current process (see `image::ProcessDerived`).
+static PASSTHROUGH_OFFSET: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+pub fn set_standalone_passthrough_offset(offset: usize) {
+    // (name kept: also set for plain `bun entry args…` when the args are a verbatim argv tail)
+    PASSTHROUGH_OFFSET.store(offset, core::sync::atomic::Ordering::Relaxed);
+}
+pub fn standalone_passthrough_offset() -> usize {
+    PASSTHROUGH_OFFSET.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 #[cold]
 #[inline(never)]
 fn argv_view_init() -> ArgvView {
     let storage: &'static [ZBox] = argv_storage();
     let mut view: Vec<&'static ZStr> = storage.iter().map(ZBox::as_zstr).collect();
-    // Splice BUN_OPTIONS tokens after argv[0].
+    // Splice the executable's own compile-time options, then BUN_OPTIONS tokens, after argv[0].
+    // SAFETY: written once during single-threaded startup.
+    let compile_opts = unsafe { COMPILE_EXEC_ARGV.read() };
+    if !compile_opts.is_empty() {
+        let before = view.len();
+        append_options_env::<&'static ZStr>(compile_opts, &mut view);
+        COMPILE_EXEC_ARGC.store(view.len() - before, core::sync::atomic::Ordering::Relaxed);
+    }
     if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
         let original_len = view.len();
         append_options_env::<&'static ZStr>(opts, &mut view);

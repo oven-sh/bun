@@ -1201,3 +1201,23 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
 }
 
 } // namespace Zig
+
+// Heap-image restore: launch-derived lazy properties that were already reified into own properties on the Bun object
+// get their value recomputed for this process (same callbacks as first access).
+extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSObject* bunObject = globalObject->bunObject();
+    if (!bunObject)
+        return;
+    struct LaunchDerivedProp { ASCIILiteral name; JSValue (*make)(VM&, JSObject*); };
+    static const LaunchDerivedProp props[] = {
+        { "argv"_s, BunObject_lazyPropCb_wrap_argv },
+    };
+    for (auto& p : props) {
+        JSC::Identifier id = JSC::Identifier::fromString(vm, p.name);
+        if (bunObject->getDirectOffset(vm, id) == invalidOffset)
+            continue; // never accessed: the static-table callback will run on first access
+        bunObject->putDirect(vm, id, p.make(vm, bunObject), 0);
+    }
+}

@@ -998,6 +998,25 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     ctx.passthrough = slice_to_owned(args.remaining());
+    {
+        // When the script's arguments are a verbatim tail of argv (the usual `bun [flags] entry a b` shape), record
+        // where they start: process.argv/Bun.argv are then derived from the live argv (correct after a heap-image restore).
+        let all = bun_core::argv();
+        let rem = args.remaining();
+        if !rem.is_empty() && rem.len() < all.len() {
+            let offset = all.len() - rem.len();
+            if all
+                .iter()
+                .skip(offset)
+                .zip(rem.iter())
+                .all(|(a, b)| a == &b[..])
+            {
+                bun_core::set_standalone_passthrough_offset(offset);
+            }
+        } else if rem.is_empty() {
+            bun_core::set_standalone_passthrough_offset(all.len());
+        }
+    }
 
     if matches!(
         cmd,

@@ -19,6 +19,18 @@ unsafe extern "C" {
 // `extern "C"`; the C++ caller guarantees a live pointer, so the reference
 // param discharges the non-null obligation at the type level.
 #[unsafe(export_name = "Bun__Process__createArgv0")]
+
+/// The script's own arguments. When the CLI recorded where they start in argv (compiled executables and the plain
+/// `bun entry a b` shape), they are read from the live process argv — recomputed after a heap-image restore —
+/// otherwise from the CLI's parsed passthrough. Entries borrow process-lifetime storage.
+pub(crate) fn passthrough_argv(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Vec<&[u8]> {
+    let offset = bun_core::standalone_passthrough_offset();
+    if offset > 0 && vm.worker_ref().is_none() {
+        return bun_core::argv().iter().skip(offset).collect();
+    }
+    vm.argv.iter().map(|a| &a[..]).collect()
+}
+
 extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
     let argv0 = bun_core::argv()
         .get(0)
@@ -379,7 +391,7 @@ mod _impl {
 
         let args_count: usize = match worker {
             Some(w) => w.argv().len(),
-            None => vm.argv.len(),
+            None => super::passthrough_argv(vm).len(),
         };
 
         // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
@@ -425,7 +437,7 @@ mod _impl {
                 args_list.push(BunString::init(arg));
             }
         } else {
-            for arg in &vm.argv {
+            for arg in super::passthrough_argv(vm) {
                 let str_ = BunString::borrow_utf8(arg);
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
                 args_list.push(str_);

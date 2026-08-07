@@ -455,3 +455,68 @@ test.skipIf(!isDebug)(
   },
   120_000,
 );
+
+// Regression: JSBuffer__bufferFromPointerAndLengthAndDeinit finished with a
+// plain scope.assertNoException(). With several pbkdf2 lanes in flight, one
+// lane's JS callback hits a bytecode trap checkpoint where a concurrent
+// worker.terminate() installs the sticky TerminationException; the next
+// lane's completion (Pbkdf2Ctx::then -> JSValue::create_buffer) then enters
+// JSBuffer__bufferFromPointerAndLengthAndDeinit with that exception still
+// pending and the assert SIGABRTs the whole process. The assert is under
+// ENABLE(EXCEPTION_SCOPE_VERIFICATION) = ASSERT_ENABLED || ASAN_ENABLED, so
+// it is compiled in for both debug and release+ASAN; this stays debug-only
+// for now because release+ASAN hits the orthogonal AnyTaskJob pool-thread
+// UAF (#36817) that this assert was masking.
+test.skipIf(!isDebug)(
+  "terminate() while a worker's async crypto.pbkdf2() completion is creating its result Buffer does not trip assertNoException()",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          'const { parentPort } = require("node:worker_threads");' +
+          'const crypto = require("node:crypto");' +
+          // One iteration, large salt: EVP_PBKDF2_HMAC is dominated by the
+          // HMAC over the salt, so the threadpool job is short but nonzero
+          // and overlaps the parent's terminate(). The async completion then
+          // allocates a 64-byte Buffer via JSBuffer__bufferFromPointerAndLengthAndDeinit.
+          'const salt = Buffer.alloc(3 << 20, 0xaa);' +
+          'function lane() { crypto.pbkdf2(salt, salt, 1, 64, "sha256", lane); }' +
+          'for (let i = 0; i < 8; i++) lane();' +
+          'parentPort.postMessage("up");';
+        function ready(w) {
+          return new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", (c) => rej(new Error("worker exited " + c + " before ready")));
+          });
+        }
+        for (let r = 0; r < 15; r++) {
+          const ws = [];
+          for (let i = 0; i < 4; i++) {
+            const w = new Worker(src, { eval: true });
+            ws.push(w);
+          }
+          await Promise.all(ws.map(ready));
+          for (const w of ws) w.on("error", () => {});
+          await Bun.sleep(r % 7);
+          await Promise.all(ws.map((w) => w.terminate()));
+        }
+        console.log("PASS");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);

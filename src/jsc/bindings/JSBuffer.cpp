@@ -407,7 +407,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
     }
 
     // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in.
-    scope.assertNoException();
+    scope.assertNoExceptionExceptTermination();
     ASSERT(uint8Array);
 
     return JSC::JSValue::encode(uint8Array);

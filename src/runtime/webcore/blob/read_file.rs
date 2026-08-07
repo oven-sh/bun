@@ -1118,7 +1118,7 @@ impl<'a> ReadFileUV<'a> {
             open_callback: Self::on_file_open,
         });
         // Keep the event loop alive while the async operation is pending
-        event_loop.ref_concurrently();
+        event_loop.ref_keep_alive();
         let this_ptr: *mut ReadFileUV = bun_core::heap::into_raw(this);
         // SAFETY: this_ptr is freshly boxed and uniquely owned by the async op.
         unsafe { (*this_ptr).get_fd(Self::on_file_open) };
@@ -1157,7 +1157,7 @@ impl<'a> ReadFileUV<'a> {
         this_box.req.deinit();
         drop(this_box);
         // Release the event loop reference now that we're done
-        event_loop.unref_concurrently();
+        event_loop.unref_keep_alive();
         log!("ReadFileUV.finalize destroy");
     }
 

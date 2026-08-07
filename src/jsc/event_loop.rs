@@ -1009,28 +1009,15 @@ impl EventLoop {
         }
     }
 
-    /// `task` must be a live `ConcurrentTaskItem` that the queue may take
-    /// ownership of via its intrusive `next` link. All callers pass a
-    /// freshly-allocated or struct-embedded task — never null.
-    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTaskItem>) {
-        if cfg!(debug_assertions) {
-            if self.vm_ref().has_terminated {
-                panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
-            }
-        }
-        self.concurrent_tasks.push(task);
-        self.wakeup();
-    }
-
-    pub fn ref_concurrently(&self) {
+    /// JS thread: count one more thing keeping this loop alive (the same
+    /// counter a `VmHandle::ref_keep_alive` from another thread adjusts).
+    pub fn ref_keep_alive(&self) {
         let _ = self.concurrent_ref.fetch_add(1, Ordering::SeqCst);
-        self.wakeup();
     }
 
-    pub fn unref_concurrently(&self) {
-        // TODO maybe this should be AcquireRelease
+    /// JS thread: balance a [`Self::ref_keep_alive`].
+    pub fn unref_keep_alive(&self) {
         let _ = self.concurrent_ref.fetch_sub(1, Ordering::SeqCst);
-        self.wakeup();
     }
 
     // ──────────── private helpers ────────────

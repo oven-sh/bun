@@ -2537,7 +2537,13 @@ it("getActiveResourcesInfo reports connecting sockets and pending dns lookups li
        dns.lookup("localhost", () => {
          out.dnsSettled = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
          out.reqsSettled = process._getActiveRequests().filter(r => r.constructor.name === "GetAddrInfoReqWrap").length;
-         console.log(JSON.stringify(out));
+         // The promise form parks a wrap too, like node's createLookupPromise.
+         const p = dns.promises.lookup("localhost");
+         out.promisePending = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
+         p.catch(() => {}).then(() => {
+           out.promiseSettled = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
+           console.log(JSON.stringify(out));
+         });
        });
        out.dnsPending = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
        out.reqsPending = process._getActiveRequests().filter(r => r.constructor.name === "GetAddrInfoReqWrap").length;`,
@@ -2554,6 +2560,8 @@ it("getActiveResourcesInfo reports connecting sockets and pending dns lookups li
     reqsPending: 1,
     dnsSettled: 0,
     reqsSettled: 0,
+    promisePending: 1,
+    promiseSettled: 0,
   });
   expect(exitCode).toBe(0);
 });

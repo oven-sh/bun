@@ -27,13 +27,13 @@ head[kNext] = head;
 class FSReqCallback {}
 class GetAddrInfoReqWrap {}
 class GetNameInfoReqWrap {}
-// wrap -> kind string. The kind is captured here, at registration, because the
-// wraps are exposed via _getActiveRequests(): reading wrap.constructor.name at
-// inspection time would run user tampering (a replaced constructor, a getter).
+// wrap -> kind string. The kind is the caller's literal: the wraps (and their
+// shared prototype) are exposed via _getActiveRequests(), so any read off the
+// wrap, constructor.name included, could run user tampering.
 const pendingRequestWraps = new Map();
 
-function noteRequestStart(wrap) {
-  pendingRequestWraps.$set(wrap, wrap.constructor.name);
+function noteRequestStart(wrap, kind) {
+  pendingRequestWraps.$set(wrap, kind);
   return wrap;
 }
 

@@ -319,7 +319,7 @@ function lookup(hostname, options, callback) {
   // only after dns.lookup() returns since it can throw synchronously.
   const promise = dns.lookup(hostname, options);
   activeHandles ??= require("internal/active_handles");
-  const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetAddrInfoReqWrap());
+  const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetAddrInfoReqWrap(), "GetAddrInfoReqWrap");
   promise
     .then(res => {
       activeHandles.noteRequestEnd(reqWrap);
@@ -368,7 +368,7 @@ function lookupService(address, port, callback) {
   // non-IP address, so the promise is captured before the wrap registers.
   const promise = dns.lookupService(address, +port);
   activeHandles ??= require("internal/active_handles");
-  const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetNameInfoReqWrap());
+  const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetNameInfoReqWrap(), "GetNameInfoReqWrap");
   promise.then(
     results => {
       activeHandles.noteRequestEnd(reqWrap);
@@ -769,10 +769,25 @@ const promises = {
       return Promise.$resolve(options.all ? [obj] : obj);
     }
 
+    // Node's promise form parks a GetAddrInfoReqWrap too
+    // (lib/internal/dns/promises.js); same post-call registration as lookup().
+    const promise = dns.lookup(hostname, options);
+    activeHandles ??= require("internal/active_handles");
+    const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetAddrInfoReqWrap(), "GetAddrInfoReqWrap");
+    const settled = promise.then(
+      res => {
+        activeHandles.noteRequestEnd(reqWrap);
+        return res;
+      },
+      err => {
+        activeHandles.noteRequestEnd(reqWrap);
+        throw err;
+      },
+    );
     if (options.all) {
-      return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll(options.order)));
+      return translateErrorCode(settled.then(promisifyLookupAll(options.order)));
     }
-    return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup(options.order)));
+    return translateErrorCode(settled.then(promisifyLookup(options.order)));
   },
 
   lookupService(address, port) {
@@ -784,7 +799,22 @@ const promises = {
     validatePort(port, "port");
 
     try {
-      return translateErrorCode(dns.lookupService(address, +port)).then(([hostname, service]) => ({
+      // Same registration as the callback form: the native call throws
+      // synchronously for a non-IP address, so the wrap registers after it.
+      const promise = dns.lookupService(address, +port);
+      activeHandles ??= require("internal/active_handles");
+      const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetNameInfoReqWrap(), "GetNameInfoReqWrap");
+      const settled = promise.then(
+        res => {
+          activeHandles.noteRequestEnd(reqWrap);
+          return res;
+        },
+        err => {
+          activeHandles.noteRequestEnd(reqWrap);
+          throw err;
+        },
+      );
+      return translateErrorCode(settled).then(([hostname, service]) => ({
         hostname,
         service,
       }));

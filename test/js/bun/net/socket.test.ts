@@ -3667,3 +3667,71 @@ describe.concurrent("connect() failure promise settlement", () => {
     ).rejects.toBe(boom);
   });
 });
+
+describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
+  // The full victim matrix (Bun.listen/Bun.serve/node:http(s)/fetch, plain and
+  // TLS) runs as test/js/bun/test/parallel/test-net-half-open-peer-reset-*.mjs;
+  // this covers the shared usockets core in bun:test form. Unfixed, epoll
+  // re-delivered end on every writable rearm, kqueue spun the writable
+  // dispatch forever, and the libuv backend stranded (the FIN consumed the
+  // only AFD event the reset could ride).
+  it("delivers end exactly once and closes after the reset", async () => {
+    const issued = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    let endCount = 0;
+    const big = Buffer.alloc(4 * 1024 * 1024, 0x78);
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open(s) {
+          // Write until the kernel refuses a full chunk so the reset is
+          // guaranteed to land behind pending writes (the peer is paused, so
+          // this terminates once its receive buffer and our send buffer fill).
+          while (s.write(big) === big.byteLength) {}
+          issued.resolve();
+        },
+        data() {},
+        drain(s) {
+          s.write(big);
+        },
+        end() {
+          endCount++;
+          ended.resolve();
+        },
+        error() {},
+        close() {
+          closed.resolve();
+        },
+      },
+    });
+
+    const opened = Promise.withResolvers<Socket>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: {
+        open: s => opened.resolve(s),
+        data() {},
+        end() {},
+        error: (_s, e) => opened.reject(e),
+        close: () => opened.reject(new Error("peer closed before setup finished")),
+      },
+    });
+    const peer = await opened.promise;
+    peer.pause();
+    await issued.promise; // victim has queued more than the kernel will buffer
+    peer.shutdown(); // FIN
+    await ended.promise; // victim saw it
+    // The FIN-to-RST gap is where the bug lived; an immediate RST can overtake
+    // the FIN and just read as ECONNRESET on the readable side.
+    await Bun.sleep(50);
+    peer.terminate(); // RST
+    await closed.promise; // victim must tear down, not spin or strand
+    expect(endCount).toBe(1);
+  });
+});

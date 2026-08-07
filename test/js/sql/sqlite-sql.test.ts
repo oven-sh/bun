@@ -2119,7 +2119,8 @@ describe("Memory and resource management", () => {
     expect(finalCount[0].count).toBe(iterations - 300);
 
     await sql.close();
-  });
+    // 10k awaited inserts need more than the 5s default under debug + ASAN
+  }, 60_000);
 
   test("handles many concurrent prepared statements", async () => {
     const sql = new SQL("sqlite://:memory:");

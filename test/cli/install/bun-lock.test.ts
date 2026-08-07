@@ -1046,17 +1046,8 @@ function makeTarball(rootDir: string, files: Record<string, string>): Uint8Array
   return Bun.gzipSync(Buffer.concat(blocks));
 }
 
-// The text lockfile writes the resolved commit in the committish position of a
-// git/github resolution string ("git+url#<sha>"), so after a lockfile round
-// trip a dependency naming a branch or tag (or no ref at all) never matches the
-// loaded committish again. Re-resolving (any edit that re-parses a workspace
-// member's dependency list) then fetched every such dependency from the remote
-// on every install. The identical dependency literal already bound in the
-// loaded lockfile must be reused instead.
-it("re-resolving reuses branch and bare ref git dependencies from the lockfile instead of re-fetching", async () => {
-  const { packageDir, packageJson } = await registry.createTestDir();
-
-  // Isolate git from system/global config (e.g. core.autocrlf on Windows).
+// Isolate git from system/global config (e.g. core.autocrlf on Windows).
+async function makeGitFixture(packageDir: string) {
   const gitEnv = {
     ...env,
     GIT_CONFIG_NOSYSTEM: "1",
@@ -1074,6 +1065,19 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
     return out;
   }
   await write(join(packageDir, "gitconfig"), "[core]\n\tautocrlf = false\n");
+  return { gitEnv, git };
+}
+
+// The text lockfile writes the resolved commit in the committish position of a
+// git/github resolution string ("git+url#<sha>"), so after a lockfile round
+// trip a dependency naming a branch or tag (or no ref at all) never matches the
+// loaded committish again. Re-resolving (any edit that re-parses a workspace
+// member's dependency list) then fetched every such dependency from the remote
+// on every install. The identical dependency literal already bound in the
+// loaded lockfile must be reused instead.
+it("re-resolving reuses branch and bare ref git dependencies from the lockfile instead of re-fetching", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const { gitEnv, git } = await makeGitFixture(packageDir);
 
   // Bare repos served over git's dumb HTTP protocol: after
   // `git update-server-info`, a bare repo is plain static files.
@@ -1125,6 +1129,8 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
     BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
   };
   async function install(retries = 1) {
+    const gitRequestsBefore = gitRequests;
+    const githubDownloadsBefore = githubDownloads;
     await using proc = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
@@ -1133,11 +1139,12 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
       stderr: "pipe",
     });
     const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
-    // Loaded CI machines can OOM-kill a spawned git child (SIGKILL); that is
-    // environmental, not the behavior under test. The request-count
-    // assertions below only ever compare values captured after a completed
-    // install, so a retried attempt cannot mask the re-fetch bug.
-    if (retries > 0 && err.includes("signal 9")) {
+    // A loaded CI machine can OOM-kill the spawned git child (SIGKILL); that
+    // is environmental, not the behavior under test. Restore the counters so
+    // the retried attempt starts from the aborted attempt's baseline.
+    if (retries > 0 && err.includes("git failed with signal 9")) {
+      gitRequests = gitRequestsBefore;
+      githubDownloads = githubDownloadsBefore;
       return install(retries - 1);
     }
     expect(err).not.toContain("error:");
@@ -1193,24 +1200,7 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
 // reuse above is explicitly skipped for update targets.
 it("`bun update` still re-resolves a branch ref git dependency against the remote", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
-
-  const gitEnv = {
-    ...env,
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: join(packageDir, "gitconfig"),
-    GIT_AUTHOR_NAME: "bun-test",
-    GIT_AUTHOR_EMAIL: "test@bun.sh",
-    GIT_COMMITTER_NAME: "bun-test",
-    GIT_COMMITTER_EMAIL: "test@bun.sh",
-  };
-  async function git(args: string[], cwd: string): Promise<string> {
-    await using proc = spawn({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
-    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(err).not.toContain("fatal:");
-    expect(code).toBe(0);
-    return out;
-  }
-  await write(join(packageDir, "gitconfig"), "[core]\n\tautocrlf = false\n");
+  const { gitEnv, git } = await makeGitFixture(packageDir);
 
   const srcDir = join(packageDir, "git-src");
   const bareDir = join(packageDir, "repo.git");
@@ -1246,9 +1236,10 @@ it("`bun update` still re-resolves a branch ref git dependency against the remot
       stderr: "pipe",
     });
     const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
-    // Loaded CI machines can OOM-kill a spawned git child (SIGKILL); retrying
-    // only ever adds requests, so the requests-increase assertion holds.
-    if (retries > 0 && err.includes("signal 9")) {
+    // A loaded CI machine can OOM-kill the spawned git child (SIGKILL);
+    // retrying only ever adds requests, so the requests-increase assertion
+    // holds.
+    if (retries > 0 && err.includes("git failed with signal 9")) {
       return run(args, retries - 1);
     }
     expect(err).not.toContain("error:");

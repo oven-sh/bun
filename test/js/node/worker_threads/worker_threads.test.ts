@@ -2205,6 +2205,61 @@ test("worker argv/execArgv option strings, read repeatedly in the worker", async
   await Promise.all(ws.map(w => w.terminate()));
 });
 
+// A build whose plugin answers slowly (async setup + async onLoad) is in every
+// possible phase when the worker goes away; each must cancel, not wait on the
+// worker's JS thread for an answer that will never come.
+test("terminate()/exit while Bun.build with a slow plugin is mid-flight in the worker", async () => {
+  using dir = tempDir("worker-build-slow-plugin", {
+    "entry.ts":
+      Array.from({ length: 20 }, (_, i) => `export * as n${i} from "./m${i}.ts"`).join("\n") +
+      `\nimport data from "virtual:data"\nexport { data }\n`,
+    ...Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [
+        `m${i}.ts`,
+        `import { v as a } from "./m${(i + 1) % 20}.ts"\nexport const v: number = ${i}\nexport function f${i}(x: number) { return x + a }\n`,
+      ]),
+    ),
+  });
+  const workerSrc = `
+    import { join } from "node:path";
+    const SRC = process.env.SRC, OUT = process.env.OUT;
+    const slow = { name: "slow", setup(build) {
+      build.onResolve({ filter: /^virtual:data$/ }, () => ({ path: "data", namespace: "virt" }));
+      build.onLoad({ filter: /.*/, namespace: "virt" }, async () => { await Bun.sleep(5 + Math.random() * 40); return { contents: "export default 1", loader: "js" } });
+      return Bun.sleep(Math.random() * 30);
+    } };
+    let n = 0;
+    const one = () => Bun.build({ entrypoints: [join(SRC, "entry.ts")], outdir: join(OUT, String(n++)), plugins: [slow] });
+    self.onmessage = e => { if (e.data === "exit") process.exit(0) };
+    let inflight = 0;
+    (function pump() { while (inflight < 3) { inflight++; Promise.resolve().then(one).catch(() => {}).finally(() => { inflight--; setImmediate(pump) }) } })();
+    postMessage("busy");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const url = URL.createObjectURL(new Blob([${JSON.stringify(workerSrc)}]));
+       for (let r = 0; r < 6; r++) {
+         const door = r % 2 ? "exit" : "terminate";
+         const ws = Array.from({ length: 1 + (r % 3) }, (_, i) => new Worker(url, { env: { ...process.env, OUT: process.env.OUT + "/r" + r + "w" + i } }));
+         await Promise.all(ws.map(w => new Promise(res => { w.onmessage = e => e.data === "busy" && res(); w.addEventListener("close", res) })));
+         await Bun.sleep((r * 11) % 60);
+         const closed = ws.map(w => new Promise(res => w.addEventListener("close", res)));
+         for (const w of ws) { if (door === "terminate") w.terminate(); else w.postMessage("exit") }
+         await Promise.all(closed);
+       }
+       console.log("PASS");`,
+    ],
+    env: { ...bunEnv, SRC: String(dir), OUT: join(String(dir), "out") },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("PASS\n");
+  expect(exitCode).toBe(0);
+}, 60_000);
+
 describe("VM teardown ordering", () => {
   // The exiting main thread must not park the process-wide HTTP thread while a
   // child can still start a request: the child then waits for a hand-back that

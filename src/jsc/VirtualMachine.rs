@@ -1116,17 +1116,11 @@ impl VirtualMachine {
 
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
-        if self.is_shutting_down {
-            return crate::ScriptExecutionStatus::Stopped;
+        if self.is_shutting_down || !self.script_allowed() {
+            crate::ScriptExecutionStatus::Stopped
+        } else {
+            crate::ScriptExecutionStatus::Running
         }
-
-        if let Some(worker) = self.worker_ref() {
-            if worker.has_requested_terminate() {
-                return crate::ScriptExecutionStatus::Stopped;
-            }
-        }
-
-        crate::ScriptExecutionStatus::Running
     }
 
     /// Per-callback hot path: `drain_microtasks_with_global` calls
@@ -1170,6 +1164,7 @@ impl VirtualMachine {
                 + self.active_tasks
                 + el.tasks.readable_length()
                 + el.yield_tasks.len()
+                + (!el.concurrent_tasks.is_empty() as usize)
                 + (el.has_pending_refs() as usize)
                 > 0)
     }
@@ -2578,9 +2573,8 @@ impl VirtualMachine {
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].
     #[inline]
-    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) {
-        // accessed here (no overlapping `&mut EventLoop`).
-        self.event_loop_mut().wait_for_promise(promise);
+    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::JsTerminated> {
+        self.event_loop_mut().wait_for_promise(promise)
     }
 
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
@@ -2789,7 +2783,7 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))
@@ -4871,7 +4865,7 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
         // Pre-arm the waker so this settled-promise tick cannot park (#36450).
@@ -5080,7 +5074,7 @@ impl VirtualMachine {
         let promise =
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, Some(&path_str))?
                 .as_ptr();
-        self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+        let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         Some(promise)
     }
 

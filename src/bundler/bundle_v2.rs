@@ -1119,16 +1119,25 @@ pub mod bv2_impl {
                     outstanding: Default::default(),
                 }
                 }
-                /// Hops to the JS thread to call the `onResolve` plugin chain.
+                /// Hops to the JS thread to call the `onResolve` plugin chain —
+                /// unless the pass is already cancelled (that VM is stopping and
+                /// will never answer): then the request fails here and now.
                 pub(crate) fn dispatch(&mut self) {
-                    let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                        bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
-                    );
                     // SAFETY: `bv2` is a valid backref set by `init`; plugins is
                     // Some (asserted by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
-                        (*self.bv2).graph.outstanding_resolves.push(self);
-                        (*self.bv2).enqueue_on_js_loop_for_plugins(task);
+                        let bv2 = &mut *self.bv2;
+                        bv2.graph.outstanding_resolves.push(self);
+                        if bv2.graph.cancelled {
+                            // Failed by `is_done` at the loop's top level (not
+                            // here, mid-caller); make sure it runs again.
+                            bv2.wake_own_loop();
+                            return;
+                        }
+                        let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
+                            bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
+                        );
+                        bv2.enqueue_on_js_loop_for_plugins(task);
                     }
                 }
                 pub fn run_on_js_thread(&mut self) {
@@ -1245,16 +1254,24 @@ pub mod bv2_impl {
                 pub(crate) fn bake_graph(&self) -> crate::bake_types::Graph {
                     self.parse_task().known_target.bake_graph()
                 }
-                /// Hops to the JS thread to call the `onLoad` plugin chain.
+                /// Hops to the JS thread to call the `onLoad` plugin chain —
+                /// unless the pass is already cancelled: see `Resolve::dispatch`.
                 pub(crate) fn dispatch(&mut self) {
-                    let concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                        bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
-                    );
                     // SAFETY: `bv2` is a valid backref; plugins is Some (asserted
                     // by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
-                        (*self.bv2).graph.outstanding_loads.push(self);
-                        (*self.bv2).enqueue_on_js_loop_for_plugins(concurrent_task);
+                        let bv2 = &mut *self.bv2;
+                        bv2.graph.outstanding_loads.push(self);
+                        if bv2.graph.cancelled {
+                            // Failed by `is_done` at the loop's top level (not
+                            // here, mid-caller); make sure it runs again.
+                            bv2.wake_own_loop();
+                            return;
+                        }
+                        let concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
+                            bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
+                        );
+                        bv2.enqueue_on_js_loop_for_plugins(concurrent_task);
                     }
                 }
                 pub fn run_on_js_thread(&mut self) {
@@ -2028,7 +2045,6 @@ pub mod bv2_impl {
                             mini.run_ready(this.cast());
                         }
                     }
-                    self.fail_outstanding_plugin_requests();
                     // And the pass as a whole fails at its next checkpoint.
                     self.transpiler.log_mut().add_error(
                         None,
@@ -2036,6 +2052,10 @@ pub mod bv2_impl {
                         &b"Bun.build was cancelled: the VM that started it shut down"[..],
                     );
                 }
+                // Every check, not just the first: `dispatch()` refuses new
+                // requests once cancelled, but one may have been linked between
+                // the completion's flag flipping and this thread observing it.
+                self.fail_outstanding_plugin_requests();
                 return self.graph.pending_items == 0;
             }
 
@@ -2057,6 +2077,14 @@ pub mod bv2_impl {
 
         /// Every onResolve/onLoad a plugin still holds is answered with an
         /// error (bundle thread; the plugins' VM runs no more script).
+        /// Bundle thread: make the pass's own Mini loop return from its poll so
+        /// `is_done` is evaluated again.
+        pub(crate) fn wake_own_loop(&mut self) {
+            if let bun_event_loop::AnyEventLoop::Mini(mini) = self.any_loop_mut() {
+                mini.wakeup();
+            }
+        }
+
         fn fail_outstanding_plugin_requests(&mut self) {
             fn cancelled_msg(file: &[u8]) -> bun_ast::Msg {
                 bun_ast::Msg {

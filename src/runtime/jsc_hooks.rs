@@ -881,7 +881,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 unsafe { (*(*vm).event_loop()).perform_gc() };
                 // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
                 // live protected JSC heap cell.
-                unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
+                let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
             }
         }
 
@@ -1033,8 +1033,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
         // SAFETY: `el` is the live per-thread event loop.
-        let has_pending_immediate =
-            has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty();
+        // SAFETY: `el` is the live per-thread event loop.
+        let has_pending_immediate = has_yielded_tasks
+            || !unsafe { &*el }.immediate_tasks.is_empty()
+            || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
@@ -1169,8 +1171,10 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     {
         // SAFETY: `el` is the live per-thread event loop.
-        let has_pending_immediate =
-            has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty();
+        // SAFETY: `el` is the live per-thread event loop.
+        let has_pending_immediate = has_yielded_tasks
+            || !unsafe { &*el }.immediate_tasks.is_empty()
+            || unsafe { &*el }.has_pending_tasks();
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
             let ild = &(*loop_).internal_loop_data;

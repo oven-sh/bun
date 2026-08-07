@@ -101,7 +101,10 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // below, then convert it to ERR_SCRIPT_EXECUTION_*.
             std::ignore = scope.exception();
             if ((vm.hasTerminationRequest() || vm.hasPendingTerminationException()) && !Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) {
-                return {}; // the VM itself is being stopped; not ours to consume
+                // The VM itself is being stopped; not ours to consume. Propagate the termination.
+                if (!vm.hasPendingTerminationException())
+                    vm.throwTerminationException();
+                return {};
             }
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
                 vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
@@ -244,7 +247,10 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
     if ((vm.hasTerminationRequest() || vm.hasPendingTerminationException()) && !Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) {
-        return {}; // the VM itself is being stopped; not ours to consume
+        // The VM itself is being stopped; not ours to consume. Propagate the termination.
+        if (!vm.hasPendingTerminationException())
+            vm.throwTerminationException();
+        return {};
     }
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);

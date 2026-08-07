@@ -16,6 +16,7 @@
 #include "napi_type_tag.h"
 
 #include "helpers.h"
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
 #include <wtf/text/ExternalStringImpl.h>
@@ -105,16 +106,16 @@ using namespace Zig;
         NAPI_CHECK_ARG(_env, _env);        \
     } while (0)
 
-// Like NAPI_PREAMBLE but does NOT return napi_pending_exception when the env
-// has a stashed napi_throw* exception. Mirrors Node.js's CHECK_ENV_NOT_IN_GC
-// for pure value constructors/accessors that are safe to call while an
-// exception is pending. Still declares a throw scope so NAPI_RETURN_SUCCESS
-// can assert and VM-level exceptions from JSC internals are caught.
-#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                    \
-    NAPI_LOG_CURRENT_FUNCTION;                                                  \
-    NAPI_CHECK_ARG(_env, _env);                                                 \
-    auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm()); \
-    NAPI_RETURN_IF_VM_EXCEPTION(_env)
+// Like NAPI_PREAMBLE but for pure value constructors/accessors, which Node lets an addon call while
+// an exception is pending (CHECK_ENV_NOT_IN_GC only) — node-addon-api relies on that to build the
+// Error it wraps a failed call in. Any exception already on the VM (a napi_throw*, or a termination
+// request that materialised in an earlier call while a worker is being stopped) is stashed for the
+// duration and restored on return; the throw scope still catches what the body itself raises.
+#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                       \
+    NAPI_LOG_CURRENT_FUNCTION;                                                     \
+    NAPI_CHECK_ARG(_env, _env);                                                    \
+    JSC::SuspendExceptionScope napi_preamble_suspended_exception__ { _env->vm() }; \
+    auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm());
 
 // Return an error code if arg is null. Only use for input validation.
 #define NAPI_CHECK_ARG(_env, arg)                               \

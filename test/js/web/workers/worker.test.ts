@@ -460,6 +460,30 @@ describe("web worker", () => {
       expect(exitCode).toBe(0);
     });
 
+    // Everything a worker posted before it exited arrives before 'close'.
+    test("messages posted right before a natural exit are all delivered before close", async () => {
+      const K = 5000;
+      const src = `const p = Buffer.alloc(256, "x").toString(); for (let i = 0; i < ${K}; i++) postMessage({ i, p })`;
+      const url = URL.createObjectURL(new Blob([src]));
+      for (let r = 0; r < 3; r++) {
+        let got = 0;
+        const w = new Worker(url);
+        w.onmessage = () => got++;
+        await once(w, "close");
+        expect(got).toBe(K);
+      }
+    });
+
+    // process.exit() from inside nested node:vm contexts in a worker: the
+    // termination unwinds through both frames like any exception.
+    test("process.exit() from a nested node:vm context inside a worker", async () => {
+      const src = `const vm = require("node:vm"); postMessage("in");
+        vm.runInNewContext('run("exit(0)")', { run: s => vm.runInNewContext(s, { exit: process.exit.bind(process) }) })`;
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      const [ev] = await once(w, "close");
+      expect(ev.code).toBe(0);
+    });
+
     // fs completions racing terminate(): whatever completes on the worker
     // after the request must release, not build script values under it.
     test("terminate() while fs.readFile completions keep arriving", async () => {

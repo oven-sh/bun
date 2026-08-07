@@ -62,6 +62,8 @@ class Worker;
 //
 // Everything a task posted from the worker thread wants to do to the Worker object goes through
 // m_workerObject on the parent thread, which workerObjectDestroyed() nulls first.
+enum class DrainBudget;
+
 class WorkerMessagingProxy final : public ThreadSafeRefCounted<WorkerMessagingProxy> {
     WTF_MAKE_TZONE_ALLOCATED(WorkerMessagingProxy);
 
@@ -122,7 +124,7 @@ private:
 
     void workerGlobalScopeDestroyedInternal(int32_t exitCode, bool stoppedByParent);
     void releaseWorkerThread();
-    void drainMessagesToWorkerObject(ScriptExecutionContext&);
+    void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
     void postMessageErrorToWorkerObject(String&& message);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);

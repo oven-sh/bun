@@ -264,14 +264,21 @@ void WorkerMessagingProxy::rejectAllCrossVMRequests()
 
 // ---- Inbox drain (both directions) ---------------------------------------------------------------
 //
-// Mirrors MessagePortPipe::drainAndDispatch and Node's MessagePort::OnMessage: one task drains up to
-// max(initial queue size, 1000) messages, running microtasks after each so queueMicrotask/Promise
-// callbacks observe them one at a time, then yields and reports whether more remain. Worker inboxes
-// never change owner, so the whole batch is swapped out under the lock and dispatched uncontended.
+// Mirrors MessagePortPipe::drainAndDispatch and Node's MessagePort::OnMessage: one task drains a
+// bounded batch of messages, running microtasks after each so queueMicrotask/Promise callbacks
+// observe them one at a time, then yields to the loop and reports whether more remain. The budget is
+// a fixed count rather than "everything that was queued when the drain began": with a producer on
+// another thread that snapshot can be arbitrarily large, and the receiving loop's timers and I/O
+// wait behind it. `UntilEmpty` is for the sender having exited: the queue is finite and everything
+// in it precedes 'close'. Worker inboxes never change owner, so the batch is swapped out under the
+// lock and dispatched uncontended.
+enum class DrainBudget { Bounded, UntilEmpty };
+static constexpr size_t drainBatchLimit = 1024;
+
 template<typename Dispatch>
-static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
+static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, Dispatch&& dispatch)
 {
-    size_t limit;
+    size_t limit = budget == DrainBudget::UntilEmpty ? std::numeric_limits<size_t>::max() : drainBatchLimit;
     Deque<MessageWithMessagePorts> batch;
     {
         Locker locker { inbox.lock };
@@ -279,7 +286,6 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
             inbox.drainScheduled = false;
             return false;
         }
-        limit = std::max<size_t>(inbox.queue.size(), 1000);
         batch = std::exchange(inbox.queue, {});
     }
 
@@ -318,7 +324,7 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
 void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionContext& context)
 {
     auto& globalObject = *defaultGlobalObject(context.globalObject());
-    bool more = drainInbox(m_toWorker, globalObject, context, [&](Event& event) {
+    bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, [&](Event& event) {
         globalObject.globalEventScope->dispatchEvent(event);
     });
     if (more) {
@@ -330,7 +336,7 @@ void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionConte
     }
 }
 
-void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& context)
+void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& context, DrainBudget budget)
 {
     if (!m_workerObject) {
         Locker locker { m_toParent.lock };
@@ -340,12 +346,12 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
     }
     Ref workerObject = *m_workerObject;
     auto& globalObject = *defaultGlobalObject(context.globalObject());
-    bool more = drainInbox(m_toParent, globalObject, context, [&](Event& event) {
+    bool more = drainInbox(m_toParent, globalObject, context, budget, [&](Event& event) {
         workerObject->dispatchEvent(event);
     });
     if (more) {
         context.postTaskAfterYield([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            protectedThis->drainMessagesToWorkerObject(context);
+            protectedThis->drainMessagesToWorkerObject(context, DrainBudget::Bounded);
         });
     }
 }
@@ -403,7 +409,7 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
         m_toParent.drainScheduled = true;
     }
     bool posted = ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-        protectedThis->drainMessagesToWorkerObject(context);
+        protectedThis->drainMessagesToWorkerObject(context, DrainBudget::Bounded);
     });
     if (!posted) {
         Locker locker { m_toParent.lock };
@@ -522,6 +528,11 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, 
         m_pendingTasks.clear();
     }
     rejectAllCrossVMRequests();
+
+    // Everything the worker posted before it exited is delivered before 'close' (Node: before
+    // 'exit'); the thread is gone, so the queue is finite. A bounded drain still queued behind this
+    // task then finds it empty.
+    drainMessagesToWorkerObject(*m_scriptExecutionContext, DrainBudget::UntilEmpty);
 
     if (RefPtr workerObject = m_workerObject; workerObject && workerObject->hasEventListeners(eventNames().closeEvent)) {
         auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);

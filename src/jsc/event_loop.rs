@@ -637,6 +637,20 @@ impl EventLoop {
         self.vm_ref().as_mut().gc_controller.process_gc_timer();
     }
 
+    /// How many times one `tick()` refills the task queue from the concurrent
+    /// queue before returning to let the loop poll. Other threads can post
+    /// faster than this thread runs what they post; without a bound a steady
+    /// producer (a worker flooding postMessage) keeps `tick()` from ever
+    /// returning and timers / I/O never run. What is left is picked up by the
+    /// next `tick()`, after a non-blocking poll (`has_pending_tasks`).
+    const CONCURRENT_REFILLS_PER_TICK: u32 = 8;
+
+    /// Work is queued that the next `tick()` will run: the poll before it must
+    /// not block.
+    pub fn has_pending_tasks(&self) -> bool {
+        self.tasks.readable_length() > 0 || !self.concurrent_tasks.is_empty()
+    }
+
     pub fn tick(&mut self) {
         jsc::mark_binding();
         crate::top_scope!(scope, self.global_ref());
@@ -653,8 +667,13 @@ impl EventLoop {
         let global = self.vm_ref().global();
         let global_vm = self.vm_ref().jsc_vm();
 
-        loop {
+        let mut refills = 0u32;
+        'tick: loop {
             while self.tick_with_count(ctx) > 0 {
+                if refills == Self::CONCURRENT_REFILLS_PER_TICK {
+                    break 'tick;
+                }
+                refills += 1;
                 self.tick_concurrent();
                 self.global_ref().handle_rejected_promises();
             }
@@ -666,6 +685,10 @@ impl EventLoop {
                 self.entered_event_loop_count -= 1;
                 return;
             }
+            if refills == Self::CONCURRENT_REFILLS_PER_TICK {
+                break;
+            }
+            refills += 1;
             self.tick_concurrent();
             if self.tasks.readable_length() > 0 {
                 continue;
@@ -673,7 +696,8 @@ impl EventLoop {
             break;
         }
 
-        while self.tick_with_count(ctx) > 0 {
+        while refills < Self::CONCURRENT_REFILLS_PER_TICK && self.tick_with_count(ctx) > 0 {
+            refills += 1;
             self.tick_concurrent();
         }
 
@@ -1012,25 +1036,25 @@ impl EventLoop {
         self.vm_ref().as_mut().auto_tick_active();
     }
 
-    /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
-    /// `promise` settles or execution is forbidden.
-    /// Ticks until `promise` settles — or the VM can no longer run the script
-    /// that would settle it (execution forbidden, or a stop was requested:
-    /// a worker being terminated mid-load never sees its module promise settle).
-    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) {
+    /// Ticks until `promise` settles. `Err` when it returns with the promise
+    /// still pending because the VM can no longer run the script that would
+    /// settle it (execution forbidden, or a stop was requested: a worker being
+    /// terminated mid-wait) — a `JsError::Terminated` for the caller.
+    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::JsTerminated> {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
-            return;
+            return Ok(());
         }
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden() || !self.vm_ref().script_allowed() {
-                break;
+                return Err(jsc::JsTerminated::JSTerminated);
             }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
                 self.auto_tick();
             }
         }
+        Ok(())
     }
 
     pub fn wakeup(&self) {

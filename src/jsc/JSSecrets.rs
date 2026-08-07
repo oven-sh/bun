@@ -24,6 +24,12 @@ pub(crate) struct SecretsCtx {
 }
 
 impl AnyTaskJobCtx for SecretsCtx {
+    /// The C++ options are plain owned data; the promise handle dies with the VM.
+    fn release_off_thread(&mut self) {
+        // SAFETY: as in `Drop` (which does not run on this path).
+        unsafe { Bun__SecretsJobOptions__deinit(self.ctx) };
+    }
+
     fn run(&mut self, global: *mut JSGlobalObject) {
         // `ctx` is a valid C++ SecretsJobOptions* held alive until Drop;
         // `global` is the creating VM's global pointer. Both are `opaque_ffi!`

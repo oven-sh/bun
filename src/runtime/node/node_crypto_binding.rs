@@ -119,6 +119,11 @@ macro_rules! extern_crypto_job {
             }
 
             impl AnyTaskJobCtx for ExternCtx {
+                /// The C++ ctx is plain owned data; the callback handle went
+                /// with the VM's heap.
+                fn release_off_thread(&mut self) {
+                    self.deinit_ctx();
+                }
                 fn run(&mut self, global: *mut JSGlobalObject) {
                     ctx_run_task(Ctx::opaque_ref(self.ctx), global);
                 }
@@ -229,6 +234,10 @@ trait CryptoJobCtx: Sized {
     fn run_task(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue);
     fn deinit(&mut self);
+    /// VM gone, off the JS thread: free what `self` owns there (scratch/output
+    /// buffers); protected JS values went with the heap. `Drop`/`deinit` do
+    /// not run afterwards.
+    fn release_off_thread(&mut self);
 }
 
 /// Adapter binding a [`CryptoJobCtx`] + JS callback into an [`AnyTaskJobCtx`].
@@ -239,6 +248,9 @@ struct CallbackCtx<C: CryptoJobCtx> {
 }
 
 impl<C: CryptoJobCtx> AnyTaskJobCtx for CallbackCtx<C> {
+    fn release_off_thread(&mut self) {
+        self.inner.release_off_thread();
+    }
     #[inline]
     fn init(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         self.inner.init(global)
@@ -310,6 +322,9 @@ pub mod random {
     const MAX_RANGE: i64 = 0xffff_ffff_ffff;
 
     impl CryptoJobCtx for JobCtx {
+        fn release_off_thread(&mut self) {
+            drop(self.scratch.take());
+        }
         fn init(&mut self, _: &JSGlobalObject) -> JsResult<()> {
             self.value.protect();
             Ok(())
@@ -1129,6 +1144,9 @@ mod _impl {
     }
 
     impl CryptoJobCtx for Scrypt {
+        /// Nothing portable: the inputs are JS-backed (or strings shared with
+        /// the JS heap) and the output is written into a JS ArrayBuffer.
+        fn release_off_thread(&mut self) {}
         fn init(&mut self, global: &JSGlobalObject) -> JsResult<()> {
             if self.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
                 return Err(global.throw_out_of_memory());

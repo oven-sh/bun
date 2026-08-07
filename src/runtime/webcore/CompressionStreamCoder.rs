@@ -804,6 +804,21 @@ pub struct CompressionAsyncCtx {
 
 pub type CompressionStreamCoderTask = WorkTask<CompressionAsyncCtx>;
 
+impl CompressionAsyncCtx {
+    /// An owned input copy is ours; the coder belongs to the JS
+    /// `TransformStream` cell and the pinned input / `stream` root went with
+    /// the VM's heap.
+    fn release_portable(this: *mut Self) {
+        // SAFETY: the pool thread owns `this` (heap, from the WorkTask flow).
+        unsafe {
+            if let AsyncInput::Owned(_) = &(*this).input {
+                core::ptr::drop_in_place(&raw mut (*this).input);
+            }
+            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+        }
+    }
+}
+
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl WorkTaskContext for CompressionAsyncCtx {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CompressionStreamCoderTask;
@@ -837,6 +852,9 @@ impl WorkTaskContext for CompressionAsyncCtx {
         // `out[..out_len]` before releasing the coder.
         unsafe { Bun__CompressionStream__deliverAsync(global, stream, out, out_len, err) };
         Ok(())
+    }
+    fn release_off_thread(this: *mut Self) {
+        Self::release_portable(this)
     }
 }
 

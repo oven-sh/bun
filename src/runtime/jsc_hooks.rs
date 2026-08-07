@@ -464,8 +464,7 @@ unsafe fn init_runtime_state(
                         .wake_ctx
                         .insert(Box::new(bun_jsc::async_module::WakeContext {
                             queue: ptr::addr_of_mut!((*vm).modules),
-                            vm: (*vm).handle(),
-                            loop_kind: bun_jsc::LoopKind::Regular,
+                            loop_handle: (*vm).loop_handle(),
                         }));
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(wake_ctx.cast()),

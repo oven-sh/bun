@@ -1,8 +1,6 @@
-use bun_event_loop::Task;
 use bun_io::KeepAlive;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
-use crate::event_loop::ConcurrentTask;
 use crate::{JSGlobalObject, JsResult};
 
 /// Per-job payload trait. Implementors own the off-thread work body and the
@@ -33,7 +31,7 @@ pub trait AnyTaskJobCtx: Sized {
     /// The VM was torn down before the completion could be delivered: release
     /// what `self` owns that is safe to release off the JS thread (own buffers,
     /// C library state). `Drop` is **not** run afterwards. Default: nothing.
-    fn release_off_thread(&mut self) {}
+    fn release_off_thread(&mut self);
 }
 
 /// Heap-allocated offload job; created via [`AnyTaskJob::create`] and freed in
@@ -43,9 +41,8 @@ pub trait AnyTaskJobCtx: Sized {
 pub struct AnyTaskJob<C> {
     run_from_js_erased: fn(*mut ()) -> JsResult<()>,
     release_erased: fn(*mut ()),
-    /// How the pool thread reaches the VM to deliver the completion.
-    vm: crate::VmHandle,
-    loop_kind: crate::LoopKind,
+    /// Where the pool thread delivers the completion.
+    loop_handle: crate::LoopHandle,
     /// Raw creating global, forwarded to `run` per the trait contract (not
     /// dereferenced off-thread) and used on the JS thread in `then`.
     global: *mut JSGlobalObject,
@@ -90,6 +87,24 @@ impl<C> bun_event_loop::Taskable for AnyTaskJob<C> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
 }
 
+impl<C: AnyTaskJobCtx> crate::Postable for AnyTaskJob<C> {
+    unsafe fn loop_handle(this: *mut Self) -> *const crate::LoopHandle {
+        // SAFETY: fn contract.
+        unsafe { &raw const (*this).loop_handle }
+    }
+    /// The context's portable resources, then the job without running `Drop`
+    /// (its keep-alive and any JS handles inside `ctx` belong to a loop/heap that
+    /// no longer exist).
+    unsafe fn release_refused(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).ctx.release_off_thread();
+            core::ptr::drop_in_place(&raw mut (*this).loop_handle);
+            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+        }
+    }
+}
+
 bun_threading::intrusive_work_task!([C] AnyTaskJob<C>, task);
 
 impl<C> Drop for AnyTaskJob<C> {
@@ -111,8 +126,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         let job = bun_core::heap::into_raw(Box::new(Self {
             run_from_js_erased: |p| Self::run_from_js(p.cast::<Self>()),
             release_erased: |p| Self::release(p.cast::<Self>()),
-            vm: vm.handle(),
-            loop_kind: vm.as_mut().current_loop_kind(),
+            loop_handle: vm.loop_handle(),
             global: core::ptr::from_ref(global).cast_mut(),
             task: WorkPoolTask {
                 node: Default::default(),
@@ -172,32 +186,8 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // `run_from_js` reclaims it.
         let job = unsafe { &mut *Self::from_task_ptr(task) };
         job.ctx.run(job.global);
-        // `ConcurrentTask::create` heap-allocates a fresh task; the queue takes
-        // ownership of it — unless the VM was torn down meanwhile, in which case
-        // both the task and the job are released here.
-        let ct = ConcurrentTask::create(Task::init(std::ptr::from_mut(job)));
-        if let crate::vm_handle::Posted::Refused(ct) = job.vm.post_ref(&job.loop_kind, ct) {
-            // SAFETY: refused ⇒ we still own both allocations.
-            unsafe {
-                drop(bun_core::heap::take(ct.as_ptr()));
-                Self::release_off_thread(job);
-            }
-        }
-    }
-
-    /// Off the JS thread, VM gone: let the context release its portable
-    /// resources, then free the job without running `Drop` (its keep-alive and
-    /// any JS handles inside `ctx` belong to a loop/heap that no longer exist).
-    ///
-    /// # Safety
-    /// `this` is the live job and nothing else references it.
-    unsafe fn release_off_thread(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe {
-            (*this).ctx.release_off_thread();
-            core::ptr::drop_in_place(&raw mut (*this).vm);
-            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
-        }
+        // SAFETY: live heap job; the pool is done with it.
+        unsafe { crate::post_job(core::ptr::from_mut(job)) };
     }
 
     fn run_from_js(this: *mut Self) -> JsResult<()> {

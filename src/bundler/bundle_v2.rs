@@ -1485,7 +1485,7 @@ pub mod bv2_impl {
                 .js_poster
                 .as_ref()
                 .expect("No JavaScript event loop for transpiler plugins to run on");
-            if let Err(task) = poster.post(task) {
+            if let bun_event_loop::Posted::Refused(task) = poster.post(task) {
                 // The JS VM running the plugins was torn down mid-bundle; the
                 // plugin hop will never run. Free the task if it is heap-owned.
                 // SAFETY: refused ⇒ still ours.
@@ -4193,7 +4193,7 @@ pub mod bv2_impl {
                         .js_poster
                         .as_ref()
                         .expect("JS-owned bundle has a poster");
-                    if let Err(ct) = poster.post(ct) {
+                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                         // Owning JS VM torn down mid-bundle: the hop never runs.
                         // SAFETY: refused ⇒ we own the task box.
                         unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
@@ -4225,7 +4225,7 @@ pub mod bv2_impl {
                         .js_poster
                         .as_ref()
                         .expect("JS-owned bundle has a poster");
-                    if let Err(ct) = poster.post(ct) {
+                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                         // Owning JS VM torn down mid-bundle: the hop never runs.
                         // SAFETY: refused ⇒ we own the task box.
                         unsafe { drop(bun_core::heap::take(ct.as_ptr())) };

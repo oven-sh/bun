@@ -30,25 +30,17 @@ pub trait WorkTaskContext: Sized {
     fn then(this: *mut Self, global_this: &JSGlobalObject) -> Result<(), crate::JsTerminated>;
 
     /// The VM was torn down before this task's completion could be delivered:
-    /// release whatever `this` owns that is safe to release **off the JS
-    /// thread** (its own buffers/allocations). JSC handles are not touched here.
-    /// Default: leak, loudly in debug — implement for each context.
-    fn release_off_thread(this: *mut Self) {
-        let _ = this;
-        #[cfg(debug_assertions)]
-        bun_core::Output::debug_warn(&format_args!(
-            "WorkTask<{}> refused after VM teardown; context leaked (implement release_off_thread)",
-            core::any::type_name::<Self>()
-        ));
-    }
+    /// on the pool thread, free the context — its own buffers/allocations —
+    /// without touching JSC handles (they die with the VM). No default: every
+    /// context states what it owns.
+    fn release_off_thread(this: *mut Self);
 }
 
 pub struct WorkTask<Context: WorkTaskContext> {
     pub ctx: *mut Context,
     pub(crate) task: WorkPoolTask,
-    /// How the pool thread reaches the VM to deliver the completion.
-    pub(crate) vm: crate::VmHandle,
-    pub(crate) loop_kind: crate::LoopKind,
+    /// Where the pool thread delivers the completion.
+    pub(crate) loop_handle: crate::LoopHandle,
     /// JS thread only (`then`/`run_from_js`); never dereferenced off-thread.
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) concurrent_task: ConcurrentTask,
@@ -74,8 +66,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
     pub fn create_on_js_thread(global_this: &JSGlobalObject, value: *mut Context) -> *mut Self {
         let vm = global_this.bun_vm().as_mut();
         let mut this = Box::new(Self {
-            vm: vm.handle(),
-            loop_kind: vm.current_loop_kind(),
+            loop_handle: vm.loop_handle(),
             ctx: value,
             global_this: BackRef::new(global_this),
             task: WorkPoolTask {
@@ -136,32 +127,27 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         WorkPool::schedule(&raw mut this.task);
     }
 
-    /// Pool thread: deliver the completion to the VM, or — if the VM has been
-    /// torn down meanwhile — release the task here.
+    /// Pool thread: deliver the completion to the VM (or release, if it is gone).
     pub fn on_finish(this: &mut Self) {
-        // `concurrent_task` is an intrusive field of `*this`; `from`
-        // re-initializes it in place and returns the same address. Passing
-        // `this_ptr` while holding `&mut *this` is sound because `from` only
-        // stores the pointer (does not dereference it).
-        let this_ptr: *mut Self = this;
-        let task = core::ptr::NonNull::from(
-            this.concurrent_task
-                .from(this_ptr, AutoDeinit::ManualDeinit),
-        );
-        if let crate::vm_handle::Posted::Refused(_) = this.vm.post_ref(&this.loop_kind, task) {
-            // SAFETY: the queue refused it, so the pool thread still owns `this`.
-            unsafe { Self::release_off_thread(this_ptr) };
-        }
+        // SAFETY: live heap carrier; the pool is done with it.
+        unsafe { crate::post_job(core::ptr::from_mut(this)) };
     }
+}
 
-    /// Off the JS thread, VM gone: release the context's portable resources and
-    /// the carrier. The JS-thread-only members (`ref_` keep-alive on a loop that
-    /// no longer counts, the inspector tracker, `global_this`) are inert now and
-    /// are forgotten rather than run.
-    ///
-    /// # Safety
-    /// `this` is the live heap carrier and no queue holds it.
-    unsafe fn release_off_thread(this: *mut Self) {
+impl<Context: WorkTaskContext> crate::Postable for WorkTask<Context> {
+    unsafe fn loop_handle(this: *mut Self) -> *const crate::LoopHandle {
+        // SAFETY: fn contract.
+        unsafe { &raw const (*this).loop_handle }
+    }
+    unsafe fn concurrent_task(this: *mut Self) -> core::ptr::NonNull<ConcurrentTask> {
+        // The embedded task, re-initialised in place (`from` only stores `this`).
+        // SAFETY: fn contract.
+        core::ptr::NonNull::from(unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) })
+    }
+    /// The context's portable resources and the carrier. The JS-thread-only
+    /// members (`ref_` keep-alive on a loop that no longer counts, the inspector
+    /// tracker, `global_this`) are inert now and are forgotten rather than run.
+    unsafe fn release_refused(this: *mut Self) {
         // SAFETY: fn contract.
         let this = core::mem::ManuallyDrop::new(unsafe { bun_core::heap::take(this) });
         Context::release_off_thread(this.ctx);

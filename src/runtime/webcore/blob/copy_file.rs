@@ -82,6 +82,10 @@ impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_>
     fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
         CopyFile::then(self, promise)
     }
+    /// Store refs (thread-safe), fds and an error value: all portable.
+    fn release_off_thread(self: Box<Self>) {
+        drop(self);
+    }
 }
 
 impl<'a> CopyFile<'a> {
@@ -1066,8 +1070,7 @@ pub struct CopyFileWindows<'a> {
     // likely should be *const jsc::EventLoop.
     pub(crate) event_loop: &'a jsc::event_loop::EventLoop,
     /// How the mkdirp pool completion gets back to the VM.
-    pub(crate) vm_handle: jsc::VmHandle,
-    pub(crate) loop_kind: jsc::LoopKind,
+    pub(crate) loop_handle: jsc::LoopHandle,
 
     pub(crate) size: SizeType,
 
@@ -1373,10 +1376,7 @@ impl<'a> CopyFileWindows<'a> {
             promise: jsc::JSPromiseStrong::init(global),
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
-            vm_handle: jsc::VirtualMachine::VirtualMachine::get().handle(),
-            loop_kind: jsc::VirtualMachine::VirtualMachine::get()
-                .as_mut()
-                .current_loop_kind(),
+            loop_handle: jsc::VirtualMachine::VirtualMachine::get().loop_handle(),
             event_loop,
             mkdirp_if_not_exists,
             destination_mode,
@@ -1929,7 +1929,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         this,
         call_erased,
     ));
-    if let jsc::vm_handle::Posted::Refused(ct) = this.vm_handle.post_ref(&this.loop_kind, ct) {
+    if let jsc::vm_handle::Posted::Refused(ct) = this.loop_handle.post_task(ct) {
         // VM torn down: nobody will settle the promise; free the hop.
         // SAFETY: refused ⇒ we own the task box.
         unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct) };

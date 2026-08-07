@@ -344,8 +344,7 @@ impl RuntimeTranspilerStore {
                 non_threadsafe_referrer: OwnedString::new(referrer),
                 vm,
                 // SAFETY: `vm` is the live per-thread VM (this is its JS thread).
-                vm_handle: unsafe { (*vm).handle() },
-                loop_kind: unsafe { (*vm).current_loop_kind() },
+                loop_handle: unsafe { (*vm).loop_handle() },
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
@@ -402,11 +401,10 @@ pub struct TranspilerJob {
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
     pub(crate) vm: *mut VirtualMachine,
-    /// The pool thread runs this job under `vm_handle.borrow()`: the job's
+    /// The pool thread runs this job under `loop_handle.borrow()`: the job's
     /// own slot, the transpiler it copies and the store queue it pushes to are
     /// all VM-owned, and the VM's teardown waits for the borrow to end.
-    pub(crate) vm_handle: crate::VmHandle,
-    pub(crate) loop_kind: crate::LoopKind,
+    pub(crate) loop_handle: crate::LoopHandle,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) fetcher: Fetcher,
     pub(crate) poll_ref: KeepAlive,
@@ -516,8 +514,7 @@ impl TranspilerJob {
 
     fn dispatch_to_main_thread(&mut self) {
         let vm = self.vm;
-        let handle = self.vm_handle.clone();
-        let loop_kind = self.loop_kind.clone();
+        let loop_handle = self.loop_handle.clone();
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
@@ -532,7 +529,7 @@ impl TranspilerJob {
         // job stays on the store's queue either way; teardown releases whatever
         // is still there on the JS thread (`release_queued_jobs_for_teardown`).
         if let crate::vm_handle::Posted::Refused(task) =
-            handle.post_ref(&loop_kind, ConcurrentTask::create_from(transpiler_store))
+            loop_handle.post_task(ConcurrentTask::create_from(transpiler_store))
         {
             // SAFETY: just created above and handed back unqueued.
             unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task) };
@@ -616,7 +613,7 @@ impl TranspilerJob {
         // SAFETY: the one access before the borrow: `schedule` (JS thread)
         // wrote the handle before handing the job to the pool, and the teardown
         // joins/waits on pool work it owns before freeing the store.
-        let handle = unsafe { (*this).vm_handle.clone() };
+        let handle = unsafe { (*this).loop_handle.clone() };
         // Held (RAII) for the rest of this fn: `close()` cannot complete while
         // the job reads VM-owned memory below.
         let Some(_borrow) = handle.borrow() else {

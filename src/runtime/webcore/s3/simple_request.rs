@@ -118,8 +118,7 @@ pub struct S3HttpSimpleTask {
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
     /// How the HTTP thread reaches the VM to deliver the response.
-    pub(crate) vm: bun_jsc::VmHandle,
-    pub(crate) loop_kind: bun_jsc::LoopKind,
+    pub(crate) loop_handle: bun_jsc::LoopHandle,
     pub(crate) sign_result: SignResult,
     pub(crate) headers: Headers,
     pub(crate) callback_context: *mut c_void,
@@ -152,8 +151,7 @@ impl Default for S3HttpSimpleTask {
         }
         Self {
             http: core::mem::MaybeUninit::uninit(),
-            vm: VirtualMachine::get().handle(),
-            loop_kind: VirtualMachine::get().as_mut().current_loop_kind(),
+            loop_handle: VirtualMachine::get().loop_handle(),
             sign_result: SignResult::default(),
             headers: Headers::default(),
             callback_context: core::ptr::null_mut(),
@@ -472,7 +470,7 @@ impl S3HttpSimpleTask {
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
                 if let bun_jsc::vm_handle::Posted::Refused(_) =
-                    (*this).vm.post_ref(&(*this).loop_kind, queued)
+                    (*this).loop_handle.post_task(queued)
                 {
                     Self::release_off_thread(this);
                 }
@@ -495,7 +493,7 @@ impl S3HttpSimpleTask {
             core::ptr::drop_in_place(&raw mut (*this).headers);
             core::ptr::drop_in_place(&raw mut (*this).sign_result);
             core::ptr::drop_in_place(&raw mut (*this).result);
-            core::ptr::drop_in_place(&raw mut (*this).vm);
+            core::ptr::drop_in_place(&raw mut (*this).loop_handle);
             std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
         }
     }
@@ -644,8 +642,7 @@ pub(crate) fn execute_simple_s3_request(
         callback_context,
         callback,
         headers,
-        vm: VirtualMachine::get().handle(),
-        loop_kind: VirtualMachine::get().as_mut().current_loop_kind(),
+        loop_handle: VirtualMachine::get().loop_handle(),
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),

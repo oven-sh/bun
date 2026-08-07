@@ -1734,8 +1734,7 @@ pub(crate) struct napi_async_work {
     pub(crate) concurrent_task: ConcurrentTask,
     // Note: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
     /// How the pool thread delivers completion / cancellation to the VM.
-    pub(crate) vm: bun_jsc::VmHandle,
-    pub(crate) loop_kind: bun_jsc::LoopKind,
+    pub(crate) loop_handle: bun_jsc::LoopHandle,
     /// JS thread only.
     pub global: GlobalRef,
     pub(crate) env: NapiEnvRef,
@@ -1768,8 +1767,7 @@ impl napi_async_work {
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
-            vm: global.bun_vm().handle(),
-            loop_kind: global.bun_vm().as_mut().current_loop_kind(),
+            loop_handle: global.bun_vm().loop_handle(),
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1831,7 +1829,7 @@ impl napi_async_work {
             self.concurrent_task
                 .from(self_ptr, AutoDeinit::ManualDeinit),
         );
-        let _ = self.vm.post_ref(&self.loop_kind, ct);
+        let _ = self.loop_handle.post_task(ct);
     }
 
     pub(crate) fn cancel(&mut self) -> bool {
@@ -2413,8 +2411,7 @@ pub(crate) struct ThreadSafeFunction {
     pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop, bun_ptr::Mut>>,
     /// How addon threads (`napi_call_threadsafe_function`) schedule a
     /// dispatch on the VM.
-    pub(crate) vm: bun_jsc::VmHandle,
-    pub(crate) loop_kind: bun_jsc::LoopKind,
+    pub(crate) loop_handle: bun_jsc::LoopHandle,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -2807,7 +2804,7 @@ impl ThreadSafeFunction {
                 }
                 let ct = ConcurrentTask::create_from(self_ptr);
                 if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                    self.vm.post_ref(&self.loop_kind, ct)
+                    self.loop_handle.post_task(ct)
                 {
                     // VM torn down before the env cleanup hook ran here: no
                     // dispatch will happen; the queued calls are released by the
@@ -3098,8 +3095,7 @@ extern "C" fn napi_create_threadsafe_function(
         // SAFETY: the loop is live now; `NapiEnv::cleanup()` clears this field
         // (via `env_teardown`) before the VirtualMachine holding it is freed.
         event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
-        vm: vm.handle(),
-        loop_kind: vm.current_loop_kind(),
+        loop_handle: vm.loop_handle(),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,

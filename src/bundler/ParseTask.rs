@@ -2853,7 +2853,7 @@ pub mod parse_worker {
                     .js_poster
                     .as_ref()
                     .expect("JS-owned bundle has a poster");
-                if let Err(ct) = poster.post(ct) {
+                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                     // Owning JS VM torn down mid-bundle: free the hop and the result.
                     // SAFETY: refused ⇒ we own the task box and the leaked result.
                     unsafe {

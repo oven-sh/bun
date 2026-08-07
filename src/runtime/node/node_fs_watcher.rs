@@ -49,9 +49,7 @@ pub struct FSWatcher {
     /// How the watcher thread delivers event batches to the VM (POSIX; on
     /// Windows libuv delivers fs events on the JS thread).
     #[cfg(not(windows))]
-    vm_handle: bun_jsc::VmHandle,
-    #[cfg(not(windows))]
-    loop_kind: bun_jsc::LoopKind,
+    loop_handle: bun_jsc::LoopHandle,
     verbose: bool,
 
     mutex: Mutex,
@@ -105,7 +103,7 @@ impl FSWatcher {
         &self,
         task: core::ptr::NonNull<ConcurrentTask>,
     ) -> bun_jsc::vm_handle::Posted {
-        self.vm_handle.post_ref(&self.loop_kind, task)
+        self.loop_handle.post_task(task)
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
@@ -1114,9 +1112,7 @@ impl FSWatcher {
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
             #[cfg(not(windows))]
-            vm_handle: vm_ref.handle(),
-            #[cfg(not(windows))]
-            loop_kind: vm_ref.as_mut().current_loop_kind(),
+            loop_handle: vm_ref.loop_handle(),
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,
                 ..Default::default()

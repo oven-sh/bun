@@ -1101,6 +1101,18 @@ impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
         GetAddrInfoRequest::then(this, global_this);
         Ok(())
     }
+    /// The copied addrinfo list (POSIX libc backend) is ours. The lookup
+    /// chain (`head`…) holds promise handles, keep-alives and resolver refs
+    /// that belong to the VM's heap/loop and are forgotten with it; the
+    /// pending-cache slot pointing at this request went with the resolver.
+    fn release_off_thread(this: *mut Self) {
+        // SAFETY: the pool thread owns `this` (heap, from the WorkTask flow).
+        unsafe {
+            #[cfg(not(windows))]
+            core::ptr::drop_in_place(&raw mut (*this).backend);
+            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+        }
+    }
 }
 
 impl GetAddrInfoRequest {

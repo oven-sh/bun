@@ -17,10 +17,13 @@ pub trait ConcurrentPromiseTaskContext: Sized {
     fn run(&mut self);
     fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated>;
 
-    /// The VM was torn down before the completion could be delivered: release
-    /// what `self` owns that is safe to release off the JS thread. `self` is
-    /// dropped right after. Default: nothing beyond `Drop`.
-    fn release_off_thread(&mut self) {}
+    /// The VM was torn down before the completion could be delivered. Runs on
+    /// the pool thread with the context handed over whole: drop what is
+    /// portable, forget what belongs to the JS heap or must only be touched on
+    /// the JS thread (`Strong`s, non-atomic refs to JS-side objects) — a plain
+    /// `drop(self)` is right only when `Drop` touches nothing of that kind.
+    /// No default: every context states what it holds.
+    fn release_off_thread(self: Box<Self>);
 }
 
 /// A generic task that runs work on a thread pool and resolves a JavaScript Promise with the result.
@@ -34,9 +37,8 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     // Owned here so dropping the task frees the context.
     pub ctx: Box<Context>,
     pub(crate) task: WorkPoolTask,
-    /// How the pool thread reaches the VM to deliver the completion.
-    pub(crate) vm: crate::VmHandle,
-    pub(crate) loop_kind: crate::LoopKind,
+    /// Where the pool thread delivers the completion.
+    loop_handle: crate::LoopHandle,
     /// JS thread only.
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
@@ -59,12 +61,34 @@ impl<Context: ConcurrentPromiseTaskContext> Taskable for ConcurrentPromiseTask<'
     const TAG: TaskTag = Context::TASK_TAG;
 }
 
+impl<Context: ConcurrentPromiseTaskContext> crate::Postable for ConcurrentPromiseTask<'_, Context> {
+    unsafe fn loop_handle(this: *mut Self) -> *const crate::LoopHandle {
+        // SAFETY: fn contract.
+        unsafe { &raw const (*this).loop_handle }
+    }
+    unsafe fn concurrent_task(this: *mut Self) -> core::ptr::NonNull<ConcurrentTask> {
+        // The embedded task, re-initialised in place (`from` only stores `this`).
+        // SAFETY: fn contract.
+        core::ptr::NonNull::from(unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) })
+    }
+    /// The context (an owned `Box<Context>`, portable by this type's `Send`
+    /// contract) and the carrier's storage; the promise handle and keep-alive
+    /// belong to a heap/loop that no longer exist and are forgotten, not dropped.
+    unsafe fn release_refused(this: *mut Self) {
+        // SAFETY: fn contract; `ctx` is moved out (not dropped here).
+        unsafe {
+            Context::release_off_thread(core::ptr::read(&raw const (*this).ctx));
+            core::ptr::drop_in_place(&raw mut (*this).loop_handle);
+            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+        }
+    }
+}
+
 impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Context> {
     pub fn create_on_js_thread(global_this: &'a JSGlobalObject, value: Box<Context>) -> Box<Self> {
         let vm = VirtualMachine::get();
         let mut this = Box::new(Self {
-            vm: vm.handle(),
-            loop_kind: vm.current_loop_kind(),
+            loop_handle: vm.loop_handle(),
             ctx: value,
             task: WorkPoolTask {
                 node: Default::default(),
@@ -103,43 +127,11 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         WorkPool::schedule(&raw mut self.task);
     }
 
-    /// Pool thread: deliver the completion to the VM, or — if the VM has been
-    /// torn down meanwhile — release the task here.
+    /// Pool thread: deliver the completion to the VM (or release, if it is gone).
     fn on_finish(this: *mut Self) {
         // SAFETY: only called from `run_from_thread_pool` above with the live
         // heap allocation; the work pool owns it exclusively for this callback.
-        // `concurrent_task` is an intrusive field of `*this`; `from`
-        // re-initializes it in place and returns the same address. Passing
-        // `this` while a `&mut` to the field is live is sound because `from`
-        // only stores the pointer (does not dereference it).
-        let (task, posted) = unsafe {
-            let task = core::ptr::NonNull::from(
-                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-            );
-            (task, (*this).vm.post_ref(&(*this).loop_kind, task))
-        };
-        let _ = task;
-        if let crate::vm_handle::Posted::Refused(_) = posted {
-            // SAFETY: refused ⇒ still exclusively ours.
-            unsafe { Self::release_off_thread(this) };
-        }
-    }
-
-    /// Off the JS thread, VM gone: release the context (owned `Box<Context>`,
-    /// portable by the `Send` contract on this type) and the carrier's storage;
-    /// the promise handle and keep-alive belong to a heap/loop that no longer
-    /// exist and are forgotten, not dropped.
-    ///
-    /// # Safety
-    /// `this` is the live heap carrier and no queue holds it.
-    unsafe fn release_off_thread(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe {
-            Context::release_off_thread(&mut *(*this).ctx);
-            core::ptr::drop_in_place(&raw mut (*this).ctx);
-            core::ptr::drop_in_place(&raw mut (*this).vm);
-            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
-        }
+        unsafe { crate::post_job(this) };
     }
 
     /// Frees the heap allocation backing this task.

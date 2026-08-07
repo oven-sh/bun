@@ -561,8 +561,7 @@ struct PasswordJob<Op: PasswordOp> {
     password: Box<[u8]>,
     promise: JSPromiseStrong,
     /// How the pool thread delivers the result.
-    vm: bun_jsc::VmHandle,
-    loop_kind: bun_jsc::LoopKind,
+    loop_handle: bun_jsc::LoopHandle,
     global: *const JSGlobalObject,
     r#ref: KeepAlive,
     task: WorkPoolTask,
@@ -600,7 +599,7 @@ impl<Op: PasswordOp> PasswordJob<Op> {
             <PasswordResult<Op> as bun_event_loop::Taskable>::TAG,
             result.cast::<()>(),
         ));
-        if let bun_jsc::vm_handle::Posted::Refused(ct) = self.vm.post_ref(&self.loop_kind, ct) {
+        if let bun_jsc::vm_handle::Posted::Refused(ct) = self.loop_handle.post_task(ct) {
             // SAFETY: refused ⇒ we own both boxes.
             unsafe {
                 drop(bun_core::heap::take(ct.as_ptr()));
@@ -686,8 +685,7 @@ impl JSPasswordObject {
             password,
             promise,
             // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
-            vm: global_object.bun_vm().handle(),
-            loop_kind: global_object.bun_vm().as_mut().current_loop_kind(),
+            loop_handle: global_object.bun_vm().loop_handle(),
             global: std::ptr::from_ref(global_object),
             r#ref: KeepAlive::default(),
             task: WorkPoolTask::default(),

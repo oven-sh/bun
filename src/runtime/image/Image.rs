@@ -1405,6 +1405,19 @@ pub type AsyncImageTask<'a> = ConcurrentPromiseTask<'a, PipelineTask<'a>>;
 
 impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncImageTask;
+    /// The pipeline, our input copy and the encoded result are portable; the
+    /// `Image` back-pointer bookkeeping and a `WriteDest` handle are JS-thread
+    /// state that went with the VM, so `Drop` must not run.
+    fn release_off_thread(self: Box<Self>) {
+        let this = Box::into_raw(self);
+        // SAFETY: sole owner; free the portable members and the storage.
+        unsafe {
+            core::ptr::drop_in_place(&raw mut (*this).pipeline);
+            drop((*this).input.copied.take());
+            core::ptr::drop_in_place(&raw mut (*this).result);
+            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+        }
+    }
     #[inline]
     fn run(&mut self) {
         PipelineTask::run(self)

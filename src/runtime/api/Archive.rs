@@ -694,8 +694,7 @@ pub struct AsyncTask<C: TaskContext> {
     ctx: C,
     promise: JSPromiseStrong,
     /// How the pool thread delivers the completion.
-    vm: bun_jsc::VmHandle,
-    loop_kind: bun_jsc::LoopKind,
+    loop_handle: bun_jsc::LoopHandle,
     task: WorkPoolTask,
     concurrent_task: ConcurrentTask,
     keep_alive: KeepAlive,
@@ -716,8 +715,7 @@ impl<C: TaskContext> AsyncTask<C> {
             ctx,
             promise: JSPromiseStrong::init(global),
             // SAFETY: `vm` is the live per-thread VM (JS thread).
-            vm: unsafe { (*vm).handle() },
-            loop_kind: unsafe { (*vm).current_loop_kind() },
+            loop_handle: unsafe { (*vm).loop_handle() },
             task: WorkPoolTask {
                 callback: Self::run_callback,
                 node: Default::default(),
@@ -768,13 +766,13 @@ impl<C: TaskContext> AsyncTask<C> {
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
             if let bun_jsc::vm_handle::Posted::Refused(_) =
-                (*this).vm.post_ref(&(*this).loop_kind, ct)
+                (*this).loop_handle.post_task(ct)
             {
                 // VM torn down: nobody will settle the promise. Release the
                 // context (portable) and the task's storage; the promise handle
                 // and keep-alive belong to a heap/loop that are gone.
                 core::ptr::drop_in_place(&raw mut (*this).ctx);
-                core::ptr::drop_in_place(&raw mut (*this).vm);
+                core::ptr::drop_in_place(&raw mut (*this).loop_handle);
                 std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
             }
         }

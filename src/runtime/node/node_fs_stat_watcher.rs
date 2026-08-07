@@ -62,8 +62,7 @@ pub struct StatWatcherScheduler {
     /// JS-thread uses only (`timer_callback`).
     vm: BackRef<VirtualMachine>,
     /// How the pool thread asks the JS thread to (re)arm the timer.
-    vm_handle: bun_jsc::VmHandle,
-    loop_kind: bun_jsc::LoopKind,
+    loop_handle: bun_jsc::LoopHandle,
     watchers: WatcherQueue,
 
     pub(crate) event_loop_timer: EventLoopTimer,
@@ -189,8 +188,7 @@ impl StatWatcherScheduler {
             // JSC_BORROW: `vm` is the live per-thread VM (never null).
             vm: BackRef::from(core::ptr::NonNull::new(vm).expect("vm")),
             // SAFETY: `vm` is the live per-thread VM; this runs on its thread.
-            vm_handle: unsafe { (*vm).handle() },
-            loop_kind: unsafe { (*vm).current_loop_kind() },
+            loop_handle: unsafe { (*vm).loop_handle() },
             watchers: WatcherQueue::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::StatWatcherScheduler),
             ref_count: ThreadSafeRefCount::init(),
@@ -304,7 +302,7 @@ impl StatWatcherScheduler {
                 holder.cast::<()>(),
             ));
             if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                (*this).vm_handle.post_ref(&(*this).loop_kind, ct)
+                (*this).loop_handle.post_task(ct)
             {
                 // VM torn down: no timer will be armed. Free the hop and its payload.
                 drop(bun_core::heap::take(ct.as_ptr()));
@@ -516,8 +514,7 @@ pub struct StatWatcher {
     /// JS-thread uses only.
     ctx: BackRef<VirtualMachine, bun_ptr::Mut>,
     /// How the pool thread delivers stat results to the VM.
-    vm_handle: bun_jsc::VmHandle,
-    loop_kind: bun_jsc::LoopKind,
+    loop_handle: bun_jsc::LoopHandle,
 
     ref_count: ThreadSafeRefCount<StatWatcher>,
 
@@ -676,7 +673,7 @@ impl StatWatcher {
     /// task is freed here and that ref released.
     fn post_to_js_thread(&self, task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>) {
         if let bun_jsc::vm_handle::Posted::Refused(task) =
-            self.vm_handle.post_ref(&self.loop_kind, task)
+            self.loop_handle.post_task(task)
         {
             // SAFETY: refused ⇒ we own the task box; `self` is live (ref held for the callback).
             unsafe { drop(bun_core::heap::take(task.as_ptr())) };
@@ -1012,8 +1009,7 @@ impl StatWatcher {
             // SAFETY: `bun_vm_ptr()` is the live per-thread VM, non-null, outlives the watcher.
             ctx: unsafe { BackRef::from_raw_mut(vm) },
             // SAFETY: `vm` is the live per-thread VM; this runs on its thread.
-            vm_handle: unsafe { (*vm).handle() },
-            loop_kind: unsafe { (*vm).current_loop_kind() },
+            loop_handle: unsafe { (*vm).loop_handle() },
             ref_count: ThreadSafeRefCount::init(),
             closed: AtomicBool::new(false),
             path: alloc_file_path,

@@ -540,9 +540,17 @@ impl EventLoopHandle {
 // underlying handle, after which `post` refuses (returns the task) and the
 // caller releases it on its own thread. Valid for as long as it is held.
 
+/// Result of posting a task to a JS loop from another thread: it was queued, or
+/// the loop's VM is gone and the caller has the task back to release on this
+/// thread.
+#[must_use = "a refused task must be released by its producer"]
+pub enum Posted {
+    Queued,
+    Refused(NonNull<ConcurrentTask>),
+}
+
 pub struct JsPosterVTable {
-    /// Returns `true` if queued, `false` if the VM is gone (caller keeps `task`).
-    pub post: unsafe fn(data: *const (), task: NonNull<ConcurrentTask>) -> bool,
+    pub post: unsafe fn(data: *const (), task: NonNull<ConcurrentTask>) -> Posted,
     pub wake: unsafe fn(data: *const ()),
     pub clone: unsafe fn(data: *const ()) -> *const (),
     pub drop: unsafe fn(data: *const ()),
@@ -566,16 +574,12 @@ impl JsPoster {
         Self { data, vtable }
     }
 
-    /// Queue `task` on the VM this poster was created for and wake it. Returns
-    /// the task back if the VM has been torn down.
+    /// Queue `task` on the VM this poster was created for and wake it, or hand
+    /// it back if the VM has been torn down.
     #[inline]
-    pub fn post(&self, task: NonNull<ConcurrentTask>) -> Result<(), NonNull<ConcurrentTask>> {
+    pub fn post(&self, task: NonNull<ConcurrentTask>) -> Posted {
         // SAFETY: vtable contract.
-        if unsafe { (self.vtable.post)(self.data, task) } {
-            Ok(())
-        } else {
-            Err(task)
-        }
+        unsafe { (self.vtable.post)(self.data, task) }
     }
 
     #[inline]

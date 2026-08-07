@@ -676,6 +676,20 @@ pub(crate) type AsyncTransformTask<'a> =
 
 impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncTransformTask;
+    /// Log, error, macro map and export map are portable; the `JSTranspiler`
+    /// ref is a non-atomic count on a JS-side object and is forgotten (its
+    /// wrapper went with the VM), so `Drop` must not run.
+    fn release_off_thread(self: Box<Self>) {
+        let this = Box::into_raw(self);
+        // SAFETY: sole owner; free the portable members and the storage.
+        unsafe {
+            core::ptr::drop_in_place(&raw mut (*this).log);
+            core::ptr::drop_in_place(&raw mut (*this).err);
+            core::ptr::drop_in_place(&raw mut (*this).macro_map);
+            core::ptr::drop_in_place(&raw mut (*this).replace_exports);
+            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+        }
+    }
     fn run(&mut self) {
         TransformTask::run(self)
     }

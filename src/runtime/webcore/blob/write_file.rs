@@ -51,6 +51,17 @@ impl bun_jsc::work_task::WorkTaskContext for WriteFile {
         // SAFETY: `this` was heap-allocated by the WorkTask flow; consumed here.
         WriteFile::then(unsafe { bun_core::heap::take(this) }, global)
     }
+    /// The two blobs hold store refs (thread-safe); the completion ctx belongs
+    /// to a JS-side waiter and is forgotten with the VM.
+    fn release_off_thread(this: *mut Self) {
+        // SAFETY: the pool thread owns `this` (heap, from the WorkTask flow).
+        unsafe {
+            core::ptr::drop_in_place(&raw mut (*this).file_blob);
+            #[cfg(not(windows))]
+            core::ptr::drop_in_place(&raw mut (*this).bytes_blob);
+            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+        }
+    }
 }
 
 pub struct WriteFile {
@@ -634,8 +645,7 @@ mod windows_impl {
         pub(crate) total_written: usize,
         pub(crate) event_loop: *mut EventLoop,
         /// How the mkdirp pool completion gets back to the VM.
-        pub(crate) vm_handle: bun_jsc::VmHandle,
-        pub(crate) loop_kind: bun_jsc::LoopKind,
+        pub(crate) loop_handle: bun_jsc::LoopHandle,
         pub poll_ref: KeepAlive,
 
         pub(crate) owned_fd: bool,
@@ -693,10 +703,7 @@ mod windows_impl {
                     base: null_mut(),
                     len: 0,
                 }],
-                vm_handle: bun_jsc::virtual_machine::VirtualMachine::get().handle(),
-                loop_kind: bun_jsc::virtual_machine::VirtualMachine::get()
-                    .as_mut()
-                    .current_loop_kind(),
+                loop_handle: bun_jsc::virtual_machine::VirtualMachine::get().loop_handle(),
                 event_loop,
                 fd: -1,
                 err: None,
@@ -1037,7 +1044,7 @@ mod windows_impl {
                 Self::on_mkdirp_complete_task,
             ));
             if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                this.vm_handle.post_ref(&this.loop_kind, ct)
+                this.loop_handle.post_task(ct)
             {
                 // VM torn down: nobody will settle the promise. Free the hop (the
                 // ConcurrentTask owns the boxed ManagedTask); the operation's

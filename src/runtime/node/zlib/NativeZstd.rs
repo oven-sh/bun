@@ -42,8 +42,7 @@ mod _impl {
         // `BackRef` centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
-        pub vm_handle: bun_jsc::VmHandle,
-        pub loop_kind: bun_jsc::LoopKind,
+        pub loop_handle: bun_jsc::LoopHandle,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
@@ -111,8 +110,7 @@ mod _impl {
                 // JSC_BORROW — the JSGlobalObject outlives this payload (the C++
                 // wrapper is owned by that global's heap).
                 global_this: bun_ptr::BackRef::new(global),
-                vm_handle: global.bun_vm().handle(),
-                loop_kind: global.bun_vm().as_mut().current_loop_kind(),
+                loop_handle: global.bun_vm().loop_handle(),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),

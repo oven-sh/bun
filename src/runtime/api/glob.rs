@@ -236,6 +236,11 @@ impl<'a> WalkTask<'a> {
 
 impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncGlobWalkTask;
+    /// The walker and its error are portable (`run` already dropped the
+    /// pending-activity count it held on the JS Glob).
+    fn release_off_thread(self: Box<Self>) {
+        drop(self);
+    }
     fn run(&mut self) {
         let guard = scopeguard::guard(self.has_pending_activity, |hpa| {
             decr_pending_activity_flag(hpa);

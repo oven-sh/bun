@@ -87,13 +87,7 @@ unsafe impl Sync for Inner {}
 #[repr(transparent)]
 pub struct VmHandle(Arc<Inner>);
 
-/// Result of [`VmHandle::post`]: the task was queued, or the VM is closed and
-/// the caller has it back to release on this thread.
-#[must_use]
-pub enum Posted {
-    Queued,
-    Refused(NonNull<ConcurrentTaskItem>),
-}
+pub use bun_event_loop::Posted;
 
 /// RAII: one unit of `active`. While held, `close()` cannot complete.
 struct Access<'a>(&'a Inner);
@@ -173,11 +167,7 @@ impl VmHandle {
 
     pub fn post_ref(&self, kind: &LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
         if let LoopKind::Isolated(p) = kind {
-            return if p.post(task) {
-                Posted::Queued
-            } else {
-                Posted::Refused(task)
-            };
+            return p.post(task);
         }
         let Some(_a) = self.enter() else {
             return Posted::Refused(task);
@@ -400,10 +390,7 @@ impl ConcurrentPoster {
     /// releases. Panics (debug) if this poster is `Mini`.
     pub fn post_js(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
         match self {
-            ConcurrentPoster::Js(p) => match p.post(task) {
-                Ok(()) => Posted::Queued,
-                Err(task) => Posted::Refused(task),
-            },
+            ConcurrentPoster::Js(p) => p.post(task),
             ConcurrentPoster::Mini(_) => {
                 debug_assert!(false, "post_js on a Mini poster");
                 Posted::Refused(task)
@@ -436,10 +423,10 @@ struct PosterData {
     kind: LoopKind,
 }
 
-unsafe fn poster_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> bool {
+unsafe fn poster_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> Posted {
     // SAFETY: `data` is a leaked `Arc<PosterData>` pointer (see `to_js_poster`).
     let d = unsafe { &*(data as *const PosterData) };
-    matches!(d.handle.post_ref(&d.kind, task), Posted::Queued)
+    d.handle.post_ref(&d.kind, task)
 }
 unsafe fn poster_wake(data: *const ()) {
     // SAFETY: as above.
@@ -476,7 +463,113 @@ impl VmHandle {
 impl VirtualMachine {
     /// JS thread: an erased poster for the current loop of this VM.
     pub fn js_poster(&self) -> bun_event_loop::JsPoster {
-        self.handle().to_js_poster(self.current_loop_kind())
+        self.loop_handle().to_js_poster()
+    }
+}
+
+// ── LoopHandle: "where this job's completion goes" ────────────────────────
+
+/// A [`VmHandle`] plus the loop of that VM the completion belongs on — what a
+/// job created on the JS thread captures (`vm.loop_handle()`) and posts back
+/// through from whatever thread finishes it.
+#[derive(Clone)]
+pub struct LoopHandle {
+    vm: VmHandle,
+    kind: LoopKind,
+}
+
+/// A job that finishes off the JS thread and is posted back to its VM as a
+/// `ConcurrentTask` — see [`post_job`]. It says where its [`LoopHandle`] lives
+/// and how to release itself when the VM is already gone. There is
+/// deliberately no default for the release: a job that cannot release itself
+/// does not compile.
+pub trait Postable: bun_event_loop::Taskable + Sized {
+    /// The handle captured at creation (`vm.loop_handle()`), stored in the job.
+    ///
+    /// # Safety
+    /// `this` is live.
+    unsafe fn loop_handle(this: *mut Self) -> *const LoopHandle;
+
+    /// The `ConcurrentTask` that carries `this`: a fresh heap one by default;
+    /// jobs with an embedded task return that instead.
+    ///
+    /// # Safety
+    /// `this` is live.
+    unsafe fn concurrent_task(this: *mut Self) -> NonNull<ConcurrentTaskItem> {
+        ConcurrentTaskItem::create_from(this)
+    }
+
+    /// The VM refused the completion (torn down). Runs on the posting thread,
+    /// usually *not* the JS thread: free what the job owns, do not touch JSC
+    /// handles (they die with the VM), and free the allocation itself.
+    ///
+    /// # Safety
+    /// `this` is the live job; nothing uses it afterwards.
+    unsafe fn release_refused(this: *mut Self);
+}
+
+/// Post a finished job's completion back to the VM it came from. If that VM
+/// has been torn down, the job releases itself here; callers have nothing to
+/// check either way.
+///
+/// # Safety
+/// `job` is a live heap job whose off-thread part is finished; the caller does
+/// not touch it afterwards (it now belongs to the VM's queue, or was released).
+pub unsafe fn post_job<T: Postable>(job: *mut T) {
+    // Clone the handle out first: a refusal frees `job`, handle field included.
+    // SAFETY: fn contract.
+    let handle = unsafe { (*T::loop_handle(job)).clone() };
+    // SAFETY: fn contract.
+    let task = unsafe { T::concurrent_task(job) };
+    if let Posted::Refused(task) = handle.post_task(task) {
+        // SAFETY: handed back unqueued; `job` per fn contract.
+        unsafe {
+            ConcurrentTaskItem::release_refused(task);
+            T::release_refused(job);
+        }
+    }
+}
+
+impl LoopHandle {
+    pub fn vm_handle(&self) -> &VmHandle {
+        &self.vm
+    }
+
+    /// Post an already-built task. Prefer [`post_job`], which leaves the caller
+    /// nothing to check; this hands a refusal back.
+    pub fn post_task(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
+        self.vm.post_ref(&self.kind, task)
+    }
+
+    pub fn wake(&self) {
+        self.vm.wake()
+    }
+    pub fn borrow(&self) -> Option<Borrow> {
+        self.vm.borrow()
+    }
+    pub fn is_open(&self) -> bool {
+        self.vm.is_open()
+    }
+    pub fn ref_keep_alive(&self) {
+        self.vm.ref_keep_alive(self.kind.clone())
+    }
+    pub fn unref_keep_alive(&self) {
+        self.vm.unref_keep_alive(self.kind.clone())
+    }
+    /// An erased poster for this loop, for code that cannot name `bun_jsc`.
+    pub fn to_js_poster(&self) -> bun_event_loop::JsPoster {
+        self.vm.to_js_poster(self.kind.clone())
+    }
+}
+
+impl VirtualMachine {
+    /// JS thread: the handle a new job captures — this VM, and the loop it is
+    /// currently ticking (regular, macro, or a spawnSync isolated loop).
+    pub fn loop_handle(&self) -> LoopHandle {
+        LoopHandle {
+            vm: self.handle(),
+            kind: self.current_loop_kind(),
+        }
     }
 }
 
@@ -515,17 +608,17 @@ impl IsolatedPosterInner {
         }
     }
 
-    pub(crate) fn post(&self, task: NonNull<ConcurrentTaskItem>) -> bool {
+    pub(crate) fn post(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
         self.active.fetch_add(1, Ordering::SeqCst);
-        let ok = self.open.load(Ordering::SeqCst);
-        if ok {
+        let open = self.open.load(Ordering::SeqCst);
+        if open {
             // SAFETY: gate held and open ⇒ the isolated loop is alive.
             let el = unsafe { &*self.event_loop };
             el.concurrent_tasks.push(task);
             el.wakeup();
         }
         self.active.fetch_sub(1, Ordering::SeqCst);
-        ok
+        if open { Posted::Queued } else { Posted::Refused(task) }
     }
 
     pub(crate) fn to_js_poster(this: &Arc<Self>) -> bun_event_loop::JsPoster {
@@ -535,7 +628,7 @@ impl IsolatedPosterInner {
     }
 }
 
-unsafe fn isolated_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> bool {
+unsafe fn isolated_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> Posted {
     // SAFETY: leaked Arc<IsolatedPosterInner>.
     unsafe { &*(data as *const IsolatedPosterInner) }.post(task)
 }

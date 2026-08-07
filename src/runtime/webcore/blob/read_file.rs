@@ -174,6 +174,17 @@ impl bun_jsc::work_task::WorkTaskContext for ReadFile {
         // SAFETY: `this` was heap-allocated by the WorkTask flow; consumed here.
         ReadFile::then(unsafe { bun_core::heap::take(this) }, global)
     }
+    /// The read buffer and the store ref are ours (this was the in-flight
+    /// `readFile` result that leaked per terminated worker); the completion
+    /// ctx belongs to a JS-side waiter and is forgotten with the VM.
+    fn release_off_thread(this: *mut Self) {
+        // SAFETY: the pool thread owns `this` (heap, from the WorkTask flow).
+        unsafe {
+            drop(core::mem::take(&mut (*this).buffer));
+            drop((*this).store.take());
+            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

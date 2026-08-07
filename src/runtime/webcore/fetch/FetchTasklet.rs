@@ -69,8 +69,7 @@ pub struct FetchTasklet {
     pub(crate) metadata: Option<HTTPResponseMetadata>,
     /// How the HTTP thread reaches the VM (post progress/deinit tasks). JS-thread
     /// code uses the VM through `global_this` instead.
-    pub(crate) vm: jsc::VmHandle,
-    pub(crate) loop_kind: jsc::LoopKind,
+    pub(crate) loop_handle: jsc::LoopHandle,
     pub global_this: GlobalRef,
     pub(crate) request_body: HTTPRequestBody,
     // ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
@@ -306,7 +305,7 @@ impl FetchTasklet {
     /// task back if the VM has been torn down (caller releases what it holds).
     #[inline]
     fn post(&self, task: core::ptr::NonNull<ConcurrentTask>) -> jsc::vm_handle::Posted {
-        self.vm.post_ref(&self.loop_kind, task)
+        self.loop_handle.post_task(task)
     }
 
     /// Wrap a borrowed body chunk in a `StreamResult::Temporary*` for
@@ -1915,8 +1914,7 @@ impl FetchTasklet {
             http: None,
             result: HTTPClientResult::default(),
             metadata: None,
-            vm: jsc_vm.handle(),
-            loop_kind: jsc_vm.as_mut().current_loop_kind(),
+            loop_handle: jsc_vm.loop_handle(),
             global_this: GlobalRef::from(global_this),
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,

@@ -78,8 +78,7 @@ pub struct Queue {
 /// registration and kept for the VM's lifetime.
 pub struct WakeContext {
     pub queue: *mut Queue,
-    pub vm: crate::VmHandle,
-    pub loop_kind: crate::LoopKind,
+    pub loop_handle: crate::LoopHandle,
 }
 
 impl Queue {
@@ -370,7 +369,7 @@ impl Queue {
         // SAFETY: `ctx` is the leaked `WakeContext` registered with this handler.
         let ctx = unsafe { &*ctx.cast::<WakeContext>() };
         let task = ConcurrentTaskItem::create_from(ctx.queue);
-        if let crate::vm_handle::Posted::Refused(task) = ctx.vm.post_ref(&ctx.loop_kind, task) {
+        if let crate::vm_handle::Posted::Refused(task) = ctx.loop_handle.post_task(task) {
             // VM torn down: nobody is waiting on these modules any more.
             // SAFETY: refused ⇒ we own the task box.
             unsafe { drop(bun_core::heap::take(task.as_ptr())) };

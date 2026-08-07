@@ -1260,8 +1260,7 @@ mod _async_tasks {
         /// JS thread only (`run_from_js_thread`).
         pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread reaches the VM to deliver the result.
-        pub(crate) vm: bun_jsc::VmHandle,
-        pub(crate) loop_kind: bun_jsc::LoopKind,
+        pub(crate) loop_handle: bun_jsc::LoopHandle,
         pub task: WorkPoolTask,
         pub(crate) result: Maybe<R>,
         pub(crate) r#ref: KeepAlive,
@@ -1304,8 +1303,7 @@ mod _async_tasks {
                 // niche-optimised; never construct an all-zero `Result` value.
                 result: Err(sys::Error::default()),
                 global_object: bun_ptr::BackRef::new(global_object),
-                vm: vm.handle(),
-                loop_kind: vm.current_loop_kind(),
+                loop_handle: vm.loop_handle(),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -1340,7 +1338,7 @@ mod _async_tasks {
             // released without touching JSC.
             // SAFETY: `this` is still exclusively owned here (see above).
             let ct = ConcurrentTask::create_from(this);
-            let posted = unsafe { (*this).vm.post_ref(&(*this).loop_kind, ct) };
+            let posted = unsafe { (*this).loop_handle.post_task(ct) };
             if let bun_jsc::vm_handle::Posted::Refused(ct) = posted {
                 // SAFETY: refused ⇒ we own the ConcurrentTask box and `this`.
                 unsafe {
@@ -1364,7 +1362,7 @@ mod _async_tasks {
                 // `args` is `ThreadSafe<A>` whose Drop would `unprotect()` JS values
                 // via the (dead) VM; drop the value's own storage without that.
                 drop(core::ptr::read(&raw const (*this).args).into_inner_without_unprotect());
-                core::ptr::drop_in_place(&raw mut (*this).vm);
+                core::ptr::drop_in_place(&raw mut (*this).loop_handle);
                 std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
             }
         }
@@ -2244,8 +2242,7 @@ mod _async_tasks {
         /// JS thread only.
         pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
         /// How the last subtask's thread delivers the completion.
-        pub(crate) vm: bun_jsc::VmHandle,
-        pub(crate) loop_kind: bun_jsc::LoopKind,
+        pub(crate) loop_handle: bun_jsc::LoopHandle,
         pub task: WorkPoolTask,
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
@@ -2428,8 +2425,7 @@ mod _async_tasks {
                 args: FsArgument::into_thread_safe(args),
                 has_result: AtomicBool::new(false),
                 global_object: bun_ptr::BackRef::new(global_object),
-                vm: vm.handle(),
-                loop_kind: vm.current_loop_kind(),
+                loop_handle: vm.loop_handle(),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -2620,7 +2616,7 @@ mod _async_tasks {
             // takes ownership of it — unless the VM has been torn down.
             let this: *mut Self = self;
             let ct = ConcurrentTask::create(Task::init(this));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) = self.vm.post_ref(&self.loop_kind, ct) {
+            if let bun_jsc::vm_handle::Posted::Refused(ct) = self.loop_handle.post_task(ct) {
                 // Nobody will settle the promise: drop the collected results, the
                 // arguments' own storage and the task; forget the JS-side members.
                 // SAFETY: refused ⇒ we own `ct`; subtask count hit zero ⇒ exclusive `this`.
@@ -2629,7 +2625,7 @@ mod _async_tasks {
                     (*this).clear_result_list();
                     core::ptr::drop_in_place(&raw mut (*this).result_list);
                     drop(core::ptr::read(&raw const (*this).args).into_inner_without_unprotect());
-                    core::ptr::drop_in_place(&raw mut (*this).vm);
+                    core::ptr::drop_in_place(&raw mut (*this).loop_handle);
                     std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
                 }
             }

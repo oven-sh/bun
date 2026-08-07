@@ -268,6 +268,12 @@ pub(crate) struct Pbkdf2Ctx {
 }
 
 impl AnyTaskJobCtx for Pbkdf2Ctx {
+    /// The output buffer is ours; the protected input buffers and the promise
+    /// handle went with the VM's heap (their un-protect must not run here).
+    fn release_off_thread(&mut self) {
+        drop(core::mem::take(&mut self.output));
+    }
+
     fn run(&mut self, _global: *mut JSGlobalObject) {
         let len = usize::try_from(self.pbkdf2.length).expect("int cast");
         // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.

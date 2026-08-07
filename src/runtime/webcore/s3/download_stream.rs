@@ -21,8 +21,7 @@ pub struct S3HttpDownloadStreamingTask {
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
     /// How the HTTP thread reaches the VM to deliver chunks.
-    pub(crate) vm: bun_jsc::VmHandle,
-    pub(crate) loop_kind: bun_jsc::LoopKind,
+    pub(crate) loop_handle: bun_jsc::LoopHandle,
     pub(crate) sign_result: SignResult,
     pub(crate) headers: Headers,
     pub(crate) callback_context: NonNull<()>,
@@ -61,8 +60,7 @@ impl Default for S3HttpDownloadStreamingTask {
         Self {
             // never read — fully overwritten by `AsyncHTTP::init` before first use.
             http: core::mem::MaybeUninit::uninit(),
-            vm: VirtualMachine::get().handle(),
-            loop_kind: VirtualMachine::get().as_mut().current_loop_kind(),
+            loop_handle: VirtualMachine::get().loop_handle(),
             sign_result: SignResult::default(),
             headers: Headers::default(),
             callback_context: NonNull::dangling(),
@@ -340,7 +338,7 @@ impl S3HttpDownloadStreamingTask {
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
                 if let bun_jsc::vm_handle::Posted::Refused(_) =
-                    (*this).vm.post_ref(&(*this).loop_kind, task)
+                    (*this).loop_handle.post_task(task)
                 {
                     // Nobody will consume the staged result. If the request is finished
                     // the HTTP thread holds the last reference: release the task here.
@@ -364,7 +362,7 @@ impl S3HttpDownloadStreamingTask {
             core::ptr::drop_in_place(&raw mut (*this).reported_response_buffer);
             core::ptr::drop_in_place(&raw mut (*this).headers);
             core::ptr::drop_in_place(&raw mut (*this).sign_result);
-            core::ptr::drop_in_place(&raw mut (*this).vm);
+            core::ptr::drop_in_place(&raw mut (*this).loop_handle);
             std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
         }
     }

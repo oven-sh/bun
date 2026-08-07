@@ -2852,6 +2852,12 @@ pub mod JSZstd {
     }
 
     impl jsc::AnyTaskJobCtx for ZstdCtx {
+        /// The output buffer is ours; the protected input and the promise
+        /// handle went with the VM's heap.
+        fn release_off_thread(&mut self) {
+            drop(core::mem::take(&mut self.output));
+        }
+
         fn run(&mut self, _global: *mut JSGlobalObject) {
             let input = self.buffer.slice();
 

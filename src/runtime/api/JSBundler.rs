@@ -1527,7 +1527,7 @@ pub mod js_bundler {
                             .js_poster
                             .as_ref()
                             .expect("JS-owned bundle has a poster");
-                        if let Err(ct) = poster.post(ct) {
+                        if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                             // Owning JS VM torn down mid-bundle: the notify never runs.
                             drop(bun_core::heap::take(ct.as_ptr()));
                         }

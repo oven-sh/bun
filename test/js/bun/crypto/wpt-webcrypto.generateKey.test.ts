@@ -119,23 +119,28 @@ type CryptoKeyView = ReturnType<typeof cryptoKeyToView>;
 // structured-cloned keys for the export checks. Every vector still performs
 // its own generateKey call with its exact parameters; nothing is shared or
 // cached between vectors.
+//
+// Vectors are handed to workers a couple at a time from a shared queue, and a
+// test that is about to await a still-queued vector moves it to the front of
+// the queue. That bounds any single test's wait at a few keygens no matter
+// the execution order (-t filters, --randomize), while a full in-order run
+// keeps every worker saturated.
 // ---------------------------------------------------------------------------
 
 function rsaKeygenWorkerMain() {
   globalThis.onmessage = async (event: MessageEvent) => {
-    for (const { index, algorithm, extractable, usages } of event.data) {
-      try {
-        const pair = (await crypto.subtle.generateKey(algorithm, extractable, usages)) as CryptoKeyPair;
-        postMessage({
-          index,
-          privateKey: pair.privateKey,
-          publicKey: pair.publicKey,
-          privateSnapshot: cryptoKeyToView(pair.privateKey),
-          publicSnapshot: cryptoKeyToView(pair.publicKey),
-        });
-      } catch (error) {
-        postMessage({ index, error: String(error) });
-      }
+    const { index, algorithm, extractable, usages } = event.data;
+    try {
+      const pair = (await crypto.subtle.generateKey(algorithm, extractable, usages)) as CryptoKeyPair;
+      postMessage({
+        index,
+        privateKey: pair.privateKey,
+        publicKey: pair.publicKey,
+        privateSnapshot: cryptoKeyToView(pair.privateKey),
+        publicSnapshot: cryptoKeyToView(pair.publicKey),
+      });
+    } catch (error) {
+      postMessage({ index, error: String(error) });
     }
   };
 }
@@ -152,6 +157,9 @@ interface RsaKeygenResult {
 const rsaVectors: { algorithm: any; extractable: boolean; usages: string[] }[] = [];
 const rsaResults: PromiseWithResolvers<RsaKeygenResult>[] = [];
 const rsaWorkers: Worker[] = [];
+// Indices of vectors not yet handed to a worker, in dispatch order.
+const rsaPendingQueue: number[] = [];
+let rsaLiveWorkers = 0;
 let rsaWorkerUrl: string | undefined;
 
 function enqueueRsaVector(algorithm, extractable, usages): number {
@@ -160,37 +168,67 @@ function enqueueRsaVector(algorithm, extractable, usages): number {
   return rsaVectors.length - 1;
 }
 
-// Started lazily by the first RSA test that actually runs, so filtered runs
-// that skip the RSA tests never spawn workers.
+// Started lazily by the first RSA test that actually runs, so runs whose
+// filter matches no RSA success test never spawn workers.
 function ensureRsaWorkersStarted() {
   if (rsaWorkers.length > 0 || rsaVectors.length === 0) return;
 
+  for (let i = 0; i < rsaVectors.length; i++) rsaPendingQueue.push(i);
+
   const workerCount = Math.min(4, Math.max(2, (navigator.hardwareConcurrency || 4) - 1), rsaVectors.length);
+  rsaLiveWorkers = workerCount;
   const source = `const cryptoKeyToView = ${cryptoKeyToView};\n(${rsaKeygenWorkerMain})();`;
   rsaWorkerUrl = URL.createObjectURL(new Blob([source], { type: "application/javascript" }));
 
   for (let w = 0; w < workerCount; w++) {
     const worker = new Worker(rsaWorkerUrl);
-    // Round-robin sharding keeps completion order close to test order.
-    const shard: any[] = [];
-    for (let i = w; i < rsaVectors.length; i += workerCount) {
-      shard.push({ index: i, ...rsaVectors[i] });
-    }
-    const pending = new Set(shard.map(entry => entry.index));
-    worker.onmessage = event => {
-      pending.delete(event.data.index);
-      rsaResults[event.data.index].resolve(event.data);
+    const inFlight = new Set<number>();
+    const dispatchNext = () => {
+      const index = rsaPendingQueue.shift();
+      if (index !== undefined) {
+        inFlight.add(index);
+        worker.postMessage({ index, ...rsaVectors[index] });
+      }
     };
-    // A crashed worker fails its remaining vectors loudly instead of letting
-    // their tests hang until the timeout.
+    worker.onmessage = event => {
+      inFlight.delete(event.data.index);
+      rsaResults[event.data.index].resolve(event.data);
+      dispatchNext();
+    };
+    // A crashed worker fails its in-flight vectors loudly; once no worker is
+    // left, the still-queued vectors fail too instead of letting their tests
+    // hang until the timeout.
     worker.onerror = event => {
-      for (const index of pending) {
+      worker.terminate();
+      rsaLiveWorkers -= 1;
+      for (const index of inFlight) {
         rsaResults[index].resolve({ index, error: `keygen worker error: ${event.message}` });
       }
-      pending.clear();
+      inFlight.clear();
+      if (rsaLiveWorkers === 0) {
+        for (const index of rsaPendingQueue) {
+          rsaResults[index].resolve({ index, error: `keygen worker error: ${event.message}` });
+        }
+        rsaPendingQueue.length = 0;
+      }
     };
-    worker.postMessage(shard);
+    // Two vectors in flight per worker: the worker can start the next keygen
+    // from its own message queue without waiting for this thread to process
+    // the previous result.
+    dispatchNext();
+    dispatchNext();
     rsaWorkers.push(worker);
+  }
+}
+
+// A test that is about to await this vector moves it to the front of the
+// pending queue, so the next free worker picks it up regardless of where the
+// vector sits in registration order.
+function prioritizeRsaVector(index: number) {
+  const pos = rsaPendingQueue.indexOf(index);
+  if (pos > 0) {
+    rsaPendingQueue.splice(pos, 1);
+    rsaPendingQueue.unshift(index);
   }
 }
 
@@ -316,6 +354,7 @@ function testRsaSuccess(algorithm, extractable, usages) {
   const index = enqueueRsaVector(algorithm, extractable, usages);
   test("Success: generateKey" + parameterString(algorithm, extractable, usages), async () => {
     ensureRsaWorkersStarted();
+    prioritizeRsaVector(index);
     const result = await rsaResults[index].promise;
     if (result.error !== undefined) {
       throw new Error(`generateKey${parameterString(algorithm, extractable, usages)} failed: ${result.error}`);

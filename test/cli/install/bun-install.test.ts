@@ -6,7 +6,6 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
-  isMacOS,
   isWindows,
   joinP,
   readdirSorted,
@@ -9556,9 +9555,13 @@ it("reinstalls a file: dependency on an ancestor directory resolved to an absolu
     "sample/package.json": "",
   });
   // On case-insensitive filesystems, containment must be detected even when
-  // the lockfile spells the ancestor path with different casing.
+  // the lockfile spells the ancestor path with different casing. Flip only the
+  // ASCII basename and keep the real spelling where the flipped path does not
+  // resolve (case-sensitive filesystems).
   const realRoot = String(dir).replaceAll("\\", "/");
-  const root = isWindows || isMacOS ? realRoot.toUpperCase() : realRoot;
+  const basenameStart = realRoot.lastIndexOf("/") + 1;
+  const flipped = realRoot.slice(0, basenameStart) + realRoot.slice(basenameStart).toUpperCase();
+  const root = (await exists(flipped)) ? flipped : realRoot;
   const projectDir = join(String(dir), "sample");
   await write(
     join(projectDir, "package.json"),

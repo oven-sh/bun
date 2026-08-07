@@ -2598,6 +2598,16 @@ impl JSValue {
         Bun__JSValue__getArrayBufferViewByteOffset(self)
     }
 
+    /// Force a typed array out of JSC's "fast" mode, where small views'
+    /// contents live in GC-heap storage that is abandoned (copied into a
+    /// fresh `ArrayBuffer`) the first time the backing buffer is
+    /// materialized. After this call the view's data pointer is stable for
+    /// the view's lifetime. Returns `false` if `self` is not a view or the
+    /// buffer could not be allocated.
+    pub fn materialize_array_buffer_view_buffer(self) -> bool {
+        Bun__JSValue__materializeArrayBufferViewBuffer(self)
+    }
+
     // ── Formatting. ────────────────────────────────────
     #[inline]
     pub fn fmt_string(self, global: &JSGlobalObject) -> StringFormatter<'_> {
@@ -2724,6 +2734,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
     ) -> JSValue;
     safe fn Bun__JSValue__getArrayBufferViewByteOffset(this: JSValue) -> usize;
+    safe fn Bun__JSValue__materializeArrayBufferViewBuffer(this: JSValue) -> bool;
     safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, func: JSValue, arg: JSValue);
     fn Bun__JSValue__deserialize(
         global: *const JSGlobalObject,

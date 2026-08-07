@@ -6249,6 +6249,16 @@ CPP_DECL JSC::EncodedJSValue Bun__JSValue__getArrayBufferViewBuffer(JSC::Encoded
     return JSValue::encode(JSValue());
 }
 
+CPP_DECL bool Bun__JSValue__materializeArrayBufferViewBuffer(JSC::EncodedJSValue encoded)
+{
+    JSC::JSValue value = JSValue::decode(encoded);
+    if (!value || !value.isCell())
+        return false;
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value.asCell()))
+        return view->possiblySharedBuffer() != nullptr;
+    return false;
+}
+
 CPP_DECL size_t Bun__JSValue__getArrayBufferViewByteOffset(JSC::EncodedJSValue encoded)
 {
     JSC::JSValue value = JSValue::decode(encoded);

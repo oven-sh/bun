@@ -1417,6 +1417,14 @@ extern "C" fn napi_get_typedarray_info(
     }
     let _keep = jsc::EnsureStillAlive(typedarray);
 
+    // Node guarantees the data pointer stays valid for the view's lifetime.
+    // A fast-mode view's storage is abandoned when its buffer is materialized
+    // (which the arraybuffer out-param below would do anyway), so materialize
+    // it before capturing the pointer.
+    if !maybe_data.is_null() {
+        typedarray.materialize_array_buffer_view_buffer();
+    }
+
     let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
         return env.invalid_arg();
     };
@@ -2006,6 +2014,11 @@ extern "C" fn napi_create_buffer_copy(
         Ok(b) => b,
         Err(_) => return env.generic_failure(),
     };
+    // Node guarantees `result_data` stays valid for the buffer's lifetime;
+    // a fast-mode view's storage is abandoned when its buffer is materialized.
+    if !result_data.is_null() {
+        buffer.materialize_array_buffer_view_buffer();
+    }
     if let Some(mut array_buf) = buffer.as_array_buffer(env.to_js()) {
         if length > 0 {
             // SAFETY: caller guarantees `data` points to at least `length` bytes.
@@ -2041,6 +2054,11 @@ extern "C" fn napi_get_buffer_info(
     bun_output::scoped_log!(napi, "napi_get_buffer_info");
     let env = get_env!(env_);
     let value = value_.get();
+    // Node guarantees the data pointer stays valid for the buffer's lifetime;
+    // a fast-mode view's storage is abandoned when its buffer is materialized.
+    if !data.is_null() {
+        value.materialize_array_buffer_view_buffer();
+    }
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };

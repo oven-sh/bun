@@ -89,12 +89,10 @@ impl FieldType {
     }
 
     /// Type code declared in the COM_STMT_EXECUTE parameter-type block.
-    /// `MYSQL_TYPE_JSON` is a result-set-only code there: MariaDB's
-    /// `parameter_type_sanity_check` rejects it with ER_WRONG_ARGUMENTS
-    /// ("Incorrect arguments to mysqld_stmt_execute"), while MySQL reads a
-    /// JSON parameter through the same `set_str` path as VARCHAR/VAR_STRING/
-    /// STRING. Declaring the serialized JSON text as `MYSQL_TYPE_STRING`
-    /// keeps both servers happy without changing the value bytes.
+    /// MariaDB rejects `MYSQL_TYPE_JSON` as an input parameter type (error
+    /// 1210, "Incorrect arguments to mysqld_stmt_execute"); MySQL reads a
+    /// JSON parameter exactly like a string one, so the serialized JSON
+    /// text is declared as `MYSQL_TYPE_STRING`.
     pub(crate) fn to_param_bind_type(self) -> Self {
         match self {
             FieldType::MYSQL_TYPE_JSON => FieldType::MYSQL_TYPE_STRING,

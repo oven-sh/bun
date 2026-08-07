@@ -477,6 +477,11 @@ impl WebWorker {
             // Node: being stopped only counts (exit code 1) once the environment
             // exists and before the thread starts tearing it down on its own.
             this.terminated_by_parent.store(true, Ordering::Relaxed);
+            // From now on the worker's native code enters no script and settles
+            // no promises (Node's `ExitEnv` → `is_stopping`), even before its
+            // thread notices: whatever completes on its loop meanwhile bails.
+            // SAFETY: vm_ptr published under vm_lock; the handle is any-thread.
+            unsafe { (*vm_ptr).handle().stop() };
             // SAFETY: vm_ptr published under vm_lock and non-null here.
             // jsc_vm is a valid JSC::VM*; request_termination is
             // documented thread-safe (VMTraps). Cast through the real opaque

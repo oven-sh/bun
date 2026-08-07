@@ -785,7 +785,7 @@ impl JSMySQLConnection {
             ResultMode::Objects => {
                 // Build unconditionally (matches postgres) so toJS always has
                 // either a Structure or a names array.
-                let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
+                let owner = self.js_value.get().try_get().unwrap_or_default();
                 let cs = statement.structure(owner, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                 Some(ParentRef::new(cs))

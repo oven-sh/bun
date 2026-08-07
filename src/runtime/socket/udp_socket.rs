@@ -787,7 +787,7 @@ impl UDPSocket {
         } else {
             this_value_
         };
-        let callback = js::on_error_get_cached(this_value).unwrap_or(JSValue::ZERO);
+        let callback = js::on_error_get_cached(this_value).unwrap_or_default();
         let global_this = self.global_this.get();
         let vm = global_this.bun_vm().as_mut();
 

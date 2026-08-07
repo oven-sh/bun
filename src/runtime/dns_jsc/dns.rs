@@ -728,19 +728,18 @@ impl CAresNameInfo {
             }
             return;
         };
-        let array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, global_this)
-            .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+        let array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, global_this);
         // SAFETY: see fn contract.
         unsafe { Self::on_complete(this, array) };
     }
 
     /// SAFETY: see `process_resolve`.
-    unsafe fn on_complete(this: *mut Self, result: JSValue) {
+    unsafe fn on_complete(this: *mut Self, result: JsResult<JSValue>) {
         // SAFETY: see fn contract — `this` is a live node.
         let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
         // SAFETY: see fn contract — `this` is a live node.
         let global_this = unsafe { (*this).global_this() };
-        let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+        let _ = promise.settle_task(global_this, result);
         // SAFETY: see fn contract.
         unsafe { Self::destroy(this) };
     }
@@ -1515,19 +1514,18 @@ impl CAresReverse {
                 return;
             };
             // node is a valid c-ares hostent for the callback's duration
-            let array = super::cares_jsc::hostent_to_js_response(&mut *node, global_this, b"")
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let array = super::cares_jsc::hostent_to_js_response(&mut *node, global_this, b"");
             Self::on_complete(this, array);
         }
     }
 
     /// SAFETY: see `process_resolve`.
-    unsafe fn on_complete(this: *mut Self, result: JSValue) {
+    unsafe fn on_complete(this: *mut Self, result: JsResult<JSValue>) {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            let _ = promise.settle_task(global_this, result);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1664,20 +1662,18 @@ impl<T: CAresRecordType> CAresLookup<T> {
             };
 
             // node is a valid c-ares reply for the callback's duration; freed by `_free` guard.
-            let array = (*node)
-                .to_js_response(global_this, T::TYPE_NAME)
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let array = (*node).to_js_response(global_this, T::TYPE_NAME);
             Self::on_complete(this, array);
         }
     }
 
     /// SAFETY: see `process_resolve`.
-    unsafe fn on_complete(this: *mut Self, result: JSValue) {
+    unsafe fn on_complete(this: *mut Self, result: JsResult<JSValue>) {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            let _ = promise.settle_task(global_this, result);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1764,10 +1760,10 @@ impl DNSLookup {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let array = super::options_jsc::result_any_to_js(result, (*this).global_this())
-                .ok()
-                .flatten()
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let global = (*this).global_this();
+            // A null addrinfo with no error is an empty answer.
+            let array = super::options_jsc::result_any_to_js(result, global)
+                .and_then(|a| a.map_or_else(|| JSValue::create_empty_array(global, 0), Ok));
             Self::on_complete_with_array(this, array);
         }
     }
@@ -1838,20 +1834,19 @@ impl DNSLookup {
         // owned by the caller's scopeguard; JSGlobalObject outlives the request.
         unsafe {
             let array =
-                super::cares_jsc::addr_info_to_js_array(&mut *result, (*this).global_this())
-                    .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                super::cares_jsc::addr_info_to_js_array(&mut *result, (*this).global_this());
             Self::on_complete_with_array(this, array);
         }
     }
 
     /// SAFETY: see `on_complete_native`.
-    unsafe fn on_complete_with_array(this: *mut Self, result: JSValue) {
+    unsafe fn on_complete_with_array(this: *mut Self, result: JsResult<JSValue>) {
         bun_output::scoped_log!(DNSLookup, "onCompleteWithArray");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            let _ = promise.settle_task(global_this, result);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1871,6 +1866,15 @@ impl DNSLookup {
                 drop(bun_core::heap::take(this));
             }
         }
+    }
+}
+
+/// A converted answer shared by every waiter of one pending-cache entry stays
+/// alive across their completions (each may allocate).
+#[inline]
+fn keep_alive(array: &JsResult<JSValue>) {
+    if let Ok(a) = array {
+        a.ensure_still_alive();
     }
 }
 
@@ -4239,29 +4243,27 @@ impl Resolver {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
             let mut array = (*addr)
-                .to_js_response(prev_global, T::TYPE_NAME)
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                .to_js_response(prev_global, T::TYPE_NAME);
             // SAFETY: addr is the c-ares-allocated reply; freed once after all consumers run.
             let _free_addr = scopeguard::guard(addr, |a| T::destroy(a));
-            array.ensure_still_alive();
+            keep_alive(&array);
             CAresLookup::<T>::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
 
-            array.ensure_still_alive();
+            keep_alive(&array);
 
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
                     array = (*addr)
-                        .to_js_response(new_global, T::TYPE_NAME)
-                        .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                        .to_js_response(new_global, T::TYPE_NAME);
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
 
-                array.ensure_still_alive();
+                keep_alive(&array);
                 CAresLookup::<T>::on_complete(value.as_ptr(), array);
-                array.ensure_still_alive();
+                keep_alive(&array);
             }
         }
     }
@@ -4304,29 +4306,27 @@ impl Resolver {
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
-            let mut array = super::cares_jsc::addr_info_to_js_array(&mut *addr, prev_global)
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut array = super::cares_jsc::addr_info_to_js_array(&mut *addr, prev_global);
             // SAFETY: addr is the c-ares-allocated AddrInfo; freed once after all consumers run.
             // Move the raw pointer into the guard so the loop body can keep borrowing `*addr`.
             let _free_addr = scopeguard::guard(addr, |a| c_ares::AddrInfo::destroy(a));
-            array.ensure_still_alive();
+            keep_alive(&array);
             DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
 
-            array.ensure_still_alive();
+            keep_alive(&array);
 
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = super::cares_jsc::addr_info_to_js_array(&mut *addr, new_global)
-                        .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = super::cares_jsc::addr_info_to_js_array(&mut *addr, new_global);
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
 
-                array.ensure_still_alive();
+                keep_alive(&array);
                 DNSLookup::on_complete_with_array(value.as_ptr(), array);
-                array.ensure_still_alive();
+                keep_alive(&array);
             }
         }
     }
@@ -4344,10 +4344,12 @@ impl Resolver {
         // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
         let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
-        let mut array: JSValue = match super::options_jsc::result_any_to_js(result, global_object)
-            .unwrap_or(None)
+        let mut array: JsResult<JSValue> = match super::options_jsc::result_any_to_js(
+            result,
+            global_object,
+        )
+        .transpose()
         {
-            // TODO: properly propagate exception upwards
             Some(a) => a,
             None => {
                 // SAFETY: `key.lookup` is the heap-allocated request stored in the
@@ -4379,25 +4381,25 @@ impl Resolver {
             let mut prev_global = (*key.lookup).head.global_this();
 
             {
-                array.ensure_still_alive();
+                keep_alive(&array);
                 DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
                 drop(bun_core::heap::take(key.lookup));
-                array.ensure_still_alive();
+                keep_alive(&array);
             }
 
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
                 pending = (*value.as_ptr()).next;
                 if !core::ptr::eq(prev_global, new_global) {
+                    // Non-null addrinfo (checked above): never `None`.
                     array = super::options_jsc::result_any_to_js(result, new_global)
-                        .unwrap_or(None)
-                        .unwrap(); // TODO: properly propagate exception upwards
+                        .map(|a| a.expect("addrinfo present"));
                     prev_global = new_global;
                 }
 
-                array.ensure_still_alive();
+                keep_alive(&array);
                 DNSLookup::on_complete_with_array(value.as_ptr(), array);
-                array.ensure_still_alive();
+                keep_alive(&array);
             }
         }
     }
@@ -4443,26 +4445,24 @@ impl Resolver {
             //  The callback need not and should not attempt to free the memory
             //  pointed to by hostent; the ares library will free it when the
             //  callback returns.
-            let mut array = super::cares_jsc::hostent_to_js_response(&mut *addr, prev_global, b"")
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
-            array.ensure_still_alive();
+            let mut array = super::cares_jsc::hostent_to_js_response(&mut *addr, prev_global, b"");
+            keep_alive(&array);
             CAresReverse::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
 
-            array.ensure_still_alive();
+            keep_alive(&array);
 
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = super::cares_jsc::hostent_to_js_response(&mut *addr, new_global, b"")
-                        .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = super::cares_jsc::hostent_to_js_response(&mut *addr, new_global, b"");
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
 
-                array.ensure_still_alive();
+                keep_alive(&array);
                 CAresReverse::on_complete(value.as_ptr(), array);
-                array.ensure_still_alive();
+                keep_alive(&array);
             }
         }
     }
@@ -4506,26 +4506,24 @@ impl Resolver {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
 
-            let mut array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, prev_global)
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
-            array.ensure_still_alive();
+            let mut array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, prev_global);
+            keep_alive(&array);
             CAresNameInfo::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
 
-            array.ensure_still_alive();
+            keep_alive(&array);
 
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, new_global)
-                        .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, new_global);
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
 
-                array.ensure_still_alive();
+                keep_alive(&array);
                 CAresNameInfo::on_complete(value.as_ptr(), array);
-                array.ensure_still_alive();
+                keep_alive(&array);
             }
         }
     }

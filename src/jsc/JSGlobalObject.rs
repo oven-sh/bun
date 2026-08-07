@@ -857,8 +857,8 @@ impl JSGlobalObject {
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
         self.queue_microtask_job(
             function,
-            args.first().copied().unwrap_or(JSValue::ZERO),
-            args.get(1).copied().unwrap_or(JSValue::ZERO),
+            args.first().copied().unwrap_or_default(),
+            args.get(1).copied().unwrap_or_default(),
         );
     }
 

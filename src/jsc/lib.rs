@@ -654,6 +654,27 @@ impl<T> JsResultExt for JsResult<T> {
     }
 }
 
+/// The one sanctioned way to turn a `JsResult<JSValue>` into a bare `JSValue`:
+/// **only in host-function / getter return position**, where JSC's convention
+/// is that an empty value means "the exception is pending on the VM". Anywhere
+/// else (a promise settlement, a callback argument, a property store) an empty
+/// `JSValue` is not a value — carry the `JsResult` to that boundary instead
+/// (`JSPromise::settle`, `?`). `unwrap_or(JSValue::ZERO)` is banned by
+/// test/internal/source-lints for that reason.
+pub trait HostReturn {
+    fn or_pending_exception(self) -> JSValue;
+}
+
+impl HostReturn for JsResult<JSValue> {
+    #[inline]
+    fn or_pending_exception(self) -> JSValue {
+        match self {
+            Ok(v) => v,
+            Err(_) => JSValue::ZERO,
+        }
+    }
+}
+
 impl From<crate::CrateError> for JsError {
     fn from(_: crate::CrateError) -> Self {
         // Mapping to `Thrown` here lets `?` propagate while the actual throw

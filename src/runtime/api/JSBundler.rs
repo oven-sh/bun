@@ -1683,6 +1683,9 @@ pub mod js_bundler {
         /// `this` must be a live handle previously returned by `Plugin::create`;
         /// non-null is checked via `Plugin::opaque_ref` (panics on null).
         fn destroy(this: *mut Plugin);
+        /// From here the plugin object swallows whatever its JS side still
+        /// delivers (onLoad/onResolve answers, defer, addError). JS thread.
+        fn tombstone(&self);
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
         fn add_plugin(
@@ -1740,6 +1743,10 @@ pub mod js_bundler {
             );
             scope.return_if_exception()?;
             Ok(value)
+        }
+
+        fn tombstone(&self) {
+            JSBundlerPlugin__tombstone(self);
         }
 
         fn destroy(this: *mut Plugin) {

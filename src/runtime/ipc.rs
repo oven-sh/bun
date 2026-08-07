@@ -896,7 +896,7 @@ impl SendQueueOwner {
                 .this_value
                 .get()
                 .try_get()
-                .unwrap_or(JSValue::ZERO),
+                .unwrap_or_default(),
             SendQueueOwner::Instance(_) => JSValue::ZERO,
         }
     }

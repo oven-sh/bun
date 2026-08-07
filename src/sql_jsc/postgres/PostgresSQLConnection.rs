@@ -1942,10 +1942,10 @@ impl PostgresSQLConnection {
                                     };
                                     let binding_value =
                                         postgres_sql_query::js::binding_get_cached(this_value)
-                                            .unwrap_or(JSValue::ZERO);
+                                            .unwrap_or_default();
                                     let columns_value =
                                         postgres_sql_query::js::columns_get_cached(this_value)
-                                            .unwrap_or(JSValue::ZERO);
+                                            .unwrap_or_default();
                                     req.update_flags(|f| f.binary = !statement.fields.is_empty());
 
                                     if self
@@ -2082,7 +2082,7 @@ impl PostgresSQLConnection {
                                         // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
                                         let binding_value =
                                             postgres_sql_query::js::binding_get_cached(this_value)
-                                                .unwrap_or(JSValue::ZERO);
+                                                .unwrap_or_default();
                                         debug!("prepareAndQueryWithSignature");
                                         let global = self.global_object;
                                         if let Err(err) =
@@ -2151,10 +2151,10 @@ impl PostgresSQLConnection {
                                         };
                                         let binding_value =
                                             postgres_sql_query::js::binding_get_cached(this_value)
-                                                .unwrap_or(JSValue::ZERO);
+                                                .unwrap_or_default();
                                         let columns_value =
                                             postgres_sql_query::js::columns_get_cached(this_value)
-                                                .unwrap_or(JSValue::ZERO);
+                                                .unwrap_or_default();
                                         debug!("parseAndBindAndExecute (unnamed, first execution)");
                                         let global = self.global_object;
                                         if let Err(err) =
@@ -2372,7 +2372,7 @@ impl PostgresSQLConnection {
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
-                        let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
+                        let owner = self.js_value.get().try_get().unwrap_or_default();
                         let cs = statement.structure(owner, self.global());
                         structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                         cached_structure = Some(ParentRef::new(cs));
@@ -2448,7 +2448,7 @@ impl PostgresSQLConnection {
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
                 let pending_value = postgres_sql_query::js::pending_value_get_cached(this_value)
-                    .unwrap_or(JSValue::ZERO);
+                    .unwrap_or_default();
                 pending_value.ensure_still_alive();
                 let result = putter.to_js(
                     self.global(),
@@ -2512,7 +2512,7 @@ impl PostgresSQLConnection {
                         request.on_result(
                             b"",
                             self.global(),
-                            self.js_value.get().try_get().unwrap_or(JSValue::ZERO),
+                            self.js_value.get().try_get().unwrap_or_default(),
                             true,
                         );
                     }
@@ -2535,7 +2535,7 @@ impl PostgresSQLConnection {
                 request.on_result(
                     cmd.command_tag.slice(),
                     self.global(),
-                    self.js_value.get().try_get().unwrap_or(JSValue::ZERO),
+                    self.js_value.get().try_get().unwrap_or_default(),
                     false,
                 );
                 self.update_ref();

@@ -33,14 +33,13 @@ use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
 enum State {
     /// Normal operation.
     Open = 0,
-    /// Teardown has begun: no new off-thread work is started; posts are still
-    /// accepted so completions of already-running work are delivered.
+    /// The VM is going away — a parent's `terminate()` (from its thread) or
+    /// this thread's own exit/teardown: native code enters no more script and
+    /// starts no new off-thread work; posts are still accepted so completions
+    /// of already-running work are delivered (and released by the teardown).
     Stopping = 1,
-    /// After `forbidExecution`: no user script; posts still accepted (released,
-    /// never run, by the teardown before `close`).
-    ScriptForbidden = 2,
     /// `close()` ran: nothing off-thread reaches the VM any more.
-    Closed = 3,
+    Closed = 2,
 }
 
 /// Which event loop a task belongs to, fixed when the task is created on the JS
@@ -115,14 +114,8 @@ impl Drop for Access<'_> {
 /// waits for it before freeing anything. Obtain with [`VmHandle::borrow`].
 pub struct Borrow {
     _access: Access<'static>,
-    handle: VmHandle,
-}
-
-impl Borrow {
-    /// The VM this borrow keeps open.
-    pub fn handle(&self) -> &VmHandle {
-        &self.handle
-    }
+    /// Keeps the `Inner` that `_access` borrows alive.
+    _handle: VmHandle,
 }
 
 impl VmHandle {
@@ -178,10 +171,6 @@ impl VmHandle {
 
     /// Queue `task` on the VM's `kind` loop and wake it, or hand it back.
     pub fn post(&self, kind: &LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
-        self.post_ref(kind, task)
-    }
-
-    pub fn post_ref(&self, kind: &LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
         if let LoopKind::Isolated(p) = kind {
             return p.post(task);
         }
@@ -215,14 +204,6 @@ impl VmHandle {
         }
     }
 
-    /// Wake the VM's loop (no-op once closed).
-    pub fn wake(&self) {
-        if let Some(_a) = self.enter() {
-            // SAFETY: inside the gate.
-            Self::loop_of(unsafe { self.vm() }, &LoopKind::Regular).wakeup();
-        }
-    }
-
     /// Keep the VM's loop alive from another thread (no-op once closed; the
     /// teardown ignores keep-alives anyway). Isolated loops need no keep-alive:
     /// spawnSync ticks them until its child is done.
@@ -250,12 +231,6 @@ impl VmHandle {
         }
     }
 
-    /// Advisory: has the VM started tearing down? Correct decisions go through
-    /// `post`/`borrow`; this only lets a producer skip starting new work.
-    pub fn is_open(&self) -> bool {
-        self.0.state.load(Ordering::Acquire) == State::Open as u8
-    }
-
     /// This job is about to use VM-owned memory off-thread; `None` if the VM
     /// is closed (touch nothing). Hold the result until done. Jobs that could
     /// block indefinitely on an external party must own their memory instead.
@@ -266,7 +241,7 @@ impl VmHandle {
         let a: Access<'static> = unsafe { core::mem::transmute(a) };
         Some(Borrow {
             _access: a,
-            handle: self.clone(),
+            _handle: self.clone(),
         })
     }
 
@@ -346,9 +321,12 @@ impl VmHandle {
     #[inline(always)]
     pub(crate) fn assert_js_thread(&self) {}
 
-    /// Teardown phase A begins.
-    pub(crate) fn set_stopping(&self) {
-        self.assert_js_thread();
+    /// The VM is going away: `Open → Stopping` (idempotent; never reopens or
+    /// un-closes). Any thread — a parent's `terminate()` calls it at request
+    /// time, as Node's `Environment::ExitEnv` sets `is_stopping` from the
+    /// requesting thread; this thread's own exit path calls it via
+    /// `VirtualMachine::forbid_script`.
+    pub fn stop(&self) {
         let _ = self.0.state.compare_exchange(
             State::Open as u8,
             State::Stopping as u8,
@@ -357,20 +335,10 @@ impl VmHandle {
         );
     }
 
-    /// `forbidExecution` ran: from here native code must not enter user script.
-    pub(crate) fn forbid_script(&self) {
-        self.assert_js_thread();
-        let s = self.0.state.load(Ordering::SeqCst);
-        if s < State::ScriptForbidden as u8 {
-            self.0
-                .state
-                .store(State::ScriptForbidden as u8, Ordering::SeqCst);
-        }
-    }
-
-    /// May native code call into user JS right now? (Node's `can_call_into_js`.)
+    /// May native code call into user JS / settle its promises right now?
+    /// (Node's `can_call_into_js()`.) Any thread; meaningful on the JS thread.
     pub fn script_allowed(&self) -> bool {
-        self.0.state.load(Ordering::Acquire) < State::ScriptForbidden as u8
+        self.0.state.load(Ordering::Acquire) == State::Open as u8
     }
 
     /// Teardown, JS thread, after children are joined and before queued work
@@ -392,9 +360,6 @@ impl VmHandle {
         unsafe { *self.0.vm.get() = core::ptr::null_mut() };
     }
 
-    pub fn is_closed(&self) -> bool {
-        self.0.state.load(Ordering::Acquire) == State::Closed as u8
-    }
 }
 
 // ── C++ holds handles as an opaque box of a clone ─────────────────────────
@@ -536,11 +501,7 @@ struct PosterData {
 unsafe fn poster_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> Posted {
     // SAFETY: `data` is a leaked `Arc<PosterData>` pointer (see `to_js_poster`).
     let d = unsafe { &*data.cast::<PosterData>() };
-    d.handle.post_ref(&d.kind, task)
-}
-unsafe fn poster_wake(data: *const ()) {
-    // SAFETY: as above.
-    unsafe { &*data.cast::<PosterData>() }.handle.wake();
+    d.handle.post(&d.kind, task)
 }
 unsafe fn poster_clone(data: *const ()) -> *const () {
     // SAFETY: as above; bump the Arc count and hand out the same pointer.
@@ -565,7 +526,6 @@ unsafe fn poster_embedded_finished(data: *const ()) {
 }
 static POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
     post: poster_post,
-    wake: poster_wake,
     embedded_work_scheduled: poster_embedded_scheduled,
     embedded_work_finished: poster_embedded_finished,
     clone: poster_clone,
@@ -656,18 +616,10 @@ pub unsafe fn post_job<T: Postable>(job: *mut T) {
 }
 
 impl LoopHandle {
-    pub fn vm_handle(&self) -> &VmHandle {
-        &self.vm
-    }
-
     /// Post an already-built task. Prefer [`post_job`], which leaves the caller
     /// nothing to check; this hands a refusal back.
     pub fn post_task(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
-        self.vm.post_ref(&self.kind, task)
-    }
-
-    pub fn wake(&self) {
-        self.vm.wake()
+        self.vm.post(&self.kind, task)
     }
     pub fn borrow(&self) -> Option<Borrow> {
         self.vm.borrow()
@@ -683,9 +635,6 @@ impl LoopHandle {
     }
     pub fn embedded_work_finished(&self) {
         self.vm.embedded_work_finished()
-    }
-    pub fn is_open(&self) -> bool {
-        self.vm.is_open()
     }
     pub fn ref_keep_alive(&self) {
         self.vm.ref_keep_alive(&self.kind)
@@ -783,16 +732,6 @@ unsafe fn isolated_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> P
     // SAFETY: leaked Arc<IsolatedPosterInner>.
     unsafe { &*data.cast::<IsolatedPosterInner>() }.post(task)
 }
-unsafe fn isolated_wake(data: *const ()) {
-    // SAFETY: as above.
-    let d = unsafe { &*data.cast::<IsolatedPosterInner>() };
-    d.active.fetch_add(1, Ordering::SeqCst);
-    if d.open.load(Ordering::SeqCst) {
-        // SAFETY: gate held and open.
-        unsafe { &*d.event_loop }.wakeup();
-    }
-    d.active.fetch_sub(1, Ordering::SeqCst);
-}
 unsafe fn isolated_clone(data: *const ()) -> *const () {
     // SAFETY: as above.
     unsafe { Arc::increment_strong_count(data.cast::<IsolatedPosterInner>()) };
@@ -807,7 +746,6 @@ unsafe fn isolated_drop(data: *const ()) {
 unsafe fn isolated_embedded_noop(_data: *const ()) {}
 static ISOLATED_POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
     post: isolated_post,
-    wake: isolated_wake,
     embedded_work_scheduled: isolated_embedded_noop,
     embedded_work_finished: isolated_embedded_noop,
     clone: isolated_clone,

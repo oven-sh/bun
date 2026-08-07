@@ -563,7 +563,7 @@ impl<'a> Run<'a> {
         let result = vm.run_with_api_lock(|| {
             macro_callback
                 .call(global, JSValue::ZERO, args)
-                .unwrap_or_else(|_| global.try_take_exception().unwrap_or(JSValue::ZERO))
+                .unwrap_or_else(|_| global.try_take_exception().unwrap_or_default())
         });
 
         let mut runner = Run {

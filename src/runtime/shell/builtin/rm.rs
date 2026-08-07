@@ -1393,9 +1393,22 @@ impl DirTask {
                     tm.pending_main_callbacks.fetch_add(1, Ordering::SeqCst);
                 }
 
+                // The verbose hop is posted while the rm task is still counted
+                // work of its VM — i.e. before anything below can let the root
+                // `finish_concurrently` (which releases that count) run: our
+                // parent decrement can cascade into it, and for the root it is
+                // the next statement. `this` may be freed by the JS thread once
+                // posted, so what we still need is captured first.
+                let (parent_task, task_manager) = (me.parent_task, me.task_manager);
+                if will_queue_verbose {
+                    Self::queue_for_write(this);
+                } else if !parent_task.is_null() {
+                    Self::deinit(this);
+                }
+
                 // If we have a parent and we are the last child, now we can delete the parent.
-                if !me.parent_task.is_null() {
-                    let p = &*me.parent_task;
+                if !parent_task.is_null() {
+                    let p = &*parent_task;
                     // The parent releases its own slot on this counter in
                     // `remove_entry_dir`; whoever takes it to 0 owns the
                     // parent's rmdir. The parent's `fetch_sub` is sequenced
@@ -1405,24 +1418,14 @@ impl DirTask {
                     // parent's release and makes those writes visible to
                     // `delete_after_waiting_for_children`.
                     if p.subtask_count.fetch_sub(1, Ordering::SeqCst) == 1 {
-                        Self::delete_after_waiting_for_children(me.parent_task);
-                    }
-                    if will_queue_verbose {
-                        Self::queue_for_write(this);
-                    } else {
-                        Self::deinit(this);
+                        Self::delete_after_waiting_for_children(parent_task);
                     }
                     return;
                 }
 
-                // Root task. After finish_concurrently() the task may be freed at
-                // any time unless we hold a pending count, so don't touch
-                // `this`/task_manager afterwards unless will_queue_verbose kept it
-                // alive.
-                ShellRmTask::finish_concurrently(me.task_manager);
-                if will_queue_verbose {
-                    Self::queue_for_write(this);
-                }
+                // Root task: hand it back. It may be freed at any time after
+                // this unless the verbose hop's pending count keeps it.
+                ShellRmTask::finish_concurrently(task_manager);
             }
         }
         // Otherwise need to wait.

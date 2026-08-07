@@ -543,7 +543,6 @@ pub enum Posted {
 
 pub struct JsPosterVTable {
     pub post: unsafe fn(data: *const (), task: NonNull<ConcurrentTask>) -> Posted,
-    pub wake: unsafe fn(data: *const ()),
     /// `VmHandle::embedded_work_scheduled` / `_finished` (see there).
     pub embedded_work_scheduled: unsafe fn(data: *const ()),
     pub embedded_work_finished: unsafe fn(data: *const ()),
@@ -588,10 +587,6 @@ impl JsPoster {
     pub fn embedded_work_finished(&self) {
         // SAFETY: vtable contract.
         unsafe { (self.vtable.embedded_work_finished)(self.data) }
-    }
-    pub fn wake(&self) {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.wake)(self.data) }
     }
 }
 

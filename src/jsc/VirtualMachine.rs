@@ -825,7 +825,7 @@ impl VirtualMachine {
     /// worker's exit (before it) go through here.
     pub fn forbid_script(&self) {
         Zig__GlobalObject__forbidExecution(self.global());
-        self.handle.forbid_script();
+        self.handle.stop();
     }
 
     /// Which loop is current (`event_loop` points at the regular loop except
@@ -1702,7 +1702,6 @@ impl VirtualMachine {
         // scope, WebCore's ActiveDOMObject::stop() runs no script — so no
         // 'close'/'error' handler runs after 'exit', and nothing can reopen what
         // a sweep just closed.
-        vm.handle.set_stopping();
         vm.forbid_script();
         Zig__GlobalObject__prepareForDestruction(vm.global());
         // SAFETY: fn contract.

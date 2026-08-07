@@ -2279,3 +2279,28 @@ describe("VM teardown ordering", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A native completion on the worker's own loop (here: a dns lookup finishing)
+// after the parent requested termination must not settle a promise with the
+// empty value its interrupted JS conversion produced.
+test("terminate() while dns lookups keep completing in the worker", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const w = new Worker(
+         'const dns = require("dns"); const { parentPort } = require("worker_threads");' +
+         'let n = 0;' +
+         '(function go() { dns.lookup("localhost", () => {}); dns.promises.lookup("localhost").catch(() => {}); if (++n === 50) parentPort.postMessage("going"); setImmediate(go); })();',
+         { eval: true });
+       w.once("message", async () => { console.log("exit", await w.terminate()); process.exit(0); });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("exit 1\n");
+  expect(exitCode).toBe(0);
+}, 30_000);

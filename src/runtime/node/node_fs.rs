@@ -2,6 +2,7 @@
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
 
+use bun_jsc::HostReturn as _;
 use bun_paths::strings;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
@@ -7203,8 +7204,7 @@ impl NodeFS {
                                 global,
                                 temporary_read_buffer_before_stat_call,
                             )
-                            // TODO: properly propagate exception upwards
-                            .unwrap_or(JSValue::ZERO);
+                            .or_pending_exception();
                             array_buffer.ensure_still_alive();
                             return match array_buffer.as_array_buffer(global) {
                                 Some(buffer) => Ok(ret::ReadFileWithOptions::Buffer(

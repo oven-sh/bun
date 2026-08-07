@@ -407,7 +407,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         let args_type = args.js_type();
         if args_type.is_array() {
             cmd_value = args;
-            args = secondary_args_value.unwrap_or(JSValue::ZERO);
+            args = secondary_args_value.unwrap_or_default();
         } else if !args.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array")));
         } else if let Some(cmd_value_) = args.get_truthy(global_this, "cmd")? {

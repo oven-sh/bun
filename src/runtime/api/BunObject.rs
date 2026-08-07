@@ -70,6 +70,7 @@ pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
     }
 }
 
+use bun_jsc::HostReturn as _;
 use core::ffi::c_void;
 use std::io::Write as _;
 
@@ -889,10 +890,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             }
         }
 
-        return vm
-            .main_resolved_path
-            .to_js(global_this)
-            .unwrap_or(JSValue::ZERO);
+        return vm.main_resolved_path.to_js(global_this).or_pending_exception();
     }
 
     ZigString::init(vm.main()).to_js(global_this)

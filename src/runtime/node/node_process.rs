@@ -413,7 +413,7 @@ mod _impl {
             }
         }
 
-        bun_string_jsc::to_js_array(global_object, &args_list).unwrap_or(JSValue::ZERO)
+        bun_jsc::HostReturn::or_pending_exception(bun_string_jsc::to_js_array(global_object, &args_list))
     }
 
     // ───────────────────────────── eval ─────────────────────────────

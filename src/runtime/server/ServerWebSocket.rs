@@ -491,19 +491,23 @@ impl ServerWebSocket {
 
         let _loop_guard = vm.enter_event_loop_scope();
 
+        let data = match opcode {
+            Opcode::Text => jsc::bun_string_jsc::create_utf8_for_js(global_object, message),
+            Opcode::Binary => self.binary_to_js(global_object, message),
+            _ => unreachable!(),
+        };
+        let data = match data {
+            Ok(v) => v,
+            // Converting the payload threw (or the VM is terminating): there is
+            // no message to deliver; the exception is reported, not passed on.
+            Err(e) => return global_object.report_active_exception_as_unhandled(e),
+        };
         let arguments = [
             self.this_value
                 .get()
                 .try_get()
                 .unwrap_or(JSValue::UNDEFINED),
-            match opcode {
-                Opcode::Text => jsc::bun_string_jsc::create_utf8_for_js(global_object, message)
-                    .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
-                Opcode::Binary => self
-                    .binary_to_js(global_object, message)
-                    .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
-                _ => unreachable!(),
-            },
+            data,
         ];
 
         let mut corker = Corker {
@@ -608,13 +612,16 @@ impl ServerWebSocket {
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
+        let data = match self.binary_to_js(global_this, data) {
+            Ok(v) => v,
+            Err(e) => return global_this.report_active_exception_as_unhandled(e),
+        };
         let args = [
             self.this_value
                 .get()
                 .try_get()
                 .unwrap_or(JSValue::UNDEFINED),
-            self.binary_to_js(global_this, data)
-                .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
+            data,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
@@ -639,13 +646,16 @@ impl ServerWebSocket {
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
+        let data = match self.binary_to_js(global_this, data) {
+            Ok(v) => v,
+            Err(e) => return global_this.report_active_exception_as_unhandled(e),
+        };
         let args = [
             self.this_value
                 .get()
                 .try_get()
                 .unwrap_or(JSValue::UNDEFINED),
-            self.binary_to_js(global_this, data)
-                .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
+            data,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);

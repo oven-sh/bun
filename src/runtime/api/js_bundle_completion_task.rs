@@ -548,17 +548,24 @@ impl JSBundleCompletionTask {
         unsafe { &mut *ctx }.on_complete()
     }
 
-    /// VM teardown's stop phase (JS thread): give up on the result and tell
-    /// the bundle thread to stop waiting on this VM's plugins; it fails the
-    /// build and posts the completion, which teardown waits for and releases.
+    /// Stop phase (JS thread) — VM teardown, or `bun test --isolate` retiring
+    /// a file on a live VM: give up on the result and tell the bundle thread to
+    /// stop waiting on the plugins; it fails what they hold, fails the build
+    /// and posts the completion. The plugin object is tombstoned first so an
+    /// answer its JS side still delivers later (live VM) is swallowed rather
+    /// than reaching a request the bundle thread already failed.
     ///
     /// # Safety
     /// `this` is live (registered ⇒ its completion has not run); JS thread.
     pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
         use core::sync::atomic::Ordering;
-        // SAFETY: fn contract; the loop pointer is a thread's uws loop, valid
-        // for that thread's lifetime, and wakeup is thread-safe.
+        // SAFETY: fn contract; the plugin cell is protected by this task; the
+        // loop pointer is a thread's uws loop, valid for that thread's
+        // lifetime, and wakeup is thread-safe.
         unsafe {
+            if let Some(plugins) = (*this).plugins {
+                crate::api::JSBundler::PluginJscExt::tombstone(plugins.as_ref());
+            }
             (*this).cancelled.store(true, Ordering::Release);
             let l = (*this).bundle_loop.load(Ordering::Acquire);
             if !l.is_null() {

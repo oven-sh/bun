@@ -347,6 +347,7 @@ extern "C" void on_before_reload_process_posix()
 #if !defined(__OHOS__)
     bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
 #endif
+#endif // OS(LINUX) || OS(FREEBSD)
 
 
     // Preserve the IPC channel to the parent across the execve: NODE_CHANNEL_FD survives in

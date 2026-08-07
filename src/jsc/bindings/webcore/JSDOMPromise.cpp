@@ -68,7 +68,7 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
     return scope.exception() ? IsCallbackRegistered::No : IsCallbackRegistered::Yes;
 }
 
-auto DOMPromise::whenSettled(std::function<void()>&& callback) -> IsCallbackRegistered
+auto DOMPromise::whenSettled(Function<void()>&& callback) -> IsCallbackRegistered
 {
     return whenPromiseIsSettled(globalObject(), promise(), WTF::move(callback));
 }

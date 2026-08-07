@@ -49,7 +49,7 @@ public:
 
     static IsCallbackRegistered whenPromiseIsSettled(JSDOMGlobalObject*, JSC::JSObject* promise, Function<void()>&&);
 
-    IsCallbackRegistered whenSettled(std::function<void()>&&);
+    IsCallbackRegistered whenSettled(Function<void()>&&);
     JSC::JSValue result() const;
 
     enum class Status { Pending,

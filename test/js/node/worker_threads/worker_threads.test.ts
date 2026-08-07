@@ -1868,3 +1868,17 @@ test("parent messages are delivered after the worker's entry evaluated; exit han
   expect(await exited).toBe(0);
   expect(errors).toEqual(["ok"]);
 });
+
+// node: assigning a non-function to parentPort.onmessage clears the handler and
+// releases the ref the previous handler took, so the worker can exit.
+test("parentPort.onmessage = <not a function> lets the worker exit", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.onmessage = () => { throw new Error("must not be called"); };
+     parentPort.onmessage = "fhqwhgads";`,
+    { eval: true },
+  );
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  w.postMessage(2);
+  expect(await exited).toBe(0);
+});

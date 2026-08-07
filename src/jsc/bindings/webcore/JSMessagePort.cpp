@@ -203,7 +203,12 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    // node: a callable handler starts the port and keeps the loop alive; assigning anything else
+    // clears the handler and lets the loop exit again.
+    if (value.isCallable())
+        thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    else
+        thisObject.wrapped().jsUnref(&lexicalGlobalObject);
 
     return true;
 }

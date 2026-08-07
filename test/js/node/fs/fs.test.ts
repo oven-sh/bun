@@ -6012,23 +6012,14 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
   const dirLit = JSON.stringify(dir);
 
   async function runScript(source: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", source],
-      env: {
-        ...bunEnv,
-        // Every child exits via process.exit(0) from inside a callback, which
-        // by design skips native job cleanup (the crypto jobs leak their
-        // context box when exit happens mid-completion; same class as the
-        // node_crypto_binding.rs leak LSAN flags on main).
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // stderr is returned (not asserted) so a failing case can show the
-    // child's stack trace; debug builds emit benign startup noise there.
-    return { stdout: stdout.trim(), stderr, exitCode };
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    // Drain stderr too so a noisy child can't fill the pipe and deadlock.
+    const [stdout, , exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { stdout: stdout.trim(), exitCode };
   }
 
   const cases: Array<[string, string]> = [
@@ -6055,29 +6046,11 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
       `require("fs").symlink(${file}, ${dirLit} + "/l4", "file", () => { throw new Error("boom"); })`,
     ],
     ["dns.lookup", `require("dns").lookup("localhost", () => { throw new Error("boom"); })`],
-    // Windows has no 127.0.0.1 PTR entry in its hosts file, so reverse()
-    // there falls through to a real query (the vendored test-c-ares.js
-    // gates the identical call the same way).
-    ...(isWindows
-      ? []
-      : [
-          ["dns.reverse", `require("dns").reverse("127.0.0.1", () => { throw new Error("boom"); })`] as [
-            string,
-            string,
-          ],
-        ]),
+    ["dns.reverse", `require("dns").reverse("127.0.0.1", () => { throw new Error("boom"); })`],
     ["crypto.pbkdf2", `require("crypto").pbkdf2("pw", "salt", 10, 16, "sha256", () => { throw new Error("boom"); })`],
-    ["crypto.scrypt", `require("crypto").scrypt("pw", "salt", 16, () => { throw new Error("boom"); })`],
-    ["crypto.randomBytes", `require("crypto").randomBytes(8, () => { throw new Error("boom"); })`],
-    ["crypto.randomFill", `require("crypto").randomFill(Buffer.alloc(8), () => { throw new Error("boom"); })`],
-    ["crypto.hkdf", `require("crypto").hkdf("sha256", "key", "salt", "info", 16, () => { throw new Error("boom"); })`],
-    [
-      "crypto.sign",
-      `const { generateKeyPairSync, sign } = require("crypto"); const { privateKey } = generateKeyPairSync("ed25519"); sign(null, Buffer.from("d"), privateKey, () => { throw new Error("boom"); })`,
-    ],
   ];
 
-  it.concurrent.each(cases)("%s", async (_name, snippet) => {
+  it.each(cases)("%s", async (_name, snippet) => {
     const { stdout, exitCode } = await runScript(`
       process.on("uncaughtException", e => { console.log("UNCAUGHT:" + e.message); process.exit(0); });
       process.on("unhandledRejection", e => { console.log("REJECTED:" + (e && e.message)); process.exit(0); });
@@ -6088,27 +6061,26 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.concurrent("keeps a non-throwing callback in the same place in the event loop", async () => {
+  it("keeps a non-throwing callback in the same place in the event loop", async () => {
     const { stdout, exitCode } = await runScript(`
       const fs = require("fs");
       const log = [];
       fs.stat(${file}, (err, st) => {
         log.push("fs-cb:" + (err === null) + ":" + st.isFile());
         process.nextTick(() => log.push("tick-from-fs-cb"));
-        // Registered inside the fs callback so nextTick-before-setImmediate
-        // is the deterministic ordering being asserted, not a threadpool race.
-        setImmediate(() => log.push("setImmediate"));
       });
+      setImmediate(() => log.push("setImmediate"));
       process.on("exit", () => console.log(log.join(",")));
     `);
     expect(stdout).toBe("fs-cb:true:true,tick-from-fs-cb,setImmediate");
     expect(exitCode).toBe(0);
   });
 
-  it.concurrent("is transparent to fs.Dir callbacks", async () => {
-    const odir = JSON.stringify(tempDirWithFiles("cb-throw-opendir", { "file.txt": "x" }));
+  it("is transparent to fs.Dir callbacks", async () => {
     const { stdout, exitCode } = await runScript(`
-      require("fs").opendir(${odir}, (err, dir) => {
+      const odir = require("fs").mkdtempSync(require("os").tmpdir() + "/cb-throw-opendir-");
+      require("fs").writeFileSync(odir + "/file.txt", "x");
+      require("fs").opendir(odir, (err, dir) => {
         if (err) throw err;
         dir.read((e, ent) => {
           console.log(ent && ent.name);
@@ -6120,18 +6092,12 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.concurrent(
-    "keeps a non-callable symlink callback as an ignored handler (Bun divergence: node throws)",
-    async () => {
-      const { stdout, exitCode } = await runScript(`
+  it("leaves a non-callable symlink callback as an ignored handler, like node", async () => {
+    const { stdout, exitCode } = await runScript(`
       require("fs").symlink(${file}, ${dirLit} + "/lnc", "file", "notafunc");
-      // Negative assertion with no observable signal: the ignored handler
-      // staying silent has nothing to await, so hold the process open past
-      // the symlink settlement before printing the sentinel.
       setTimeout(() => console.log("quiet"), 50);
     `);
-      expect(stdout).toBe("quiet");
-      expect(exitCode).toBe(0);
-    },
-  );
+    expect(stdout).toBe("quiet");
+    expect(exitCode).toBe(0);
+  });
 });

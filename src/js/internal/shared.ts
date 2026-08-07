@@ -147,8 +147,9 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
-// Node invokes fs/dns callbacks via MakeCallback so a throw is an uncaughtException; Bun runs them from
-// a promise reaction where it would only be an unhandledRejection. https://github.com/nodejs/node/blob/main/src/node_file.cc
+// Node invokes fs/dns callbacks via InternalMakeCallback, so a throw becomes uncaughtException
+// (not unhandledRejection); Bun runs them from a promise reaction so we reroute the throw.
+// https://github.com/nodejs/node/blob/main/src/api/callback.cc
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 
 // Wrap a node-style callback so a throw inside it takes the uncaught path. The
@@ -173,6 +174,46 @@ function guardCallback(callback) {
       reportUncaughtException(e);
     }
   };
+}
+
+const nodeModulesRE = /[\\/]node_modules[\\/]/;
+const ErrorCaptureStackTrace = Error.captureStackTrace;
+function returnStackFrames(_err: unknown, frames: unknown[]) {
+  return frames;
+}
+
+// Port of node's IsInsideNodeModules: first real user frame inside node_modules?
+// Guarded so a tampered Error.* never escapes to callers like url.parse.
+// https://github.com/nodejs/node/blob/main/src/node_util.cc
+function isInsideNodeModules(frameLimit: number): boolean {
+  let prevLimit: unknown, prevPrepare: unknown;
+  let frames: { getFileName(): string | null }[] | undefined;
+  try {
+    prevLimit = Error.stackTraceLimit;
+    prevPrepare = Error.prepareStackTrace;
+    Error.stackTraceLimit = frameLimit;
+    Error.prepareStackTrace = returnStackFrames;
+    const target: { stack?: unknown } = {};
+    ErrorCaptureStackTrace(target, isInsideNodeModules);
+    frames = target.stack as typeof frames;
+  } catch {
+  } finally {
+    try {
+      Error.stackTraceLimit = prevLimit;
+      Error.prepareStackTrace = prevPrepare;
+    } catch {}
+  }
+  if (!$isJSArray(frames)) return false;
+  try {
+    for (const frame of frames) {
+      const filename = frame.getFileName();
+      if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
+        continue;
+      }
+      return nodeModulesRE.test(filename);
+    }
+  } catch {}
+  return false;
 }
 
 // Marks an addEventListener() options object so that dispatch still invokes the
@@ -368,6 +409,7 @@ export default {
   once,
   getLazy,
   guardCallback,
+  isInsideNodeModules,
   reportUncaughtException,
   resistStopPropagation,
 

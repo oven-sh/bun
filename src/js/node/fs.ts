@@ -25,14 +25,20 @@ function lazyGlob() {
 
 const { guardCallback } = require("internal/shared");
 
-// Validates and returns the callback wrapped by guardCallback.
+// guardCallback reroutes a throw inside the user callback to the
+// uncaughtException path instead of rejecting the internal promise chain.
+function wrapFsCallback(callback) {
+  return guardCallback(callback);
+}
+
+// Validates and returns the wrapped callback.
 // Callers must use the return value, not the argument.
 function ensureCallback(callback) {
   if (!$isCallable(callback)) {
     throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
   }
 
-  return guardCallback(callback);
+  return wrapFsCallback(callback);
 }
 
 // Micro-optimization: avoid creating a new function for every call
@@ -71,7 +77,7 @@ var access = function access(path, mode, callback) {
   },
   close = function close(fd, callback) {
     if ($isCallable(callback)) {
-      callback = guardCallback(callback);
+      callback = wrapFsCallback(callback);
       fs.close(fd).then(() => callback(null), callback);
     } else if (callback === undefined) {
       fs.close(fd).then(() => {});
@@ -150,7 +156,7 @@ var access = function access(path, mode, callback) {
       options = undefined;
     }
 
-    callback = ensureCallback(callback);
+    callback = wrapFsCallback(callback);
     fs.fstat(fd, options).then(function (stats) {
       callback(null, stats);
     }, callback);
@@ -272,7 +278,10 @@ var access = function access(path, mode, callback) {
       }
       ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
     }
-    callback = ensureCallback(callback);
+    if (!callback) {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
+    callback = wrapFsCallback(callback);
     fs.read(fd, buffer, offset, length, position).then(
       bytesRead => void callback(null, bytesRead, buffer),
       err => callback(err),
@@ -412,10 +421,9 @@ var access = function access(path, mode, callback) {
       callback = ensureCallback(type);
       type = undefined;
     } else if ($isCallable(callback)) {
-      // Not ensureCallback: this preserves Bun's existing behavior where a
-      // non-callable 4th argument stays an ignored `.then` handler. (Node
-      // validates it and throws ERR_INVALID_ARG_TYPE synchronously.)
-      callback = guardCallback(callback);
+      // Not ensureCallback: node does not validate the 4-argument overload's
+      // callback, and a non-callable one must stay an ignored `.then` handler.
+      callback = wrapFsCallback(callback);
     }
 
     fs.symlink(target, path, type).then(callback, callback);
@@ -619,6 +627,7 @@ var access = function access(path, mode, callback) {
     // the eager path check runs on an async stat so the JS thread isn't
     // blocked and the callback never fires synchronously.
     const result = new Dir(1, path, options, kAlreadyValidated);
+    callback = wrapFsCallback(callback);
     // Invoke the callback from process.nextTick so an exception thrown by it
     // surfaces as an uncaught exception instead of rejecting this internal
     // promise chain (same convention as glob() below).
@@ -982,7 +991,9 @@ function cp(src, dest, options, callback) {
     options = undefined;
   }
 
-  callback = ensureCallback(callback);
+  if (!$isCallable(callback)) {
+    throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
+  }
 
   // node's callback form throws synchronously on invalid options/paths
   const { validateCpOptions } = require("internal/fs/cp-sync");
@@ -990,6 +1001,7 @@ function cp(src, dest, options, callback) {
   options = validateCpOptions(options);
   src = getValidatedFsPath(src, "src");
   dest = getValidatedFsPath(dest, "dest");
+  callback = guardCallback(callback);
 
   promises.cp(src, dest, options).then(callOnceWithNull.bind(null, callback), callback);
 }

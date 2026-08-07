@@ -430,6 +430,8 @@ export function mysqlParseHandshakeResponse41(payload: Buffer): { username: stri
 // blob of (Int<1> kind, string<lenenc> value) pairs between org_name and the
 // fixed-length fields; pass `extendedTypeInfo` (possibly []) to emit it:
 // https://mariadb.com/kb/en/result-set-packets/#column-definition-packet
+// A raw Buffer is the fault-injection escape hatch (mirrors `declaredLength`
+// above): it becomes the blob's contents verbatim, however malformed.
 export function mysqlColumnDefinition(
   seq: number,
   opts: {
@@ -443,7 +445,7 @@ export function mysqlColumnDefinition(
     table?: string;
     orgTable?: string;
     orgName?: string;
-    extendedTypeInfo?: { kind: number; value: string }[];
+    extendedTypeInfo?: { kind: number; value: string }[] | Buffer;
   },
 ): Buffer {
   const fixed = Buffer.alloc(12);
@@ -457,7 +459,9 @@ export function mysqlColumnDefinition(
     opts.extendedTypeInfo === undefined
       ? Buffer.alloc(0)
       : mysqlLenencStr(
-          Buffer.concat(opts.extendedTypeInfo.flatMap(e => [Buffer.from([e.kind]), mysqlLenencStr(e.value)])),
+          Buffer.isBuffer(opts.extendedTypeInfo)
+            ? opts.extendedTypeInfo
+            : Buffer.concat(opts.extendedTypeInfo.flatMap(e => [Buffer.from([e.kind]), mysqlLenencStr(e.value)])),
         );
   return mysqlRawPacket(
     seq,

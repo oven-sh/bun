@@ -252,6 +252,7 @@ pub fn do_patch_commit(
                     manager,
                     &name,
                     &resolution_clone,
+                    Some(lockfile.buffers.string_bytes.as_slice()),
                     &mut folder_path_buf,
                     None,
                 );
@@ -289,6 +290,7 @@ pub fn do_patch_commit(
                     manager,
                     &pkg_name_slice,
                     &resolution_clone,
+                    Some(lockfile.buffers.string_bytes.as_slice()),
                     &mut folder_path_buf,
                     None,
                 );
@@ -889,6 +891,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     manager,
                     &name,
                     &actual_package.resolution,
+                    None,
                     &mut folder_path_buf,
                     existing_patchfile_hash,
                 );
@@ -949,6 +952,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     manager,
                     &pkg_name,
                     &pkg_resolution,
+                    None,
                     &mut folder_path_buf,
                     existing_patchfile_hash,
                 );

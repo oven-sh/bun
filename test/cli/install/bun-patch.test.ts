@@ -946,3 +946,179 @@ module.exports = function isOdd() {
     }
   });
 });
+
+// `bun patch --commit` derives the pristine copy's cache folder from the
+// package's resolution. For non-registry resolutions (git, github, tarball)
+// the resolution strings live in the lockfile's string buffer; resolving them
+// against the wrong buffer produced paths like "@GH@@@@1" and the diff step
+// failed with "Could not access".
+describe.concurrent("bun patch --commit for non-registry dependencies", () => {
+  async function runBun(cwd: string, env: Record<string, string | undefined>, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function expectPatchFlowWorks(dir: string, env: Record<string, string | undefined>, commitArg: string) {
+    {
+      const { stderr, exitCode } = await runBun(dir, env, "install");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    {
+      const { stderr, exitCode } = await runBun(dir, env, "patch", "pkg-to-patch");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    await Bun.write(join(dir, "node_modules", "pkg-to-patch", "index.js"), `module.exports = "patched";\n`);
+
+    {
+      const { stderr, exitCode } = await runBun(dir, env, "patch", "--commit", commitArg);
+      expect(stderr).not.toContain("Could not access");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    const pkg = await Bun.file(join(dir, "package.json")).json();
+    const entries = Object.entries(pkg.patchedDependencies ?? {}) as [string, string][];
+    expect(entries).toHaveLength(1);
+    const [patchKey, patchPath] = entries[0];
+    const patchContents = await Bun.file(join(dir, patchPath)).text();
+    expect(patchContents).toContain('-module.exports = "original";');
+    expect(patchContents).toContain('+module.exports = "patched";');
+    // the commit flow reinstalls with the patch applied
+    expect(await Bun.file(join(dir, "node_modules", "pkg-to-patch", "index.js")).text()).toBe(
+      `module.exports = "patched";\n`,
+    );
+    return patchKey;
+  }
+
+  test("github dependency", async () => {
+    await using dir = tempDir("patch-commit-github", {
+      "package.json": JSON.stringify({
+        name: "test-patch-github",
+        dependencies: { "pkg-to-patch": "github:testowner/testrepo#aaaaaaa" },
+      }),
+      // GitHub API tarballs have an `<owner>-<repo>-<committish>` root folder;
+      // that folder name becomes the `resolved` part of the cache folder name.
+      "tarball-src": {
+        "testowner-testrepo-aaaaaaa": {
+          "package.json": JSON.stringify({ name: "pkg-to-patch", version: "1.0.0" }),
+          "index.js": `module.exports = "original";\n`,
+        },
+      },
+    });
+
+    await using tarProc = Bun.spawn({
+      cmd: [
+        "tar",
+        "-czf",
+        join(String(dir), "gh.tgz"),
+        "-C",
+        join(String(dir), "tarball-src"),
+        "testowner-testrepo-aaaaaaa",
+      ],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await tarProc.exited).toBe(0);
+    const tgz = await Bun.file(join(String(dir), "gh.tgz")).bytes();
+
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(tgz, { headers: { "content-type": "application/gzip" } }),
+    });
+
+    const env = {
+      ...bunEnv,
+      GITHUB_API_URL: `http://localhost:${server.port}`,
+      BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+    };
+
+    const patchKey = await expectPatchFlowWorks(String(dir), env, "node_modules/pkg-to-patch");
+    expect(patchKey).toBe("pkg-to-patch@github:testowner/testrepo#aaaaaaa");
+  });
+
+  test("git dependency", async () => {
+    await using dir = tempDir("patch-commit-git", {
+      "gitrepo": {
+        "package.json": JSON.stringify({ name: "pkg-to-patch", version: "1.0.0" }),
+        "index.js": `module.exports = "original";\n`,
+      },
+      "project": {},
+    });
+    const repo = join(String(dir), "gitrepo");
+
+    for (const args of [
+      ["init", "-q"],
+      ["add", "-A"],
+      ["-c", "user.email=test@test.test", "-c", "user.name=test", "commit", "-q", "-m", "init"],
+      // serve the repo over git's dumb HTTP protocol (plain file fetches)
+      ["update-server-info"],
+    ]) {
+      await using proc = Bun.spawn({ cmd: ["git", ...args], cwd: repo, env: bunEnv, stderr: "pipe" });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const pathname = new URL(req.url).pathname;
+        if (!pathname.startsWith("/repo.git/")) return new Response("not found", { status: 404 });
+        const file = Bun.file(join(repo, ".git", ...pathname.slice("/repo.git/".length).split("/")));
+        return (await file.exists()) ? new Response(file) : new Response("not found", { status: 404 });
+      },
+    });
+
+    const project = join(String(dir), "project");
+    const depUrl = `git+http://localhost:${server.port}/repo.git`;
+    await Bun.write(
+      join(project, "package.json"),
+      JSON.stringify({ name: "test-patch-git", dependencies: { "pkg-to-patch": depUrl } }),
+    );
+
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+
+    const patchKey = await expectPatchFlowWorks(project, env, "node_modules/pkg-to-patch");
+    expect(patchKey).toStartWith(`pkg-to-patch@${depUrl}#`);
+  });
+
+  test("local tarball dependency", async () => {
+    await using dir = tempDir("patch-commit-tarball", {
+      "package.json": JSON.stringify({
+        name: "test-patch-tarball",
+        dependencies: { "pkg-to-patch": "file:./dep.tgz" },
+      }),
+      "tarball-src": {
+        "package": {
+          "package.json": JSON.stringify({ name: "pkg-to-patch", version: "1.0.0" }),
+          "index.js": `module.exports = "original";\n`,
+        },
+      },
+    });
+
+    await using tarProc = Bun.spawn({
+      cmd: ["tar", "-czf", join(String(dir), "dep.tgz"), "-C", join(String(dir), "tarball-src"), "package"],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await tarProc.exited).toBe(0);
+
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+
+    // name-only argument exercises the name-and-version lookup path
+    const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
+    expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});

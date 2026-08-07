@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -1169,7 +1169,7 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
 // referenced. The process then never exited. The client receiving the first
 // body chunk proves the server has drained the pipe and parked the read; the
 // abort must tear the stream down and let the process exit on its own.
-test.skipIf(isWindows)(
+test.concurrent.skipIf(isWindows)(
   "process exits after a FIFO file response is aborted while its read is parked",
   async () => {
     using dir = tempDir("serve-fifo-abort-exit", {
@@ -1221,18 +1221,18 @@ console.log("aborted");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   },
-  15_000,
 );
 
 // Completing a FIFO file response also used to keep the process alive: the
 // stream cleared the reader's CLOSE_HANDLE flag (it owns the fd itself), and
 // the reader's own teardown skips the FilePoll in that mode, so the poll's
 // event-loop active ref leaked even after the response finished at EOF.
-test.skipIf(isWindows)(
-  "process exits after a FIFO file response completes at EOF",
-  async () => {
-    using dir = tempDir("serve-fifo-eof-exit", {
-      "fixture.ts": `
+// Linux-only: macOS kqueue does not reliably wake an armed FIFO read filter
+// when the last writer closes (see the workaround note in io/pipes.rs), so
+// the late EOF there arrives via idleTimeout instead of the poll.
+test.concurrent.skipIf(!isLinux)("process exits after a FIFO file response completes at EOF", async () => {
+  using dir = tempDir("serve-fifo-eof-exit", {
+    "fixture.ts": `
 import { openSync, writeSync, closeSync } from "node:fs";
 
 const fifoPath = process.argv[2];
@@ -1267,27 +1267,25 @@ try {
 server.stop(true);
 console.log(body);
 `,
-    });
+  });
 
-    const fifoPath = join(String(dir), "body.fifo");
-    mkfifo(fifoPath);
+  const fifoPath = join(String(dir), "body.fifo");
+  mkfifo(fifoPath);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.ts", fifoPath],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts", fifoPath],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("fifo-body");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  },
-  15_000,
-);
+  expect(stdout.trim()).toBe("fifo-body");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
 
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared

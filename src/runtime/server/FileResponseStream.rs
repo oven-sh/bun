@@ -545,10 +545,8 @@ impl FileResponseStream {
             (self.on_complete.get())(self.ctx.get(), resp);
         }
 
-        // An abort can finish the stream while a read is still parked on the
-        // poll (e.g. a FIFO with no writer); `on_reader_done`/`on_reader_error`
-        // will never fire to adopt the in-flight read ref, so release it here.
-        // No-op on the reader-callback paths, which already took it.
+        // On abort the read can still be parked on a poll that will never
+        // fire; no reader callback is coming to adopt the in-flight read ref.
         drop(self.take_read_ref());
 
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry
@@ -606,12 +604,9 @@ bun_io::impl_buffered_reader_parent! {
 impl Drop for FileResponseStream {
     fn drop(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "deinit");
-        // `start()` cleared CLOSE_HANDLE (auto_close owns the fd), so the
-        // reader's own `Drop` skips the handle. Unregister and free the
-        // FilePoll explicitly — it holds the event loop's active ref, which
-        // otherwise keeps the process alive forever — without closing the fd
-        // (same idiom as the shell `IOReader`). On Windows the reader's `Drop`
-        // hands its libuv source back to the loop itself.
+        // `start()` cleared CLOSE_HANDLE, so the reader's own `Drop` skips the
+        // handle: free the FilePoll (it holds the event loop's active ref)
+        // without closing the fd, which `auto_close` below owns.
         #[cfg(unix)]
         self.reader.with_mut(|reader| {
             if matches!(reader.handle, bun_io::pipes::PollOrFd::Poll(_)) {

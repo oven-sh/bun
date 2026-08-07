@@ -803,3 +803,30 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+it("skips lazy properties whose initializer throws without leaving a stale exception", async () => {
+  // With the global Symbol overwritten, reifying Bun.$ (and Bun.sql) throws.
+  // The exception must be cleared before moving to the next property:
+  // enumeration should keep the remaining properties, and a direct access
+  // should throw a catchable error.
+  const code = `
+    globalThis.Symbol = 0;
+    const out = Bun.inspect(Bun);
+    for (const name of ["Archive", "CryptoHasher", "serve", "spawn"]) {
+      if (!out.includes(name)) throw new Error("missing " + name);
+    }
+    let caught = 0;
+    try { Bun.$; } catch { caught++; }
+    try { Bun.sql; } catch { caught++; }
+    console.log("OK", caught);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("OK 2");
+  expect(exitCode).toBe(0);
+});

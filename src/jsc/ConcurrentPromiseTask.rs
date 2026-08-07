@@ -116,7 +116,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
             let task = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            (task, (*this).vm.post((*this).loop_kind, task))
+            (task, (*this).vm.post_ref(&(*this).loop_kind, task))
         };
         let _ = task;
         if let crate::vm_handle::Posted::Refused(_) = posted {

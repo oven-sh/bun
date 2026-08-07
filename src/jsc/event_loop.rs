@@ -69,6 +69,9 @@ pub struct EventLoop {
     pub next_immediate_tasks: Vec<*mut ()>,
 
     pub concurrent_tasks: ConcurrentQueue,
+    /// Set only on Bun.spawnSync's isolated loop: how other threads reach *this*
+    /// loop's queue (the VM's handle names only the VM's own two loops).
+    pub(crate) isolated_poster: Option<std::sync::Arc<crate::vm_handle::IsolatedPosterInner>>,
     // BACKREF — `*JSGlobalObject` owned by the VM; outlives this EventLoop.
     pub global: Option<NonNull<JSGlobalObject>>,
     // BACKREF — owning `*VirtualMachine` (EventLoop is a value field of it).
@@ -114,6 +117,7 @@ impl Default for EventLoop {
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
             concurrent_tasks: ConcurrentQueue::default(),
+            isolated_poster: None,
             global: None,
             virtual_machine: None,
             waker: None,
@@ -1012,6 +1016,16 @@ impl EventLoop {
         }
     }
 
+    /// JS thread: the poster other threads use to reach the loop this
+    /// `EventLoop` is — the VM's handle for its embedded loops, or the isolated
+    /// loop's own poster for a spawnSync loop.
+    pub fn js_poster(&self) -> bun_event_loop::JsPoster {
+        match &self.isolated_poster {
+            Some(p) => crate::vm_handle::IsolatedPosterInner::to_js_poster(p),
+            None => self.vm_ref().js_poster(),
+        }
+    }
+
     /// JS thread: count one more thing keeping this loop alive (the same
     /// counter a `VmHandle::ref_keep_alive` from another thread adjusts).
     pub fn ref_keep_alive(&self) {
@@ -1325,7 +1339,7 @@ bun_event_loop::link_impl_JsEventLoop! {
         enter() => (*this).enter(),
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
-        js_poster() => (*this).vm_ref().js_poster(),
+        js_poster() => (*this).js_poster(),
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
         create_null_delimited_env_map() =>
@@ -1375,13 +1389,22 @@ pub(crate) fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws
     {
         let _ = uws_loop;
     }
-    bun_core::heap::into_raw(el).cast()
+    let el = bun_core::heap::into_raw(el);
+    // SAFETY: `el` is the stable heap address the poster targets until destroy.
+    unsafe { (*el).isolated_poster = Some(crate::vm_handle::IsolatedPosterInner::new(el)) };
+    el.cast()
 }
 
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_destroy_event_loop(el: *mut ()) {
+    let el = el.cast::<EventLoop>();
+    // Refuse (and wait out) posts from other threads before the loop goes.
+    // SAFETY: `el` is the live isolated loop; JS thread.
+    if let Some(p) = unsafe { (*el).isolated_poster.as_ref() } {
+        p.close();
+    }
     // SAFETY: paired with `heap::alloc` in `__bun_spawn_sync_create_event_loop`.
-    drop(unsafe { bun_core::heap::take(el.cast::<EventLoop>()) });
+    drop(unsafe { bun_core::heap::take(el) });
 }
 
 /// Re-bind `event_loop.{global, virtual_machine}` to `vm` (prepare path).

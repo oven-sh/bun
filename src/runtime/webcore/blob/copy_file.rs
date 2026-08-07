@@ -1929,7 +1929,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         this,
         call_erased,
     ));
-    if let jsc::vm_handle::Posted::Refused(ct) = this.vm_handle.post(this.loop_kind, ct) {
+    if let jsc::vm_handle::Posted::Refused(ct) = this.vm_handle.post_ref(&this.loop_kind, ct) {
         // VM torn down: nobody will settle the promise; free the hop.
         // SAFETY: refused ⇒ we own the task box.
         unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct) };

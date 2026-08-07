@@ -1340,7 +1340,7 @@ mod _async_tasks {
             // released without touching JSC.
             // SAFETY: `this` is still exclusively owned here (see above).
             let ct = ConcurrentTask::create_from(this);
-            let posted = unsafe { (*this).vm.post((*this).loop_kind, ct) };
+            let posted = unsafe { (*this).vm.post_ref(&(*this).loop_kind, ct) };
             if let bun_jsc::vm_handle::Posted::Refused(ct) = posted {
                 // SAFETY: refused ⇒ we own the ConcurrentTask box and `this`.
                 unsafe {
@@ -2620,7 +2620,7 @@ mod _async_tasks {
             // takes ownership of it — unless the VM has been torn down.
             let this: *mut Self = self;
             let ct = ConcurrentTask::create(Task::init(this));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) = self.vm.post(self.loop_kind, ct) {
+            if let bun_jsc::vm_handle::Posted::Refused(ct) = self.vm.post_ref(&self.loop_kind, ct) {
                 // Nobody will settle the promise: drop the collected results, the
                 // arguments' own storage and the task; forget the JS-side members.
                 // SAFETY: refused ⇒ we own `ct`; subtask count hit zero ⇒ exclusive `this`.

@@ -802,13 +802,19 @@ impl VirtualMachine {
     /// the loop that was current when their work started.
     #[inline]
     pub fn current_loop_kind(&self) -> crate::LoopKind {
-        if core::ptr::eq(
-            self.event_loop,
-            &raw const self.macro_event_loop as *mut EventLoop,
-        ) {
+        if core::ptr::eq(self.event_loop, &raw const self.regular_event_loop as *mut EventLoop) {
+            crate::LoopKind::Regular
+        } else if core::ptr::eq(self.event_loop, &raw const self.macro_event_loop as *mut EventLoop) {
             crate::LoopKind::Macro
         } else {
-            crate::LoopKind::Regular
+            // Bun.spawnSync installed its isolated loop for the duration.
+            // SAFETY: `event_loop` is the live loop this VM is currently ticking.
+            let el = unsafe { &*self.event_loop };
+            crate::LoopKind::Isolated(
+                el.isolated_poster
+                    .clone()
+                    .expect("a non-embedded current loop is a spawnSync isolated loop"),
+            )
         }
     }
 

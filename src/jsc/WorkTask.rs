@@ -148,7 +148,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
             this.concurrent_task
                 .from(this_ptr, AutoDeinit::ManualDeinit),
         );
-        if let crate::vm_handle::Posted::Refused(_) = this.vm.post(this.loop_kind, task) {
+        if let crate::vm_handle::Posted::Refused(_) = this.vm.post_ref(&this.loop_kind, task) {
             // SAFETY: the queue refused it, so the pool thread still owns `this`.
             unsafe { Self::release_off_thread(this_ptr) };
         }

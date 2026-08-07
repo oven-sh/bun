@@ -306,7 +306,7 @@ impl FetchTasklet {
     /// task back if the VM has been torn down (caller releases what it holds).
     #[inline]
     fn post(&self, task: core::ptr::NonNull<ConcurrentTask>) -> jsc::vm_handle::Posted {
-        self.vm.post(self.loop_kind, task)
+        self.vm.post_ref(&self.loop_kind, task)
     }
 
     /// Wrap a borrowed body chunk in a `StreamResult::Temporary*` for

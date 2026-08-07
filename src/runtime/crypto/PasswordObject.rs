@@ -600,7 +600,7 @@ impl<Op: PasswordOp> PasswordJob<Op> {
             <PasswordResult<Op> as bun_event_loop::Taskable>::TAG,
             result.cast::<()>(),
         ));
-        if let bun_jsc::vm_handle::Posted::Refused(ct) = self.vm.post(self.loop_kind, ct) {
+        if let bun_jsc::vm_handle::Posted::Refused(ct) = self.vm.post_ref(&self.loop_kind, ct) {
             // SAFETY: refused ⇒ we own both boxes.
             unsafe {
                 drop(bun_core::heap::take(ct.as_ptr()));

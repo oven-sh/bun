@@ -472,7 +472,7 @@ impl S3HttpSimpleTask {
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
                 if let bun_jsc::vm_handle::Posted::Refused(_) =
-                    (*this).vm.post((*this).loop_kind, queued)
+                    (*this).vm.post_ref(&(*this).loop_kind, queued)
                 {
                     Self::release_off_thread(this);
                 }

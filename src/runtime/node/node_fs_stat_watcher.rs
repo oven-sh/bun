@@ -304,7 +304,7 @@ impl StatWatcherScheduler {
                 holder.cast::<()>(),
             ));
             if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                (*this).vm_handle.post((*this).loop_kind, ct)
+                (*this).vm_handle.post_ref(&(*this).loop_kind, ct)
             {
                 // VM torn down: no timer will be armed. Free the hop and its payload.
                 drop(bun_core::heap::take(ct.as_ptr()));
@@ -675,7 +675,7 @@ impl StatWatcher {
     /// callback consumes one ref on `self`; if the VM has been torn down the
     /// task is freed here and that ref released.
     fn post_to_js_thread(&self, task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>) {
-        if let bun_jsc::vm_handle::Posted::Refused(task) = self.vm_handle.post(self.loop_kind, task)
+        if let bun_jsc::vm_handle::Posted::Refused(task) = self.vm_handle.post_ref(&self.loop_kind, task)
         {
             // SAFETY: refused ⇒ we own the task box; `self` is live (ref held for the callback).
             unsafe { drop(bun_core::heap::take(task.as_ptr())) };

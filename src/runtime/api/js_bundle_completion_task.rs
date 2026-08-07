@@ -773,7 +773,7 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
         unsafe {
             let task = core::ptr::NonNull::new_unchecked(task);
             let c = from_completion_handle(c);
-            if let jsc::vm_handle::Posted::Refused(task) = c.vm.post(c.loop_kind, task) {
+            if let jsc::vm_handle::Posted::Refused(task) = c.vm.post_ref(&c.loop_kind, task) {
                 bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task);
             }
         }
@@ -997,7 +997,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // completion task itself is released with the bundle thread's state).
         let this = std::ptr::from_mut::<Self>(self);
         let ct = jsc::ConcurrentTask::create(jsc::Task::init(this));
-        if let jsc::vm_handle::Posted::Refused(ct) = self.vm.post(self.loop_kind, ct) {
+        if let jsc::vm_handle::Posted::Refused(ct) = self.vm.post_ref(&self.loop_kind, ct) {
             // SAFETY: refused ⇒ we own the task box.
             unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
         }

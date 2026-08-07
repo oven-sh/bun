@@ -105,7 +105,7 @@ impl FSWatcher {
         &self,
         task: core::ptr::NonNull<ConcurrentTask>,
     ) -> bun_jsc::vm_handle::Posted {
-        self.vm_handle.post(self.loop_kind, task)
+        self.vm_handle.post_ref(&self.loop_kind, task)
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /

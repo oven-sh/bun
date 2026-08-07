@@ -340,7 +340,7 @@ impl S3HttpDownloadStreamingTask {
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
                 if let bun_jsc::vm_handle::Posted::Refused(_) =
-                    (*this).vm.post((*this).loop_kind, task)
+                    (*this).vm.post_ref(&(*this).loop_kind, task)
                 {
                     // Nobody will consume the staged result. If the request is finished
                     // the HTTP thread holds the last reference: release the task here.

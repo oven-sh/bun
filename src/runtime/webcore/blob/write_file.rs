@@ -1036,7 +1036,7 @@ mod windows_impl {
                 this,
                 Self::on_mkdirp_complete_task,
             ));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) = this.vm_handle.post(this.loop_kind, ct)
+            if let bun_jsc::vm_handle::Posted::Refused(ct) = this.vm_handle.post_ref(&this.loop_kind, ct)
             {
                 // VM torn down: nobody will settle the promise. Free the hop (the
                 // ConcurrentTask owns the boxed ManagedTask); the operation's

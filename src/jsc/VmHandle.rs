@@ -41,13 +41,25 @@ enum State {
     Closed = 3,
 }
 
-/// Which of the VM's two event loops a task belongs to (fixed when the task is
-/// created on the JS thread; a task started while a macro runs completes into
-/// the macro loop the macro runner is ticking).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// Which event loop a task belongs to, fixed when the task is created on the JS
+/// thread: one of the VM's two embedded loops (a task started while a macro
+/// runs completes into the macro loop), or the isolated loop a `Bun.spawnSync`
+/// is ticking (which has its own poster; the VM's queues would never be seen).
+#[derive(Clone)]
 pub enum LoopKind {
     Regular,
     Macro,
+    Isolated(Arc<IsolatedPosterInner>),
+}
+
+impl core::fmt::Debug for LoopKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            LoopKind::Regular => "Regular",
+            LoopKind::Macro => "Macro",
+            LoopKind::Isolated(_) => "Isolated",
+        })
+    }
 }
 
 pub struct Inner {
@@ -139,12 +151,13 @@ impl VmHandle {
     }
 
     #[inline]
-    fn loop_of<'a>(vm: *mut VirtualMachine, kind: LoopKind) -> &'a EventLoop {
+    fn loop_of<'a>(vm: *mut VirtualMachine, kind: &LoopKind) -> &'a EventLoop {
         // SAFETY: caller is inside the gate; the VM and both embedded loops are alive.
         unsafe {
             match kind {
                 LoopKind::Regular => &(*vm).regular_event_loop,
                 LoopKind::Macro => &(*vm).macro_event_loop,
+                LoopKind::Isolated(_) => unreachable!("isolated loops are posted to through their own poster"),
             }
         }
     }
@@ -153,6 +166,13 @@ impl VmHandle {
 
     /// Queue `task` on the VM's `kind` loop and wake it, or hand it back.
     pub fn post(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
+        self.post_ref(&kind, task)
+    }
+
+    pub fn post_ref(&self, kind: &LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
+        if let LoopKind::Isolated(p) = kind {
+            return if p.post(task) { Posted::Queued } else { Posted::Refused(task) };
+        }
         let Some(_a) = self.enter() else {
             return Posted::Refused(task);
         };
@@ -167,25 +187,32 @@ impl VmHandle {
     pub fn wake(&self) {
         if let Some(_a) = self.enter() {
             // SAFETY: inside the gate.
-            Self::loop_of(unsafe { self.vm() }, LoopKind::Regular).wakeup();
+            Self::loop_of(unsafe { self.vm() }, &LoopKind::Regular).wakeup();
         }
     }
 
     /// Keep the VM's loop alive from another thread (no-op once closed; the
-    /// teardown ignores keep-alives anyway).
+    /// teardown ignores keep-alives anyway). Isolated loops need no keep-alive:
+    /// spawnSync ticks them until its child is done.
     pub fn ref_keep_alive(&self, kind: LoopKind) {
+        if matches!(kind, LoopKind::Isolated(_)) {
+            return;
+        }
         if let Some(_a) = self.enter() {
             // SAFETY: inside the gate.
-            let el = Self::loop_of(unsafe { self.vm() }, kind);
+            let el = Self::loop_of(unsafe { self.vm() }, &kind);
             let _ = el.concurrent_ref.fetch_add(1, Ordering::SeqCst);
             el.wakeup();
         }
     }
 
     pub fn unref_keep_alive(&self, kind: LoopKind) {
+        if matches!(kind, LoopKind::Isolated(_)) {
+            return;
+        }
         if let Some(_a) = self.enter() {
             // SAFETY: inside the gate.
-            let el = Self::loop_of(unsafe { self.vm() }, kind);
+            let el = Self::loop_of(unsafe { self.vm() }, &kind);
             let _ = el.concurrent_ref.fetch_sub(1, Ordering::SeqCst);
             el.wakeup();
         }
@@ -389,7 +416,7 @@ struct PosterData {
 unsafe fn poster_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> bool {
     // SAFETY: `data` is a leaked `Arc<PosterData>` pointer (see `to_js_poster`).
     let d = unsafe { &*(data as *const PosterData) };
-    matches!(d.handle.post(d.kind, task), Posted::Queued)
+    matches!(d.handle.post_ref(&d.kind, task), Posted::Queued)
 }
 unsafe fn poster_wake(data: *const ()) {
     // SAFETY: as above.
@@ -429,3 +456,85 @@ impl VirtualMachine {
         self.handle().to_js_poster(self.current_loop_kind())
     }
 }
+
+// ── Isolated event loops (Bun.spawnSync) ──────────────────────────────────
+//
+// spawnSync runs a third, heap-allocated `EventLoop` on the JS thread while it
+// blocks; process exits (waiter thread) and pool completions for that call
+// must land on *its* concurrent queue, not the VM's. It gets its own small
+// poster with the same gate discipline, closed before the loop is freed.
+
+/// Opaque outside this crate: the poster of a spawnSync isolated loop.
+pub struct IsolatedPosterInner {
+    open: core::sync::atomic::AtomicBool,
+    active: AtomicU32,
+    event_loop: *const EventLoop,
+}
+// SAFETY: `event_loop` is dereferenced only under the gate (open && counted).
+unsafe impl Send for IsolatedPosterInner {}
+unsafe impl Sync for IsolatedPosterInner {}
+
+impl IsolatedPosterInner {
+    pub(crate) fn new(event_loop: *const EventLoop) -> Arc<Self> {
+        Arc::new(Self { open: core::sync::atomic::AtomicBool::new(true), active: AtomicU32::new(0), event_loop })
+    }
+
+    /// JS thread, before the isolated loop is freed: refuse further posts and
+    /// wait out anyone mid-post.
+    pub(crate) fn close(&self) {
+        self.open.store(false, Ordering::SeqCst);
+        while self.active.load(Ordering::SeqCst) != 0 {
+            core::hint::spin_loop();
+        }
+    }
+
+    pub(crate) fn post(&self, task: NonNull<ConcurrentTaskItem>) -> bool {
+        self.active.fetch_add(1, Ordering::SeqCst);
+        let ok = self.open.load(Ordering::SeqCst);
+        if ok {
+            // SAFETY: gate held and open ⇒ the isolated loop is alive.
+            let el = unsafe { &*self.event_loop };
+            el.concurrent_tasks.push(task);
+            el.wakeup();
+        }
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        ok
+    }
+
+    pub(crate) fn to_js_poster(this: &Arc<Self>) -> bun_event_loop::JsPoster {
+        let data = Arc::into_raw(this.clone()) as *const ();
+        // SAFETY: data/vtable pair per `JsPoster::from_raw`.
+        unsafe { bun_event_loop::JsPoster::from_raw(data, &ISOLATED_POSTER_VTABLE) }
+    }
+}
+
+unsafe fn isolated_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> bool {
+    // SAFETY: leaked Arc<IsolatedPosterInner>.
+    unsafe { &*(data as *const IsolatedPosterInner) }.post(task)
+}
+unsafe fn isolated_wake(data: *const ()) {
+    // SAFETY: as above.
+    let d = unsafe { &*(data as *const IsolatedPosterInner) };
+    d.active.fetch_add(1, Ordering::SeqCst);
+    if d.open.load(Ordering::SeqCst) {
+        // SAFETY: gate held and open.
+        unsafe { &*d.event_loop }.wakeup();
+    }
+    d.active.fetch_sub(1, Ordering::SeqCst);
+}
+unsafe fn isolated_clone(data: *const ()) -> *const () {
+    // SAFETY: as above.
+    unsafe { Arc::increment_strong_count(data as *const IsolatedPosterInner) };
+    data
+}
+unsafe fn isolated_drop(data: *const ()) {
+    // SAFETY: as above.
+    unsafe { drop(Arc::from_raw(data as *const IsolatedPosterInner)) };
+}
+static ISOLATED_POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
+    post: isolated_post,
+    wake: isolated_wake,
+    clone: isolated_clone,
+    drop: isolated_drop,
+};
+

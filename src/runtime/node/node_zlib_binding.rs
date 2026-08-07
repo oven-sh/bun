@@ -205,7 +205,7 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn global_this(&self) -> &JSGlobalObject;
     /// How the pool thread reaches the VM (captured at construction).
     fn vm_handle(&self) -> &bun_jsc::VmHandle;
-    fn loop_kind(&self) -> bun_jsc::LoopKind;
+    fn loop_kind(&self) -> &bun_jsc::LoopKind;
     fn stream(&self) -> &JsCell<Self::Stream>;
 
     /// Write `(avail_out, avail_in)` into the JS-owned 2-element `Uint32Array`
@@ -499,7 +499,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // the task and that ref here.
         let ct = ConcurrentTask::create(Task::init(this));
         if let bun_jsc::vm_handle::Posted::Refused(ct) =
-            this_ref.vm_handle().post(this_ref.loop_kind(), ct)
+            this_ref.vm_handle().post_ref(&this_ref.loop_kind(), ct)
         {
             // SAFETY: refused ⇒ we own the task box; `this` is live (ref held).
             unsafe {
@@ -1016,7 +1016,7 @@ macro_rules! __impl_compression_stream {
 
             #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
             #[inline] fn vm_handle(&self) -> &::bun_jsc::VmHandle { &self.vm_handle }
-            #[inline] fn loop_kind(&self) -> ::bun_jsc::LoopKind { self.loop_kind }
+            #[inline] fn loop_kind(&self) -> &::bun_jsc::LoopKind { &self.loop_kind }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }

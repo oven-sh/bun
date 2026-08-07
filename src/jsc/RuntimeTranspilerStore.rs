@@ -495,7 +495,7 @@ impl TranspilerJob {
     fn dispatch_to_main_thread(&mut self) {
         let vm = self.vm;
         let handle = self.vm_handle.clone();
-        let loop_kind = self.loop_kind;
+        let loop_kind = self.loop_kind.clone();
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
@@ -504,7 +504,7 @@ impl TranspilerJob {
         unsafe { (*transpiler_store).queue.push(job) };
         // Another thread may free `self` at any time after .push, so we cannot use it any more
         // (the handle was cloned out above for exactly this reason).
-        let posted = handle.post(loop_kind, ConcurrentTask::create_from(transpiler_store));
+        let posted = handle.post_ref(&loop_kind, ConcurrentTask::create_from(transpiler_store));
         // Runs under the borrow taken in `run_from_worker_thread`, so the VM
         // cannot have closed: the post is always accepted.
         debug_assert!(matches!(posted, crate::vm_handle::Posted::Queued));

@@ -176,7 +176,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // ownership of it — unless the VM was torn down meanwhile, in which case
         // both the task and the job are released here.
         let ct = ConcurrentTask::create(Task::init(std::ptr::from_mut(job)));
-        if let crate::vm_handle::Posted::Refused(ct) = job.vm.post(job.loop_kind, ct) {
+        if let crate::vm_handle::Posted::Refused(ct) = job.vm.post_ref(&job.loop_kind, ct) {
             // SAFETY: refused ⇒ we still own both allocations.
             unsafe {
                 drop(bun_core::heap::take(ct.as_ptr()));

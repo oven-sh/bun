@@ -1091,7 +1091,12 @@ impl WebWorker {
             // SAFETY: vm_ptr non-null; jsc_vm is a valid JSC::VM*;
             // request_termination is documented thread-safe (VMTraps).
             // Cast through the real opaque `crate::VM`.
-            unsafe { (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination() };
+            unsafe {
+                // As for a parent's terminate(): nothing more may enter script
+                // (Node's `Stop(env)` on the worker's own exit).
+                (*vm_ptr).handle().stop();
+                (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination();
+            }
         }
     }
 

@@ -987,13 +987,16 @@ impl EventLoop {
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
     /// `promise` settles or execution is forbidden.
+    /// Ticks until `promise` settles — or the VM can no longer run the script
+    /// that would settle it (execution forbidden, or a stop was requested:
+    /// a worker being terminated mid-load never sees its module promise settle).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
             return;
         }
         while promise.status() == PromiseStatus::Pending {
-            if jsc_vm.execution_forbidden() {
+            if jsc_vm.execution_forbidden() || !self.vm_ref().script_allowed() {
                 break;
             }
             self.tick();

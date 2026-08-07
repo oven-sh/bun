@@ -255,7 +255,10 @@ mod advanced {
     const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
     // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
     const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
-    const VERSION: u32 = 1;
+    // v2 added `SerializedMessageWithBuffers`. The peer's advertised version is
+    // debug-logged, never consulted, so mixed-version pairs only break when a
+    // Buffer-bearing message actually crosses to a v1 peer.
+    const VERSION: u32 = 2;
 
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq)]
@@ -263,6 +266,10 @@ mod advanced {
         Version = 1,
         SerializedMessage = 2,
         SerializedInternalMessage = 3,
+        /// A `[message, buffers]` envelope so the receiver can restore Buffer prototypes (JSC's
+        /// serializer has no host-object hook). Only emitted when Buffers are present, so plain
+        /// messages keep the version-1 wire format.
+        SerializedMessageWithBuffers = 4,
     }
     // SAFETY: `#[repr(u8)]` fieldless enum → size 1, align 1, no padding,
     // `Copy + 'static`; the single byte is always an initialized discriminant.
@@ -274,6 +281,7 @@ mod advanced {
                 1 => "Version",
                 2 => "SerializedMessage",
                 3 => "SerializedInternalMessage",
+                4 => "SerializedMessageWithBuffers",
                 _ => "unknown",
             }
         }
@@ -316,7 +324,8 @@ mod advanced {
                 message: DecodedIPCMessage::Version(message_len),
             }),
             x if x == IPCMessageType::SerializedMessage as u8
-                || x == IPCMessageType::SerializedInternalMessage as u8 =>
+                || x == IPCMessageType::SerializedInternalMessage as u8
+                || x == IPCMessageType::SerializedMessageWithBuffers as u8 =>
             {
                 if message_len > u32::MAX - HEADER_LENGTH_U32 {
                     return Err(IPCDecodeError::InvalidFormat);
@@ -336,7 +345,10 @@ mod advanced {
                 }
 
                 let message = &data[HEADER_LENGTH..][..message_len as usize];
-                let deserialized = JSValue::deserialize(message, global)?;
+                let mut deserialized = JSValue::deserialize(message, global)?;
+                if x == IPCMessageType::SerializedMessageWithBuffers as u8 {
+                    deserialized = ipc_restore_advanced_buffers(global, deserialized)?;
+                }
 
                 Ok(DecodeIPCMessageResult {
                     bytes_consumed: HEADER_LENGTH_U32 + message_len,
@@ -368,6 +380,24 @@ mod advanced {
         value: JSValue,
         is_internal: IsInternal,
     ) -> Result<usize, IPCSerializationError> {
+        // Internal (control) messages never carry user Buffers, and the
+        // hardcoded ack/nack packets depend on their bare wire shape.
+        let (value, message_type) = match is_internal {
+            IsInternal::Internal => (value, IPCMessageType::SerializedInternalMessage),
+            IsInternal::External => {
+                let tagged = ipc_tag_advanced_buffers(global, value).map_err(|e| match e {
+                    JsError::Thrown => IPCSerializationError::JSError,
+                    JsError::Terminated => IPCSerializationError::JSTerminated,
+                    JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
+                })?;
+                if tagged.is_null() {
+                    (value, IPCMessageType::SerializedMessage)
+                } else {
+                    (tagged, IPCMessageType::SerializedMessageWithBuffers)
+                }
+            }
+        };
+
         let serialized = value
             .serialize(
                 global,
@@ -394,10 +424,7 @@ mod advanced {
             .ensure_unused_capacity(payload_length)
             .map_err(|_| IPCSerializationError::OutOfMemory)?;
 
-        writer.write_type_as_bytes_assume_capacity(match is_internal {
-            IsInternal::Internal => IPCMessageType::SerializedInternalMessage,
-            IsInternal::External => IPCMessageType::SerializedMessage,
-        });
+        writer.write_type_as_bytes_assume_capacity(message_type);
         writer.write_type_as_bytes_assume_capacity(size);
         writer.write_assume_capacity(serialized.data());
 
@@ -2556,6 +2583,25 @@ pub fn ipc_serialize(
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`
     bun_jsc::cpp::IPCSerialize(global_object, message, handle, options, target)
+}
+
+#[track_caller]
+pub(crate) fn ipc_tag_advanced_buffers(
+    global_object: &JSGlobalObject,
+    message: JSValue,
+) -> JsResult<JSValue> {
+    // `[[ZIG_EXPORT(zero_is_throw)]]`; returns null when the message holds no
+    // Buffers, else the `[message, buffers]` envelope (see Ipc.ts).
+    bun_jsc::cpp::IPCTagAdvancedBuffers(global_object, message)
+}
+
+#[track_caller]
+pub(crate) fn ipc_restore_advanced_buffers(
+    global_object: &JSGlobalObject,
+    envelope: JSValue,
+) -> JsResult<JSValue> {
+    // `[[ZIG_EXPORT(zero_is_throw)]]`
+    bun_jsc::cpp::IPCRestoreAdvancedBuffers(global_object, envelope)
 }
 
 #[track_caller]

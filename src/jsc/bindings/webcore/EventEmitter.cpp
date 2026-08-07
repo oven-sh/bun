@@ -85,8 +85,18 @@ bool EventEmitter::removeAllListeners()
 
     auto& map = data->eventListenerMap;
     bool any = !map.isEmpty();
+    // Collect before clearing so per-event teardown (signal handlers, IPC
+    // refs, listener-count mirrors) observes the post-removal zero counts.
+    Vector<Identifier> eventTypes = map.eventTypes();
     map.clear();
     this->m_thisObject.clear();
+    if (any) {
+        eventListenersDidChange();
+        if (this->onDidChangeListener) {
+            for (auto& eventType : eventTypes)
+                this->onDidChangeListener(*this, eventType, false);
+        }
+    }
     return any;
 }
 

@@ -5,7 +5,7 @@ use bun_core::Global;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
 use bun_parsers::json;
-use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_paths::{self, PathBuffer, Platform, platform, resolve_path};
 use bun_sys;
 
 const SKIP_LIST: &[&[u8]] = &[
@@ -283,6 +283,42 @@ impl<'a> PackageFilterIterator<'a> {
         })
     }
 
+    fn can_resolve_pattern_directly(pattern: &[u8]) -> bool {
+        // Keep raw glob tokens on GlobWalker, including escaped tokens that it must unescape.
+        // Relative literals can use the host filesystem's native case semantics directly.
+        !Platform::AUTO.is_absolute(pattern)
+            && pattern.first() != Some(&b'!')
+            && !strings::contains_char(pattern, 0)
+            && strings::index_of_any(pattern, b"*{[?!").is_none()
+            && !strings::split_any(pattern, b"/\\").any(|component| {
+                component.eq_ignore_ascii_case(b"node_modules")
+                    || component.eq_ignore_ascii_case(b".git")
+            })
+    }
+
+    fn resolve_literal_pattern(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
+        let pattern: &[u8] = &self.patterns[self.pattern_idx];
+        let mut spill = Vec::new();
+        let path =
+            resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[self.root_dir, pattern]);
+        let stat_result = bun_sys::stat(path);
+        self.pattern_idx += 1;
+
+        match stat_result {
+            Ok(stat) if bun_sys::S::ISREG(stat.st_mode as _) => {
+                Ok(Some(Box::<[u8]>::from(path.as_bytes())))
+            }
+            Ok(_) => Ok(None),
+            Err(err)
+                if err.get_errno() == bun_sys::E::ENOENT
+                    || err.get_errno() == bun_sys::E::ENOTDIR =>
+            {
+                Ok(None)
+            }
+            Err(err) => Err(err.with_path(path.as_bytes()).into()),
+        }
+    }
+
     fn start_walk(&self) -> Result<ActiveWalk, crate::Error> {
         // pattern_idx < patterns.len() checked by caller.
         let pattern: &[u8] = &self.patterns[self.pattern_idx];
@@ -315,6 +351,13 @@ impl<'a> PackageFilterIterator<'a> {
             let Some(active) = &mut self.active else {
                 if self.pattern_idx >= self.patterns.len() {
                     return Ok(None);
+                }
+                let pattern: &[u8] = &self.patterns[self.pattern_idx];
+                if Self::can_resolve_pattern_directly(pattern) {
+                    if let Some(path) = self.resolve_literal_pattern()? {
+                        return Ok(Some(path));
+                    }
+                    continue;
                 }
                 self.active = Some(self.start_walk()?);
                 continue;

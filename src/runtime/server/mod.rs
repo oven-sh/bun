@@ -81,6 +81,10 @@ pub use file_route::FileRoute;
 pub mod directory_route;
 pub use directory_route::DirectoryRoute;
 
+#[path = "DevErrorPage.rs"]
+pub mod dev_error_page;
+pub use dev_error_page::DevErrorPage;
+
 #[path = "FileResponseStream.rs"]
 pub mod file_response_stream;
 pub use file_response_stream::FileResponseStream;

@@ -2,16 +2,11 @@
 // protocol (https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore/inspector/protocol).
 // One adapter per frontend connection; backend commands use a separate id space.
 const { pathToFileURL, fileURLToPath } = require("node:url");
-// SafeMap/SafeSet: the in-process Session runs on the user's thread, so for..of over these fields
-// must not go through a tamperable Map/Set prototype iterator.
 const { SafeMap, SafeSet } = require("internal/primordials");
 const { Buffer } = require("node:buffer");
 const { basename, isAbsolute } = require("node:path");
 
 const EXECUTION_CONTEXT_ID = 1;
-// Bun names code with no file of its own after the directory it ran in:
-// `<cwd>/[eval]` for -e/--eval/-p, `<cwd>/[stdin]` for `bun -`. Node reports
-// the bare names; a real file so named is reported that way too, as in Node.
 const PSEUDO_SCRIPT_NAMES = new Set(["[eval]", "[stdin]"]);
 
 type AnyObject = Record<string, any>;
@@ -48,9 +43,6 @@ function escapeRegex(text: string): string {
 // plain path, so match a breakpoint URL against every spelling.
 function breakpointUrlRegex(url: string): string {
   if (PSEUDO_SCRIPT_NAMES.$has(url)) {
-    // The reverse of toCdpUrl. Anchored on the trailing path segment rather
-    // than on a cwd captured here: the debugger thread's cwd can differ from
-    // the one the script URL was built with.
     return [`${escapeRegex("/" + url)}$`, `${escapeRegex("\\" + url)}$`, `^${escapeRegex(url)}$`].join("|");
   }
   const candidates = new Set([url]);
@@ -67,8 +59,6 @@ function breakpointUrlRegex(url: string): string {
 }
 
 // ── Source maps ────────────────────────────────────────────────────────────
-// Bun transpiles every script, so CDP clients see the original source and positions (translated via
-// the inline sourceMappingURL Bun appended). The map is consumed here and not forwarded.
 
 interface OriginalPosition {
   lineNumber: number;
@@ -76,8 +66,6 @@ interface OriginalPosition {
 }
 
 interface GeneratedLine {
-  // Parallel arrays, ascending by `columns`, of every mapping on one line of
-  // the generated script.
   columns: number[];
   lineNumbers: number[];
   columnNumbers: number[];
@@ -85,7 +73,6 @@ interface GeneratedLine {
 
 interface ScriptSourceMap {
   byGeneratedLine: (GeneratedLine | undefined)[];
-  // Every mapping, ascending by original position, for original -> generated.
   originalOrder: { lineNumber: number; columnNumber: number; genLine: number; genColumn: number }[];
 }
 
@@ -93,8 +80,6 @@ interface ScriptRecord {
   cdpUrl: string;
   endLine: number;
   endColumn: number;
-  // Both undefined for a script with no map of Bun's own: an internal module,
-  // a `vm` compilation, or code the client itself evaluated.
   source: string | undefined;
   mappings: string | undefined;
   map: ScriptSourceMap | undefined;
@@ -107,8 +92,6 @@ for (let index = 0; index < VLQ_CHARACTERS.length; index++) {
 }
 
 function decodeSourceMapURL(sourceMapURL: string | undefined): AnyObject | undefined {
-  // Only the inline map Bun itself produced. A `//# sourceMappingURL=foo.map`
-  // pointing at a file is the user's own map and is forwarded untouched.
   if (!sourceMapURL || !sourceMapURL.startsWith("data:application/json")) return undefined;
   const comma = sourceMapURL.indexOf(",");
   if (comma < 0) return undefined;
@@ -118,9 +101,6 @@ function decodeSourceMapURL(sourceMapURL: string | undefined): AnyObject | undef
       ? Buffer.from(payload, "base64").toString("utf8")
       : decodeURIComponent(payload);
     const map = JSON.parse(text);
-    // A runtime-transpiled script has exactly one source. A pre-bundled file
-    // whose map names several cannot be shown as one original script, so it is
-    // left alone.
     if (!map || typeof map.mappings !== "string") return undefined;
     if (!$isJSArray(map.sources) || map.sources.length !== 1) return undefined;
     return map;
@@ -151,9 +131,6 @@ function decodeMappings(mappings: string): ScriptSourceMap {
       index++;
       continue;
     }
-    // Decode up to four VLQ fields: generated column, source index, original
-    // line, original column. A one-field segment marks generated code with no
-    // original position and is skipped.
     const fields: number[] = [];
     while (index < length && mappings[index] !== "," && mappings[index] !== ";") {
       let shift = 0;
@@ -162,8 +139,6 @@ function decodeMappings(mappings: string): ScriptSourceMap {
       do {
         digit = VLQ_VALUES.$get(mappings[index++]);
         if (digit === undefined) {
-          // originalOrder's consumer binary-searches by original position, so
-          // the partial result must still be sorted on the abort path.
           originalOrder.sort(compareOriginalOrder);
           return { byGeneratedLine, originalOrder };
         }
@@ -204,8 +179,6 @@ function compareOriginalOrder(a: AnyObject, b: AnyObject): number {
   );
 }
 
-// Last mapping at or before the generated position; falls forward if none (e.g. --inspect-brk's
-// injected `debugger;`), so that line resolves to the user's first statement like Node.
 function generatedToOriginal(
   map: ScriptSourceMap,
   lineNumber: number,
@@ -237,8 +210,6 @@ function generatedToOriginal(
   return undefined;
 }
 
-// The first generated position at or after an original one, so a breakpoint
-// set on a line the transpiler moved still lands on that line's code.
 function originalToGenerated(
   map: ScriptSourceMap,
   lineNumber: number,
@@ -264,8 +235,6 @@ function originalToGenerated(
 
 const SOURCE_MAPPING_URL_COMMENT = "//# sourceMappingURL=";
 
-// The original file's own sourceMappingURL (Bun's is stripped). Only a line-starting marker is
-// accepted, matching JSC's and V8's scanners, so a string literal is not mistaken for a directive.
 function ownSourceMappingURL(source: string): string {
   const at = source.lastIndexOf(SOURCE_MAPPING_URL_COMMENT);
   if (at < 0) return "";
@@ -275,9 +244,6 @@ function ownSourceMappingURL(source: string): string {
   return source.slice(at + SOURCE_MAPPING_URL_COMMENT.length, end < 0 ? source.length : end).trim();
 }
 
-// Null-proto so a key not present as an own property does not fall through to
-// Object.prototype: the in-process Session runs this adapter on the user's
-// main thread, where Object.prototype may have been tampered with.
 const SCOPE_TYPE_MAP: Record<string, string> = {
   __proto__: null,
   global: "global",
@@ -289,9 +255,6 @@ const SCOPE_TYPE_MAP: Record<string, string> = {
   nestedLexical: "block",
 } as any;
 
-// JSC reports the async boundary itself as the top frame of an async stack
-// (`setTimeout`, `then`, ...). V8 has no such frame; it names the boundary in
-// `description`. Boundaries without a V8 counterpart are left undescribed.
 const ASYNC_BOUNDARY_DESCRIPTIONS: Record<string, string> = {
   __proto__: null,
   setTimeout: "Timeout",
@@ -329,12 +292,8 @@ const CONSOLE_LEVEL_MAP: Record<string, string> = {
   debug: "debug",
 } as any;
 
-// Per-server, shared by every CDP session attached to one inspected context.
 interface DisconnectNotifyState {
   handshakeStarted: boolean;
-  // Node's Agent::retaining_context_: how many sessions were retaining the
-  // context at handshake time. Snapshotted, so a session opting in afterwards
-  // can neither suppress nor duplicate the deferred executionContextDestroyed.
   retaining: number;
   adapters: Set<InspectorCDPAdapter> | undefined;
 }
@@ -348,8 +307,6 @@ class InspectorCDPAdapter {
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
   >();
   #scripts = new Map<string, ScriptRecord>();
-  // Every spelling of a script's URL, so a console message or a breakpoint
-  // request that names one can be matched back to its sourcemap.
   #scriptIdsByUrl: Map<string, string> = new SafeMap();
   // By-URL breakpoints set before their script parsed, keyed by the id given to the client. Re-set
   // through the map at scriptParsed (as V8 does); events and removeBreakpoint map through jscId.
@@ -364,36 +321,22 @@ class InspectorCDPAdapter {
       columnNumber: number | undefined;
       condition: string | undefined;
       resolved: boolean;
-      // True while the stale binding's remove/re-set are in flight; events referencing the stale
-      // id in that window (breakpointResolved / pause at the untranslated coordinate) are dropped.
       resetPending?: boolean;
-      // Set when the client removes the breakpoint while resetPending; the
-      // re-set reply then retires the new binding instead of aliasing it.
       clientRemoved?: boolean;
     }
   > = new SafeMap();
-  // Current backend breakpointId -> the id the client knows (only entries that
-  // were re-set diverge).
   #breakpointIdAliases = new Map<string, string>();
-  // Profiler: tracking state plus a FIFO of deferred Profiler.stop reply ids, each answered in
-  // order when ScriptProfiler.trackingComplete delivers the samples.
   #profilerTracking = false;
   #profilerStartTime = 0;
   #profilerStopClientIds: (number | string)[] = [];
-  // NodeRuntime domain state, per connection, mirroring Node's RuntimeAgent.
   #nodeRuntimeEnabled = false;
   #notifyWhenWaitingForDisconnect = false;
-  // This session's slice of retaining_context_, fixed when the handshake began.
   #retainingContext = false;
   #sentContextDestroyed = false;
   // Shared across this context's sessions. Node ORs the flag across channels: one opt-in defers
   // executionContextDestroyed for all. https://github.com/nodejs/node/blob/main/src/inspector_agent.cc
   #disconnectNotify: DisconnectNotifyState;
   #isWaitingForDebugger: () => boolean;
-
-  // `allocateBackendId` lets several adapters share one backend whose
-  // replies are broadcast to all of them (JSC's FrontendRouter): a shared
-  // allocator keeps their command ids disjoint, so each claims only its own.
   #allocateBackendId: () => number;
 
   constructor(
@@ -415,8 +358,6 @@ class InspectorCDPAdapter {
     this.#allocateBackendId = allocateBackendId;
   }
 
-  // Node takes retaining_context_ once, inside notifyWaitingForDisconnect, so
-  // fix every session's share of it the first time any session is told.
   #startHandshakeOnce(): void {
     const state = this.#disconnectNotify;
     if (state.handshakeStarted) return;
@@ -431,13 +372,7 @@ class InspectorCDPAdapter {
     }
   }
 
-  // The WebSocket for this session went away. Mirrors Node's
-  // disconnectFrontend: if this was the last session retaining the context
-  // during the exit handshake, the others finally see the context go.
   handleClientDisconnect(): void {
-    // The leaked native connection keeps this adapter reachable after the
-    // socket closes; drop the per-session state (script records now carry
-    // full source text + mappings) so a closed session retains O(1).
     this.#scripts.$clear();
     this.#scriptIdsByUrl.clear();
     this.#preParseBreakpoints.clear();
@@ -447,8 +382,6 @@ class InspectorCDPAdapter {
     const state = this.#disconnectNotify;
     state.adapters?.delete(this);
     this.#notifyWhenWaitingForDisconnect = false;
-    // Only a session that was retaining the context at handshake time can
-    // release it, and only once.
     if (!this.#retainingContext) return;
     this.#retainingContext = false;
     state.retaining--;
@@ -466,8 +399,6 @@ class InspectorCDPAdapter {
     });
   }
 
-  // Decoding the mappings is deferred: a session may never ask about a
-  // position in a given script, and every module Bun runs carries a map.
   #sourceMapFor(scriptId: string | undefined): ScriptSourceMap | undefined {
     if (!scriptId) return undefined;
     const script = this.#scripts.$get(scriptId);
@@ -479,8 +410,6 @@ class InspectorCDPAdapter {
     return script.map;
   }
 
-  // Array#map adapter (map also passes index/array; the cast keeps the
-  // AnyObject element type of the inline closure it replaces).
   #mapToOriginalLocation(location: AnyObject): AnyObject {
     return this.#toOriginalLocation(location) as AnyObject;
   }
@@ -490,17 +419,12 @@ class InspectorCDPAdapter {
     if (error || typeof result.breakpointId !== "string") return;
     const { breakpointId } = result;
     if (bp.clientRemoved) {
-      // The client removed this breakpoint while the re-set was in flight;
-      // retire the new binding instead of aliasing it.
       this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId });
       return;
     }
     this.#breakpointIdAliases.$delete(bp.jscId);
     bp.jscId = breakpointId;
     if (breakpointId !== clientBreakpointId) this.#breakpointIdAliases.$set(breakpointId, clientBreakpointId);
-    // The re-set resolves against an already-parsed script, so JSC reports
-    // the location in the response rather than a breakpointResolved event;
-    // forward it under the client's id so its gutter marker turns verified.
     const location = result.locations?.[0];
     if (location) {
       this.#emitToClient("Debugger.breakpointResolved", {
@@ -548,7 +472,6 @@ class InspectorCDPAdapter {
   }
 
   #onProfilerStopReply(id: number, _result: AnyObject, error: AnyObject) {
-    // The success reply waits for trackingComplete; only an error answers here.
     if (error) {
       const at = this.#profilerStopClientIds.indexOf(id);
       if (at >= 0) this.#profilerStopClientIds.splice(at, 1);
@@ -609,9 +532,6 @@ class InspectorCDPAdapter {
         resolved: false,
       };
       this.#preParseBreakpoints.set(breakpointId, bp);
-      // scriptParsed can land between the untranslated send and this reply; its
-      // retranslate pass ran before this entry existed, so re-check here or the
-      // binding stays at original-line-as-generated for the session.
       const scriptId =
         url !== undefined
           ? this.#scriptIdsByUrl.get(url)
@@ -650,9 +570,6 @@ class InspectorCDPAdapter {
     return translated;
   }
 
-  // The stale binding (original coordinates bound as generated) can fire
-  // between scriptParsed and the re-set's completion; events carrying its id
-  // in that window describe a coordinate the client never asked for.
   #isStaleResetBreakpoint(breakpointId: string): boolean {
     for (const bp of this.#preParseBreakpoints.values()) {
       if (bp.resetPending && bp.jscId === breakpointId) return true;
@@ -664,14 +581,9 @@ class InspectorCDPAdapter {
     return this.#breakpointIdAliases.$get(breakpointId) ?? breakpointId;
   }
 
-  // Re-sets by-URL breakpoints that predate their script through its map. JSC keys a URL breakpoint
-  // on one generated coordinate, so the first matching script with a map wins.
   #retranslatePreParseBreakpoints(url: string, cdpUrl: string, scriptId: string): void {
     if (this.#preParseBreakpoints.size === 0) return;
     const script = this.#scripts.$get(scriptId);
-    // Without a map the original coordinates were already the right ones.
-    // A synchronous scriptParsed listener may have already decoded the map
-    // (#sourceMapFor consumes mappings into map), so check both states.
     if (!script || (script.mappings === undefined && script.map === undefined)) return;
     for (const [clientBreakpointId, bp] of this.#preParseBreakpoints) {
       if (bp.resolved) continue;
@@ -692,9 +604,6 @@ class InspectorCDPAdapter {
     }
   }
 
-  // Re-binds one pre-parse breakpoint through scriptId's map: marks it
-  // resolved, and when the map moves the position, removes the stale binding
-  // and re-sets at the generated coordinate under the client's id.
   #resetPreParseBreakpoint(clientBreakpointId: string, bp: AnyObject, scriptId: string): void {
     bp.resolved = true;
     const generated = this.#toGeneratedLocation({
@@ -703,7 +612,7 @@ class InspectorCDPAdapter {
       columnNumber: bp.columnNumber ?? 0,
     }) as AnyObject;
     if (generated.lineNumber === bp.lineNumber && (generated.columnNumber ?? 0) === (bp.columnNumber ?? 0)) {
-      return; // The map is an identity for this position.
+      return;
     }
     bp.resetPending = true;
     this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: bp.jscId });
@@ -724,9 +633,6 @@ class InspectorCDPAdapter {
     );
   }
 
-  // A client may address a script by pattern rather than by URL. Matching it
-  // against the scripts already announced keeps a breakpoint request in the
-  // same coordinates as the response it gets back.
   #scriptIdMatching(urlRegex: string): string | undefined {
     let pattern: RegExp;
     try {
@@ -973,16 +879,11 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.removeBreakpoint": {
-        // The client removes by the id it was originally given; a re-set
-        // breakpoint lives in JSC under a newer id.
         const tracked = this.#preParseBreakpoints.get(params.breakpointId);
         if (tracked) {
           this.#preParseBreakpoints.delete(params.breakpointId);
           this.#breakpointIdAliases.$delete(tracked.jscId);
           if (tracked.resetPending) {
-            // The old binding is already removed and the re-set is in
-            // flight; its reply removes the new binding (clientRemoved) —
-            // forwarding the stale id would error and orphan the new one.
             tracked.clientRemoved = true;
             this.#replyToClient(id, {});
             return;
@@ -1004,8 +905,6 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.getScriptSource": {
-        // The client is shown the original file, so serve it from the map
-        // rather than handing back what the transpiler produced.
         const script = this.#scripts.$get(params.scriptId);
         if (script?.source !== undefined) {
           this.#replyToClient(id, { scriptSource: script.source });
@@ -1032,9 +931,6 @@ class InspectorCDPAdapter {
         const { condition, urlRegex, url } = params;
         const options: AnyObject = {};
         if (condition) options.condition = condition;
-        // The line the client names is a line of the original file. Resolve it
-        // through the map of the script it refers to; a breakpoint set before
-        // that script is parsed has no map yet and is passed through.
         const known = url ? this.#scriptIdsByUrl.get(url) : urlRegex ? this.#scriptIdMatching(urlRegex) : undefined;
         const generated = this.#toGeneratedLocation({
           scriptId: known,
@@ -1060,8 +956,6 @@ class InspectorCDPAdapter {
           return;
         }
         if (known === undefined) {
-          // No script (and so no map) yet: remember the original coordinates
-          // so the breakpoint can be re-set through the map at scriptParsed.
           this.#sendToBackend(
             "Debugger.setBreakpointByUrl",
             jscParams,
@@ -1093,9 +987,6 @@ class InspectorCDPAdapter {
         const start = this.#toGeneratedLocation(params.start);
         let end = params.end ? this.#toGeneratedLocation(params.end) : undefined;
         if (!end) {
-          // script.endLine/endColumn are JSC's generated end, already in the
-          // backend's coordinate space: no #toGeneratedLocation needed (EOF
-          // has no mapping to translate through anyway).
           const script = this.#scripts.$get(params.start?.scriptId);
           end = {
             scriptId: params.start?.scriptId,
@@ -1128,11 +1019,7 @@ class InspectorCDPAdapter {
         this.#sendToBackend("Heap.gc", undefined, id, method);
         return;
 
-      // V8's CPU profiler maps onto JSC's ScriptProfiler: track with samples,
-      // then reshape them into a V8 profile (#translateSamplingProfile).
       case "Profiler.start":
-        // Set synchronously so a pipelined Profiler.stop is not rejected while
-        // the startTracking round-trip is still in flight.
         this.#profilerTracking = true;
         this.#sendToBackend(
           "ScriptProfiler.startTracking",
@@ -1150,7 +1037,6 @@ class InspectorCDPAdapter {
         }
         this.#profilerTracking = false;
         this.#profilerStopClientIds.push(id);
-        // The success reply waits for trackingComplete; only an error answers here.
         this.#sendToBackend(
           "ScriptProfiler.stopTracking",
           undefined,
@@ -1182,8 +1068,6 @@ class InspectorCDPAdapter {
       case "Runtime.setAsyncCallStackDepth":
       case "Profiler.enable":
       case "Profiler.disable":
-      // Accepted and ignored: JSC's ScriptProfiler protocol exposes no
-      // sampling-interval control, so the hint cannot reach the backend.
       case "Profiler.setSamplingInterval":
       case "HeapProfiler.enable":
       case "HeapProfiler.disable":
@@ -1202,16 +1086,11 @@ class InspectorCDPAdapter {
         return;
 
       case "NodeRuntime.notifyWhenWaitingForDisconnect":
-        // Per-session: at exit this session gets waitingForDisconnect instead of contextDestroyed.
-        // Inert after handshake (retaining_context_ already taken). See Node's runtime_agent.cc.
         this.#notifyWhenWaitingForDisconnect = !!params.enabled;
         this.#replyToClient(id, {});
         return;
 
       case "NodeRuntime.enable":
-        // Node's RuntimeAgent::enable announces the wait, if there is one,
-        // before the reply, and does so again on every re-enable. Clients
-        // (--inspect-brk launchers, Node's own test helper) block on it.
         this.#nodeRuntimeEnabled = true;
         if (this.#isWaitingForDebugger()) {
           this.#emitToClient("NodeRuntime.waitingForDebugger", {});
@@ -1291,8 +1170,6 @@ class InspectorCDPAdapter {
         let endColumn = params.endColumn ?? 0;
         let sourceMapURL = params.sourceMapURL;
         if (source !== undefined) {
-          // The client is told the shape of the original file, not of the
-          // transpiler's output, and is not handed Bun's map for it.
           const lastNewline = source.lastIndexOf("\n");
           endLine = 0;
           for (let at = source.indexOf("\n"); at >= 0; at = source.indexOf("\n", at + 1)) endLine++;
@@ -1301,8 +1178,6 @@ class InspectorCDPAdapter {
         }
         this.#scripts.$set(params.scriptId, {
           cdpUrl,
-          // JSC's generated end, kept for getBreakpointLocations: the original
-          // EOF has no mapping, so it cannot be translated back to generated.
           endLine: params.endLine ?? 0,
           endColumn: params.endColumn ?? 0,
           source,
@@ -1325,17 +1200,11 @@ class InspectorCDPAdapter {
           embedderName: cdpUrl,
           scriptLanguage: "JavaScript",
         });
-        // After the scriptParsed emit: the re-set's reply and its
-        // Debugger.breakpointResolved reference this scriptId, and a
-        // synchronous in-process client must learn the script first.
         this.#retranslatePreParseBreakpoints(url, cdpUrl, params.scriptId);
         return;
       }
 
       case "Debugger.paused": {
-        // A pause whose only hit breakpoint is a stale pre-parse binding is at a coordinate the
-        // client never asked for. The pause loop drains the backend queue, so the posted re-set
-        // completes during this pause; resume and let execution reach the corrected binding.
         if (
           params.reason === "Breakpoint" &&
           typeof params.data?.breakpointId === "string" &&
@@ -1380,9 +1249,6 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.breakpointResolved":
-        // A resolution of the stale pre-parse binding reports the coordinate
-        // the re-set is about to correct; #onBreakpointReset forwards the
-        // corrected one instead.
         if (this.#isStaleResetBreakpoint(params.breakpointId)) return;
         this.#emitToClient("Debugger.breakpointResolved", {
           breakpointId: this.#toClientBreakpointId(params.breakpointId),
@@ -1405,9 +1271,6 @@ class InspectorCDPAdapter {
       case "ScriptProfiler.trackingComplete": {
         const clientId = this.#profilerStopClientIds.shift();
         if (clientId === undefined) {
-          // Broadcast: a session that did not issue the stop learns tracking
-          // ended. The issuing session already cleared #profilerTracking at
-          // Profiler.stop and may have re-armed it with a pipelined start.
           this.#profilerTracking = false;
           return;
         }
@@ -1429,9 +1292,6 @@ class InspectorCDPAdapter {
         return;
 
       case "Bun.waitingForDebugger":
-        // Synthesized by the inspected thread when it starts waiting for a
-        // frontend, mirroring Node's RuntimeAgent::setWaitingForDebugger:
-        // announce it to a session that already enabled the domain.
         if (this.#nodeRuntimeEnabled) {
           this.#emitToClient("NodeRuntime.waitingForDebugger", {});
         }
@@ -1443,9 +1303,6 @@ class InspectorCDPAdapter {
     }
   }
 
-  // Rebuilds V8's CPUProfile tree from JSC's flat sample list: each sampled
-  // stack is walked caller-to-callee interning one node per call path, the
-  // leaf takes the hit, and timestamps become microsecond deltas.
   #translateSamplingProfile(params: AnyObject): AnyObject {
     const stackTraces: AnyObject[] = params.samples?.stackTraces ?? [];
     const root: AnyObject = {
@@ -1463,13 +1320,11 @@ class InspectorCDPAdapter {
     for (const trace of stackTraces) {
       let parent = root;
       const frames: AnyObject[] = trace.stackFrames ?? [];
-      // JSC reports frames innermost-first; the tree grows from the root.
       for (let i = frames.length - 1; i >= 0; i--) {
         const frame = frames[i];
         const key = `${parent.id}\u0000${frame.sourceID}\u0000${frame.name}\u0000${frame.line}\u0000${frame.column}`;
         let node = interned.$get(key);
         if (!node) {
-          // JSC counts these lines and columns from 1; CDP counts from 0.
           const location = this.#toOriginalLocation({
             scriptId: frame.sourceID,
             lineNumber: Math.max((frame.line ?? 1) - 1, 0),
@@ -1512,14 +1367,11 @@ class InspectorCDPAdapter {
   #translateStackTrace(stackTrace: AnyObject | undefined): AnyObject | undefined {
     if (!stackTrace) return undefined;
     const frames: AnyObject[] = stackTrace.callFrames ?? [];
-    // The boundary frame is a label, not a location: hand it to the client as
-    // `description` the way V8 does instead of leaving it in the frame list.
     const boundary = stackTrace.topCallFrameIsBoundary && frames.length ? frames[0] : undefined;
     const description = boundary ? ASYNC_BOUNDARY_DESCRIPTIONS[boundary.functionName ?? ""] : undefined;
     const translated: AnyObject = {
       callFrames: (boundary ? frames.slice(1) : frames).map((frame: AnyObject) => {
         const scriptId = frame.scriptId ?? this.#scriptIdsByUrl.get(frame.url ?? "") ?? "";
-        // JSC counts these lines and columns from 1; CDP counts from 0.
         const location = this.#toOriginalLocation({
           scriptId,
           lineNumber: Math.max((frame.lineNumber ?? 1) - 1, 0),

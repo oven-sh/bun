@@ -2045,11 +2045,6 @@ where
             return Ok(JSValue::FALSE);
         }
         if !is_valid_sec_websocket_key(sec_websocket_key_str.slice()) {
-            // Node's inspector does not validate the key shape at all.
-            // `websocket.internalAllowAnySecWebSocketKey` (undocumented, used
-            // only by src/js/internal/debugger.ts, also read by uWS's routing
-            // gate in App.h) opts a server out. The key must still be present:
-            // the accept header is computed from it.
             let allow_any_key = self
                 .config
                 .websocket

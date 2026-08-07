@@ -4228,9 +4228,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_unref, (JSGlobalObject * globalObject, CallFram
 
 extern "C" void Debugger__debugEnd();
 
-// process._debugEnd(): Node stops this agent's IO thread here, which also
-// means exit no longer waits for an attached frontend. Bun implements the
-// second half only; the listener and any live session stay up.
 JSC_DEFINE_HOST_FUNCTION(Process_functionDebugEnd, (JSGlobalObject*, CallFrame*))
 {
     Debugger__debugEnd();

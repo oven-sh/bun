@@ -375,9 +375,6 @@ public:
         bool sendPingsAutomatically = true;
         /* Maximum socket lifetime in minutes before forced closure (defaults to disabled) */
         unsigned short maxLifetime = 0;
-        /* Also route a present-but-not-24-char Sec-WebSocket-Key to the custom
-         * upgrade handler, which then decides. Node's inspector does not
-         * validate the key; note the accept header is generated from 24 bytes. */
         bool allowAnySecWebSocketKey = false;
         MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *, WebSocketContext<SSL, true, UserData> *)> upgrade = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *)> open = nullptr;

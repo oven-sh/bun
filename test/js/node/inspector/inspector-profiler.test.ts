@@ -3,9 +3,6 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
 
-// node's Session.post never returns the result synchronously and never throws
-// for a protocol error — replies and errors are callback-only (verified on
-// v26.3.0); promisify for assertions.
 function post(session: inspector.Session, method: string, params?: object): Promise<any> {
   return new Promise((resolve, reject) =>
     session.post(method, params, (err, result) => (err ? reject(err) : resolve(result))),
@@ -427,9 +424,6 @@ describe("node:inspector", () => {
   });
 
   describe("unsupported methods", () => {
-    // Like Node, post() is asynchronous: without a callback it returns
-    // undefined and never throws for a backend error; the protocol error is
-    // delivered to the callback instead.
     test("unknown method reports ERR_INSPECTOR_COMMAND to the callback, not by throwing", async () => {
       const session = new inspector.Session();
       session.connect();

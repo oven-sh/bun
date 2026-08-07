@@ -14,9 +14,6 @@ pub struct WebSocketServerContext {
     pub(crate) send_pings_automatically: bool,
     pub(crate) reset_idle_timeout_on_send: bool,
     pub(crate) close_on_backpressure_limit: bool,
-    /// Internal, undocumented, not part of `Bun.serve({ websocket })`: accept a
-    /// `Sec-WebSocket-Key` of any non-zero length. Only the inspector server in
-    /// `src/js/internal/debugger.ts` sets it, to match Node's inspector.
     pub(crate) allow_any_sec_websocket_key: bool,
 }
 

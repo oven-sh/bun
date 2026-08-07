@@ -1518,11 +1518,6 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
-        // Node's inspector Agent::WaitForDisconnect: with a CDP frontend
-        // attached, exit blocks until it goes away. No-op otherwise. Runs
-        // before `is_shutting_down` is set (as in Node) so a frontend-driven
-        // `Runtime.evaluate` still gets its microtasks: `Stopped` script
-        // execution status makes JSC drop promise reactions.
         crate::debugger::wait_for_debugger_to_disconnect(self);
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.

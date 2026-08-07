@@ -2502,7 +2502,7 @@ Socket.prototype.ref = function ref() {
   this[kUserUnrefed] = false;
   const socket = this._handle;
   if (!socket) {
-    this.once("connect", this.ref);
+    this.once("connect", applyDeferredRef);
     return this;
   }
   socket.ref();
@@ -2695,13 +2695,27 @@ Socket.prototype._unrefTimer = function _unrefTimer() {
 Socket.prototype.unref = function unref() {
   this[kUserUnrefed] = true;
   const socket = this._handle;
-  if (!socket) {
-    this.once("connect", this.unref);
+  if (!socket || this.connecting) {
+    // Node keeps the loop alive while a connect is pending (the uv_connect_t
+    // is an active request) even when the handle itself is unref'd; our handle
+    // has no request concept, so unrefing it now would let the process exit
+    // before the connection completes. Apply once "connect" fires - this also
+    // makes an autoSelectFamily retry handle inherit the unref. The listener
+    // re-checks kUserUnrefed so a ref() issued in the meantime wins.
+    this.once("connect", applyDeferredUnref);
     return this;
   }
   socket.unref();
   return this;
 };
+
+function applyDeferredUnref(this: any) {
+  if (this[kUserUnrefed]) this.unref();
+}
+
+function applyDeferredRef(this: any) {
+  if (!this[kUserUnrefed]) this.ref();
+}
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L785
 Socket.prototype.destroySoon = function destroySoon() {
@@ -4089,8 +4103,6 @@ function initSocketHandle(self) {
   const handle = self._handle;
   if (handle) {
     handle[owner_symbol] = self;
-    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref().
-    if (self[kUserUnrefed]) handle.unref?.();
   }
 }
 

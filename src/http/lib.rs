@@ -1423,7 +1423,6 @@ pub(crate) fn print_request(
             path: url,
             minor_version: request.minor_version,
             headers: request.headers,
-            bytes_read: request.bytes_read,
         };
         bun_core::pretty_errorln!("{}", request_.curl(ignore_insecure, body));
     }
@@ -2555,7 +2554,6 @@ impl<'a> HTTPClient<'a> {
             // SAFETY: `request_headers_buf` is the per-HTTP-thread
             // `SHARED_REQUEST_HEADERS_BUF` static, outliving the returned `Request`.
             headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
-            bytes_read: 0,
         }
     }
 
@@ -3680,19 +3678,13 @@ impl<'a> HTTPClient<'a> {
 
         let shared_resp = scratch::response_headers();
         let mut response = loop {
-            let mut amount_read: usize = 0;
-
             // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
             // if less than 16 it will always be a ShortRead
             if to_read.len() < 16 {
                 short_read!();
             }
 
-            let parsed = match picohttp::Response::parse_parts(
-                to_read,
-                &mut shared_resp[..],
-                Some(&mut amount_read),
-            ) {
+            let parsed = match picohttp::Response::parse(to_read, &mut shared_resp[..]) {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
                     // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
@@ -3717,9 +3709,7 @@ impl<'a> HTTPClient<'a> {
                 }
             };
 
-            let bytes_read =
-                (usize::try_from(parsed.bytes_read).expect("int cast")).min(to_read.len());
-            to_read = &to_read[bytes_read..];
+            to_read = &to_read[parsed.bytes_read..];
 
             if parsed.status_code == 101 {
                 if self.flags.upgrade_state == HTTPUpgradeState::None
@@ -4659,79 +4649,48 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
     ) -> crate::Result<bool> {
-        // reshaped for borrowck — `chunked_decoder` and the body
-        // buffer (`compressed_body` / `decoded_body`) are disjoint fields of
-        // `self.state`, so borrow them once together via the split accessor and
-        // operate on safe references. Deep-cloning the buffer here would
-        // diverge (mutations from process_body_buffer would be lost).
         let (decoder, body_buf) = self.state.chunked_decoder_and_body_buffer();
         body_buf.append_slice(incoming_data)?;
 
-        // set consume_trailer to 1 to discard the trailing header
-        // using content-encoding per chunk is not supported
-        decoder.consume_trailer = 1;
-
-        let mut bytes_decoded = incoming_data.len();
-        // phr_decode_chunked mutates in-place
-        // SAFETY: body_buf.list is initialized for [0..len()) and uniquely
-        // borrowed here; the offset is len() - incoming_data.len() (the
-        // just-appended tail), which is in bounds.
-        let pret = unsafe {
-            picohttp::phr_decode_chunked(
-                &raw mut *decoder,
-                body_buf
-                    .list
-                    .as_mut_ptr()
-                    .add(body_buf.list.len().saturating_sub(incoming_data.len())),
-                &raw mut bytes_decoded,
-            )
+        let start = body_buf.list.len() - incoming_data.len();
+        let Ok(decoded) = decoder.decode(&mut body_buf.list[start..]) else {
+            return Err(crate::Error::InvalidHTTPResponse);
         };
-        let new_len = body_buf
-            .list
-            .len()
-            .saturating_sub(incoming_data.len() - bytes_decoded);
-        body_buf.list.truncate(new_len);
+        body_buf.list.truncate(start + decoded.written);
         let buffer_len = body_buf.list.len();
-        self.state.total_body_received += bytes_decoded;
+        self.state.total_body_received += decoded.written;
         bun_core::scoped_log!(
             fetch,
             "handleResponseBodyChunkedEncodingFromMultiplePackets {}",
             self.state.total_body_received
         );
 
-        match pret {
-            // Invalid HTTP response body
-            -1 => return Err(crate::Error::InvalidHTTPResponse),
-            // Needs more data
-            -2 => {
-                self.report_progress(buffer_len);
-                // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming)
-                    || self.signals.body_receive_mode.is_some()
-                {
-                    // If we're streaming, we cannot use the libdeflate fast path
-                    self.state.flags.is_libdeflate_fast_path_disabled = true;
-                    // Move the
-                    // bytes out so no `&` into self.state aliases the `&mut self.state` call.
-                    let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, false);
-                }
-
-                return Ok(false);
-            }
-            // Done
-            _ => {
-                self.state.flags.received_last_chunk = true;
+        if !decoded.complete {
+            self.report_progress(buffer_len);
+            // streaming chunks
+            if self.signals.get(signals::Field::ResponseBodyStreaming)
+                || self.signals.body_receive_mode.is_some()
+            {
+                // If we're streaming, we cannot use the libdeflate fast path
+                self.state.flags.is_libdeflate_fast_path_disabled = true;
                 // Move the
                 // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                 let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                let _ = self.state.process_body_buffer(buffer_snap, true)?;
-
-                self.report_progress(buffer_len);
-
-                return Ok(true);
+                return self.state.process_body_buffer(buffer_snap, false);
             }
+
+            return Ok(false);
         }
+
+        self.state.flags.received_last_chunk = true;
+        // Move the
+        // bytes out so no `&` into self.state aliases the `&mut self.state` call.
+        let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+        let _ = self.state.process_body_buffer(buffer_snap, true)?;
+
+        self.report_progress(buffer_len);
+
+        Ok(true)
     }
 
     fn handle_response_body_chunked_encoding_from_single_packet(
@@ -4741,72 +4700,50 @@ impl<'a> HTTPClient<'a> {
         let small = scratch::single_packet_small_buffer();
         debug_assert!(incoming_data.len() <= small.len());
 
-        // set consume_trailer to 1 to discard the trailing header
-        // using content-encoding per chunk is not supported
-        self.state.chunked_decoder.consume_trailer = 1;
-
         // `handle_on_data_headers` moves `response_message_buffer` into a
         // local before dispatching here, so `incoming_data` never aliases
         // `self` and the scratch copy is always sufficient (the dispatcher
         // bounds `incoming_data.len()` to the scratch size).
-        let in_len = incoming_data.len();
-        let buffer = &mut small[0..in_len];
+        let buffer = &mut small[0..incoming_data.len()];
         buffer.copy_from_slice(incoming_data);
 
-        let mut bytes_decoded = in_len;
-        // phr_decode_chunked mutates in-place
-        // SAFETY: `buffer` is an exclusive &mut [u8] of len == in_len; offset
-        // len - in_len == 0 is trivially in bounds. `chunked_decoder` is a
-        // disjoint field of `self.state` (`buffer` borrows `small`).
-        let pret = unsafe {
-            picohttp::phr_decode_chunked(
-                &raw mut self.state.chunked_decoder,
-                buffer.as_mut_ptr().add(buffer.len().saturating_sub(in_len)),
-                &raw mut bytes_decoded,
-            )
+        let Ok(decoded) = self.state.chunked_decoder.decode(buffer) else {
+            return Err(crate::Error::InvalidHTTPResponse);
         };
-        let new_len = buffer.len().saturating_sub(in_len - bytes_decoded);
-        let buffer = &mut buffer[..new_len];
-        self.state.total_body_received += bytes_decoded;
+        let buffer = &mut buffer[..decoded.written];
+        self.state.total_body_received += decoded.written;
         bun_core::scoped_log!(
             fetch,
             "handleResponseBodyChunkedEncodingFromSinglePacket {}",
             self.state.total_body_received
         );
-        match pret {
-            // Invalid HTTP response body
-            -1 => Err(crate::Error::InvalidHTTPResponse),
-            // Needs more data
-            -2 => {
-                self.report_progress(buffer.len());
-                self.state.get_body_buffer().append_slice_exact(buffer)?;
+        if !decoded.complete {
+            self.report_progress(buffer.len());
+            self.state.get_body_buffer().append_slice_exact(buffer)?;
 
-                // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming)
-                    || self.signals.body_receive_mode.is_some()
-                {
-                    // If we're streaming, we cannot use the libdeflate fast path
-                    self.state.flags.is_libdeflate_fast_path_disabled = true;
+            // streaming chunks
+            if self.signals.get(signals::Field::ResponseBodyStreaming)
+                || self.signals.body_receive_mode.is_some()
+            {
+                // If we're streaming, we cannot use the libdeflate fast path
+                self.state.flags.is_libdeflate_fast_path_disabled = true;
 
-                    // Move
-                    // the bytes out so no `&` into self.state aliases the `&mut self.state`
-                    // taken by process_body_buffer (which mutates compressed_body/decoded_body).
-                    let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, false);
-                }
-
-                Ok(false)
+                // Move
+                // the bytes out so no `&` into self.state aliases the `&mut self.state`
+                // taken by process_body_buffer (which mutates compressed_body/decoded_body).
+                let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+                return self.state.process_body_buffer(buffer_snap, false);
             }
-            // Done
-            _ => {
-                self.state.flags.received_last_chunk = true;
-                self.handle_response_body_from_single_packet(buffer)?;
-                debug_assert!(self.state.decoded_body.list.as_ptr() != buffer.as_ptr());
-                self.report_progress(buffer.len());
 
-                Ok(true)
-            }
+            return Ok(false);
         }
+
+        self.state.flags.received_last_chunk = true;
+        self.handle_response_body_from_single_packet(buffer)?;
+        debug_assert!(self.state.decoded_body.list.as_ptr() != buffer.as_ptr());
+        self.report_progress(buffer.len());
+
+        Ok(true)
     }
 
     pub(crate) fn handle_response_metadata(

@@ -159,7 +159,6 @@ codegen-for-zig-team.tar.gz
 /src/deps/lol*html
 /src/deps/ls*hpack
 /src/deps/mimalloc
-/src/deps/picohttpparser
 /src/deps/tinycc
 /src/deps/WebKit
 /src/deps/zig

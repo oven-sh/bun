@@ -937,11 +937,12 @@ declare module "bun" {
      * when only part of the query is unsafe.
      *
      * With the SQLite adapter, `values` may also be an object of named
-     * parameters (`:name`, `$name`, or `@name` placeholders).
+     * parameters (`:name`, `$name`, or `@name` placeholders). Object keys
+     * keep the prefix unless the connection sets `strict: true`.
      * @example
      * ```ts
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
-     * const row = await sql.unsafe("select * from users where id = :id", { id: 1 })
+     * const row = await sql.unsafe("select * from users where id = :id", { ":id": 1 })
      * ```
      */
     unsafe<T = any>(string: string, values?: any[] | Record<string, any>): SQL.Query<T>;
@@ -950,7 +951,8 @@ declare module "bun" {
      * Reads a file and runs its contents as a query.
      * Pass `values` if the file uses positional parameters (`$1`, `$2`, ...).
      * With the SQLite adapter, `values` may also be an object of named
-     * parameters (`:name`, `$name`, or `@name` placeholders).
+     * parameters (`:name`, `$name`, or `@name` placeholders); keys keep the
+     * prefix unless the connection sets `strict: true`.
      * @example
      * ```ts
      * const result = await sql.file("query.sql", [1, 2, 3]);

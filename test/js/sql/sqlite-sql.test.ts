@@ -1591,6 +1591,19 @@ describe("SQL helpers", () => {
     expect(result[0].param1).toBe("value1");
     expect(result[0].param2).toBe("value2");
   });
+
+  test("file with named parameters", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE file_named_test (id INTEGER, name TEXT)`;
+    await strictSql.unsafe("INSERT INTO file_named_test VALUES (:id, :name)", { id: 1, name: "Alice" });
+
+    await using dir = tempDir("sql-file-named", {
+      "query.sql": `SELECT * FROM file_named_test WHERE name = :name`,
+    });
+
+    const result = await strictSql.file(path.join(dir, "query.sql"), { name: "Alice" });
+    expect(result).toEqual([{ id: 1, name: "Alice" }]);
+  });
 });
 
 describe("Helper argument validation", () => {

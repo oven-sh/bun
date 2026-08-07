@@ -90,8 +90,7 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker)
             return true;
         }
 
-        // Kernel couldn't allocate the message: nothing was queued, so
-        // returning here would lose the wakeup.
+        // Nothing was queued (no kernel buffer): retry or the wakeup is lost.
         case MACH_SEND_NO_BUFFER: {
             continue;
         }

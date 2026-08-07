@@ -1061,6 +1061,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                             package_name: sbuf!().append(actual_name)?,
                         }));
                     } else {
+                        // yarn writes scp-form repos with the same ssh:// prefix
+                        // bun.lock uses; parse it back off like the other
+                        // lockfile-shaped sites
+                        let repo_str =
+                            dependency::scp_path_without_ssh_prefix(repo_str).unwrap_or(repo_str);
                         break 'blk Resolution::init(ResolutionValue::Git(Repository {
                             owner: sbuf!().append(owner_str)?,
                             repo: sbuf!().append(repo_str)?,

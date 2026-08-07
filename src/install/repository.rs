@@ -748,8 +748,7 @@ impl RepositoryExt for Repository {
                             &[folder_name.as_bytes()],
                         );
 
-                        if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"])
-                        {
+                        if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
                             log.add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,

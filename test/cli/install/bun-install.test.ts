@@ -5426,9 +5426,9 @@ describe.concurrent("bun-install", () => {
       expect(err).toContain(`"git checkout" for "my-git-dep" failed`);
       expect(exitCode).not.toBe(0);
     }
-    expect(
-      (await readdirSorted(cacheDir)).filter(entry => entry.startsWith("@G@") || entry.endsWith(".tmp")),
-    ).toEqual([]);
+    expect((await readdirSorted(cacheDir)).filter(entry => entry.startsWith("@G@") || entry.endsWith(".tmp"))).toEqual(
+      [],
+    );
     await write(blobPath, blobBytes);
     await install();
     expect(await file(join(projectDir, "node_modules", "my-git-dep", "package.json")).json()).toMatchObject({

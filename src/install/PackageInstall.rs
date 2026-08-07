@@ -1044,16 +1044,13 @@ impl<'a> PackageInstall<'a> {
             == self.package_name.slice(&self.lockfile.buffers.string_bytes)
     }
 
-    /// Whether the install source is a `file:` folder containing the destination
-    /// `node_modules` directory (e.g. `"pkg": "file:../"` installed into
-    /// `<cwd>/node_modules/pkg`). Copying such a folder must not descend into
-    /// `node_modules` directories: the walk would race the asynchronous deletion
-    /// of the renamed previous install (`uninstall_before_install`) and re-copy
-    /// already-installed packages into the destination itself.
+    /// Whether the source is a `file:` folder that contains the destination
+    /// `node_modules` (e.g. `"pkg": "file:../"`). Walking such a source must
+    /// skip `node_modules`: it would mirror installed packages into the
+    /// destination and race the async deletion of the renamed previous install.
     fn source_folder_contains_destination(&self) -> bool {
+        // Only `file:` folder sources resolve relative to the cwd.
         if self.cache_dir != Fd::cwd() {
-            // Only `file:` folder sources are resolved relative to the cwd; other
-            // resolutions copy from a cache directory outside the project.
             return false;
         }
         let top_level_dir = bun_fs::FileSystem::instance().top_level_dir();
@@ -1159,9 +1156,7 @@ impl<'a> PackageInstall<'a> {
         };
         self.file_count = match copy(&subdir, &mut walker_) {
             Ok(n) => n,
-            // `install()` only falls back to copyfile on `Err(NotSupported)`;
-            // wrapping it in an `InstallResult` would report the install failed
-            // on filesystems without clonefile support.
+            // `install()` falls back to copyfile only on `Err(NotSupported)`.
             Err(crate::Error::NotSupported) => return Err(crate::Error::NotSupported),
             Err(err) => return Ok(InstallResult::fail(err, Step::CopyingFiles, None)),
         };
@@ -1173,8 +1168,8 @@ impl<'a> PackageInstall<'a> {
     #[cfg(target_os = "macos")]
     fn install_with_clonefile(&mut self, destination_dir: &Dir) -> crate::Result<InstallResult> {
         if self.source_folder_contains_destination() {
-            // A whole-directory clone would snapshot the destination tree into
-            // itself; the per-directory walk skips `node_modules` instead.
+            // A whole-directory clone cannot skip `node_modules`; the
+            // per-directory walk can.
             return self.install_with_clonefile_each_dir(destination_dir);
         }
 

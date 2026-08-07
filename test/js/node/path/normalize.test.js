@@ -82,6 +82,12 @@ describe("path.normalize", () => {
       const longPath = "a".repeat(len);
       assert.strictEqual(path.normalize(longPath), longPath);
       assert.strictEqual(path.normalize(longPath).length, len);
+      // Both platform flavours: win32.normalize reserves leading slots in the
+      // same buffer for the ".\\" prefix it can prepend, so it hits the
+      // boundary two bytes earlier than posix.normalize does.
+      assert.strictEqual(path.posix.normalize(longPath), longPath);
+      assert.strictEqual(path.win32.normalize(longPath), longPath);
+      assert.strictEqual(path.win32.join(longPath, "b"), longPath + "\\b");
     }
   });
 });

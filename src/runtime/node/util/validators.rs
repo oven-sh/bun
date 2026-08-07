@@ -43,14 +43,7 @@ pub(crate) fn throw_err_invalid_arg_type(
     expected_type: &str,
     value: JSValue,
 ) -> JsError {
-    let actual_type = get_type_name(global_this, value);
-    throw_err_invalid_arg_type_with_message(
-        global_this,
-        format_args!(
-            "The \"{}\" property must be of type {}, got {}",
-            name, expected_type, actual_type
-        ),
-    )
+    global_this.throw_err_invalid_arg_type(name.to_string(), expected_type, value)
 }
 
 #[cold]

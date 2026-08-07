@@ -7447,12 +7447,15 @@ fn stdio_bit(fd: Fd) -> u8 {
 }
 
 /// Clear `O_NONBLOCK` on one of our stdio fds and record it in
-/// [`STDIO_MADE_BLOCKING`].
+/// [`STDIO_MADE_BLOCKING`]. Best effort, like libuv's equivalent: a child is
+/// still better off spawned with a non-blocking stdio than not spawned.
 #[cfg(unix)]
 pub fn make_stdio_blocking(fd: Fd) {
     debug_assert!(stdio_bit(fd) != 0);
     if update_nonblocking(fd, false).is_ok() {
-        STDIO_MADE_BLOCKING.fetch_or(stdio_bit(fd), core::sync::atomic::Ordering::Release);
+        // AcqRel: the outline-atomics helper for it is already on the aarch64
+        // baseline allowlist (scripts/verify-baseline-static).
+        STDIO_MADE_BLOCKING.fetch_or(stdio_bit(fd), core::sync::atomic::Ordering::AcqRel);
     }
 }
 

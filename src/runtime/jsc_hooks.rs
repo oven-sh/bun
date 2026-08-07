@@ -1657,9 +1657,21 @@ fn stop_dns_for_vm_teardown() {
     // of the `OnceCell` only (the resolver's own state is interior-mutable).
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
         gd.resolver.close_channel_for_terminate();
+        #[cfg(windows)]
+        gd.resolver.cancel_pending_uv_requests_for_teardown();
     }
     #[cfg(target_os = "macos")]
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
+}
+
+/// `--isolate` swap: a microtask still pending at end-of-file (queued by
+/// `tick_immediate_tasks` or `handle_rejected_promises`) can register new
+/// handles when it runs, so drain first so they land in the registry before it
+/// empties, then stop. (VM teardown must *not* drain here — its
+/// prepareForDestruction discards the pre-exit queues.)
+pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
+    let _ = vm.event_loop_mut().drain_microtasks();
+    stop_active_handles_for_vm_teardown(vm);
 }
 
 pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) {
@@ -1667,11 +1679,6 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) {
     if state.is_null() {
         return;
     }
-    // A microtask still pending at end-of-file (e.g. queued by
-    // `tick_immediate_tasks` or `handle_rejected_promises`) can register new
-    // handles when it runs. Drain first so they land in the registry before
-    // it empties — matches the swap's own drain-before-teardown ordering.
-    let _ = vm.event_loop_mut().drain_microtasks();
     // Fake-timer state lives in the per-thread `timer::All`, not the JS
     // global, so a file that leaves it active routes every later file's
     // `setTimeout` into the never-driven fake heap. Leave the heap itself

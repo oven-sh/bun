@@ -571,7 +571,7 @@ impl<'a> WorkerLoop<'a> {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
             if vm.test_isolation_enabled {
-                crate::jsc_hooks::stop_active_handles_for_vm_teardown(vm);
+                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
                 vm.swap_global_for_test_isolation();
                 self.reporter
                     .jest

@@ -1917,6 +1917,32 @@ impl Resolver {
     /// `DNSLookup::global_this` (to enqueue the rejection task) and the hive
     /// `FilePoll` (to unregister it from the loop). Running this after either
     /// is freed is a UAF (Node `test-worker-dns-terminate.js`).
+    /// Windows: `uv_getaddrinfo` requests are uv *requests* on this thread's
+    /// loop, which the teardown drains before closing the loop; cancel the ones
+    /// still in flight so that drain is prompt (each completes through its
+    /// callback with UV_ECANCELED against the still-live VM).
+    #[cfg(windows)]
+    pub(crate) fn cancel_pending_uv_requests_for_teardown(&self) {
+        // SAFETY: JS thread; no other borrow of the cache is live during the
+        // stop phase (completions run later, from the loop drain).
+        let cache = unsafe { self.pending_host_cache_native.get_mut() };
+        let mut set = cache.used.iter_set();
+        while let Some(index) = set.next() {
+            // SAFETY: a set slot is an initialised `PendingCacheKey`; JS thread.
+            let lookup = unsafe { (*cache.ptr_at(index)).lookup };
+            if lookup.is_null() {
+                continue;
+            }
+            // SAFETY: `lookup` is the live boxed request until its completion
+            // callback removes it from the cache.
+            unsafe {
+                if let get_addr_info_request::Backend::Libc(l) = &mut (*lookup).backend {
+                    let _ = libuv::uv_cancel(core::ptr::from_mut(&mut l.uv).cast());
+                }
+            }
+        }
+    }
+
     pub(crate) fn close_channel_for_terminate(&self) {
         if let Some(channel) = self.channel.take() {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.

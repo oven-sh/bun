@@ -9600,6 +9600,127 @@ it("reinstalls a file: dependency on an ancestor directory resolved to an absolu
   }
 });
 
+for (const backend of [null, "hardlink", "copyfile"]) {
+  it(`installs a workspace member's file: dependency on an ancestor behind the workspace symlink${backend ? ` (--backend ${backend})` : ""}`, async () => {
+    // packages/ is itself a package ("x") and member packages/a depends on it
+    // via `file:../`, while the root depends on a different "x", so the
+    // member's copy cannot hoist and installs at node_modules/a/node_modules/x.
+    // node_modules/a is a symlink to packages/a, so the destination physically
+    // lives inside the copy source; containment must be detected through the
+    // symlink or the install self-copies and fails.
+    using dir = tempDir("file-dep-ws-ancestor", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { x: "file:./other-x" },
+      }),
+      "other-x/package.json": JSON.stringify({ name: "x", version: "2.0.0" }),
+      "other-x/index.js": "module.exports = 'other-x';",
+      "packages/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "packages/index.js": "module.exports = 'packages-x';",
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        dependencies: { x: "file:../" },
+      }),
+    });
+
+    for (let i = 0; i < 2; i++) {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--linker", "hoisted", ...(backend ? ["--backend", backend] : [])],
+        cwd: String(dir),
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+      expect(err).not.toContain("ENOENT");
+      expect(err).not.toContain("Failed to install");
+      expect(out).toContain("installed");
+      expect(exitCode).toBe(0);
+
+      const nested = join(String(dir), "node_modules", "a", "node_modules", "x");
+      expect(await Bun.file(join(nested, "package.json")).json()).toMatchObject({ name: "x", version: "1.0.0" });
+      // Never a self-copy of the member's own node_modules.
+      expect(await exists(join(nested, "a", "node_modules"))).toBe(false);
+    }
+  });
+}
+
+it("preserves a vendored node_modules inside a file: folder dependency", async () => {
+  // The node_modules skip only engages when the source contains the
+  // destination: an ordinary folder dependency that ships its own
+  // node_modules keeps it, through the copy walk (absolute lockfile path).
+  using dir = tempDir("file-dep-vendored", {
+    "sibling/package.json": JSON.stringify({ name: "sibling", version: "1.0.0" }),
+    "sibling/index.js": "module.exports = require('vendored-pkg');",
+    "sibling/node_modules/vendored-pkg/package.json": JSON.stringify({
+      name: "vendored-pkg",
+      version: "1.0.0",
+    }),
+    "sibling/node_modules/vendored-pkg/index.js": "module.exports = 'vendored';",
+    "app/package.json": "",
+  });
+  const sibAbs = String(dir).replaceAll("\\", "/") + "/sibling";
+  const projectDir = join(String(dir), "app");
+  await write(
+    join(projectDir, "package.json"),
+    JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { sibling: "file:" + sibAbs },
+    }),
+  );
+  await write(
+    join(projectDir, "bun.lock"),
+    JSON.stringify({
+      lockfileVersion: 2,
+      configVersion: 1,
+      workspaces: { "": { name: "app", dependencies: { sibling: "file:" + sibAbs } } },
+      packages: { sibling: ["sibling@file:" + sibAbs, {}] },
+    }),
+  );
+
+  for (let i = 0; i < 2; i++) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).not.toContain("Failed to install");
+    expect(out).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+
+    expect(
+      await exists(join(projectDir, "node_modules", "sibling", "node_modules", "vendored-pkg", "package.json")),
+    ).toBe(true);
+  }
+
+  await using runProc = spawn({
+    cmd: [bunExe(), "-e", "console.log(require('sibling'))"],
+    cwd: projectDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [runOut, runErr, runExit] = await Promise.all([
+    runProc.stdout.text(),
+    runProc.stderr.text(),
+    runProc.exited,
+  ]);
+  expect(runErr).toBe("");
+  expect(runOut).toBe("vendored\n");
+  expect(runExit).toBe(0);
+});
+
 for (const field of ["resolutions", "overrides"]) {
   it(`installs a file: dependency pointing outside the project when it came from root package.json "${field}"`, async () => {
     // `overrides` / `resolutions` can only be declared in the root package.json,

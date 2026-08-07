@@ -825,6 +825,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject *
     return JSC::JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetWorkerData, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    defaultGlobalObject(lexicalGlobalObject)->setNodeWorkerData(callFrame->argument(0));
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -833,7 +839,10 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
     JSValue threadName = jsEmptyString(vm);
-    JSMap* environmentData = nullptr;
+    // Re-entrant (Worker.data getter + node:worker_threads both call this): reuse the first run's cache.
+    JSMap* environmentData = globalObject->nodeWorkerEnvironmentData();
+    if (JSValue cached = globalObject->nodeWorkerData())
+        workerData = cached;
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
@@ -877,12 +886,13 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     }
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
+    globalObject->setNodeWorkerData(workerData);
 
     bool isNodeWorker = false;
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM()))
         isNodeWorker = worker->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 11);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 12);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -895,6 +905,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 8, JSFunction::create(vm, globalObject, 1, "markAsUncloneable"_s, jsFunctionMarkAsUncloneable, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
+    array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setWorkerData"_s, jsFunctionSetWorkerData, ImplementationVisibility::Public, NoIntrinsic));
     return array;
 }
 

@@ -405,6 +405,19 @@ template<> JSValue JSWorkerDOMConstructor::prototypeForStructure(JSC::VM& vm, co
     return JSEventTarget::getConstructor(vm, &globalObject);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsWorkerConstructor_data, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    // nodeWorkerData is seeded by createNodeWorkerThreadsBinding; force that once if node:worker_threads hasn't run.
+    if (!globalObject->nodeWorkerEnvironmentData()) {
+        createNodeWorkerThreadsBinding(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(globalObject->nodeWorkerData()));
+}
+
 template<> void JSWorkerDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
@@ -412,6 +425,7 @@ template<> void JSWorkerDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSWorker::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "data"_s), JSC::CustomGetterSetter::create(vm, jsWorkerConstructor_data, nullptr), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

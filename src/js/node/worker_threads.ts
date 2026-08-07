@@ -79,6 +79,7 @@ const {
   8: _markAsUncloneable,
   9: _setEntryEvaluatedHook,
   10: _isNodeWorker,
+  11: _setWorkerData,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -91,6 +92,7 @@ const {
   (value: unknown) => void,
   (hook: () => void) => void,
   boolean,
+  (value: unknown) => void,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -742,6 +744,8 @@ if (
   if (stdioPorts) setupWorkerStdio(stdioPorts);
   if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
 }
+// Keep the native Worker.data cache in sync with the unpacked/unwrapped value above.
+if (workerData !== _workerData) _setWorkerData(workerData);
 function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
   if (!res) return undefined;

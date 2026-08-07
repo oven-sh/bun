@@ -458,4 +458,110 @@ describe("worker_threads", () => {
     await p;
     expect(message).toEqual("hello");
   });
+
+  // https://github.com/oven-sh/bun/issues/9330
+  // Spawned so that the worker body can observe `Worker.data` before the
+  // `node:worker_threads` module has been imported (the deserialization is
+  // shared between the two, so ordering matters).
+  describe("Worker.data", () => {
+    test.concurrent("is the cloned value of the `data` option", async () => {
+      const body = `
+        const before = Worker.data;
+        const { workerData } = require("node:worker_threads");
+        postMessage({ before, after: Worker.data, workerData,
+                      same: before === workerData && Worker.data === workerData });`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const w = new Worker(${JSON.stringify("data:text/javascript," + encodeURIComponent(body))}, {
+             data: { greeting: "hello" },
+           });
+           w.onerror = e => { console.error(e.message); process.exit(1); };
+           w.onmessage = e => { console.log(JSON.stringify(e.data)); w.terminate(); };`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        before: { greeting: "hello" },
+        after: { greeting: "hello" },
+        workerData: { greeting: "hello" },
+        same: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("agrees with workerData when node:worker_threads is imported first", async () => {
+      const body = `
+        const { workerData } = require("node:worker_threads");
+        postMessage({ workerData, data: Worker.data, same: Worker.data === workerData });`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const w = new Worker(${JSON.stringify("data:text/javascript," + encodeURIComponent(body))}, {
+             data: { v: 1 },
+           });
+           w.onerror = e => { console.error(e.message); process.exit(1); };
+           w.onmessage = e => { console.log(JSON.stringify(e.data)); w.terminate(); };`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ workerData: { v: 1 }, data: { v: 1 }, same: true });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("is the unwrapped workerData inside a node:worker_threads Worker", async () => {
+      // The node wt.Worker constructor wraps workerData to carry internal
+      // stdio/messaging ports; Worker.data must be the unwrapped user value,
+      // identical to `workerData`, not the transport wrapper.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Worker } = require("node:worker_threads");
+           const src = 'const wt = require("node:worker_threads");' +
+                       'console.log(JSON.stringify({ data: Worker.data, same: Worker.data === wt.workerData,' +
+                       '  keys: typeof Worker.data === "object" ? Object.keys(Worker.data) : null }));';
+           const w = new Worker(src, { eval: true, workerData: { greeting: "hello" } });
+           w.on("error", e => { console.error(e.message); process.exit(1); });
+           w.on("exit", code => process.exit(code));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ data: { greeting: "hello" }, same: true, keys: ["greeting"] });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("mirrors workerData when no data is passed", async () => {
+      // node:worker_threads' workerData is null on the main thread but undefined
+      // inside a worker that received no workerData; Worker.data should match both.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `console.log(Worker.data === require("node:worker_threads").workerData ? "main ok" : "main mismatch");
+           const body = 'postMessage(Worker.data === require("node:worker_threads").workerData ? "worker ok" : "worker mismatch")';
+           const w = new Worker("data:text/javascript," + encodeURIComponent(body));
+           w.onerror = e => { console.error(e.message); process.exit(1); };
+           w.onmessage = e => { console.log(e.data); w.terminate(); };`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("main ok\nworker ok\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

@@ -147,7 +147,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     for &data in chunks {
         let mut cur: Option<usize> = None; // index into by_file; raw &mut would alias across getOrPut
         // reshaped for borrowck — store index instead of *mut FileCoverage
-        for raw in data.split(|b| *b == b'\n') {
+        for raw in strings::split(data, b"\n") {
             let line = strings::trim_right(raw, b"\r");
             if line.starts_with(b"SF:") {
                 let name = &line[3..];
@@ -166,7 +166,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             } else if let Some(i) = cur {
                 let fc = &mut by_file.values_mut()[i];
                 if line.starts_with(b"DA:") {
-                    let mut parts = line[3..].split(|b| *b == b',');
+                    let mut parts = strings::split(&line[3..], b",");
                     let Some(ln_s) = parts.next() else { continue };
                     let Ok(ln) = strings::parse_int::<u32>(ln_s, 10) else {
                         continue;

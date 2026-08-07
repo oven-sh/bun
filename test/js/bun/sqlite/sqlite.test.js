@@ -1789,6 +1789,51 @@ it("close() releases the database file when only query() statements are outstand
   expect(existsSync(file)).toBe(false);
 });
 
+it("close() does not crash with FTS5 virtual tables (#37044)", async () => {
+  // close() must not finalize FTS5's internal prepared statements behind the
+  // vtab's back; doing so use-after-frees in sqlite3_close's vtab disconnect.
+  const src = `
+    import { Database } from "bun:sqlite";
+    for (let i = 0; i < 10; i++) {
+      const db = new Database(":memory:");
+      db.exec("CREATE VIRTUAL TABLE notes_fts USING fts5(body)");
+      db.exec("INSERT INTO notes_fts(body) VALUES ('hello world'), ('goodbye moon')");
+      db.query("SELECT rowid FROM notes_fts WHERE notes_fts MATCH 'hello'").all();
+      db.query("SELECT count(*) c FROM notes_fts").get();
+      db.close(i % 2 === 0);
+    }
+    console.log("survived");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("survived");
+  expect(exitCode).toBe(0);
+});
+
+it("close() releases an FTS5 database file once the last prepare() statement is finalized (#37044)", () => {
+  using dir = tempDir("sqlite-close-unlink-fts5", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE VIRTUAL TABLE t USING fts5(a)");
+  // FTS5 caches internal prepared statements on the connection; they must not
+  // keep the deferred close from ever happening.
+  db.query("SELECT rowid FROM t WHERE t MATCH 'x'").all();
+  const stmt = db.prepare("SELECT 1");
+  db.close();
+  stmt.finalize();
+  // On Windows rmSync throws EBUSY if the handle stayed open past the last finalize.
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
 it("should dispose even if a prepared statement is still live", () => {
   let prepared;
   expect(() => {

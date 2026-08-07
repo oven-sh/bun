@@ -776,7 +776,7 @@ pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
 /// verbatim, breaking the no-CR/LF invariant the HTTP/1.1 parser provides and
 /// enabling header injection when values are forwarded downstream.
 pub(crate) fn is_malformed_response_value(value: &[u8]) -> bool {
-    value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
+    bun_core::strings::contains_any(value, b"\0\r\n")
 }
 
 pub(crate) fn error_code_for(err: crate::Error) -> wire::ErrorCode {

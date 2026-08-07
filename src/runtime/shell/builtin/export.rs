@@ -29,7 +29,7 @@ impl Export {
             if s.is_empty() {
                 continue;
             }
-            let (name, value) = match s.iter().position(|&b| b == b'=') {
+            let (name, value) = match bun_core::strings::index_of_char_usize(s, b'=') {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
                 None => (s, &b""[..]),
             };

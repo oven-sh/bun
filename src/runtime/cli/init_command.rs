@@ -1943,10 +1943,7 @@ fn exists(path: &[u8]) -> bool {
 /// (absolute paths or any `..` segment), so `bun init` only creates files
 /// inside the current working directory.
 fn is_safe_entry_point_path(path: &[u8]) -> bool {
-    !bun_paths::is_absolute_loose(path)
-        && !path
-            .split(|&c| c == b'/' || c == b'\\')
-            .any(|seg| seg == b"..")
+    !bun_paths::is_absolute_loose(path) && !strings::split_any(path, b"/\\").any(|seg| seg == b"..")
 }
 
 #[inline]

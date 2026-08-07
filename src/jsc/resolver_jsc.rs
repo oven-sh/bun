@@ -4,7 +4,7 @@
 use bstr::BStr;
 
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::{OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString, strings};
 use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
 
@@ -77,7 +77,7 @@ extern "C" fn node_module_paths_js_value(
         let mut index: Option<usize> = Some(suffix.len());
         while let Some(end) = index {
             let part: &[u8];
-            match suffix[..end].iter().rposition(|&b| b == SEP) {
+            match strings::last_index_of_char(&suffix[..end], SEP) {
                 Some(delim) => {
                     part = &suffix[delim + 1..end];
                     index = Some(delim);

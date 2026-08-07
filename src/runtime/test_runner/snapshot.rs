@@ -711,7 +711,7 @@ impl<'a> Snapshots<'a> {
                     None => 'd: {
                         let source_until_final_start = &source.contents[..final_start_usize];
                         let line_start =
-                            match source_until_final_start.iter().rposition(|&b| b == b'\n') {
+                            match strings::last_index_of_char(source_until_final_start, b'\n') {
                                 Some(newline_loc) => newline_loc + 1,
                                 None => 0,
                             };
@@ -731,11 +731,11 @@ impl<'a> Snapshots<'a> {
                     re_indented_string.extend_from_slice(b"\n");
                     let mut re_indented_source = &ils.value[1..];
                     while !re_indented_source.is_empty() {
-                        let next_newline = match re_indented_source.iter().position(|&b| b == b'\n')
-                        {
-                            Some(a) => a + 1,
-                            None => re_indented_source.len(),
-                        };
+                        let next_newline =
+                            match strings::index_of_char_usize(re_indented_source, b'\n') {
+                                Some(a) => a + 1,
+                                None => re_indented_source.len(),
+                            };
                         let segment = &re_indented_source[..next_newline];
                         if segment.is_empty() {
                             // last line; loop already exited

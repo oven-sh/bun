@@ -3,6 +3,8 @@
 
 use core::ffi::{c_char, c_int, c_uint, c_ulong, c_void};
 
+use bun_core::strings;
+
 #[repr(C)]
 pub struct lsquic_engine {
     _opaque: [u8; 0],
@@ -816,7 +818,7 @@ impl HeaderSet {
         // SAFETY: the shim guarantees `p[..len]` is valid until free.
         let bytes = unsafe { core::slice::from_raw_parts(p.cast::<u8>(), len) };
         let bytes = bytes.strip_suffix(&[0u8][..]).unwrap_or(bytes);
-        bytes.split(|&b| b == 0).map(<[u8]>::to_vec).collect()
+        strings::split(bytes, b"\0").map(<[u8]>::to_vec).collect()
     }
 }
 
@@ -895,7 +897,7 @@ pub const MAX_CID_LEN: usize = 20;
 
 impl NqTransportParams {
     fn cid_str(buf: &[u8; 2 * MAX_CID_LEN + 1]) -> &str {
-        let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        let nul = strings::index_of_char_usize(buf, 0).unwrap_or(buf.len());
         core::str::from_utf8(&buf[..nul]).unwrap_or("")
     }
     pub fn initial_scid_str(&self) -> &str {

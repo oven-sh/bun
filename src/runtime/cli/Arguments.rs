@@ -1442,8 +1442,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
-    opts.resolve = Some(api::ResolveMode::Lazy);
-
     if jsx_factory.is_some()
         || jsx_fragment.is_some()
         || jsx_import_source.is_some()
@@ -1963,9 +1961,9 @@ fn parse_build_command_options(
 
     if let Some(packages) = args.option(b"--packages") {
         if packages == b"bundle" {
-            opts.packages = Some(api::Packages::Bundle);
+            opts.packages = Some(api::PackagesMode::Bundle);
         } else if packages == b"external" {
-            opts.packages = Some(api::Packages::External);
+            opts.packages = Some(api::PackagesMode::External);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid packages setting: \"{}\"",
@@ -2450,15 +2448,15 @@ fn parse_build_command_options(
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
             // In the future, Bun is going to make this default to .linked
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else if setting == b"inline" {
-            opts.source_map = Some(api::SourceMap::Inline);
+            opts.source_map = Some(api::SourceMapMode::Inline);
         } else if setting == b"none" {
-            opts.source_map = Some(api::SourceMap::None);
+            opts.source_map = Some(api::SourceMapMode::None);
         } else if setting == b"external" {
-            opts.source_map = Some(api::SourceMap::External);
+            opts.source_map = Some(api::SourceMapMode::External);
         } else if setting == b"linked" {
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid sourcemap setting: \"{}\"",

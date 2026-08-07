@@ -594,9 +594,9 @@ impl RepositoryExt for Repository {
             // `user@host:path` already carries its user (the `git@` form took
             // the early return above); prepend only the scheme and turn the
             // scp separator into the path slash
-            let has_user = strings::index_of_char_usize(url, b'@')
-                .is_some_and(|at| colon_index.is_none_or(|colon| at < colon as usize));
-            if has_user {
+            if let Some(at) = strings::index_of_char_usize(url, b'@')
+                && colon_index.is_none_or(|colon| at < colon as usize)
+            {
                 const SCHEME: &[u8] = b"ssh://";
                 if SCHEME.len() + url.len() > ssh_path_buf.len() {
                     return None;
@@ -604,8 +604,16 @@ impl RepositoryExt for Repository {
                 ssh_path_buf[..SCHEME.len()].copy_from_slice(SCHEME);
                 let rest = &mut ssh_path_buf[SCHEME.len()..];
                 rest[..url.len()].copy_from_slice(url);
-                if let Some(colon) = colon_index {
-                    rest[colon as usize] = b'/';
+                // the separator sits after any bracketed IPv6 host, as in
+                // scp_path_without_ssh_prefix
+                let mut sep_from = at + 1;
+                if url[sep_from..].starts_with(b"[")
+                    && let Some(close) = strings::index_of_char_usize(&url[sep_from..], b']')
+                {
+                    sep_from += close + 1;
+                }
+                if let Some(sep) = strings::index_of_char_usize(&url[sep_from..], b':') {
+                    rest[sep_from + sep] = b'/';
                 }
                 return Some(&ssh_path_buf[..SCHEME.len() + url.len()]);
             }

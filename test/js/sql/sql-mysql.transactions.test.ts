@@ -6,8 +6,6 @@ describeWithContainer(
   "mysql",
   {
     image: "mysql_plain",
-    env: {},
-    args: [],
   },
   container => {
     // Use a getter to avoid reading port/host at define time
@@ -55,14 +53,16 @@ describeWithContainer(
       await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
-      expect(
-        await sql
-          .begin(async sql => {
-            await sql`insert into ${sql(random_name)} values(1)`;
-            await sql`insert into ${sql(random_name)} values('hej')`;
-          })
-          .catch(e => e.message),
-      ).toBe("Incorrect integer value: 'hej' for column 'a' at row 1");
+      const err = await sql
+        .begin(async sql => {
+          await sql`insert into ${sql(random_name)} values(1)`;
+          await sql`insert into ${sql(random_name)} values('hej')`;
+        })
+        .catch(e => e);
+      // errno is the stable wire-protocol error number (1366 = ER_TRUNCATED_WRONG_VALUE_FOR_FIELD);
+      // the message prose is the server's and varies across MySQL versions and MariaDB.
+      expect({ code: err.code, errno: err.errno }).toEqual({ code: "ERR_MYSQL_SERVER_ERROR", errno: 1366 });
+      expect(err.message).toContain("Incorrect integer value: 'hej' for column");
     });
 
     test("Transaction rolls back", async () => {
@@ -151,9 +151,10 @@ describeWithContainer(
 
     test("Uncaught transaction request errors bubbles to transaction", async () => {
       await using sql = new SQL(getOptions());
-      expect(await sql.begin(sql => [sql`select wat`, sql`select 1 as x, ${1} as a`]).catch(e => e.message)).toBe(
-        "Unknown column 'wat' in 'field list'",
-      );
+      const err = await sql.begin(sql => [sql`select wat`, sql`select 1 as x, ${1} as a`]).catch(e => e);
+      // 1054 = ER_BAD_FIELD_ERROR; see the note on errno vs. message prose in "Transaction throws".
+      expect({ code: err.code, errno: err.errno }).toEqual({ code: "ERR_MYSQL_SERVER_ERROR", errno: 1054 });
+      expect(err.message).toContain("Unknown column 'wat'");
     });
 
     test("Transaction rejects with rethrown error", async () => {

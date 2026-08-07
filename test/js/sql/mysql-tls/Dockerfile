@@ -1,4 +1,4 @@
-ARG MYSQL_VERSION=8.4
+ARG MYSQL_VERSION=9
 FROM mysql:${MYSQL_VERSION}
 
 # Bake a fully initialized data directory into the image so cold container

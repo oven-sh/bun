@@ -1,4 +1,4 @@
-FROM mysql:8.4
+FROM mysql:9
 
 # Bake a fully initialized data directory into the image so cold container
 # start skips `mysqld --initialize` and the temp-server dance entirely and is

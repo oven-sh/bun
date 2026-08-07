@@ -254,7 +254,7 @@ Some services use volumes to persist data across container restarts:
 
 Control behavior with environment variables:
 - `COMPOSE_PROJECT_NAME`: Prefix for container names (default: "bun-test-services")
-- `BUN_DOCKER_COMPOSE_PATH`: Override docker-compose.yml location
+- `BUN_DOCKER_COMPOSE_FILE`: Override docker-compose.yml location
 
 ## Migration Guide
 

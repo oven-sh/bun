@@ -584,12 +584,48 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     
     int events = us_poll_events(p);
 #ifdef LIBUS_USE_EPOLL
-    /* Hack: forcefully update poll by stripping away already set events */
-    new_p->state.poll_type = us_internal_poll_type(new_p);
-    us_poll_change(new_p, loop, events);
+    /* Re-point the kernel's epitem at new_p directly instead of through
+     * us_poll_change, whose old==new diff would skip the epoll_ctl at
+     * events == 0 (a real steady state: half-open socket after on_end, see
+     * us_poll_start_rc) - and the MOD is what moves data.ptr off the old
+     * poll, which the caller frees. */
+    struct epoll_event event;
+    event.events = events;
+    if (!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
+        /* See us_poll_start_rc: 0-event polls rely on implicit EPOLLHUP/EPOLLERR. */
+        event.events |= EPOLLHUP | EPOLLERR;
+    }
+    event.data.ptr = new_p;
+    int rc;
+    do {
+        rc = epoll_ctl(loop->fd, EPOLL_CTL_MOD, new_p->state.fd, &event);
+    } while (IS_EINTR(rc));
 #else
-    /* Forcefully update poll by resetting them with new_p as user data */
-    kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
+    /* Re-register each filter with new_p as udata (EV_ADD on an existing knote
+     * updates udata in place), arming exactly the poll's current interest.
+     * Arming READABLE|WRITABLE unconditionally here desynced kernel vs poll
+     * state for a poll not watching both directions: the dispatcher masks
+     * delivered events with us_poll_events() but never deletes the filter, and
+     * us_poll_change cannot diff away a filter the poll state says was never
+     * armed, so a level-triggered EVFILT_READ with data or a FIN pending would
+     * re-fire on every kevent call forever.
+     * EV_DELETE of an absent filter only reports ENOENT via
+     * KEVENT_FLAG_ERROR_EVENTS; issue the deletes anyway so a stale
+     * FIN-detector oneshot (kqueue_change arms EVFILT_WRITE at 0 events, and
+     * that knote survives a later 0 -> READABLE transition) cannot keep the
+     * old poll as udata past its free. */
+    struct kevent64_s change_list[2];
+    EV_SET64(&change_list[0], new_p->state.fd, EVFILT_READ,
+        (events & LIBUS_SOCKET_READABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    /* At 0 events the FIN-detector oneshot is the poll's only kernel presence;
+     * re-add it so its udata moves to new_p, matching what kqueue_change
+     * maintains for that state. */
+    EV_SET64(&change_list[1], new_p->state.fd, EVFILT_WRITE,
+        ((events & LIBUS_SOCKET_WRITABLE) || events == 0) ? (EV_ADD | EV_ONESHOT) : EV_DELETE, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    int ret;
+    do {
+        ret = kevent64(loop->fd, change_list, 2, change_list, 2, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(ret));
 #endif
     /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
     us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);

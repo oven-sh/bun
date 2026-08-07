@@ -655,6 +655,66 @@ describe.concurrent("socket", () => {
     }
   });
 
+  // Adoption (us_socket_adopt -> us_poll_resize) can run after the peer's FIN
+  // was already consumed by end() and the write buffer drained, i.e. with the
+  // poll watching neither direction and relying on implicit EPOLLHUP/EPOLLERR.
+  // The kernel registration must follow the adopted socket so the peer's later
+  // reset dispatches to the live poll, exactly once, instead of touching a
+  // freed one. Linux-only: the zero-event steady state is epoll's (kqueue
+  // keeps no kernel filter on such a socket, so the reset goes unseen there).
+  it.skipIf(!isLinux)("upgradeTLS after the peer half-closed survives a subsequent reset", async () => {
+    const { promise: ended, resolve: onEnd } = Promise.withResolvers<Socket<undefined>>();
+    const { promise: torndown, resolve: onTeardown } = Promise.withResolvers<string>();
+    let endCount = 0;
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open() {},
+        data() {},
+        end(socket) {
+          endCount++;
+          onEnd(socket);
+        },
+        close() {},
+        error() {},
+      },
+    });
+
+    const client = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+    client.on("error", () => {});
+    await new Promise<void>(resolve => client.once("connect", resolve));
+    client.end(); // FIN; the server side stays half-open
+
+    const socket = await ended;
+    // Let the post-end writable dispatch drop the poll to zero events before adopting.
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+
+    socket.upgradeTLS({
+      tls: { cert: tls.cert, key: tls.key },
+      isServer: true,
+      data: {},
+      socket: {
+        data() {},
+        end() {},
+        close() {
+          onTeardown("close");
+        },
+        error() {
+          onTeardown("error");
+        },
+      },
+    });
+
+    // The reset must reach the adopted socket (EPOLLHUP/EPOLLERR have no mask).
+    client.resetAndDestroy();
+    expect(["close", "error"]).toContain(await torndown);
+    expect(endCount).toBe(1);
+  });
+
   it("upgradeTLS handles errors", async () => {
     using server = Bun.serve({
       port: 0,

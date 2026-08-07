@@ -736,10 +736,7 @@ pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, Pri
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 fn normalized_bin_name(name: &[u8]) -> &[u8] {
-    let name = match name
-        .iter()
-        .rposition(|&b| b == b'/' || b == b'\\' || b == b':')
-    {
+    let name = match strings::last_index_of_any(name, b"/\\:") {
         Some(i) => &name[i + 1..],
         None => name,
     };
@@ -769,15 +766,14 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     // be a drive prefix (or an NTFS alternate-data-stream on the leading
     // segment) — reject it. Colons in later components are left alone so Unix
     // filenames containing `:` keep working.
-    if target
-        .split(|&b| b == b'/' || b == b'\\')
+    if strings::split_any(target, b"/\\")
         .next()
-        .is_some_and(|first| first.contains(&b':'))
+        .is_some_and(|first| strings::contains_char(first, b':'))
     {
         return true;
     }
     let mut depth: isize = 0;
-    for component in target.split(|&b| b == b'/' || b == b'\\') {
+    for component in strings::split_any(target, b"/\\") {
         match component {
             b"" | b"." => {}
             b".." => {
@@ -793,9 +789,7 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
 }
 
 fn bin_target_needs_resolved_containment_check(target: &[u8]) -> bool {
-    let mut components = target
-        .split(|&b| b == b'/' || b == b'\\')
-        .filter(|component| !component.is_empty());
+    let mut components = strings::tokenize_any(target, b"/\\");
     let Some(first) = components.next() else {
         return false;
     };

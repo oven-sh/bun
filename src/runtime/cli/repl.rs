@@ -203,7 +203,7 @@ impl History {
             sys::Result::Err(_) => return Ok(()),
         };
 
-        for line in content.split(|b: &u8| *b == b'\n') {
+        for line in strings::split(&content, b"\n") {
             if !line.is_empty() {
                 self.entries.push(Box::<[u8]>::from(line));
             }
@@ -938,7 +938,9 @@ impl<'a> Repl<'a> {
         // Enable raw mode
         #[cfg(unix)]
         {
-            let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
+            let _ = self
+                .tty_state
+                .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
         }
         #[cfg(windows)]
         {
@@ -958,7 +960,9 @@ impl<'a> Repl<'a> {
     fn restore_terminal(&mut self) {
         #[cfg(unix)]
         {
-            let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
+            let _ = self
+                .tty_state
+                .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
         }
         #[cfg(windows)]
         {
@@ -983,7 +987,9 @@ impl<'a> Repl<'a> {
         #[cfg(unix)]
         {
             // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
-            let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
+            let _ = self
+                .tty_state
+                .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
 
             // Install SIGINT handler
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
@@ -1005,7 +1011,9 @@ impl<'a> Repl<'a> {
         #[cfg(unix)]
         {
             // Back to raw mode
-            let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
+            let _ = self
+                .tty_state
+                .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
 
             // Restore default SIGINT handling
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL

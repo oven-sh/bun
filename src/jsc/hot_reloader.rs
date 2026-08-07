@@ -39,48 +39,26 @@ pub enum ImportWatcher {
 const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
 
 impl ImportWatcher {
-    /// Look up the cached fd (and `package_json` column) for `hash` under the
-    /// watcher's mutex, snapshotting both before returning.
+    /// Look up the `package_json` column for `hash` under the watcher's
+    /// mutex.
     ///
-    /// The watcher thread's `flush_evictions` (called from `on_file_update`)
-    /// closes the cached fd in pass 1 and `swap_remove`s the entry in pass 2.
-    /// `on_file_update` orders `flush_evictions` *before* `enqueue` so the JS
-    /// thread cannot observe the closed-fd window for the *same* event, but
-    /// nothing serializes a *subsequent* event's `flush_evictions` against the
-    /// JS thread's previous-event reload that re-added the entry: the JS
-    /// thread can read the cached fd here while the watcher thread is between
-    /// pass 1 (close) and pass 2 (remove), surfacing as `EBADF reading
-    /// "<path>"` in `transpiler.rs:read_file_with_allocator` (hot.test.ts
-    /// "should work with sourcemap generation" on debian-aarch64). The race
-    /// is closed by locking the same mutex `append_file_maybe_lock<true>` and
-    /// `flush_evictions` take.
-    pub fn snapshot_fd_and_package_json(
+    /// Deliberately does NOT hand out the stored fd: the watchlist owns it
+    /// and `flush_evictions` closes it concurrently, so a reader would hit
+    /// `EBADF`/`EISDIR` after the mutex is released (watch-many-dirs.test.ts)
+    /// or read the stale pre-rename inode after an atomic save. Reloads open
+    /// the file by path; `Watcher::add_file` adopts the fresh descriptor.
+    pub fn snapshot_package_json(
         &self,
         hash: bun_watcher::HashType,
-    ) -> (
-        Option<bun_sys::Fd>,
-        Option<&'static bun_watcher::PackageJSON>,
-    ) {
+    ) -> Option<&'static bun_watcher::PackageJSON> {
         let w = match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w,
-            ImportWatcher::None => return (None, None),
+            ImportWatcher::None => return None,
         };
         let _guard = w.mutex.lock_guard();
-        let Some(index) = w.index_of(hash) else {
-            return (None, None);
-        };
-        let watcher_fd = w.watchlist.items_fd()[index as usize];
-        let package_json = w
-            .watchlist
-            .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize];
-        (
-            if watcher_fd.is_valid() {
-                Some(watcher_fd)
-            } else {
-                None
-            },
-            package_json,
-        )
+        let index = w.index_of(hash)?;
+        w.watchlist
+            .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
     }
 
     #[inline]
@@ -106,7 +84,7 @@ impl ImportWatcher {
         // Note: bun_watcher::PackageJSON is an opaque forward-decl;
         // callers cast from `&bun_resolver::PackageJSON`.
         package_json: Option<&'static bun_watcher::PackageJSON>,
-    ) -> bun_sys::Result<()> {
+    ) -> bun_sys::Result<bun_watcher::FdOwnership> {
         match self {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => watcher
                 .add_file::<COPY_FILE_PATH>(
@@ -117,7 +95,7 @@ impl ImportWatcher {
                     dir_fd,
                     package_json,
                 ),
-            ImportWatcher::None => Ok(()),
+            ImportWatcher::None => Ok(bun_watcher::FdOwnership::Caller),
         }
     }
 }

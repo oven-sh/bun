@@ -3,6 +3,7 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec as BumpVec;
 use bun_ast::ImportRecord;
+use bun_core::strings;
 
 use crate::css_parser as css;
 use crate::values as css_values;
@@ -427,14 +428,11 @@ impl<'a> Printer<'a> {
         if self.dest.write_all(comment).is_err() {
             return Err(self.add_fmt_error());
         }
-        let new_lines = comment.iter().filter(|&&b| b == b'\n').count();
+        let new_lines = strings::count_char(comment, b'\n');
         self.line += u32::try_from(new_lines).expect("int cast");
         self.col = 0;
-        let last_line_start = comment.len()
-            - comment
-                .iter()
-                .rposition(|&b| b == b'\n')
-                .unwrap_or(comment.len());
+        let last_line_start =
+            comment.len() - strings::last_index_of_char(comment, b'\n').unwrap_or(comment.len());
         self.col += u32::try_from(last_line_start).expect("int cast");
         Ok(())
     }
@@ -447,7 +445,7 @@ impl<'a> Printer<'a> {
         let s = s.as_ref();
         #[cfg(debug_assertions)]
         {
-            debug_assert!(!s.contains(&b'\n'));
+            debug_assert!(!strings::contains_char(s, b'\n'));
         }
         self.col += u32::try_from(s.len()).expect("int cast");
         if self.dest.write_all(s).is_err() {
@@ -462,7 +460,7 @@ impl<'a> Printer<'a> {
         let s = &self.scratchbuf[range];
         #[cfg(debug_assertions)]
         {
-            debug_assert!(!s.contains(&b'\n'));
+            debug_assert!(!strings::contains_char(s, b'\n'));
         }
         self.col += u32::try_from(s.len()).expect("int cast");
         if self.dest.write_all(s).is_err() {
@@ -480,8 +478,8 @@ impl<'a> Printer<'a> {
     pub(crate) fn write_bytes(&mut self, s: &[u8]) -> PrintResult<()> {
         // Unlike `write_str`, newlines are allowed here; track line/col across them
         // (matching `write_char` applied byte-by-byte) so source maps stay correct.
-        if let Some(last_newline) = s.iter().rposition(|&b| b == b'\n') {
-            let new_lines = s.iter().filter(|&&b| b == b'\n').count();
+        if let Some(last_newline) = strings::last_index_of_char(s, b'\n') {
+            let new_lines = strings::count_char(s, b'\n');
             self.line += u32::try_from(new_lines).expect("int cast");
             self.col = u32::try_from(s.len() - last_newline - 1).expect("int cast");
         } else {

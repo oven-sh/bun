@@ -51,6 +51,10 @@ public:
 
     bool m_isExitCodeObservable = false;
     bool m_sourceMapsEnabled = false;
+    // Lazy install guard for the JS onWarning 'warning' listener.
+    bool m_warningListenerInstalled = false;
+    // Node's per-Environment EmitProcessEnvWarning one-shot for DEP0104.
+    bool m_emitEnvNonstringWarning = true;
     // Re-entry guard for dispatchExitInternal. Per-Process (i.e. per-VM): a
     // function-local static would be shared across worker threads, so a
     // worker's exit would suppress the main thread's 'exit' event.

@@ -98,6 +98,7 @@ pub mod task_tag {
         GetAddrInfoRequestTask,
         GetAddrInfoLibuvComplete,
         HotReloadTask,
+        WatchReloadTask,
         ImmediateObject,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,

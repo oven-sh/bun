@@ -1225,7 +1225,7 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     }
     // `o1` is not a Temporal object; a Temporal `o2` can then never be equal
     // (and must not reach the own-property walk).
-    if (Bun__JSValue__temporalObjectType(JSValue::encode(o2)))
+    if (Bun::temporalObjectType(o2))
         return false;
     return std::nullopt;
 }

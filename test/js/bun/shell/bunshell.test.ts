@@ -1154,6 +1154,25 @@ booga"
         chmodSync(noaccess, 0o755);
       }
     });
+
+    test("cd to nonexistent path reports ENOENT, not ENOTDIR", async () => {
+      using dir = tempDir("cd-enoent-enotdir", {
+        "afile.txt": "",
+      });
+      const missing = join(String(dir), "does-not-exist");
+      const afile = join(String(dir), "afile.txt");
+
+      {
+        const { stderr, exitCode } = await $`cd ${missing}`.quiet().nothrow();
+        expect(stderr.toString()).toBe(`cd: no such file or directory: ${missing}\n`);
+        expect(exitCode).toBe(1);
+      }
+      {
+        const { stderr, exitCode } = await $`cd ${afile}`.quiet().nothrow();
+        expect(stderr.toString()).toBe(`cd: not a directory: ${afile}\n`);
+        expect(exitCode).toBe(1);
+      }
+    });
   });
 
   test("which", async () => {

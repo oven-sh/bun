@@ -46,8 +46,11 @@ pub struct FSWatcher {
     // codegen: jsc.Codegen.JSFSWatcher provides toJS/fromJS/fromJSDirect
     /// JS-thread uses only.
     ctx: *mut VirtualMachine,
-    /// How the watcher thread delivers event batches to the VM.
+    /// How the watcher thread delivers event batches to the VM (POSIX; on
+    /// Windows libuv delivers fs events on the JS thread).
+    #[cfg(not(windows))]
     vm_handle: bun_jsc::VmHandle,
+    #[cfg(not(windows))]
     loop_kind: bun_jsc::LoopKind,
     verbose: bool,
 
@@ -79,6 +82,15 @@ pub mod js {
 }
 
 impl FSWatcher {
+    /// JS thread only (Windows delivers fs events on the loop thread).
+    #[cfg(windows)]
+    #[inline]
+    fn vm(&self) -> &mut VirtualMachine {
+        // SAFETY: `ctx` is the live per-thread VM (set in `init`); every caller
+        // is on its JS thread.
+        unsafe { &mut *self.ctx }
+    }
+
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
         // SAFETY: `self.ctx` is the live per-thread VM singleton backref.
@@ -1096,7 +1108,9 @@ impl FSWatcher {
 
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
+            #[cfg(not(windows))]
             vm_handle: vm_ref.handle(),
+            #[cfg(not(windows))]
             loop_kind: vm_ref.as_mut().current_loop_kind(),
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,

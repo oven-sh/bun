@@ -273,18 +273,15 @@ function removeConsoleHooks() {
 }
 
 // Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
-// ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed]] }])
-// into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage:
-// each function gets an entry whose first range spans the whole function with its
-// call count, followed by the basic-block ranges inside it; blocks outside any
-// function go on a synthetic whole-script entry.
+// into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage.
 function buildScriptCoverageList(
   rawScripts: Array<{
     url: string;
     scriptId: number;
     sourceLength: number;
-    blocks: Array<[number, number, number]>;
+    blocks: Array<[number, number, number, boolean]>;
     functions: Array<[number, number, boolean]>;
+    executables: Array<[number, number, number, string, boolean]>;
   }>,
   callCount: boolean,
   detailed: boolean,
@@ -301,26 +298,48 @@ function buildScriptCoverageList(
       url = pathToFileURL(url).href;
     }
 
+    // Keyed by (functionStart, functionEnd): the same key FunctionHasExecutedCache uses.
+    const execByRange = new Map<string, { sourceEnd: number; name: string; skip: boolean }>();
+    for (const [start, end, sourceEnd, name, skip] of script.executables) {
+      const key = `${start}:${end}`;
+      const prev = execByRange.$get(key);
+      if (prev === undefined || (prev.skip && !skip)) {
+        execByRange.$set(key, { sourceEnd, name, skip });
+      }
+    }
+
+    type Fn = { start: number; end: number; sourceEnd: number; name: string; executed: boolean };
+    const seenFns = new Set<string>();
+    const functions: Fn[] = [];
+    for (const [start, end, executed] of script.functions) {
+      if (start < 0 || end < start) continue;
+      const key = `${start}:${end}`;
+      if (seenFns.$has(key)) continue;
+      seenFns.$add(key);
+      const meta = execByRange.$get(key);
+      // Program/module/eval and default-ctor ranges have no FunctionExecutable on this sourceID; gen/async bodies are skip.
+      if (meta === undefined || meta.skip) continue;
+      functions.push({ start, end, sourceEnd: meta.sourceEnd, name: meta.name, executed });
+    }
     // Outer functions before nested ones, so a stack-based sweep below sees
     // enclosing ranges first.
-    const functions = script.functions
-      .filter(([start, end]) => start >= 0 && end >= start)
-      .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    functions.sort((a, b) => a.start - b.start || b.end - a.end);
+
     const blocks = script.blocks.filter(([start, end]) => start >= 0 && end >= start).sort((a, b) => a[0] - b[0]);
 
-    // Assign each basic block to the innermost function range containing it.
-    const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);
-    const topLevelBlocks: Array<[number, number, number]> = [];
+    // Assign each block to the innermost surviving function; skipped generator/async body blocks fall to the wrapper.
+    const blocksPerFunction: Array<Array<[number, number, number, boolean]>> = functions.map(() => []);
+    const topLevelBlocks: Array<[number, number, number, boolean]> = [];
     const stack: number[] = [];
     let nextFunction = 0;
     for (const block of blocks) {
-      while (nextFunction < functions.length && functions[nextFunction][0] <= block[0]) {
+      while (nextFunction < functions.length && functions[nextFunction].start <= block[0]) {
         stack.push(nextFunction);
         nextFunction++;
       }
       // Functions that ended before this block started can no longer contain
       // this block or any later one (blocks are sorted by start).
-      while (stack.length > 0 && functions[stack[stack.length - 1]][1] < block[0]) {
+      while (stack.length > 0 && functions[stack[stack.length - 1]].end < block[0]) {
         stack.pop();
       }
       // The stack is a nesting chain (siblings get popped above), so ends
@@ -328,7 +347,7 @@ function buildScriptCoverageList(
       // covers the block's end is the innermost containing function.
       let owner = -1;
       for (let i = stack.length - 1; i >= 0; i--) {
-        if (functions[stack[i]][1] >= block[1]) {
+        if (functions[stack[i]].end >= block[1]) {
           owner = stack[i];
           break;
         }
@@ -340,57 +359,68 @@ function buildScriptCoverageList(
       }
     }
 
+    const clampCount = (c: number) => (callCount ? c : c > 0 ? 1 : 0);
+
+    const subRanges = (ownBlocks: Array<[number, number, number, boolean]>, ownerCount: number, ownerEnd: number) => {
+      const ranges: object[] = [];
+      for (const [start, end, count, hasCode] of ownBlocks) {
+        // V8 sub-ranges are deltas from the owner's count, so the entry block (same count) is redundant.
+        if (count === ownerCount) continue;
+        // JSC's post-return/throw block: whitespace/comment/`}` only, or a single position at ownerEnd for arrow bodies.
+        if (count === 0 && (!hasCode || start >= ownerEnd)) continue;
+        ranges.push({ startOffset: start, endOffset: end + 1, count: clampCount(count) });
+      }
+      return ranges;
+    };
+
     // Derived from the (delta-subtracted) block counts only: the function
     // `executed` flag is cumulative and would make a second takePreciseCoverage
     // report 1 even when nothing ran since the first.
     const scriptExecuted = blocks.some(([, , count]) => count > 0) ? 1 : 0;
     const entries: object[] = [];
 
-    const toRange = ([startOffset, endOffset, count]: [number, number, number]) => ({
-      startOffset,
-      endOffset,
-      count: callCount ? count : count > 0 ? 1 : 0,
-    });
+    // A class-field initializer shares the script's entry BasicBlockLocation and inflates its counter; use that as baseline.
+    let scriptEntryCount = scriptExecuted;
+    if (topLevelBlocks.length > 0) {
+      let entry = topLevelBlocks[0];
+      for (const b of topLevelBlocks) if (b[0] < entry[0]) entry = b;
+      scriptEntryCount = entry[2];
+    }
 
     // Whole-script entry. V8 always reports one covering the entire source.
     entries.push({
       functionName: "",
       ranges: [
         { startOffset: 0, endOffset: sourceLength, count: scriptExecuted },
-        ...(detailed ? topLevelBlocks.map(toRange) : []),
+        ...(detailed ? subRanges(topLevelBlocks, scriptEntryCount, sourceLength - 1) : []),
       ],
       isBlockCoverage: detailed,
     });
 
     for (let i = 0; i < functions.length; i++) {
-      const [startOffset, endOffset, executed] = functions[i];
-      if (!executed) {
+      const fn = functions[i];
+      const ownBlocks = blocksPerFunction[i];
+      // No entry block means not actually called (the executed bit can alias the program's when they share (start,end)).
+      if (!fn.executed || ownBlocks.length === 0) {
         entries.push({
-          functionName: "",
-          ranges: [{ startOffset, endOffset, count: 0 }],
+          functionName: fn.name,
+          ranges: [{ startOffset: fn.start, endOffset: fn.sourceEnd, count: 0 }],
           isBlockCoverage: false,
         });
         continue;
       }
 
-      const ownBlocks = blocksPerFunction[i];
-      // Approximate the call count from the entry block (the one with the
-      // smallest start offset). Diverges from V8 for generators/async
-      // functions, which JSC compiles as two nested CodeBlocks whose body
-      // entry counts state-0 resumes rather than user-visible calls.
-      let count = 1;
-      if (ownBlocks.length > 0) {
-        let entryBlock = ownBlocks[0];
-        for (const block of ownBlocks) {
-          if (block[0] < entryBlock[0]) entryBlock = block;
-        }
-        count = entryBlock[2];
+      // The smallest-start block is the entry block; its count is the call count (wrapper's, since bodies were skipped).
+      let entryBlock = ownBlocks[0];
+      for (const block of ownBlocks) {
+        if (block[0] < entryBlock[0]) entryBlock = block;
       }
+      const count = entryBlock[2];
       entries.push({
-        functionName: "",
+        functionName: fn.name,
         ranges: [
-          { startOffset, endOffset, count: callCount ? count : count > 0 ? 1 : 0 },
-          ...(detailed ? ownBlocks.map(toRange) : []),
+          { startOffset: fn.start, endOffset: fn.sourceEnd, count: clampCount(count) },
+          ...(detailed ? subRanges(ownBlocks, count, fn.end) : []),
         ],
         isBlockCoverage: detailed,
       });

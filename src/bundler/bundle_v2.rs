@@ -4184,7 +4184,10 @@ pub mod bv2_impl {
                         std::ptr::from_mut(load),
                         on_load_from_js_loop_raw,
                     );
-                    let poster = self.js_poster.as_ref().expect("JS-owned bundle has a poster");
+                    let poster = self
+                        .js_poster
+                        .as_ref()
+                        .expect("JS-owned bundle has a poster");
                     if let Err(ct) = poster.post(ct) {
                         // Owning JS VM torn down mid-bundle: the hop never runs.
                         // SAFETY: refused ⇒ we own the task box.
@@ -4213,7 +4216,10 @@ pub mod bv2_impl {
                         std::ptr::from_mut(resolve),
                         on_resolve_from_js_loop_raw,
                     );
-                    let poster = self.js_poster.as_ref().expect("JS-owned bundle has a poster");
+                    let poster = self
+                        .js_poster
+                        .as_ref()
+                        .expect("JS-owned bundle has a poster");
                     if let Err(ct) = poster.post(ct) {
                         // Owning JS VM torn down mid-bundle: the hop never runs.
                         // SAFETY: refused ⇒ we own the task box.

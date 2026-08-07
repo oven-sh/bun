@@ -1166,7 +1166,8 @@ pub mod waiter_thread_posix {
                                     rusage,
                                 });
                                 let ct = ConcurrentTask::create(Task::new(T::TASK_TAG, rt.cast()));
-                                let poster = T::js_poster(process_ref).expect("JS-owned process has a poster");
+                                let poster = T::js_poster(process_ref)
+                                    .expect("JS-owned process has a poster");
                                 if let Err(ct) = poster.post(ct) {
                                     // VM torn down: nobody will observe this exit. Free the
                                     // task and drop the ref its delivery would have released.

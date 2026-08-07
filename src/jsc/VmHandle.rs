@@ -347,7 +347,10 @@ impl ConcurrentPoster {
     }
 
     /// Post a mini-loop task (always accepted; the mini loop outlives its work).
-    pub fn post_mini(&self, task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>) {
+    pub fn post_mini(
+        &self,
+        task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
+    ) {
         match self {
             ConcurrentPoster::Mini(mini) => {
                 let mut mini = *mini;
@@ -396,7 +399,10 @@ static POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterV
 impl VmHandle {
     /// An erased poster for `kind`, for code that cannot name `VmHandle`.
     pub fn to_js_poster(&self, kind: LoopKind) -> bun_event_loop::JsPoster {
-        let data = Arc::into_raw(Arc::new(PosterData { handle: self.clone(), kind })) as *const ();
+        let data = Arc::into_raw(Arc::new(PosterData {
+            handle: self.clone(),
+            kind,
+        })) as *const ();
         // SAFETY: `data`/vtable pair as documented on `JsPoster::from_raw`.
         unsafe { bun_event_loop::JsPoster::from_raw(data, &POSTER_VTABLE) }
     }
@@ -408,4 +414,3 @@ impl VirtualMachine {
         self.handle().to_js_poster(self.current_loop_kind())
     }
 }
-

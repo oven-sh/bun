@@ -123,7 +123,11 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
                 unsafe { on_complete(p) };
                 Ok(())
             });
-            let poster = worker.ctx.js_poster.as_ref().expect("JS-owned bundle has a poster");
+            let poster = worker
+                .ctx
+                .js_poster
+                .as_ref()
+                .expect("JS-owned bundle has a poster");
             if let Err(ct) = poster.post(ct) {
                 // Owning JS VM torn down mid-bundle: free the hop and the result.
                 // SAFETY: refused ⇒ we own the task box and the leaked result.

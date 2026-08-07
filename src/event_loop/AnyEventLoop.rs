@@ -571,7 +571,11 @@ impl JsPoster {
     #[inline]
     pub fn post(&self, task: NonNull<ConcurrentTask>) -> Result<(), NonNull<ConcurrentTask>> {
         // SAFETY: vtable contract.
-        if unsafe { (self.vtable.post)(self.data, task) } { Ok(()) } else { Err(task) }
+        if unsafe { (self.vtable.post)(self.data, task) } {
+            Ok(())
+        } else {
+            Err(task)
+        }
     }
 
     #[inline]
@@ -584,7 +588,10 @@ impl JsPoster {
 impl Clone for JsPoster {
     fn clone(&self) -> Self {
         // SAFETY: vtable contract.
-        Self { data: unsafe { (self.vtable.clone)(self.data) }, vtable: self.vtable }
+        Self {
+            data: unsafe { (self.vtable.clone)(self.data) },
+            vtable: self.vtable,
+        }
     }
 }
 

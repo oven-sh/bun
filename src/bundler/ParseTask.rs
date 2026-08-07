@@ -2841,13 +2841,18 @@ pub mod parse_worker {
             .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
         {
             bun_event_loop::AnyEventLoop::Js { .. } => {
-                let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                    // SAFETY: `p` is the `result` Box leaked above; ownership
-                    // transfers to `on_complete`, which deallocates it.
-                    unsafe { on_complete(p) };
-                    Ok(())
-                });
-                let poster = worker.ctx.js_poster.as_ref().expect("JS-owned bundle has a poster");
+                let ct =
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
+                        // SAFETY: `p` is the `result` Box leaked above; ownership
+                        // transfers to `on_complete`, which deallocates it.
+                        unsafe { on_complete(p) };
+                        Ok(())
+                    });
+                let poster = worker
+                    .ctx
+                    .js_poster
+                    .as_ref()
+                    .expect("JS-owned bundle has a poster");
                 if let Err(ct) = poster.post(ct) {
                     // Owning JS VM torn down mid-bundle: free the hop and the result.
                     // SAFETY: refused ⇒ we own the task box and the leaked result.

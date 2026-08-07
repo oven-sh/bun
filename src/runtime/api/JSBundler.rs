@@ -1524,8 +1524,12 @@ pub mod js_bundler {
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { .. } => {
-                        let ct = ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw);
-                        let poster = (*ctx.as_mut_ptr()).js_poster.as_ref().expect("JS-owned bundle has a poster");
+                        let ct =
+                            ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw);
+                        let poster = (*ctx.as_mut_ptr())
+                            .js_poster
+                            .as_ref()
+                            .expect("JS-owned bundle has a poster");
                         if let Err(ct) = poster.post(ct) {
                             // Owning JS VM torn down mid-bundle: the notify never runs.
                             drop(bun_core::heap::take(ct.as_ptr()));

@@ -1673,7 +1673,9 @@ mod _async_tasks {
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
                 evtloop: EventLoopHandle::init_mini(mini),
-                poster: bun_jsc::ConcurrentPoster::from_event_loop_handle(&EventLoopHandle::init_mini(mini)),
+                poster: bun_jsc::ConcurrentPoster::from_event_loop_handle(
+                    &EventLoopHandle::init_mini(mini),
+                ),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker { id: 0 },
@@ -1774,7 +1776,9 @@ mod _async_tasks {
                     },
                 );
                 // `from_callback_auto_deinit` heap-allocates; never null.
-                this_ref.poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
+                this_ref
+                    .poster
+                    .post_mini(core::ptr::NonNull::new(at).expect("heap task"));
             }
         }
 

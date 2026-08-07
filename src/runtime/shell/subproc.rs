@@ -1,4 +1,6 @@
-use core::ffi::{CStr, c_char, c_void};
+use core::ffi::{c_char, c_void};
+#[cfg(target_env = "ohos")]
+use core::ffi::CStr;
 use std::sync::Arc;
 
 #[cfg(unix)]

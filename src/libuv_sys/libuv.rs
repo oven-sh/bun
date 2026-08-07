@@ -630,7 +630,11 @@ impl Loop {
                             break;
                         }
                     }
-                    debug_assert_eq!(rc, ReturnCode::ZERO, "uv loop still busy after closing every handle");
+                    debug_assert_eq!(
+                        rc,
+                        ReturnCode::ZERO,
+                        "uv loop still busy after closing every handle"
+                    );
                 }
             }
             slot.set(ptr::null_mut());

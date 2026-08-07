@@ -540,6 +540,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.adopted = 0;
                         s->flags.last_write_failed = 0;
                         s->unclassified_send_failures = 0;
+                        s->paused_poll_stopped = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -830,16 +831,31 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
 
             /* kqueue reports EV_EOF on the same readable event as a connection's
-             * final data. If the data callback paused the socket mid-burst (stream
+             * final data, and epoll reports EPOLLHUP once both sides have
+             * FIN'd. If the data callback paused the socket mid-burst (stream
              * backpressure), the read loop above stopped with bytes still queued in
              * the kernel, and acting on the hint now would end+close the socket and
              * discard them. Defer it: resuming re-arms the poll and the EOF is
-             * re-reported once the rest has been read. Sockets we already shut down
-             * are exempt (their peer's FIN must still close them promptly below),
-             * as are error-flagged events. */
-            if (eof && s && !error && s->flags.is_paused && !us_socket_is_shut_down(s) &&
-                !us_socket_is_closed(s)) {
-                eof = 0;
+             * re-reported once the rest has been read. Error-flagged events are
+             * exempt. A shut-down socket defers only when allow_half_open
+             * (node:net, whose consumer resumes to drain): uws HTTP pauses
+             * internally and may never resume once the response has ended, so
+             * its peer's FIN must still close it promptly below. */
+            if (eof && s && !error && s->flags.is_paused && !us_socket_is_closed(s)) {
+                if (!us_socket_is_shut_down(s)) {
+                    eof = 0;
+                } else if (s->flags.allow_half_open) {
+                    #ifdef LIBUS_USE_EPOLL
+                    /* EPOLLHUP is level-triggered and unmaskable; take the fd
+                     * out of the set so the loop cannot spin on it, and have
+                     * us_socket_resume re-ADD it (us_poll_start, not MOD). */
+                    if (!s->paused_poll_stopped) {
+                        s->paused_poll_stopped = 1;
+                        us_poll_stop(&s->p, loop);
+                    }
+                    #endif
+                    eof = 0;
+                }
             }
             if(eof && s) {
                 if (UNLIKELY(us_socket_is_closed(s))) {

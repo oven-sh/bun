@@ -320,6 +320,10 @@ struct us_socket_t {
    * the sweep escalates via SO_ERROR when the peer later resets). */
   unsigned char unclassified_send_failures : 7;
   unsigned char fin_deferred : 1;
+  /* us_poll_stop was issued from the eof-while-is_paused gate so a
+   * level-triggered EPOLLHUP cannot spin the loop; us_socket_resume must
+   * EPOLL_CTL_ADD (us_poll_start) rather than MOD. */
+  unsigned char paused_poll_stopped : 1;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach

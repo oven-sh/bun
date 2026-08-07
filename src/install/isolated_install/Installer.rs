@@ -1216,7 +1216,7 @@ impl Task {
                         // re-adding the patch then saw the stale marker and
                         // skipped the entry. Delete the previous build so
                         // the rebuild replaces instead of merges.
-                        let mut prev_build = AutoPath::init_top_level_dir();
+                        let mut prev_build = AutoAbsPath::init_top_level_dir();
                         installer.append_real_store_path(
                             &mut prev_build,
                             self.entry_id,

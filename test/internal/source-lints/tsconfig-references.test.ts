@@ -12,9 +12,11 @@ import path from "path";
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 
-// tsconfig.json is JSONC: strip // and /* */ comments (string-aware) and
-// trailing commas, then JSON.parse. A malformed file throws, failing the test
-// with the offending path in the message.
+// tsconfig.json is JSONC: strip // and /* */ comments and trailing commas,
+// string-aware, then JSON.parse. This stays hand-rolled because the
+// source-lints workflow runs on a bare checkout (no `bun install`), so the
+// typescript package's JSONC reader is not importable here. A malformed file
+// throws, failing the test with the offending path in the message.
 function parseJsonc(text: string, from: string): any {
   let out = "";
   let i = 0;
@@ -46,34 +48,36 @@ function parseJsonc(text: string, from: string): any {
       i += 2;
       while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
       i += 2;
+      // A space, not nothing: `1/* */2` must stay two tokens, not parse as 12.
+      out += " ";
       continue;
+    }
+    if (c === "}" || c === "]") {
+      // Trailing-comma removal happens only here, outside any string: a comma
+      // inside a string always has the closing quote between it and this
+      // bracket, so `,\s*$` cannot reach into string contents.
+      out = out.replace(/,(\s*)$/, "$1");
     }
     out += c;
     i++;
   }
   try {
-    return JSON.parse(out.replace(/,\s*([}\]])/g, "$1"));
+    return JSON.parse(out);
   } catch (e) {
     throw new Error(`failed to parse ${from}: ${e}`);
   }
 }
 
 // tsc's resolution for a reference path: a file is used as-is, a directory
-// means <dir>/tsconfig.json.
+// means <dir>/tsconfig.json. `throwIfNoEntry: false` maps only ENOENT to
+// undefined; permission and I/O failures still throw, carrying the path.
 function resolveReference(fromDir: string, ref: string): string | null {
   const p = path.resolve(fromDir, ref);
-  const stat = (() => {
-    try {
-      return statSync(p);
-    } catch {
-      return null;
-    }
-  })();
+  const stat = statSync(p, { throwIfNoEntry: false });
   if (stat?.isFile()) return p;
   if (stat?.isDirectory()) {
-    try {
-      if (statSync(path.join(p, "tsconfig.json")).isFile()) return path.join(p, "tsconfig.json");
-    } catch {}
+    const sub = path.join(p, "tsconfig.json");
+    if (statSync(sub, { throwIfNoEntry: false })?.isFile()) return sub;
   }
   return null;
 }

@@ -869,6 +869,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                      * writable dispatch disables writable polling again once
                      * the buffer is drained, so this does not busy-poll. */
                     us_poll_change(&s->p, loop, LIBUS_SOCKET_WRITABLE);
+#ifdef LIBUS_USE_KQUEUE
+                    /* The change above deleted the read filter; without a sentinel
+                     * the peer's later RST is never reported (the one-shot write
+                     * filter may already be consumed) and the socket strands. */
+                    us_internal_kqueue_socket_arm_read_sentinel(s);
+#endif
                     s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
                 } else {
                     /* We dont allow half open just emit end and close the socket */

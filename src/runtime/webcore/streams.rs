@@ -79,9 +79,6 @@ pub enum Start {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
 pub enum StartTag {
-    Empty,
-    Err,
-    ChunkSize,
     ArrayBufferSink,
     FileSink,
     HTTPSResponseSink,
@@ -90,9 +87,6 @@ pub enum StartTag {
     NetworkSink,
     FetchRequestBodySink,
     HTMLRewriterSink,
-    Ready,
-    OwnedAndDone,
-    Done,
 }
 
 impl Start {
@@ -161,8 +155,6 @@ impl Start {
             StartTag::HTMLRewriterSink => {
                 Self::from_js_with_tag::<{ StartTag::HTMLRewriterSink }>(global_this, value)
             }
-            // No `Start` variant carries these tags from JS.
-            _ => Self::from_js(global_this, value),
         }
     }
 
@@ -280,11 +272,6 @@ impl Start {
                 if !empty {
                     return Ok(Start::ChunkSize(chunk_size));
                 }
-            }
-            _ => {
-                // Dead for every valid TAG; runtime unreachable until
-                // `generic_const_exprs` lets us hoist to a compile error.
-                unreachable!("Unsupported StartTag");
             }
         }
 

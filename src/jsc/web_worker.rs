@@ -108,6 +108,12 @@ pub struct WebWorker {
     terminated_by_parent: AtomicBool,
 }
 
+enum EntryOutcome {
+    Continue,
+    /// The entry module rejected and no handler took it: the worker exits.
+    Stop,
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Status {
@@ -842,26 +848,32 @@ impl WebWorker {
         // Atomics.waitAsync settles. dispatchOnline re-calls it as a no-op.
         WebWorker__entrySettled(vm.global());
 
-        // SAFETY: `promise` is a live JSC heap cell.
-        unsafe {
-            if (*promise).status() == jsc::js_promise::Status::Rejected {
-                let handled = vm.as_mut().uncaught_exception(
-                    vm.global(),
-                    (*promise).result(vm.jsc_vm()),
-                    true,
-                );
-                if !handled {
-                    // exit_code is already 1 from uncaught_exception; re-setting it here
-                    // would clobber a process.on('exit') change to process.exitCode.
-                    return self.shutdown();
+        // The entry's evaluation outcome is checked once now and then after every
+        // loop turn: a rejection (immediate, or a top-level await rejecting
+        // later) is the entry's uncaught error at that moment — the worker stops
+        // unless a handler took it — and is reported exactly once. The loader
+        // marks this promise handled, so nothing else would report it.
+        let mut entry_rejection_seen = false;
+        let mut observe_entry = |vm: &VirtualMachine| -> EntryOutcome {
+            // SAFETY: `promise` is a live JSC heap cell, rooted below for the loop's duration.
+            unsafe {
+                if entry_rejection_seen || (*promise).status() != jsc::js_promise::Status::Rejected {
+                    return EntryOutcome::Continue;
                 }
+                entry_rejection_seen = true;
+                let handled = vm.as_mut().uncaught_exception(vm.global(), (*promise).result(vm.jsc_vm()), true);
+                if handled { EntryOutcome::Continue } else { EntryOutcome::Stop }
             }
+        };
+        if let EntryOutcome::Stop = observe_entry(vm) {
+            // exit_code is already 1 from uncaught_exception; re-setting it here
+            // would clobber a process.on('exit') change to process.exitCode.
+            return self.shutdown();
         }
         // A still-pending entry promise is an unsettled top-level await: as in
-        // Node the worker counts as started once its module has been evaluated,
+        // Node the worker counts as started once its module graph is executing,
         // and the await continues in the normal event loop below — messages,
-        // timers and I/O keep flowing meanwhile. Its outcome is examined again
-        // when the loop drains. Rooted so a settle-and-collect cannot free it.
+        // timers and I/O keep flowing meanwhile. Rooted for the loop's duration.
         let entry_promise = crate::Strong::create(JSValue::from_cell(promise.cast::<crate::JSCell>()), vm.global());
 
         self.flush_logs(vm);
@@ -869,7 +881,7 @@ impl WebWorker {
         // Pending -> Running: 'online' is posted to the parent and messages/tasks
         // that arrived while the entry point was loading are delivered. After the
         // entry point on purpose, so the parent observes 'online' only once the
-        // worker's top-level code has been evaluated.
+        // worker's top-level code has run (up to its first top-level await).
         WebWorker__workerGlobalScopeStarted(self.proxy, vm.global());
         self.set_status(Status::Running);
 
@@ -884,15 +896,23 @@ impl WebWorker {
         // Always do a first tick so we call CppTask without delay after
         // dispatchOnline.
         vm.as_mut().tick();
+        let mut stopped_by_entry = matches!(observe_entry(vm), EntryOutcome::Stop);
 
-        while vm.is_event_loop_alive() {
+        while !stopped_by_entry && vm.is_event_loop_alive() {
             vm.as_mut().tick();
             if self.has_requested_terminate() {
+                break;
+            }
+            if let EntryOutcome::Stop = observe_entry(vm) {
+                stopped_by_entry = true;
                 break;
             }
             vm.as_mut().auto_tick_active();
             if self.has_requested_terminate() {
                 break;
+            }
+            if let EntryOutcome::Stop = observe_entry(vm) {
+                stopped_by_entry = true;
             }
         }
 
@@ -901,45 +921,24 @@ impl WebWorker {
             self.execution_context_id,
             if self.has_requested_terminate() {
                 "(terminated)"
+            } else if stopped_by_entry {
+                "(entry rejected)"
             } else {
                 "(event loop dead)"
             }
         );
 
-        // Only emit 'beforeExit' on a natural drain, not on terminate().
-        if !self.has_requested_terminate() {
+        if !self.has_requested_terminate() && !stopped_by_entry {
+            // Only emit 'beforeExit' on a natural drain, not on terminate().
             // TODO: is this able to allow the event loop to continue?
             vm.as_mut().on_before_exit();
-        }
-
-        // The entry module's evaluation, revisited now that the loop has drained
-        // (or termination was requested): a top-level await that rejected while
-        // the loop ran is an uncaught error; one still pending is Node's exit 13
-        // (unless the user chose a nonzero exit code or asked to stop).
-        if !self.has_requested_terminate() {
-            // SAFETY: `promise` is rooted by `entry_promise`.
-            unsafe {
-                match (*promise).status() {
-                    jsc::js_promise::Status::Rejected => {
-                        // The rejection was routed through the VM's unhandled-
-                        // rejection tracking while the loop ran (the internal
-                        // promise has no user handler); report it as the entry's
-                        // uncaught error only if that has not already happened.
-                        if vm.unhandled_error_counter == 0 && vm.exit_handler.exit_code == 0 {
-                            let _ = vm.as_mut().uncaught_exception(
-                                vm.global(),
-                                (*promise).result(vm.jsc_vm()),
-                                true,
-                            );
-                        }
-                    }
-                    jsc::js_promise::Status::Pending => {
-                        if vm.exit_handler.exit_code == 0 {
-                            vm.as_mut().exit_handler.exit_code = 13;
-                        }
-                    }
-                    jsc::js_promise::Status::Fulfilled => {}
-                }
+            // Drained with the entry still pending: an unsettled top-level await,
+            // Node's exit 13 (unless the user chose a nonzero exit code).
+            // SAFETY: rooted by `entry_promise`.
+            if unsafe { (*promise).status() } == jsc::js_promise::Status::Pending
+                && vm.exit_handler.exit_code == 0
+            {
+                vm.as_mut().exit_handler.exit_code = 13;
             }
         }
         drop(entry_promise);

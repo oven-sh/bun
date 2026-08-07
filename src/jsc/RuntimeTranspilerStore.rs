@@ -232,6 +232,28 @@ impl RuntimeTranspilerStore {
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
+    /// VM teardown (JS thread, heap alive, script forbidden, handle closed so
+    /// no job is mid-flight): jobs whose completion arrived too late to run —
+    /// queued after the last tick, or posted after `close()` began — release
+    /// their source, log and module promise here instead of running.
+    pub fn release_queued_jobs_for_teardown(&mut self) {
+        let batch = self.queue.pop_batch();
+        let mut iter = batch.iterator();
+        loop {
+            let job = iter.next();
+            if job.is_null() {
+                break;
+            }
+            // SAFETY: a live job popped from the intrusive queue; this thread
+            // owns it now (its worker-thread part finished before `close()`).
+            unsafe {
+                (*job).promise.deinit();
+                (*job).reset_for_pool();
+                self.store.put(job);
+            }
+        }
+    }
+
     pub fn run_from_js_thread(
         &mut self,
         event_loop: NonNull<EventLoop>,
@@ -504,11 +526,17 @@ impl TranspilerJob {
         unsafe { (*transpiler_store).queue.push(job) };
         // Another thread may free `self` at any time after .push, so we cannot use it any more
         // (the handle was cloned out above for exactly this reason).
-        let posted = handle.post_ref(&loop_kind, ConcurrentTask::create_from(transpiler_store));
-        // Runs under the borrow taken in `run_from_worker_thread`, so the VM
-        // cannot have closed: the post is always accepted.
-        debug_assert!(matches!(posted, crate::vm_handle::Posted::Queued));
-        let _ = posted;
+        // Runs under the borrow taken in `run_from_worker_thread`, so the VM is
+        // alive — but `close()` may already have begun (it publishes Closed,
+        // then waits for this borrow), in which case the post is refused. The
+        // job stays on the store's queue either way; teardown releases whatever
+        // is still there on the JS thread (`release_queued_jobs_for_teardown`).
+        if let crate::vm_handle::Posted::Refused(task) =
+            handle.post_ref(&loop_kind, ConcurrentTask::create_from(transpiler_store))
+        {
+            // SAFETY: just created above and handed back unqueued.
+            unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task) };
+        }
     }
 
     fn run_from_js_thread(&mut self) -> JsResult<()> {

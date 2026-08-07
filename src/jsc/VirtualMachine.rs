@@ -242,6 +242,11 @@ pub struct VirtualMachine {
     // outlives the VM.
     pub arena: Option<NonNull<bun_alloc::Arena>>,
     pub has_loaded: bool,
+    /// The current entry load reached module evaluation: the graph is linked and
+    /// its synchronous prefixes have run (set from the moduleLoaderEvaluate
+    /// hook). What is still pending on the entry promise after that is a
+    /// top-level await.
+    pub entry_evaluation_started: bool,
 
     pub(crate) had_errors: bool,
 
@@ -513,6 +518,11 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__getExitCode(vm: &VirtualMachine) -> u8 {
         vm.exit_handler.exit_code
+    }
+
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__noteModuleEvaluationStarted(vm: &mut VirtualMachine) {
+        vm.entry_evaluation_started = true;
     }
 
     #[unsafe(no_mangle)]
@@ -1814,6 +1824,7 @@ impl VirtualMachine {
     pub fn release_queued_work(&mut self) {
         self.regular_event_loop.release_queued_tasks();
         self.macro_event_loop.release_queued_tasks();
+        self.transpiler_store.release_queued_jobs_for_teardown();
     }
 }
 
@@ -2497,6 +2508,7 @@ impl VirtualMachine {
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
+        self.entry_evaluation_started = false;
         self.set_main(entry_path);
         self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
@@ -4669,28 +4681,24 @@ impl VirtualMachine {
         Ok(promise)
     }
 
-    /// Loads the worker entry point and waits for it, honoring termination requests.
-    /// Link and evaluate a worker's entry module. Returns once the module has
-    /// been *evaluated* — its promise may still be pending on a top-level await,
-    /// which then continues in the worker's normal event loop (Node's ordering:
-    /// the worker is started, and receives messages, from this point on).
+    /// Load a worker's entry: fetch and link its module graph and begin
+    /// evaluating it. Returns once evaluation has begun (or the load failed) —
+    /// the promise may still be pending on a top-level await, which then
+    /// continues in the worker's normal event loop, as in Node.
     pub(crate) fn load_entry_point_for_web_worker(
         &mut self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        let _ = self.reload_entry_point(entry_path)?;
+        let promise = self.reload_entry_point(entry_path)?;
         self.event_loop_mut().perform_gc();
-        // Module loading and a TLA-free evaluation settle through tasks and
-        // microtasks the loader queued; run those, but do not wait on the loop
-        // for an await that needs outside events.
         self.event_loop_mut()
-            .settle_promise_without_waiting(jsc::AnyPromise::Internal(self.pending_internal_promise.unwrap()));
+            .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {
             if worker.has_requested_terminate() {
                 return Err(crate::CrateError::WorkerTerminated);
             }
         }
-        Ok(self.pending_internal_promise.unwrap())
+        Ok(promise)
     }
 
     /// Loads a test-file entry point and waits for the load promise to settle.

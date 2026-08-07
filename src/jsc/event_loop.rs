@@ -1178,61 +1178,30 @@ impl EventLoop {
         self.tick();
     }
 
-    /// Run what is already runnable — queued tasks, concurrent completions that
-    /// have arrived, microtasks — until `promise` settles or nothing more can run
-    /// without waiting for outside events. Used to let a worker's entry module
-    /// finish loading/evaluating without blocking on a top-level await.
-    pub fn settle_promise_without_waiting(&mut self, promise: jsc::AnyPromise) {
-        let worker = self.vm_ref().worker_ref();
-        let mut idle_rounds = 0u8;
-        while promise.status() == PromiseStatus::Pending
-            && !worker.is_some_and(|w| w.has_requested_terminate())
-        {
-            let before = self.vm_ref().pending_internal_promise;
+    /// Drive the loop while a worker's entry module graph is fetched and
+    /// linked, until its evaluation has begun (`entry_evaluation_started`, set
+    /// by the moduleLoaderEvaluate hook once the linked graph starts executing),
+    /// the promise settled, or termination was requested. Parks in `auto_tick`
+    /// while imports are still being read/transpiled off-thread; does not wait
+    /// for a top-level await.
+    pub fn wait_for_worker_entry_evaluation(&mut self, promise: jsc::AnyPromise) {
+        loop {
+            let vm = self.vm_ref();
+            let terminated = vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
+            if terminated || vm.entry_evaluation_started || promise.status() != PromiseStatus::Pending {
+                break;
+            }
             self.tick();
-            // `tick` ran tasks/microtasks; if the promise is still pending and the
-            // module loader made no progress (no new work became runnable), the
-            // await needs the loop — stop here.
-            if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
-                idle_rounds += 1;
-                if idle_rounds >= 2 {
-                    break;
-                }
-            } else {
-                idle_rounds = 0;
+            let vm = self.vm_ref();
+            let terminated = vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
+            if terminated || vm.entry_evaluation_started || promise.status() != PromiseStatus::Pending {
+                break;
             }
-            let _ = before;
-        }
-    }
-
-    pub fn wait_for_promise_with_termination(&mut self, promise: jsc::AnyPromise) {
-        // BACKREF — `WebWorker` is owned by C++ and outlives this VM (see
-        // [`VirtualMachine::worker_ref`]); route through the safe accessor
-        // instead of open-coding the raw `*const c_void` cast + deref.
-        let worker = self
-            .vm_ref()
-            .worker_ref()
-            .expect("worker is not initialized");
-        match promise.status() {
-            PromiseStatus::Pending => {
-                while !worker.has_requested_terminate()
-                    && promise.status() == PromiseStatus::Pending
-                {
-                    self.tick();
-                    if !worker.has_requested_terminate()
-                        && promise.status() == PromiseStatus::Pending
-                    {
-                        // Unsettled top-level await: the loop has drained but the
-                        // entry module's evaluation promise is still pending. Stop
-                        // waiting so the worker can exit (node uses exit code 13).
-                        if !self.vm_ref().is_event_loop_alive() {
-                            break;
-                        }
-                        self.auto_tick();
-                    }
-                }
+            if !vm.is_event_loop_alive() {
+                // Nothing in flight can settle the load; let spin() decide.
+                break;
             }
-            _ => {}
+            self.auto_tick();
         }
     }
 }

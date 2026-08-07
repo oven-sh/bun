@@ -3888,11 +3888,15 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     return Zig::ImportMetaObject::create(globalObject, key);
 }
 
+extern "C" void Bun__VM__noteModuleEvaluationStarted(void*);
+
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
+    // Reached from inside the root record's evaluate(): the graph is linked and executing.
+    Bun__VM__noteModuleEvaluationStarted(defaultGlobalObject(lexicalGlobalObject)->bunVM());
     return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
 }
@@ -3909,6 +3913,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    Bun__VM__noteModuleEvaluationStarted(globalObject->bunVM());
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of

@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -639,15 +639,11 @@ describe("getHeapSnapshot", () => {
   // uncaught_exception return handled=true so spin() continues to
   // fireEarlyMessages (the call resolves with real data). Under `bun -e`
   // it rejects — see the test-worker-heapdump-failure.js vendored test for
-  // subprocess coverage. The case below takes the shutdown() path directly so
-  // it exercises the m_pendingTasks abandon drain regardless. (A worker with an
-  // unsettled top-level await is not such a case: like Node it counts as
-  // started once its module has been evaluated, so these calls resolve.)
-  test.each([
-    ["entry not found", undefined],
-  ])("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start (%s)", async (_, src) => {
-    const worker =
-      src === undefined ? new Worker("/nonexistent/__bun_worker_path__.js") : new Worker(src, { eval: true });
+  // subprocess coverage. A worker whose entry is not found takes the
+  // shutdown() path directly, so it exercises the m_pendingTasks abandon drain
+  // regardless.
+  test("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start", async () => {
+    const worker = new Worker("/nonexistent/__bun_worker_path__.js");
     worker.on("error", () => {});
     // Called immediately (m_state still Pending) so the task queues into
     // m_pendingTasks; dispatchExit drains it on the parent thread when the
@@ -1903,5 +1899,46 @@ test("parentPort messages are delivered while a top-level await is pending", asy
   w.postMessage("hi");
   expect(await exited).toBe(0);
   expect(replies).toEqual(["got hi", "got bye"]);
+});
+
+// A top-level await that rejects while other work keeps the loop alive fails the
+// worker at rejection time (Node), not when the loop eventually drains.
+// (Subprocess: inside `bun test` a worker's uncaught error counts as handled.)
+test("a top-level await rejecting while the loop is alive fails the worker then", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const w = new Worker(
+         'setInterval(() => {}, 1000); await new Promise((_, reject) => setTimeout(() => reject(new Error("late")), 5));',
+         { eval: true },
+       );
+       w.on("error", e => console.log("error: " + e.message));
+       w.on("exit", c => console.log("exit " + c));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("error: late\nexit 1\n");
+  expect(exitCode).toBe(0);
+});
+
+// Static imports that are still being read/transpiled are loading, not a
+// top-level await: 'online' and message delivery wait for the graph to execute.
+test("a file worker's static imports load before it counts as started", async () => {
+  using dir = tempDir("worker-static-import-start", {
+    "dep.js": `export const listeners = [];\n${"// filler\n".repeat(2000)}`,
+    "w.js": `import { listeners } from "./dep.js";
+import { parentPort } from "worker_threads";
+parentPort.on("message", m => parentPort.postMessage("got " + m + " " + listeners.length));`,
+  });
+  const w = new Worker(join(String(dir), "w.js"));
+  const reply = new Promise<string>(resolve => w.on("message", resolve));
+  w.postMessage("hi");
+  expect(await reply).toBe("got hi 0");
+  await w.terminate();
 });
 

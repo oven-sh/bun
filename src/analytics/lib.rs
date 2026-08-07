@@ -6,8 +6,6 @@ use bun_core::env_var;
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 use bun_semver as semver;
 
-use crate::schema::analytics;
-
 #[cfg(target_os = "macos")]
 use bun_core::slice_to_nul;
 
@@ -298,6 +296,7 @@ pub mod features {
         56 => (webview_chrome, "webview_chrome"),
         #[unsafe(export_name = "Bun__Feature__webview_webkit")]
         57 => (webview_webkit, "webview_webkit"),
+        58 => (xml_parse, "xml_parse", core = XML_PARSE),
     }
 
     // C++ declares these as `extern "C" size_t Bun__...;` and
@@ -332,20 +331,23 @@ const fn validate_feature_name(name: &[u8]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-const PLATFORM_ARCH: analytics::Architecture = {
-    #[cfg(target_arch = "aarch64")]
-    {
-        analytics::Architecture::Arm
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        analytics::Architecture::X64
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    {
-        analytics::Architecture::None
-    }
-};
+/// Finer-grained than `bun_core::Environment::OperatingSystem`: distinguishes
+/// WSL and Android from Linux for crash reports and `/bun:info`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum OperatingSystem {
+    Linux,
+    Macos,
+    Windows,
+    Wsl,
+    Android,
+    Freebsd,
+}
+
+#[derive(Copy, Clone)]
+pub struct Platform {
+    pub os: OperatingSystem,
+    pub version: &'static [u8],
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // GenerateHeader
@@ -360,8 +362,6 @@ pub mod generate_header {
     pub mod generate_platform {
         use super::*;
 
-        pub use analytics::Platform;
-
         // ──────────────────────────────────────────────────────────────────
         // macOS
         // ──────────────────────────────────────────────────────────────────
@@ -370,7 +370,7 @@ pub mod generate_header {
         static OSVERSION_NAME: OnceLock<[u8; 32]> = OnceLock::new();
 
         #[cfg(target_os = "macos")]
-        fn for_mac() -> analytics::Platform {
+        fn for_mac() -> Platform {
             let buf: &'static [u8; 32] = OSVERSION_NAME.get_or_init(|| {
                 let mut name = [0u8; 32];
                 let mut len: usize = name.len() - 1;
@@ -389,10 +389,9 @@ pub mod generate_header {
                 if rc == -1 { [0u8; 32] } else { name }
             });
 
-            analytics::Platform {
-                os: analytics::OperatingSystem::Macos,
+            Platform {
+                os: OperatingSystem::Macos,
                 version: slice_to_nul(&buf[..]),
-                arch: PLATFORM_ARCH,
             }
         }
 
@@ -409,9 +408,9 @@ pub mod generate_header {
         // Platform OnceLock
         // ──────────────────────────────────────────────────────────────────
 
-        static PLATFORM_: OnceLock<analytics::Platform> = OnceLock::new();
+        static PLATFORM_: OnceLock<Platform> = OnceLock::new();
 
-        pub fn for_os() -> analytics::Platform {
+        pub fn for_os() -> Platform {
             *PLATFORM_.get_or_init(|| {
                 #[cfg(target_os = "macos")]
                 {
@@ -428,24 +427,9 @@ pub mod generate_header {
                 #[cfg(windows)]
                 {
                     return Platform {
-                        os: analytics::OperatingSystem::Windows,
+                        os: OperatingSystem::Windows,
                         version: &[],
-                        arch: PLATFORM_ARCH,
                     };
-                }
-                #[cfg(not(any(
-                    target_os = "macos",
-                    target_os = "linux",
-                    target_os = "android",
-                    target_os = "freebsd",
-                    windows
-                )))]
-                {
-                    Platform {
-                        os: analytics::OperatingSystem::None,
-                        version: &[],
-                        arch: PLATFORM_ARCH,
-                    }
                 }
             })
         }
@@ -537,17 +521,16 @@ pub mod generate_header {
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        fn for_linux() -> analytics::Platform {
+        fn for_linux() -> Platform {
             // Confusingly, the "release" tends to contain the kernel version much more frequently than the "version" field.
             let release: &'static [u8] =
                 bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
 
             #[cfg(target_os = "android")]
             {
-                return analytics::Platform {
-                    os: analytics::OperatingSystem::Android,
+                return Platform {
+                    os: OperatingSystem::Android,
                     version: release,
-                    arch: PLATFORM_ARCH,
                 };
             }
 
@@ -555,17 +538,15 @@ pub mod generate_header {
             {
                 // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
                 if bun_core::strings::index_of(release, b"microsoft").is_some() {
-                    return analytics::Platform {
-                        os: analytics::OperatingSystem::Wsl,
+                    return Platform {
+                        os: OperatingSystem::Wsl,
                         version: release,
-                        arch: PLATFORM_ARCH,
                     };
                 }
 
-                analytics::Platform {
-                    os: analytics::OperatingSystem::Linux,
+                Platform {
+                    os: OperatingSystem::Linux,
                     version: release,
-                    arch: PLATFORM_ARCH,
                 }
             }
         }
@@ -575,17 +556,14 @@ pub mod generate_header {
         // ──────────────────────────────────────────────────────────────────
 
         #[cfg(target_os = "freebsd")]
-        fn for_freebsd() -> analytics::Platform {
+        fn for_freebsd() -> Platform {
             let name = bun_core::ffi::cached_uname();
-            analytics::Platform {
-                os: analytics::OperatingSystem::Freebsd,
+            Platform {
+                os: OperatingSystem::Freebsd,
                 version: bun_core::ffi::c_field_bytes(&name.release),
-                arch: PLATFORM_ARCH,
             }
         }
     }
 }
 
 pub use generate_header as GenerateHeader;
-
-pub mod schema;

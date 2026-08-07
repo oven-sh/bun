@@ -422,6 +422,15 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
  * after the socket closed (no-op). */
 void us_socket_sni_resolve(us_socket_r s, struct ssl_ctx_st *ctx, int error);
 void *us_socket_server_name_userdata(us_socket_r s);
+/* Records a per-serverName entry's client-certificate policy on its SSL_CTX
+ * so the SNI switch adds it to the connection's inherited one, and gives the
+ * context its own session-id context so sessions from other contexts are not
+ * resumed under it. Contexts without one keep the server-level policy. */
+void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
+    int reject_unauthorized);
+/* 1 iff the SNI-selected context for this connection demands closing on a
+ * client-certificate verification error. */
+int us_socket_server_name_reject_unauthorized(us_socket_r s);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
  * listen socket behind it. Same contract as the listener resolver: an owned
  * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
@@ -554,6 +563,13 @@ int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_ca
 /* The resumable session most recently delivered via the new-session callback,
  * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
 struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);
+/* Per-SSL session sink: each resumable session reaching the new-session
+ * callback is SSL_SESSION_up_ref'd and handed to on_new_session (which takes
+ * ownership of that reference). on_free(owner) runs once on SSL_free. */
+void us_ssl_set_session_sink(struct ssl_st *ssl, void *owner,
+                             void (*on_new_session)(void *, struct ssl_session_st *),
+                             void (*on_free)(void *));
+void *us_ssl_get_session_sink_owner(struct ssl_st *ssl);
 
 /* Public interfaces for loops */
 

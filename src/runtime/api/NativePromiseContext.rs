@@ -28,7 +28,6 @@ use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::api::html_rewriter;
 use crate::api::server;
-use crate::webcore::body;
 
 // Request contexts are a single generic
 // `NewRequestContext<ThisServer, SSL, DEBUG, HTTP3>`; alias the six
@@ -55,13 +54,17 @@ pub enum Tag {
     HTTPSServerRequestContext,
     DebugHTTPServerRequestContext,
     DebugHTTPSServerRequestContext,
-    BodyValueBufferer,
     HTTPSServerH3RequestContext,
     DebugHTTPSServerH3RequestContext,
+    HTMLRewriterSuspension,
+    /// Task-only tag (never a context cell): frees a `RewriterPipe` whose
+    /// last claim was released from a GC destructor; see
+    /// `RewriterPipe::release_pump_claim`.
+    HTMLRewriterPipeFree,
 }
 
 impl Tag {
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -70,9 +73,10 @@ impl Tag {
             1 => Tag::HTTPSServerRequestContext,
             2 => Tag::DebugHTTPServerRequestContext,
             3 => Tag::DebugHTTPSServerRequestContext,
-            4 => Tag::BodyValueBufferer,
-            5 => Tag::HTTPSServerH3RequestContext,
-            6 => Tag::DebugHTTPSServerH3RequestContext,
+            4 => Tag::HTTPSServerH3RequestContext,
+            5 => Tag::DebugHTTPSServerH3RequestContext,
+            6 => Tag::HTMLRewriterSuspension,
+            7 => Tag::HTMLRewriterPipeFree,
             _ => unreachable!(),
         }
     }
@@ -105,8 +109,8 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> NativePromise
 {
     const TAG: Tag = npc_tag_for(SSL, DBG, H3);
 }
-impl NativePromiseContextType for body::ValueBufferer<'_> {
-    const TAG: Tag = Tag::BodyValueBufferer;
+impl NativePromiseContextType for html_rewriter::RewriterPipe {
+    const TAG: Tag = Tag::HTMLRewriterSuspension;
 }
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
@@ -118,14 +122,22 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         ctx: *mut c_void,
         tag: u8,
+        held: JSValue,
     ) -> JSValue;
     safe fn Bun__NativePromiseContext__take(value: JSValue) -> *mut c_void;
 }
 
-/// The caller must have already taken a ref on `ctx`. The returned cell owns
-/// that ref until `take()` transfers it back or GC runs the destructor.
-pub(crate) fn create<T: NativePromiseContextType>(global: &JSGlobalObject, ctx: *mut T) -> JSValue {
-    Bun__NativePromiseContext__create(global, ctx.cast::<c_void>(), T::TAG as u8)
+/// The cell owns the caller's claim on `ctx` until `take()` transfers it back
+/// or GC runs the destructor (which defers to [`DeferredDerefTask`]). `held`
+/// is visited by the cell, so whatever GC object keeps `ctx` alive can ride
+/// along for as long as the promise can settle; pass `JSValue::ZERO` when
+/// nothing needs rooting.
+pub(crate) fn create<T: NativePromiseContextType>(
+    global: &JSGlobalObject,
+    ctx: *mut T,
+    held: JSValue,
+) -> JSValue {
+    Bun__NativePromiseContext__create(global, ctx.cast::<c_void>(), T::TAG as u8, held)
 }
 
 /// Transfers the ref back to the caller and nulls the cell so the destructor
@@ -177,7 +189,7 @@ impl Taskable for DeferredDerefTask {
 impl DeferredDerefTask {
     const TAG_MASK: usize = 0b111;
 
-    fn schedule(ctx: *mut c_void, tag: Tag) {
+    pub(crate) fn schedule(ctx: *mut c_void, tag: Tag) {
         // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
         // thread-local VM is alive for the duration of this call.
         let vm = VirtualMachine::get();
@@ -204,8 +216,13 @@ impl DeferredDerefTask {
     pub(crate) fn run_from_js_thread(packed_ptr: usize) {
         let tag = Tag::from_raw((packed_ptr & Self::TAG_MASK) as u8);
         let ctx = (packed_ptr & !Self::TAG_MASK) as *mut c_void;
-        // SAFETY: ctx was packed in `schedule` from a live intrusive-refcounted
-        // pointer of the type indicated by `tag`; we are on the JS thread.
+        // SAFETY: ctx was packed in `schedule` from a live pointer of the
+        // type indicated by `tag`. The request-context tags hold an intrusive
+        // refcount released here. The HTMLRewriter tags point at a
+        // claim-counted `RewriterPipe`: the suspension task owns the claim
+        // taken in `begin_suspension`, and `HTMLRewriterPipeFree` is
+        // scheduled only by the release of the last claim, so this task is
+        // the sole owner of the allocation it frees. We are on the JS thread.
         unsafe {
             match tag {
                 Tag::HTTPServerRequestContext => (*ctx.cast::<HTTPServerRequestContext>()).deref(),
@@ -218,21 +235,20 @@ impl DeferredDerefTask {
                 Tag::DebugHTTPSServerRequestContext => {
                     (*ctx.cast::<DebugHTTPSServerRequestContext>()).deref()
                 }
-                Tag::BodyValueBufferer => {
-                    // ValueBufferer is embedded by value inside HTMLRewriter's
-                    // BufferOutputSink, with the owner pointer stored in .ctx.
-                    // The pending-promise ref was taken on the owner, so we
-                    // release it there.
-                    let bufferer = &*ctx.cast::<body::ValueBufferer<'_>>();
-                    html_rewriter::BufferOutputSink::deref(
-                        bufferer.ctx.cast::<html_rewriter::BufferOutputSink>(),
-                    );
-                }
                 Tag::HTTPSServerH3RequestContext => {
                     (*ctx.cast::<HTTPSServerH3RequestContext>()).deref()
                 }
                 Tag::DebugHTTPSServerH3RequestContext => {
                     (*ctx.cast::<DebugHTTPSServerH3RequestContext>()).deref()
+                }
+                Tag::HTMLRewriterSuspension => {
+                    let back = bun_ptr::BackRef::from(NonNull::new_unchecked(
+                        ctx.cast::<html_rewriter::RewriterPipe>(),
+                    ));
+                    html_rewriter::RewriterPipe::abandon_suspension(back);
+                }
+                Tag::HTMLRewriterPipeFree => {
+                    bun_core::heap::destroy(ctx.cast::<html_rewriter::RewriterPipe>());
                 }
             }
         }
@@ -251,4 +267,4 @@ const _: () =
 const _: () =
     assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
 const _: () =
-    assert!(core::mem::align_of::<body::ValueBufferer<'_>>() > DeferredDerefTask::TAG_MASK);
+    assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);

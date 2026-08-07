@@ -896,11 +896,11 @@ pub mod command {
         }
         // Has a `.` in the basename — `foo.js`, `dir/foo.ts`, `.dotfile`, …
         // (no subcommand keyword contains a `.`).
-        let basename = match arg.iter().rposition(|&b| b == b'/' || b == b'\\') {
+        let basename = match strings::last_index_of_any(arg, b"/\\") {
             Some(i) => &arg[i + 1..],
             None => arg,
         };
-        basename.contains(&b'.')
+        strings::contains_char(basename, b'.')
     }
 
     /// `#[inline(never)]`: argv→`Tag` classification, called once from

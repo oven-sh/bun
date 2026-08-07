@@ -81,6 +81,8 @@ pub mod standalone_graph_jsc;
 pub mod toml_object;
 #[path = "api/UnsafeObject.rs"]
 pub mod unsafe_object;
+#[path = "api/XMLObject.rs"]
+pub mod xml_object;
 #[path = "api/YAMLObject.rs"]
 pub mod yaml_object;
 
@@ -134,7 +136,6 @@ pub mod bun {
     pub use super::bun_ssl_context_cache as ssl_context_cache;
     pub use super::bun_subprocess as subprocess;
     pub use super::bun_x509 as x509;
-    pub use process::StdioKind as SubprocessStdioKind;
     pub use process::{
         Dup2, Exited, ExtraPipe, PidFdType, PidT, Poller, PosixSpawnOptions, PosixSpawnResult,
         PosixStdio, Process, ProcessExit, ProcessExitHandler, ProcessExitKind, Rusage,
@@ -162,7 +163,6 @@ pub mod bun {
     }
     pub use h2_frame_parser::H2FrameParser;
 }
-pub use bun::process::Process as SpawnProcess;
 
 pub use crate::image as Image;
 pub use crate::shell as Shell;
@@ -186,11 +186,11 @@ pub use crate::api::js_bundler::JSBundler;
 pub use crate::api::js_bundler::OutputKind;
 pub use crate::api::js_transpiler as JSTranspiler;
 pub use crate::api::json5_object as JSON5Object;
-pub use crate::api::jsonc_object as JSONCObject;
 pub use crate::api::markdown_object as MarkdownObject;
 pub use crate::api::native_promise_context as NativePromiseContext;
 pub use crate::api::toml_object as TOMLObject;
 pub use crate::api::unsafe_object as UnsafeObject;
+pub use crate::api::xml_object as XMLObject;
 pub use crate::api::yaml_object as YAMLObject;
 // `dns_jsc/mod.rs` IS the public surface (Resolver, Order, RecordType, internal::*);
 // the full `dns.rs` body is mounted privately as `dns_body` inside it.
@@ -204,7 +204,6 @@ pub use bun_sql_jsc::mysql as MySQL;
 pub use bun_sql_jsc::postgres as Postgres;
 
 pub use crate::webview::chrome_process as ChromeProcess;
-pub use crate::webview::host_process as WebViewHostProcess;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML}.parse ───────────────────
 //

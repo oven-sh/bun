@@ -411,8 +411,6 @@ var InternalResolver = class Resolver {
     if (typeof rrtype === "function") {
       callback = rrtype;
       rrtype = "A";
-    } else if (typeof rrtype === "undefined") {
-      rrtype = "A";
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }

@@ -58,11 +58,7 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 
 pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
-/// `api::JsException` lives in
-/// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
-/// `stack: StackTrace` field transitively names `ZigStackFramePosition` from
-/// this crate — see the `schema_api` module doc in lib.rs.
-pub type ExceptionList = Vec<crate::schema_api::JsException>;
+pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine struct (file-level @This())
@@ -187,6 +183,17 @@ pub struct VirtualMachine {
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
+    /// LAYERING: the real type is `bun_runtime`'s
+    /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
+    ///
+    /// The HTMLRewriter sink whose lol-html `write()`/`end()`/`resume()` call
+    /// is currently on this VM's native stack, if any. Content handlers reach
+    /// their sink through it (to record a thrown exception, and to park the JS
+    /// wrapper + pending promise when an async handler suspends the rewrite).
+    /// Saved and restored LIFO around every lol-html call, so a handler body
+    /// that synchronously starts a nested `transform()` nests correctly.
+    /// All-zero bytes decode as `None` (null niche).
+    pub html_rewriter_active_sink: Option<core::ptr::NonNull<c_void>>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
     // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait
@@ -4836,9 +4843,8 @@ impl VirtualMachine {
                     let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
                 }
                 if let Some(list) = exception_list {
-                    let top_level_dir = self.top_level_dir();
-                    let _ =
-                        zig_exception.add_to_error_list(list, top_level_dir, Some(&self.origin));
+                    let origin = self.is_from_devserver.then_some(&self.origin);
+                    zig_exception.add_to_error_list(list, self.top_level_dir(), origin);
                 }
                 holder.deinit(self);
             }
@@ -5141,13 +5147,8 @@ impl VirtualMachine {
                     let _ = (self.enable_source_code_preview, self.source_code_slice);
                 }
                 if let Some(list) = self.exception_list.take() {
-                    let top_level_dir = this.top_level_dir();
-                    // OOM-only.
-                    bun_core::handle_oom(exception.add_to_error_list(
-                        list,
-                        top_level_dir,
-                        Some(&this.origin),
-                    ));
+                    let origin = this.is_from_devserver.then_some(&this.origin);
+                    exception.add_to_error_list(list, this.top_level_dir(), origin);
                 }
             }
         }
@@ -5664,15 +5665,7 @@ impl VirtualMachine {
             last_pad = pad;
             splat_space(writer, pad)?;
 
-            let text = source.text.slice();
-            let _trimmed = text
-                .trim_ascii_start()
-                .strip_prefix(b"\n")
-                .unwrap_or(text)
-                .trim_ascii_end();
-            // Trim newlines on both sides, then trailing tab/space.
-            let trimmed = bun_core::trim(text, b"\n");
-            let trimmed = bun_core::trim_right(trimmed, b"\t ");
+            let trimmed = source.trimmed_text();
             let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
 
             let hl = bun_core::fmt::fmt_javascript(
@@ -5776,9 +5769,7 @@ impl VirtualMachine {
                     }
                 }
 
-                let text = source.text.slice();
-                let trimmed = bun_core::trim(text, b"\n");
-                let trimmed = bun_core::trim_right(trimmed, b"\t ");
+                let trimmed = source.trimmed_text();
 
                 if top_frame.is_none() || top_frame.unwrap().position.is_invalid() {
                     did_print_name = true;

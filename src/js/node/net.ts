@@ -120,7 +120,7 @@ const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBuf
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
-const owner_symbol = Symbol("owner_symbol");
+const { owner_symbol } = require("internal/async_hooks").symbols;
 
 // Write-only by design: the onconnection write is a GC edge keeping the
 // native Listener reachable via accepted socket handles (see a93d2fa48e).
@@ -3241,12 +3241,12 @@ function internalConnectMultiple(context, canceled?) {
 
   if (localPort) {
     if (addressType === 4) {
-      localAddress = DEFAULT_IPV4_ADDR;
+      localAddress = "0.0.0.0";
       // TODO:
       // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
-      localAddress = DEFAULT_IPV6_ADDR;
+      localAddress = "::";
       // TODO:
       // err = self._handle.bind6(localAddress, localPort, flags);
     }

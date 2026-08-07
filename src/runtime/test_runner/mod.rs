@@ -201,7 +201,7 @@ pub mod expect {
     // traits / aliases here that forward to the now-landed inherents — no
     // local FFI re-decls, no semantic divergence.
 
-    use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
+    use bun_jsc::{JSGlobalObject, JSValue, JsResult};
     use bun_jsc::console_object::Formatter;
     use bun_jsc::console_object::formatter::ZigFormatter;
 
@@ -370,21 +370,6 @@ pub mod expect {
     /// Result of `JSValue::as_big_int_compare`.
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
-
-    /// Two-argument `throw_*` adapters — matcher modules call
-    /// `global.throw2(FMT, format_args!(FMT, ..))`.
-    /// Rust's `Arguments<'_>` already encloses the format string,
-    /// so the leading `&str` is redundant; these shims drop it and forward to
-    /// the bun_jsc inherents.
-    pub trait JSGlobalObjectTestExt {
-        fn throw2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
-    }
-    impl JSGlobalObjectTestExt for JSGlobalObject {
-        #[inline]
-        fn throw2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
-            self.throw(args)
-        }
-    }
 
     /// `super::make_formatter(global_this)`
     /// is the universal matcher pattern; `Formatter` has no `Default` (it

@@ -631,7 +631,7 @@ pub mod fs {
                 // If `pretty` contains no backslashes it is already POSIX-style.
                 // Short-circuiting preserves the `pretty.ptr == text.ptr` aliasing
                 // optimisation inside `dupe_alloc` and avoids a fresh FilenameStore alloc.
-                if !self.pretty.iter().any(|&b| b == b'\\') {
+                if !bun_core::strings::contains_char(self.pretty, b'\\') {
                     return self.dupe_alloc(alloc);
                 }
                 let mut new = self.clone();
@@ -2070,17 +2070,6 @@ pub mod cache {
 
         pub use_alternate_source_cache: bool,
         pub(crate) stream: bool,
-    }
-
-    impl Default for Fs {
-        fn default() -> Self {
-            Self {
-                shared_buffer: MutableString::init(0).expect("unreachable"),
-                macro_shared_buffer: MutableString::init(0).expect("unreachable"),
-                use_alternate_source_cache: false,
-                stream: false,
-            }
-        }
     }
 
     /// Optional external destructor (`function(ctx)`) for foreign-owned

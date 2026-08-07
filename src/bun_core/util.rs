@@ -184,7 +184,7 @@ impl ZStr {
     #[inline]
     pub fn as_cstr(&self) -> &core::ffi::CStr {
         debug_assert!(
-            !self.0.contains(&0),
+            !crate::strings::contains_char(&self.0, 0),
             "ZStr::as_cstr: interior NUL would truncate the C view",
         );
         // SAFETY: `as_bytes_with_nul()` is `[.., 0]` by the ZStr invariant;
@@ -376,7 +376,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
         let mut p = c_environ();
         while !(*p).is_null() {
             let line = core::slice::from_raw_parts((*p).cast::<u8>(), libc::strlen(*p));
-            let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
+            let key_end = crate::strings::index_of_char_usize(line, b'=').unwrap_or(line.len());
             if crate::strings::eql_case_insensitive_ascii_check_length(
                 &line[..key_end],
                 key.as_bytes(),
@@ -408,7 +408,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
                 }
                 core::slice::from_raw_parts(entry.cast::<u8>(), len)
             };
-            let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
+            let key_end = crate::strings::index_of_char_usize(line, b'=').unwrap_or(line.len());
             if crate::strings::eql_case_insensitive_ascii_check_length(
                 &line[..key_end],
                 key.as_bytes(),
@@ -4256,7 +4256,7 @@ pub(crate) fn which<'a>(
         return check(buf, cwd, bin).map(|n| ZStr::from_buf(&buf.0, n));
     }
     // Bare names go straight to PATH — do NOT consult cwd.
-    for dir in path.split(|&b| b == b':') {
+    for dir in crate::strings::split(path, b":") {
         if dir.is_empty() {
             continue;
         }
@@ -4649,7 +4649,7 @@ fn spawn_sync_inherit_impl(
         let pid: libc::pid_t = {
             let arg0 = argv[0].as_ref();
             let mut pathbuf = PathBuffer::uninit();
-            let exe: *const core::ffi::c_char = if arg0.contains(&b'/') {
+            let exe: *const core::ffi::c_char = if crate::strings::contains_char(arg0, b'/') {
                 // Contains a separator → use as-is (execve resolves relative
                 // to cwd, matching posix_spawnp semantics for non-bare names).
                 ptrs[0]

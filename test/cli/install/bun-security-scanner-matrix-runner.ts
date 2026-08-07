@@ -164,10 +164,13 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
   // First write bunfig WITHOUT scanner for pre-install
   await Bun.write(
     join(dir, "bunfig.toml"),
-    `[install]
-cache.disable = true
-linker = "${linker}"
-registry = "${registryUrl}/"`,
+    Bun.TOML.stringify({
+      install: {
+        cache: { disable: true },
+        linker,
+        registry: `${registryUrl}/`,
+      },
+    }),
   );
 
   const shouldDoInitialInstall = hasExistingNodeModules || hasLockfile;
@@ -201,13 +204,16 @@ registry = "${registryUrl}/"`,
   // write the full bunfig WITH scanner configuration
   await Bun.write(
     join(dir, "bunfig.toml"),
-    `[install]
-cache.disable = true
-linker = "${linker}"
-registry = "${registryUrl}/"
-
-[install.security]
-scanner = "${scannerPath}"`,
+    Bun.TOML.stringify({
+      install: {
+        cache: { disable: true },
+        linker,
+        registry: `${registryUrl}/`,
+        security: {
+          scanner: scannerPath,
+        },
+      },
+    }),
   );
 
   if (DO_TEST_DEBUG) {

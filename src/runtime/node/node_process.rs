@@ -314,10 +314,7 @@ mod _impl {
                 }
 
                 if !compile_exec_argv.is_empty() {
-                    for token in compile_exec_argv
-                        .split(|b| matches!(*b, b' ' | b'\t' | b'\n' | b'\r'))
-                        .filter(|s: &&[u8]| !s.is_empty())
-                    {
+                    for token in strings::tokenize_any(compile_exec_argv, b" \t\n\r") {
                         args.push(BunString::clone_utf8(token));
                     }
                 }

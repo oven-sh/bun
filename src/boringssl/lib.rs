@@ -94,30 +94,38 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
 // into the process, including pthreads locks. Failing to meet these constraints
 // may result in deadlocks, crashes, or memory corruption.
 
+// Routed through `default_alloc` (mimalloc, or libc under `cfg(bun_asan)`)
+// rather than `mimalloc` directly. The BoringSSL build already drops
+// `BORINGSSL_REQUIRE_MEMORY_HOOKS` under ASAN so Mach-O/COFF fall back to
+// libc, but on ELF the weak hook symbols still resolve to these definitions;
+// hard-coding mimalloc here put every `OPENSSL_malloc` allocation outside
+// LeakSanitizer's scanned set and any libc-backed allocation reachable only
+// via one (an SSL's ex_data array, the per-SSL session-sink owner it holds)
+// was reported as a leak at exit.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
-    bun_alloc::mimalloc::mi_malloc(size)
+    bun_alloc::default_alloc::malloc(size)
 }
 
 // BoringSSL always expects memory to be zero'd
 /// # Safety
-/// `ptr` must be non-null and have been returned by `OPENSSL_memory_alloc`
-/// (i.e. `mi_malloc`); BoringSSL guarantees both for this hook.
+/// `ptr` must be non-null and returned by `OPENSSL_memory_alloc`; BoringSSL
+/// guarantees both for this hook.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by
-    // OPENSSL_memory_alloc above (i.e. mi_malloc).
+    // OPENSSL_memory_alloc above.
     unsafe {
-        let len = bun_alloc::usable_size(ptr.cast());
+        let len = bun_alloc::default_alloc::usable_size(ptr);
         ptr::write_bytes(ptr.cast::<u8>(), 0, len);
-        bun_alloc::mimalloc::mi_free(ptr);
+        bun_alloc::default_alloc::free(ptr);
     }
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
-    // ptr was returned by mi_malloc (or is null, which usable_size handles).
-    bun_alloc::usable_size(ptr.cast())
+    // SAFETY: ptr was returned by OPENSSL_memory_alloc (null-safe).
+    unsafe { bun_alloc::default_alloc::usable_size(ptr) }
 }
 
 pub use bun_sys::posix::INET6_ADDRSTRLEN;
@@ -187,7 +195,7 @@ fn eq_nocase(a: &[u8], b: &[u8]) -> bool {
 
 /// Wildcard interpretation for [`match_hostname`]'s left-most label.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Wildcards {
+enum Wildcards {
     /// No wildcard expansion: a `*` is matched literally.
     None,
     /// Full-label `*` only (OpenSSL `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`).
@@ -201,7 +209,7 @@ pub enum Wildcards {
 /// Options for [`match_hostname`]. Each defaults to the stricter setting so
 /// callers opt in explicitly.
 #[derive(Clone, Copy)]
-pub struct MatchOpts {
+struct MatchOpts {
     pub wildcards: Wildcards,
     /// A full-label `*` may span multiple host labels
     /// (OpenSSL `X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS`).
@@ -214,7 +222,7 @@ pub struct MatchOpts {
 impl MatchOpts {
     /// Node.js lib/tls.js `check()` — the matcher behind `tls.connect`,
     /// `https`, and undici `fetch`.
-    pub const TLS_CHECK: Self = Self {
+    const TLS_CHECK: Self = Self {
         wildcards: Wildcards::Anywhere,
         multi_label_wildcards: false,
         strip_trailing_dot: true,
@@ -257,7 +265,7 @@ fn openssl_valid_pattern(pattern: &[u8]) -> bool {
 /// hostname matcher every native TLS client and `X509Certificate#checkHost`
 /// share; [`MatchOpts`] selects between Node.js lib/tls.js `check()` semantics
 /// and OpenSSL `X509_check_host` semantics where they differ.
-pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
+fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
     let (pattern, hostname) = if opts.strip_trailing_dot {
         (unfqdn(pattern), unfqdn(hostname))
     } else {

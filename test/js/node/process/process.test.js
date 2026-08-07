@@ -576,11 +576,11 @@ it("process.versions", () => {
   const expectedVersions = {
     boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "d078ad066752ea7fd06acb2323b7a90c49d7d8e4",
+    mimalloc: "1803341d6241d8fa4b3f65fa68cb13a32ad92f04",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
     tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
-    lolhtml: "77127cd2b8545998756e8d64e36ee2313c4bb312",
+    lolhtml: "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e",
     ares: "3ac47ee46edd8ea40370222f91613fc16c434853",
     libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
     zstd: "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
@@ -1260,12 +1260,14 @@ describe.concurrent(() => {
 
   it("process._fatalException", async () => {
     // Returns whether an uncaughtException handler claimed the error
-    // (Node semantics), so it is a boolean rather than undefined.
+    // (Node semantics), so it is a boolean rather than undefined. The second
+    // argument (fromPromise) selects the origin passed to the handler.
     await runInlineFixture(
       `console.log(process._fatalException(new Error("nobody listening")));
-       process.on("uncaughtException", () => {});
-       console.log(process._fatalException(new Error("handled")));`,
-      "false\ntrue\n",
+       process.on("uncaughtException", (err, origin) => console.log(origin));
+       console.log(process._fatalException(new Error("handled")));
+       console.log(process._fatalException(new Error("from promise"), true));`,
+      "false\nuncaughtException\ntrue\nunhandledRejection\ntrue\n",
       0,
     );
   });
@@ -2101,6 +2103,26 @@ it("--disable-warning suppresses print but not user 'warning' listeners", async 
   expect(stdout.trim()).toBe("listener:TESTCODE");
   expect(stderr).not.toMatch(/TESTCODE/);
   expect(exitCode).toBe(0);
+});
+
+// Bun analog of the upstream test-process-warnings.mjs NODE_OPTIONS case, which
+// is skipped via process.config.variables.node_without_node_options because Bun
+// reads BUN_OPTIONS instead of NODE_OPTIONS.
+it.each(["main thread", "worker"])("--disable-warning is honored via BUN_OPTIONS (%s)", async where => {
+  const body = `process.emitWarning("one", { type: "DeprecationWarning", code: "DEP1" });
+     process.emitWarning("two", { type: "DeprecationWarning", code: "DEP2" });`;
+  const src =
+    where === "worker" ? `new (require("node:worker_threads").Worker)(${JSON.stringify(body)}, { eval: true });` : body;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, BUN_OPTIONS: "--disable-warning=DEP2" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toMatch(/\[DEP1\] DeprecationWarning: one/);
+  expect(stderr).not.toMatch(/DEP2/);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
 });
 
 it("_rawDebug never throws when fd 2 is closed", async () => {

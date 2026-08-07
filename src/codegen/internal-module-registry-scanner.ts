@@ -54,7 +54,7 @@ export function createInternalModuleRegistry(basedir: string) {
 
   if (nextNativeModuleId === 0) {
     throw new Error(
-      "Could not find BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE in _NativeModule.h. Knowing native module IDs is a part of the codegen process.",
+      "Could not find BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE in NativeModuleList.h. Knowing native module IDs is a part of the codegen process.",
     );
   }
 

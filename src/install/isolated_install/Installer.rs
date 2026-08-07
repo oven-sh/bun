@@ -902,6 +902,29 @@ impl Task {
                             };
                             let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
 
+                            // The hardlink/copy walk below only visits names
+                            // present in the source folder, so rebuilding in
+                            // place merges: a file deleted from the folder
+                            // dependency would survive in the store entry
+                            // forever. Delete to replace, matching the hoisted
+                            // linker's uninstall-before-install. (Lifecycle
+                            // scripts re-run on every install for folder
+                            // entries, so artifacts they write are recreated.)
+                            //
+                            // Root entries only reach LinkPackage as a
+                            // dependency on the root package (`"x": "file:."`);
+                            // for those `append_store_path` yields the store
+                            // entry's package dir, never the project dir.
+                            debug_assert!(
+                                pkg_res.tag != ResolutionTag::Root
+                                    || dep_id != invalid_dependency_id
+                            );
+                            let mut prev_build = AutoPath::init_top_level_dir();
+                            installer.append_store_path(&mut prev_build, self.entry_id);
+                            if let Some(e) = Fd::cwd().delete_tree(prev_build.slice()).err() {
+                                return Ok(Yield::failure(TaskError::LinkPackage(e)));
+                            }
+
                             let mut backend = InstallMethod::Hardlink;
                             'backend: loop {
                                 match backend {

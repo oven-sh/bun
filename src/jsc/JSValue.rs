@@ -1588,7 +1588,7 @@ impl JSValue {
     }
 
     pub fn temporal_type(self) -> TemporalType {
-        crate::cpp::Bun__JSValue__temporalObjectType(self)
+        crate::cpp::Bun__JSValue__temporalType(self)
     }
 
     /// Requires `self.temporal_type() != TemporalType::None`; e.g. `("Temporal.PlainDate", "2020-01-02")`.
@@ -2161,7 +2161,7 @@ pub enum ProxyField {
     Handler = 1,
 }
 
-/// `Bun::TemporalType` (Temporal.h) — result of [`JSValue::temporal_type`].
+/// `JSC::TemporalType` (TemporalObject.h) — result of [`JSValue::temporal_type`].
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemporalType {

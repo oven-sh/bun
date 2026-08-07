@@ -451,7 +451,7 @@ const rustSharedTypes: Record<string, string> = {
 
   // JSC / Bun
   "BunString": "bun_core::String",
-  "Bun::TemporalType": "crate::TemporalType",
+  "JSC::TemporalType": "crate::TemporalType",
   "JSC::EncodedJSValue": "crate::JSValue",
   "EncodedJSValue": "crate::JSValue",
   "JSC::JSGlobalObject": "crate::JSGlobalObject",

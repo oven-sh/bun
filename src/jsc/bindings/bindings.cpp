@@ -108,8 +108,8 @@
 #include "JavaScriptCore/TemporalPlainTime.h"
 #include "JavaScriptCore/TemporalPlainYearMonth.h"
 #include "JavaScriptCore/TemporalZonedDateTime.h"
+#include "JavaScriptCore/TemporalObject.h"
 #include "JavaScriptCore/TimeZoneICUBridge.h"
-#include "Temporal.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
@@ -1225,7 +1225,7 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     }
     // `o1` is not a Temporal object; a Temporal `o2` can then never be equal
     // (and must not reach the own-property walk).
-    if (Bun::temporalObjectType(o2) != Bun::TemporalType::None)
+    if (JSC::temporalType(o2) != JSC::TemporalType::None)
         return false;
     return std::nullopt;
 }

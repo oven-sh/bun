@@ -79,6 +79,7 @@ pub struct Inner {
 // SAFETY: `vm` is only dereferenced under the gate described in the module doc;
 // everything else is atomics / std sync primitives.
 unsafe impl Send for Inner {}
+// SAFETY: as above.
 unsafe impl Sync for Inner {}
 
 /// See the module documentation. `repr(transparent)` over the `Arc` so a
@@ -105,10 +106,17 @@ impl Drop for Access<'_> {
 /// An off-thread job is using memory the VM owns (request buffers, a JS
 /// buffer's backing store) for as long as this is held; the VM's teardown
 /// waits for it before freeing anything. Obtain with [`VmHandle::borrow`].
-pub struct Borrow(
-    #[allow(dead_code)] Access<'static>,
-    #[allow(dead_code)] VmHandle,
-);
+pub struct Borrow {
+    _access: Access<'static>,
+    handle: VmHandle,
+}
+
+impl Borrow {
+    /// The VM this borrow keeps open.
+    pub fn handle(&self) -> &VmHandle {
+        &self.handle
+    }
+}
 
 impl VmHandle {
     /// JS thread, at VM creation.
@@ -245,7 +253,10 @@ impl VmHandle {
         // SAFETY: lifetime extension is sound because `Borrow` also holds a
         // clone of the Arc that `a` borrows from.
         let a: Access<'static> = unsafe { core::mem::transmute(a) };
-        Some(Borrow(a, self.clone()))
+        Some(Borrow {
+            _access: a,
+            handle: self.clone(),
+        })
     }
 
     // ── JS-thread API ─────────────────────────────────────────────────────
@@ -595,6 +606,7 @@ pub struct IsolatedPosterInner {
 }
 // SAFETY: `event_loop` is dereferenced only under the gate (open && counted).
 unsafe impl Send for IsolatedPosterInner {}
+// SAFETY: as above.
 unsafe impl Sync for IsolatedPosterInner {}
 
 impl IsolatedPosterInner {

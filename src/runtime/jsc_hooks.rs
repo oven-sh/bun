@@ -1779,15 +1779,15 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
             // cannot fire before `close()` drops the wrapper's Strong ref.
             ActiveHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
             ActiveHandle::Server(mut s) => s.stop(true),
-            // Live until it unregisters in `do_stop`/`finalize`.
             ActiveHandle::Listener(l) => {
+                // SAFETY: live until it unregisters in `do_stop`/`finalize`.
                 crate::socket::Listener::stop_for_vm_teardown(unsafe { l.as_ref() })
             }
-            // Live until it unregisters in `deinit`.
+            // SAFETY: live until it unregisters in `deinit`.
             ActiveHandle::DuplexUpgrade(c) => unsafe {
                 crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c.as_ptr())
             },
-            // Live until it unregisters when its deinit task runs.
+            // SAFETY: live until it unregisters when its deinit task runs.
             #[cfg(windows)]
             ActiveHandle::WindowsNamedPipe(c) => unsafe {
                 crate::socket::WindowsNamedPipeContext::stop_for_vm_teardown(c.as_ptr())

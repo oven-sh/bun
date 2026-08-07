@@ -564,6 +564,7 @@ pub struct JsPoster {
 // SAFETY: `data` is an erased `Arc<VmHandle inner>`; the vtable fns are the
 // thread-safe VmHandle operations.
 unsafe impl Send for JsPoster {}
+// SAFETY: as above.
 unsafe impl Sync for JsPoster {}
 
 impl JsPoster {
@@ -591,8 +592,8 @@ impl JsPoster {
 
 impl Clone for JsPoster {
     fn clone(&self) -> Self {
-        // SAFETY: vtable contract.
         Self {
+            // SAFETY: vtable contract.
             data: unsafe { (self.vtable.clone)(self.data) },
             vtable: self.vtable,
         }

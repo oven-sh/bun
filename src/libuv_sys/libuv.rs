@@ -502,7 +502,9 @@ impl Loop {
                     // never return.
                     let mut rc = ReturnCode::ZERO;
                     for _ in 0..64 {
+                        // SAFETY: this thread's initialised loop; nothing else drives it.
                         let _ = unsafe { uv_run(loop_, RunMode::NoWait) };
+                        // SAFETY: as above.
                         rc = unsafe { uv_loop_close(loop_) };
                         if rc == ReturnCode::ZERO {
                             break;

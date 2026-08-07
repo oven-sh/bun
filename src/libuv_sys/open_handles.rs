@@ -115,6 +115,7 @@ pub fn stop_all_for_vm_teardown() {
             // SAFETY: listed ⇒ initialised on this thread and not closing; a
             // pipe/tty nobody adopted is a leaked Box handed to libuv here.
             (None, Kind::Pipe) => unsafe { Pipe::close_and_destroy_unlisted(e.handle.cast()) },
+            // SAFETY: as above (a leaked Box<uv_tty_t> nobody adopted).
             (None, Kind::Tty) => unsafe {
                 unsafe extern "C" fn free_tty(t: *mut uv_tty_t) {
                     // SAFETY: heap tty (stdin's static tty is never listed).
@@ -130,6 +131,7 @@ pub fn stop_all_for_vm_teardown() {
             },
             // A process handle is embedded in its owner and always adopted at
             // spawn; an unowned one cannot be freed safely — close in place.
+            // SAFETY: listed ⇒ an initialised, not-closing handle on this loop.
             (None, Kind::Process) => unsafe { uv_close(e.handle, None) },
         }
     }

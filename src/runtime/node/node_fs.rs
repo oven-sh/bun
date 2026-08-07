@@ -1336,8 +1336,8 @@ mod _async_tasks {
             // Deliver the result to the VM. Ownership of `this` transfers to the JS
             // thread on Queued; on Refused (VM torn down) it stays here and is
             // released without touching JSC.
-            // SAFETY: `this` is still exclusively owned here (see above).
             let ct = ConcurrentTask::create_from(this);
+            // SAFETY: `this` is still exclusively owned here (see above).
             let posted = unsafe { (*this).loop_handle.post_task(ct) };
             if let bun_jsc::vm_handle::Posted::Refused(ct) = posted {
                 // SAFETY: refused ⇒ we own the ConcurrentTask box and `this`.

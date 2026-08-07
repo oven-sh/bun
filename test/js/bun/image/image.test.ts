@@ -79,3 +79,21 @@ test("launch context (argv, env, cwd, HOME) comes from the restoring process, no
   expect(got.cwd.endsWith("/b")).toBe(true);
   expect(code).toBe(0);
 }, 60000);
+
+test("full GC right after restore is not stalled by the builder's parked threads", async () => {
+  using dir = tempDir("bun-image-gctime", {});
+  const img = join(String(dir), "gct.img");
+  const fixture = join(import.meta.dir, "gctime-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    await p.exited;
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img }, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  const m = out.match(/full gc #2 (\d+) ms; #3 (\d+) ms/);
+  expect(m, err.slice(-1000)).not.toBeNull();
+  // was 10_000 ms (AutomaticThread timeout) before ParkingLot entries were dropped at restore
+  expect(Number(m![1])).toBeLessThan(2000);
+  expect(Number(m![2])).toBeLessThan(2000);
+  expect(code).toBe(0);
+}, 60000);

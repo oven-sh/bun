@@ -1563,21 +1563,16 @@ impl VirtualMachine {
         // all: no 'exit' handlers or close events for a forcefully terminated
         // worker, matching Node and WebCore's terminate()).
         {
-            let global = self.global();
-            // A worker stopped by its parent (worker.terminate()) runs no exit
-            // handlers or close events. A worker exiting on its own —
-            // process.exit(), or an uncaught exception — does, even though Bun
-            // stops its script with the same termination trap: that trap's
-            // leftover exception is cleared along with any ordinary one.
-            let stopped_by_parent = self.worker_ref().is_some_and(|w| w.stopped_by_parent());
-            if stopped_by_parent {
-                self.forbid_script();
+            unsafe extern "C" {
+                safe fn Bun__GlobalObject__clearExceptionsForExit(global: &JSGlobalObject);
             }
-            // Either way the trap has done its job (script was unwound); what
-            // remains pending would only trip native code that runs below.
-            if !global.clear_exception_except_termination() {
-                self.jsc_vm().clear_has_termination_request();
-                global.clear_termination_exception();
+            Bun__GlobalObject__clearExceptionsForExit(self.global());
+            // A worker stopped by its parent (worker.terminate()) runs no exit
+            // handlers. A worker exiting on its own — process.exit(), or an
+            // uncaught exception — does, even though Bun stops its script with
+            // the same trap.
+            if self.worker_ref().is_some_and(|w| w.stopped_by_parent()) {
+                self.forbid_script();
             }
         }
 
@@ -1684,8 +1679,10 @@ impl VirtualMachine {
     /// (worker: unpublished under `vm_lock`); `is_shutting_down` is set and
     /// the exit handlers have run.
     pub(crate) unsafe fn teardown(this: *mut Self, kind: Teardown) {
-        // SAFETY: per fn contract — sole owner on the owning thread.
-        let vm = unsafe { &mut *this };
+        // SAFETY: per fn contract — sole owner on the owning thread. Shared
+        // here; the few `&mut` steps below are statement-scoped, because the
+        // hooks re-derive their own access from `this`.
+        let vm = unsafe { &*this };
         let hooks = runtime_hooks();
 
         // ---- A. no more script; stop phase ------------------------------------
@@ -1721,7 +1718,8 @@ impl VirtualMachine {
             unsafe { uws::Timer::close::<true>(t.as_ptr()) };
         }
         if let Some(hooks) = hooks {
-            (hooks.stop_cron_for_vm_teardown)(vm);
+            // SAFETY: fn contract (statement-scoped exclusive access).
+            (hooks.stop_cron_for_vm_teardown)(unsafe { &mut *this });
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
             // +1 while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
@@ -1736,8 +1734,11 @@ impl VirtualMachine {
             // SAFETY: fn contract.
             unsafe { (hooks.disarm_all_timers_for_vm_teardown)(this) };
         }
-        vm.gc_controller.deinit();
-        crate::web_worker::join_child_workers(vm);
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        unsafe {
+            (*this).gc_controller.deinit();
+            crate::web_worker::join_child_workers(&mut *this);
+        }
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.
         vm.close_sqlite_databases_for_exit();
@@ -1770,9 +1771,12 @@ impl VirtualMachine {
         // Tasks posted by other threads (HTTP, children before they were
         // joined) or by the request callbacks above: release, do not run —
         // their JSC handles must drop against a live heap.
-        vm.release_queued_work();
-        if let Some(rare) = vm.rare_data.as_deref_mut() {
-            rare.release_js_handles();
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        unsafe {
+            (*this).release_queued_work();
+            if let Some(rare) = (*this).rare_data.as_deref_mut() {
+                rare.release_js_handles();
+            }
         }
         teardown_log!("teardown: script forbidden, resources cancelled, children joined");
 
@@ -1798,7 +1802,8 @@ impl VirtualMachine {
             // on Windows it shares `active_handles` with libuv and a residue
             // would keep the loop close below spinning.
             vm.event_loop_mut().apply_concurrent_ref_delta();
-            if let Some(rare) = vm.rare_data.as_deref_mut() {
+            // SAFETY: fn contract (statement-scoped exclusive access).
+            if let Some(rare) = unsafe { (*this).rare_data.as_deref_mut() } {
                 rare.detach_socket_groups_from_loop();
             }
             // SAFETY: this thread's loop; nothing ticks it any more.
@@ -1811,17 +1816,12 @@ impl VirtualMachine {
         }
 
         // ---- E. free owners --------------------------------------------------
-        vm.destroy();
+        // SAFETY: fn contract; last use of `this`.
+        unsafe { (*this).destroy() };
     }
 }
 
 impl VirtualMachine {
-    /// Release — never run — everything queued on both event loops (tasks,
-    /// concurrent tasks, pending immediates) while the JSC heap and this
-    /// thread's loop are alive: their JS handles and keep-alives drop now. The
-    /// macro loop is only ever ticked explicitly, so whatever a macro queued on
-    /// it is still there. Teardown phase B; also the one thing an owner that
-    /// calls `destroy()` without a teardown (bake's build VM) must do first.
     /// One stop-phase sweep: registered handles (servers, listeners, watchers,
     /// duplex/named-pipe sockets, resolvers), a worker's uv stream/process
     /// handles, every socket group, the VM-global dns channel. Reports whether
@@ -1830,8 +1830,6 @@ impl VirtualMachine {
     /// # Safety
     /// As [`teardown`](Self::teardown): sole owner on the owning thread, heap alive.
     unsafe fn stop_phase_sweep(this: *mut Self, kind: Teardown) -> SweepResult {
-        // SAFETY: fn contract.
-        let vm = unsafe { &mut *this };
         let hooks = runtime_hooks();
         let mut result = SweepResult::Idle;
         if let Some(hooks) = hooks {
@@ -1850,10 +1848,11 @@ impl VirtualMachine {
             bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
         }
         let _ = kind;
-        if let Some(rare) = vm.rare_data.as_deref_mut() {
-            // `close_all_socket_groups` walks the loop's group list through the
-            // VM and never touches `rare_data`, so the re-derived shared borrow
-            // is disjoint. SAFETY: fn contract.
+        // `close_all_socket_groups` walks the loop's group list through the VM
+        // and never touches `rare_data`, so the two accesses are disjoint.
+        // SAFETY: fn contract.
+        if let Some(rare) = unsafe { (*this).rare_data.as_deref_mut() } {
+            // SAFETY: as above.
             result = result.and(rare.close_all_socket_groups(unsafe { &*this }));
         }
         if let Some(hooks) = hooks {
@@ -1862,6 +1861,12 @@ impl VirtualMachine {
         result
     }
 
+    /// Release — never run — everything queued on both event loops (tasks,
+    /// concurrent tasks, pending immediates) while the JSC heap and this
+    /// thread's loop are alive: their JS handles and keep-alives drop now. The
+    /// macro loop is only ever ticked explicitly, so whatever a macro queued on
+    /// it is still there. Teardown phase B; also the one thing an owner that
+    /// calls `destroy()` without a teardown (bake's build VM) must do first.
     pub fn release_queued_work(&mut self) {
         self.regular_event_loop.release_queued_tasks();
         self.macro_event_loop.release_queued_tasks();

@@ -993,10 +993,6 @@ impl WebWorker {
             // SAFETY: vm_ptr valid; unpublished above under vm_lock, so no
             // other thread can dereference it now — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
-            // terminate() set the JSC termination flag to interrupt running JS;
-            // clear it so process.on('exit') handlers can run. teardownJSCVM
-            // re-sets it for the JSC VM teardown.
-            vm.jsc_vm().clear_has_termination_request();
             vm.is_shutting_down = true;
             vm.on_exit();
             exit_code = i32::from(vm.exit_handler.exit_code);

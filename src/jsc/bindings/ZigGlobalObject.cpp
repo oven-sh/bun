@@ -4264,9 +4264,25 @@ void GlobalObject::forbidExecution()
 
     // WorkerOrWorkletScriptController::forbidExecution() + scheduleExecutionTermination(): no script
     // past this point. executionForbidden is what the native→JS boundary (Bun__JSValue__call,
-    // JSEventListener via isJSExecutionForbidden) and JSC's microtask drain consult.
+    // JSEventListener via isJSExecutionForbidden) and JSC's microtask drain consult; the
+    // termination request unwinds anything JSC enters internally, which needs the exception
+    // object to exist (a main-thread VM never materialized it before this).
+    vm.ensureTerminationException();
     vm.setExecutionForbidden();
     vm.setHasTerminationRequest();
+}
+
+extern "C" void Bun__GlobalObject__clearExceptionsForExit(Zig::GlobalObject* globalObject)
+{
+    // Whatever unwound script to reach the exit sequence — the stop trap (a termination
+    // request/exception) or an ordinary exception thrown across process.exit() — is spent;
+    // the native teardown that follows must not trip over it (Node's EmitProcessExit runs
+    // under a TryCatch for the same reason).
+    auto& vm = globalObject->vm();
+    vm.clearHasTerminationRequest();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (scope.exception())
+        scope.clearException();
 }
 
 static void destroyVM(JSC::VM& vm)

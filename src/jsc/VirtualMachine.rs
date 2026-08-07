@@ -1693,46 +1693,11 @@ impl VirtualMachine {
         // ---- A. stop phase; script may still run ------------------------------
         vm.handle.set_stopping();
         Zig__GlobalObject__prepareForDestruction(vm.global());
-        // Each sweep below dispatches close handlers, and a handler may open
-        // something an earlier sweep already emptied (a socket from a DNS
-        // rejection, a server from an on_close). Repeat until a whole round
-        // finds nothing to stop, so nothing survives into B. The bound only
-        // exists so a handler that reopens on every close cannot wedge
-        // teardown (the same bound `close_all_socket_groups` uses internally);
-        // whatever is still open after it is closed with script already
-        // refused, by finalizers and the loop free.
-        let mut rounds = 0u8;
-        loop {
-            let mut round = SweepResult::Idle;
-            if let Some(hooks) = hooks {
-                // SAFETY: fn contract; JSC heap alive.
-                round = round.and(unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) });
-            }
-            // A worker's uv loop is closed in D, so every pipe / tty / child-process
-            // handle open on it closes now — through whoever drives it (reader,
-            // writer, IPC channel, named pipe, Process), or directly if nothing
-            // adopted it — so pending writes complete (ECANCELED) against a live VM
-            // and no request on them can hold up the loop drain in B. The exiting
-            // main thread keeps its loop (the OS reclaims the handles); sweeping them
-            // there only re-enters stream owners under still-running script.
-            #[cfg(windows)]
-            if matches!(kind, Teardown::Worker) {
-                bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
-            }
-            if let Some(rare) = vm.rare_data.as_deref_mut() {
-                // `close_all_socket_groups` walks the loop's group list through
-                // the VM and never touches `rare_data`, so the re-derived shared
-                // borrow is disjoint. SAFETY: fn contract.
-                round = round.and(rare.close_all_socket_groups(unsafe { &*this }));
-            }
-            if let Some(hooks) = hooks {
-                round = round.and((hooks.stop_dns_for_vm_teardown)());
-            }
-            rounds += 1;
-            if round == SweepResult::Idle || rounds == 8 {
-                break;
-            }
-        }
+        // Close handlers run during this sweep, and a handler may open something
+        // a sweep already emptied (a socket from a DNS rejection, a server from
+        // an on_close) — those are picked up by the second, silent sweep below.
+        // SAFETY: fn contract.
+        let _ = unsafe { Self::stop_phase_sweep(this, kind) };
         if matches!(kind, Teardown::MainThreadExit) {
             // The HTTP thread holds a `Box<ThreadlocalAsyncHTTP>` per in-flight
             // request that will never complete now; have it reclaim them (≤1 s).
@@ -1742,6 +1707,18 @@ impl VirtualMachine {
 
         // ---- B. no more script -----------------------------------------------
         vm.forbid_script();
+        // Whatever A's close handlers opened is stopped now, silently. Nothing
+        // can reopen after this one — script is refused — so the stop phase is
+        // quiescent by construction (Node needs no bound either: its cleanup
+        // runs with can_call_into_js already false).
+        // SAFETY: fn contract.
+        unsafe {
+            let _ = Self::stop_phase_sweep(this, kind);
+            debug_assert!(
+                Self::stop_phase_sweep(this, kind) == SweepResult::Idle,
+                "something registered a stoppable resource after script was forbidden"
+            );
+        }
         // After the stop phase (its close handlers may still have used them),
         // before finalizers could: sqlite connections checkpoint and close.
         vm.close_sqlite_databases_for_exit();
@@ -1837,6 +1814,46 @@ impl VirtualMachine {
     /// macro loop is only ever ticked explicitly, so whatever a macro queued on
     /// it is still there. Teardown phase B; also the one thing an owner that
     /// calls `destroy()` without a teardown (bake's build VM) must do first.
+    /// One stop-phase sweep: registered handles (servers, listeners, watchers,
+    /// duplex/named-pipe sockets, resolvers), a worker's uv stream/process
+    /// handles, every socket group, the VM-global dns channel. Reports whether
+    /// it found anything.
+    ///
+    /// # Safety
+    /// As [`teardown`](Self::teardown): sole owner on the owning thread, heap alive.
+    unsafe fn stop_phase_sweep(this: *mut Self, kind: Teardown) -> SweepResult {
+        // SAFETY: fn contract.
+        let vm = unsafe { &mut *this };
+        let hooks = runtime_hooks();
+        let mut result = SweepResult::Idle;
+        if let Some(hooks) = hooks {
+            // SAFETY: fn contract.
+            result = result.and(unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) });
+        }
+        // A worker's uv loop is closed in D, so every pipe / tty / child-process
+        // handle open on it closes now — through whoever drives it (reader,
+        // writer, IPC channel, named pipe, Process), or directly if nothing
+        // adopted it — so pending writes complete (ECANCELED) against a live VM
+        // and no request on them can hold up the loop drain in B. The exiting
+        // main thread keeps its loop (the OS reclaims the handles); sweeping
+        // them there only re-enters stream owners under still-running script.
+        #[cfg(windows)]
+        if matches!(kind, Teardown::Worker) {
+            bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
+        }
+        let _ = kind;
+        if let Some(rare) = vm.rare_data.as_deref_mut() {
+            // `close_all_socket_groups` walks the loop's group list through the
+            // VM and never touches `rare_data`, so the re-derived shared borrow
+            // is disjoint. SAFETY: fn contract.
+            result = result.and(rare.close_all_socket_groups(unsafe { &*this }));
+        }
+        if let Some(hooks) = hooks {
+            result = result.and((hooks.stop_dns_for_vm_teardown)());
+        }
+        result
+    }
+
     pub fn release_queued_work(&mut self) {
         self.regular_event_loop.release_queued_tasks();
         self.macro_event_loop.release_queued_tasks();
@@ -1851,8 +1868,7 @@ pub(crate) enum Teardown {
     MainThreadExit,
 }
 
-/// What one stop-phase sweep found. The stop phase repeats its sweeps until a
-/// whole round comes back `Idle`.
+/// What one stop-phase sweep found (see `VirtualMachine::stop_phase_sweep`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[must_use]
 pub enum SweepResult {

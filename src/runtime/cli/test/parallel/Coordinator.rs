@@ -211,8 +211,10 @@ impl<'a> Coordinator<'a> {
                 }
                 #[cfg(not(unix))]
                 {
+                    // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
+                    // other than SIGQUIT/SIGTERM/SIGKILL/SIGINT.
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                    let _ = unsafe { (*p).kill(1) };
+                    let _ = unsafe { (*p).kill(9) };
                 }
             }
         }
@@ -580,7 +582,8 @@ impl<'a> Coordinator<'a> {
             // and the run continues in a fresh worker. If the worker was
             // killed by a fatal signal — SIGABRT from Bun's own panic handler
             // or a JSC/WTF assertion, SIGSEGV/SIGBUS/SIGFPE/SIGILL from native
-            // code — that's a Bun or addon bug and must not be
+            // code — or died with the Windows NTSTATUS equivalent, that's a
+            // Bun or addon bug and must not be
             // masked by the rest of the suite passing: abort the whole run so
             // the exit status reflects the crash. SIGKILL is treated as a
             // regular failure (commonly the OOM killer or the user).
@@ -728,8 +731,12 @@ impl<'a> Coordinator<'a> {
                 }
                 #[cfg(not(unix))]
                 {
+                    // SIGKILL → TerminateProcess (libuv-win ENOSYSes most
+                    // signals, so e.g. kill(1) would leave the sibling running
+                    // past the banner); it reaps as Signaled(9) →
+                    // "aborted: sibling worker panicked".
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                    let _ = unsafe { (*p).kill(1) };
+                    let _ = unsafe { (*p).kill(9) };
                 }
             }
         }
@@ -811,34 +818,83 @@ impl<'a> Coordinator<'a> {
 /// as opposed to the test calling process.exit() or being SIGKILL'd by
 /// the OOM killer. Bun's panic handler re-raises the original fault
 /// (SIGSEGV/SIGBUS/SIGFPE/SIGILL) or SIGABRT for panics; JSC/WTF
-/// assertion failures abort() → SIGABRT. On Windows
-/// neither surfaces as a signal — abort() is exit code 3 and NTSTATUS
-/// fault codes arrive as a plain exit status, both indistinguishable
-/// from process.exit(N) — so this classification is effectively
-/// POSIX-only and Windows worker crashes fall into the non-panic
-/// per-file-failure branch.
+/// assertion failures abort() → SIGABRT.
+///
+/// Windows delivers no signals: an unhandled exception or `__fastfail`
+/// exits with the NTSTATUS as the exit code, so recognized fatal values of
+/// `Exited.raw` (the untruncated code; `Exited.code` is `u8`) classify as
+/// panics too. A fault Bun's crash handler catches still exits with code
+/// 3, indistinguishable from process.exit(3), and stays a per-file
+/// failure, recognizable only by its banner in stderr.
 fn is_panic_status(status: &SpawnStatus) -> bool {
-    let Some(sig) = status.signal_code() else {
-        return false;
-    };
-    use bun_core::SignalCode;
+    if let Some(sig) = status.signal_code() {
+        use bun_core::SignalCode;
+        return matches!(
+            sig,
+            SignalCode::SIGILL
+                | SignalCode::SIGTRAP
+                | SignalCode::SIGABRT
+                | SignalCode::SIGBUS
+                | SignalCode::SIGFPE
+                | SignalCode::SIGSEGV
+                | SignalCode::SIGSYS
+        );
+    }
+    #[cfg(windows)]
+    if let SpawnStatus::Exited(e) = status {
+        return is_fatal_windows_exit_code(e.raw);
+    }
+    false
+}
+
+/// Fatal NTSTATUS exit codes — the Windows mirror of the signal list
+/// above. An allowlist, not `>= 0xC0000000`, because high exit codes are
+/// not all faults: 0xC000013A is Ctrl+C (the SIGINT analog), and foreign
+/// code in the worker can exit with arbitrary DWORDs (CRT `exit(-1)` is
+/// 0xFFFFFFFF). TerminateProcess (taskkill, job limits) stays a per-file
+/// failure, like SIGKILL.
+#[cfg(windows)]
+#[rustfmt::skip]
+fn is_fatal_windows_exit_code(code: u32) -> bool {
     matches!(
-        sig,
-        SignalCode::SIGILL
-            | SignalCode::SIGTRAP
-            | SignalCode::SIGABRT
-            | SignalCode::SIGBUS
-            | SignalCode::SIGFPE
-            | SignalCode::SIGSEGV
-            | SignalCode::SIGSYS
+        code,
+        0x8000_0003                  // STATUS_BREAKPOINT: unhandled int3 (SIGTRAP)
+        | 0x8000_0004                // STATUS_SINGLE_STEP (SIGTRAP)
+        | 0xC000_0005                // STATUS_ACCESS_VIOLATION (SIGSEGV)
+        | 0xC000_0006                // STATUS_IN_PAGE_ERROR (SIGBUS)
+        | 0xC000_001D                // STATUS_ILLEGAL_INSTRUCTION (SIGILL)
+        | 0xC000_0025                // STATUS_NONCONTINUABLE_EXCEPTION
+        | 0xC000_008C                // STATUS_ARRAY_BOUNDS_EXCEEDED
+        | 0xC000_008D..=0xC000_0093  // STATUS_FLOAT_* faults (SIGFPE)
+        | 0xC000_0094                // STATUS_INTEGER_DIVIDE_BY_ZERO (SIGFPE)
+        | 0xC000_0095                // STATUS_INTEGER_OVERFLOW (SIGFPE)
+        | 0xC000_0096                // STATUS_PRIVILEGED_INSTRUCTION (SIGILL)
+        | 0xC000_00FD                // STATUS_STACK_OVERFLOW
+        | 0xC000_0374                // STATUS_HEAP_CORRUPTION
+        | 0xC000_0409                // STATUS_STACK_BUFFER_OVERRUN: __fastfail —
+                                     // UCRT abort(), Rust abort, /GS checks (SIGABRT)
+        | 0xC000_0417                // STATUS_INVALID_CRUNTIME_PARAMETER
+        | 0xC000_041D                // STATUS_FATAL_USER_CALLBACK_EXCEPTION
+        | 0xC000_0420                // STATUS_ASSERTION_FAILURE
+        | 0xC000_0602                // STATUS_FAIL_FAST_EXCEPTION
     )
 }
 
 fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] {
     match status {
         SpawnStatus::Exited(e) => {
+            // Windows: report the untruncated code; NTSTATUS values print in
+            // hex ("exit code 0xC0000409"), the form Windows tooling uses.
+            #[cfg(windows)]
+            let code: u32 = e.raw;
+            #[cfg(not(windows))]
+            let code: u32 = u32::from(e.code);
             let mut cursor: &mut [u8] = &mut buf[..];
-            write!(cursor, "exit code {}", e.code).expect("unreachable");
+            if code >= 0x8000_0000 {
+                write!(cursor, "exit code 0x{code:08X}").expect("unreachable");
+            } else {
+                write!(cursor, "exit code {code}").expect("unreachable");
+            }
             let remaining = cursor.len();
             &buf[..buf.len() - remaining]
         }

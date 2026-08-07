@@ -781,9 +781,9 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
       stdout: "pipe",
       stderr: "pipe",
     });
-    // The rejected handler is logged to stderr by design; assert only the
-    // drain behavior.
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // The rejected handler is logged to stderr by design; drain it but assert
+    // only the drain behavior.
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       out: { resolvedEarly: false, got500: true, resolved: true },
       exitCode: 0,

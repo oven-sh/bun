@@ -1905,7 +1905,10 @@ __attribute__((callback (corker, ctx)))
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto pair = uwsRes->tryEnd(stringViewFromC(bytes, len), total_len, close);
-      if (pair.first) {
+      /* A completed tryEnd may have closed the socket through a
+       * shouldCloseConnection() gate, destructing the ext; markDone already
+       * cleared the callbacks in that case. */
+      if (pair.first && !us_socket_is_closed((struct us_socket_t *)res)) {
         uwsRes->clearOnWritableAndAborted();
       }
 
@@ -1915,7 +1918,8 @@ __attribute__((callback (corker, ctx)))
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto pair = uwsRes->tryEnd(stringViewFromC(bytes, len), total_len, close);
-      if (pair.first) {
+      /* See the SSL arm above. */
+      if (pair.first && !us_socket_is_closed((struct us_socket_t *)res)) {
           uwsRes->clearOnWritableAndAborted();
       }
 

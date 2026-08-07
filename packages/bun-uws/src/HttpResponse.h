@@ -609,6 +609,12 @@ public:
      * Starts a timeout in some cases. Returns [ok, hasResponded] */
     std::pair<bool, bool> tryEnd(std::string_view data, uintmax_t totalSize = 0, bool closeConnection = false) {
         bool ok = internalEnd(data, totalSize, true, true, closeConnection);
+        /* internalEnd's close gate may have closed the socket (destructing the
+         * ext hasResponded() reads); that only happens once the response has
+         * completed, so report responded without touching it. */
+        if (us_socket_is_closed((us_socket_t *) this)) {
+            return {ok, true};
+        }
         return {ok, hasResponded()};
     }
 

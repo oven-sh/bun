@@ -358,6 +358,12 @@ struct us_connecting_socket_t {
     unsigned char kind;
     uint16_t port;
     int error;
+    /* errno of the most recent candidate-address failure (synchronous
+     * socket()/connect() failure in start_connections, or the SO_ERROR a
+     * failed candidate reported through after_open). When every address is
+     * exhausted this becomes the reported error instead of a blanket
+     * ECONNREFUSED, matching libuv/node (ETIMEDOUT stays ETIMEDOUT). */
+    int last_candidate_error;
     struct addrinfo *addrinfo_head;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;

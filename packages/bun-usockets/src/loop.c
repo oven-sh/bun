@@ -485,17 +485,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * before we collected the event. Report the kernel's actual
                  * SO_ERROR (ECONNRESET for that race) instead of the literal
                  * boolean, which downstream would misreport as ECONNREFUSED.
-                 * libuv does the same getsockopt in uv__stream_connect. */
+                 * libuv does the same getsockopt in uv__stream_connect, and
+                 * like libuv the verdict is SO_ERROR alone: zero means the
+                 * connect itself succeeded and the hint is the peer closing
+                 * right after accepting (deterministic for an AF_UNIX server
+                 * that accepts, writes and closes within one event-loop turn
+                 * of the client - a peer close there raises EPOLLHUP with no
+                 * socket error). Open the socket and let the read path deliver
+                 * the pending data and EOF; fabricating ECONNRESET here
+                 * reported a successful connect as failed and discarded the
+                 * server's reply. A connect that completed and was then RST
+                 * still reports: the reset leaves SO_ERROR nonzero. */
                 int connect_error = 0;
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
-                    if (connect_error == 0) {
-#ifdef _WIN32
-                        connect_error = WSAECONNRESET;
-#else
-                        connect_error = ECONNRESET;
-#endif
-                    }
                 }
                 us_internal_socket_after_open((struct us_socket_t *) p, connect_error);
             } else {

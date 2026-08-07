@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { randomBytes } from "crypto";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -154,4 +155,68 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
     emptyErr: "Unexpected end of JSON input",
   });
   expect(exitCode).toBe(0);
+});
+
+describe("Bun.file().text()", () => {
+  test.each([
+    ["ascii", Buffer.from(Buffer.alloc(1000, "hello world\n").toString())],
+    ["utf8-multibyte", Buffer.from(Buffer.alloc(1000, "héllo wörld 🎉\n").toString())],
+    ["utf8-bom", Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("hello bom\n")])],
+    ["utf16le-bom", Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("hello utf16\n", "utf16le")])],
+    ["invalid-utf8", Buffer.from([0x80, 0x81, 0x82, 0xff, 0xfd, 0xc0, 0xc1])],
+    ["bom-only", Buffer.from([0xef, 0xbb, 0xbf])],
+    ["empty", Buffer.from([])],
+  ])("decodes %s identically to in-memory Blob", async (name, bytes) => {
+    using dir = tempDir("bun-file-text-decode", { "data.bin": bytes });
+    const viaFile = await Bun.file(join(dir, "data.bin")).text();
+    const viaBlob = await new Blob([bytes]).text();
+    expect(viaFile).toBe(viaBlob);
+  });
+
+  // The POSIX ReadFile task runs the UTF-8 decode on the work pool; on
+  // Windows ReadFileUV delivers bytes on the uv loop thread, so the decode
+  // still happens inline there.
+  test.skipIf(isWindows)("does not block the event loop while decoding", async () => {
+    using dir = tempDir("bun-file-text-loop", {});
+    // Random bytes force the invalid-UTF-8 slow path, which is where the
+    // on-thread decode was most visible.
+    const big = join(dir, "big.bin");
+    await Bun.write(big, randomBytes(8 * 1024 * 1024));
+
+    const probe = `
+      let last = performance.now(), maxGap = 0;
+      const iv = setInterval(() => {
+        const n = performance.now();
+        if (n - last > maxGap) maxGap = n - last;
+        last = n;
+      }, 1);
+      await new Promise(r => setTimeout(r, 20));
+      maxGap = 0;
+      last = performance.now();
+      const t0 = performance.now();
+      const s = await Bun.file(process.env.BIG_FILE).text();
+      const n = performance.now();
+      if (n - last > maxGap) maxGap = n - last;
+      clearInterval(iv);
+      console.log(JSON.stringify({ dur: n - t0, maxGap, len: s.length }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", probe],
+      env: { ...bunEnv, BIG_FILE: big },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { dur, maxGap, len } = JSON.parse(stdout);
+    expect(len).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+    // When the decode ran on the JS thread the heartbeat stalled for the
+    // whole decode, so maxGap was essentially equal to dur. With the decode
+    // on the work pool the loop keeps ticking throughout. Skip the ratio
+    // check when the whole operation was faster than setInterval can
+    // meaningfully sample.
+    if (dur < 50) return;
+    expect(maxGap).toBeLessThan(dur / 2);
+  });
 });

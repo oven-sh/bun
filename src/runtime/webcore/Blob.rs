@@ -483,6 +483,7 @@ impl BlobExt for Blob {
                 self.offset.get(),
                 self.size.get(),
                 handler,
+                F::WANTS_TEXT,
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             let read_file_task = read_file::ReadFileTask::create_on_js_thread(
@@ -697,6 +698,7 @@ impl BlobExt for Blob {
                 NewInternalReadFileHandler::<C, F>::run,
                 self.offset.get(),
                 self.size.get(),
+                false,
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             let read_file_task = read_file::ReadFileTask::create_on_js_thread(
@@ -6263,6 +6265,38 @@ impl Drop for TemporaryBytes {
     }
 }
 
+/// Off-thread counterpart of `to_string_with_bytes::<Temporary>`; keep in sync.
+#[cfg(not(windows))]
+pub(crate) fn decode_blob_text_owned(mut bytes: Vec<u8>) -> BunString {
+    let (bom, bom_len) = {
+        let (bom, rest) = strings::BOM::detect_and_split(&bytes);
+        (bom, bytes.len() - rest.len())
+    };
+    if bytes.len() == bom_len {
+        return BunString::empty();
+    }
+    if bom == Some(strings::BOM::Utf16Le) {
+        let buf = &bytes[bom_len..];
+        let buf = &buf[..buf.len() & !1];
+        return match bytemuck::try_cast_slice::<u8, u16>(buf) {
+            Ok(units) => BunString::clone_utf16(units),
+            Err(_) => {
+                let units: Vec<u16> = buf
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pair| u16::from_le_bytes(*pair))
+                    .collect();
+                BunString::clone_utf16(&units)
+            }
+        };
+    }
+    if bom_len > 0 {
+        bytes.drain(..bom_len);
+    }
+    webcore::encoding::to_bun_string_from_owned_slice(bytes, node::types::Encoding::Utf8)
+}
+
 // Marker types for static fn dispatch through do_read_file/do_read_from_s3.
 // Each implements `ReadFileToJs` so a plain fn-pointer monomorphizes per `*WithBytes` body.
 pub(crate) struct ToStringWithBytesFn;
@@ -6275,6 +6309,7 @@ pub(crate) struct ToFormDataWithBytesFn;
 // it to the matching unsafe `*_with_bytes` body, so the deref is documented there.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
+    const WANTS_TEXT: bool = true;
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: `by` upholds the `ReadFileToJs::call` contract — a leaked
         // `Box<[u8]>` for `Temporary`, store-backed otherwise.

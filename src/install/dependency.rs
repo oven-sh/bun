@@ -441,6 +441,9 @@ pub(crate) fn scp_path_without_ssh_prefix(repo: &[u8]) -> Option<&[u8]> {
     let port_end = strings::index_of_char_usize(after_colon, b'/').unwrap_or(after_colon.len());
     let port = &after_colon[..port_end];
     if !port.is_empty() && port.iter().all(u8::is_ascii_digit) {
+        // also matches an scp path whose first segment is numeric
+        // ("git@host:2048/x"): the encoding collapses the two spellings, and
+        // reload has always taken the port reading
         return None;
     }
     Some(rest)

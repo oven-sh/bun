@@ -2690,8 +2690,12 @@ describe("hoist", () => {
 
 // Isolated install with stdout/stderr drained concurrently, and the exit
 // bounded by a deadline instead of the test timeout: the regressions covered
-// below make the install never exit on its own.
-async function runInstall(cwd: string, env: Record<string, string | undefined>): Promise<number | "install hung"> {
+// below make the install never exit on its own. Returns stderr alongside the
+// exit code so failures can surface git's diagnostics.
+async function runInstall(
+  cwd: string,
+  env: Record<string, string | undefined>,
+): Promise<{ exitCode: number | "install hung"; stderr: string }> {
   await using proc = spawn({
     cmd: [bunExe(), "install", "--linker", "isolated"],
     cwd,
@@ -2705,14 +2709,14 @@ async function runInstall(cwd: string, env: Record<string, string | undefined>):
   const hung = new Promise<"install hung">(resolve => {
     deadline = setTimeout(() => resolve("install hung"), 60_000);
   });
-  const exited = await Promise.race([proc.exited, hung]);
+  const exitCode = await Promise.race([proc.exited, hung]);
   clearTimeout(deadline);
-  if (exited === "install hung") {
+  if (exitCode === "install hung") {
     proc.kill();
     await proc.exited;
   }
-  await Promise.all([stdout, stderr]);
-  return exited;
+  await stdout;
+  return { exitCode, stderr: await stderr };
 }
 
 // bun.lock writes an scp-form git repo ("git@host:path") with an "ssh://"
@@ -2782,10 +2786,11 @@ exec sh -c "$1"
     GIT_ASKPASS: "echo",
   });
 
-  // stderr is not asserted: the https attempt that precedes the ssh
-  // fallback fails with a git error even on the happy path
-  const firstExitCode = await runInstall(projectDir, installEnv("cache-fresh"));
-  expect(firstExitCode).toBe(0);
+  // stderr content is not asserted (the https attempt that precedes the ssh
+  // fallback fails with a git error even on the happy path); it is the
+  // failure message so a broken install surfaces git's diagnostics
+  const first = await runInstall(projectDir, installEnv("cache-fresh"));
+  expect(first.exitCode, first.stderr).toBe(0);
   expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
     name: "scp-dep",
     version: "1.0.0",
@@ -2799,8 +2804,8 @@ exec sh -c "$1"
   await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
   await rm(join(String(dir), "ssh.log"), { force: true });
 
-  const secondExitCode = await runInstall(projectDir, installEnv("cache-cold"));
-  expect(secondExitCode).toBe(0);
+  const second = await runInstall(projectDir, installEnv("cache-cold"));
+  expect(second.exitCode, second.stderr).toBe(0);
   expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
     name: "scp-dep",
     version: "1.0.0",
@@ -2875,8 +2880,8 @@ exec sh -c "$1"
     GIT_ASKPASS: "echo",
   });
 
-  const firstExitCode = await runInstall(projectDir, installEnv("cache-fresh"));
-  expect(firstExitCode).toBe(0);
+  const first = await runInstall(projectDir, installEnv("cache-fresh"));
+  expect(first.exitCode, first.stderr).toBe(0);
   expect(await file(join(projectDir, "node_modules", "v6-dep", "package.json")).json()).toMatchObject({
     name: "v6-dep",
     version: "1.0.0",
@@ -2888,8 +2893,8 @@ exec sh -c "$1"
 
   await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
 
-  const secondExitCode = await runInstall(projectDir, installEnv("cache-cold"));
-  expect(secondExitCode).toBe(0);
+  const second = await runInstall(projectDir, installEnv("cache-cold"));
+  expect(second.exitCode, second.stderr).toBe(0);
   expect(await file(join(projectDir, "node_modules", "v6-dep", "package.json")).json()).toMatchObject({
     name: "v6-dep",
     version: "1.0.0",

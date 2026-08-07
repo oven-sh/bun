@@ -52,7 +52,7 @@ const flooder = Bun.spawn({
   ],
   env: bunEnv,
   stdout: "ignore",
-  stderr: "ignore",
+  stderr: "pipe",
 });
 
 function fail(message: string): never {
@@ -61,7 +61,14 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-await firstPacket.promise;
+// A flooder that dies before its first datagram would leave firstPacket
+// pending forever; surface its exit (and stderr) instead of an opaque hang.
+await Promise.race([
+  firstPacket.promise,
+  flooder.exited.then(async code => {
+    throw new Error(`flooder exited (${code}) before the first packet: ${await flooder.stderr.text()}`);
+  }),
+]);
 watchdogDeadline = Bun.nanoseconds() + 6_000_000_000;
 
 let ticks = 0;

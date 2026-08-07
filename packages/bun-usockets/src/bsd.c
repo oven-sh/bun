@@ -1082,6 +1082,17 @@ int bsd_send_is_transient_error() {
 #endif
 }
 
+/* libuv's UDP retry set is exactly EAGAIN/EWOULDBLOCK/ENOBUFS (unix/udp.c);
+ * ENOMEM stays a hard error like Node, so this is narrower than the TCP
+ * helper above. */
+int bsd_udp_send_is_transient_error() {
+#ifdef _WIN32
+    return WSAGetLastError() == WSAENOBUFS;
+#else
+    return errno == ENOBUFS;
+#endif
+}
+
 static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog, int* error) {
     int result;
     do

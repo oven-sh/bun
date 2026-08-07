@@ -13,11 +13,11 @@ const skip = !fault.available() || isWindows;
 afterEach(() => fault.clear());
 
 describe.skipIf(skip)("udp send under injected syscall faults", () => {
-  // libuv classifies ENOBUFS/ENOMEM from a UDP send as EAGAIN (transient
-  // kernel resource exhaustion; macOS returns ENOBUFS when bursty sends fill
-  // the interface queue) and retries on the next writable event. send() must
-  // report backpressure (false) and arm the drain callback, not throw.
-  test.each(["ENOBUFS", "ENOMEM"] as const)("udpSocket.send → %s is backpressure, not an error", async errno => {
+  // libuv's UDP send retry set is exactly EAGAIN/EWOULDBLOCK/ENOBUFS (macOS
+  // returns ENOBUFS when bursty sends fill the interface queue). All of them
+  // must report backpressure (false) and arm the drain callback, not throw;
+  // the EWOULDBLOCK cell pins the baseline ENOBUFS is specified against.
+  test.each(["ENOBUFS", "EWOULDBLOCK"] as const)("udpSocket.send → %s is backpressure, not an error", async errno => {
     const received = Promise.withResolvers<string>();
     using server = await Bun.udpSocket({
       port: 0,
@@ -40,36 +40,43 @@ describe.skipIf(skip)("udp send under injected syscall faults", () => {
       },
     });
 
-    // The poll starts out writable, so one creation-time drain may already
-    // have fired; only a drain after the failed send may resolve this.
+    // The poll starts out writable, so one creation-time drain fires on the
+    // first loop turn. Consume it now; otherwise it would satisfy the await
+    // below even if the failed send never re-armed writable.
+    await drained.promise;
     drained = Promise.withResolvers();
+
     fault.set({ syscall: "sendmsg", action: "errno", errno, repeat: 1 });
     expect(client.send("hello", server.port, "127.0.0.1")).toBe(false);
 
-    // The failed send must re-arm writable; without it this never resolves.
+    // The creation-time drain is spent, so this only resolves if the failed
+    // send re-armed writable.
     await drained.promise;
     expect(client.send("hello", server.port, "127.0.0.1")).toBe(true);
     expect(await received.promise).toBe("hello");
   });
 
-  test("udpSocket.send still throws on a hard errno (EINVAL)", async () => {
+  // ENOMEM is deliberately not in the retry set: libuv surfaces it for UDP
+  // sends and so does Node (only the TCP path treats it as transient).
+  test.each(["EINVAL", "ENOMEM"] as const)("udpSocket.send still throws on a hard errno (%s)", async errno => {
     using server = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
     using client = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
 
-    fault.set({ syscall: "sendmsg", action: "errno", errno: "EINVAL", repeat: 1 });
+    fault.set({ syscall: "sendmsg", action: "errno", errno, repeat: 1 });
     let thrown: any;
     try {
       client.send("x", server.port, "127.0.0.1");
     } catch (e) {
       thrown = e;
     }
-    expect(thrown?.code).toBe("EINVAL");
+    expect(thrown?.code).toBe(errno);
   });
 
   // node:dgram queues a backpressured send and retries it from the drain
   // handler, so a transient ENOBUFS must complete the callback with no error
   // once the kernel recovers (three consecutive failures here: the initial
-  // try plus two drain retries).
+  // try plus two drain retries, so at least two of the drains require the
+  // failed send to re-arm writable).
   test("dgram send callback succeeds after transient ENOBUFS", async () => {
     await using server = dgram.createSocket("udp4");
     const messageP = once(server, "message");
@@ -110,7 +117,11 @@ describe.skipIf(skip)("udp send under injected syscall faults", () => {
       parts.push("x", server.port, "127.0.0.1");
     }
 
+    // Consume the creation-time drain (see above) so the loop below only
+    // advances on drains the failed batch re-armed.
+    await drained.promise;
     drained = Promise.withResolvers();
+
     fault.set({ syscall: "sendmsg", action: "errno", errno: "ENOBUFS", after: 1, repeat: 1 });
     const first = client.sendMany(parts);
     expect(first).toBeGreaterThan(0);

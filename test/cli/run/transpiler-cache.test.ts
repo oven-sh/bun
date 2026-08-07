@@ -81,6 +81,16 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("cache hit on the entry point keeps unknown-extension imports on the file loader", async () => {
+    writeFileSync(join(temp_dir, "asset.hbs"), "<!DOCTYPE html>\n<html></html>\n");
+    const padding = "// " + Buffer.alloc(8 * 1024, "x").toString() + "\n";
+    writeFileSync(join(temp_dir, "a.js"), `import asset from "./asset.hbs";\n${padding}console.log(typeof asset);\n`);
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("string");
+    expect(newCacheCount()).toBe(1);
+    // The second run loads the entry point from the transpiler cache; the
+    // unknown extension must still get the file loader, not the tsx fallback.
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("string");
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");

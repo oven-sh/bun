@@ -1566,11 +1566,14 @@ test.skipIf(!isLinux)(
       const results = await Promise.all(
         procs.map(async proc => {
           const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-          return { verdict: JSON.parse(stdout.trim()), exitCode };
+          return { stdout: stdout.trim(), exitCode };
         }),
       );
-      for (const { verdict, exitCode } of results) {
-        expect(exitCode).toBe(0);
+      for (const { stdout, exitCode } of results) {
+        // Raw output alongside the exit code, so a crashed client reports
+        // what it printed instead of a JSON parse error.
+        expect({ exitCode, stdout }).toMatchObject({ exitCode: 0 });
+        const verdict = JSON.parse(stdout);
         if (verdict.failures.length > 0 || verdict.ok !== ITERATIONS_PER_CLIENT) {
           problems.push(verdict);
         } else {

@@ -1245,8 +1245,11 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
         JSValue value = constructor->get(globalObject, property);
 
         if (topExceptionScope.exception()) [[unlikely]] {
-            value = {};
-            (void)topExceptionScope.tryClearException();
+            // A termination (worker terminate() mid-import) cannot be cleared:
+            // stop the walk and leave it pending for the loader.
+            if (!topExceptionScope.tryClearException())
+                return;
+            value = jsUndefined();
         }
 
         exportNames.append(property);

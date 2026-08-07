@@ -1418,14 +1418,14 @@ impl NodeHTTPResponse {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         Ok(self
-            .drain_buffered_request_body_from_pause(global_object)
+            .drain_buffered_request_body_from_pause(global_object)?
             .unwrap_or(JSValue::UNDEFINED))
     }
 
     fn drain_buffered_request_body_from_pause(
         &self,
         global_object: &JSGlobalObject,
-    ) -> Option<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         scoped_log!(
             NodeHTTPResponse,
             "drainBufferedRequestBodyFromPause {}",
@@ -1440,15 +1440,17 @@ impl NodeHTTPResponse {
             let bytes = self
                 .buffered_request_body_data_during_pause
                 .replace(Vec::new());
-            return Some(JSValue::create_buffer_from_box(
-                global_object,
-                bytes.into_boxed_slice(),
-            ));
+            return JSValue::create_buffer_from_box(global_object, bytes.into_boxed_slice())
+                .map(Some);
         }
-        None
+        Ok(None)
     }
 
-    pub(crate) fn do_resume(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
+    pub(crate) fn do_resume(
+        &self,
+        global_object: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         scoped_log!(NodeHTTPResponse, "doResume");
         // Re-arm the poll first, unconditionally: a paused socket that received
         // the peer's FIN has that EOF deferred (loop.c) until it is resumed, so
@@ -1457,7 +1459,7 @@ impl NodeHTTPResponse {
         self.resume_socket();
         let flags = self.flags.get();
         let Some(raw) = self.raw_response.get() else {
-            return JSValue::FALSE;
+            return Ok(JSValue::FALSE);
         };
         if flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || flags.contains(Flags::SOCKET_CLOSED)
@@ -1467,7 +1469,7 @@ impl NodeHTTPResponse {
             // here would deliver them twice (and park them in the body buffer).
             || raw.is_connect_request()
         {
-            return JSValue::FALSE;
+            return Ok(JSValue::FALSE);
         }
         // Body already delivered: re-arming onData/onTimeout would overwrite a
         // pipelined request's userData on the shared HttpResponseData. The drain
@@ -1479,12 +1481,9 @@ impl NodeHTTPResponse {
             raw.on_data(on_data_shim, self.as_ctx_ptr());
         }
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
-        let mut result: JSValue = JSValue::TRUE;
-
-        if let Some(buffered_data) = self.drain_buffered_request_body_from_pause(global_object) {
-            result = buffered_data;
-        }
-        result
+        Ok(self
+            .drain_buffered_request_body_from_pause(global_object)?
+            .unwrap_or(JSValue::TRUE))
     }
 
     pub(crate) fn on_request_complete(&self) {
@@ -1673,21 +1672,22 @@ impl NodeHTTPResponse {
                 };
             }
 
-            if let Some(buffered_data) = self.drain_buffered_request_body_from_pause(global_this) {
-                break 'brk buffered_data;
-            }
-
-            if !chunk.is_empty() {
-                break 'brk match jsc::ArrayBuffer::create_buffer(global_this, chunk) {
-                    Ok(b) => b,
-                    Err(err) => {
-                        let exc = global_this.take_exception(err);
-                        let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
-                        return JSValue::UNDEFINED;
-                    }
-                };
-            }
-            break 'brk JSValue::UNDEFINED;
+            let created = match self.drain_buffered_request_body_from_pause(global_this) {
+                Ok(Some(buffered_data)) => Ok(buffered_data),
+                Ok(None) if !chunk.is_empty() => {
+                    jsc::ArrayBuffer::create_buffer(global_this, chunk)
+                }
+                Ok(None) => Ok(JSValue::UNDEFINED),
+                Err(err) => Err(err),
+            };
+            break 'brk match created {
+                Ok(b) => b,
+                Err(err) => {
+                    let exc = global_this.take_exception(err);
+                    let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
+                    return JSValue::UNDEFINED;
+                }
+            };
         };
         bytes
     }

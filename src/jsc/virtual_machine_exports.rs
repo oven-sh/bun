@@ -92,6 +92,15 @@ pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask)
     this.event_loop_mut().enqueue_task(Task::init(task));
 }
 
+/// [`vm_queue_task`] for a task that must let the loop poll I/O and timers
+/// first (a drain re-posting its own continuation).
+// HOST_EXPORT(Bun__VM__queueTaskAfterYield, c)
+pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
+    crate::mark_binding!();
+    this.event_loop_mut()
+        .enqueue_task_after_yield(Task::init(task));
+}
+
 /// Off-thread counterpart of [`vm_queue_task`]: see [`crate::VmHandle::post_cpp_task`].
 // HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
 pub fn vm_handle_queue_task_concurrently(

@@ -306,7 +306,7 @@ impl JobContext for Pbkdf2Job {
         debug_assert!(output_slice.len() == usize::try_from(this.pbkdf2.length).expect("int cast"));
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
-        promise.resolve(global_this, buffer_value)?;
+        promise.settle(global_this, buffer_value)?;
         Ok(())
     }
 }

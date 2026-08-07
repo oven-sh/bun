@@ -4533,10 +4533,7 @@ pub mod ret {
                     // itself is freed when `items` drops.
                     let array = JSValue::create_empty_array(global_object, items.len())?;
                     for (i, item) in items.iter_mut().enumerate() {
-                        let res = item.to_node_buffer(global_object);
-                        if res == JSValue::ZERO {
-                            return Ok(JSValue::ZERO);
-                        }
+                        let res = item.to_node_buffer(global_object)?;
                         array.put_index(global_object, i as u32, res)?;
                     }
                     Ok(array)

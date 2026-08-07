@@ -872,7 +872,7 @@ impl TaskContext for BlobContext {
                     }
                     BlobOutputType::Bytes => {
                         // Ownership transfers to JSC's `MarkedArrayBuffer_deallocator`.
-                        JSValue::create_buffer_from_box(global, data.into_boxed_slice())
+                        JSValue::create_buffer_from_box(global, data.into_boxed_slice())?
                     }
                 }))
             }
@@ -896,7 +896,7 @@ impl TaskContext for BlobContext {
                     PromiseResult::Resolve(JSValue::create_buffer_from_box(
                         global,
                         dup.into_boxed_slice(),
-                    ))
+                    )?)
                 }
             }),
         }

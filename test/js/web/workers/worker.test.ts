@@ -406,6 +406,60 @@ describe("web worker", () => {
       expect(exitCode).toBe(0);
     });
 
+    // A worker posting faster than the parent can deserialize must not pin the
+    // parent inside one drain: its timers and I/O still get their turn.
+    test("a message flood from a worker does not starve the parent's event loop", async () => {
+      const src = `const p = { s: Buffer.alloc(200, "x").toString(), a: [1, 2, 3], n: 0 };
+        (function burst() { for (let i = 0; i < 2000; i++) { p.n++; postMessage(p) } setImmediate(burst) })()`;
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      let received = 0;
+      w.onmessage = () => received++;
+      // Three timer turns while the flood is running is the property; not the timing.
+      for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
+      expect(received).toBeGreaterThan(0);
+      w.terminate();
+      await once(w, "close");
+    });
+
+    // node:vm's timeout machinery shares the VM's termination bit with
+    // terminate(); a terminate() landing mid-script is not a vm timeout.
+    test("terminate() while a node:vm script with a timeout is running", async () => {
+      const src = `import vm from "node:vm"; postMessage("busy");
+        for (;;) { try { vm.runInNewContext("for(let i=0;i<1e7;i++){}", {}, { timeout: 1000 }) } catch {} await new Promise(r => setImmediate(r)) }`;
+      const url = URL.createObjectURL(new Blob([src]));
+      for (let r = 0; r < 6; r++) {
+        const w = new Worker(url);
+        await new Promise(res => (w.onmessage = res));
+        w.terminate();
+        await once(w, "close");
+      }
+    });
+
+    // terminate() mid `import "node:*"`: the native module's export walk stops
+    // at the termination instead of clearing it and reading on.
+    test("terminate() while importing every builtin module", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { builtinModules } from "node:module";
+           const L = builtinModules.filter(m => !m.startsWith("_") && !/^(bun|detect-libc|undici|ws)/.test(m));
+           const src = "for (const b of " + JSON.stringify(L) + ") { try { await import('node:' + b) } catch {} } postMessage('done')";
+           const url = URL.createObjectURL(new Blob([src]));
+           for (let r = 0; r < 6; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
+             const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => w.terminate();
+             setTimeout(() => w.terminate(), (r * 4 + i) * 15) })));
+           console.log("PASS");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("PASS\n");
+      expect(exitCode).toBe(0);
+    });
+
     // fs completions racing terminate(): whatever completes on the worker
     // after the request must release, not build script values under it.
     test("terminate() while fs.readFile completions keep arriving", async () => {

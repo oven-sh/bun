@@ -66,6 +66,11 @@ pub struct EventLoop {
     /// (link-time `__bun_run_immediate_task`) casts it back.
     pub immediate_tasks: Vec<*mut ()>,
     pub next_immediate_tasks: Vec<*mut ()>,
+    /// Tasks that asked to run on the *next* loop iteration — after I/O and
+    /// timers have had a turn — rather than in the current drain, which runs
+    /// until the queue is empty (a task that re-posts itself there never lets
+    /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
+    pub yield_tasks: Vec<Task>,
 
     pub concurrent_tasks: ConcurrentQueue,
     /// Set only on Bun.spawnSync's isolated loop: how other threads reach *this*
@@ -116,6 +121,7 @@ impl Default for EventLoop {
             closed_for_tasks: false,
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
+            yield_tasks: Vec::new(),
             concurrent_tasks: ConcurrentQueue::default(),
             isolated_poster: None,
             global: None,
@@ -772,6 +778,7 @@ impl EventLoop {
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
         self.drop_concurrent_cpp_tasks();
+        let _ = self.promote_yield_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: tag-specific release (drops JSC handles while the VM is
@@ -849,6 +856,26 @@ impl EventLoop {
     /// `*mut bun_runtime::timer::ImmediateObject` — see [`RunImmediateFn`].
     pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
         self.immediate_tasks.push(task);
+    }
+
+    /// See [`EventLoop::yield_tasks`].
+    pub fn enqueue_task_after_yield(&mut self, task: Task) {
+        if self.closed_for_tasks {
+            return self.enqueue_task(task);
+        }
+        self.yield_tasks.push(task);
+    }
+
+    /// `auto_tick`, before it polls: last iteration's yielded tasks become
+    /// runnable. Returns whether there are any, so the poll does not block.
+    pub fn promote_yield_tasks(&mut self) -> bool {
+        if self.yield_tasks.is_empty() {
+            return false;
+        }
+        for task in core::mem::take(&mut self.yield_tasks) {
+            let _ = self.tasks.write_item(task);
+        }
+        true
     }
 
     /// `tickImmediateTasks` — swaps the two

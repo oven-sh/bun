@@ -2812,7 +2812,7 @@ pub mod JSZstd {
             output.shrink_to_fit();
         }
 
-        Ok(JSValue::create_buffer(global_this, output.leak()))
+        JSValue::create_buffer(global_this, output.leak())
     }
 
     #[bun_jsc::host_fn]
@@ -2836,7 +2836,7 @@ pub mod JSZstd {
             }
         };
 
-        Ok(JSValue::create_buffer(global_this, output.leak()))
+        JSValue::create_buffer(global_this, output.leak())
     }
 
     // --- Async versions ---
@@ -2926,7 +2926,7 @@ pub mod JSZstd {
 
             let output_slice = core::mem::take(&mut this.output);
             let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
-            promise.resolve(global_this, buffer_value)?;
+            promise.settle(global_this, buffer_value)?;
             Ok(())
         }
     }

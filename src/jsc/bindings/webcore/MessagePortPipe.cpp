@@ -179,8 +179,13 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         }
     }
 
-    if (rescheduleCtx)
-        scheduleDrain(side, rescheduleCtx);
+    // Budget spent with messages left. We are on `context`'s thread: continue on
+    // its next loop iteration (after I/O and timers), not in this drain.
+    if (rescheduleCtx) {
+        context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx](ScriptExecutionContext&) {
+            pipe->drainAndDispatch(side, rescheduleCtx);
+        });
+    }
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)

@@ -285,6 +285,10 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
 
     while (true) {
         while (!batch.isEmpty()) {
+            // The receiving VM is being stopped: nothing more is delivered (the
+            // rest is dropped with the proxy).
+            if (context.isJSExecutionForbidden())
+                return false;
             if (limit-- == 0) {
                 // Budget spent: put the undrained tail back in front of anything enqueued meanwhile.
                 Locker locker { inbox.lock };
@@ -318,7 +322,9 @@ void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionConte
         globalObject.globalEventScope->dispatchEvent(event);
     });
     if (more) {
-        context.postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        // Budget spent with messages left: continue after the loop has polled,
+        // or a producer faster than this drain starves timers and I/O for good.
+        context.postTaskAfterYield([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             protectedThis->drainMessagesToWorkerGlobalScope(context);
         });
     }
@@ -338,7 +344,7 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
         workerObject->dispatchEvent(event);
     });
     if (more) {
-        context.postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        context.postTaskAfterYield([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             protectedThis->drainMessagesToWorkerObject(context);
         });
     }

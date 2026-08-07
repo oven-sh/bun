@@ -909,7 +909,7 @@ impl MarkedArrayBuffer {
     }
 
     /// Ownership of the bytes moves to JSC (freed by the buffer's deallocator).
-    pub fn to_node_buffer(&mut self, global: &JSGlobalObject) -> JSValue {
+    pub fn to_node_buffer(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // `JSValue::create_buffer` takes `&mut [u8]` (ownership transfers to JSC
         // via the deallocator). `ArrayBuffer` is `Copy` over a raw pointer, so
         // copy the descriptor and project a mutable slice.

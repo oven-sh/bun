@@ -123,6 +123,7 @@ public:
     void postTask(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
     void postTask(EventLoopTask* task);
+    void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
 
     template<typename... Arguments>
     void postCrossThreadTask(Arguments&&... arguments)

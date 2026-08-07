@@ -91,6 +91,7 @@ JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
 }
 
 extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
+extern "C" void Bun__VM__queueTaskAfterYield(void* bunVM, EventLoopTask*);
 extern "C" void Bun__VmHandle__queueTaskConcurrently(::BunVmHandle*, EventLoopTask*);
 
 // JS thread (this context's thread): MessagePort / BroadcastChannel / worker global scope
@@ -211,7 +212,7 @@ void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionOb
 
 bool ScriptExecutionContext::isJSExecutionForbidden()
 {
-    return !m_vm || m_vm->executionForbidden();
+    return !m_vm || m_vm->executionForbidden() || !Bun__VmHandle__scriptAllowed(m_vmHandle);
 }
 
 void ScriptExecutionContext::prepareForDestruction()
@@ -363,6 +364,11 @@ void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& 
 void ScriptExecutionContext::postTask(EventLoopTask* task)
 {
     Bun__VM__queueTask(m_bunVM, task);
+}
+// Same thread; runs on the next loop iteration, after I/O and timers have had a turn.
+void ScriptExecutionContext::postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    Bun__VM__queueTaskAfterYield(m_bunVM, new EventLoopTask(WTF::move(lambda)));
 }
 
 // Native bindings

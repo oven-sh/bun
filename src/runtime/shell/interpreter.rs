@@ -1199,20 +1199,26 @@ impl Interpreter {
                     let global_this = self
                         .global_this_ref()
                         .expect("global_this set on Js event-loop path");
-                    let buffered_stdout = self.get_buffered_stdout(global_this);
-                    let buffered_stderr = self.get_buffered_stderr(global_this);
+                    let buffers = self
+                        .get_buffered_stdout(global_this)
+                        .and_then(|out| Ok((out, self.get_buffered_stderr(global_this)?)));
                     self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
                     let _entered = loop_.entered();
-                    if let Err(err) = resolve.call(
-                        global_this,
-                        JSValue::UNDEFINED,
-                        &[
-                            JSValue::js_number_from_int32(i32::from(exit_code)),
-                            buffered_stdout,
-                            buffered_stderr,
-                        ],
-                    ) {
+                    let called = buffers.and_then(|(buffered_stdout, buffered_stderr)| {
+                        resolve
+                            .call(
+                                global_this,
+                                JSValue::UNDEFINED,
+                                &[
+                                    JSValue::js_number_from_int32(i32::from(exit_code)),
+                                    buffered_stdout,
+                                    buffered_stderr,
+                                ],
+                            )
+                            .map(|_| ())
+                    });
+                    if let Err(err) = called {
                         global_this.report_active_exception_as_unhandled(err);
                     }
                     JSShellInterpreter::resolve_set_cached(
@@ -1407,7 +1413,7 @@ impl Interpreter {
     pub(crate) fn get_buffered_stdout(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
-    ) -> crate::jsc::JSValue {
+    ) -> bun_jsc::JsResult<crate::jsc::JSValue> {
         io_to_js_value(
             global_this,
             self.root_shell.with_mut(|rs| rs.buffered_stdout()),
@@ -1417,7 +1423,7 @@ impl Interpreter {
     pub(crate) fn get_buffered_stderr(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
-    ) -> crate::jsc::JSValue {
+    ) -> bun_jsc::JsResult<crate::jsc::JSValue> {
         io_to_js_value(
             global_this,
             self.root_shell.with_mut(|rs| rs.buffered_stderr()),
@@ -1553,7 +1559,7 @@ impl Interpreter {
 fn io_to_js_value(
     global_this: &crate::jsc::JSGlobalObject,
     buf: *mut Vec<u8>,
-) -> crate::jsc::JSValue {
+) -> bun_jsc::JsResult<crate::jsc::JSValue> {
     // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
     let bytelist = core::mem::take(unsafe { &mut *buf });
     // The moved-out `Vec<u8>` storage is handed to JSC directly; the

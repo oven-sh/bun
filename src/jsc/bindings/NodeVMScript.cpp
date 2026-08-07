@@ -1,4 +1,5 @@
 #include "NodeVMScript.h"
+#include "BunClientData.h"
 
 #include "ErrorCode.h"
 
@@ -309,6 +310,10 @@ void NodeVMScript::destroy(JSCell* cell)
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (vm.hasTerminationRequest()) {
+        // The whole VM is being stopped (worker terminate()/exit): that
+        // termination is not ours to consume; leave it pending.
+        if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle))
+            return true;
         vm.drainMicrotasksForGlobalObject(globalObject);
         // The termination may have fired inside an afterEvaluate microtask
         // checkpoint, leaving the termination exception pending; clear it so

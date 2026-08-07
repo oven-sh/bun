@@ -6,6 +6,8 @@ extern "C" BunVmHandle* Bun__VmHandle__create(void* bunVM);
 extern "C" BunVmHandle* Bun__VmHandle__clone(const BunVmHandle*);
 extern "C" void Bun__VmHandle__release(BunVmHandle*);
 extern "C" void Bun__VmHandle__refKeepAlive(BunVmHandle*, int delta);
+// Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.
+extern "C" bool Bun__VmHandle__scriptAllowed(const BunVmHandle*);
 // JS thread only: adjust the keep-alive of the VM this thread runs.
 extern "C" void Bun__eventLoop__refKeepAlive(void* bunVM, int delta);
 

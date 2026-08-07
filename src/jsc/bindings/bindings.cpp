@@ -3140,10 +3140,13 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 
     // The native→JS boundary for the Rust side (Node: InternalMakeCallback's can_call_into_js;
-    // WebCore: JSEventListener's isJSExecutionForbidden): once teardown has forbidden script,
-    // a callback from any event source is a silent no-op rather than each source checking.
-    if (vm.executionForbidden()) [[unlikely]]
+    // WebCore: JSEventListener's isJSExecutionForbidden): once the VM's stop was requested or
+    // teardown has forbidden script, a callback from any event source is a silent no-op rather
+    // than each source checking.
+    if (vm.executionForbidden() || !Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) [[unlikely]] {
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
+    }
 
     JSC::JSValue jsObject = JSValue::decode(object);
     ASSERT_WITH_MESSAGE(jsObject, "Cannot call function with JSValue zero.");

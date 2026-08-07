@@ -1828,7 +1828,7 @@ impl PipelineTask {
                     // createBufferWithCtx returns plain JSValue (its C++ side asserts
                     // the no-throw contract), so the .uint8array catch is unmatched
                     // here by construction, not omission.
-                    Deliver::Buffer => promise.resolve(
+                    Deliver::Buffer => promise.settle(
                         global,
                         // SAFETY: `out.bytes` is the codec-owned allocation whose
                         // ownership transfers to JSC; `ctx` is null and `out.free`
@@ -1902,13 +1902,16 @@ impl PipelineTask {
                         // SAFETY: `out.bytes` is the codec-owned allocation whose
                         // ownership transfers to JSC; `ctx` is null and `out.free`
                         // ignores it.
-                        let data = unsafe {
+                        let data = match unsafe {
                             JSValue::create_buffer_with_ctx(
                                 global,
                                 out.bytes,
                                 core::ptr::null_mut(),
                                 out.free,
                             )
+                        } {
+                            Ok(d) => d,
+                            Err(e) => return promise.reject(global, Err(e)),
                         };
                         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
                         // valid for the JS thread; `ArgumentsSlice::init` wants `&`.

@@ -413,6 +413,13 @@ pub extern "C" fn Bun__VmHandle__refKeepAlive(handle: &VmHandle, delta: core::ff
     }
 }
 
+/// Any thread: Node's `can_call_into_js()` — false once the VM's stop was
+/// requested (a parent's terminate(), the worker's own exit, teardown).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VmHandle__scriptAllowed(handle: &VmHandle) -> bool {
+    handle.script_allowed()
+}
+
 // ── Producers that serve either a JS VM or a MiniEventLoop ────────────────
 //
 // fs.cp (also used by the shell), shell builtins, password hashing, zlib run

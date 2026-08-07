@@ -106,7 +106,9 @@ static void runPendingWork(::BunVmHandle* vmHandle, Bun::JSCTaskScheduler& sched
     }
     holder.unlockEarly();
 
-    if (pendingTicket && !pendingTicket->isCancelled()) {
+    // Deferred work runs script (FinalizationRegistry callbacks, wasm
+    // completions); not once the VM's stop was requested.
+    if (pendingTicket && !pendingTicket->isCancelled() && Bun__VmHandle__scriptAllowed(vmHandle)) {
         job->task(job->ticket.get());
     }
 

@@ -2190,6 +2190,23 @@ test("terminating a worker mid-Bun.build (plugin pending) does not wedge the bun
   expect(exitCode).toBe(0);
 });
 
+// The worker gets its own copies of options.argv/execArgv strings (they live in
+// the parent's WorkerOptions); empty strings included.
+test("worker argv/execArgv option strings, read repeatedly in the worker", async () => {
+  const src = `const { parentPort } = require("node:worker_threads");
+    for (let i = 0; i < 200; i++) { process.argv; process.execArgv }
+    parentPort.postMessage({ argv: process.argv.slice(2), execArgv: process.execArgv })`;
+  const ws = Array.from(
+    { length: 4 },
+    (_, i) => new Worker(src, { eval: true, argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] }),
+  );
+  const got = await Promise.all(ws.map(w => new Promise(res => w.once("message", res))));
+  expect(got).toEqual(
+    [0, 1, 2, 3].map(i => ({ argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] })),
+  );
+  await Promise.all(ws.map(w => w.terminate()));
+});
+
 describe("VM teardown ordering", () => {
   // The exiting main thread must not park the process-wide HTTP thread while a
   // child can still start a request: the child then waits for a hand-back that

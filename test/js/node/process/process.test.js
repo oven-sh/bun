@@ -1711,3 +1711,25 @@ describe("NODE_NO_WARNINGS", () => {
     expect(await warn("1")).not.toMatch(/Warning: foo/);
   });
 });
+
+it("process.exit() does not run microtasks or nextTicks that were queued before it", async () => {
+  // Node runs 'exit' handlers and nothing queued before them; the exit-time
+  // teardown must discard, not drain, the pre-exit microtask/nextTick queues.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.nextTick(() => console.log("TICK_FIRED"));
+       queueMicrotask(() => console.log("MICROTASK_FIRED"));
+       Promise.resolve().then(() => console.log("THEN_FIRED"));
+       process.on("exit", () => console.log("exit handler"));
+       process.exit(0);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("exit handler\n");
+  expect(exitCode).toBe(0);
+});

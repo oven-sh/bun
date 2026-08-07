@@ -4192,6 +4192,13 @@ void GlobalObject::prepareForDestruction()
     auto& vm = this->vm();
     auto* context = m_scriptExecutionContext;
 
+    // Whatever was queued before exit began does not resurrect during teardown: process.exit()
+    // runs 'exit' handlers and nothing after them (Node), and a worker's stop phase dispatches
+    // close events, not stale microtasks. Anything the stop phase itself queues drains with it.
+    vm.defaultMicrotaskQueue().clear();
+    if (auto* nextTickQueue = m_nextTickQueue.get())
+        nextTickQueue->discard(vm);
+
     // Refuse cross-thread posts first: markTerminating() serializes with postTaskTo() on the
     // contexts-map lock, so anything another thread enqueues after this is visible to the caller's
     // drain and nothing later can land. DeferredWorkTimer gets the same fence because finalizers

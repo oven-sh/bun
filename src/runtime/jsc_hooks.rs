@@ -1679,7 +1679,9 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
         // SAFETY: the VM-global resolver, pinned by `GlobalData` (its own ref
         // never drops here).
-        result = result.and(unsafe { crate::dns_jsc::Resolver::close_channel_for_terminate(gd.resolver.as_ctx_ptr()) });
+        result = result.and(unsafe {
+            crate::dns_jsc::Resolver::close_channel_for_terminate(gd.resolver.as_ctx_ptr())
+        });
         #[cfg(windows)]
         gd.resolver.cancel_pending_uv_requests_for_teardown();
     }

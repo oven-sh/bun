@@ -1947,7 +1947,9 @@ impl Resolver {
     /// `this` is a live resolver. It may be freed by the time this returns (a
     /// failing query can drop the last reference); the caller touches nothing
     /// of it afterwards.
-    pub(crate) unsafe fn close_channel_for_terminate(this: *mut Self) -> bun_jsc::virtual_machine::SweepResult {
+    pub(crate) unsafe fn close_channel_for_terminate(
+        this: *mut Self,
+    ) -> bun_jsc::virtual_machine::SweepResult {
         use bun_jsc::virtual_machine::SweepResult;
         // Failing the pending queries releases their refs on this resolver from
         // inside `ares_destroy`; hold one so it outlives its own channel close.

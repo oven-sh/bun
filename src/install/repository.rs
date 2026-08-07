@@ -982,7 +982,7 @@ impl RepositoryExt for Repository {
             // `.bun-tag` marks the folder complete (`is_safe_resolved_tag`
             // above guarantees `resolved` is non-empty). Publishing the folder
             // without it would make every later install re-clone it.
-            let tag_written = match dir.create_file_z(
+            let tag_error = match dir.create_file_z(
                 bun_core::zstr!(".bun-tag"),
                 bun_sys::CreateFlags {
                     truncate: true,
@@ -992,15 +992,19 @@ impl RepositoryExt for Repository {
                 Ok(git_tag) => {
                     let written = git_tag.write_all(resolved);
                     let _ = git_tag.close(); // close error is non-actionable
-                    written.is_ok()
+                    written.err()
                 }
-                Err(_) => false,
+                Err(err) => Some(err),
             };
-            if !tag_written {
+            if let Some(err) = tag_error {
                 log.add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
-                    format_args!("writing \".bun-tag\" for \"{}\" failed", BStr::new(name)),
+                    format_args!(
+                        "writing \".bun-tag\" for \"{}\" failed: {}",
+                        BStr::new(name),
+                        BStr::new(err.name()),
+                    ),
                 );
                 dir.close();
                 let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(tmp_name);

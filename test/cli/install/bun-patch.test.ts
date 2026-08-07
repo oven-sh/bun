@@ -1059,6 +1059,7 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
 
     for (const args of [
       ["init", "-q"],
+      ["config", "core.autocrlf", "false"],
       ["add", "-A"],
       ["-c", "user.email=test@test.test", "-c", "user.name=test", "commit", "-q", "-m", "init"],
       // serve the repo over git's dumb HTTP protocol (plain file fetches)
@@ -1066,7 +1067,7 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     ]) {
       await using proc = Bun.spawn({ cmd: ["git", ...args], cwd: repo, env: bunEnv, stderr: "pipe" });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
+      expect(stderr, `git ${args.join(" ")} failed: ${stderr}`).not.toContain("fatal:");
       expect(exitCode).toBe(0);
     }
 

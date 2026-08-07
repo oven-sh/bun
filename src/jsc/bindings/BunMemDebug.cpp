@@ -1926,7 +1926,7 @@ static void imageRestoreAndRun(const char* path)
     us_loop_reinit_for_image(uws_get_loop());
     { const char* d = getenv("BUN_MEMDEBUG"); s_dir = (d && *d) ? strdup(d) : nullptr; } // tooling dir belongs to this process, not the builder
     __atomic_add_fetch(&bun_image_epoch, 1, __ATOMIC_ACQ_REL);
-    imageReprobeCPUDispatch();
+    if (!getenv("BUN_IMAGE_NO_CPU_REPROBE")) imageReprobeCPUDispatch();
     Bun__imageAdoptMainThreadVM();
     vm->refreshStackBoundsAfterImageRestore(); // before any JSLock/sanitizeStack: the VM still holds the builder's stack addresses (asserts once the stack lands elsewhere, i.e. with ASLR)
     { JSC::JSLockHolder lock(*vm); vm->didRestoreFromImage();

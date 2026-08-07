@@ -7481,6 +7481,18 @@ pub fn is_on_pipefs(fd: Fd) -> bool {
     }
 }
 
+/// `c-bindings.cpp` `bun_restore_stdio_nonblock`: it just put `fd` back to
+/// blocking (exit / signal / pre-execve restore); record it like
+/// [`make_stdio_blocking`] so a process that survives (failed execve) has its
+/// sinks downgrade.
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__stdioMadeBlocking(fd: core::ffi::c_int) {
+    if let n @ 0..=2 = fd {
+        STDIO_MADE_BLOCKING.fetch_or(1u8 << n, core::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 /// See [`STDIO_MADE_BLOCKING`].
 #[cfg(unix)]
 #[inline]

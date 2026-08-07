@@ -1254,14 +1254,30 @@ impl FileSink {
                     // `Owned(consumed)` result `to_result` seeded and
                     // `run_pending_later()` alone would resolve it as if every
                     // buffered byte had reached the reader. Latch the error and
-                    // move the sink to its terminal state (mirrors `end_from_js`).
-                    (*this).done.set(true);
+                    // move the sink to its terminal state (mirrors `end_from_js`);
+                    // a stdio sink stays "open" and re-fails per call instead.
+                    let err = if (*this).is_stdio() {
+                        (*this).stdio_latch_error(err)
+                    } else {
+                        (*this).done.set(true);
+                        err
+                    };
                     if (*this).pending.get().state == streams::PendingState::Pending {
                         (*this)
                             .pending
-                            .with_mut(|p| p.result = streams::Writable::Err(err));
+                            .with_mut(|p| p.result = streams::Writable::Err(err.clone()));
                     }
-                    (*this).writer.with_mut(|w| w.end());
+                    #[cfg(not(windows))]
+                    if (*this).is_stdio() {
+                        (*this).writer.with_mut(|w| w.fail(err));
+                    } else {
+                        (*this).writer.with_mut(|w| w.end());
+                    }
+                    #[cfg(windows)]
+                    {
+                        let _ = err;
+                        (*this).writer.with_mut(|w| w.end());
+                    }
                     (*this).run_pending_later();
                     (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                     return false;

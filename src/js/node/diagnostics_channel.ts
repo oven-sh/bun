@@ -88,7 +88,7 @@ function publishToConsoleChannel(index: number, args: unknown[]) {
   channels.get(kConsoleChannelNames[index])?.publish(args);
 }
 function updateConsoleChannel(channel, active: boolean) {
-  const index = kConsoleChannelNames.indexOf(channel.name);
+  const index = ArrayPrototypeIndexOf.$call(kConsoleChannelNames, channel.name);
   if (index === -1) return;
   const bit = 1 << index;
   const next = active ? consoleChannelMask | bit : consoleChannelMask & ~bit;

@@ -508,6 +508,8 @@ static struct {
     ino_t ino;
 } bun_stdio_startup_state[3] = { { -1, 0, 0 }, { -1, 0, 0 }, { -1, 0, 0 } };
 
+extern "C" void Bun__stdioMadeBlocking(int fd);
+
 static void bun_restore_stdio_nonblock()
 {
     for (int fd = 0; fd < 3; fd++) {
@@ -534,6 +536,10 @@ static void bun_restore_stdio_nonblock()
             do
                 err = fcntl(fd, F_SETFL, flags);
             while (err == -1 && errno == EINTR);
+            // If we keep running after this (a failed execve), the stdio sink
+            // that had set O_NONBLOCK must stop expecting EAGAIN.
+            if (err == 0 && !(flags & O_NONBLOCK))
+                Bun__stdioMadeBlocking(fd);
         }
     }
 }

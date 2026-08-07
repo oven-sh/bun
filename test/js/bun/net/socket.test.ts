@@ -391,6 +391,8 @@ describe.concurrent("socket", () => {
     const before = drains;
     s.pause();
     await Bun.sleep(100); // window in which the buggy pause-armed writable fired
+    s.resume();
+    await Bun.sleep(100); // resume() manufacturing WRITABLE fired one too
     const delta = drains - before;
     s.terminate(); // release before asserting so a failure does not leak the socket
     expect(delta).toBe(0);
@@ -433,6 +435,44 @@ describe.concurrent("socket", () => {
     await Bun.sleep(250);
     const closed = closedEarly;
     peer.terminate(); // release before asserting so a failure does not leak the socket
+    expect(closed).toBe(false);
+  });
+
+  // The sibling ordering: pause() first arms the 0-event fallback write
+  // one-shot before the socket is shut down, and the teardown transition must
+  // still scrub it or it echoes our own SS_CANTSENDMORE as EV_EOF.
+  it("pause() then shutdown() keeps a half-closed socket open while the peer is silent", async () => {
+    let closedEarly = false;
+    const opened = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.pause();
+          s.shutdown();
+          opened.resolve();
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {
+          closedEarly = true;
+        },
+      },
+    });
+    // allowHalfOpen peer ignores our FIN and stays silently connected.
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
+    });
+    await opened.promise;
+    // Negative-assertion window, same rationale as the shutdown-then-pause test.
+    await Bun.sleep(250);
+    const closed = closedEarly;
+    peer.terminate();
     expect(closed).toBe(false);
   });
 

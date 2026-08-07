@@ -890,6 +890,11 @@ void us_socket_resume(struct us_socket_t *s) {
         us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
         return;
     }
-    // we are readable and writable so we resume everything
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    /* Re-add readable, but like pause() only KEEP writable interest: any
+     * backpressure during the pause already armed it via
+     * us_internal_rearm_writable, and manufacturing it here fired a bogus
+     * drain on every pause/resume round trip (libuv's uv_read_start only
+     * adds POLLIN). */
+    us_poll_change(&s->p, s->group->loop,
+                   LIBUS_SOCKET_READABLE | (us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE));
 }

@@ -551,11 +551,12 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     int teardown_watch = !is_readable && !is_writable && own_shutdown;
     if (teardown_watch) {
         EV_SET64(&change_list[change_length++], fd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, (uint64_t)(void*)user_data, 0, 0);
-        if (old_events & LIBUS_SOCKET_WRITABLE) {
-            /* A still-armed write one-shot would report our own
-             * SS_CANTSENDMORE; nothing can ever be sent again anyway. */
-            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
-        }
+        /* Unconditionally drop any write filter: a still-armed one-shot would
+         * report our own SS_CANTSENDMORE, and old_events cannot be trusted to
+         * know about it - pause() before shutdown() arms the 0-event fallback
+         * one-shot without recording it anywhere (ENOENT from the receipt is
+         * harmless when none exists). Nothing can ever be sent again anyway. */
+        EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     } else if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
         EV_SET64(&change_list[change_length++], fd, EVFILT_READ, is_readable ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }

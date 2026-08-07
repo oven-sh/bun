@@ -1528,8 +1528,8 @@ impl VirtualMachine {
         // the teardown's stop phase consult `script_allowed()`.
         {
             let global = self.global();
-            let termination_pending =
-                !global.clear_exception_except_termination() || self.jsc_vm().has_termination_request();
+            let termination_pending = !global.clear_exception_except_termination()
+                || self.jsc_vm().has_termination_request();
             if termination_pending {
                 self.handle.forbid_script();
             }

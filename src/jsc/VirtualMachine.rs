@@ -1972,12 +1972,6 @@ bun_io::link_impl_EventLoopCtx! {
                 .pending_unref_counter
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         },
-        // CROSS-THREAD: reached via `KeepAlive::{,un}ref_concurrently`. Do NOT
-        // use `vm_from_owner()` / `event_loop_mut()` — both mint `&mut`, UB
-        // against the JS thread's borrow. `event_loop()` takes `&self` (Sync)
-        // and `{,un}ref_concurrently` take `&self` (atomic fetch_add + wakeup).
-        ref_concurrently()   => (*(*this).event_loop()).ref_concurrently(),
-        unref_concurrently() => (*(*this).event_loop()).unref_concurrently(),
         after_event_loop_callback() => vm_from_owner(this.cast()).after_event_loop_callback,
         set_after_event_loop_callback(cb, ctx) => {
             let vm = vm_from_owner(this.cast());

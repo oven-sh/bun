@@ -2918,14 +2918,14 @@ impl ThreadSafeFunction {
         self.thread_count.load(Ordering::SeqCst) <= 0
     }
 
+    /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn ref_(&mut self) {
-        self.poll_ref
-            .ref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+        self.poll_ref.ref_(bun_io::js_vm_ctx());
     }
 
+    /// `napi_unref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn unref(&mut self) {
-        self.poll_ref
-            .unref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+        self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
     pub(crate) fn acquire(&mut self) -> napi_status {

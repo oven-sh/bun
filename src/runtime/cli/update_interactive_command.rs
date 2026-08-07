@@ -13,8 +13,8 @@ use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
-    LogLevel, ROOT_PACKAGE_JSON_PATH, Subcommand, WorkspaceFilter,
-    install_with_manager, populate_manifest_cache,
+    LogLevel, ROOT_PACKAGE_JSON_PATH, Subcommand, WorkspaceFilter, install_with_manager,
+    populate_manifest_cache,
 };
 use bun_install::{
     CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,

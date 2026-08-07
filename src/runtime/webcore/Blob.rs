@@ -3981,13 +3981,12 @@ impl FormDataContext<'_> {
                 // Borrowed from the blob, which the `DOMFormData` keeps alive
                 // past `joiner.done()`.
                 let blob_ct = blob.content_type_slice();
-                let content_type: &[u8] = if !blob_ct.is_empty()
-                    && !blob_ct.iter().any(|&b| matches!(b, b'\r' | b'\n'))
-                {
-                    blob_ct
-                } else {
-                    b"application/octet-stream"
-                };
+                let content_type: &[u8] =
+                    if !blob_ct.is_empty() && !strings::contains_any(blob_ct, b"\r\n") {
+                        blob_ct
+                    } else {
+                        b"application/octet-stream"
+                    };
                 joiner.push_static(b"Content-Type: ");
                 // SAFETY: either a `'static` literal or borrowed from the entry's Blob,
                 // which the `DOMFormData` keeps alive past `joiner.done()` in
@@ -5779,7 +5778,7 @@ pub(crate) fn construct_bun_file(
 // S3BlobDownloadTask
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct S3BlobDownloadTask {
+struct S3BlobDownloadTask {
     pub(crate) blob: Blob,
     /// JSC_BORROW: process-lifetime global; `BackRef` so the deref is safe and
     /// the borrow detaches from `&self` (Copy) for use across `&mut self` calls.
@@ -5789,7 +5788,7 @@ pub struct S3BlobDownloadTask {
     pub(crate) handler: S3ReadHandler,
 }
 
-pub type S3ReadHandler = fn(&Blob, bun_ptr::BackRef<JSGlobalObject>, &mut [u8]) -> JSValue;
+type S3ReadHandler = fn(&Blob, bun_ptr::BackRef<JSGlobalObject>, &mut [u8]) -> JSValue;
 
 impl S3BlobDownloadTask {
     pub(crate) fn call_handler(&mut self, raw_bytes: &mut [u8]) -> JSValue {
@@ -5941,7 +5940,7 @@ impl Drop for S3BlobDownloadTask {
 // FileStreamWrapper / pipeReadableStreamToBlob
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct FileStreamWrapper {
+struct FileStreamWrapper {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) readable_stream_ref: webcore::readable_stream::ReadableStreamStrong,
     // LIFETIMES.tsv: SHARED — but FileSink uses an intrusive single-thread refcount

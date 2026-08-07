@@ -152,8 +152,8 @@ pub fn crc32_bytes(crc: u32, data: &[u8]) -> u32 {
 }
 
 pub use bun_core::compress::State;
-pub type ZlibReaderArrayListState = State;
-pub type ZlibCompressorArrayListState = State;
+type ZlibReaderArrayListState = State;
+type ZlibCompressorArrayListState = State;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZlibError {

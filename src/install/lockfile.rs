@@ -2476,9 +2476,9 @@ macro_rules! string_builder {
 
 /// Trait implemented by `String` and `ExternalString` to support generic `append*`.
 /// Canonical def lives in
-/// `bun_semver::semver_string`; re-exported under the local name so generic
+/// `bun_semver::semver_string`; imported under the local name so generic
 /// bounds in this module (`append<T: StringBuilderType>`) are unchanged.
-pub use bun_semver::semver_string::BuilderStringType as StringBuilderType;
+use bun_semver::semver_string::BuilderStringType as StringBuilderType;
 
 impl<'a> StringBuilder<'a> {
     #[inline]
@@ -3071,12 +3071,8 @@ const MAX_DEFAULT_TRUSTED_DEPENDENCIES: usize = 512;
 /// --default` need not re-sort.
 pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: std::sync::LazyLock<Vec<&'static [u8]>> =
     std::sync::LazyLock::new(|| {
-        const DATA: &str = include_str!("default-trusted-dependencies.txt");
-        let mut names: Vec<&'static [u8]> = DATA
-            .split([' ', '\r', '\n', '\t'])
-            .filter(|s| !s.is_empty())
-            .map(str::as_bytes)
-            .collect();
+        const DATA: &[u8] = include_bytes!("default-trusted-dependencies.txt");
+        let mut names: Vec<&'static [u8]> = strings::tokenize_any(DATA, b" \r\n\t").collect();
         names.sort_unstable();
         debug_assert!(
             names.len() <= MAX_DEFAULT_TRUSTED_DEPENDENCIES,

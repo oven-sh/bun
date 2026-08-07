@@ -1,6 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -197,7 +198,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { bunEnv, bunExe, tempDir } from "harness";
+import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -542,6 +543,86 @@ describe("errors", () => {
       sleep(2_500),
     ]);
     expect(text).toBe(result);
+  });
+});
+
+describe("object loader with a throwing exports getter", () => {
+  // The result object's "exports" getter throws while the module loader reads
+  // it. Run in a subprocess: the unfixed runtime segfaults instead of
+  // surfacing the getter's error.
+  const throwingExportsResult = `
+    const result = { loader: "object" };
+    Object.defineProperty(result, "exports", {
+      enumerable: true,
+      get() {
+        throw new Error("exports getter threw");
+      },
+    });
+    return result;
+  `;
+
+  async function expectCleanFailure(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("failed: exports getter threw\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
+  it.concurrent("rejects import() of a build.module result", async () => {
+    await expectCleanFailure(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.module("virt-mod", () => { ${throwingExportsResult} });
+        },
+      });
+      try {
+        await import("virt-mod");
+        console.log("imported");
+      } catch (e) {
+        console.log("failed:", e?.message);
+      }
+    `);
+  });
+
+  it.concurrent("throws from require() of a build.module result", async () => {
+    await expectCleanFailure(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.module("virt-mod", () => { ${throwingExportsResult} });
+        },
+      });
+      try {
+        require("virt-mod");
+        console.log("required");
+      } catch (e) {
+        console.log("failed:", e?.message);
+      }
+    `);
+  });
+
+  it.concurrent("rejects import() of a build.onLoad result", async () => {
+    await expectCleanFailure(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.onResolve({ filter: /.*/, namespace: "virtns" }, args => ({ path: args.path, namespace: "virtns" }));
+          build.onLoad({ filter: /.*/, namespace: "virtns" }, () => { ${throwingExportsResult} });
+        },
+      });
+      try {
+        await import("virtns:mod");
+        console.log("imported");
+      } catch (e) {
+        console.log("failed:", e?.message);
+      }
+    `);
   });
 });
 

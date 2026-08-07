@@ -387,9 +387,7 @@ unsafe fn init_runtime_state(
         // measurable on `bun -e ''` startup.
         let mut args = core::mem::take(&mut opts.transform_options);
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
-        // Inlined `configure_transform_options_for_bun_vm`:
         args.write = Some(false);
-        args.resolve = Some(api::ResolveMode::Lazy);
         args.target = Some(api::Target::Bun);
         // The arena lives on
         // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it
@@ -2027,6 +2025,20 @@ fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
         _ => bun_jsc::CrateError::ParseError,
     }
 }
+/// Shared guard for the two parse-failure exits: register the module with the
+/// Node compile cache (Unknown module type maps to CJS, matching Node).
+fn note_compile_cache_parse_failure(
+    path: &bun_resolver::fs::Path<'_>,
+    loader: Loader,
+    module_type: ModuleType,
+) {
+    if bun_jsc::node_compile_cache::is_enabled() && loader.is_java_script_like() && path.is_file() {
+        bun_jsc::node_compile_cache::note_parse_failure(
+            path.text,
+            !matches!(module_type, ModuleType::Esm),
+        );
+    }
+}
 
 /// `ModuleLoader.transpileSourceCode(...)` — the runtime-transpiler path:
 /// read file → `Transpiler::parse`
@@ -2116,7 +2128,7 @@ fn transpile_source_code_inner(
         && !(loader.is_java_script_like()
             || matches!(
                 loader,
-                L::Toml | L::Yaml | L::Json5 | L::Text | L::Json | L::Jsonc
+                L::Toml | L::Yaml | L::Json5 | L::Xml | L::Text | L::Json | L::Jsonc
             ))
     {
         return Ok(OwnedResolvedSource::from(ResolvedSource {
@@ -2140,6 +2152,7 @@ fn transpile_source_code_inner(
         | L::Toml
         | L::Yaml
         | L::Json5
+        | L::Xml
         | L::Text
         | L::Md => {
             // `bun_ast::ASTMemoryAllocator::Scope`.
@@ -2257,8 +2270,7 @@ fn transpile_source_code_inner(
             // consume this scope via `take_state()` and ship the box with the
             // arena.
             let ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
-            // ── Watcher fd / package_json lookup ────────────────────────────
-            let mut fd: Option<bun_sys::Fd> = None;
+            // ── Watcher package_json lookup ─────────────────────────────────
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
             {
                 // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
@@ -2266,31 +2278,12 @@ fn transpile_source_code_inner(
                 let import_watcher: *mut bun_jsc::ImportWatcher =
                     unsafe { &*jsc_vm }.bun_watcher.cast();
                 if !import_watcher.is_null() {
-                    // SAFETY: non-null per check above. The watchlist *is*
-                    // mutated cross-thread (the watcher thread's
-                    // `flush_evictions` closes fds and `swap_remove`s), so
-                    // snapshot under the watcher mutex — see
-                    // `ImportWatcher::snapshot_fd_and_package_json` doc for
-                    // the EBADF race this closes.
+                    // SAFETY: non-null per check above. Never read through the
+                    // watchlist's stored fd; see
+                    // `ImportWatcher::snapshot_package_json`.
                     let iw = unsafe { &*import_watcher };
-                    (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
+                    package_json = iw.snapshot_package_json(hash);
                 }
-            }
-
-            // Note / fix: never reuse the watcher's cached fd for the
-            // `--hot` entrypoint. An atomic `rename()` over the entrypoint (the
-            // common HMR save pattern) replaces its inode; the watcher entry
-            // still holds an fd to the now-unlinked old inode until the
-            // IN_DELETE_SELF event for it is processed and `flush_evictions`
-            // closes it. If a reload's transpile runs first (e.g. the
-            // directory-watch recovery in `hot_reloader` re-fired the reload
-            // before that file event landed under load), reading via the stale
-            // fd returns the OLD file contents — the reload "succeeds" with the
-            // wrong source and `bun --hot` hangs. Re-open the entrypoint by
-            // path so we always see the current inode; `maybe_watch_file` below
-            // re-registers the fresh fd with the watcher.
-            if is_main && fd.is_some() {
-                fd = None;
             }
 
             // ── RuntimeTranspilerCache ──────────────────────────────────────
@@ -2371,7 +2364,7 @@ fn transpile_source_code_inner(
                 }
             };
 
-            let mut should_close_input_file_fd = fd.is_none();
+            let mut should_close_input_file_fd = true;
 
             // Only JS-like loaders get the cjs/esm wrapper hint.
             let module_type_only_for_wrappables = match loader {
@@ -2530,7 +2523,7 @@ fn transpile_source_code_inner(
                     path: parse_path,
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
-                    file_descriptor: fd,
+                    file_descriptor: None,
                     // SAFETY: `input_file_fd_ptr` points at this frame's
                     // `input_file_fd`; reborrow through the raw pointer so the
                     // `_fd_guard` scopeguard's tag is not invalidated by a
@@ -2615,6 +2608,9 @@ fn transpile_source_code_inner(
                         );
                     }
                     arena_guard.2 = false; // give_back_arena = false
+                    // Node compile cache: record the failed module so exit-time
+                    // persist logs the "was not initialized" skip (Node parity).
+                    note_compile_cache_parse_failure(path, loader, module_type);
                     return Err(crate::Error::ParseError);
                 };
 
@@ -2668,6 +2664,9 @@ fn transpile_source_code_inner(
                 // `transpiler.log` was swapped to non-null `args.log` above.
                 if unsafe { (*(*jsc_vm).transpiler.log).errors > 0 } {
                     arena_guard.2 = false;
+                    // Node compile cache: record the failed module so exit-time
+                    // persist logs the "was not initialized" skip (Node parity).
+                    note_compile_cache_parse_failure(path, loader, module_type);
                     return Err(crate::Error::ParseError);
                 }
 
@@ -2708,8 +2707,11 @@ fn transpile_source_code_inner(
                     }));
                 }
 
-                // JSON/TOML/YAML/JSON5: export as a JS object.
-                if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5) {
+                // JSON/TOML/YAML/JSON5/XML: export as a JS object.
+                if matches!(
+                    loader,
+                    L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5 | L::Xml
+                ) {
                     // SAFETY: `jsc_vm.global` is set during init and live for
                     // VM lifetime; `global_object` (if non-null) is the live
                     // per-thread global.
@@ -2737,12 +2739,23 @@ fn transpile_source_code_inner(
                             // `SExpr` part; anything else is a parser bug.
                             unreachable!("JSON/TOML/YAML parse result is always SExpr")
                         };
-                        bun_js_parser_jsc::expr_to_js(&s_expr.value, global).unwrap_or_else(|e| {
-                            bun_core::Output::panic(format_args!(
-                                "Unexpected JS error: {}",
-                                <&'static str>::from(e)
-                            ))
-                        })
+                        match bun_js_parser_jsc::expr_to_js(&s_expr.value, global) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                return Err(match e {
+                                    bun_ast::ToJSError::JSError => bun_jsc::JsError::Thrown,
+                                    bun_ast::ToJSError::JSTerminated => {
+                                        bun_jsc::JsError::Terminated
+                                    }
+                                    bun_ast::ToJSError::OutOfMemory => global.throw_out_of_memory(),
+                                    e => global.throw_error(
+                                        bun_jsc::CrateError::from(e),
+                                        "converting module to JavaScript",
+                                    ),
+                                }
+                                .into());
+                            }
+                        }
                     };
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         specifier: input_specifier.dupe_ref(),
@@ -2841,6 +2854,23 @@ fn transpile_source_code_inner(
                     } else {
                         core::ptr::null_mut()
                     };
+                    let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
+                    // Node compile cache hook (transpiler-cache-hit path); must
+                    // read `output_code` before it is consumed below. UTF-16
+                    // output would hash differently than the print path — skip.
+                    let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                        && source.path.is_file()
+                        && loader.is_java_script_like()
+                        && !matches!(&entry.output_code, OutputCode::String(s) if s.is_utf16())
+                    {
+                        bun_jsc::node_compile_cache::fetch(
+                            source.path.text,
+                            is_commonjs_module,
+                            entry.output_code.byte_slice(),
+                        )
+                    } else {
+                        None
+                    };
                     let source_code = match &mut entry.output_code {
                         OutputCode::String(s) => *s,
                         OutputCode::Utf8(utf8) => {
@@ -2849,7 +2879,6 @@ fn transpile_source_code_inner(
                             result
                         }
                     };
-                    let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
                     // When the cached entry was detected as
                     // CJS but lives inside a `"type":"module"` package, emit
                     // `package_json_type_module` so the C++ loader applies the
@@ -2900,6 +2929,8 @@ fn transpile_source_code_inner(
                     } else {
                         ResolvedSourceTag::Javascript
                     };
+                    let (bytecode_cache, bytecode_cache_size) =
+                        node_compile_cache_blob.unwrap_or((core::ptr::null_mut(), 0));
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
@@ -2907,6 +2938,8 @@ fn transpile_source_code_inner(
                         is_commonjs_module,
                         module_info,
                         tag,
+                        bytecode_cache,
+                        bytecode_cache_size,
                         ..Default::default()
                     }));
                 }
@@ -2948,24 +2981,16 @@ fn transpile_source_code_inner(
                     // AST's small `AstVec`s live in its inline bump chunk.
                     let ast_alloc_state = ast_alloc_scope.take_state();
                     // SAFETY: per fn contract — `jsc_vm` / `global_object` are the live
-                    // per-thread VM / global; `package_json` is the opaque watcher
-                    // forward-decl of `bun_resolver::package_json::PackageJSON`.
+                    // per-thread VM / global.
                     unsafe {
                         (*jsc_vm).modules.enqueue(
                             &*global_object,
                             bun_jsc::async_module::InitOpts {
                                 parse_result,
                                 path: *path,
-                                loader,
-                                fd,
-                                package_json: package_json.map(|p| {
-                                    &*core::ptr::from_ref(p)
-                                        .cast::<bun_resolver::package_json::PackageJSON>()
-                                }),
                                 promise_ptr: Some(promise_ptr),
                                 specifier,
                                 referrer,
-                                hash,
                                 arena,
                                 ast_alloc_state,
                             },
@@ -3095,11 +3120,20 @@ fn transpile_source_code_inner(
                     // (Stacked Borrows — see the matching note below).
                     let printer: &mut bun_js_printer::BufferPrinter =
                         unsafe { &mut *(*extra).source_code_printer };
+                    let written = printer.ctx.get_written();
+                    let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                        && path.is_file()
+                        && loader.is_java_script_like()
+                    {
+                        bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
+                    } else {
+                        None
+                    };
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread
                     // VM; `printer.ctx.get_written()` borrows thread-local data.
                     let mut resolved_source = unsafe {
                         (*jsc_vm).ref_counted_resolved_source::<false>(
-                            printer.ctx.get_written(),
+                            written,
                             input_specifier.dupe_ref(),
                             path.text,
                             None,
@@ -3107,6 +3141,10 @@ fn transpile_source_code_inner(
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
+                    if let Some((ptr, size)) = node_compile_cache_blob {
+                        resolved_source.bytecode_cache = ptr;
+                        resolved_source.bytecode_cache_size = size;
+                    }
                     return Ok(OwnedResolvedSource::from(resolved_source));
                 }
 
@@ -3167,6 +3205,16 @@ fn transpile_source_code_inner(
                 let printer: &mut bun_js_printer::BufferPrinter =
                     unsafe { &mut *(*extra).source_code_printer };
                 let written = printer.ctx.get_written();
+                // Node compile cache hook (sync transpile path). `fetch` copies
+                // `written`; the printer may be replaced below.
+                let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                    && path.is_file()
+                    && loader.is_java_script_like()
+                {
+                    bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
+                } else {
+                    None
+                };
                 // The `Jsc` vtable bridge `put()` does not write
                 // `cache.output_code` (only the `r#impl == None` fallback
                 // does, and `r#impl` is `Some(Jsc)` here), so it is always
@@ -3188,6 +3236,8 @@ fn transpile_source_code_inner(
                 // (fd close handled by `_fd_guard` registered above; spec
                 // :251-256 `defer` fires on every exit path.)
 
+                let (bytecode_cache, bytecode_cache_size) =
+                    node_compile_cache_blob.unwrap_or((core::ptr::null_mut(), 0));
                 return Ok(OwnedResolvedSource::from(ResolvedSource {
                     source_code,
                     specifier: input_specifier.dupe_ref(),
@@ -3195,6 +3245,8 @@ fn transpile_source_code_inner(
                     is_commonjs_module,
                     module_info,
                     tag,
+                    bytecode_cache,
+                    bytecode_cache_size,
                     ..Default::default()
                 }));
             }
@@ -3377,20 +3429,19 @@ fn transpile_source_code_inner(
                 // type.
                 let watcher =
                     unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                if watcher
-                    .add_file::<true>(
+                if !matches!(
+                    watcher.add_file::<true>(
                         input_fd,
                         path.text,
                         hash,
                         loader,
                         bun_sys::Fd::INVALID,
                         None,
-                    )
-                    .is_err()
-                {
-                    // Close the fd we just opened on macOS;
-                    // not a transpile failure (the user didn't open it).
-                    #[cfg(target_os = "macos")]
+                    ),
+                    Ok(bun_watcher::FdOwnership::Watcher)
+                ) {
+                    // Not adopted (already watched, or add failed); close the
+                    // fd this arm opened.
                     if input_fd.is_valid() {
                         use bun_sys::FdExt as _;
                         input_fd.close();
@@ -3489,18 +3540,22 @@ fn maybe_watch_file(
     {
         return;
     }
-    *should_close_input_file_fd = false;
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-    let _ = watcher.add_file::<true>(
-        input_file_fd,
-        path.text,
-        hash,
-        loader,
-        bun_sys::Fd::INVALID,
-        package_json,
-    );
+    if matches!(
+        watcher.add_file::<true>(
+            input_file_fd,
+            path.text,
+            hash,
+            loader,
+            bun_sys::Fd::INVALID,
+            package_json,
+        ),
+        Ok(bun_watcher::FdOwnership::Watcher)
+    ) {
+        *should_close_input_file_fd = false;
+    }
 }
 
 // Generated `bun:sqlite` import shims.
@@ -3865,6 +3920,7 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
         19 => Some(L::Yaml),
         20 => Some(L::Json5),
         21 => Some(L::Md),
+        22 => Some(L::Xml),
         // 254 = `_none`; everything else is open-tail.
         _ => None,
     }
@@ -3910,6 +3966,11 @@ unsafe fn normalize_specifier_for_loader<'a>(
 ) -> (&'a [u8], &'a [u8], &'a [u8]) {
     let mut slice = slice_;
     if slice.is_empty() {
+        return (slice, slice, b"");
+    }
+    // In a `data:` URL everything after the comma is the payload; a `?` is
+    // part of the data, not a query string.
+    if bun_core::strings::has_prefix_comptime(slice, b"data:") {
         return (slice, slice, b"");
     }
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -4316,9 +4377,10 @@ unsafe fn transpile_file(
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
 
     // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
-    // We only run the transpiler concurrently when we can.
-    // Today that's: import statements (`import 'foo'`) and import expressions
-    // (`import('foo')`).
+    // We only run the transpiler concurrently when we can — today that's import statements and
+    // import expressions. Node compile cache: lazily initialize from env on the first fetch.
+    bun_jsc::node_compile_cache::init_from_env_once();
+
     'transpile_async: {
         let concurrent_loader = lr.loader.unwrap_or(Loader::File);
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -4339,6 +4401,9 @@ unsafe fn transpile_file(
             // TODO: allow running concurrently when no onLoad handlers match a plugin.
             && plugin_runner_is_none
             && store_enabled
+            // With the Node compile cache enabled, transpile on-thread so the
+            // fetch hook sees every module.
+            && !bun_jsc::node_compile_cache::is_enabled()
         {
             // Disgusting workaround: polyfills like
             // `reflect-metadata` are CJS-with-side-effects that other ESM

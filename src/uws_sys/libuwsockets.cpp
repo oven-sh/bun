@@ -387,17 +387,17 @@ extern "C"
     }
   }
 
-  void uws_app_close_idle(int ssl, uws_app_t *app)
+  size_t uws_app_close_idle(int ssl, uws_app_t *app, int close_when_idle)
   {
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->closeIdle();
+      return uwsApp->closeIdle(close_when_idle != 0);
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->closeIdle();
+      return uwsApp->closeIdle(close_when_idle != 0);
     }
   }
 
@@ -541,13 +541,13 @@ extern "C"
       uwsApp->setMaxHTTPHeaderSize(max_header_size);
     }
   }
-  void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation, bool use_insecure_http_parser, bool http_allow_half_open) {
+  void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->setFlags(require_host_header, use_strict_method_validation, use_insecure_http_parser, http_allow_half_open);
+      uwsApp->setFlags(require_host_header, use_strict_method_validation, lenient_http_flags, http_allow_half_open);
     } else {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->setFlags(require_host_header, use_strict_method_validation, use_insecure_http_parser, http_allow_half_open);
+      uwsApp->setFlags(require_host_header, use_strict_method_validation, lenient_http_flags, http_allow_half_open);
     }
   }
 
@@ -1186,6 +1186,11 @@ extern "C"
 
   void uws_res_pause(int ssl, uws_res_r res)
   {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1200,6 +1205,12 @@ extern "C"
 
   void uws_res_resume(int ssl, uws_res_r res)
   {
+    /* No-op on a closed socket (resume's resetTimeout reads the destructed
+     * ext); see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1339,6 +1350,36 @@ extern "C"
       uwsRes->resetTimeout();
     }
   }
+  /* Completion gate for response-end paths that bypass internalEnd (the
+   * sendfile path): closes the socket when the connection is marked to close
+   * (Connection: close, peer FIN, close-when-idle), the response is complete,
+   * and every outgoing byte has been flushed. Corked responses are left to the
+   * cork() wrapper's own post-uncork gate. */
+  void uws_res_close_if_done_and_marked(int ssl, uws_res_r res)
+  {
+    /* A callback upstream of this gate may already have closed the socket;
+     * onClose destructs the ext block, so bail before touching it. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      if (!uwsRes->AsyncSocket<true>::isCorked())
+      {
+        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
+      }
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      if (!uwsRes->AsyncSocket<false>::isCorked())
+      {
+        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
+      }
+    }
+  }
   void uws_res_reset_timeout(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1379,6 +1420,12 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      /* No close gate here: callers (FileResponseStream::finish,
+       * DevServer/HTMLBundle error paths) keep using the response after this
+       * returns, so closing inside this call would destruct the ext under
+       * them. Corked callers get the cork() wrapper's post-uncork gate;
+       * uncorked ones run uws_res_close_if_done_and_marked themselves once
+       * they are done with the response. */
     }
     else
     {
@@ -1401,6 +1448,7 @@ extern "C"
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      /* No close gate here; see the SSL arm above. */
     }
   }
 
@@ -1499,6 +1547,10 @@ extern "C"
   }
 
   void uws_res_clear_on_writable(int ssl, uws_res_r res) {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res)) {
+      return;
+    }
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->clearOnWritable();
@@ -1512,6 +1564,14 @@ extern "C"
                           void (*handler)(uws_res_r res, void *optional_data),
                           void *optional_data)
   {
+    /* A closed socket's ext block is already destructed (HttpContext::onClose)
+     * and its callbacks can never fire again; registering or clearing one is a
+     * no-op. Completion bookkeeping runs after ends that may have closed the
+     * socket via a shouldCloseConnection() gate, so this must not touch ext. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1544,6 +1604,11 @@ extern "C"
                           void (*handler)(uws_res_r res, void *optional_data),
                           void *optional_data)
   {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1578,6 +1643,11 @@ extern "C"
                                        void *optional_data),
                        void *optional_data)
   {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1767,8 +1837,11 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     us_socket_r s = (us_socket_t *)res;
     if(us_socket_is_closed(s)) return;
     s->flags.last_write_failed = 1;
+    /* Same gate as us_internal_rearm_writable (socket.c): re-adding READABLE
+     * would undo a pause mid-backpressure and re-surface a consumed EOF on a
+     * half-open socket. */
     us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+                   LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
   }
 
   void uws_res_override_write_offset(int ssl, uws_res_r res, uint64_t offset)
@@ -1835,7 +1908,10 @@ __attribute__((callback (corker, ctx)))
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto pair = uwsRes->tryEnd(stringViewFromC(bytes, len), total_len, close);
-      if (pair.first) {
+      /* A completed tryEnd may have closed the socket through a
+       * shouldCloseConnection() gate, destructing the ext; markDone already
+       * cleared the callbacks in that case. */
+      if (pair.first && !us_socket_is_closed((struct us_socket_t *)res)) {
         uwsRes->clearOnWritableAndAborted();
       }
 
@@ -1845,7 +1921,8 @@ __attribute__((callback (corker, ctx)))
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto pair = uwsRes->tryEnd(stringViewFromC(bytes, len), total_len, close);
-      if (pair.first) {
+      /* See the SSL arm above. */
+      if (pair.first && !us_socket_is_closed((struct us_socket_t *)res)) {
           uwsRes->clearOnWritableAndAborted();
       }
 
@@ -1935,7 +2012,11 @@ __attribute__((callback (corker, ctx)))
   void us_socket_sendfile_needs_more(us_socket_r s) {
     if(us_socket_is_closed(s)) return;
     s->flags.last_write_failed = 1;
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    /* Same gate as us_internal_rearm_writable (socket.c): re-adding READABLE
+     * would undo a pause mid-backpressure and re-surface a consumed EOF on a
+     * half-open socket. */
+    us_poll_change(&s->p, s->group->loop,
+                   LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
   }
 
   LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) {

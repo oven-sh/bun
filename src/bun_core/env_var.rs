@@ -158,10 +158,15 @@ new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
 // A string, not a boolean: node suppresses warnings only when the value is
 // exactly "1" (lib/internal/process/pre_execution.js).
 new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});
+new!(pub NODE_COMPILE_CACHE: string, "NODE_COMPILE_CACHE", {});
+new!(pub NODE_COMPILE_CACHE_PORTABLE: string, "NODE_COMPILE_CACHE_PORTABLE", {});
+new!(pub NODE_DEBUG_NATIVE: string, "NODE_DEBUG_NATIVE", {});
+new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
 new!(pub BUN_INTERNAL_WEBVIEW_HOST: string, "BUN_INTERNAL_WEBVIEW_HOST", {});
+new!(pub NODE_PENDING_DEPRECATION: string, "NODE_PENDING_DEPRECATION", {});
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});
@@ -212,6 +217,7 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER, "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE, "BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", {});
     // Force the event loop to use epoll_pwait(2) instead of epoll_pwait2(2).
     // Escape hatch for seccomp policies that block syscall 441 without
@@ -235,6 +241,8 @@ pub mod feature_flag {
     // Fall back to the scalar byte-at-a-time VLQ decode in
     // bun_sourcemap::mapping::parse (skips the Highway-dispatched path).
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP, "BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP", {});
+    // Set by the test harness so stderr assertions don't flake on slow CI filesystems.
+    new_feature_flag!(pub BUN_DISABLE_SLOW_FILESYSTEM_WARNING, "BUN_DISABLE_SLOW_FILESYSTEM_WARNING", {});
     new_feature_flag!(pub BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING, "BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING", {});
     new_feature_flag!(pub BUN_DISABLE_SOURCE_CODE_PREVIEW, "BUN_DISABLE_SOURCE_CODE_PREVIEW", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS, "BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS", {});

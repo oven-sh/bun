@@ -90,6 +90,7 @@ extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, 
 extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
 
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
@@ -1604,10 +1605,6 @@ static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uin
 {
     int64_t haystackLen = std::min(thisLength, byteOffset + valueLength);
     if (haystackLen < valueLength) return -1;
-    if (valueLength == 1) {
-        auto span = std::span<const uint8_t>(thisPtr, static_cast<size_t>(haystackLen));
-        return WTF::reverseFind(span, valuePtr[0]);
-    }
     size_t result = highway_memrmem(thisPtr, static_cast<size_t>(haystackLen),
         valuePtr, static_cast<size_t>(valueLength));
     if (result == kHighwayNotFound) return -1;
@@ -1663,15 +1660,15 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     if (!computeIndexOfRange(byteLength, byteOffsetD, endD, 1, !last, false, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
 
-    auto span = std::span<const uint8_t>(typedVector, searchEnd);
     if (last) {
-        span = span.subspan(0, byteOffset + 1);
-        return WTF::reverseFind(span, byteValue);
+        size_t len = byteOffset + 1;
+        size_t result = highway_last_index_of_char(typedVector, len, byteValue);
+        return result == len ? -1 : static_cast<int64_t>(result);
     }
-    span = span.subspan(byteOffset);
-    auto result = WTF::find<uint8_t>(span, byteValue);
-    if (result == WTF::notFound) return -1;
-    return result + byteOffset;
+    size_t len = searchEnd - byteOffset;
+    size_t result = highway_index_of_char(typedVector + byteOffset, len, byteValue);
+    if (result == len) return -1;
+    return static_cast<int64_t>(result + byteOffset);
 }
 
 // ucs2 and utf16le name the same encoding (the parser normalizes every alias

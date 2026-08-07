@@ -58,11 +58,7 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 
 pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
-/// `api::JsException` lives in
-/// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
-/// `stack: StackTrace` field transitively names `ZigStackFramePosition` from
-/// this crate — see the `schema_api` module doc in lib.rs.
-pub type ExceptionList = Vec<crate::schema_api::JsException>;
+pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine struct (file-level @This())
@@ -72,6 +68,10 @@ pub type ExceptionList = Vec<crate::schema_api::JsException>;
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
+    /// True when the entry module evaluated as CommonJS: Node reports a CJS
+    /// entry's top-level throw with origin `uncaughtException` but an ESM
+    /// entry rejection with `unhandledRejection`; the run command consults this.
+    pub evaluated_as_cjs: bool,
 }
 
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
@@ -476,6 +476,34 @@ impl VMHolder {
     #[unsafe(no_mangle)]
     extern "C" fn Bun__thisThreadHasVM() -> bool {
         VM.get().is_some()
+    }
+
+    /// Node parity: `process.kill(self, sig)` with no JS handler for `sig`
+    /// flushes the CPU and heap profiles before sending the (likely fatal)
+    /// signal, mirroring node's `Kill` binding. Idempotent via `Option::take`.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__writeProfilesBeforeSelfKill() {
+        let Some(vm_ptr) = VM.get() else { return };
+        // SAFETY: called on the JS thread that owns this VM (process._kill).
+        let vm = unsafe { &mut *vm_ptr };
+        if let Some(config) = vm.cpu_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_cpu_profiler::stop_and_write_profile(vm.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
+            }
+        }
+        if let Some(config) = vm.heap_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_heap_profiler::generate_and_write_profile(vm.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(e, "Failed to write heap profile", ());
+            }
+        }
+        // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
+        // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
+        // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
+        crate::node_compile_cache::persist_now();
     }
 }
 
@@ -1518,6 +1546,12 @@ impl VirtualMachine {
         }
         // `mem::take` above leaves an empty `Vec` (capacity already freed by drop).
         self.has_run_cleanup_hooks = true;
+
+        // Persist the Node compile cache (NODE_COMPILE_CACHE /
+        // module.enableCompileCache()) after user exit handlers ran.
+        if self.is_main_thread() {
+            crate::node_compile_cache::persist_at_exit();
+        }
     }
 
     pub fn global_exit(&mut self) -> ! {
@@ -1603,13 +1637,11 @@ impl VirtualMachine {
             // a terminal state. Ask it to reclaim them now (waits up to 1s).
             bun_http::shutdown_for_exit();
 
-            // The HTTP daemon is parked. Release any task it posted to our
-            // queue before observing `is_shutting_down` (the read is
-            // non-atomic and can lag the JS-thread store) — `FetchTasklet`'s
-            // `on_progress_update` would have dropped the JS-side ref, and
-            // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
-            // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
-            // JSC `Strong`/`Weak` handles against a live heap.
+            // Release tasks the HTTP daemon posted before observing `is_shutting_down` (else the
+            // tasklet ⇄ `Box<AsyncHTTP>` cycle leaks); must precede `destructOnExit`. Wait for
+            // work-pool fs completions first — they post without a shutdown check, so a post
+            // landing after the drain leaks.
+            self.event_loop_mut().wait_for_concurrent_posters();
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
             if let Some(rare) = self.rare_data.as_deref_mut() {
@@ -2873,6 +2905,11 @@ fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
+    // In a `data:` URL everything after the comma is the payload; a `?` is
+    // part of the data, not a query string.
+    if bun_core::strings::has_prefix_comptime(specifier_, b"data:") {
+        return specifier_;
+    }
     if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
         *query_string = &specifier_[i..];
         &specifier_[..i]
@@ -3429,6 +3466,22 @@ impl VirtualMachine {
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+        if self.hot_reload == HOT_RELOAD_WATCH {
+            // Watch reload replaces the process: never defer on a pending
+            // entry promise (node restarts regardless of child state), and
+            // emit the --watch-kill-signal JS handlers first, like node.
+            crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
+            let should_clear_terminal =
+                !self.env_loader().has_set_no_clear_terminal_on_reload(
+                    !bun_core::Output::enable_ansi_colors_stdout(),
+                );
+            // execve will not reach on_exit; flush the compile cache here like
+            // node's child does via AtExit(FlushCompileCache) on every restart.
+            crate::node_compile_cache::persist_now();
+            bun_core::Output::flush();
+            bun_core::reload_process(should_clear_terminal, false);
+        }
+
         if let Some(p) = self.pending_internal_promise {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
@@ -3451,11 +3504,6 @@ impl VirtualMachine {
         let should_clear_terminal = !self
             .env_loader()
             .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
-        if self.hot_reload == HOT_RELOAD_WATCH {
-            bun_core::Output::flush();
-            bun_core::reload_process(should_clear_terminal, false);
-        }
-
         if should_clear_terminal {
             bun_core::Output::flush();
             bun_core::Output::disable_buffering();
@@ -4143,7 +4191,12 @@ impl VirtualMachine {
         mode: ResolveMode,
     ) -> JsResult<()> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
-        if IS_A_FILE_PATH && specifier.length() > MAX_LEN {
+        // `data:` URLs carry the module source inline and never touch the
+        // filesystem, so the path-length cap does not apply to them.
+        if IS_A_FILE_PATH
+            && specifier.length() > MAX_LEN
+            && !specifier.has_prefix_comptime(b"data:")
+        {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
             let import_kind = mode.import_kind();
@@ -4686,6 +4739,7 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
+        self.entry_point_result.evaluated_as_cjs = false;
         if let Some(promise) = self.pending_internal_promise {
             if self.pending_internal_promise_is_protected {
                 JSValue::from_cell(promise).unprotect();
@@ -4842,9 +4896,8 @@ impl VirtualMachine {
                     let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
                 }
                 if let Some(list) = exception_list {
-                    let top_level_dir = self.top_level_dir();
-                    let _ =
-                        zig_exception.add_to_error_list(list, top_level_dir, Some(&self.origin));
+                    let origin = self.is_from_devserver.then_some(&self.origin);
+                    zig_exception.add_to_error_list(list, self.top_level_dir(), origin);
                 }
                 holder.deinit(self);
             }
@@ -5147,13 +5200,8 @@ impl VirtualMachine {
                     let _ = (self.enable_source_code_preview, self.source_code_slice);
                 }
                 if let Some(list) = self.exception_list.take() {
-                    let top_level_dir = this.top_level_dir();
-                    // OOM-only.
-                    bun_core::handle_oom(exception.add_to_error_list(
-                        list,
-                        top_level_dir,
-                        Some(&this.origin),
-                    ));
+                    let origin = this.is_from_devserver.then_some(&this.origin);
+                    exception.add_to_error_list(list, this.top_level_dir(), origin);
                 }
             }
         }
@@ -5670,15 +5718,7 @@ impl VirtualMachine {
             last_pad = pad;
             splat_space(writer, pad)?;
 
-            let text = source.text.slice();
-            let _trimmed = text
-                .trim_ascii_start()
-                .strip_prefix(b"\n")
-                .unwrap_or(text)
-                .trim_ascii_end();
-            // Trim newlines on both sides, then trailing tab/space.
-            let trimmed = bun_core::trim(text, b"\n");
-            let trimmed = bun_core::trim_right(trimmed, b"\t ");
+            let trimmed = source.trimmed_text();
             let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
 
             let hl = bun_core::fmt::fmt_javascript(
@@ -5782,9 +5822,7 @@ impl VirtualMachine {
                     }
                 }
 
-                let text = source.text.slice();
-                let trimmed = bun_core::trim(text, b"\n");
-                let trimmed = bun_core::trim_right(trimmed, b"\t ");
+                let trimmed = source.trimmed_text();
 
                 if top_frame.is_none() || top_frame.unwrap().position.is_invalid() {
                     did_print_name = true;

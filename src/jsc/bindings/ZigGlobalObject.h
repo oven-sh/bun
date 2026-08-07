@@ -37,6 +37,7 @@ class NapiHandleScopeImpl;
 class JSNextTickQueue;
 class Process;
 class SecureContextCache;
+class GCProfilerObserver;
 } // namespace Bun
 
 namespace v8 {
@@ -68,6 +69,7 @@ struct node_module;
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
 #include "WriteBarrierList.h"
+#include "NativeModuleList.h"
 #include "streams/JSStreamsRuntime.h"
 
 namespace Bun {
@@ -456,6 +458,13 @@ public:
 
     using ThenablesArray = std::array<WriteBarrier<JSFunction>, promiseFunctionsSize + 1>;
     using NapiModuleAndExports = std::array<WriteBarrier<Unknown>, 2>;
+    // Native module default-export cache so require(id) === (await import(id)).default.
+    // Visited via FOR_EACH_GLOBALOBJECT_GC_MEMBER's std::array<WriteBarrier> overload.
+    using NativeModuleDefaultsArray = std::array<WriteBarrier<JSObject>, NativeModuleDefaultSlotCount>;
+    WriteBarrier<JSObject>& nativeModuleDefaultObject(NativeModuleDefaultSlot slot)
+    {
+        return m_nativeModuleDefaults[static_cast<size_t>(slot)];
+    }
 
     // Macro for doing something with each member of GlobalObject that has to be visited by the
     // garbage collector. To use, define a macro taking three arguments (visibility, type, and
@@ -512,6 +521,7 @@ public:
                                                                                                              \
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(private, ThenablesArray, m_thenables)                                                                  \
+    V(private, NativeModuleDefaultsArray, m_nativeModuleDefaults)                                            \
                                                                                                              \
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
@@ -691,7 +701,9 @@ public:
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)                              \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcTagAdvancedBuffersFunction)                       \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcRestoreAdvancedBuffersFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \
@@ -806,6 +818,11 @@ public:
     // config digest. WeakGCMap self-registers with the heap, so no
     // visitChildren wiring needed (and it must NOT keep its values alive).
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
+
+    // Backs node:v8's GCProfiler. Lazily created on first start(); its
+    // destructor detaches from the heap so a worker that exits mid-profile
+    // does not leave the observer registered.
+    std::unique_ptr<Bun::GCProfilerObserver> m_gcProfilerObserver;
 
     WTF::Vector<WTF::Ref<NapiEnv>> m_napiEnvs;
     Ref<NapiEnv> makeNapiEnv(const napi_module&);

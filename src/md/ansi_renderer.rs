@@ -110,7 +110,7 @@ impl RendererImpl for ImageUrlCollector {
 
 // Drop is automatic for `Vec<Box<[u8]>>`.
 
-pub struct AnsiRenderer<'a> {
+struct AnsiRenderer<'a> {
     pub(crate) out: OutputBuffer,
     src_text: &'a [u8],
     theme: Theme<'a>,
@@ -2170,7 +2170,7 @@ impl<'s> CellAnsiState<'s> {
         // Stateful parse: 38/48 consume 2 extra params for `5;N` or
         // 4 extra for `2;R;G;B`. Snapshot the whole seq for fg/bg
         // since we don't need to recompute it — just replay it.
-        let mut iter = params.split(|b| *b == b';');
+        let mut iter = strings::split(params, b";");
         while let Some(p) = iter.next() {
             let n = match bun_core::fmt::parse_int::<u32>(p, 10).ok() {
                 Some(n) => n,
@@ -2445,7 +2445,7 @@ pub fn detect_light_background() -> bool {
         // (bright white) are light terminal backgrounds. Bright colors
         // 9-14 are high-intensity foreground codes, not light backgrounds.
         let mut last: &[u8] = b"";
-        for part in value.split(|b| *b == b';') {
+        for part in strings::split(value, b";") {
             last = part;
         }
         if !last.is_empty() {
@@ -2535,10 +2535,18 @@ fn probe_kitty_graphics() -> bool {
             Err(_) => return false,
         };
         let mut tty_state = bun_core::tty::State::new();
-        let _ = tty_state.set_mode(0, bun_core::tty::Mode::Raw);
+        let _ = tty_state.set_mode(
+            0,
+            bun_core::tty::Mode::Raw,
+            bun_core::tty::SetAttrWhen::Drain,
+        );
         let _restore = scopeguard::guard((saved_termios, tty_state), |(saved, mut state)| {
             if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
-                let _ = state.set_mode(0, bun_core::tty::Mode::Normal);
+                let _ = state.set_mode(
+                    0,
+                    bun_core::tty::Mode::Normal,
+                    bun_core::tty::SetAttrWhen::Drain,
+                );
             }
         });
 

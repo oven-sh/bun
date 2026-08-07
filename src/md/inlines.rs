@@ -61,7 +61,7 @@ impl Default for EmphDelim {
 
 /// Closing-delimiter kinds tracked by `HtmlScanMemo`.
 #[derive(Clone, Copy)]
-pub enum HtmlScanKind {
+enum HtmlScanKind {
     /// `<!--` … `-->`
     Comment = 0,
     /// `<?` … `?>`

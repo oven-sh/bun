@@ -195,6 +195,12 @@ static int us_ssl_pending_keylog_idx = -1;
  * received NewSessionTicket, so SSL_get_session() alone gives an unresumable
  * snapshot; node:tls's getSession()/getTLSTicket() read from here instead. */
 static int us_ssl_new_session_ref_idx = -1;
+/* Optional per-SSL sink for resumable sessions: an owner pointer plus a
+ * callback that receives each SSL_SESSION_up_ref'd session. Checked before the
+ * us_ssl_is_socket_ex_idx opt-in so consumers that don't surface a JS
+ * 'session' event (fetch) can still cache without paying the serialized
+ * pending-session queue. */
+static int us_ssl_session_sink_idx = -1;
 #ifdef _WIN32
 static INIT_ONCE us_ex_idx_once = INIT_ONCE_STATIC_INIT;
 #else
@@ -286,6 +292,20 @@ static void us_ssl_new_session_ref_free(void *parent, void *ptr, CRYPTO_EX_DATA 
   (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
   if (ptr) SSL_SESSION_free((SSL_SESSION *)ptr);
 }
+
+struct us_ssl_session_sink_t {
+  void *owner;
+  void (*on_new_session)(void *owner, SSL_SESSION *session);
+  void (*on_free)(void *owner);
+};
+static void us_ssl_session_sink_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                     int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  if (!ptr) return;
+  struct us_ssl_session_sink_t *sink = ptr;
+  if (sink->on_free) sink->on_free(sink->owner);
+  us_free(sink);
+}
 /* NSS key-log lines are produced from inside SSL_do_handshake/SSL_read, so
  * they are parked on the SSL the same way new sessions are and delivered once
  * the read unwinds. The stored bytes already carry the trailing newline Node
@@ -338,12 +358,21 @@ static void ssl_flush_pending_keylog(struct us_socket_t *s) {
 }
 
 static int us_ssl_new_session_cb(SSL *ssl, SSL_SESSION *session) {
+  /* The session sink is the cheap path: hand the session to an owner-provided
+   * callback (one up_ref, no i2d serialize, no queue). Used by the HTTP
+   * client's per-origin session cache. */
+  struct us_ssl_session_sink_t *sink = SSL_get_ex_data(ssl, us_ssl_session_sink_idx);
+  if (sink && sink->on_new_session) {
+    SSL_SESSION_up_ref(session);
+    sink->on_new_session(sink->owner, session);
+    return 0;
+  }
   /* Park only for consumers that will drain the queue: SSLs attached to a
    * real us_socket_t (flushed into us_dispatch_session once the read unwinds)
    * and SSLs whose owner opted in via us_ssl_enable_pending_events (the
    * Rust SSLWrapper behind TLS-over-duplex / named pipes, which polls
-   * us_ssl_pop_pending_session after its reads). Everything else (fetch,
-   * WebSocket tunnels) has no consumer - don't queue. */
+   * us_ssl_pop_pending_session after its reads). Everything else (WebSocket
+   * tunnels) has no consumer - don't queue. */
   if (!SSL_get_ex_data(ssl, us_ssl_is_socket_ex_idx)) {
     return 0;
   }
@@ -426,6 +455,7 @@ static void us_ex_idx_init(void) {
   us_ssl_pending_session_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
   us_ssl_pending_keylog_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
   us_ssl_new_session_ref_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_new_session_ref_free);
+  us_ssl_session_sink_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_session_sink_free);
 }
 
 #ifdef _WIN32
@@ -447,6 +477,37 @@ static inline void us_ex_idx_ensure(void) {
 static inline int us_ssl_ctx_ex_idx(void) {
   us_ex_idx_ensure();
   return us_ctx_ex_idx;
+}
+
+/* Install a session sink on `ssl`: each resumable session reaching the
+ * new-session callback is SSL_SESSION_up_ref'd and passed to `on_new_session`
+ * (which takes ownership of that reference). `on_free(owner)` runs once on
+ * SSL_free. Replacing an existing sink first frees the old one. */
+void us_ssl_set_session_sink(SSL *ssl, void *owner,
+                             void (*on_new_session)(void *, SSL_SESSION *),
+                             void (*on_free)(void *)) {
+  us_ex_idx_ensure();
+  struct us_ssl_session_sink_t *sink = us_malloc(sizeof(*sink));
+  if (!sink) {
+    if (on_free) on_free(owner);
+    return;
+  }
+  sink->owner = owner;
+  sink->on_new_session = on_new_session;
+  sink->on_free = on_free;
+  struct us_ssl_session_sink_t *old = SSL_get_ex_data(ssl, us_ssl_session_sink_idx);
+  SSL_set_ex_data(ssl, us_ssl_session_sink_idx, sink);
+  if (old) {
+    if (old->on_free) old->on_free(old->owner);
+    us_free(old);
+  }
+}
+
+/* The `owner` pointer installed via us_ssl_set_session_sink, or NULL. */
+void *us_ssl_get_session_sink_owner(SSL *ssl) {
+  if (us_ssl_session_sink_idx < 0) return NULL;
+  struct us_ssl_session_sink_t *sink = SSL_get_ex_data(ssl, us_ssl_session_sink_idx);
+  return sink ? sink->owner : NULL;
 }
 
 /* TLS-over-duplex / named-pipe owners (the Rust SSLWrapper): opt this SSL
@@ -2097,8 +2158,12 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
        * uWS layer's flushed==0-after-FIN guard, or hasFullyDrained() when
        * nothing is buffered, then closes the connection on this dispatch)
        * and dispatch directly, bypassing the is_shut_down gate below that
-       * ssl_fatal_error would otherwise trip. */
-      if (s->ssl_end_delivered && loop_ssl_data->ssl_spill_off == spill_off_before) {
+       * ssl_fatal_error would otherwise trip. On the libuv backend zero
+       * progress does not prove death (a stale SEND completion can run
+       * after this loop turn refilled the buffer), so confirm with the
+       * kernel before declaring the spill undrainable. */
+      if (s->ssl_end_delivered && loop_ssl_data->ssl_spill_off == spill_off_before &&
+          us_socket_stalled_write_means_peer_gone(s)) {
         ssl_release_spill(s->group->loop, s);
         s->ssl_fatal_error = 1;
         return us_dispatch_writable(s);

@@ -10,7 +10,7 @@
 //! poll deadline). See PORTING.md §Dispatch.
 
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, Ordering};
 
 use bun_io::{self as Async, Waker};
 use bun_uws as uws;
@@ -88,6 +88,10 @@ pub struct EventLoop {
 
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
+    /// Work-pool tasks that will post to `concurrent_tasks` when they finish (counted on the JS
+    /// thread before hand-off, decremented on the pool thread after the post). Shutdown waits for
+    /// zero before the final queue drain so a completion can't land after it and leak.
+    pub concurrent_posters: AtomicU32,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
     /// Note (§Dispatch): payload is `*mut ()` — the real
@@ -128,6 +132,7 @@ impl Default for EventLoop {
             uws_loop: (),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
+            concurrent_posters: AtomicU32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
             signal_handler: None,
@@ -743,9 +748,9 @@ impl EventLoop {
     ///
     /// Tags `__bun_release_task_at_shutdown` doesn't claim are likewise
     /// re-queued so they remain reachable from the static-rooted VM box (the
-    /// pre-`532a5411961b` state). Consuming them silently here unhooked that
-    /// root and surfaced the boxes as direct leaks (e.g. `AnyTaskJob<_>`); the
-    /// definer can't safely dispatch every erased callback at shutdown.
+    /// pre-`532a5411961b` state). Consuming them without freeing unhooked that
+    /// root and surfaced the boxes as direct leaks; the definer can't safely
+    /// dispatch every erased callback at shutdown.
     pub fn release_queued_tasks_for_shutdown(&mut self) {
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
@@ -1005,6 +1010,29 @@ impl EventLoop {
         self.wakeup();
     }
 
+    /// See `concurrent_posters`. Call on the JS thread before scheduling a
+    /// work-pool task whose completion posts via `enqueue_task_concurrent`.
+    pub fn concurrent_poster_begin(&self) {
+        let _ = self.concurrent_posters.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Pool-thread pair of [`Self::concurrent_poster_begin`]. Must be the
+    /// poster's last touch of this event loop: once the count hits zero the
+    /// shutdown thread may drain the queue and tear the VM down.
+    pub fn concurrent_poster_end(&self) {
+        let prev = self.concurrent_posters.fetch_sub(1, Ordering::Release);
+        debug_assert!(prev > 0);
+    }
+
+    /// Spin until every counted poster has finished its post. Called on the JS thread during
+    /// shutdown, after the last JS has run and before the final queue drain. Each pending fs
+    /// operation is finite, so the wait is bounded by syscall latency.
+    pub fn wait_for_concurrent_posters(&self) {
+        while self.concurrent_posters.load(Ordering::Acquire) > 0 {
+            std::thread::yield_now();
+        }
+    }
+
     pub fn ref_concurrently(&self) {
         let _ = self.concurrent_ref.fetch_add(1, Ordering::SeqCst);
         self.wakeup();
@@ -1223,19 +1251,6 @@ extern "C" fn noop_forever_timer(_: *mut uws::Timer) {
     // do nothing
 }
 
-// HOST_EXPORT(Bun__EventLoop__runCallback1, c)
-pub fn event_loop_run_callback1(
-    global: &JSGlobalObject,
-    callback: JSValue,
-    this_value: JSValue,
-    arg0: JSValue,
-) {
-    global
-        .bun_vm()
-        .event_loop_mut()
-        .run_callback(callback, global, this_value, &[arg0]);
-}
-
 // HOST_EXPORT(Bun__EventLoop__runCallback2, c)
 pub fn event_loop_run_callback2(
     global: &JSGlobalObject,
@@ -1248,23 +1263,6 @@ pub fn event_loop_run_callback2(
         .bun_vm()
         .event_loop_mut()
         .run_callback(callback, global, this_value, &[arg0, arg1]);
-}
-
-// HOST_EXPORT(Bun__EventLoop__runCallback3, c)
-pub fn event_loop_run_callback3(
-    global: &JSGlobalObject,
-    callback: JSValue,
-    this_value: JSValue,
-    arg0: JSValue,
-    arg1: JSValue,
-    arg2: JSValue,
-) {
-    global.bun_vm().event_loop_mut().run_callback(
-        callback,
-        global,
-        this_value,
-        &[arg0, arg1, arg2],
-    );
 }
 
 // HOST_EXPORT(Bun__EventLoop__enter, c)
@@ -1345,6 +1343,7 @@ bun_event_loop::link_impl_JsEventLoop! {
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
         enqueue_task_concurrent(task) => (*this).enqueue_task_concurrent(task),
+        concurrent_poster_end() => (*this).concurrent_poster_end(),
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
         create_null_delimited_env_map() =>

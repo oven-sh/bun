@@ -720,7 +720,7 @@ describe.concurrent("socket", () => {
   // end-of-stream, instead of being torn down with a fabricated ECONNRESET.
   it.skipIf(isWindows)("paused unix socket keeps data from a peer that closed gracefully", async () => {
     const { promise: opened, resolve: onOpen } = Promise.withResolvers<Socket<undefined>>();
-    const { promise: gotData, resolve: onData } = Promise.withResolvers<string>();
+    const { promise: gotData, resolve: onData, reject: onDataLost } = Promise.withResolvers<string>();
     const { promise: closed, resolve: onClosed } = Promise.withResolvers<string>();
     let teardown: string | null = null;
 
@@ -740,10 +740,14 @@ describe.concurrent("socket", () => {
         end() {},
         close() {
           teardown ??= "close";
+          // No-op on the expected path (data already resolved); an early
+          // teardown fails the data await with the cause instead of hanging.
+          onDataLost(new Error("server socket closed before the queued data was delivered"));
           onClosed(teardown);
         },
         error() {
           teardown ??= "error";
+          onDataLost(new Error("server socket errored before the queued data was delivered"));
           onClosed(teardown);
         },
       },

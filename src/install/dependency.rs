@@ -940,8 +940,6 @@ impl TagExt for Tag {
             // https://github.com/user/repo
             // httplatest (a dist-tag, not a URL)
             b'h' => {
-                // Without the ':' a bare word like "httplatest" would be
-                // misclassified as a tarball; npm treats it as a dist-tag.
                 if dependency.starts_with(b"http:") || dependency.starts_with(b"https:") {
                     let mut url = &dependency[b"http".len()..];
                     if url.starts_with(b"://") {
@@ -970,8 +968,6 @@ impl TagExt for Tag {
             // ssh://git@example.com/repo.git
             // sshlatest (a dist-tag, not a URL)
             b's' => {
-                // Without the ':' a bare word like "sshlatest" would be
-                // misclassified as git; npm treats it as a dist-tag.
                 if dependency.starts_with(b"ssh:") {
                     if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency) {
                         return hgi_to_tag(&info);

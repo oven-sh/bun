@@ -619,6 +619,33 @@ pub unsafe fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut Patch
     let _ = this.pending_pre_calc_hashes.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Mirrors the npm arm's `should_update` gate in
+/// `get_or_put_resolved_package_with_find_result`: a `bun update` target must
+/// not bind to the in-memory lockfile package on its first enqueue, or the
+/// update never re-fetches.
+fn is_update_target(this: &mut PackageManager, dependency: &Dependency, id: DependencyID) -> bool {
+    if !this.to_update {
+        return false;
+    }
+    let this_ptr: *mut PackageManager = this;
+    // Update direct deps of the current workspace; catalogs are root-scoped.
+    // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
+    // `manager.workspace_package_json_cache` only — disjoint from
+    // `manager.lockfile`.
+    if dependency.version.tag != dependency::version::Tag::Catalog
+        && !unsafe { &*(*this_ptr).lockfile }.is_root_dependency(unsafe { &mut *this_ptr }, id)
+    {
+        return false;
+    }
+    // By name_hash, not `updating_packages`: that map only records
+    // npm/dist-tag deps. Matches `Diff::generate`'s update-target test.
+    this.update_requests.is_empty()
+        || this
+            .update_requests
+            .iter()
+            .any(|r| r.name_hash == dependency.name_hash)
+}
+
 /// Q: "What do we do with a dependency in a package.json?"
 /// A: "We enqueue it!"
 pub fn enqueue_dependency_with_main_and_success_fn(
@@ -641,13 +668,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         return Ok(());
     }
 
-    // For git/github/tarball dependencies `realname()` is the name from the
-    // extracted package's package.json, which stays empty until the first
-    // extract completes. Fall back to the alias so a re-resolution can find
-    // the package already loaded from the lockfile (`package_index` is keyed
-    // by real package names) instead of re-downloading it.
+    // Git/github/tarball `realname()` is only learned from the first extract,
+    // so on a fresh parse fall back to the alias; `package_index` is keyed by
+    // real names, and hashing "" would re-download lockfile-resolved packages.
     let mut name = dependency.realname();
-    if name.is_empty() {
+    let is_provisional_name = name.is_empty();
+    if is_provisional_name {
         name = dependency.name;
     }
     let mut name_hash = match dependency.version.tag {
@@ -1184,10 +1210,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let dep: Repository = *version.git();
             let res = Resolution::init(ResolutionTagged::Git(dep));
 
-            // First: see if we already loaded the git package in-memory
-            if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
-                success_fn(this, id, pkg_id);
-                return Ok(());
+            // First: see if we already loaded the git package in-memory.
+            // On the fresh (alias-named) enqueue, `bun update` targets skip
+            // the bind so the update re-fetches; the post-checkout re-enqueue
+            // binds as before.
+            if !(is_provisional_name && is_update_target(this, dependency, id)) {
+                if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
+                    success_fn(this, id, pkg_id);
+                    return Ok(());
+                }
             }
 
             // reshaped for borrowck — `alias`/`url` borrow
@@ -1294,10 +1325,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let dep: &Repository = version.github();
             let res = Resolution::init(ResolutionTagged::Github(*dep));
 
-            // First: see if we already loaded the github package in-memory
-            if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
-                success_fn(this, id, pkg_id);
-                return Ok(());
+            // First: see if we already loaded the github package in-memory.
+            // See the git arm for the update-target gate.
+            if !(is_provisional_name && is_update_target(this, dependency, id)) {
+                if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
+                    success_fn(this, id, pkg_id);
+                    return Ok(());
+                }
             }
 
             let url = this.alloc_github_url(dep);
@@ -1483,10 +1517,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             };
 
-            // First: see if we already loaded the tarball package in-memory
-            if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
-                success_fn(this, id, pkg_id);
-                return Ok(());
+            // First: see if we already loaded the tarball package in-memory.
+            // See the git arm for the update-target gate.
+            if !(is_provisional_name && is_update_target(this, dependency, id)) {
+                if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
+                    success_fn(this, id, pkg_id);
+                    return Ok(());
+                }
             }
 
             // reshaped for borrowck — `url` borrows `string_bytes`;

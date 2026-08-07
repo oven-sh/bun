@@ -1123,6 +1123,7 @@ it("re-resolving reuses github and remote tarball packages from the lockfile ins
   expect(lock).toContain("gh-dep@github:testowner/testrepo#aaaaaaa");
   expect(lock).toContain(`td-dep@http://localhost:${server.port}/td-dep.tgz`);
   expect(await file(join(packageDir, "node_modules", "gh-dep", "index.js")).text()).toBe("module.exports = 'gh';\n");
+  expect(await file(join(packageDir, "node_modules", "td-dep", "index.js")).text()).toBe("module.exports = 'td';\n");
 });
 
 // Same bug through the git: dependency path (clone/fetch tasks instead of a
@@ -1177,9 +1178,9 @@ it("re-resolving reuses a git package from the lockfile instead of re-fetching",
     ...gitEnv,
     BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
   };
-  async function install() {
+  async function install(extraArgs: string[] = []) {
     await using proc = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", ...extraArgs],
       cwd: packageDir,
       env: installEnv,
       stdout: "pipe",
@@ -1214,4 +1215,137 @@ it("re-resolving reuses a git package from the lockfile instead of re-fetching",
     `git-dep@git+http://127.0.0.1:${server.port}/repo.git#${sha}`,
   );
   expect(await file(join(packageDir, "node_modules", "git-dep", "index.js")).text()).toBe("module.exports = 'git';\n");
+
+  // Cold cache with the lockfile already resolved: the isolated installer
+  // must clone and then check out. Its clone-completion path used to lean on
+  // the dependency resolver missing the in-memory lookup to schedule the
+  // checkout, which deadlocked once that lookup could hit.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "packages", "member", "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+  const requestsBeforeColdInstall = gitRequests;
+  await install(["--linker", "isolated"]);
+  expect(gitRequests).toBeGreaterThan(requestsBeforeColdInstall);
+  expect(await file(join(packageDir, "packages", "member", "node_modules", "git-dep", "index.js")).text()).toBe(
+    "module.exports = 'git';\n",
+  );
+});
+
+// Overrides match dependencies by the name they are declared under. For a
+// github dependency that name used to be unknown until the first extract, so
+// the override only applied after a wasted tarball download; now it applies on
+// the first enqueue and the tarball is never fetched.
+it("an override on a github dependency applies without downloading the tarball", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  const ghTarball = makeTarball("testowner-testrepo-aaaaaaa", {
+    "package.json": JSON.stringify({ name: "no-deps", version: "9.9.9" }),
+    "index.js": "module.exports = 'github';\n",
+  });
+  let githubDownloads = 0;
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      githubDownloads++;
+      return new Response(ghTarball, { headers: { "Content-Type": "application/gzip" } });
+    },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "override-root",
+      dependencies: { "no-deps": "github:testowner/testrepo#aaaaaaa" },
+      overrides: { "no-deps": "1.0.0" },
+    }),
+  );
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env: {
+      ...env,
+      GITHUB_API_URL: `http://localhost:${server.port}`,
+      BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+  expect(err).not.toContain("error:");
+  expect(code).toBe(0);
+
+  expect(githubDownloads).toBe(0);
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain('"no-deps": ["no-deps@1.0.0"');
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+});
+
+// `bun update <dep>` must re-fetch git-backed and tarball dependencies rather
+// than rebinding them to the lockfile-resolved package.
+it("bun update re-fetches github and remote tarball dependencies", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  const ghTarball = makeTarball("testowner-testrepo-aaaaaaa", {
+    "package.json": JSON.stringify({ name: "gh-dep", version: "1.0.0" }),
+    "index.js": "module.exports = 'gh';\n",
+  });
+  const tdTarball = makeTarball("package", {
+    "package.json": JSON.stringify({ name: "td-dep", version: "1.0.0" }),
+    "index.js": "module.exports = 'td';\n",
+  });
+  let githubDownloads = 0;
+  let tarballDownloads = 0;
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/td-dep.tgz") {
+        tarballDownloads++;
+        return new Response(tdTarball, { headers: { "Content-Type": "application/gzip" } });
+      }
+      githubDownloads++;
+      return new Response(ghTarball, { headers: { "Content-Type": "application/gzip" } });
+    },
+  });
+
+  const installEnv = {
+    ...env,
+    GITHUB_API_URL: `http://localhost:${server.port}`,
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+  };
+  async function run(args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: packageDir,
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    expect(err).not.toContain("error:");
+    expect(code).toBe(0);
+  }
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "update-root",
+      dependencies: {
+        "gh-dep": "github:testowner/testrepo#aaaaaaa",
+        "td-dep": `http://localhost:${server.port}/td-dep.tgz`,
+      },
+    }),
+  );
+
+  await run(["install"]);
+  expect({ githubDownloads, tarballDownloads }).toEqual({ githubDownloads: 1, tarballDownloads: 1 });
+
+  await run(["update", "td-dep"]);
+  expect({ githubDownloads, tarballDownloads }).toEqual({ githubDownloads: 1, tarballDownloads: 2 });
+
+  await run(["update", "gh-dep"]);
+  expect({ githubDownloads, tarballDownloads }).toEqual({ githubDownloads: 2, tarballDownloads: 2 });
 });

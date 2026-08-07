@@ -1305,6 +1305,8 @@ describe.concurrent(() => {
     expect(flags.has("require")).toBe(true);
     expect(flags.has("--no_warnings")).toBe(true);
     expect(flags.has("--require=./foo.js")).toBe(true);
+    expect(flags.has("--abort-on-uncaught-exception")).toBe(true);
+    expect(flags.has("--abort_on_uncaught_exception")).toBe(true);
     expect(flags.has("--not-a-real-flag")).toBe(false);
     flags.add("--not-a-real-flag");
     expect(flags.has("--not-a-real-flag")).toBe(false);

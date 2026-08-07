@@ -147,8 +147,13 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
        * READABLE below: SEMI_SOCKET checks error/eof (set from status) and
        * listen polls READABLE only. */
       struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
+      /* A reported UV_PRIORITIZED is AFD's own ABORT signal and needs no
+       * probe; the probe covers a reset that arrives while PRIORITIZED was
+       * not yet subscribed (reported as plain DISCONNECT, same as the FIN
+       * re-report) and a reset AFD has latched but only SO_ERROR shows. */
       if (!sock->flags.is_closed &&
-          (us_socket_get_error(sock) != 0 ||
+          ((events & UV_PRIORITIZED) ||
+           us_socket_get_error(sock) != 0 ||
            us_internal_libuv_peer_reset_probe(us_poll_fd(wp)))) {
         error = 1;
       } else {

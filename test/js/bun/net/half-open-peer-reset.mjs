@@ -39,7 +39,7 @@ export async function run(mode) {
         // Reject so a setup failure names itself instead of pending past the
         // watchdog (both are no-ops once opened has resolved).
         error: (_s, e) => opened.reject(e),
-        close: () => opened.reject(new Error("peer socket closed before setup finished")),
+        close: (_s, e) => opened.reject(e ?? new Error("peer socket closed before setup finished")),
       },
     });
     await opened.promise;

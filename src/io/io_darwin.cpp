@@ -85,22 +85,19 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker)
             return true;
         }
 
-        // The queue is full (qlimit is 1), so a wakeup is already
-        // pending and the receiver is guaranteed to run.
+        // Queue full (qlimit is 1): a wakeup is already pending.
         case MACH_SEND_TIMED_OUT: {
             return true;
         }
 
-        // The kernel couldn't allocate the message, so nothing was queued.
-        // Returning would silently lose the wakeup; retry until it queues
-        // or the queue reports full.
+        // Kernel couldn't allocate the message: nothing was queued, so
+        // returning here would lose the wakeup.
         case MACH_SEND_NO_BUFFER: {
             continue;
         }
 
         default: {
-            // The port is created once per process and never destroyed, so
-            // MACH_SEND_INVALID_DEST and friends are structurally impossible.
+            // This port is never destroyed, so dead-port errors can't happen.
             ASSERT_NOT_REACHED_WITH_MESSAGE("mach_msg failed with %x", kr);
             return false;
         }

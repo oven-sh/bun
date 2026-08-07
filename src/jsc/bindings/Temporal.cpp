@@ -141,8 +141,7 @@ static WTF::String temporalDisplayString(JSC::JSGlobalObject* globalObject, JSC:
 
 } // namespace Bun
 
-// `encodedValue` must be a Temporal value (`Bun__JSValue__temporalObjectType` != 0).
-// Writes e.g. `Temporal.PlainDate` to `label` and `2020-01-02` to `text`.
+// Precondition: Bun__JSValue__temporalObjectType(encodedValue) != 0. Writes e.g. ("Temporal.PlainDate", "2020-01-02").
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__Temporal__toDisplayString(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* label, BunString* text)
 {
     auto& vm = JSC::getVM(globalObject);

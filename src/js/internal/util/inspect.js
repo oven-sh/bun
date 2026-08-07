@@ -182,9 +182,7 @@ const {
   isTypedArray,
 } = require("node:util/types");
 
-// getTemporalLabel(value) is e.g. "Temporal.PlainDate", or undefined for
-// non-Temporal values; getTemporalDisplayString is the value's default-options
-// toString() text, computed without calling user-observable methods.
+// "Temporal.PlainDate" / undefined, and the slot-derived default toString() text.
 const getTemporalLabel = $newCppFunction("Temporal.cpp", "jsFunctionTemporalLabel", 1);
 const getTemporalDisplayString = $newCppFunction("Temporal.cpp", "jsFunctionTemporalToDisplayString", 1);
 

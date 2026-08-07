@@ -1591,9 +1591,7 @@ impl JSValue {
         crate::cpp::Bun__JSValue__temporalObjectType(self) != 0
     }
 
-    /// Requires `self.is_temporal()`. `(label, text)`, e.g.
-    /// `("Temporal.PlainDate", "2020-01-02")`: the class label and the value's
-    /// default-options `toString()`, read from internal slots.
+    /// Requires `self.is_temporal()`; e.g. `("Temporal.PlainDate", "2020-01-02")`.
     pub fn temporal_display_string(
         self,
         global: &JSGlobalObject,

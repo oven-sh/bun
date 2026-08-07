@@ -7500,10 +7500,8 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
             if rc < 0 {
                 let e = last_errno();
                 match e {
-                    // This fd's type does not support RWF_NOWAIT (named FIFOs
-                    // return EOPNOTSUPP). Per-fd, not per-kernel: do NOT
-                    // disable the flag globally, or one FIFO read degrades
-                    // every later pipe read in the process to the fallback.
+                    // Per-fd-type (named FIFOs), not per-kernel: a global
+                    // disable would degrade every later pipe read too.
                     libc::EOPNOTSUPP => break,
                     libc::ENOSYS | libc::EPERM | libc::EACCES => {
                         linux::RWFFlagSupport::disable();
@@ -7515,12 +7513,9 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
             }
             return Ok(rc as usize);
         }
-        // Poll-then-read fallback. Plain read() is not a substitute for
-        // RWF_NOWAIT here for two reasons: a blocking fd would block the
-        // event loop, and a named FIFO opened before any writer returns 0
-        // (EOF) from read() even though poll — which honors the FIFO's
-        // writer-epoch — still reports not-ready until a writer has come
-        // and gone.
+        // Poll first: plain read() would block the event loop on a blocking
+        // fd, and misreport a FIFO that never had a writer as EOF (poll
+        // honors the FIFO's writer epoch; read does not).
         return match bun_core::is_readable(fd) {
             bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
             _ => Err(Error::retry().with_fd(fd)),

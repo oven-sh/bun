@@ -402,16 +402,11 @@ impl FileResponseStream {
     }
 
     // ───────────────── macOS FIFO first-writer probe ─────────────────
-    // A fetch handler returning `Response(Bun.file(fifo))` opens the FIFO's
-    // read end itself, so when the producer connects only after the request,
-    // the reader starts against a FIFO with zero writers. On macOS that state
-    // cannot be waited on through the descriptor: `read()` returns 0 (which
-    // `FIFO_AWAITING_FIRST_WRITER` stops us from mistaking for EOF), and a
-    // kqueue filter registered then does not reliably report the first
-    // writer's data. Until the first byte we tick
-    // `BufferedReader::retry_stalled_fifo_read` on a backoff timer; see its
-    // doc for the full story. The probe stops at the first chunk/EOF — from
-    // then on the descriptor behaves and kqueue registrations work.
+    // A path-opened FIFO with no writer yet cannot be waited on through the
+    // descriptor on macOS (see `retry_stalled_fifo_read` and
+    // `FIFO_AWAITING_FIRST_WRITER` in bun_io), so until the first byte we
+    // tick that recovery read on a backoff timer; it stops at the first
+    // chunk/EOF.
 
     #[cfg(target_os = "macos")]
     const FIFO_PROBE_MIN_MS: u32 = 2;

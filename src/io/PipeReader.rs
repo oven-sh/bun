@@ -548,25 +548,15 @@ impl PosixBufferedReader {
         }
     }
 
-    /// macOS recovery tick for reading a named FIFO that may not have a
-    /// writer yet. Two platform quirks make the descriptor useless for
-    /// waiting in that state:
-    ///
-    /// - `read()` returns 0 while the FIFO has never had a writer, which is
-    ///   indistinguishable from EOF at the call site;
-    ///   [`PosixFlags::FIFO_AWAITING_FIRST_WRITER`] makes the read loop
-    ///   treat it as not-ready instead (the first EAGAIN or data clears it,
-    ///   since either proves a writer connected).
-    /// - an `EVFILT_READ` filter registered while the FIFO has zero writers
-    ///   does not reliably report the first writer's data (one registered
-    ///   while a writer exists works).
-    ///
-    /// So while waiting for the first writer there is no kernel event to
-    /// wait on, and owners arm a repeating timer against this method
-    /// instead. Each tick drops the kevent registration and reads directly;
-    /// once a writer exists the read comes back as data or EAGAIN, and the
-    /// EAGAIN path re-attaches a fresh kevent in a state where it works.
-    /// Owners stop the timer at the first chunk/EOF.
+    /// macOS tick for reading a named FIFO still awaiting its first writer
+    /// (see [`PosixFlags::FIFO_AWAITING_FIRST_WRITER`]). That state has no
+    /// kernel event to wait on: `read()` reports a false EOF and an
+    /// `EVFILT_READ` filter registered with zero writers does not reliably
+    /// report the first writer's data, so owners drive this from a repeating
+    /// timer instead. Each tick drops the kevent registration and reads
+    /// directly; once a writer exists, the EAGAIN path re-attaches a fresh
+    /// kevent in a state where it works, and owners stop the timer at the
+    /// first chunk/EOF.
     ///
     /// # Safety
     /// Same contract as [`Self::read`]: `this` is the live reader; the
@@ -1089,17 +1079,13 @@ impl PosixBufferedReader {
                                 };
                                 if awaiting_first_writer {
                                     if bytes_read == 0 {
-                                        // A FIFO with no writer yet reads as
-                                        // 0 on macOS even though it is not at
-                                        // EOF (see the flag's doc). Not ready
-                                        // — stop without closing; the owner's
-                                        // probe timer retries. No bytes can
-                                        // be buffered: data clears the flag.
+                                        // False EOF (see the flag's doc);
+                                        // the owner's probe timer retries.
                                         debug_assert!(head_start == 0);
                                         return;
                                     }
-                                    // First bytes: a writer exists, so a
-                                    // 0-byte read from here on is a real EOF.
+                                    // Data: a writer connected; 0 now means
+                                    // a real EOF.
                                     // SAFETY: caller contract; borrow ends at `;`.
                                     unsafe {
                                         (*this)
@@ -1173,12 +1159,8 @@ impl PosixBufferedReader {
                         }
                         sys::Result::Err(err) => {
                             if err.is_retry() {
-                                // EAGAIN from a FIFO means a writer exists
-                                // now (macOS reads 0, not EAGAIN, while the
-                                // FIFO has never had one), so from here on a
-                                // 0-byte read is a real EOF and the kevent
-                                // about to be registered attaches in a
-                                // working state.
+                                // EAGAIN: a writer connected (see the flag's
+                                // doc); 0 now means a real EOF.
                                 #[cfg(target_os = "macos")]
                                 // SAFETY: caller contract; borrow ends at `;`.
                                 unsafe {

@@ -682,13 +682,9 @@ impl FileReader {
     }
 
     // ───────────────── macOS FIFO first-writer probe ─────────────────
-    // Twin of `FileResponseStream::arm_fifo_probe` (see the full story there
-    // and on `retry_stalled_fifo_read`): a FIFO with no writer yet cannot be
-    // waited on through the descriptor on macOS, so
-    // `Bun.file(fifo).stream()` started before the first writer connects
-    // would end empty or never deliver anything. While waiting for the first
-    // byte, tick `retry_stalled_fifo_read` on a backoff timer; stop at the
-    // first chunk/EOF.
+    // Twin of `FileResponseStream::arm_fifo_probe`; see
+    // `retry_stalled_fifo_read` and `FIFO_AWAITING_FIRST_WRITER` in bun_io
+    // for why a writerless FIFO needs a timer-driven read on macOS.
 
     #[cfg(target_os = "macos")]
     const FIFO_PROBE_MIN_MS: u32 = 2;

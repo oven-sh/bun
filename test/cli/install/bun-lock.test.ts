@@ -1012,3 +1012,248 @@ it("optional peer with a non-wildcard range is idempotent with two versions of t
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await run(["install", "--frozen-lockfile"]);
 });
+
+// Minimal gzipped tarball with a single root folder wrapping the files, the
+// shape of both github codeload tarballs and npm pack tarballs.
+function makeTarball(rootDir: string, files: Record<string, string>): Uint8Array {
+  function tarHeader(name: string, size: number, isDir: boolean): Uint8Array {
+    const header = new Uint8Array(512);
+    const encoder = new TextEncoder();
+    header.set(encoder.encode(name), 0);
+    header.set(encoder.encode(isDir ? "0000755 " : "0000644 "), 100);
+    header.set(encoder.encode("0000000 "), 108);
+    header.set(encoder.encode("0000000 "), 116);
+    header.set(encoder.encode(size.toString(8).padStart(11, "0") + " "), 124);
+    header.set(encoder.encode("00000000000 "), 136);
+    header.set(encoder.encode("        "), 148);
+    header[156] = (isDir ? "5" : "0").charCodeAt(0);
+    header.set(encoder.encode("ustar"), 257);
+    header.set(encoder.encode("00"), 263);
+    let checksum = 0;
+    for (const byte of header) checksum += byte;
+    header.set(encoder.encode(checksum.toString(8).padStart(6, "0") + "\0 "), 148);
+    return header;
+  }
+  const blocks: Uint8Array[] = [];
+  blocks.push(tarHeader(`${rootDir}/`, 0, true));
+  for (const [name, contents] of Object.entries(files)) {
+    const bytes = new TextEncoder().encode(contents);
+    blocks.push(tarHeader(`${rootDir}/${name}`, bytes.length, false));
+    blocks.push(bytes);
+    if (bytes.length % 512 !== 0) blocks.push(new Uint8Array(512 - (bytes.length % 512)));
+  }
+  blocks.push(new Uint8Array(1024));
+  return Bun.gzipSync(Buffer.concat(blocks));
+}
+
+// The text lockfile writes the resolved commit in the committish position of a
+// git/github resolution string ("git+url#<sha>"), so after a lockfile round
+// trip a dependency naming a branch or tag (or no ref at all) never matches the
+// loaded committish again. Re-resolving (any edit that re-parses a workspace
+// member's dependency list) then fetched every such dependency from the remote
+// on every install. The identical dependency literal already bound in the
+// loaded lockfile must be reused instead.
+it("re-resolving reuses branch and bare ref git dependencies from the lockfile instead of re-fetching", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // Isolate git from system/global config (e.g. core.autocrlf on Windows).
+  const gitEnv = {
+    ...env,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: join(packageDir, "gitconfig"),
+    GIT_AUTHOR_NAME: "bun-test",
+    GIT_AUTHOR_EMAIL: "test@bun.sh",
+    GIT_COMMITTER_NAME: "bun-test",
+    GIT_COMMITTER_EMAIL: "test@bun.sh",
+  };
+  async function git(args: string[], cwd: string): Promise<string> {
+    await using proc = spawn({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("fatal:");
+    expect(code).toBe(0);
+    return out;
+  }
+  await write(join(packageDir, "gitconfig"), "[core]\n\tautocrlf = false\n");
+
+  // Bare repos served over git's dumb HTTP protocol: after
+  // `git update-server-info`, a bare repo is plain static files.
+  async function makeBareRepo(name: string): Promise<string> {
+    const srcDir = join(packageDir, `${name}-src`);
+    await write(join(srcDir, "package.json"), JSON.stringify({ name, version: "1.0.0" }));
+    await write(join(srcDir, "index.js"), `module.exports = '${name}';\n`);
+    await git(["init", "-q", "-b", "main"], srcDir);
+    await git(["add", "-A"], srcDir);
+    await git(["commit", "-qm", "init"], srcDir);
+    const sha = (await git(["rev-parse", "HEAD"], srcDir)).trim();
+    await git(["clone", "-q", "--bare", srcDir, join(packageDir, `${name}.git`)], packageDir);
+    await git(["update-server-info"], join(packageDir, `${name}.git`));
+    return sha;
+  }
+  const bareSha = await makeBareRepo("bare-dep");
+  const branchSha = await makeBareRepo("branch-dep");
+
+  let gitRequests = 0;
+  await using gitServer = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      gitRequests++;
+      const { pathname } = new URL(req.url);
+      const match = pathname.match(/^\/((?:bare|branch)-dep\.git)\/(.+)$/);
+      if (!match) return new Response("not found", { status: 404 });
+      const f = file(join(packageDir, match[1], match[2]));
+      return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
+    },
+  });
+
+  const ghTarball = makeTarball("testowner-testrepo-aaaaaaa", {
+    "package.json": JSON.stringify({ name: "gh-dep", version: "1.0.0" }),
+    "index.js": "module.exports = 'gh';\n",
+  });
+  let githubDownloads = 0;
+  await using ghServer = Bun.serve({
+    port: 0,
+    fetch() {
+      githubDownloads++;
+      return new Response(ghTarball, { headers: { "Content-Type": "application/gzip" } });
+    },
+  });
+
+  const installEnv = {
+    ...gitEnv,
+    GITHUB_API_URL: `http://localhost:${ghServer.port}`,
+    // CI exports BUN_INSTALL_CACHE_DIR; pin it so this test's cache is its own.
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+  };
+  async function install() {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    expect(err).not.toContain("error:");
+    expect(code).toBe(0);
+  }
+
+  await write(packageJson, JSON.stringify({ name: "ws-root", workspaces: ["packages/*"] }));
+  const memberPackageJson = join(packageDir, "packages", "member", "package.json");
+  const memberDeps: Record<string, string> = {
+    "bare-dep": `git+http://127.0.0.1:${gitServer.port}/bare-dep.git`,
+    "branch-dep": `git+http://127.0.0.1:${gitServer.port}/branch-dep.git#main`,
+    "gh-dep": "github:testowner/testrepo#main",
+  };
+  await write(memberPackageJson, JSON.stringify({ name: "member", version: "1.0.0", dependencies: memberDeps }));
+  await write(
+    join(packageDir, "packages", "member", "dummy", "package.json"),
+    JSON.stringify({ name: "dummy", version: "1.0.0" }),
+  );
+
+  await install();
+  expect(gitRequests).toBeGreaterThan(0);
+  expect(githubDownloads).toBe(1);
+  const lock = await file(join(packageDir, "bun.lock")).text();
+  expect(lock).toContain(`bare-dep@git+http://127.0.0.1:${gitServer.port}/bare-dep.git#${bareSha}`);
+  expect(lock).toContain(`branch-dep@git+http://127.0.0.1:${gitServer.port}/branch-dep.git#${branchSha}`);
+
+  // Dirty the lockfile with a change that re-resolves the member's unchanged
+  // dependencies (a workspace member edit re-parses its whole dependency list).
+  memberDeps["dummy"] = "file:./dummy";
+  await write(memberPackageJson, JSON.stringify({ name: "member", version: "1.0.0", dependencies: memberDeps }));
+  const requestsAfterFirstInstall = gitRequests;
+  await install();
+  expect({ gitRequests, githubDownloads }).toEqual({
+    gitRequests: requestsAfterFirstInstall,
+    githubDownloads: 1,
+  });
+
+  // The locked commits did not move.
+  const lockAfter = await file(join(packageDir, "bun.lock")).text();
+  expect(lockAfter).toContain(`bare-dep@git+http://127.0.0.1:${gitServer.port}/bare-dep.git#${bareSha}`);
+  expect(lockAfter).toContain(`branch-dep@git+http://127.0.0.1:${gitServer.port}/branch-dep.git#${branchSha}`);
+  expect(await file(join(packageDir, "node_modules", "bare-dep", "index.js")).text()).toBe(
+    "module.exports = 'bare-dep';\n",
+  );
+  expect(await file(join(packageDir, "node_modules", "branch-dep", "index.js")).text()).toBe(
+    "module.exports = 'branch-dep';\n",
+  );
+  expect(await file(join(packageDir, "node_modules", "gh-dep", "index.js")).text()).toBe("module.exports = 'gh';\n");
+});
+
+// `bun update` must keep going to the remote for a branch-tracking ref: the
+// reuse above is explicitly skipped for update targets.
+it("`bun update` still re-resolves a branch ref git dependency against the remote", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  const gitEnv = {
+    ...env,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: join(packageDir, "gitconfig"),
+    GIT_AUTHOR_NAME: "bun-test",
+    GIT_AUTHOR_EMAIL: "test@bun.sh",
+    GIT_COMMITTER_NAME: "bun-test",
+    GIT_COMMITTER_EMAIL: "test@bun.sh",
+  };
+  async function git(args: string[], cwd: string): Promise<string> {
+    await using proc = spawn({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("fatal:");
+    expect(code).toBe(0);
+    return out;
+  }
+  await write(join(packageDir, "gitconfig"), "[core]\n\tautocrlf = false\n");
+
+  const srcDir = join(packageDir, "git-src");
+  const bareDir = join(packageDir, "repo.git");
+  await write(join(srcDir, "package.json"), JSON.stringify({ name: "git-dep", version: "1.0.0" }));
+  await git(["init", "-q", "-b", "main"], srcDir);
+  await git(["add", "-A"], srcDir);
+  await git(["commit", "-qm", "init"], srcDir);
+  await git(["clone", "-q", "--bare", srcDir, bareDir], packageDir);
+  await git(["update-server-info"], bareDir);
+
+  let gitRequests = 0;
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      gitRequests++;
+      const { pathname } = new URL(req.url);
+      if (!pathname.startsWith("/repo.git/")) return new Response("not found", { status: 404 });
+      const f = file(join(bareDir, pathname.slice("/repo.git/".length)));
+      return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
+    },
+  });
+
+  const installEnv = {
+    ...gitEnv,
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+  };
+  async function run(args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: packageDir,
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    expect(err).not.toContain("error:");
+    expect(code).toBe(0);
+  }
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "git-update-root",
+      dependencies: { "git-dep": `git+http://127.0.0.1:${server.port}/repo.git#main` },
+    }),
+  );
+
+  await run(["install"]);
+  const requestsAfterInstall = gitRequests;
+  expect(requestsAfterInstall).toBeGreaterThan(0);
+
+  await run(["update", "git-dep"]);
+  expect(gitRequests).toBeGreaterThan(requestsAfterInstall);
+});

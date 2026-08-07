@@ -1182,6 +1182,16 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
+            // Second: reuse the package an identical dependency is already
+            // bound to. A branch, tag, or bare committish can never match the
+            // lookup above after a lockfile round-trip.
+            if let Some(pkg_id) =
+                find_locked_git_package(this, id, dependency, &dep, ResolutionTag::Git)
+            {
+                success_fn(this, id, pkg_id);
+                return Ok(());
+            }
+
             // reshaped for borrowck — `alias`/`url` borrow
             // `this.lockfile.buffers.string_bytes`; detach the slice
             // lifetimes so the `&mut PackageManager` reborrows for the
@@ -1288,6 +1298,16 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
             // First: see if we already loaded the github package in-memory
             if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
+                success_fn(this, id, pkg_id);
+                return Ok(());
+            }
+
+            // Second: reuse the package an identical dependency is already
+            // bound to. A branch, tag, or bare committish can never match the
+            // lookup above after a lockfile round-trip.
+            if let Some(pkg_id) =
+                find_locked_git_package(this, id, dependency, dep, ResolutionTag::Github)
+            {
                 success_fn(this, id, pkg_id);
                 return Ok(());
             }
@@ -1931,6 +1951,79 @@ fn update_name_and_name_hash_from_version_replacement(
         }
         _ => (original_name, original_name_hash),
     }
+}
+
+/// Finds the package an identical, already-resolved dependency is bound to, so
+/// a git/github dependency re-enqueued during re-resolution (most commonly a
+/// workspace member edit re-parsing the member's whole dependency list) reuses
+/// it instead of fetching the remote again.
+///
+/// The `get_package_id` lookup in the git/github arms can only match a
+/// committish equal to the loaded one, and the text lockfile writes the
+/// *resolved* commit in the committish position of the resolution string, so a
+/// branch, tag, or bare ref never matches again after a lockfile round-trip.
+/// Dependency entries keep their original version literals, so an identical
+/// literal bound to a package of the same repository is the lossless record of
+/// what this dependency previously resolved to.
+fn find_locked_git_package(
+    this: &PackageManager,
+    id: DependencyID,
+    dependency: &Dependency,
+    repo: &Repository,
+    resolution_tag: ResolutionTag,
+) -> Option<PackageID> {
+    if this.lockfile.buffers.resolutions[id as usize] != invalid_package_id {
+        return None;
+    }
+
+    // `bun update` re-resolves git refs against the remote; reusing the locked
+    // commit here would turn the update into a no-op. Same update-target test
+    // as `Diff::generate` (an empty request list is a bare `bun update`).
+    if this.to_update
+        && (this.update_requests.is_empty()
+            || this
+                .update_requests
+                .iter()
+                .any(|request| request.name_hash == dependency.name_hash))
+    {
+        return None;
+    }
+
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let package_resolutions = this.lockfile.packages.items_resolution();
+    let dependencies = this.lockfile.buffers.dependencies.as_slice();
+    let resolutions = this.lockfile.buffers.resolutions.as_slice();
+
+    for (other, &package_id) in dependencies.iter().zip(resolutions) {
+        if package_id == invalid_package_id || (package_id as usize) >= package_resolutions.len() {
+            continue;
+        }
+        if other.name_hash != dependency.name_hash
+            || other.version.tag != dependency.version.tag
+            || !other
+                .version
+                .literal
+                .eql(dependency.version.literal, buf, buf)
+        {
+            continue;
+        }
+        // Overrides and catalogs replace the version after parsing, so an
+        // identical literal does not guarantee an identical resolution; the
+        // resolved repository must match the effective one too. (A changed
+        // override/catalog also invalidates the old binding before
+        // re-enqueueing, so a stale binding is never reachable here.)
+        let resolution = &package_resolutions[package_id as usize];
+        if resolution.tag != resolution_tag {
+            continue;
+        }
+        let locked = resolution.repository();
+        if !locked.repo.eql(repo.repo, buf, buf) || !locked.owner.eql(repo.owner, buf, buf) {
+            continue;
+        }
+        return Some(package_id);
+    }
+
+    None
 }
 
 pub(crate) enum ResolvedPackageTask {

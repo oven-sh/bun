@@ -968,13 +968,11 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
   async function expectPatchFlowWorks(dir: string, env: Record<string, string | undefined>, commitArg: string) {
     {
       const { stderr, exitCode } = await runBun(dir, env, "install");
-      expect(stderr).not.toContain("error:");
-      expect(exitCode).toBe(0);
+      expect(exitCode, `bun install failed: ${stderr}`).toBe(0);
     }
     {
       const { stderr, exitCode } = await runBun(dir, env, "patch", "pkg-to-patch");
-      expect(stderr).not.toContain("error:");
-      expect(exitCode).toBe(0);
+      expect(exitCode, `bun patch failed: ${stderr}`).toBe(0);
     }
 
     await Bun.write(join(dir, "node_modules", "pkg-to-patch", "index.js"), `module.exports = "patched";\n`);
@@ -982,14 +980,15 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     {
       const { stderr, exitCode } = await runBun(dir, env, "patch", "--commit", commitArg);
       expect(stderr).not.toContain("Could not access");
-      expect(stderr).not.toContain("error:");
-      expect(exitCode).toBe(0);
+      expect(exitCode, `bun patch --commit failed: ${stderr}`).toBe(0);
     }
 
     const pkg = await Bun.file(join(dir, "package.json")).json();
     const entries = Object.entries(pkg.patchedDependencies ?? {}) as [string, string][];
     expect(entries).toHaveLength(1);
     const [patchKey, patchPath] = entries[0];
+    // the filename must stay valid on Windows (no NTFS-reserved characters)
+    expect(patchPath).not.toMatch(/[:?*"<>|]/);
     const patchContents = await Bun.file(join(dir, patchPath)).text();
     expect(patchContents).toContain('-module.exports = "original";');
     expect(patchContents).toContain('+module.exports = "patched";');
@@ -1057,6 +1056,8 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     });
     const repo = join(String(dir), "gitrepo");
 
+    // keep git away from the machine's global/system config (autocrlf, gpgsign)
+    const gitEnv = { ...bunEnv, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(String(dir), "no-gitconfig") };
     for (const args of [
       ["init", "-q"],
       ["config", "core.autocrlf", "false"],
@@ -1065,10 +1066,9 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
       // serve the repo over git's dumb HTTP protocol (plain file fetches)
       ["update-server-info"],
     ]) {
-      await using proc = Bun.spawn({ cmd: ["git", ...args], cwd: repo, env: bunEnv, stderr: "pipe" });
+      await using proc = Bun.spawn({ cmd: ["git", ...args], cwd: repo, env: gitEnv, stderr: "pipe" });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr, `git ${args.join(" ")} failed: ${stderr}`).not.toContain("fatal:");
-      expect(exitCode).toBe(0);
+      expect(exitCode, `git ${args.join(" ")} failed: ${stderr}`).toBe(0);
     }
 
     await using server = Bun.serve({

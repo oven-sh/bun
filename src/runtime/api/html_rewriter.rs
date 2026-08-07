@@ -1302,6 +1302,22 @@ impl RewriterPipe {
         Writable::Owned(len)
     }
 
+    pub fn write_latin1(&self, data: &StreamResult) -> Writable {
+        let bytes = data.slice();
+        if bun_core::strings::is_all_ascii(bytes) {
+            return self.write(data);
+        }
+        let mut buf = Vec::new();
+        let _ = buf.write_latin1(bytes);
+        self.write(&StreamResult::Temporary(RawSlice::new(&buf)))
+    }
+
+    pub fn write_utf16(&self, data: &StreamResult) -> Writable {
+        let mut buf = Vec::new();
+        let _ = buf.write_utf16(data.slice16());
+        self.write(&StreamResult::Temporary(RawSlice::new(&buf)))
+    }
+
     /// `SinkHandle::end` entry — input EOF or terminal upstream error.
     pub fn end_from_stream(&self, err: Option<StreamError>) {
         // Detach via `detach_input_source` (not a bare `.set(None)`) so a
@@ -1692,18 +1708,10 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         RewriterPipe::write(self, data)
     }
     fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        let mut buf = Vec::new();
-        let _ = buf.write_utf16(data.slice16());
-        RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
+        RewriterPipe::write_utf16(self, data)
     }
     fn write_latin1(&mut self, data: &StreamResult) -> Writable {
-        let bytes = data.slice();
-        if bun_core::strings::is_all_ascii(bytes) {
-            return RewriterPipe::write(self, data);
-        }
-        let mut buf = Vec::new();
-        let _ = buf.write_latin1(bytes);
-        RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
+        RewriterPipe::write_latin1(self, data)
     }
     fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
         self.end_from_stream(err.map(StreamError::Error));

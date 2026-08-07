@@ -130,5 +130,6 @@ process.on('warning', common.mustNotCall());
 // become errors on the domain") that is omitted because Bun does not yet
 // capture the reject-time domain and route unhandled rejections through it
 // (Node's promiseInfo.domain path in lib/internal/process/promises.js --
-// distinct from the uncaught-exception capture callback). See the .todo
-// mode-matrix tests in test/js/node/domain/domain.test.ts.
+// distinct from the uncaught-exception capture callback). Omitted block:
+// https://github.com/nodejs/node/blob/v26.3.0/test/parallel/test-domain-promise.js
+// See the .todo mode-matrix tests in test/js/node/domain/domain.test.ts.

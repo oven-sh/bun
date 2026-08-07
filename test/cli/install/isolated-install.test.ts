@@ -724,6 +724,86 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   await checkInstall();
 });
 
+test("removing and re-adding a patch rebuilds the store entry", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const cacheDir = join(packageDir, ".bun-cache");
+
+  // Modifies index.js and creates patched.txt, covering both a file the
+  // unpatched rebuild must revert and one it must delete.
+  await write(
+    join(packageDir, "patches", "no-deps@1.0.0.patch"),
+    `diff --git a/index.js b/index.js
+index bb9c6f6876154493527577cd78279aa6bb686ebb..2b7940d013058ce26395cc33cb3b26ce10f725f8 100644
+--- a/index.js
++++ b/index.js
+@@ -1,7 +1 @@
+-module.exports = require(\`./package.json\`);
+-
+-for (const key of [\`dependencies\`, \`devDependencies\`, \`peerDependencies\`]) {
+-  for (const dep of Object.keys(module.exports[key] || {})) {
+-    module.exports[key][dep] = require(dep);
+-  }
+-}
++module.exports = "patched";
+diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..1023de9a151ad14964d6afa5a86dbcb9ef068a7b
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++added by patch
+`,
+  );
+
+  const packageJsonOf = (patched: boolean) =>
+    JSON.stringify({
+      name: "patch-toggle",
+      dependencies: { "no-deps": "1.0.0" },
+      ...(patched ? { patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" } } : {}),
+    });
+
+  async function install() {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  const indexJs = join(packageDir, "node_modules", "no-deps", "index.js");
+  const patchedTxt = join(packageDir, "node_modules", "no-deps", "patched.txt");
+
+  await write(packageJson, packageJsonOf(false));
+  await install();
+  const original = await file(indexJs).text();
+  expect(original).not.toBe('module.exports = "patched";\n');
+
+  await write(packageJson, packageJsonOf(true));
+  await install();
+  expect(await file(indexJs).text()).toBe('module.exports = "patched";\n');
+  expect(await file(patchedTxt).exists()).toBe(true);
+
+  // Removing the patch must rebuild the store entry from the unpatched
+  // package with nothing left over from the patched build.
+  await write(packageJson, packageJsonOf(false));
+  await install();
+  expect(await file(indexJs).text()).toBe(original);
+  expect(await file(patchedTxt).exists()).toBe(false);
+
+  // Re-adding the same patch must reinstall the patched content. A stale
+  // `.bun-tag-<hash>` marker surviving the unpatched rebuild used to make
+  // this install skip the entry entirely.
+  await write(packageJson, packageJsonOf(true));
+  await install();
+  expect(await file(indexJs).text()).toBe('module.exports = "patched";\n');
+  expect(await file(patchedTxt).exists()).toBe(true);
+});
+
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test(`isolated install with backend: ${backend}`, async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

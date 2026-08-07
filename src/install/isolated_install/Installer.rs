@@ -1205,6 +1205,26 @@ impl Task {
                                 }
                             }
                         }
+
+                        // Project-local entries are built in place (no
+                        // staging), and the clone/hardlink/copy walk only
+                        // visits names present in the cache folder, so files
+                        // only the previous build produced would survive a
+                        // rebuild. After a patch removal that merge left the
+                        // patched build's `.bun-tag-<hash>` marker (and any
+                        // patch-created files) next to the unpatched files;
+                        // re-adding the patch then saw the stale marker and
+                        // skipped the entry. Delete the previous build so
+                        // the rebuild replaces instead of merges.
+                        let mut prev_build = AutoPath::init_top_level_dir();
+                        installer.append_real_store_path(
+                            &mut prev_build,
+                            self.entry_id,
+                            Which::Final,
+                        );
+                        if let Some(e) = Fd::cwd().delete_tree(prev_build.slice()).err() {
+                            return Ok(Yield::failure(TaskError::LinkPackage(e)));
+                        }
                     }
 
                     if uses_global_store {

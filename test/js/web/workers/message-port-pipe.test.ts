@@ -228,6 +228,61 @@ describe("MessagePort pipe", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A message popped off the inbox but not yet dispatched must still count
+  // as pending activity: once the peer is closed, that count is all that
+  // keeps the receiving wrapper (and, via it, the listener functions) alive,
+  // and the deserialization inside the dispatch allocates. A GC there used
+  // to collect the wrapper and silently drop the message (on debug builds:
+  // "ASSERTION FAILED: m_wrapper" in JSEventListener::ensureJSFunction).
+  test("in-flight message keeps an otherwise-unreferenced listening port alive across GC", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const N = 100;
+          // Deserializing a large string reports its size as extra GC memory,
+          // so collections trigger inside the dispatch of some of the messages.
+          const big = Buffer.alloc(1 << 20, "x").toString();
+          let fired = 0;
+          for (let i = 0; i < N; i++) {
+            const { port1, port2 } = new MessageChannel();
+            // The handler must not capture port1; nothing but the pipe's
+            // undelivered-message count roots the wrapper once port2 closes.
+            port1.onmessage = () => { fired++; };
+            port2.postMessage(big);
+            port2.close();
+          }
+          // Every postMessage above scheduled its drain task, in order, on this
+          // context's task queue; this channel's drain therefore runs last.
+          await new Promise(resolve => {
+            const { port1, port2 } = new MessageChannel();
+            port1.onmessage = () => { port1.close(); port2.close(); resolve(); };
+            port2.postMessage(null);
+          });
+          console.log("fired=" + fired + "/" + N);
+          process.exit(0);
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        // Keep the JSC heap small so the deserialization inside the dispatch
+        // window reliably triggers a collection.
+        BUN_JSC_forceRAMSize: String(16 * 1024 * 1024),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is reported but not constrained: debug/ASAN lanes may emit
+    // benign diagnostics under the GC pressure this child creates.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "fired=100/100",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
   // A port transferred through a carrier whose destination is already
   // closed never reaches a new owner. The endpoint must be marked Closed
   // when the in-transit struct is dropped, otherwise the peer's

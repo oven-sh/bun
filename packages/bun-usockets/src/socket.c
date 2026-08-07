@@ -410,12 +410,13 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
 }
 
 /* Re-arm writable for a backpressured write without resuming the read side of
- * a paused socket: us_poll_change sets absolute flags, so including READABLE
- * unconditionally would silently undo us_socket_pause mid-backpressure and
- * deliver data the caller asked to defer. */
+ * a paused socket (caller asked to defer data) or a socket whose readable side
+ * has ended (recv()==0 would fire every tick). us_poll_change sets absolute
+ * flags, so READABLE must be added back explicitly for the common case. */
 static void us_internal_rearm_writable(struct us_socket_t *s) {
     us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_WRITABLE | (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
+                   LIBUS_SOCKET_WRITABLE |
+                   ((s->flags.is_paused || s->readable_ended) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
@@ -457,6 +458,8 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
+    s->fin_deferred = 0;
+    s->readable_ended = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -703,12 +706,29 @@ int us_connecting_socket_is_shut_down(struct us_connecting_socket_t *c) {
 }
 
 void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
-    /* Todo: should we emit on_close if calling shutdown on an already half-closed socket?
-     * We need more states in that case, we need to track RECEIVED_FIN
-     * so far, the app has to track this and call close as needed */
     if (!us_socket_is_closed(s) && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN) {
+#ifdef LIBUS_USE_LIBUV
+        /* Arming READABLE below hands ownership back to normal delivery (the
+         * SHUT_DOWN branch closes next iteration), so the sweep no longer owns
+         * this socket - and after SD_SEND the sweep's send() probe would
+         * misread WSAESHUTDOWN as a peer reset. */
+        if (s->fin_deferred) {
+            s->fin_deferred = 0;
+            s->group->loop->data.fin_deferred_count--;
+        }
+#endif
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
-        us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+        /* Peer FIN already delivered: the half-open poll has settled at
+         * events=0, so us_poll_change(&READABLE)=0 would be a no-op on
+         * libuv/kqueue and the is_shut_down close path never fires (epoll
+         * gets it via unmaskable EPOLLHUP). Arm READABLE instead so the
+         * next poll delivers the 0-byte read / DISCONNECT and closes via
+         * the existing SHUT_DOWN branch - next iteration, not synchronously,
+         * so callers on the stack (e.g. uWS onWritable) still see a live
+         * socket after shutdown() returns. */
+        us_poll_change(&s->p, s->group->loop,
+                       s->readable_ended ? LIBUS_SOCKET_READABLE
+                                         : (us_poll_events(&s->p) & LIBUS_SOCKET_READABLE));
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }
 }
@@ -846,24 +866,29 @@ void us_socket_pause(struct us_socket_t *s) {
 }
 
 void us_socket_resume(struct us_socket_t *s) {
+    if (!s->flags.is_paused) return;
 #ifdef LIBUS_USE_LIBUV
     /* Reads flow again: normal delivery discovers the deferred FIN (and any
-     * reset behind it), so the sweep no longer owns this socket. */
+     * reset behind it), so the sweep no longer owns this socket. Cleared
+     * after the !is_paused early-return so a readable_ended socket enrolled
+     * at settle keeps sweep ownership when resume() is a no-op. */
     if (s->fin_deferred) {
         s->fin_deferred = 0;
         s->group->loop->data.fin_deferred_count--;
     }
 #endif
-    if (!s->flags.is_paused) return;
     s->flags.is_paused = 0;
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 
+    /* The peer's FIN was already delivered; recv() can only return 0 now.
+     * Re-arming READABLE would just fire that 0-byte read on the next tick. */
+    int readable = s->readable_ended ? 0 : LIBUS_SOCKET_READABLE;
     if (us_socket_is_shut_down(s)) {
         // we already sent FIN so we resume only readable side we are read-only
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
+        us_poll_change(&s->p, s->group->loop, readable);
         return;
     }
     // we are readable and writable so we resume everything
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    us_poll_change(&s->p, s->group->loop, readable | LIBUS_SOCKET_WRITABLE);
 }

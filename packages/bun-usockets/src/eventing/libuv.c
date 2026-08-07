@@ -92,6 +92,23 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
     if (kind == POLL_TYPE_SOCKET_SHUT_DOWN) {
       eof = 1;
       events |= UV_READABLE;
+    } else if (kind == POLL_TYPE_SOCKET && us_internal_poll_cb_adopted_socket(wp)->readable_ended) {
+      /* on_end already delivered (half-open). AFD's level-triggered DISCONNECT
+       * for the FIN must not re-derive eof every tick (that spin re-armed
+       * WRITABLE and fired on_writable each iteration); the re-arm above has
+       * dropped DISCONNECT for this report, so the poll settles within two
+       * iterations. But AFD also reports a later RST on the same bit, and
+       * once settled at events=0 nothing else will: probe so an ABORT still
+       * closes like epoll's unmaskable EPOLLERR would, and hand the socket to
+       * the fin_deferred sweep so a RST arriving after settle is escalated. */
+      struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
+      if (us_socket_get_error(sock) != 0 || us_internal_libuv_peer_reset_probe(us_poll_fd(wp))) {
+        error = 1;
+        events |= UV_READABLE;
+      } else if (!sock->fin_deferred && us_poll_events(wp) == 0) {
+        sock->fin_deferred = 1;
+        sock->group->loop->data.fin_deferred_count++;
+      }
     } else if (kind == POLL_TYPE_SOCKET && us_internal_poll_cb_socket_is_probeable(wp)) {
       /* A paused socket polls without READABLE, so the read loop cannot
        * discover terminal states for it - and the pause contract forbids

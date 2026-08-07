@@ -623,6 +623,63 @@ describe("HTTP server CONNECT", () => {
       });
     },
   );
+
+  // Windows-specific: AFD reports UV_DISCONNECT level-triggered. After the peer
+  // FIN the half-open socket's poll was re-armed WRITABLE|DISCONNECT every
+  // tick, so while something kept the uv loop alive the on_writable handler
+  // fired on every iteration (flooding 'drain') and on_end re-dispatched. On
+  // POSIX the poll settles to events=0 after one writable event, so 'drain'
+  // fires at most once there.
+  test("half-open CONNECT socket's poll settles after peer FIN (no drain/end storm)", async () => {
+    const fixture = `
+      const http = require("http");
+      const net = require("net");
+      let drainCount = 0;
+      let endCount = 0;
+      const server = http.createServer((req, res) => { res.end(); });
+      server.on("connect", (req, socket, head) => {
+        socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+        socket.on("drain", () => { drainCount++; });
+        socket.on("end", () => {
+          endCount++;
+          // Keep the uv loop alive for a bounded window after FIN. With the
+          // poll spinning this fires 'drain' on every tick; with the fix the
+          // poll is at events=0 within two ticks and the interval idles.
+          let ticks = 0;
+          const i = setInterval(() => {
+            if (++ticks === 20) {
+              clearInterval(i);
+              console.log(JSON.stringify({ drainCount, endCount }));
+              socket.destroy();
+              server.close();
+            }
+          }, 5);
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = net.connect(server.address().port, "127.0.0.1", () => {
+          client.write("CONNECT example.com:80 HTTP/1.1\\r\\nHost: example.com:80\\r\\n\\r\\n");
+        });
+        client.on("data", () => client.end());
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const line = stdout.trim().split("\n").pop() ?? "";
+    const { drainCount, endCount } = JSON.parse(line);
+    // One writable event after FIN is expected (the half-open path arms
+    // WRITABLE once so a just-queued write can flush). A spinning poll
+    // produces one per uv_run iteration, i.e. hundreds over 20 interval ticks.
+    expect(drainCount).toBeLessThanOrEqual(3);
+    expect(endCount).toBe(1);
+    expect(exitCode).toBe(0);
+  });
 });
 
 /**
@@ -780,7 +837,7 @@ describe("Should be compatible with node.js", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
-  });
+  }, 30_000); // The child bun-debug runs seven subtests; startup alone is ~2s under ASAN.
 });
 
 // Windows: after FIN on a CONNECT-tunnel socket, AFD's level-triggered

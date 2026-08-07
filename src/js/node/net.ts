@@ -156,15 +156,12 @@ const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
 const kerrorEmitted = Symbol("kerrorEmitted");
 const kUserUnrefed = Symbol("kUserUnrefed");
-// process._getActiveHandles()/getActiveResourcesInfo() registry. Lazy-loaded so
-// `require('node:net')` alone does not pull in the registry's native bindings.
 // Node ref: https://github.com/nodejs/node/blob/main/lib/net.js
 let activeHandles;
 function registerHandle(handle, kind, unrefFlag) {
   (activeHandles ??= require("internal/active_handles")).registerHandle(handle, kind, unrefFlag);
 }
 function unregisterHandle(handle) {
-  // Nothing can be registered before the module loads.
   if (activeHandles === undefined) return;
   activeHandles.unregisterHandle(handle);
 }
@@ -1196,10 +1193,6 @@ function onconnection(err, clientHandle) {
     return;
   }
 
-  // Past the drop checks: the accepted socket is now a real handle, as in
-  // node, where dropped connections never surface a wrap. The kind sticks to
-  // the socket so a later server-side TLS wrap re-registers with the same
-  // transport (a pipe stays 'PipeWrap').
   _socket[kHandleKind] = self[kAcceptedHandleKind] || "TCPSocketWrap";
   registerHandle(_socket, _socket[kHandleKind], kUserUnrefed);
 
@@ -2007,8 +2000,6 @@ Socket.prototype.connect = function connect(...args) {
         this.connecting = false;
       }
       if (connectListener != null) this.once("secureConnect", connectListener);
-      // The TLS wrap registers from its open handler via this[kHandleKind];
-      // keep the wrapped connection's transport kind (a pipe stays 'PipeWrap').
       this[kHandleKind] = connection[kHandleKind] || "TCPSocketWrap";
       try {
         // reset the underlying writable object when establishing a new connection
@@ -2148,8 +2139,6 @@ Socket.prototype.connect = function connect(...args) {
     initSocketHandle(this);
   }
 
-  // Node creates the TCP/Pipe wrap synchronously in connect() (lib/net.js), so a
-  // connecting socket is already visible; open handler's registerHandle is a no-op re-link.
   this[kHandleKind] = pipe ? "PipeWrap" : "TCPSocketWrap";
   registerHandle(this, this[kHandleKind], kUserUnrefed);
 
@@ -2161,8 +2150,6 @@ Socket.prototype.connect = function connect(...args) {
       internalConnect(this, options, path);
     }
   } catch (e) {
-    // Synchronous option-validation throws leave the caller with no socket
-    // reference to destroy(); unlink here or the registry pins it forever.
     unregisterHandle(this);
     throw e;
   }
@@ -2417,10 +2404,6 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     connection.on("close", events[3]);
     this[kupgraded] = connection;
     this._handle = result;
-    // ServerHandlers.open skips onconnection for standalone server-side
-    // wraps, so register here too or the duplex-backed TLS socket never
-    // appears in _getActiveHandles()/getActiveResourcesInfo(). The TLS wrap
-    // keeps the wrapped connection's transport kind (a pipe stays 'PipeWrap').
     registerHandle(this, connection[kHandleKind] || "TCPSocketWrap", kUserUnrefed);
     return;
   }
@@ -2477,9 +2460,6 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
     this._handle = tlsHandle;
-    // ServerHandlers.open skips onconnection for standalone server-side wraps,
-    // so the live TLS socket registers here, with the adopted fd's transport
-    // kind (a pipe stays 'PipeWrap').
     registerHandle(this, connection[kHandleKind] || "TCPSocketWrap", kUserUnrefed);
     this.emit(kUpgradeAttached);
   });
@@ -3205,7 +3185,6 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.oncomplete = afterConnect;
     req.tls = tls;
 
-    // Unix/named-pipe transport: node reports these handles as 'PipeWrap'.
     self[kHandleKind] = "PipeWrap";
     traceConnectStart(req, address);
     err = kConnectPipe(self, req, address);

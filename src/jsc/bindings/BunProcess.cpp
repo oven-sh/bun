@@ -4246,9 +4246,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
     return JSValue::encode(jsUndefined());
 }
 
-// getActiveResourcesInfo / _getActiveHandles / _getActiveRequests live in JS
-// (ProcessObjectInternals.ts): node:net maintains the live-handle registry
-// and the timer/fs counts come from Rust via $newRustFunction bindings.
 static JSValue constructGetActiveResourcesInfo(VM& vm, JSObject* processObject)
 {
     auto* globalObject = defaultGlobalObject(processObject->globalObject());

@@ -512,9 +512,6 @@ pub enum Flavor {
 // Async task type aliases
 // ──────────────────────────────────────────────────────────────────────────
 thread_local! {
-    /// Async fs requests in flight on this JS thread (scheduled in `create()`,
-    /// retired in `destroy()`). Backs the 'FSReqCallback' entries of
-    /// `process.getActiveResourcesInfo()` and `process._getActiveRequests()`.
     static PENDING_ASYNC_REQUESTS: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
 }
 
@@ -1029,8 +1026,6 @@ mod _async_tasks {
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
             super::PENDING_ASYNC_REQUESTS.with(|c| {
-                // The create/destroy pairing is 1:1; a silent absorb here would
-                // make getActiveResourcesInfo() under-report forever.
                 debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
                 c.set(c.get().saturating_sub(1));
             });
@@ -1426,8 +1421,6 @@ mod _async_tasks {
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
             super::PENDING_ASYNC_REQUESTS.with(|c| {
-                // The create/destroy pairing is 1:1; a silent absorb here would
-                // make getActiveResourcesInfo() under-report forever.
                 debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
                 c.set(c.get().saturating_sub(1));
             });
@@ -1862,8 +1855,6 @@ mod _async_tasks {
                 let ctx = event_loop_handle_to_ctx(task.evtloop);
                 task.r#ref.unref(ctx);
                 super::PENDING_ASYNC_REQUESTS.with(|c| {
-                    // The create/destroy pairing is 1:1; a silent absorb here would
-                    // make getActiveResourcesInfo() under-report forever.
                     debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
                     c.set(c.get().saturating_sub(1));
                 });
@@ -2735,8 +2726,6 @@ mod _async_tasks {
             // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
             task.r#ref.unref(bun_io::js_vm_ctx());
             super::PENDING_ASYNC_REQUESTS.with(|c| {
-                // The create/destroy pairing is 1:1; a silent absorb here would
-                // make getActiveResourcesInfo() under-report forever.
                 debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
                 c.set(c.get().saturating_sub(1));
             });

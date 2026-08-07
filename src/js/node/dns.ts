@@ -321,8 +321,6 @@ function lookup(hostname, options, callback) {
   }
 
   callback = guardCallback(callback);
-  // Node parks a GetAddrInfoReqWrap per in-flight lookup (lib/dns.js); register
-  // only after dns.lookup() returns since it can throw synchronously.
   const promise = dns.lookup(hostname, options);
   activeHandles ??= require("internal/active_handles");
   const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetAddrInfoReqWrap(), "GetAddrInfoReqWrap");
@@ -371,8 +369,6 @@ function lookupService(address, port, callback) {
   validatePort(port, "port");
 
   callback = guardCallback(callback);
-  // Same shape as lookup(): Bun.dns.lookupService throws synchronously for a
-  // non-IP address, so the promise is captured before the wrap registers.
   const promise = dns.lookupService(address, +port);
   activeHandles ??= require("internal/active_handles");
   const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetNameInfoReqWrap(), "GetNameInfoReqWrap");
@@ -780,8 +776,6 @@ const promises = {
       return Promise.$resolve(options.all ? [obj] : obj);
     }
 
-    // Node's promise form parks a GetAddrInfoReqWrap too
-    // (lib/internal/dns/promises.js); same post-call registration as lookup().
     const promise = dns.lookup(hostname, options);
     activeHandles ??= require("internal/active_handles");
     const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetAddrInfoReqWrap(), "GetAddrInfoReqWrap");
@@ -810,8 +804,6 @@ const promises = {
     validatePort(port, "port");
 
     try {
-      // Same registration as the callback form: the native call throws
-      // synchronously for a non-IP address, so the wrap registers after it.
       const promise = dns.lookupService(address, +port);
       activeHandles ??= require("internal/active_handles");
       const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetNameInfoReqWrap(), "GetNameInfoReqWrap");

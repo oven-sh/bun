@@ -1546,13 +1546,9 @@ it("process.execArgv", async () => {
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
     ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
     ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
-    // `--` as the pending value of a value-taking option stays; as a bare
-    // terminator it is dropped (node src/node_options.cc).
     ["--conditions -- index.ts", ["--conditions", "--"], []],
     ["--smol -- index.ts", ["--smol"], []],
     ["--conditions foo -- index.ts", ["--conditions", "foo"], []],
-    // A value spelled like a value-taking option is still just a value: the
-    // `--` after it terminates (pending-value state, not prev-token sniffing).
     ["--conditions --conditions -- index.ts", ["--conditions", "--conditions"], []],
     ["--conditions --inspect -- index.ts", ["--conditions", "--inspect"], []],
     // The CLI consumes the next token as the value even when it spells `run`.
@@ -1567,9 +1563,6 @@ it("process.execArgv", async () => {
 });
 
 it.skipIf(isWindows)("process.execArgv drops `--` after a flag whose value is only taken via `=`", async () => {
-  // `--inspect` never consumes the next token (value only via `--inspect=...`),
-  // so a following `--` is the terminator, not its value. BUN_INSPECT points
-  // the debugger at a unix socket so no TCP port is bound.
   using dir = tempDir("execargv-inspect", {});
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--inspect", "--", join(__dirname, "print-process-execArgv.js")],
@@ -1578,7 +1571,6 @@ it.skipIf(isWindows)("process.execArgv drops `--` after a flag whose value is on
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // The inspector banner goes to stderr; the fixture's JSON is alone on stdout.
   expect(stdout, stderr).not.toBe("");
   expect(JSON.parse(stdout)).toEqual({ execArgv: ["--inspect"], argv: [] });
   expect(exitCode).toBe(0);
@@ -2338,13 +2330,6 @@ it("process.throwDeprecation is per-Worker, not process-global", async () => {
 });
 
 it("getActiveResourcesInfo reports a listening http.Server like node", async () => {
-  // node v26.3.0 transcript for the same script:
-  //   {"listening":1,"handleWhileListening":true,"unrefed":0,"refed":1,"closed":0,"handleAfterClose":true}
-  // (listening server = one "TCPServerWrap"; unref() removes it, ref()
-  // restores it; _handle nulls in the close callback and the entry drops
-  // once the close settles — node keeps the closing wrap listed until uv's
-  // OnClose, so "closed" is sampled after a short settle, where both
-  // runtimes report 0.)
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2380,7 +2365,6 @@ it("getActiveResourcesInfo reports a listening http.Server like node", async () 
 });
 
 it("getActiveResourcesInfo reports a unix-socket http.Server as PipeWrap like node", async () => {
-  // node v26.3.0: http server on a unix path reports ["PipeWrap"].
   using dir = tempDir("http-pipewrap", {});
   await using proc = Bun.spawn({
     cmd: [
@@ -2409,8 +2393,6 @@ it("getActiveResourcesInfo reports a unix-socket http.Server as PipeWrap like no
 });
 
 it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a client-side TLS wrap", async () => {
-  // tls.connect({ socket }) over a unix transport: the TLS socket registers
-  // from its open handler and must inherit the wrapped connection's kind.
   using dir = tempDir("tls-client-pipewrap", {});
   await using proc = Bun.spawn({
     cmd: [
@@ -2450,7 +2432,6 @@ it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a client-sid
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  // Everything rides the unix transport; nothing may report as TCP.
   const parsed = JSON.parse(stdout.trim());
   expect(parsed.tlsHandle).toBe(true);
   expect(parsed.tcp).toBe(0);
@@ -2459,8 +2440,6 @@ it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a client-sid
 });
 
 it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a server-side TLS wrap", async () => {
-  // Wrapping an accepted unix-socket connection in a server-side TLSSocket
-  // re-registers the handle; the transport kind must survive the swap.
   using dir = tempDir("tls-pipewrap", {});
   await using proc = Bun.spawn({
     cmd: [
@@ -2504,8 +2483,6 @@ it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a server-sid
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  // Everything in this fixture rides the unix transport: the listener, the
-  // client, and the TLS wrap of the accepted connection. Nothing is TCP.
   const parsed = JSON.parse(stdout.trim());
   expect(parsed.tlsHandle).toBe(true);
   expect(parsed.tcp).toBe(0);
@@ -2545,13 +2522,6 @@ describe("NODE_NO_WARNINGS", () => {
 });
 
 it("getActiveResourcesInfo reports connecting sockets and pending dns lookups like node", async () => {
-  // node v26.3.0:
-  //   - a socket with a connect still in flight reports "TCPSocketWrap"
-  //     immediately after connect() dispatch (sampled synchronously, before
-  //     any routing outcome can arrive, so a closed local port works);
-  //   - an in-flight dns.lookup reports "GetAddrInfoReqWrap" in
-  //     getActiveResourcesInfo() and a wrap with that constructor name in
-  //     _getActiveRequests(), and both disappear once the lookup settles.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2597,10 +2567,6 @@ it("getActiveResourcesInfo reports connecting sockets and pending dns lookups li
 });
 
 it("_getActiveRequests entries carry node's request-wrap constructor names", async () => {
-  // node v26.3.0 names pending fs requests FSReqCallback/FSReqPromise; Bun's
-  // fs callback API wraps the promise API natively, so both report
-  // FSReqCallback (documented divergence) - but the entries must be named
-  // wraps, not plain objects, so constructor-name filtering works.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2620,9 +2586,6 @@ it("_getActiveRequests entries carry node's request-wrap constructor names", asy
 });
 
 it("synchronous connect/lookup validation throws do not leak registry entries", async () => {
-  // Acquire-before-fallible-call regression: a sync throw from option
-  // validation (net) or the native call (dns) must not leave a phantom
-  // handle/request pinned in the registry.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

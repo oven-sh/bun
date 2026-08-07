@@ -92,8 +92,6 @@ const {
 } = require("internal/http1_server_fallback");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 
-// Bun's http.Server rides Bun.serve (no net.Server), so register with the handle
-// registry directly as "TCPServerWrap"/"PipeWrap"; `_unref` mirrors net.Server.
 // Node ref: https://github.com/nodejs/node/blob/main/lib/_http_server.js
 let activeHandles;
 function registerServerHandle(server, kind) {
@@ -1142,8 +1140,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     });
 
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
-    // node's http.Server carries `_handle` (the listen wrap) while listening
-    // and nulls it on close; the registry's liveness walk keys off it too.
     this._handle = this[serverSymbol];
     registerServerHandle(this, socketPath ? "PipeWrap" : "TCPServerWrap");
     isHTTPS = this[serverSymbol].protocol === "https";

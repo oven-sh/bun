@@ -281,10 +281,6 @@ mod _impl {
             if let Some(exec_argv) = worker.exec_argv() {
                 use bun_core::WTFStringImplExt as _;
 
-                // Node truncates a worker's execArgv at the first `--` (src/node_options.cc);
-                // same carve-out as below: `--` consumed as an option's value stays. The
-                // pending-value state is explicit so a value that merely looks like a
-                // value-taking option cannot keep a later `--` alive.
                 let mut end = exec_argv.len();
                 let mut awaiting_value = false;
                 for (i, &wtf) in exec_argv.iter().enumerate() {
@@ -373,15 +369,11 @@ mod _impl {
             let arg: &[u8] = arg;
 
             if awaiting_value {
-                // The previous option consumes this token as its value whatever
-                // it looks like (`--`, another option's spelling), matching the
-                // CLI parse, so execArgv round-trips through fork().
                 args.push(BunString::clone_utf8(arg));
                 awaiting_value = false;
                 continue;
             }
 
-            // `--` terminates option parsing (Node drops it; src/node_options.cc).
             if arg == b"--" {
                 break;
             }

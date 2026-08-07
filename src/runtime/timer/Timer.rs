@@ -39,9 +39,6 @@ impl All {
         }
     }
 
-    /// Number of `setTimeout`/`setInterval` objects currently keeping the
-    /// event loop alive (alive and not `unref()`ed). Backs the `'Timeout'`
-    /// entries of `process.getActiveResourcesInfo()`.
     pub(crate) fn active_timeout_count() -> u32 {
         let all = timer_all();
         if all.is_null() {
@@ -51,9 +48,6 @@ impl All {
         unsafe { (*all).js_timeout_ref_count.max(0) as u32 }
     }
 
-    /// Number of pending `setImmediate` objects currently keeping the event
-    /// loop alive. Backs the `'Immediate'` entries of
-    /// `process.getActiveResourcesInfo()`.
     pub(crate) fn active_immediate_count() -> u32 {
         let all = timer_all();
         if all.is_null() {

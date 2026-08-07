@@ -13,23 +13,15 @@ const getPendingFsRequestCount = $newRustFunction("node_fs_binding.rs", "getPend
 const kPrev = Symbol("kActiveHandlePrev");
 const kNext = Symbol("kActiveHandleNext");
 const kKind = Symbol("kActiveHandleKind");
-// The handle's own unref-marker key (net.ts's kUserUnrefed symbol for
-// sockets, "_unref" for servers): truthy after unref(), so unref'd handles
-// drop out of both APIs and ref() re-includes them, as in node.
 const kUnrefFlag = Symbol("kActiveHandleUnrefFlag");
 
 const head: any = {};
 head[kPrev] = head;
 head[kNext] = head;
 
-// Named to match Node's wraps so constructor-name filtering on _getActiveRequests() works.
-// fs entries are count-derived (no live wrap); dns entries register the live wrap at dispatch.
 class FSReqCallback {}
 class GetAddrInfoReqWrap {}
 class GetNameInfoReqWrap {}
-// wrap -> kind string. The kind is the caller's literal: the wraps (and their
-// shared prototype) are exposed via _getActiveRequests(), so any read off the
-// wrap, constructor.name included, could run user tampering.
 const pendingRequestWraps = new Map();
 
 function noteRequestStart(wrap, kind) {
@@ -44,7 +36,6 @@ function noteRequestEnd(wrap) {
 function registerHandle(handle, kind, unrefFlag) {
   handle[kUnrefFlag] = unrefFlag;
   if (handle[kKind] != null) {
-    // Already linked (e.g. kReinitializeHandle swapping the native handle).
     handle[kKind] = kind;
     return;
   }
@@ -64,8 +55,6 @@ function unregisterHandle(handle) {
   handle[kNext] = null;
 }
 
-// Walks the list, unlinking any handle whose native handle is gone — a missed
-// unregister self-heals instead of pinning the dead socket forever.
 function forEachActive(out, pushKind) {
   for (let h = head[kNext]; h !== head; ) {
     const next = h[kNext];
@@ -84,9 +73,6 @@ function getActiveHandles() {
 }
 
 function getActiveResourcesInfo() {
-  // Node orders requests before handles before timers. Every async fs request
-  // is 'FSReqCallback': Bun's fs callback API wraps the promise API, so node's
-  // FSReqCallback/FSReqPromise split does not exist here.
   const resources: string[] = [];
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
     $arrayPush(resources, "FSReqCallback");
@@ -105,8 +91,6 @@ function getActiveResourcesInfo() {
 }
 
 function getActiveRequests() {
-  // fs requests have no user-visible wrap (native promise), so each fs entry is a
-  // fresh FSReqCallback instance; dns entries are the live wraps registered at dispatch.
   const requests: unknown[] = [];
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
     $arrayPush(requests, new FSReqCallback());

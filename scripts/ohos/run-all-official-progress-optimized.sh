@@ -136,8 +136,15 @@ find test/ -type f \
 # 放末尾：fast 先快速完成（~1900 个），最后 35 个 slow 5 并行集中跑。
 SLOW_RE="(jsx-production|shell-cmdsub-crash|run-extensionless|udp_socket\.test|bunshell\.test|spawn\.test|fetch/fetch\.test|terminal/terminal-|terminal\.test\.ts|bun-install\.test|request-clone-leak|create-jsx|bun-run\.test|dev-server\.test|expo-app|fetch-leak|bun-security-scanner-matrix|test-dev-peer-dependency|spawn-noread-leak|bun-install-registry|boundary-conditions|streams-leak|serve-response-stream-sink-leak|bun-serve-static-stress|bun-add\.test|init\.test|rm\.test\.ts|inspector\.test\.ts)"
 grep -v -E "$SLOW_RE" "$PDIR/test_files_all.txt" > "$PDIR/test_files_fast.txt"
-grep -E "$SLOW_RE" "$PDIR/test_files_all.txt" >> "$PDIR/test_files_fast.txt"
-mv "$PDIR/test_files_fast.txt" "$PDIR/test_files.txt"
+grep -E "$SLOW_RE" "$PDIR/test_files_all.txt" > "$PDIR/test_files_slow.txt"
+# cat 拼接（非 grep >> 追加）：若前一段末尾无换行，>> 会粘连行；
+# 且强制末尾换行，确保 while read 读到全部行（read 在无结尾换行时
+# 对最后一行仍会读，但某些 toybox 版本会提前 EOF）。
+cat "$PDIR/test_files_fast.txt" "$PDIR/test_files_slow.txt" > "$PDIR/test_files.txt"
+printf '\n' >> "$PDIR/test_files.txt" 2>/dev/null || true
+# 去除可能因末尾空行产生的多余计数（grep -v 空行，不用 sed -i）
+grep -v '^$' "$PDIR/test_files.txt" > "$PDIR/test_files.txt.tmp"
+mv "$PDIR/test_files.txt.tmp" "$PDIR/test_files.txt"
 
 TOTAL_FILES=$(wc -l < "$PDIR/test_files.txt")
 echo "Found $TOTAL_FILES test files, running $PARALLEL parallel workers (TIMEOUT=${TMOUT}s, RETRIES=${RETRIES})"

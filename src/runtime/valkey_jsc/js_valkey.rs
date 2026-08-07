@@ -1783,6 +1783,44 @@ impl<const SSL: bool> SocketHandler<SSL> {
         socket: SocketType<SSL>,
     ) -> JsTerminatedResult<()> {
         this.client_mut().socket = Self::socket(socket);
+        if SSL {
+            let ssl_ptr: *mut boringssl::c::SSL = this
+                .client
+                .get()
+                .socket
+                .get_native_handle()
+                .unwrap_or(core::ptr::null_mut())
+                .cast();
+            // SAFETY: `ssl_ptr` is the live pre-handshake SSL handle for the
+            // just-opened TLS socket (null-checked).
+            if !ssl_ptr.is_null() && unsafe { boringssl::c::SSL_is_init_finished(ssl_ptr) } == 0 {
+                let client = this.client.get();
+                let server_name: Option<&[u8]> = match &client.tls {
+                    valkey::TLS::Custom(cfg) => cfg.server_name_bytes(),
+                    _ => None,
+                };
+                let sni: Option<bun_core::ZBox> =
+                    if let Some(name) = server_name.filter(|n| !n.is_empty()) {
+                        Some(bun_core::ZBox::from_bytes(name))
+                    } else if let valkey::Address::Host { host, .. } = &client.address {
+                        let mut host: &[u8] = &host[..];
+                        if host.len() >= 2 && host[0] == b'[' && host[host.len() - 1] == b']' {
+                            host = &host[1..host.len() - 1];
+                        }
+                        if host.is_empty() || bun_core::ip_address::is_ip_address(host) {
+                            None
+                        } else {
+                            Some(bun_core::ZBox::from_bytes(host))
+                        }
+                    } else {
+                        None
+                    };
+                if let Some(name_z) = sni {
+                    // SAFETY: `name_z` is NUL-terminated; FFI reads until NUL.
+                    unsafe { boringssl::c::SSL_set_tlsext_host_name(ssl_ptr, name_z.as_ptr()) };
+                }
+            }
+        }
         narrow_terminated(this.client_mut().on_open(Self::socket(socket)))
     }
 

@@ -15,6 +15,20 @@ const serverKey = fs.readFileSync(path.join(fixturesDir, "agent1-key.pem"));
 const serverCert = fs.readFileSync(path.join(fixturesDir, "agent1-cert.pem"));
 const ca = fs.readFileSync(path.join(fixturesDir, "ca1-cert.pem"));
 
+// SNICallback records the server_name extension sent in the ClientHello.
+// Returning the same context for every name is fine; we only care that the
+// callback fires (i.e. the client sent SNI) and what name it carried.
+function sniRecorder(key: Buffer | string, cert: Buffer | string) {
+  const seen: string[] = [];
+  return {
+    seen,
+    SNICallback(name: string, cb: (err: Error | null, ctx?: tls.SecureContext) => void) {
+      seen.push(name);
+      cb(null, tls.createSecureContext({ key, cert }));
+    },
+  };
+}
+
 // Consume one complete RESP array (*N\r\n followed by N bulk strings) from the
 // front of `buf`. Returns the number of bytes consumed, or 0 if incomplete.
 function consumeRespArray(buf: Buffer): number {
@@ -216,6 +230,85 @@ describe("RedisClient TLS hostname verification", () => {
       } finally {
         client.close();
       }
+    });
+  });
+
+  test("sends the URL host as SNI", async () => {
+    const rec = sniRecorder(localhostTls.key, localhostTls.cert);
+    await withServer({ key: localhostTls.key, cert: localhostTls.cert, SNICallback: rec.SNICallback }, async port => {
+      const client = new RedisClient(`rediss://localhost:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+        tls: { ca: localhostTls.cert, rejectUnauthorized: true },
+      });
+      try {
+        expect(await client.send("PING", [])).toBe("PONG");
+      } finally {
+        client.close();
+      }
+      expect(rec.seen).toEqual(["localhost"]);
+    });
+  });
+
+  test("sends tls.serverName as SNI and uses it for certificate identity", async () => {
+    const rec = sniRecorder(localhostTls.key, localhostTls.cert);
+    await withServer({ key: localhostTls.key, cert: localhostTls.cert, SNICallback: rec.SNICallback }, async port => {
+      // Dial by IP (which would fail DNS-SAN identity and is not sent as SNI
+      // on its own), but pin identity via serverName. Mirrors node/ioredis.
+      const client = new RedisClient(`rediss://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+        tls: { ca: localhostTls.cert, serverName: "localhost", rejectUnauthorized: true },
+      });
+      try {
+        expect(await client.send("PING", [])).toBe("PONG");
+      } finally {
+        client.close();
+      }
+      expect(rec.seen).toEqual(["localhost"]);
+    });
+  });
+
+  test("does not send an IP-literal URL host as SNI", async () => {
+    const rec = sniRecorder(localhostTls.key, localhostTls.cert);
+    await withServer({ key: localhostTls.key, cert: localhostTls.cert, SNICallback: rec.SNICallback }, async port => {
+      const client = new RedisClient(`rediss://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+        tls: { ca: localhostTls.cert, rejectUnauthorized: true },
+      });
+      try {
+        expect(await client.send("PING", [])).toBe("PONG");
+      } finally {
+        client.close();
+      }
+      // RFC 6066: IP literals are not valid SNI HostNames.
+      expect(rec.seen).toEqual([]);
+    });
+  });
+
+  test("tls.serverName governs certificate identity (mismatch is rejected)", async () => {
+    const rec = sniRecorder(localhostTls.key, localhostTls.cert);
+    await withServer({ key: localhostTls.key, cert: localhostTls.cert, SNICallback: rec.SNICallback }, async port => {
+      // URL host matches the cert, but serverName does not. With SNI wired
+      // through, identity is checked against serverName and must fail.
+      const client = new RedisClient(`rediss://localhost:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+        tls: { ca: localhostTls.cert, serverName: "evil.example", rejectUnauthorized: true },
+      });
+      let err: any;
+      try {
+        await client.send("PING", []);
+      } catch (e) {
+        err = e;
+      } finally {
+        client.close();
+      }
+      expect(err).toBeInstanceOf(Error);
+      expect(err.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      expect(err.message).toContain("evil.example");
+      expect(rec.seen).toEqual(["evil.example"]);
     });
   });
 

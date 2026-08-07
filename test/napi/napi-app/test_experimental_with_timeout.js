@@ -6,15 +6,31 @@ const modulePath = path.join(__dirname, 'build/Debug/test_reference_unref_in_fin
 
 // Spawn the test process
 const proc = spawn(process.argv[0], ['--expose-gc', '-e', `
-const m = require("${modulePath}");
+const m = require(${JSON.stringify(modulePath)});
 console.log('Loading experimental module...');
-let arr = m.test_reference_unref_in_finalizer_experimental();
-console.log('Test function returned');
-arr = null;
-global.gc ? global.gc() : (process.isBun && Bun.gc ? Bun.gc(true) : null);
-console.log('GC triggered - should crash now');
-console.log('ERROR: Did not crash! Test failed!');
-process.exit(1);
+function makeGarbage() {
+  let arr = m.test_reference_unref_in_finalizer_experimental();
+  arr = null;
+}
+async function main() {
+  // Collection of any particular object is not guaranteed under JSC: a
+  // conservative stack/register scan can pin an address for the whole
+  // process, and a pinned array keeps every finalizer object alive no matter
+  // how many more GCs run. Retry with freshly allocated objects instead
+  // (same approach as tryGcUntil in module.js); collecting any one of them
+  // crashes as expected.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    makeGarbage();
+    for (let i = 0; i < 3; i++) {
+      // Hop to a new task so the GC runs from a shallow stack.
+      await new Promise(resolve => setTimeout(resolve, 1));
+      global.gc ? global.gc() : Bun.gc(true);
+    }
+  }
+  console.log('ERROR: Did not crash! Test failed!');
+  process.exit(1);
+}
+main();
 `], {
   env: { 
     ...process.env,
@@ -52,10 +68,11 @@ proc.stderr.on('data', (data) => {
   }
 });
 
-// Fallback timeout
+// Fallback timeout. The no-crash path runs up to 15 GCs across task hops,
+// which needs headroom on slow (debug/ASAN) builds.
 const timeout = setTimeout(() => {
   proc.kill('SIGKILL');
-}, 5000);
+}, 10_000);
 
 proc.on('exit', (code, signal) => {
   clearTimeout(timeout);

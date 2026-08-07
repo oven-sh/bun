@@ -1311,8 +1311,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         bunProc.exited,
       ]);
 
-      // The wrapper script should exit with 0 if the test passed
-      expect(bunExitCode).toBe(0);
+      // Content assertions come before the exit-code assertion so a failure
+      // surfaces the child's actual output in CI.
       expect(bunStdout + bunStderr).toContain("Loading experimental module");
       expect(bunStdout + bunStderr).toContain("Created");
       expect(bunStderr).toContain("FATAL ERROR");
@@ -1323,6 +1323,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // the debug-build panic report whose "Args:" line echoes the full -e script
       // source, including the literal "ERROR: Did not crash! Test failed!".
       expect(bunStdout).not.toContain("ERROR: Did not crash");
+
+      // The wrapper script exits 0 iff it saw the expected crash
+      expect(bunExitCode).toBe(0);
     },
     25_000,
   );

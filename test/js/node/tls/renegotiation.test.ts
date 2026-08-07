@@ -525,66 +525,69 @@ it.concurrent("should complete a quiet renegotiation over a duplex socket (SSLWr
   }
 });
 
-it.concurrent("should not re-dispatch the handshake when teardown cuts a renegotiation mid-flight (SSLWrapper path)", async () => {
-  // On a quiet connection the first client-to-server write after the first
-  // 'secure' can only be the renegotiation ClientHello (the client answers
-  // the server's HelloRequest; it has no app data to send). Dropping it and
-  // destroying the raw socket guarantees teardown runs while the wrapper is
-  // mid-renegotiation, which used to re-dispatch a bogus handshake event.
-  await using server = spawnQuietRenegotiationServer("pause");
-  const nextLine = lineReader(server);
-  const port = await readPort(nextLine);
+it.concurrent(
+  "should not re-dispatch the handshake when teardown cuts a renegotiation mid-flight (SSLWrapper path)",
+  async () => {
+    // On a quiet connection the first client-to-server write after the first
+    // 'secure' can only be the renegotiation ClientHello (the client answers
+    // the server's HelloRequest; it has no app data to send). Dropping it and
+    // destroying the raw socket guarantees teardown runs while the wrapper is
+    // mid-renegotiation, which used to re-dispatch a bogus handshake event.
+    await using server = spawnQuietRenegotiationServer("pause");
+    const nextLine = lineReader(server);
+    const port = await readPort(nextLine);
 
-  const events: string[] = [];
-  let secure = 0;
-  let cut = false;
-  const raw = netConnect(port, "127.0.0.1");
-  const duplex = new Duplex({
-    read() {},
-    write(chunk, encoding, callback) {
-      if (secure >= 1 && !cut) {
-        cut = true;
-        queueMicrotask(() => raw.destroy());
+    const events: string[] = [];
+    let secure = 0;
+    let cut = false;
+    const raw = netConnect(port, "127.0.0.1");
+    const duplex = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        if (secure >= 1 && !cut) {
+          cut = true;
+          queueMicrotask(() => raw.destroy());
+          callback();
+          return;
+        }
+        if (cut) {
+          callback();
+          return;
+        }
+        raw.write(chunk, encoding, callback);
+      },
+      final(callback) {
+        raw.end();
         callback();
-        return;
-      }
-      if (cut) {
-        callback();
-        return;
-      }
-      raw.write(chunk, encoding, callback);
-    },
-    final(callback) {
-      raw.end();
-      callback();
-    },
-  });
-  raw.on("data", (chunk: Buffer) => {
-    if (!cut) duplex.push(chunk);
-  });
-  // Deliberately no raw 'end' -> push(null) forwarding: teardown must arrive
-  // via the duplex 'close' thunk alone so the wrapper's fast shutdown runs
-  // mid-renegotiation with the TLS socket's handlers still attached.
-  raw.on("close", () => duplex.destroy());
+      },
+    });
+    raw.on("data", (chunk: Buffer) => {
+      if (!cut) duplex.push(chunk);
+    });
+    // Deliberately no raw 'end' -> push(null) forwarding: teardown must arrive
+    // via the duplex 'close' thunk alone so the wrapper's fast shutdown runs
+    // mid-renegotiation with the TLS socket's handlers still attached.
+    raw.on("close", () => duplex.destroy());
 
-  const { promise: closed, resolve } = Promise.withResolvers<void>();
-  const socket = tlsConnect({ socket: duplex, rejectUnauthorized: false });
-  socket.on("secure", () => {
-    secure++;
-    events.push(`secure#${secure}`);
-  });
-  socket.on("secureConnect", () => events.push("secureConnect"));
-  socket.on("error", (e: any) => events.push(`error:${e.code ?? e.message}`));
-  socket.on("close", (hadError: boolean) => {
-    events.push(`close(hadError=${hadError})`);
-    resolve();
-  });
-  await closed;
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    const socket = tlsConnect({ socket: duplex, rejectUnauthorized: false });
+    socket.on("secure", () => {
+      secure++;
+      events.push(`secure#${secure}`);
+    });
+    socket.on("secureConnect", () => events.push("secureConnect"));
+    socket.on("error", (e: any) => events.push(`error:${e.code ?? e.message}`));
+    socket.on("close", (hadError: boolean) => {
+      events.push(`close(hadError=${hadError})`);
+      resolve();
+    });
+    await closed;
 
-  // Exactly one dispatch for the initial handshake; a renegotiation cut
-  // mid-flight must not produce a duplicate secureConnect/secure.
-  expect(events).toEqual(["secureConnect", "secure#1", "close(hadError=false)"]);
-});
+    // Exactly one dispatch for the initial handshake; a renegotiation cut
+    // mid-flight must not produce a duplicate secureConnect/secure.
+    expect(events).toEqual(["secureConnect", "secure#1", "close(hadError=false)"]);
+  },
+);
 
 it("should terminate the connection when the peer exceeds the renegotiation limit over a duplex socket", async () => {
   // tls.connect({ socket: <Duplex> }) is encrypted by the SSLWrapper path

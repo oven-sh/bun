@@ -431,6 +431,24 @@ describe("worker_threads", () => {
     expect(process.execArgv).toEqual(original_execArgv);
   });
 
+  // A web Worker with an explicit argv/execArgv whose worker thread reads
+  // process.argv, followed by a node:worker_threads Worker in the same
+  // process, used to crash on Windows (STATUS_STACK_BUFFER_OVERRUN) because
+  // building process.argv wrapped the parent-thread StringImpl instead of
+  // copying it. The crash only reproduced under `bun test`, so spawn the
+  // fixture as a test subprocess; a crash surfaces as a non-zero exit instead
+  // of taking out this test runner.
+  test("web Worker argv followed by worker_threads Worker does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", path.join(import.meta.dir, "worker-argv-cross-thread-fixture.ts")],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("worker with eval = false validates the filename", () => {
     // eval:false is equivalent to omitting eval, so a bare string that isn't a
     // path is rejected synchronously like Node (ERR_WORKER_PATH), rather than

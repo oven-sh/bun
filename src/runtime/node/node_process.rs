@@ -231,6 +231,20 @@ mod _impl {
 
     // ───────────────────────────── execArgv ─────────────────────────────
 
+    /// `WebWorker::argv`/`exec_argv` borrow `StringImpl*` from the parent
+    /// thread's `WorkerOptions` vector; those impls are not thread-safe, so
+    /// copy the bytes into a worker-local impl before handing them to JSC.
+    fn clone_parent_worker_option_string(wtf: bun_core::WTFStringImpl) -> BunString {
+        // SAFETY: each entry borrows live storage in the parent `WorkerOptions`
+        // for this worker's lifetime (see `WebWorker::argv`/`exec_argv`).
+        let impl_ = unsafe { &*wtf };
+        if impl_.is_8bit() {
+            BunString::clone_latin1(impl_.latin1_slice())
+        } else {
+            BunString::clone_utf16(impl_.utf16_slice())
+        }
+    }
+
     // The C++ caller
     // (headers.h) declares `EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*)`,
     // not a `JSHostFunctionType`. Hand-roll the shim instead of `#[bun_jsc::host_fn]`.
@@ -247,7 +261,10 @@ mod _impl {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
                 return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    BunString::init(wtf).to_js(global_object)
+                    let s = clone_parent_worker_option_string(wtf);
+                    let r = s.to_js(global_object);
+                    s.deref();
+                    r
                 });
             }
         }
@@ -384,7 +401,14 @@ mod _impl {
 
         // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
         // argv also omits the script name
-        let mut args_list: Vec<BunString> = Vec::with_capacity(args_count + 2);
+        // Scope-exit `deref` releases the +1 from `clone_*` in the worker
+        // branch; it is a no-op for the ZigString/Static entries.
+        let mut args_list =
+            scopeguard::guard(Vec::<BunString>::with_capacity(args_count + 2), |v| {
+                for a in &v {
+                    a.deref();
+                }
+            });
 
         if vm.standalone_module_graph.is_some() {
             // Don't break user's code because they did process.argv.slice(2)
@@ -422,7 +446,7 @@ mod _impl {
 
         if let Some(worker) = worker {
             for &arg in worker.argv() {
-                args_list.push(BunString::init(arg));
+                args_list.push(clone_parent_worker_option_string(arg));
             }
         } else {
             for arg in &vm.argv {

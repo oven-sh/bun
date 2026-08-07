@@ -921,12 +921,9 @@ pub struct CacheDirAndSubpath<'a> {
 /// this is copy pasted from `installPackageWithNameAndResolution()`
 /// it's not great to do this
 ///
-/// `resolution_string_bytes` is the string buffer that `resolution`'s strings
-/// index into, for callers whose resolution was read from a lockfile other
-/// than `manager.lockfile` (`bun patch --commit` loads its own copy before the
-/// install populates the manager's). `None` means `resolution` belongs to
-/// `manager.lockfile`. Strings longer than 7 bytes are offsets into that
-/// buffer, so slicing them with the wrong one yields empty or garbage paths.
+/// `resolution_string_bytes`: the string buffer `resolution`'s strings index
+/// into when it came from a lockfile other than `manager.lockfile` (`bun
+/// patch --commit` loads its own copy); `None` means `manager.lockfile`.
 pub fn compute_cache_dir_and_subpath<'a>(
     manager: &mut PackageManager,
     pkg_name: &[u8],

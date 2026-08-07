@@ -1272,6 +1272,32 @@ describe.concurrent(() => {
     );
   });
 
+  it("process._fatalException in a Worker logs a throwing capture callback instead of dropping it", async () => {
+    using dir = tempDir("process-test", {
+      "index.js": `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(
+          \`process.setUncaughtExceptionCaptureCallback(() => { throw new Error("from capture"); });
+           console.log("handled:", process._fatalException(new Error("original")));
+           process.setUncaughtExceptionCaptureCallback(null);\`,
+          { eval: true },
+        );
+        w.on("exit", code => console.log("exit", code));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "index.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("handled: false");
+    expect(stderr).toContain("from capture");
+    expect(stdout).toContain("exit 0");
+    expect(exitCode).toBe(0);
+  });
+
   for (const stub of undefinedStubs) {
     it(`process.${stub}`, () => {
       expect(process[stub]()).toBeUndefined();

@@ -4418,7 +4418,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionFatalException, (JSC::JSGlobalObject * 
     // machinery and returns whether a handler claimed the error. fromPromise selects
     // origin 'unhandledRejection' vs 'uncaughtException'.
     int origin = callFrame->argument(1).toBoolean(globalObject) ? static_cast<int>(UncaughtExceptionOrigin::Rejection) : static_cast<int>(UncaughtExceptionOrigin::Exception);
-    return JSValue::encode(jsBoolean(Bun__handleUncaughtException(globalObject, callFrame->argument(0), origin, nullptr) > 0));
+    // In a Worker a throwing domain handler / capture callback comes back via
+    // substituteError; log it here so the throw is not silently dropped.
+    JSC::EncodedJSValue substitute = JSC::encodedJSValue();
+    bool handled = Bun__handleUncaughtException(globalObject, callFrame->argument(0), origin, &substitute) > 0;
+    if (!JSValue::decode(substitute).isEmpty())
+        Bun__logUnhandledException(substitute);
+    return JSValue::encode(jsBoolean(handled));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

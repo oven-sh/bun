@@ -209,6 +209,29 @@ describe("toHaveReturnedWith Examples", () => {
       expect(mockFunctionFactory).toHaveReturnedWith(expect.any(Function));
       expect(result(5)).toBe(10);
     });
+
+    test("failure message should not crash when mock.results contains non-objects", () => {
+      const fn = jest.fn((causeError: boolean) => {
+        if (causeError) {
+          throw new Error("boom");
+        }
+        return 1;
+      });
+
+      try {
+        fn(true);
+      } catch {
+        // ignore error
+      }
+      fn(false);
+      (fn.mock.results as unknown[]).push(undefined);
+
+      // The "Some calls errored" failure message walks mock.results again;
+      // it must throw a matcher error, not crash on the non-object entry.
+      expect(() => {
+        expect(fn).toHaveReturnedWith(42);
+      }).toThrow();
+    });
   });
 
   describe("Common Mistakes and How to Avoid Them", () => {

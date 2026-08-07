@@ -1220,7 +1220,7 @@ fn lower_template(
         let value = match &tmpl.head {
             E::TemplateContents::Raw(r) => {
                 let raw_bytes = r.slice();
-                if raw_bytes.contains(&b'\\') {
+                if bun_core::strings::contains_char(raw_bytes, b'\\') {
                     builder.record_error(CompilerErrorDetail {
                         category: ErrorCategory::Todo,
                         reason: "(BuildHIR::lowerExpression) Handle tagged template where cooked value is different from raw value".to_string(),

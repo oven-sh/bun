@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
-use bun_core::{ZBox, ZStr};
+use bun_core::{ZBox, ZStr, strings};
 use bun_paths::resolve_path::{self, Platform, platform};
 use bun_sys::{E, FdExt, dir_iterator};
 
@@ -566,8 +566,8 @@ impl JoinStyle {
         if cfg!(unix) {
             return JoinStyle::Posix;
         }
-        let backslash = p.iter().position(|&c| c == b'\\').unwrap_or(usize::MAX);
-        let forwardslash = p.iter().position(|&c| c == b'/').unwrap_or(usize::MAX);
+        let backslash = strings::index_of_char_usize(p, b'\\').unwrap_or(usize::MAX);
+        let forwardslash = strings::index_of_char_usize(p, b'/').unwrap_or(usize::MAX);
         if forwardslash <= backslash {
             JoinStyle::Posix
         } else {

@@ -387,17 +387,17 @@ extern "C"
     }
   }
 
-  void uws_app_close_idle(int ssl, uws_app_t *app)
+  size_t uws_app_close_idle(int ssl, uws_app_t *app, int close_when_idle)
   {
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->closeIdle();
+      return uwsApp->closeIdle(close_when_idle != 0);
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->closeIdle();
+      return uwsApp->closeIdle(close_when_idle != 0);
     }
   }
 
@@ -1211,6 +1211,11 @@ extern "C"
 
   void uws_res_pause(int ssl, uws_res_r res)
   {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1225,6 +1230,12 @@ extern "C"
 
   void uws_res_resume(int ssl, uws_res_r res)
   {
+    /* No-op on a closed socket (resume's resetTimeout reads the destructed
+     * ext); see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1364,6 +1375,36 @@ extern "C"
       uwsRes->resetTimeout();
     }
   }
+  /* Completion gate for response-end paths that bypass internalEnd (the
+   * sendfile path): closes the socket when the connection is marked to close
+   * (Connection: close, peer FIN, close-when-idle), the response is complete,
+   * and every outgoing byte has been flushed. Corked responses are left to the
+   * cork() wrapper's own post-uncork gate. */
+  void uws_res_close_if_done_and_marked(int ssl, uws_res_r res)
+  {
+    /* A callback upstream of this gate may already have closed the socket;
+     * onClose destructs the ext block, so bail before touching it. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      if (!uwsRes->AsyncSocket<true>::isCorked())
+      {
+        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
+      }
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      if (!uwsRes->AsyncSocket<false>::isCorked())
+      {
+        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
+      }
+    }
+  }
   void uws_res_reset_timeout(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1404,6 +1445,12 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      /* No close gate here: callers (FileResponseStream::finish,
+       * DevServer/HTMLBundle error paths) keep using the response after this
+       * returns, so closing inside this call would destruct the ext under
+       * them. Corked callers get the cork() wrapper's post-uncork gate;
+       * uncorked ones run uws_res_close_if_done_and_marked themselves once
+       * they are done with the response. */
     }
     else
     {
@@ -1426,6 +1473,7 @@ extern "C"
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      /* No close gate here; see the SSL arm above. */
     }
   }
 
@@ -1524,6 +1572,10 @@ extern "C"
   }
 
   void uws_res_clear_on_writable(int ssl, uws_res_r res) {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res)) {
+      return;
+    }
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->clearOnWritable();
@@ -1537,6 +1589,14 @@ extern "C"
                           void (*handler)(uws_res_r res, void *optional_data),
                           void *optional_data)
   {
+    /* A closed socket's ext block is already destructed (HttpContext::onClose)
+     * and its callbacks can never fire again; registering or clearing one is a
+     * no-op. Completion bookkeeping runs after ends that may have closed the
+     * socket via a shouldCloseConnection() gate, so this must not touch ext. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1569,6 +1629,11 @@ extern "C"
                           void (*handler)(uws_res_r res, void *optional_data),
                           void *optional_data)
   {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1603,6 +1668,11 @@ extern "C"
                                        void *optional_data),
                        void *optional_data)
   {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1860,7 +1930,10 @@ __attribute__((callback (corker, ctx)))
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto pair = uwsRes->tryEnd(stringViewFromC(bytes, len), total_len, close);
-      if (pair.first) {
+      /* A completed tryEnd may have closed the socket through a
+       * shouldCloseConnection() gate, destructing the ext; markDone already
+       * cleared the callbacks in that case. */
+      if (pair.first && !us_socket_is_closed((struct us_socket_t *)res)) {
         uwsRes->clearOnWritableAndAborted();
       }
 
@@ -1870,7 +1943,8 @@ __attribute__((callback (corker, ctx)))
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto pair = uwsRes->tryEnd(stringViewFromC(bytes, len), total_len, close);
-      if (pair.first) {
+      /* See the SSL arm above. */
+      if (pair.first && !us_socket_is_closed((struct us_socket_t *)res)) {
           uwsRes->clearOnWritableAndAborted();
       }
 

@@ -523,7 +523,8 @@ function bufferSize(self, size, buffer) {
 }
 
 Socket.prototype.bind = function (port_, address_ /* , callback */) {
-  let port = port_;
+  // bind(cb): a function first argument is the callback, not a port.
+  let port = typeof port_ === "function" ? null : port_;
 
   healthCheck(this);
   const state = this[kStateSymbol];

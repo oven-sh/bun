@@ -140,16 +140,6 @@ JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-    return V::validateString(scope, globalObject, value, name);
-}
-
 JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
 {
     if (!value.isString()) {
@@ -230,34 +220,6 @@ JSC::EncodedJSValue V::validateFunction(JSC::ThrowScope& scope, JSC::JSGlobalObj
         return ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
     }
 
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-
-    if (!value.isCallable()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
-    }
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBoolean, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-
-    if (!value.isBoolean()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "boolean"_s, value);
-    }
     return JSValue::encode(jsUndefined());
 }
 

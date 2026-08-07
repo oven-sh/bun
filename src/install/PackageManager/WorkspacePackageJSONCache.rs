@@ -62,7 +62,7 @@ impl MapEntry {
     /// `updatePackageJSONAndInstall` edits a copy of `root`, prints it, and
     /// writes the printed JSON back into `source.contents`. The caller then
     /// invokes this to restore the invariant `root == parse(source)`.
-    pub fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
+    pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let json_bump = bun_alloc::Arena::new();
         let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
         self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
@@ -113,7 +113,7 @@ pub enum GetResult<'a> {
 }
 
 impl<'a> GetResult<'a> {
-    pub fn unwrap(self) -> Result<&'a mut MapEntry, Error> {
+    pub(crate) fn unwrap(self) -> Result<&'a mut MapEntry, Error> {
         match self {
             GetResult::Entry(entry) => Ok(entry),
             GetResult::ReadErr(err) => Err(err),

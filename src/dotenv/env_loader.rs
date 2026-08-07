@@ -37,7 +37,7 @@ pub trait DirEntryProbe {
 // is provided there — see src/resolver/lib.rs. No impl here; that would be a
 // dep-cycle.
 
-/// schema.peechy — `enum(u32)`. Canonical definition; re-exported as
+/// Canonical definition; re-exported as
 /// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -54,8 +54,7 @@ pub enum DotEnvBehavior {
 #[allow(non_upper_case_globals)]
 impl DotEnvBehavior {
     // PascalCase aliases — downstream callers (bundler/options.rs, bundler/defines.rs,
-    // runtime/api/JSBundler.rs) name the variants both ways while the snake_case enum
-    // body above stays the schema ground truth.
+    // runtime/api/JSBundler.rs) name the variants both ways.
     pub const None: Self = Self::_none;
     pub const Disable: Self = Self::disable;
     pub const Prefix: Self = Self::prefix;
@@ -76,7 +75,7 @@ impl DotEnvBehavior {
             Ok((Self::load_all, None))
         } else if s == b"disable" {
             Ok((Self::disable, None))
-        } else if let Some(asterisk) = s.iter().position(|&b| b == b'*') {
+        } else if let Some(asterisk) = strings::index_of_char_usize(s, b'*') {
             if asterisk > 0 {
                 Ok((Self::prefix, Some(&s[..asterisk])))
             } else {
@@ -107,22 +106,22 @@ pub struct S3Credentials {
 pub struct Loader {
     pub map: Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
-    pub env_local: Option<bun_ast::Source>,
-    pub env_development: Option<bun_ast::Source>,
-    pub env_production: Option<bun_ast::Source>,
-    pub env_test: Option<bun_ast::Source>,
-    pub env_development_local: Option<bun_ast::Source>,
-    pub env_production_local: Option<bun_ast::Source>,
-    pub env_test_local: Option<bun_ast::Source>,
-    pub env: Option<bun_ast::Source>,
+    pub(crate) env_local: Option<bun_ast::Source>,
+    pub(crate) env_development: Option<bun_ast::Source>,
+    pub(crate) env_production: Option<bun_ast::Source>,
+    pub(crate) env_test: Option<bun_ast::Source>,
+    pub(crate) env_development_local: Option<bun_ast::Source>,
+    pub(crate) env_production_local: Option<bun_ast::Source>,
+    pub(crate) env_test_local: Option<bun_ast::Source>,
+    pub(crate) env: Option<bun_ast::Source>,
 
     /// only populated with files specified explicitly (e.g. --env-file arg)
-    pub custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
+    pub(crate) custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
 
     pub quiet: bool,
 
-    pub did_load_process: bool,
-    pub reject_unauthorized: Cell<Option<bool>>,
+    pub(crate) did_load_process: bool,
+    pub(crate) reject_unauthorized: Cell<Option<bool>>,
 
     // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.
     aws_credentials: Option<S3Credentials>,
@@ -352,7 +351,7 @@ impl Loader {
             return false;
         }
 
-        for no_proxy_item in no_proxy_text.split(|&b| b == b',') {
+        for no_proxy_item in strings::split(no_proxy_text, b",") {
             let mut no_proxy_entry = strings::trim(no_proxy_item, &strings::WHITESPACE_CHARS);
             if no_proxy_entry.is_empty() {
                 continue;
@@ -372,7 +371,7 @@ impl Loader {
             // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
             // Bracketed IPv6 with port: "[::1]:8080"
             // Host with port: "localhost:8080" (single colon)
-            let colon_count = no_proxy_entry.iter().filter(|&&b| b == b':').count();
+            let colon_count = strings::count_char(no_proxy_entry, b':');
             let is_bracketed_ipv6 = strings::starts_with_char(no_proxy_entry, b'[');
             let has_port = 'blk: {
                 if is_bracketed_ipv6 {
@@ -497,7 +496,7 @@ impl Loader {
         Ok(true)
     }
 
-    pub fn get_as_bool(&self, key: &[u8]) -> Option<bool> {
+    pub(crate) fn get_as_bool(&self, key: &[u8]) -> Option<bool> {
         let value = self.get(key)?;
         if value == b"" {
             return Some(false);
@@ -659,7 +658,7 @@ impl Loader {
             let arg_value = strings::trim(env_files[i - 1], b" ");
             if !arg_value.is_empty() {
                 // ignore blank args
-                for file_path in arg_value.rsplit(|&b| b == b',') {
+                for file_path in strings::rsplit(arg_value, b",") {
                     if !file_path.is_empty() {
                         self.load_env_file_dynamic::<false>(file_path, value_buffer)?;
                         analytics::Features::dotenv_inc();
@@ -735,7 +734,7 @@ impl Loader {
         Ok(())
     }
 
-    pub fn print_loaded(&self, start: i128) {
+    pub(crate) fn print_loaded(&self, start: i128) {
         let count: usize = (self.env_development_local.is_some() as usize)
             + (self.env_production_local.is_some() as usize)
             + (self.env_test_local.is_some() as usize)
@@ -816,7 +815,7 @@ impl Loader {
         }
     }
 
-    pub fn load_env_file<const OVERRIDE: bool>(
+    pub(crate) fn load_env_file<const OVERRIDE: bool>(
         &mut self,
         dir: bun_sys::Fd,
         base: &'static [u8],
@@ -882,7 +881,7 @@ impl Loader {
         Ok(())
     }
 
-    pub fn load_env_file_dynamic<const OVERRIDE: bool>(
+    pub(crate) fn load_env_file_dynamic<const OVERRIDE: bool>(
         &mut self,
         file_path: &[u8],
         value_buffer: &mut Vec<u8>,
@@ -1137,74 +1136,113 @@ impl<'a> Parser<'a> {
         if value.len() < 2 {
             return Ok(None);
         }
-
         self.value_buffer.clear();
-
-        let mut pos = value.len() - 2;
-        let mut last = value.len();
-        loop {
-            if value[pos] == b'$' {
-                if pos > 0 && value[pos - 1] == b'\\' {
-                    // PERF: splice at the front is O(n)
-                    self.value_buffer
-                        .splice(0..0, value[pos..last].iter().copied());
-                    pos -= 1;
-                } else {
-                    let mut end = if value[pos + 1] == b'{' {
-                        pos + 2
-                    } else {
-                        pos + 1
-                    };
-                    let key_start = end;
-                    while end < value.len() {
-                        match value[end] {
-                            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => {
-                                end += 1;
-                                continue;
-                            }
-                            _ => break,
-                        }
-                    }
-                    let lookup_value = map.get(&value[key_start..end]);
-                    let default_value: &[u8] = if value[end..].starts_with(b":-") {
-                        end += b":-".len();
-                        let value_start = end;
-                        while end < value.len() {
-                            match value[end] {
-                                b'}' | b'\\' => break,
-                                _ => {
-                                    end += 1;
-                                    continue;
-                                }
-                            }
-                        }
-                        &value[value_start..end]
-                    } else {
-                        b""
-                    };
-                    if end < value.len() && value[end] == b'}' {
-                        end += 1;
-                    }
-                    self.value_buffer
-                        .splice(0..0, value[end..last].iter().copied());
-                    self.value_buffer
-                        .splice(0..0, lookup_value.unwrap_or(default_value).iter().copied());
-                }
-                last = pos;
-            }
-            if pos == 0 {
-                if last == value.len() {
-                    return Ok(None);
-                }
-                break;
-            }
-            pos -= 1;
-        }
-        if last > 0 {
-            self.value_buffer
-                .splice(0..0, value[..last].iter().copied());
+        if !Self::expand_into(map, value, self.value_buffer, 0) {
+            return Ok(None);
         }
         Ok(Some(self.value_buffer.as_slice()))
+    }
+
+    /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
+    /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
+    /// `\x` skipped); malformed forms fall through as literal text. The `:-`
+    /// default clause is expanded recursively.
+    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+        #[inline]
+        fn is_ident(b: u8) -> bool {
+            matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
+        }
+
+        let mut pos = 0;
+        let mut changed = false;
+        while pos < value.len() {
+            let b = value[pos];
+            if b == b'\\' && value.get(pos + 1) == Some(&b'$') {
+                out.push(b'$');
+                pos += 2;
+                changed = true;
+                continue;
+            }
+            if b != b'$' || pos + 1 >= value.len() {
+                out.push(b);
+                pos += 1;
+                continue;
+            }
+            let next = value[pos + 1];
+            if next == b'{' {
+                let inner_start = pos + 2;
+                let close = {
+                    let mut i = inner_start;
+                    let mut nest = 1usize;
+                    loop {
+                        if i >= value.len() {
+                            break None;
+                        }
+                        match value[i] {
+                            b'\\' if i + 1 < value.len() => i += 2,
+                            b'$' if value.get(i + 1) == Some(&b'{') => {
+                                nest += 1;
+                                i += 2;
+                            }
+                            b'}' => {
+                                nest -= 1;
+                                if nest == 0 {
+                                    break Some(i);
+                                }
+                                i += 1;
+                            }
+                            _ => i += 1,
+                        }
+                    }
+                };
+                let Some(close) = close else {
+                    out.extend_from_slice(&value[pos..]);
+                    pos = value.len();
+                    continue;
+                };
+                changed = true;
+                let inner = &value[inner_start..close];
+                let key_end = inner
+                    .iter()
+                    .position(|&c| !is_ident(c))
+                    .unwrap_or(inner.len());
+                let key = &inner[..key_end];
+                let rest = &inner[key_end..];
+                if rest.is_empty() {
+                    if let Some(v) = map.get(key) {
+                        out.extend_from_slice(v);
+                    }
+                } else if let Some(default) = rest.strip_prefix(b":-") {
+                    if let Some(v) = map.get(key) {
+                        out.extend_from_slice(v);
+                    } else if depth < 200 {
+                        Self::expand_into(map, default, out, depth + 1);
+                    } else {
+                        out.extend_from_slice(default);
+                    }
+                } else {
+                    out.extend_from_slice(&value[pos..=close]);
+                }
+                pos = close + 1;
+                continue;
+            }
+            if is_ident(next) {
+                changed = true;
+                let key_start = pos + 1;
+                let mut k = key_start;
+                while k < value.len() && is_ident(value[k]) {
+                    k += 1;
+                }
+                if let Some(v) = map.get(&value[key_start..k]) {
+                    out.extend_from_slice(v);
+                }
+                pos = k;
+                continue;
+            }
+            out.push(b'$');
+            pos += 1;
+        }
+        changed
     }
 
     fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
@@ -1258,7 +1296,7 @@ impl<'a> Parser<'a> {
     /// Same as [`parse`] but takes the source bytes directly. Exists so
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
-    pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
@@ -1395,7 +1433,7 @@ impl Map {
     }
 
     #[inline]
-    pub fn init() -> Map {
+    pub(crate) fn init() -> Map {
         Map {
             map: HashTable::default(),
         }
@@ -1518,7 +1556,7 @@ impl NullDelimitedEnvMap {
 }
 
 pub struct StdEnvMapWrapper {
-    pub unsafe_map: bun_sys::EnvMap,
+    pub(crate) unsafe_map: bun_sys::EnvMap,
 }
 
 impl StdEnvMapWrapper {

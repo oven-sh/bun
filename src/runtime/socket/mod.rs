@@ -24,9 +24,11 @@ pub mod listener;
 #[path = "UpgradedDuplex.rs"]
 pub mod upgraded_duplex;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipe.rs"]
 pub mod windows_named_pipe;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
@@ -40,7 +42,7 @@ pub mod ssl_wrapper {
 
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
-    pub fn init<T: Copy>(
+    pub(crate) fn init<T: Copy>(
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
         handlers: Handlers<T>,
@@ -78,6 +80,7 @@ pub use ssl_config::{SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tl
 pub use handlers::{Handlers, SocketConfig};
 pub use listener::Listener;
 pub use socket_address::SocketAddress;
+pub(crate) use socket_body::DuplexUpgradeContext;
 pub use socket_body::{
     Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
 };
@@ -143,7 +146,7 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         code: i32,
         reason: *mut core::ffi::c_void,
     ) {
-        let _ = NewSocket::on_close(
+        NewSocket::on_close(
             this,
             s,
             code,
@@ -164,7 +167,7 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         s: bun_uws::NewSocketHandler<SSL>,
         code: i32,
     ) {
-        let _ = NewSocket::on_connect_error(this, s, code);
+        NewSocket::on_connect_error(this, s, code);
     }
     #[inline]
     fn on_handshake(
@@ -173,6 +176,6 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         ok: i32,
         err: bun_uws_sys::us_bun_verify_error_t,
     ) {
-        let _ = NewSocket::on_handshake(this, s, ok, err);
+        NewSocket::on_handshake(this, s, ok, err);
     }
 }

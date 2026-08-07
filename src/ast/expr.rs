@@ -56,6 +56,11 @@ impl Expr {
             // https://github.com/oven-sh/bun/issues/2594
             Data::ESpread(_) => false,
             Data::EMissing(_) => false,
+            // `[[a?.b]][0]?.[0].c` must not become `a?.b.c`: inlining would
+            // splice this chain onto the parent's `?.` continuation.
+            Data::EDot(e) => e.optional_chain.is_none(),
+            Data::EIndex(e) => e.optional_chain.is_none(),
+            Data::ECall(e) => e.optional_chain.is_none(),
             _ => true,
         }
     }
@@ -374,7 +379,7 @@ impl Expr {
     /// Only use this for pretty-printing JSON. Do not use in transpiler.
     ///
     /// This does not handle edgecases like `-1` or stringifying arbitrary property lookups.
-    pub fn get_by_index(&self, index: u32, index_str: &[u8], bump: &Bump) -> Option<Expr> {
+    pub(crate) fn get_by_index(&self, index: u32, index_str: &[u8], bump: &Bump) -> Option<Expr> {
         match &self.data {
             Data::EArray(array) => {
                 if index >= array.items.len_u32() {
@@ -704,7 +709,7 @@ impl Expr {
     }
 
     #[inline]
-    pub fn as_string_hash(
+    pub(crate) fn as_string_hash(
         &self,
         bump: &Bump,
         hash_fn: fn(&[u8]) -> u64,
@@ -1167,7 +1172,7 @@ impl Tag {
         )
     }
 
-    pub fn typeof_(tag: Tag) -> Option<&'static [u8]> {
+    pub(crate) fn typeof_(tag: Tag) -> Option<&'static [u8]> {
         // This must only return `Some` when the operand is guaranteed to have
         // no side effects. Array/object/class literals are omitted because
         // their elements, properties, and static initializers can run code.
@@ -1239,34 +1244,10 @@ impl fmt::Display for Tag {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl Expr {
-    pub fn is_boolean(&self) -> bool {
-        match self.data {
-            Data::EBoolean(_) | Data::EBranchBoolean(_) => true,
-            Data::EIf(ex) => ex.yes.is_boolean() && ex.no.is_boolean(),
-            Data::EUnary(ex) => ex.op == crate::OpCode::UnNot || ex.op == crate::OpCode::UnDelete,
-            Data::EBinary(ex) => match ex.op {
-                crate::OpCode::BinStrictEq
-                | crate::OpCode::BinStrictNe
-                | crate::OpCode::BinLooseEq
-                | crate::OpCode::BinLooseNe
-                | crate::OpCode::BinLt
-                | crate::OpCode::BinGt
-                | crate::OpCode::BinLe
-                | crate::OpCode::BinGe
-                | crate::OpCode::BinInstanceof
-                | crate::OpCode::BinIn => true,
-                crate::OpCode::BinLogicalOr => ex.left.is_boolean() && ex.right.is_boolean(),
-                crate::OpCode::BinLogicalAnd => ex.left.is_boolean() && ex.right.is_boolean(),
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-
     // `assign` lives in the `init`/`allocate` impl block above.
 
     #[inline]
-    pub fn at<T: IntoExprData>(&self, t: T) -> Expr {
+    pub(crate) fn at<T: IntoExprData>(&self, t: T) -> Expr {
         Expr::init(t, self.loc)
     }
 
@@ -1274,7 +1255,7 @@ impl Expr {
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(&self, bump: &Bump) -> Expr {
+    pub(crate) fn not(&self, bump: &Bump) -> Expr {
         self.maybe_simplify_not(bump).unwrap_or_else(|| {
             Expr::init(
                 E::Unary {
@@ -1374,7 +1355,7 @@ impl Expr {
         None
     }
 
-    pub fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
+    pub(crate) fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
         let expr = self;
         let unwrapped = expr.unwrap_inlined();
         let slice: Option<&[u8]> = match unwrapped.data {
@@ -1441,7 +1422,7 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
-    pub fn merge(left_known: PrimitiveType, right_known: PrimitiveType) -> PrimitiveType {
+    pub(crate) fn merge(left_known: PrimitiveType, right_known: PrimitiveType) -> PrimitiveType {
         if right_known == PrimitiveType::Unknown || left_known == PrimitiveType::Unknown {
             return PrimitiveType::Unknown;
         }
@@ -1871,7 +1852,7 @@ impl Data {
 
     // Per-variant `as_*` accessors live alongside the enum decl above
     // (`e_string`/`e_object`/...).
-    pub fn as_e_identifier(&self) -> Option<E::Identifier> {
+    pub(crate) fn as_e_identifier(&self) -> Option<E::Identifier> {
         if let Data::EIdentifier(i) = self {
             Some(*i)
         } else {
@@ -2364,7 +2345,7 @@ impl Data {
     /// "const values" here refers to expressions that can participate in constant
     /// inlining, as they have no side effects on instantiation, and there would be
     /// no observable difference if duplicated. This is a subset of canBeMoved()
-    pub fn can_be_const_value(&self) -> bool {
+    pub(crate) fn can_be_const_value(&self) -> bool {
         match self {
             Data::ENumber(_)
             | Data::EBoolean(_)
@@ -2382,7 +2363,7 @@ impl Data {
     /// Expressions that can be moved are those that do not have side
     /// effects on their own. This is used to determine what can be moved
     /// outside of a module wrapper (__esm/__commonJS).
-    pub fn can_be_moved(&self) -> bool {
+    pub(crate) fn can_be_moved(&self) -> bool {
         match self {
             // TODO: identifiers can be removed if unused, however code that
             // moves expressions around sometimes does so incorrectly when
@@ -2657,7 +2638,7 @@ impl Data {
         }
     }
 
-    pub fn extract_numeric_value(&self) -> Option<f64> {
+    pub(crate) fn extract_numeric_value(&self) -> Option<f64> {
         match self {
             Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
@@ -2668,7 +2649,7 @@ impl Data {
         }
     }
 
-    pub fn extract_string_value(data: Data) -> Option<crate::StoreRef<E::String>> {
+    pub(crate) fn extract_string_value(data: Data) -> Option<crate::StoreRef<E::String>> {
         match data {
             Data::EString(s) => Some(s),
             Data::EInlinedEnum(inlined) => match inlined.value.data {
@@ -2691,36 +2672,26 @@ impl Data {
 // Equality
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Default)]
-pub struct Equality {
-    pub equal: bool,
-    pub ok: bool,
-
-    /// This extra flag is unfortunately required for the case of visiting the expression
-    /// `require.main === module` (and any combination of !==, ==, !=, either ordering)
-    ///
-    /// We want to replace this with the dedicated import_meta_main node, which:
-    /// - Stops this module from having p.require_ref, allowing conversion to ESM
-    /// - Allows us to inline `import.meta.main`'s value, if it is known (bun build --compile)
-    pub is_require_main_and_module: bool,
+#[derive(Clone, Copy)]
+pub enum Equality {
+    /// Nothing is known about the equality of the two operands.
+    Unknown,
+    Equal,
+    NotEqual,
+    /// `require.main === module` (or `!==`/`==`/`!=`, in either order); the
+    /// caller rewrites this to an import_meta_main node.
+    RequireMainAndModule,
 }
 
-impl Equality {
-    pub const TRUE: Equality = Equality {
-        ok: true,
-        equal: true,
-        is_require_main_and_module: false,
-    };
-    pub const FALSE: Equality = Equality {
-        ok: true,
-        equal: false,
-        is_require_main_and_module: false,
-    };
-    pub const UNKNOWN: Equality = Equality {
-        ok: false,
-        equal: false,
-        is_require_main_and_module: false,
-    };
+impl From<bool> for Equality {
+    #[inline]
+    fn from(equal: bool) -> Self {
+        if equal {
+            Equality::Equal
+        } else {
+            Equality::NotEqual
+        }
+    }
 }
 
 // `adt_const_params` (enum const-generic) is nightly-only. Lower to a sealed
@@ -2751,9 +2722,6 @@ pub trait EqlParser {
 // `impl EqlParser for P<...>` lives in `bun_js_parser` (next to `P`).
 
 impl Data {
-    // Returns "equal, ok". If "ok" is false, then nothing is known about the two
-    // values. If "ok" is true, the equality or inequality of the two values is
-    // stored in "equal".
     pub fn eql<P: EqlParser, K: EqlKindT>(left: &Data, right: &Data, p: &mut P) -> Equality {
         // https://dorey.github.io/JavaScript-Equality-Table/
         match left {
@@ -2763,113 +2731,76 @@ impl Data {
 
             Data::ENull(_) | Data::EUndefined(_) => {
                 let right_tag = right.tag();
-                let ok = matches!(right_tag, Tag::ENull | Tag::EUndefined)
-                    || right_tag.is_primitive_literal();
-
-                if !K::STRICT {
-                    return Equality {
-                        equal: matches!(right_tag, Tag::ENull | Tag::EUndefined),
-                        ok,
-                        ..Default::default()
-                    };
+                if !matches!(right_tag, Tag::ENull | Tag::EUndefined)
+                    && !right_tag.is_primitive_literal()
+                {
+                    return Equality::Unknown;
                 }
-
-                return Equality {
-                    equal: right_tag == left.tag(),
-                    ok,
-                    ..Default::default()
-                };
+                return Equality::from(if K::STRICT {
+                    right_tag == left.tag()
+                } else {
+                    matches!(right_tag, Tag::ENull | Tag::EUndefined)
+                });
             }
             Data::EBoolean(l) | Data::EBranchBoolean(l) => match right {
                 Data::EBoolean(r) | Data::EBranchBoolean(r) => {
-                    return Equality {
-                        ok: true,
-                        equal: l.value == r.value,
-                        ..Default::default()
-                    };
+                    return Equality::from(l.value == r.value);
                 }
                 Data::ENumber(num) => {
                     if K::STRICT {
                         // "true === 1" is false
                         // "false === 0" is false
-                        return Equality::FALSE;
+                        return Equality::NotEqual;
                     }
-                    return Equality {
-                        ok: true,
-                        equal: if l.value {
-                            num.value() == 1.0
-                        } else {
-                            num.value() == 0.0
-                        },
-                        ..Default::default()
-                    };
+                    return Equality::from(if l.value {
+                        num.value() == 1.0
+                    } else {
+                        num.value() == 0.0
+                    });
                 }
                 Data::ENull(_) | Data::EUndefined(_) => {
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 _ => {}
             },
             Data::ENumber(l) => match right {
                 Data::ENumber(r) => {
-                    return Equality {
-                        ok: true,
-                        equal: l.value() == r.value(),
-                        ..Default::default()
-                    };
+                    return Equality::from(l.value() == r.value());
                 }
                 Data::EInlinedEnum(r) => {
                     if let Data::ENumber(rn) = &r.value.data {
-                        return Equality {
-                            ok: true,
-                            equal: l.value() == rn.value(),
-                            ..Default::default()
-                        };
+                        return Equality::from(l.value() == rn.value());
                     }
                 }
                 Data::EBoolean(r) | Data::EBranchBoolean(r) => {
                     if !K::STRICT {
-                        return Equality {
-                            ok: true,
-                            // "1 == true" is true
-                            // "0 == false" is true
-                            equal: if r.value {
-                                l.value() == 1.0
-                            } else {
-                                l.value() == 0.0
-                            },
-                            ..Default::default()
-                        };
+                        // "1 == true" is true
+                        // "0 == false" is true
+                        return Equality::from(if r.value {
+                            l.value() == 1.0
+                        } else {
+                            l.value() == 0.0
+                        });
                     }
                     // "1 === true" is false
                     // "0 === false" is false
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 Data::ENull(_) | Data::EUndefined(_) => {
                     // "(not null or undefined) == undefined" is false
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 _ => {}
             },
             Data::EBigInt(l) => {
-                if let Data::EBigInt(r) = right {
-                    return match E::BigInt::check_equality(&l.value, &r.value) {
-                        Some(equal) => Equality {
-                            ok: true,
-                            equal,
-                            ..Default::default()
-                        },
-                        None => Equality {
-                            ok: false,
-                            ..Default::default()
-                        },
-                    };
-                } else {
-                    return Equality {
-                        ok: matches!(right, Data::ENull(_) | Data::EUndefined(_)),
-                        equal: false,
-                        ..Default::default()
-                    };
-                }
+                return match right {
+                    Data::EBigInt(r) => match E::BigInt::check_equality(&l.value, &r.value) {
+                        Some(equal) => Equality::from(equal),
+                        None => Equality::Unknown,
+                    },
+                    Data::ENull(_) | Data::EUndefined(_) => Equality::NotEqual,
+                    _ => Equality::Unknown,
+                };
             }
             Data::EString(l) => {
                 // `StoreRef<EString>` is a Copy pointer; rebind mutably so
@@ -2880,40 +2811,32 @@ impl Data {
                         let mut r = *r;
                         r.resolve_rope_if_needed(p.arena());
                         l.resolve_rope_if_needed(p.arena());
-                        return Equality {
-                            ok: true,
-                            equal: r.eql_string(&l),
-                            ..Default::default()
-                        };
+                        return Equality::from(r.eql_string(&l));
                     }
                     Data::EInlinedEnum(inlined) => {
                         if let Data::EString(r) = inlined.value.data {
                             let mut r = r;
                             r.resolve_rope_if_needed(p.arena());
                             l.resolve_rope_if_needed(p.arena());
-                            return Equality {
-                                ok: true,
-                                equal: r.eql_string(&l),
-                                ..Default::default()
-                            };
+                            return Equality::from(r.eql_string(&l));
                         }
                     }
                     Data::ENull(_) | Data::EUndefined(_) => {
-                        return Equality::FALSE;
+                        return Equality::NotEqual;
                     }
                     Data::ENumber(r) => {
                         if !K::STRICT {
                             l.resolve_rope_if_needed(p.arena());
                             if r.value() == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
-                                return Equality::TRUE;
+                                return Equality::Equal;
                             }
                             if r.value() == 1.0 && l.eql_comptime(b"1") {
-                                return Equality::TRUE;
+                                return Equality::Equal;
                             }
                             // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
-                            return Equality::UNKNOWN;
+                            return Equality::Unknown;
                         } else {
-                            return Equality::FALSE;
+                            return Equality::NotEqual;
                         }
                     }
                     _ => {}
@@ -2926,18 +2849,14 @@ impl Data {
                 if matches!(right, Data::ERequireMain) {
                     if let Some(id) = left.as_e_identifier() {
                         if id.ref_.eql(p.module_ref()) {
-                            return Equality {
-                                ok: true,
-                                equal: true,
-                                is_require_main_and_module: true,
-                            };
+                            return Equality::RequireMainAndModule;
                         }
                     }
                 }
             }
         }
 
-        Equality::UNKNOWN
+        Equality::Unknown
     }
 }
 

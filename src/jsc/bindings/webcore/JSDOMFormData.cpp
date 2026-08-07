@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSDOMFormData.h"
 
-#include "ActiveDOMObject.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "IDLTypes.h"

@@ -44,16 +44,6 @@ Structure* getStatFSStructure(Zig::GlobalObject* globalObject)
 }
 
 template<bool isBigInt>
-JSObject* getStatFSPrototype(Zig::GlobalObject* globalObject)
-{
-    if (isBigInt) {
-        return globalObject->m_JSStatFSBigIntClassStructure.prototypeInitializedOnMainThread(globalObject);
-    }
-
-    return globalObject->m_JSStatFSClassStructure.prototypeInitializedOnMainThread(globalObject);
-}
-
-template<bool isBigInt>
 JSObject* getStatFSConstructor(Zig::GlobalObject* globalObject)
 {
     if (isBigInt) {

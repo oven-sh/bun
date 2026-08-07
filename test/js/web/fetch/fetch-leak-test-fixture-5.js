@@ -1,5 +1,9 @@
 import { heapStats } from "bun:jsc";
 import { expect } from "bun:test";
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 function getHeapStats() {
   return heapStats().objectTypeCounts;
 }
@@ -112,12 +116,12 @@ try {
       expect(stats.Response || 0).toBeLessThanOrEqual(threshold);
       expect(stats.Promise || 0).toBeLessThanOrEqual(promiseThreshold);
       process.send({
-        rss: process.memoryUsage.rss(),
+        rss: rss(),
       });
     }
   }
   process.send({
-    rss: process.memoryUsage.rss(),
+    rss: rss(),
   });
   await Bun.sleep(10);
   process.exit(0);

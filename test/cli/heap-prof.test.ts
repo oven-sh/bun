@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 const testScript = `const arr = []; for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i }); console.log("done");`;
@@ -207,6 +207,38 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
   // Check the profile exists in the specified location
   const profilePath = join(String(dir), "output", "custom.heapsnapshot");
   expect(Bun.file(profilePath).size).toBeGreaterThan(0);
+});
+
+// On Windows the path buffer is ~98 KB and the CreateProcess command-line
+// limit is ~32 KB, so an overflowing CLI argument cannot be delivered. On
+// POSIX 5000 bytes exceeds the fixed path buffer (Linux 4096, macOS 1024);
+// 2500 + 2500 exercises the combined bound with components that fit
+// individually on Linux.
+test.skipIf(isWindows).each([
+  ["--heap-prof-dir", ["--heap-prof-dir", Buffer.alloc(5000, "d").toString()]],
+  ["--heap-prof-name", ["--heap-prof-name", Buffer.alloc(5000, "n").toString()]],
+  [
+    "--heap-prof-dir + --heap-prof-name combined",
+    ["--heap-prof-dir", Buffer.alloc(2500, "d").toString(), "--heap-prof-name", Buffer.alloc(2500, "n").toString()],
+  ],
+] as const)("%s longer than PATH_MAX reports an error instead of panicking", async (_label, args) => {
+  using dir = tempDir("heap-prof-pathmax", {});
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--heap-prof", ...args, "-e", `console.log("done");`],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("done");
+  expect(stderr).toContain("MaxPathExceeded");
+  expect(stderr).toContain("Failed to write heap profile");
+  expect(exitCode).toBe(0);
+  expect(proc.signalCode).toBeNull();
 });
 
 test("--heap-prof-name without --heap-prof or --heap-prof-md shows warning", async () => {

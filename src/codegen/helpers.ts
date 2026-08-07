@@ -98,16 +98,6 @@ export function pathToUpperSnakeCase(filepath: string) {
     .toUpperCase();
 }
 
-export function camelCase(string: string) {
-  return string
-    .split(/[\s_]/)
-    .map((e, i) => (i ? e.charAt(0).toUpperCase() + e.slice(1).toLowerCase() : e.toLowerCase()));
-}
-
-export function pascalCase(string: string) {
-  return string.split(/[\s_]/).map((e, i) => (i ? e.charAt(0).toUpperCase() + e.slice(1) : e.toLowerCase()));
-}
-
 export function argParse(keys: string[]): any {
   const options: { [key: string]: boolean | string } = {};
   for (const arg of process.argv.slice(2)) {

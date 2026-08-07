@@ -1012,6 +1012,71 @@ describe("codeGeneration options", () => {
   });
 });
 
+describe("context options with throwing getters", () => {
+  // Without the fix, reading these options with a pending exception aborted
+  // the process, so run the matrix in a subprocess.
+  test.concurrent("the getter's exception propagates to the caller", async () => {
+    // Each entry point tests the context-option keys it actually reads:
+    // createContext takes codeGeneration, Script#runInNewContext takes
+    // contextCodeGeneration, and vm.runInNewContext goes through both.
+    // A dotted key puts the throwing getter on the nested object.
+    const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
+    const contextKeys = (...codeGenerationKeyNames: string[]) => [
+      "name",
+      "origin",
+      ...codeGenerationKeyNames.flatMap(codeGenerationKeys),
+      "importModuleDynamically",
+      "microtaskMode",
+    ];
+    const matrix = {
+      createContext: contextKeys("codeGeneration"),
+      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
+      scriptRunInNewContext: contextKeys("contextCodeGeneration"),
+    };
+    const code = `
+      const vm = require("node:vm");
+      const matrix = ${JSON.stringify(matrix)};
+      const entryPoints = {
+        createContext: opts => vm.createContext({}, opts),
+        runInNewContext: opts => vm.runInNewContext("1", {}, opts),
+        scriptRunInNewContext: opts => new vm.Script("1").runInNewContext({}, opts),
+      };
+      for (const [entry, keys] of Object.entries(matrix)) {
+        for (const key of keys) {
+          const opts = {};
+          const path = key.split(".");
+          let target = opts;
+          for (const part of path.slice(0, -1)) target = target[part] = {};
+          Object.defineProperty(target, path.at(-1), {
+            get() { throw new Error("getter:" + key); },
+            enumerable: true,
+          });
+          try {
+            entryPoints[entry](opts);
+            console.log(entry, key, "did not throw");
+          } catch (e) {
+            console.log(entry, key, e.message);
+          }
+        }
+      }
+      console.log("survived");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected =
+      Object.entries(matrix)
+        .flatMap(([entry, keys]) => keys.map(key => `${entry} ${key} getter:${key}`))
+        .join("\n") + "\nsurvived\n";
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("DONT_CONTEXTIFY", () => {
   test("globalThis prototype chain stays inside the sandbox realm", () => {
     const ctx = createContext(constants.DONT_CONTEXTIFY);
@@ -1382,4 +1447,40 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(stdout.trim()).toBe("ab=B ba=A");
     expect(exitCode).toBe(0);
   });
+});
+
+test("node:vm Object.defineProperty on the context global when the sandbox is an uncacheable dictionary holding an accessor for a built-in", async () => {
+  // Regression: NodeVMGlobalObject::defineOwnProperty used a single PropertySlot
+  // for both the global-object lookup and the sandbox lookup. When the first
+  // lookup fills the slot as cacheable (e.g. Array is a lazy CustomGetterSetter
+  // on a non-dictionary global) and the sandbox has transitioned to an
+  // uncacheable dictionary with an accessor for the same name, the second lookup
+  // would hit setGetterSlot, which asserts the slot is still CachingDisallowed.
+  // Debug builds aborted; this test asserts the Node-matching behaviour so
+  // release lanes still exercise the path.
+  const fixture = `
+    const vm = require("node:vm");
+    const sandbox = {};
+    for (let i = 0; i < 200; i++) { sandbox["k" + i] = i; delete sandbox["k" + i]; }
+    Object.defineProperty(sandbox, "Array", { get: () => Array, configurable: true });
+    vm.createContext(sandbox);
+    const result = vm.runInContext(
+      'Object.defineProperty(this, "Array", { value: 1, configurable: true, writable: true }); Array',
+      sandbox,
+    );
+    console.log(JSON.stringify({ result, sandboxArray: sandbox.Array }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
+  expect(exitCode).toBe(0);
 });

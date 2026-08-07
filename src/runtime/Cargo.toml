@@ -110,10 +110,3 @@ bun_css_jsc.workspace = true
 
 [features]
 default = []
-# Mirrors Zig `Environment.show_crash_trace` — extra debug breakpoints / params.
-show_crash_trace = ["bun_bundler/show_crash_trace"]
-# Mirrors Zig `builtin.have_error_return_tracing` (`--verbose-error-trace`).
-# Rust has no error-return tracing, so this is opt-in only.
-error_return_tracing = []
-# Mirrors Zig `bun.FeatureFlags.bake_debugging_features` — DevServer dump flags.
-bake_debugging_features = []

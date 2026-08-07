@@ -24,10 +24,7 @@ fn estring_to_store_str(s: &E::EString) -> StoreStr {
     }
 }
 
-pub(super) fn lower_jsx_element_name(
-    builder: &mut HirBuilder,
-    tag: &Expr,
-) -> Result<JsxTag, CompilerError> {
+fn lower_jsx_element_name(builder: &mut HirBuilder, tag: &Expr) -> Result<JsxTag, CompilerError> {
     let loc = convert_loc(tag.loc);
     match tag.data {
         ExprData::EIdentifier(id) => {
@@ -60,10 +57,10 @@ pub(super) fn lower_jsx_element_name(
         ExprData::EString(s) => {
             let name = estring_to_store_str(&s);
             let bytes = name.slice();
-            if let Some(idx) = bytes.iter().position(|&b| b == b':') {
+            if let Some(idx) = bun_core::strings::index_of_char_usize(bytes, b':') {
                 let namespace = &bytes[..idx];
                 let local = &bytes[idx + 1..];
-                if local.contains(&b':') {
+                if bun_core::strings::contains_char(local, b':') {
                     builder.record_error(CompilerErrorDetail {
                         category: ErrorCategory::Syntax,
                         reason:
@@ -107,7 +104,7 @@ pub(super) fn lower_jsx_element_name(
     }
 }
 
-pub(super) fn lower_jsx_member_expression(
+fn lower_jsx_member_expression(
     builder: &mut HirBuilder,
     expr: &E::Dot,
     expr_loc: Loc,

@@ -174,9 +174,6 @@ void JSBakeResponse::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSBakeResponse);
 
-JSC_DECLARE_HOST_FUNCTION(callBakeResponse);
-JSC_DECLARE_HOST_FUNCTION(constructBakeResponse);
-
 class JSBakeResponseConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;

@@ -34,12 +34,11 @@ struct HttpFlags {
     bool requireHostHeader: 1 = true;
     bool isAuthorized: 1 = false;
     bool useStrictMethodValidation: 1 = false;
-    /* node:http insecureHTTPParser server option. NOTE: unlike Node's server
-     * (which fans kLenientAll out to all 10 llhttp lenient setters), the uWS
-     * parser only implements the LENIENT_HEADERS bit (control bytes accepted
-     * in field values); TE+CL conflict, chunked-size/CRLF strictness, version
-     * and header-token checks are still enforced. */
+    /* node:http parser leniency. Two llhttp lenient bits: useInsecureHTTPParser = LENIENT_HEADERS
+     * ("relaxed"+"insecure"); useLenientTransferEncoding = LENIENT_TRANSFER_ENCODING ("insecure"
+     * only). TE+CL conflict, chunked-size/CRLF, version, header-token checks stay enforced. */
     bool useInsecureHTTPParser: 1 = false;
+    bool useLenientTransferEncoding: 1 = false;
     /* node:http server.httpAllowHalfOpen: when true, a peer FIN with in-flight
      * or queued responses keeps the connection open until they drain (Node's
      * socketOnEnd); when false (the default), the connection ends right away. */
@@ -69,6 +68,14 @@ private:
     /* This is the currently browsed-to router when using SNI */
     HttpRouter<RouterData> *currentRouter = &router;
 
+    /* The socket onData is currently parsing, nullptr outside a parse. The
+     * close gates in internalEnd need the per-socket identity: a DIFFERENT
+     * socket's response can complete inside this window (a microtask drained
+     * during a request dispatch), and the context-wide isParsingHttp bit
+     * alone would wrongly defer its close to a post-parse gate that only
+     * checks the parsed socket. */
+    struct us_socket_t *parsingSocket = nullptr;
+
     /* This is the default router for default SNI or non-SSL */
     HttpRouter<RouterData> router;
     void *upgradedWebSocket = nullptr;
@@ -85,7 +92,10 @@ private:
     void clearRoutes() {
         this->router = HttpRouter<RouterData>{};
         this->currentRouter = &router;
-        filterHandlers.clear();
+        /* Not filterHandlers: filters are per-context open/close hooks, not
+         * routes. server.reload() never re-registers them, so wiping them here
+         * leaves Bun's active_connection_count (and node:http's 'connection'
+         * event) decoupled for the rest of the server's life. */
     }
 
 public:

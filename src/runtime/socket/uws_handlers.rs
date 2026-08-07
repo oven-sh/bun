@@ -19,10 +19,10 @@ use bun_uws_sys::vtable::Handler as VHandler;
 use bun_uws_sys::{CloseCode, us_bun_verify_error_t, us_socket_t};
 
 use crate::api;
+use crate::ipc as IPC;
 use crate::valkey_jsc::js_valkey;
 use bun_http_jsc::websocket_client;
 use bun_http_jsc::websocket_client::websocket_upgrade_client;
-use bun_jsc::ipc as IPC;
 use bun_sql_jsc::mysql;
 use bun_sql_jsc::postgres;
 
@@ -355,14 +355,14 @@ impl_ns_socket_events_forward!(js_valkey::JSValkeyClient, js_valkey::SocketHandl
 // the dispatch frame would alias that re-entrant borrow (Stacked-Borrows UB +
 // `noalias` dead-store of the re-entrant write). `RawPtrHandler` passes
 // `ThisPtr<Self>`.
-pub type BunSocket<const SSL: bool> = RawPtrHandler<api::NewSocket<SSL>, SSL>;
+pub(crate) type BunSocket<const SSL: bool> = RawPtrHandler<api::NewSocket<SSL>, SSL>;
 
 /// Listener accept path: the ext is uninitialised at on_open time (the C accept
 /// loop just calloc'd it), so we read the `*Listener` off `group->ext` and let
 /// `on_create` allocate the `NewSocket` and stash it in the ext. After that the
 /// socket is re-stamped as `.bun_socket_{tcp,tls}` and routes through
 /// `BunSocket` above.
-pub struct BunListener<const SSL: bool>;
+pub(crate) struct BunListener<const SSL: bool>;
 
 impl<const SSL: bool> VHandler for BunListener<SSL>
 where
@@ -406,7 +406,7 @@ where
         {
             // `ns` is the live heap `NewSocket` stashed by `on_create`. The
             // `on_*` handlers may free it, so they take `ThisPtr`, never `&mut`.
-            swallow(api::NewSocket::on_close(ns, wrap::<SSL>(s), code, reason));
+            api::NewSocket::on_close(ns, wrap::<SSL>(s), code, reason);
         }
     }
     fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {
@@ -436,12 +436,7 @@ where
     fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
         if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<ThisPtr<api::NewSocket<SSL>>>>()
         {
-            swallow(api::NewSocket::on_handshake(
-                ns,
-                wrap::<SSL>(s),
-                ok as i32,
-                err,
-            ));
+            api::NewSocket::on_handshake(ns, wrap::<SSL>(s), ok as i32, err);
         }
     }
 }
@@ -455,7 +450,7 @@ where
 /// In Rust the "separate namespace" becomes a trait `NsSocketEvents` whose
 /// methods take `&mut Owner` as the first parameter; each driver's
 /// `SocketHandler<SSL>` zero-sized type implements it.
-pub trait NsSocketEvents<Owner, const SSL: bool> {
+trait NsSocketEvents<Owner, const SSL: bool> {
     fn on_open(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
@@ -679,22 +674,22 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
 }
 
 // ── WebSocket client ────────────────────────────────────────────────────────
-pub type WSUpgrade<const SSL: bool> =
+pub(crate) type WSUpgrade<const SSL: bool> =
     RawPtrHandler<websocket_upgrade_client::NewHttpUpgradeClient<SSL>, SSL>;
-pub type WSClient<const SSL: bool> = RawPtrHandler<websocket_client::WebSocket<SSL>, SSL>;
+pub(crate) type WSClient<const SSL: bool> = RawPtrHandler<websocket_client::WebSocket<SSL>, SSL>;
 
 // ── SQL drivers ─────────────────────────────────────────────────────────────
-pub type Postgres<const SSL: bool> = NsHandler<
+pub(crate) type Postgres<const SSL: bool> = NsHandler<
     postgres::PostgresSQLConnection,
     postgres::postgres_sql_connection::SocketHandler<SSL>,
     SSL,
 >;
-pub type MySQL<const SSL: bool> = NsHandler<
+pub(crate) type MySQL<const SSL: bool> = NsHandler<
     mysql::js_my_sql_connection::JSMySQLConnection,
     mysql::js_my_sql_connection::SocketHandler<SSL>,
     SSL,
 >;
-pub type Valkey<const SSL: bool> =
+pub(crate) type Valkey<const SSL: bool> =
     NsHandler<js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>, SSL>;
 
 // ── Bun.spawn IPC / process.send() ──────────────────────────────────────────
@@ -719,27 +714,27 @@ impl VHandler for SpawnIPC {
 
     fn on_open(_ext: &mut Self::Ext, _s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {}
     fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_data(this, IpcS::from(s), data);
     }
     fn on_fd(ext: &mut Self::Ext, s: *mut us_socket_t, fd: c_int) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_fd(this, IpcS::from(s), fd);
     }
     fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_writable(this, IpcS::from(s));
     }
     fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_close(this, IpcS::from(s), code, reason);
     }
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_timeout(this, IpcS::from(s));
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_end(this, IpcS::from(s));
     }
 }

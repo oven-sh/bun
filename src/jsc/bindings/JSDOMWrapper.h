@@ -49,14 +49,6 @@ inline constexpr uint8_t JSDOMWrapperType = 0b11101110;
 inline constexpr uint8_t JSEventType = 0b11101111;
 inline constexpr uint8_t JSNodeType = 0b11110000;
 inline constexpr uint8_t JSNodeTypeMask = 0b00001111;
-inline constexpr uint8_t JSTextNodeType = JSNodeType | NodeConstants::TEXT_NODE;
-inline constexpr uint8_t JSProcessingInstructionNodeType = JSNodeType | NodeConstants::PROCESSING_INSTRUCTION_NODE;
-inline constexpr uint8_t JSDocumentTypeNodeType = JSNodeType | NodeConstants::DOCUMENT_TYPE_NODE;
-inline constexpr uint8_t JSDocumentFragmentNodeType = JSNodeType | NodeConstants::DOCUMENT_FRAGMENT_NODE;
-inline constexpr uint8_t JSDocumentWrapperType = JSNodeType | NodeConstants::DOCUMENT_NODE;
-inline constexpr uint8_t JSCommentNodeType = JSNodeType | NodeConstants::COMMENT_NODE;
-inline constexpr uint8_t JSCDATASectionNodeType = JSNodeType | NodeConstants::CDATA_SECTION_NODE;
-inline constexpr uint8_t JSAttrNodeType = JSNodeType | NodeConstants::ATTRIBUTE_NODE;
 inline constexpr uint8_t JSElementType = 0b11110000 | NodeConstants::ELEMENT_NODE;
 inline constexpr uint8_t JSAsJSONType = JSElementType;
 

@@ -54,7 +54,7 @@ const BACKEND_PARAM: ParamType = clap::param!(
 );
 
 const SHARED_PARAMS: &[ParamType] = &[
-    clap::param!("-c, --config <STR>?                   Specify path to config file (bunfig.toml)"),
+    clap::param!("-c, --config <STR>                    Specify path to config file (bunfig.toml)"),
     clap::param!("-y, --yarn                            Write a yarn.lock file (yarn v1)"),
     clap::param!("-p, --production                      Don't install devDependencies"),
     clap::param!("-P, --prod"),

@@ -3885,7 +3885,6 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
         const CHUNK = 64 * 1024;
         const payload = Buffer.alloc(CHUNK, "a");
         let sent = 0;
-        let sawError = null;
         const opened = Promise.withResolvers();
         const drained = Promise.withResolvers();
         function pump(s) {
@@ -3901,6 +3900,13 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
             if (n < want) return; // backpressure: drain() resumes the pump
           }
         }
+        // Any socket death mid-transfer is a failure: exit with the cause
+        // right away instead of hanging the child until the parent timeout
+        // with nothing on stdout.
+        function die(what) {
+          console.log("FAIL " + what);
+          process.exit(1);
+        }
         using server = Bun.listen({
           hostname: "127.0.0.1",
           port: 0,
@@ -3914,9 +3920,11 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
               pump(s);
             },
             error(s, e) {
-              sawError = e?.code || String(e);
+              die("server error " + (e?.code || e));
             },
-            close() {},
+            close(s, e) {
+              die("server closed err=" + (e?.code || e));
+            },
           },
         });
         let received = 0;
@@ -3928,18 +3936,18 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
               received += buf.length;
               if (received >= TOTAL) drained.resolve();
             },
-            error() {},
-            close() {},
+            error(s, e) {
+              die("client error " + (e?.code || e));
+            },
+            close(s, e) {
+              die("client closed err=" + (e?.code || e));
+            },
           },
         });
         const serverSock = await opened.promise;
         client.write("x");
         pump(serverSock);
         await drained.promise;
-        if (sawError) {
-          console.log("FAIL " + sawError);
-          process.exit(1);
-        }
         console.log("OK drained");
         process.exit(0);
       `);
@@ -3962,7 +3970,6 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
         const CHUNK = 64 * 1024;
         const payload = Buffer.alloc(CHUNK, "b");
         let sent = 0;
-        let sawError = null;
         const opened = Promise.withResolvers();
         const gotData = Promise.withResolvers();
         const drained = Promise.withResolvers();
@@ -3977,6 +3984,13 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
             sent += n;
             if (n < want) return; // backpressure: drain() resumes the pump
           }
+        }
+        // Any socket death is a failure (the broken path error-closes the
+        // parked socket): exit with the cause right away instead of hanging
+        // the child until the parent timeout with nothing on stdout.
+        function die(what) {
+          console.log("FAIL " + what);
+          process.exit(1);
         }
         let paused;
         using server = Bun.listen({
@@ -3995,9 +4009,11 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
               pump(s);
             },
             error(s, e) {
-              sawError = e?.code || String(e);
+              die("server error " + (e?.code || e));
             },
-            close() {},
+            close(s, e) {
+              die("server closed err=" + (e?.code || e));
+            },
           },
         });
         let received = 0;
@@ -4013,8 +4029,12 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
               received += buf.length;
               if (received >= TOTAL) drained.resolve();
             },
-            error() {},
-            close() {},
+            error(s, e) {
+              die("client error " + (e?.code || e));
+            },
+            close(s, e) {
+              die("client closed err=" + (e?.code || e));
+            },
           },
         });
         await opened.promise;
@@ -4030,11 +4050,6 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
         // The first partial write re-arms WRITABLE with both slots held:
         // the submission that used to have no slot to land in.
         pump(paused);
-        await Bun.sleep(200);
-        if (sawError) {
-          console.log("FAIL " + sawError);
-          process.exit(1);
-        }
         client.resume();
         await drained.promise;
         console.log("OK drained " + received);

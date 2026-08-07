@@ -1677,7 +1677,9 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
     // SAFETY: `state` is the live per-thread `RuntimeState` box; shared borrow
     // of the `OnceCell` only (the resolver's own state is interior-mutable).
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
-        result = result.and(gd.resolver.close_channel_for_terminate());
+        // SAFETY: the VM-global resolver, pinned by `GlobalData` (its own ref
+        // never drops here).
+        result = result.and(unsafe { crate::dns_jsc::Resolver::close_channel_for_terminate(gd.resolver.as_ctx_ptr()) });
         #[cfg(windows)]
         gd.resolver.cancel_pending_uv_requests_for_teardown();
     }
@@ -1749,9 +1751,10 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
                 crate::socket::WindowsNamedPipeContext::stop_for_vm_teardown(c.as_ptr())
             },
             // Live until it unregisters in `destroy_channel`.
-            ActiveHandle::DnsResolver(r) => {
-                let _ = unsafe { r.as_ref() }.close_channel_for_terminate();
-            }
+            // SAFETY: registered ⇒ live; may free itself inside, not touched after.
+            ActiveHandle::DnsResolver(r) => unsafe {
+                let _ = crate::dns_jsc::Resolver::close_channel_for_terminate(r.as_ptr());
+            },
         }
     }
     result

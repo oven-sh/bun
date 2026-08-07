@@ -1942,9 +1942,19 @@ impl Resolver {
 
     /// `Stopped` if a channel was open (its pending queries just failed with
     /// `ARES_EDESTRUCTION` into their callbacks).
-    pub(crate) fn close_channel_for_terminate(&self) -> bun_jsc::virtual_machine::SweepResult {
+    ///
+    /// # Safety
+    /// `this` is a live resolver. It may be freed by the time this returns (a
+    /// failing query can drop the last reference); the caller touches nothing
+    /// of it afterwards.
+    pub(crate) unsafe fn close_channel_for_terminate(this: *mut Self) -> bun_jsc::virtual_machine::SweepResult {
         use bun_jsc::virtual_machine::SweepResult;
-        let result = if self.destroy_channel() {
+        // Failing the pending queries releases their refs on this resolver from
+        // inside `ares_destroy`; hold one so it outlives its own channel close.
+        // SAFETY: fn contract.
+        unsafe { (*this).ref_() };
+        // SAFETY: alive under the ref just taken.
+        let result = if unsafe { (*this).destroy_channel() } {
             SweepResult::Stopped
         } else {
             SweepResult::Idle
@@ -1952,7 +1962,11 @@ impl Resolver {
         // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
         // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
         // this resolver plus the uws active-handle bump) can still be linked.
-        self.remove_timer();
+        // SAFETY: as above; then release our ref (may free `this`).
+        unsafe {
+            (*this).remove_timer();
+            Self::deref(this);
+        }
         result
     }
 }

@@ -2807,7 +2807,11 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         let tok = self.scanner.tok;
         self.scanner.err_fmt(
             tok.pos,
-            format_args!("Expected {} but found {}", expected, KindDisplay(tok.kind, self.scanner.latin1)),
+            format_args!(
+                "Expected {} but found {}",
+                expected,
+                KindDisplay(tok.kind, self.scanner.latin1)
+            ),
         )
     }
 
@@ -2819,7 +2823,10 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         let tok = self.scanner.tok;
         Err(self.scanner.err_fmt(
             tok.pos,
-            format_args!("Whitespace is required before {}", KindDisplay(tok.kind, self.scanner.latin1)),
+            format_args!(
+                "Whitespace is required before {}",
+                KindDisplay(tok.kind, self.scanner.latin1)
+            ),
         ))
     }
 
@@ -2915,7 +2922,10 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                     let tok = self.scanner.tok;
                     return Err(self.scanner.err_fmt(
                         tok.pos,
-                        format_args!("Unexpected {} after the root element", KindDisplay(tok.kind, self.scanner.latin1)),
+                        format_args!(
+                            "Unexpected {} after the root element",
+                            KindDisplay(tok.kind, self.scanner.latin1)
+                        ),
                     ));
                 }
             }

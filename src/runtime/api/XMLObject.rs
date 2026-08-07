@@ -64,7 +64,8 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             if matches!(result, Err(bun_parsers::Error::NeedsWiderEncoding)) {
                 // A character reference the Latin-1 result cannot hold: once
                 // more, over the same text as UTF-8.
-                utf8 = strings::allocate_latin1_into_utf8(&source.contents).map_err(|_| JsError::OutOfMemory)?;
+                utf8 = strings::allocate_latin1_into_utf8(&source.contents)
+                    .map_err(|_| JsError::OutOfMemory)?;
                 utf8_source = bun_ast::Source::init_path_string(b"input.xml", &utf8[..]);
                 *log = bun_ast::Log::init();
                 let options = xml::Options {

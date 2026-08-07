@@ -1637,13 +1637,17 @@ impl VirtualMachine {
             // SAFETY: fn contract; JSC heap alive.
             unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) };
         }
-        // Every pipe / tty / child-process handle open on this thread's loop
-        // closes now — through whoever drives it (reader, writer, IPC channel,
-        // named pipe, Process), or directly if nothing adopted it — so pending
-        // writes complete (ECANCELED) against a live VM and no request on them
-        // can hold up the loop drain in B.
+        // A worker's uv loop is closed in D, so every pipe / tty / child-process
+        // handle open on it closes now — through whoever drives it (reader,
+        // writer, IPC channel, named pipe, Process), or directly if nothing
+        // adopted it — so pending writes complete (ECANCELED) against a live VM
+        // and no request on them can hold up the loop drain in B. The exiting
+        // main thread keeps its loop (the OS reclaims the handles); sweeping them
+        // there only re-enters stream owners under still-running script.
         #[cfg(windows)]
-        bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
+        if matches!(kind, Teardown::Worker) {
+            bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
+        }
         if let Some(rare) = vm.rare_data.as_deref_mut() {
             // `close_all_socket_groups` walks the loop's group list through the
             // VM and never touches `rare_data`, so the re-derived shared borrow

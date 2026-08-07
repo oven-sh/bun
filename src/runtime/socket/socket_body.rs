@@ -112,7 +112,7 @@ extern "C" fn select_alpn_callback(
     {
         let handlers = this.get_handlers();
         let callback = handlers.on_alpn_callback();
-        if !callback.is_empty() && !handlers.vm.is_shutting_down() && !in_.is_null() && inlen > 0 {
+        if !callback.is_empty() && handlers.vm.script_allowed() && !in_.is_null() && inlen > 0 {
             let scope = handlers.enter();
             let global = handlers.global_object;
             let this_value = this.get_this_value(&global);
@@ -330,7 +330,7 @@ impl<const SSL: bool> Drop for CloseTeardown<SSL> {
             // Reconnected: `connect_finish` re-armed `this_value`/`poll_ref`, so
             // skip the idle teardown and only release what we took.
             this.update_flags(|f| f.remove(Flags::IS_ACTIVE));
-            if !VirtualMachine::get().is_shutting_down() {
+            if VirtualMachine::get().script_allowed() {
                 self.entered.mark_inactive();
             }
         }
@@ -841,7 +841,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         log!("handleError");
         let handlers = self.get_handlers();
         let vm = handlers.vm;
-        if vm.is_shutting_down() {
+        if !vm.script_allowed() {
             return;
         }
         // the handlers must be kept alive for the duration of the function call
@@ -882,7 +882,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let vm = handlers.vm;
-        if vm.is_shutting_down() {
+        if !vm.script_allowed() {
             return;
         }
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
@@ -974,7 +974,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
             return;
         }
-        if handlers.vm.is_shutting_down() {
+        if !handlers.vm.script_allowed() {
             return;
         }
 
@@ -1642,7 +1642,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let callback = handlers.on_end();
         let vm = handlers.vm;
-        if callback.is_empty() || vm.is_shutting_down() {
+        if callback.is_empty() || !vm.script_allowed() {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
             // If you don't handle TCP fin, we assume you're done.
@@ -2093,7 +2093,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
 
-        if vm.is_shutting_down() {
+        if !vm.script_allowed() {
             drop(cleanup);
             return;
         }
@@ -2168,7 +2168,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
             return;
         }
-        if handlers.vm.is_shutting_down() {
+        if !handlers.vm.script_allowed() {
             return;
         }
 

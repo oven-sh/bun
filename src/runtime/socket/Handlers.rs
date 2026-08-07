@@ -215,7 +215,7 @@ impl Handlers {
 
     pub(crate) fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
         let vm = self.vm;
-        if vm.is_shutting_down() {
+        if !vm.script_allowed() {
             return Ok(());
         }
 
@@ -231,7 +231,7 @@ impl Handlers {
 
     pub(crate) fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
         let vm = self.vm;
-        if vm.is_shutting_down() {
+        if !vm.script_allowed() {
             return Ok(true);
         }
 
@@ -259,9 +259,9 @@ impl Handlers {
         if self.mode != SocketMode::Server {
             return true;
         }
-        // Nothing to release once the process is exiting, and the listener's
-        // JS wrapper may already be gone.
-        if self.vm.is_shutting_down() {
+        // Nothing to release once teardown has forbidden script: keep-alives no
+        // longer matter and JS handles are being released.
+        if !self.vm.script_allowed() {
             return false;
         }
         // Let the listener's JS wrapper be GC'd once the last connection is
@@ -277,7 +277,7 @@ impl Handlers {
 
     pub(crate) fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> bool {
         let vm = self.vm;
-        if vm.is_shutting_down() {
+        if !vm.script_allowed() {
             return false;
         }
 

@@ -4188,7 +4188,7 @@ impl ServerAllConnectionsClosedTask {
         let global_object: &jsc::JSGlobalObject = bun_opaque::opaque_deref(this.global_object);
         let _dispatch = this.tracker.dispatch(global_object);
 
-        if !vm.is_shutting_down() {
+        if vm.script_allowed() {
             // `JSPromiseStrong`'s Drop runs when `this` falls out of scope.
             this.promise.resolve(global_object, JSValue::UNDEFINED)?;
         }

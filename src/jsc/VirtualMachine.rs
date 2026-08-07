@@ -782,6 +782,15 @@ impl VirtualMachine {
         (*self.handle).clone()
     }
 
+    /// May native code enter user JavaScript right now? `true` in normal
+    /// operation and during the stop phase of teardown (close/exit handlers
+    /// run); `false` once teardown has forbidden execution. Node's
+    /// `can_call_into_js()`. JS thread.
+    #[inline]
+    pub fn script_allowed(&self) -> bool {
+        self.handle.script_allowed()
+    }
+
     /// Which loop is current (`event_loop` points at the regular loop except
     /// while a macro runs). Off-thread completions carry this so they land on
     /// the loop that was current when their work started.

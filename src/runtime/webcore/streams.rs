@@ -585,7 +585,7 @@ impl Pending {
         // SAFETY: VirtualMachine::get() returns the per-thread singleton VM; sole
         // `&`-borrow on this thread, outlives this call.
         let vm = VirtualMachine::get();
-        if vm.is_shutting_down() {
+        if !vm.script_allowed() {
             return;
         }
 

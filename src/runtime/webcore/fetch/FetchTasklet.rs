@@ -915,8 +915,8 @@ impl FetchTasklet {
         let is_done = !self.result.has_more;
 
         let vm = self.global_this.bun_vm();
-        // vm is shutting down we cannot touch JS
-        if vm.is_shutting_down() {
+        // teardown forbade script: we cannot touch JS
+        if !vm.script_allowed() {
             // The certificate will never be checked; release the parked
             // HTTP-thread socket instead of leaving it occupying an active
             // request slot until the idle timeout.

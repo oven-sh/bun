@@ -794,7 +794,7 @@ impl<C: TaskContext> AsyncTask<C> {
         // exit (ctx implements Drop).
 
         let vm = VirtualMachine::get();
-        if vm.is_shutting_down() {
+        if !vm.script_allowed() {
             return Ok(());
         }
 

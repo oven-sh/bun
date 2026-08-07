@@ -207,7 +207,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // SAFETY: JS thread; the job was created against this global's VM,
         // which is alive while it dispatches tasks.
         let global = unsafe { &*this.global };
-        if global.bun_vm().is_shutting_down() {
+        if !global.bun_vm().script_allowed() {
             return Ok(());
         }
         this.ctx.then(global)

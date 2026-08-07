@@ -1756,9 +1756,9 @@ impl WindowsNamedPipeListeningContext {
         // Shared borrow — `on_name_pipe_created` re-enters JS; the one `&mut`
         // (the `uv_pipe` field) is taken through the root pointer below.
         let this_ref = unsafe { &*this };
-        let shutting_down = this_ref.vm.is_shutting_down();
-        if status != uv::ReturnCode::ZERO || shutting_down || this_ref.listener.is_none() {
-            // connection dropped or vm is shutting down or we are deiniting/closing
+        let script_forbidden = !this_ref.vm.script_allowed();
+        if status != uv::ReturnCode::ZERO || script_forbidden || this_ref.listener.is_none() {
+            // connection dropped, teardown forbade script, or we are deiniting/closing
             return;
         }
         // `BackRef` deref — owner `Listener` outlives this context (see field doc).
@@ -1968,7 +1968,7 @@ pub(crate) extern "C" fn us_dispatch_socket_server_name(
         return core::ptr::null_mut();
     }
     let handlers = tls.get_handlers();
-    if handlers.vm.is_shutting_down() {
+    if !handlers.vm.script_allowed() {
         return core::ptr::null_mut();
     }
     let callback = handlers.on_server_name();
@@ -2061,7 +2061,7 @@ extern "C" fn us_dispatch_server_name(
     // duration of this synchronous handshake dispatch.
     let listener = unsafe { bun_ptr::ThisPtr::new(listener_ptr) };
     let handlers = &listener.handlers;
-    if handlers.vm.is_shutting_down() {
+    if !handlers.vm.script_allowed() {
         return core::ptr::null_mut();
     }
     let callback = handlers.on_server_name();

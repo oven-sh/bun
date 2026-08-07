@@ -420,8 +420,8 @@ impl ServerWebSocket {
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
         let on_error = handler.on_error;
-        if vm.is_shutting_down() {
-            bun_output::scoped_log!(WebSocketServer, "onOpen called after script execution");
+        if !vm.script_allowed() {
+            bun_output::scoped_log!(WebSocketServer, "onOpen called after script execution was forbidden");
             ws.close();
             return;
         }
@@ -493,8 +493,8 @@ impl ServerWebSocket {
         let global_object = self.handler().global_object();
         // This is the start of a task.
         let vm = self.handler().vm();
-        if vm.is_shutting_down() {
-            bun_output::scoped_log!(WebSocketServer, "onMessage called after script execution");
+        if !vm.script_allowed() {
+            bun_output::scoped_log!(WebSocketServer, "onMessage called after script execution was forbidden");
             ws.close();
             return;
         }
@@ -562,7 +562,7 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onDrain");
         let handler = self.handler();
         let vm = handler.vm();
-        if self.is_closed() || vm.is_shutting_down() {
+        if self.is_closed() || !vm.script_allowed() {
             return;
         }
 
@@ -610,7 +610,7 @@ impl ServerWebSocket {
         let cb = handler.on_ping;
         let on_error = handler.on_error;
         let vm = handler.vm();
-        if cb.is_empty_or_undefined_or_null() || vm.is_shutting_down() {
+        if cb.is_empty_or_undefined_or_null() || !vm.script_allowed() {
             return;
         }
         let global_this = handler.global_object();
@@ -646,7 +646,7 @@ impl ServerWebSocket {
         let global_this = handler.global_object();
         let vm = handler.vm();
 
-        if vm.is_shutting_down() {
+        if !vm.script_allowed() {
             return;
         }
 
@@ -723,7 +723,7 @@ impl ServerWebSocket {
         });
 
         let vm = handler.vm();
-        if vm.is_shutting_down() {
+        if !vm.script_allowed() {
             return;
         }
 

@@ -250,7 +250,7 @@ impl JSMySQLQuery {
         if !self.query.with_mut(|q| q.result(is_last_result)) {
             return;
         }
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return;
         }
 
@@ -317,7 +317,7 @@ impl JSMySQLQuery {
     }
 
     pub(crate) fn reject(&self, queries_array: JSValue, err: AnyMySQLError::Error) {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             self.mark_as_failed();
             return;
         }
@@ -346,7 +346,7 @@ impl JSMySQLQuery {
             return;
         }
 
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return;
         }
         let Some(target_value) = self.get_target() else {
@@ -392,7 +392,7 @@ impl JSMySQLQuery {
     }
 
     pub(crate) fn run(&self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             debug!("run cannot run a query if the VM is shutting down");
             // cannot run a query if the VM is shutting down
             return Ok(());
@@ -489,7 +489,7 @@ impl JSMySQLQuery {
 
     #[inline]
     pub(crate) fn set_pending_value(&self, result: JSValue) {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return;
         }
         if let Some(value) = self.this_value.get().try_get() {
@@ -498,7 +498,7 @@ impl JSMySQLQuery {
     }
     #[inline]
     pub(crate) fn get_pending_value(&self) -> Option<JSValue> {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return None;
         }
         if let Some(value) = self.this_value.get().try_get() {
@@ -509,7 +509,7 @@ impl JSMySQLQuery {
 
     #[inline]
     fn set_target(&self, result: JSValue) {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return;
         }
         if let Some(value) = self.this_value.get().try_get() {
@@ -518,7 +518,7 @@ impl JSMySQLQuery {
     }
     #[inline]
     fn get_target(&self) -> Option<JSValue> {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return None;
         }
         if let Some(value) = self.this_value.get().try_get() {
@@ -529,7 +529,7 @@ impl JSMySQLQuery {
 
     #[inline]
     fn set_columns(&self, result: JSValue) {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return;
         }
         if let Some(value) = self.this_value.get().try_get() {
@@ -538,7 +538,7 @@ impl JSMySQLQuery {
     }
     #[inline]
     fn get_columns(&self) -> Option<JSValue> {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return None;
         }
         if let Some(value) = self.this_value.get().try_get() {
@@ -548,7 +548,7 @@ impl JSMySQLQuery {
     }
     #[inline]
     fn set_binding(&self, result: JSValue) {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return;
         }
         if let Some(value) = self.this_value.get().try_get() {
@@ -557,7 +557,7 @@ impl JSMySQLQuery {
     }
     #[inline]
     fn get_binding(&self) -> Option<JSValue> {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return None;
         }
         if let Some(value) = self.this_value.get().try_get() {

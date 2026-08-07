@@ -625,7 +625,7 @@ impl PostgresSQLConnection {
 
         self.status.set(status);
         self.reset_connection_timeout();
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             self.update_has_pending_activity();
             return;
         }
@@ -788,7 +788,7 @@ impl PostgresSQLConnection {
     fn handle_socket_failure(&self, fail: impl FnOnce(&Self)) {
         self.unregister_auto_flusher();
 
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             self.stop_timers();
             if self.status.get() == Status::Failed {
                 self.update_has_pending_activity();
@@ -945,7 +945,7 @@ impl PostgresSQLConnection {
 
     fn drain_internal(&self) {
         debug!("drainInternal");
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return self.close();
         }
 
@@ -1315,7 +1315,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     /// intentionally do NOT route through this — they forward unconditionally.
     #[inline]
     fn guarded(this: &PostgresSQLConnection, f: impl FnOnce(&PostgresSQLConnection)) {
-        if this.vm().is_shutting_down() {
+        if !this.vm().script_allowed() {
             bun_core::hint::cold();
             this.close();
             return;
@@ -1390,7 +1390,7 @@ impl PostgresSQLConnection {
         // callback fires, pending queries are rejected, and the in-flight
         // socket is torn down instead of completing the handshake after
         // close.
-        if !self.vm().is_shutting_down()
+        if self.vm().script_allowed()
             && matches!(
                 self.status.get(),
                 Status::Connecting | Status::SentStartupMessage
@@ -1492,7 +1492,7 @@ impl PostgresSQLConnection {
                         AnyPostgresError::ConnectionClosed,
                     ));
                     stmt.status = StatementStatus::Failed;
-                    if !self.vm().is_shutting_down() {
+                    if self.vm().script_allowed() {
                         let global = self.global();
                         if let Some(reason) = js_reason {
                             request.on_js_error(reason, global);
@@ -1507,7 +1507,7 @@ impl PostgresSQLConnection {
                 // in the middle of running
                 QueryStatus::Binding | QueryStatus::Running | QueryStatus::PartialResponse => {
                     self.finish_request(&request);
-                    if !self.vm().is_shutting_down() {
+                    if self.vm().script_allowed() {
                         let global = self.global();
                         if let Some(reason) = js_reason {
                             request.on_js_error(reason, global);
@@ -1874,7 +1874,7 @@ impl PostgresSQLConnection {
         while self.requests.get().readable_length() > offset
             && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
         {
-            if self.vm().is_shutting_down() {
+            if !self.vm().script_allowed() {
                 self.close();
                 defer_cleanup!(self);
                 return;

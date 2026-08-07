@@ -380,7 +380,7 @@ impl JSMySQLConnection {
         }
         self.stop_timers();
         self.unregister_auto_flusher();
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             self.connection_mut().close();
         } else {
             let queries = self.get_queries_array();
@@ -390,7 +390,7 @@ impl JSMySQLConnection {
 
     fn drain_internal(&self) {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return self.close();
         }
         // Raw-pointer RAII guard so no reference is live across the potential
@@ -669,7 +669,7 @@ impl JSMySQLConnection {
     }
 
     fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return None;
         }
         if let Some(value) = self.js_value.get().try_get() {
@@ -679,7 +679,7 @@ impl JSMySQLConnection {
     }
 
     fn consume_on_close_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return None;
         }
         if let Some(value) = self.js_value.get().try_get() {
@@ -689,7 +689,7 @@ impl JSMySQLConnection {
     }
 
     pub(crate) fn get_queries_array(&self) -> JSValue {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return JSValue::UNDEFINED;
         }
         if let Some(value) = self.js_value.get().try_get() {
@@ -739,7 +739,7 @@ impl JSMySQLConnection {
         scopeguard::defer! {
             // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
             // yields a fresh `&Self` per access (R-2: every callee is `&self`).
-            if p.vm().is_shutting_down() {
+            if !p.vm().script_allowed() {
                 p.connection_mut().close();
             } else {
                 let queries = p.get_queries_array();
@@ -754,7 +754,7 @@ impl JSMySQLConnection {
         }
 
         self.connection_mut().status = my_sql_connection::Status::Failed;
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return;
         }
 
@@ -793,7 +793,7 @@ impl JSMySQLConnection {
     }
 
     pub(crate) fn on_connection_estabilished(&self) {
-        if self.vm().is_shutting_down() {
+        if !self.vm().script_allowed() {
             return;
         }
         let Some(on_connect) = self.consume_on_connect_callback(&self.global_object) else {
@@ -892,7 +892,7 @@ impl JSMySQLConnection {
 
     pub(crate) fn on_error(&self, request: Option<&JSMySQLQuery>, err: AnyMySQLErrorT) {
         if let Some(request) = request {
-            if self.vm().is_shutting_down() {
+            if !self.vm().script_allowed() {
                 request.mark_as_failed();
                 return;
             }
@@ -902,7 +902,7 @@ impl JSMySQLConnection {
                 request.reject(self.get_queries_array(), err);
             }
         } else {
-            if self.vm().is_shutting_down() {
+            if !self.vm().script_allowed() {
                 self.close();
                 return;
             }
@@ -916,7 +916,7 @@ impl JSMySQLConnection {
 
     pub(crate) fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
         if let Some(request) = request {
-            if self.vm().is_shutting_down() {
+            if !self.vm().script_allowed() {
                 request.mark_as_failed();
             } else {
                 if let Some(err_) = self.global_object.try_take_exception() {
@@ -929,7 +929,7 @@ impl JSMySQLConnection {
                 }
             }
         } else {
-            if self.vm().is_shutting_down() {
+            if !self.vm().script_allowed() {
                 self.close();
                 return;
             }
@@ -1064,7 +1064,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.update_reference_type();
             p.register_auto_flusher();
         }
-        if this.vm().is_shutting_down() {
+        if !this.vm().script_allowed() {
             // we are shutting down lets not process the data
             return;
         }

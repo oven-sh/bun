@@ -4048,7 +4048,7 @@ impl H2FrameParser {
 
         let mut offset: usize = 0;
         let global_object = self.handlers.get().global();
-        if self.handlers.get().vm.is_shutting_down() {
+        if !self.handlers.get().vm.script_allowed() {
             return Ok(None);
         }
 

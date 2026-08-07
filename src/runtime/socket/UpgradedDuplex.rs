@@ -215,7 +215,7 @@ impl UpgradedDuplex {
         // `vm` is always set via `from()`; `None` only in the zeroed placeholder
         // state, which never reaches here.
         let Some(vm) = self.vm else { return };
-        if vm.is_shutting_down() {
+        if !vm.script_allowed() {
             return;
         }
         let duplex = self.origin.get();

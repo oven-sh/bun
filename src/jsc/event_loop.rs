@@ -390,11 +390,13 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) {
-        // A prior callback's microtasks can tear the worker down
-        // (worker.terminate()), leaving the termination exception pending;
-        // entering JS then trips executeCallImpl's `assertNoException`. Same
-        // gate as `tick_with_count()`; guarding here covers all 50+ callers.
-        if global_object.has_exception() {
+        // The gate for native code entering user JS from outside the task
+        // queue (all 50+ callers funnel through here): not once teardown has
+        // forbidden script (Node's `can_call_into_js`), and not with an
+        // exception already pending — a prior callback's microtasks can request
+        // termination (worker.terminate()), and entering JS then would trip
+        // executeCallImpl's `assertNoException`.
+        if !global_object.bun_vm().script_allowed() || global_object.has_exception() {
             return;
         }
         // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
@@ -429,7 +431,8 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JSValue {
-        if global_object.has_exception() {
+        // Same gate as `run_callback`.
+        if !global_object.bun_vm().script_allowed() || global_object.has_exception() {
             return JSValue::ZERO;
         }
         // R-2 noalias mitigation — see `run_callback` above.
@@ -1083,6 +1086,10 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JsResult<JSValue> {
+        // Same gate as `run_callback`.
+        if !global_object.bun_vm().script_allowed() || global_object.has_exception() {
+            return Ok(JSValue::UNDEFINED);
+        }
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();

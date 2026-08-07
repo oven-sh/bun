@@ -1096,14 +1096,16 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
   const bareSha = await makeBareRepo("bare-dep");
   const branchSha = await makeBareRepo("branch-dep");
 
-  let gitRequests = 0;
+  let bareRequests = 0;
+  let branchRequests = 0;
   await using gitServer = Bun.serve({
     port: 0,
     async fetch(req) {
-      gitRequests++;
       const { pathname } = new URL(req.url);
       const match = pathname.match(/^\/((?:bare|branch)-dep\.git)\/(.+)$/);
       if (!match) return new Response("not found", { status: 404 });
+      if (match[1] === "bare-dep.git") bareRequests++;
+      else branchRequests++;
       const f = file(join(packageDir, match[1], match[2]));
       return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
     },
@@ -1129,7 +1131,8 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
     BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
   };
   async function install(retries = 1) {
-    const gitRequestsBefore = gitRequests;
+    const bareRequestsBefore = bareRequests;
+    const branchRequestsBefore = branchRequests;
     const githubDownloadsBefore = githubDownloads;
     await using proc = spawn({
       cmd: [bunExe(), "install"],
@@ -1146,7 +1149,8 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
     // the aborted attempt's baseline.
     if (retries > 0 && err.includes("git failed with signal 9")) {
       await rm(installEnv.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true });
-      gitRequests = gitRequestsBefore;
+      bareRequests = bareRequestsBefore;
+      branchRequests = branchRequestsBefore;
       githubDownloads = githubDownloadsBefore;
       return install(retries - 1);
     }
@@ -1154,37 +1158,48 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
     expect(code).toBe(0);
   }
 
+  // The installs are staged so at most one git clone runs at a time: loaded
+  // CI machines reliably OOM-kill one of two concurrent git children under an
+  // ASAN build. Each stage edits the member, which re-parses its whole
+  // dependency list and re-resolves the dependencies added by earlier stages.
   await write(packageJson, JSON.stringify({ name: "ws-root", workspaces: ["packages/*"] }));
   const memberPackageJson = join(packageDir, "packages", "member", "package.json");
   const memberDeps: Record<string, string> = {
     "bare-dep": `git+http://127.0.0.1:${gitServer.port}/bare-dep.git`,
-    "branch-dep": `git+http://127.0.0.1:${gitServer.port}/branch-dep.git#main`,
-    "gh-dep": "github:testowner/testrepo#main",
   };
-  await write(memberPackageJson, JSON.stringify({ name: "member", version: "1.0.0", dependencies: memberDeps }));
+  async function writeMember() {
+    await write(memberPackageJson, JSON.stringify({ name: "member", version: "1.0.0", dependencies: memberDeps }));
+  }
+  await writeMember();
   await write(
     join(packageDir, "packages", "member", "dummy", "package.json"),
     JSON.stringify({ name: "dummy", version: "1.0.0" }),
   );
 
   await install();
-  expect(gitRequests).toBeGreaterThan(0);
-  expect(githubDownloads).toBeGreaterThan(0);
+  expect(bareRequests).toBeGreaterThan(0);
   const lock = await file(join(packageDir, "bun.lock")).text();
   expect(lock).toContain(`bare-dep@git+http://127.0.0.1:${gitServer.port}/bare-dep.git#${bareSha}`);
-  expect(lock).toContain(`branch-dep@git+http://127.0.0.1:${gitServer.port}/branch-dep.git#${branchSha}`);
 
-  // Dirty the lockfile with a change that re-resolves the member's unchanged
-  // dependencies (a workspace member edit re-parses its whole dependency list).
-  memberDeps["dummy"] = "file:./dummy";
-  await write(memberPackageJson, JSON.stringify({ name: "member", version: "1.0.0", dependencies: memberDeps }));
-  const requestsAfterFirstInstall = gitRequests;
-  const downloadsAfterFirstInstall = githubDownloads;
+  // Adding dependencies to the member re-resolves bare-dep; its bare ref must
+  // bind to the loaded package without contacting the remote again.
+  memberDeps["branch-dep"] = `git+http://127.0.0.1:${gitServer.port}/branch-dep.git#main`;
+  memberDeps["gh-dep"] = "github:testowner/testrepo#main";
+  await writeMember();
+  const bareRequestsAfterFirstInstall = bareRequests;
   await install();
-  expect({ gitRequests, githubDownloads }).toEqual({
-    gitRequests: requestsAfterFirstInstall,
-    githubDownloads: downloadsAfterFirstInstall,
-  });
+  expect(bareRequests).toBe(bareRequestsAfterFirstInstall);
+  expect(branchRequests).toBeGreaterThan(0);
+  expect(githubDownloads).toBeGreaterThan(0);
+  const lockSecond = await file(join(packageDir, "bun.lock")).text();
+  expect(lockSecond).toContain(`branch-dep@git+http://127.0.0.1:${gitServer.port}/branch-dep.git#${branchSha}`);
+
+  // Another member edit re-resolves all three; none may go to the network.
+  memberDeps["dummy"] = "file:./dummy";
+  await writeMember();
+  const snapshot = { bareRequests, branchRequests, githubDownloads };
+  await install();
+  expect({ bareRequests, branchRequests, githubDownloads }).toEqual(snapshot);
 
   // The locked commits did not move.
   const lockAfter = await file(join(packageDir, "bun.lock")).text();

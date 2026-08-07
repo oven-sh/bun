@@ -2004,7 +2004,19 @@ fn find_locked_git_package(
             continue;
         }
         let locked = resolution.repository();
-        if !locked.repo.eql(repo.repo, buf, buf) || !locked.owner.eql(repo.owner, buf, buf) {
+        if !locked.owner.eql(repo.owner, buf, buf) {
+            continue;
+        }
+        // The lockfile writer prefixes an scp-like repo ("git@host:path") with
+        // "ssh://", so a reloaded resolution carries the prefix while the
+        // freshly parsed dependency does not.
+        let locked_repo = locked.repo.slice(buf);
+        let dep_repo = repo.repo.slice(buf);
+        let repo_matches = strings::eql(locked_repo, dep_repo)
+            || (strings::has_prefix_comptime(locked_repo, b"ssh://")
+                && dependency::is_scp_like_path(dep_repo)
+                && strings::eql(&locked_repo[b"ssh://".len()..], dep_repo));
+        if !repo_matches {
             continue;
         }
         return Some(package_id);

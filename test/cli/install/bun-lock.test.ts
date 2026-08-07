@@ -1140,9 +1140,12 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
     });
     const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
     // A loaded CI machine can OOM-kill the spawned git child (SIGKILL); that
-    // is environmental, not the behavior under test. Restore the counters so
-    // the retried attempt starts from the aborted attempt's baseline.
+    // is environmental, not the behavior under test. A kill between git clone
+    // and git checkout leaves a half-created cache folder the next attempt
+    // would trust, so retry from a clean cache, with the counters restored to
+    // the aborted attempt's baseline.
     if (retries > 0 && err.includes("git failed with signal 9")) {
+      await rm(installEnv.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true });
       gitRequests = gitRequestsBefore;
       githubDownloads = githubDownloadsBefore;
       return install(retries - 1);
@@ -1236,10 +1239,12 @@ it("`bun update` still re-resolves a branch ref git dependency against the remot
       stderr: "pipe",
     });
     const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
-    // A loaded CI machine can OOM-kill the spawned git child (SIGKILL);
-    // retrying only ever adds requests, so the requests-increase assertion
-    // holds.
+    // A loaded CI machine can OOM-kill the spawned git child (SIGKILL); retry
+    // from a clean cache (a kill between clone and checkout leaves a
+    // half-created folder the next attempt would trust). Retrying only ever
+    // adds requests, so the requests-increase assertion holds.
     if (retries > 0 && err.includes("git failed with signal 9")) {
+      await rm(installEnv.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true });
       return run(args, retries - 1);
     }
     expect(err).not.toContain("error:");
@@ -1260,4 +1265,90 @@ it("`bun update` still re-resolves a branch ref git dependency against the remot
 
   await run(["update", "git-dep"]);
   expect(gitRequests).toBeGreaterThan(requestsAfterInstall);
+});
+
+// A changed override that moves a git dependency to a different ref of the
+// same repository must re-resolve every dependent. Several dependencies
+// sharing one name is the interesting case: the reuse above must not rebind a
+// cleared dependency to a sibling's not-yet-cleared binding from the old
+// override.
+it("a changed git override re-resolves every dependent instead of reusing the old pin", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const { gitEnv, git } = await makeGitFixture(packageDir);
+
+  const srcDir = join(packageDir, "git-src");
+  const bareDir = join(packageDir, "repo.git");
+  await write(join(srcDir, "package.json"), JSON.stringify({ name: "over-dep", version: "1.0.0" }));
+  await write(join(srcDir, "index.js"), "module.exports = 'V1';\n");
+  await git(["init", "-q", "-b", "main"], srcDir);
+  await git(["add", "-A"], srcDir);
+  await git(["commit", "-qm", "v1"], srcDir);
+  await git(["tag", "v1"], srcDir);
+  const sha1 = (await git(["rev-parse", "HEAD"], srcDir)).trim();
+  await write(join(srcDir, "index.js"), "module.exports = 'V2';\n");
+  await git(["add", "-A"], srcDir);
+  await git(["commit", "-qm", "v2"], srcDir);
+  await git(["tag", "v2"], srcDir);
+  const sha2 = (await git(["rev-parse", "HEAD"], srcDir)).trim();
+  await git(["clone", "-q", "--bare", srcDir, bareDir], packageDir);
+  await git(["update-server-info"], bareDir);
+
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (!pathname.startsWith("/repo.git/")) return new Response("not found", { status: 404 });
+      const f = file(join(bareDir, pathname.slice("/repo.git/".length)));
+      return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
+    },
+  });
+
+  const installEnv = {
+    ...gitEnv,
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+  };
+  async function install(retries = 1) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    // See the retry note in the re-resolving test above.
+    if (retries > 0 && err.includes("git failed with signal 9")) {
+      await rm(installEnv.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true });
+      return install(retries - 1);
+    }
+    expect(err).not.toContain("error:");
+    expect(code).toBe(0);
+  }
+
+  const repoUrl = `git+http://127.0.0.1:${server.port}/repo.git`;
+  function rootPackageJson(ref: string) {
+    return JSON.stringify({
+      name: "ws-root",
+      workspaces: ["packages/*"],
+      overrides: { "over-dep": `${repoUrl}#${ref}` },
+    });
+  }
+  await write(packageJson, rootPackageJson("v1"));
+  for (const member of ["member-a", "member-b"]) {
+    await write(
+      join(packageDir, "packages", member, "package.json"),
+      JSON.stringify({ name: member, version: "1.0.0", dependencies: { "over-dep": "^1.0.0" } }),
+    );
+  }
+
+  await install();
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain(`#${sha1}`);
+  expect(await file(join(packageDir, "node_modules", "over-dep", "index.js")).text()).toBe("module.exports = 'V1';\n");
+
+  await write(packageJson, rootPackageJson("v2"));
+  await install();
+  const lockAfter = await file(join(packageDir, "bun.lock")).text();
+  expect(lockAfter).toContain(`#${sha2}`);
+  expect(lockAfter).not.toContain(`#${sha1}`);
+  expect(await file(join(packageDir, "node_modules", "over-dep", "index.js")).text()).toBe("module.exports = 'V2';\n");
 });

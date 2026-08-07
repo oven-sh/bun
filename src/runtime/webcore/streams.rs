@@ -585,10 +585,6 @@ impl Pending {
         // SAFETY: VirtualMachine::get() returns the per-thread singleton VM; sole
         // `&`-borrow on this thread, outlives this call.
         let vm = VirtualMachine::get();
-        if !vm.script_allowed() {
-            return;
-        }
-
         let clone = Box::new(core::mem::take(self));
         // `mem::take` resets `state`/`result`/`future` via `Default`;
         // no reader observes `future` after this.
@@ -610,6 +606,18 @@ impl Pending {
         // SAFETY: this was heap-allocated in run_on_next_tick
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.run();
+        drop(boxed);
+    }
+
+    /// The loop refused the deferred fulfilment (VM teardown): nobody awaits
+    /// the read any more, so drop the promise's root and the parked result.
+    pub(crate) fn release_without_running(this: *mut Pending) {
+        // SAFETY: heap-allocated in run_on_next_tick; refused, so we own it.
+        let mut boxed = unsafe { bun_core::heap::take(this) };
+        boxed.state = PendingState::Used;
+        if let PendingFuture::Promise { promise, .. } = &boxed.future {
+            JSPromise::opaque_ref(*promise).to_js().unprotect();
+        }
         drop(boxed);
     }
 }

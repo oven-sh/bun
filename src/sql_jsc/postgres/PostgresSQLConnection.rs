@@ -625,11 +625,6 @@ impl PostgresSQLConnection {
 
         self.status.set(status);
         self.reset_connection_timeout();
-        if !self.vm().script_allowed() {
-            self.update_has_pending_activity();
-            return;
-        }
-
         match status {
             Status::Connected => {
                 let Some(on_connect) = self.consume_on_connect_callback(self.global()) else {
@@ -787,25 +782,11 @@ impl PostgresSQLConnection {
 
     fn handle_socket_failure(&self, fail: impl FnOnce(&Self)) {
         self.unregister_auto_flusher();
-
-        if !self.vm().script_allowed() {
-            self.stop_timers();
-            if self.status.get() == Status::Failed {
-                self.update_has_pending_activity();
-                return;
-            }
-
-            self.status.set(Status::Failed);
-            self.clean_up_requests(None);
-            self.update_has_pending_activity();
-        } else {
-            let event_loop = self.event_loop();
-            event_loop.enter();
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
-
-            fail(self);
-            event_loop.exit();
-        }
+        let event_loop = self.event_loop();
+        event_loop.enter();
+        self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+        fail(self);
+        event_loop.exit();
     }
 
     fn send_startup_message(&self) {
@@ -945,10 +926,6 @@ impl PostgresSQLConnection {
 
     fn drain_internal(&self) {
         debug!("drainInternal");
-        if !self.vm().script_allowed() {
-            return self.close();
-        }
-
         let event_loop = self.event_loop();
         event_loop.enter();
 
@@ -1315,11 +1292,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
     /// intentionally do NOT route through this — they forward unconditionally.
     #[inline]
     fn guarded(this: &PostgresSQLConnection, f: impl FnOnce(&PostgresSQLConnection)) {
-        if !this.vm().script_allowed() {
-            bun_core::hint::cold();
-            this.close();
-            return;
-        }
         f(this)
     }
 
@@ -1390,12 +1362,10 @@ impl PostgresSQLConnection {
         // callback fires, pending queries are rejected, and the in-flight
         // socket is torn down instead of completing the handshake after
         // close.
-        if self.vm().script_allowed()
-            && matches!(
-                self.status.get(),
-                Status::Connecting | Status::SentStartupMessage
-            )
-        {
+        if matches!(
+            self.status.get(),
+            Status::Connecting | Status::SentStartupMessage
+        ) {
             self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
             // closing an in-flight connect dispatches no socket event, so the
             // poll ref taken at creation is released here rather than in a
@@ -1492,31 +1462,27 @@ impl PostgresSQLConnection {
                         AnyPostgresError::ConnectionClosed,
                     ));
                     stmt.status = StatementStatus::Failed;
-                    if self.vm().script_allowed() {
-                        let global = self.global();
-                        if let Some(reason) = js_reason {
-                            request.on_js_error(reason, global);
-                        } else {
-                            request.on_error(
-                                &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
-                                global,
-                            );
-                        }
+                    let global = self.global();
+                    if let Some(reason) = js_reason {
+                        request.on_js_error(reason, global);
+                    } else {
+                        request.on_error(
+                            &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
+                            global,
+                        );
                     }
                 }
                 // in the middle of running
                 QueryStatus::Binding | QueryStatus::Running | QueryStatus::PartialResponse => {
                     self.finish_request(&request);
-                    if self.vm().script_allowed() {
-                        let global = self.global();
-                        if let Some(reason) = js_reason {
-                            request.on_js_error(reason, global);
-                        } else {
-                            request.on_error(
-                                &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
-                                global,
-                            );
-                        }
+                    let global = self.global();
+                    if let Some(reason) = js_reason {
+                        request.on_js_error(reason, global);
+                    } else {
+                        request.on_error(
+                            &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
+                            global,
+                        );
                     }
                 }
                 // just ignore success and fail cases

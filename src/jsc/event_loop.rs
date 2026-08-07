@@ -50,6 +50,9 @@ pub type Queue =
 
 pub struct EventLoop {
     pub tasks: Queue,
+    /// Set when teardown releases the queue: from then on `enqueue_task`
+    /// releases instead of parking (nothing will tick this loop again).
+    closed_for_tasks: bool,
 
     /// setImmediate() gets it's own two task queues
     /// When you call `setImmediate` in JS, it queues to the start of the next tick
@@ -114,6 +117,7 @@ impl Default for EventLoop {
     fn default() -> Self {
         Self {
             tasks: Queue::init(),
+            closed_for_tasks: false,
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
             concurrent_tasks: ConcurrentQueue::default(),
@@ -693,6 +697,16 @@ impl EventLoop {
     }
 
     pub fn enqueue_task(&mut self, task: Task) {
+        if self.closed_for_tasks && task.tag != bun_event_loop::task_tag::ManagedTask {
+            // Teardown already released the queue and this loop never ticks
+            // again: release the task now, as `release_queued_tasks` would have
+            // — the queue owns refusal, like `VmHandle::post` does off-thread.
+            // SAFETY: JS thread, JSC heap alive (teardown phase B/C); the
+            // definer matches the dispatch tag set.
+            if unsafe { __bun_release_task_at_shutdown(task) } {
+                return;
+            }
+        }
         let _ = self.tasks.write_item(task);
     }
 
@@ -759,6 +773,7 @@ impl EventLoop {
     /// root and surfaced the boxes as direct leaks; the definer can't safely
     /// dispatch every erased callback at shutdown.
     pub fn release_queued_tasks(&mut self) {
+        self.closed_for_tasks = true;
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {

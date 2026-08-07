@@ -249,11 +249,6 @@ impl Handlers {
         if self.mode != SocketMode::Server {
             return true;
         }
-        // Nothing to release once teardown has forbidden script: keep-alives no
-        // longer matter and JS handles are being released.
-        if !self.vm.script_allowed() {
-            return false;
-        }
         // Let the listener's JS wrapper be GC'd once the last connection is
         // closed and it's not listening anymore.
         if let Some(listener) = self.listener() {

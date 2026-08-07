@@ -2071,17 +2071,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
 
-        let vm = handlers.vm;
         this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
         let callback = handlers.on_close();
 
         if callback.is_empty() {
-            drop(cleanup);
-            return;
-        }
-
-        if !vm.script_allowed() {
             drop(cleanup);
             return;
         }
@@ -3272,6 +3266,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this_ref.update_flags(|f| f.insert(Flags::FINALIZING));
         this_ref.this_value.with_mut(|r| r.finalize());
         if !this_ref.socket.get().is_closed() {
+            this_ref.socket.get().prepare_for_finalize();
             this_ref.close_and_detach(uws::CloseCode::Failure);
         } else {
             this_ref.detach_native_callback();

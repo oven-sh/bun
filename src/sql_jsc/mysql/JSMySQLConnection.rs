@@ -367,32 +367,9 @@ impl JSMySQLConnection {
         self.register_auto_flusher();
     }
 
-    pub(crate) fn close(&self) {
-        // Re-enter through a `ParentRef` (lifetime-erased `&Self`) so no Rust
-        // borrow is held across the potential free in `deref()`. Guard drop
-        // order is LIFO: `_ref` (deref) drops last, after
-        // `update_reference_type()` has run, so `*p` is still live when the
-        // defer body executes.
-        let p = ParentRef::new(self);
-        let _ref = self.ref_guard();
-        scopeguard::defer! {
-            p.update_reference_type();
-        }
-        self.stop_timers();
-        self.unregister_auto_flusher();
-        if !self.vm().script_allowed() {
-            self.connection_mut().close();
-        } else {
-            let queries = self.get_queries_array();
-            self.connection_mut().clean_queue_and_close(None, queries);
-        }
-    }
 
     fn drain_internal(&self) {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
-        if !self.vm().script_allowed() {
-            return self.close();
-        }
         // Raw-pointer RAII guard so no reference is live across the potential
         // free.
         let _ref = self.ref_guard();
@@ -730,12 +707,8 @@ impl JSMySQLConnection {
         scopeguard::defer! {
             // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
             // yields a fresh `&Self` per access (R-2: every callee is `&self`).
-            if !p.vm().script_allowed() {
-                p.connection_mut().close();
-            } else {
-                let queries = p.get_queries_array();
-                p.connection_mut().clean_queue_and_close(Some(value), queries);
-            }
+            let queries = p.get_queries_array();
+            p.connection_mut().clean_queue_and_close(Some(value), queries);
             p.update_reference_type();
         }
         self.stop_timers();
@@ -745,10 +718,6 @@ impl JSMySQLConnection {
         }
 
         self.connection_mut().status = my_sql_connection::Status::Failed;
-        if !self.vm().script_allowed() {
-            return;
-        }
-
         let Some(on_close) = self.consume_on_close_callback(&self.global_object) else {
             return;
         };

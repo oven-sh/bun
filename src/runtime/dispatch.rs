@@ -1323,6 +1323,18 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         // dispatch arm above would have `delete`d it; mirror that here so the
         // re-queue path doesn't keep it alive past worker VM dealloc. Runs
         // before JSC teardown, so ~Ref<Ticket> is safe.
+        // Deferred out of a finalizer or a late completion; the loop is gone,
+        // so do the JS-free part of what the dispatch arm would have done.
+        task_tag::StreamPending => {
+            StreamPending::release_without_running(task.ptr.cast::<StreamPending>());
+            true
+        }
+        task_tag::ValkeyDeferredClose => {
+            // SAFETY: boxed at the enqueue site; we own it once refused/popped.
+            unsafe { bun_core::heap::take(task.ptr.cast::<crate::valkey_jsc::js_valkey::ValkeyDeferredClose>()) }
+                .run();
+            true
+        }
         task_tag::JSCDeferredWorkTask => {
             unsafe extern "C" {
                 fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);

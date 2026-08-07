@@ -1452,14 +1452,6 @@ impl JSValkeyClient {
             return;
         }
 
-        // During VM shutdown the event loop won't tick, so the deferred task below
-        // would never run; close inline (this_value is cleared, no JS re-entry).
-        if !self.vm().script_allowed() {
-            bun_core::hint::cold();
-            self.client_mut().close();
-            return;
-        }
-
         self.ref_();
         // socket close can potentially call JS so we need to enqueue the deinit
         let task = jsc::Task::from_boxed(Box::new(ValkeyDeferredClose {

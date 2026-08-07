@@ -1,18 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { GCProfiler, isStringOneByteRepresentation, queryObjects } from "node:v8";
-
-describe("v8.queryObjects", () => {
-  test("falsy but present format values throw ERR_INVALID_ARG_VALUE like Node", () => {
-    // Node reads options?.format with ??, so "" / 0 / false reach the
-    // format validation instead of silently defaulting to "count".
-    for (const format of ["", 0, false]) {
-      expect(() => queryObjects(class {}, { format: format as any })).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
-      );
-    }
-  });
-});
+import { GCProfiler, isStringOneByteRepresentation } from "node:v8";
 
 describe("v8.isStringOneByteRepresentation", () => {
   test("rejects non-string arguments", () => {

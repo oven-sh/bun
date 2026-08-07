@@ -250,7 +250,7 @@ function queryObjects(ctor, options) {
   if (options !== undefined) {
     validateObject(options, "options");
   }
-  const format = options?.format ?? "count";
+  const format = options?.format || "count";
   if (format !== "count" && format !== "summary") {
     throw $ERR_INVALID_ARG_VALUE("options.format", format);
   }

@@ -173,6 +173,41 @@ impl<'a> Response<'a> {
     }
 }
 
+impl Response<'_> {
+    /// Whether `buf` could now hold a complete head, given that its first
+    /// `already_seen` bytes were a proper prefix of one (`parse` returned
+    /// `ShortRead` on them). Only the new bytes are examined, so a caller
+    /// accumulating a trickled response checks each byte a bounded number of
+    /// times instead of re-parsing from the start on every read.
+    ///
+    /// `true` means "run `parse`": either the blank line that ends a head is
+    /// present or a stray CR makes the input invalid anyway.
+    pub fn may_be_complete(buf: &[u8], already_seen: usize) -> bool {
+        // A terminator ending in the new bytes starts at most 3 bytes earlier.
+        let mut from = already_seen.saturating_sub(3);
+        let mut line_breaks = 0;
+        while let Some(i) = strings::index_of_any_pos(buf, b"\r\n", from) {
+            if i != from {
+                line_breaks = 0;
+            }
+            if buf[i] == b'\r' {
+                match buf.get(i + 1) {
+                    None => return false,
+                    Some(b'\n') => from = i + 2,
+                    Some(_) => return true,
+                }
+            } else {
+                from = i + 1;
+            }
+            line_breaks += 1;
+            if line_breaks == 2 {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 /// Returns the response with an empty header list plus the number of entries
 /// written to `headers`, so the caller can attach the borrow.
 fn parse_response<'a>(
@@ -530,13 +565,47 @@ mod tests {
     }
 
     /// Every proper prefix of a valid head is `Partial`, never `Invalid`, and
-    /// never reads out of bounds.
+    /// never reads out of bounds; `may_be_complete` agrees at every split.
     #[test]
     fn every_prefix_is_partial() {
         let full = b"HTTP/1.1 301 Moved Permanently\r\nLocation: https://example.com/\r\nSet-Cookie: a=b; Path=/\r\nX-Empty:\r\nContent-Length: 0\r\n\r\n";
         for i in 0..full.len() {
             assert_eq!(parse(&full[..i], 8).0, PARTIAL, "prefix {i}");
+            for seen in [0, i / 2, i.saturating_sub(3), i.saturating_sub(1)] {
+                assert!(!Response::may_be_complete(&full[..i], seen), "{seen}..{i}");
+            }
+            assert!(Response::may_be_complete(full, i), "{i}..");
         }
         assert_eq!(parse(full, 8).0, OK);
+    }
+
+    #[test]
+    fn may_be_complete() {
+        for (buf, expect) in [
+            (&b""[..], false),
+            (b"\n", false),
+            (b"\n\n", true),
+            (b"\r\n\r\n", true),
+            (b"\n\r\n", true),
+            (b"\r\n\n", true),
+            (b"a\nb\n", false),
+            (b"a\r\n\r", false),
+            (b"a\rb", true), // invalid: let `parse` say so
+            (b"HTTP/1.1 200 OK\r\n\r\nbody", true),
+            (b"HTTP/1.1 200 OK\n\nbody", true),
+        ] {
+            for seen in 0..=buf.len() {
+                // Only meaningful when the seen prefix had no terminator itself.
+                if seen >= 2 && Response::may_be_complete(&buf[..seen], 0) {
+                    continue;
+                }
+                assert_eq!(
+                    Response::may_be_complete(buf, seen),
+                    expect,
+                    "{:?} seen={seen}",
+                    BStr::new(buf)
+                );
+            }
+        }
     }
 }

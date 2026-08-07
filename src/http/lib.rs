@@ -3625,6 +3625,8 @@ impl<'a> HTTPClient<'a> {
         // here once `clone_metadata()` has deep-copied the parsed headers.
         let mut buffer = std::mem::take(&mut self.state.response_message_buffer);
         let needs_move = buffer.list.is_empty();
+        // Bytes already known to be an incomplete (but so far valid) head.
+        let mut already_seen = buffer.list.len();
         let mut to_read: &[u8] = if needs_move {
             incoming_data
         } else {
@@ -3657,6 +3659,22 @@ impl<'a> HTTPClient<'a> {
                 return;
             }};
         }
+        // An incomplete head: keep accumulating unless it has outgrown the cap.
+        // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/request-side
+        // knob (Node `--max-http-header-size`); reusing it here rejects
+        // legitimate responses with large `Location`/`Set-Cookie` headers. The
+        // intent is to bound `response_message_buffer` growth, so use a
+        // generous fixed cap independent of that knob.
+        macro_rules! incomplete_head {
+            () => {{
+                const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
+                if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
+                    self.close_and_fail::<IS_SSL>(crate::Error::ResponseHeadersTooLarge, socket);
+                    return;
+                }
+                short_read!();
+            }};
+        }
 
         let shared_resp = scratch::response_headers();
         let mut response = loop {
@@ -3665,26 +3683,17 @@ impl<'a> HTTPClient<'a> {
             if to_read.len() < 16 {
                 short_read!();
             }
+            // Don't re-parse an accumulating head from the start on every read
+            // unless the new bytes could have completed it (quadratic under a
+            // trickling server otherwise).
+            let seen = core::mem::take(&mut already_seen);
+            if seen != 0 && !picohttp::Response::may_be_complete(to_read, seen) {
+                incomplete_head!();
+            }
 
             let parsed = match picohttp::Response::parse(to_read, &mut shared_resp[..]) {
                 Ok(r) => r,
-                Err(picohttp::ParseResponseError::ShortRead) => {
-                    // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
-                    // request-side knob (Node `--max-http-header-size`); reusing
-                    // it here rejects legitimate responses with large
-                    // `Location`/`Set-Cookie` headers. The intent is to bound
-                    // `response_message_buffer` growth, so use a generous fixed
-                    // cap independent of that knob.
-                    const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
-                    if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
-                        self.close_and_fail::<IS_SSL>(
-                            crate::Error::ResponseHeadersTooLarge,
-                            socket,
-                        );
-                        return;
-                    }
-                    short_read!();
-                }
+                Err(picohttp::ParseResponseError::ShortRead) => incomplete_head!(),
                 Err(e) => {
                     self.close_and_fail::<IS_SSL>(e.into(), socket);
                     return;

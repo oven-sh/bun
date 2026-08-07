@@ -738,3 +738,32 @@ describe("CTL octets in long response header values", () => {
     });
   });
 });
+
+// The client accumulates a response head that arrives in pieces and must
+// recognise its end however the terminator is split across reads.
+test("response head trickled one byte per write", async () => {
+  const head =
+    "HTTP/1.1 200 OK\r\nX-One: 1\r\nX-Two:  two \t\r\nSet-Cookie: a=b\r\nSet-Cookie: c=d\r\nContent-Length: 2\r\n\r\n";
+  await using server = net
+    .createServer(sock => {
+      sock.on("error", () => {});
+      sock.once("data", async () => {
+        for (const ch of head + "ok") {
+          if (!sock.write(ch)) await once(sock, "drain");
+          await new Promise<void>(r => setImmediate(r));
+        }
+        sock.end();
+      });
+    })
+    .listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+  const res = await fetch(`http://127.0.0.1:${port}/`);
+  expect({
+    status: res.status,
+    one: res.headers.get("x-one"),
+    two: res.headers.get("x-two"),
+    cookies: res.headers.getSetCookie(),
+    body: await res.text(),
+  }).toEqual({ status: 200, one: "1", two: "two", cookies: ["a=b", "c=d"], body: "ok" });
+});

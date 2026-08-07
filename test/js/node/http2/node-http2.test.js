@@ -2209,6 +2209,64 @@ it(
   15_000 * ASAN_MULTIPLIER,
 );
 
+// Closed streams must be evicted from maxSessionMemory accounting; a leaking
+// session refuses new streams (ENHANCE_YOUR_CALM) once retained streams exceed
+// the budget. 20k at maxSessionMemory:1 clears the 2 MiB / ~13.8k threshold.
+const STREAM_EVICTION_REQUESTS = 20_000;
+
+it(
+  "http2 sessions evict closed streams from maxSessionMemory accounting",
+  async () => {
+    const server = http2.createServer({ maxSessionMemory: 1 });
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 }, { endStream: true });
+    });
+
+    await new Promise(resolve => server.listen(0, resolve));
+
+    const client = http2.connect(`http://localhost:${server.address().port}`, { maxSessionMemory: 1 });
+
+    // Route session-level failures into the awaited request so the test fails
+    // with the real error instead of hanging until the timeout.
+    const sessionFailed = Promise.withResolvers();
+    sessionFailed.promise.catch(() => {}); // the close() in `finally` emits goaway
+    client.on("error", err => sessionFailed.reject(err));
+    client.on("goaway", errorCode => sessionFailed.reject(new Error(`GOAWAY errorCode=${errorCode}`)));
+
+    let completed = 0;
+    function request() {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const stream = client.request({ ":method": "GET" });
+      stream.on("error", reject);
+      stream.on("response", headers => {
+        if (headers[":status"] !== 200) reject(new Error(`unexpected status ${headers[":status"]}`));
+      });
+      stream.on("close", () => {
+        completed++;
+        resolve();
+      });
+      stream.resume();
+      stream.end();
+      return promise;
+    }
+
+    try {
+      for (let i = 0; i < STREAM_EVICTION_REQUESTS; i++) {
+        await Promise.race([request(), sessionFailed.promise]);
+      }
+    } finally {
+      client.removeAllListeners("goaway");
+      client.removeAllListeners("error");
+      client.on("error", () => {});
+      client.close();
+      server.close();
+    }
+
+    expect(completed).toBe(STREAM_EVICTION_REQUESTS);
+  },
+  30_000 * ASAN_MULTIPLIER,
+);
+
 it("http2.createServer validates input options", () => {
   // Test invalid options passed to createServer
   const invalidOptions = [1, true, "test", null, Symbol("test")];

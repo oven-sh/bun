@@ -2336,8 +2336,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_utilInspectStylizeColorFunction.initLater(
         [](const Initializer<JSFunction>& init) {
-            // This initializer must call init.set (LazyProperty::callFunc asserts
-            // it ran), so on any failure degrade to the no-color stylize.
+            // LazyProperty initializers must call init.set, so degrade to no-color on failure.
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
             auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(init.owner);
 
@@ -3088,9 +3087,8 @@ JSC::JSObject* GlobalObject::navigatorObject()
 JSC::JSFunction* GlobalObject::utilInspectFunction()
 {
     if (!m_utilInspectFunction.isInitialized()) [[unlikely]] {
-        // The LazyProperty initializer cannot fail (LazyProperty::callFunc
-        // asserts init.set ran) but loading node:util can throw. Load it here
-        // first so the initializer's requireId is a cache hit.
+        // Load node:util here, where failure can propagate; the LazyProperty
+        // initializer must not fail, and its requireId becomes a cache hit.
         auto& vm = JSC::getVM(this);
         auto scope = DECLARE_THROW_SCOPE(vm);
         internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::NodeUtil);

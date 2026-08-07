@@ -54,9 +54,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
 
     JSFunction* inspectFn = globalObject->utilInspectFunction();
     if (!inspectFn) [[unlikely]] {
-        // node:util failed to load (a tampered global can break its module
-        // init). Call the custom inspect without the inspect argument rather
-        // than failing the whole format.
+        // node:util failed to load; call the custom inspect without the inspect argument.
         (void)scope.tryClearException();
         RETURN_IF_EXCEPTION(scope, {});
     }

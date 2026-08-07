@@ -5558,9 +5558,8 @@ restart:
                 }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-                // Not getPropertySlot(PropertyName): reifying a static lazy property can
-                // run JS that transitions this object's structure, and that walk reads
-                // the prototype from the structure it captured before the reify.
+                // getNonIndexPropertySlot stays correct when a static lazy property
+                // reify runs JS that transitions this object's structure mid-walk.
                 bool hasProperty;
                 if (std::optional<uint32_t> index = parseIndex(property))
                     hasProperty = object->getPropertySlot(globalObject, index.value(), slot);

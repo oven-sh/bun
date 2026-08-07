@@ -249,9 +249,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
   }
 
-  // Create the symbols before touching process.env: a clobbered Symbol global
-  // must throw before env materialization, which can reify other lazy Bun
-  // properties and transition the Bun object mid-lookup.
+  // Symbols first: if Symbol is clobbered, throw before process.env materializes.
   const cwdSymbol = Symbol("cwd");
   const envSymbol = Symbol("env");
   const throwsSymbol = Symbol("throws");

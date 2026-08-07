@@ -1738,6 +1738,7 @@ impl VirtualMachine {
             // SAFETY: this thread's loop; nothing ticks it any more.
             unsafe { (*vm.uws_loop()).internal_loop_data.jsc_vm = core::ptr::null_mut() };
             bun_uws::free_thread_loop();
+            teardown_log!("teardown: uSockets loop freed");
             #[cfg(windows)]
             bun_sys::windows::libuv::Loop::close_thread_loop();
             teardown_log!("teardown: loops closed");

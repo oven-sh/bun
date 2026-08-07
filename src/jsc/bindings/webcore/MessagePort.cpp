@@ -587,7 +587,7 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     if (!m_hasRef) {
         m_hasRef = true;
         ref();
-        Bun__VmHandle__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->vmHandle, 1);
+        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
     }
 }
 
@@ -602,7 +602,7 @@ void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
     if (m_hasRef) {
         m_hasRef = false;
         deref();
-        Bun__VmHandle__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->vmHandle, -1);
+        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
     }
 }
 

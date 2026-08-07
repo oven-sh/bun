@@ -93,13 +93,15 @@ JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
 extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
 extern "C" void Bun__VmHandle__queueTaskConcurrently(::BunVmHandle*, EventLoopTask*);
 
+// JS thread (this context's thread): MessagePort / BroadcastChannel / worker global scope
+// keep-alives. Direct, so a ref taken before teardown is still released during it.
 void ScriptExecutionContext::refEventLoop()
 {
-    Bun__VmHandle__refKeepAlive(m_vmHandle, 1);
+    Bun__eventLoop__refKeepAlive(m_bunVM, 1);
 }
 void ScriptExecutionContext::unrefEventLoop()
 {
-    Bun__VmHandle__refKeepAlive(m_vmHandle, -1);
+    Bun__eventLoop__refKeepAlive(m_bunVM, -1);
 }
 
 ScriptExecutionContext::~ScriptExecutionContext()

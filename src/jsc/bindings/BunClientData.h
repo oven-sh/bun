@@ -5,6 +5,8 @@ struct BunVmHandle;
 extern "C" BunVmHandle* Bun__VmHandle__create(void* bunVM);
 extern "C" void Bun__VmHandle__release(BunVmHandle*);
 extern "C" void Bun__VmHandle__refKeepAlive(BunVmHandle*, int delta);
+// JS thread only: adjust the keep-alive of the VM this thread runs.
+extern "C" void Bun__eventLoop__refKeepAlive(void* bunVM, int delta);
 
 namespace WebCore {
 

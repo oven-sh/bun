@@ -617,11 +617,20 @@ impl Loop {
                     // (owners are freed only after this returns).
                     unsafe { uv_walk(loop_, Some(log_unclosed_cb), ptr::null_mut()) };
                     unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
-                    let _ = unsafe { uv_run(loop_, RunMode::Default) };
-                    // NOTE the call is unconditional — the close must run in
-                    // release builds too.
-                    let rc = unsafe { uv_loop_close(loop_) };
-                    debug_assert_eq!(rc, ReturnCode::ZERO);
+                    // Everything is closing now; only close callbacks / endgames
+                    // remain. Turn the loop without blocking until they have run —
+                    // RunMode::Default would also wait on ref'd-but-idle state
+                    // (Bun's virtual keep-alive count lives in active_handles) and
+                    // never return.
+                    let mut rc = ReturnCode::ZERO;
+                    for _ in 0..64 {
+                        let _ = unsafe { uv_run(loop_, RunMode::NoWait) };
+                        rc = unsafe { uv_loop_close(loop_) };
+                        if rc == ReturnCode::ZERO {
+                            break;
+                        }
+                    }
+                    debug_assert_eq!(rc, ReturnCode::ZERO, "uv loop still busy after closing every handle");
                 }
             }
             slot.set(ptr::null_mut());

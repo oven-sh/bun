@@ -290,6 +290,18 @@ pub unsafe extern "C" fn Bun__VmHandle__release(handle: *mut VmHandle) {
     drop(unsafe { bun_core::heap::take(handle) });
 }
 
+/// JS thread: adjust this VM's keep-alive directly (balanced pairs from
+/// MessagePort / BroadcastChannel / ScriptExecutionContext stay balanced through
+/// teardown; the cross-thread route below stops applying once the VM closes).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine, delta: core::ffi::c_int) {
+    if delta > 0 {
+        vm.event_loop_shared().ref_keep_alive();
+    } else {
+        vm.event_loop_shared().unref_keep_alive();
+    }
+}
+
 /// Any thread: adjust the VM's keep-alive (no-op once the VM is closed).
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__VmHandle__refKeepAlive(handle: &VmHandle, delta: core::ffi::c_int) {

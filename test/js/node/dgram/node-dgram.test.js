@@ -105,3 +105,30 @@ function getInterface() {
 
   return "::%lo";
 }
+
+// A throw from a "message" listener is a fatal uncaught exception, as in node.
+// Previously it was reported but the bound socket's ref kept the event loop
+// alive, so the process hung.
+test("node:dgram 'message' listener throw is a fatal uncaught exception", async () => {
+  const fixture = `
+    const dgram = require("node:dgram");
+    const rx = dgram.createSocket("udp4");
+    rx.on("message", () => {
+      throw new Error("dgram-boom");
+    });
+    rx.bind(0, "127.0.0.1", () => {
+      const tx = dgram.createSocket("udp4");
+      // Resend until one lands; the fatal exit ends the process.
+      setInterval(() => tx.send("hi", rx.address().port, "127.0.0.1"), 20);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("dgram-boom");
+  expect(exitCode).toBe(1);
+}, 15_000);

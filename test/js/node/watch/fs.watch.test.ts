@@ -421,6 +421,9 @@ describe("fs.watch", () => {
     try {
       const ac = new AbortController();
       const watcher = fs.watch(pathToFileURL(filepath), { signal: ac.signal });
+      // The abort delivers an unhandled "error" (AbortError), which is an
+      // uncaught exception as in node; this test is about close-from-close.
+      watcher.once("error", () => {});
 
       watcher.once("close", () => {
         try {
@@ -1621,3 +1624,52 @@ test("fs.watch wrapper reference survives GC across event, abort and close paths
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// A throw from a watch callback (or a "change" listener) is a fatal uncaught
+// exception, as in node. Previously it was reported but the watcher's ref kept
+// the event loop alive, so the process hung.
+test("fs.watch callback throw is a fatal uncaught exception", async () => {
+  const fixture = `
+    const fs = require("node:fs");
+    const dir = fs.mkdtempSync(require("node:os").tmpdir() + "/watch-throw-");
+    fs.watch(dir, () => {
+      throw new Error("watch-boom");
+    });
+    // Rewrite until the watcher fires; the fatal exit ends the process.
+    setInterval(() => fs.writeFileSync(dir + "/x", String(Date.now())), 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("watch-boom");
+  expect(exitCode).toBe(1);
+}, 15_000);
+
+test("fs.watch callback throw reaches an uncaughtException handler", async () => {
+  const fixture = `
+    const fs = require("node:fs");
+    const dir = fs.mkdtempSync(require("node:os").tmpdir() + "/watch-caught-");
+    process.on("uncaughtException", err => {
+      console.log("CAUGHT:" + err.message);
+      watcher.close();
+      clearInterval(timer);
+    });
+    const watcher = fs.watch(dir, () => {
+      throw new Error("watch-boom");
+    });
+    const timer = setInterval(() => fs.writeFileSync(dir + "/x", String(Date.now())), 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("CAUGHT:watch-boom");
+  expect(exitCode).toBe(0);
+}, 15_000);

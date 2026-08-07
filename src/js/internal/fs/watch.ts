@@ -1,6 +1,7 @@
 // fs.watch is lazily loaded so the FSWatcher class is only set up when it is used.
 const EventEmitter = require("node:events");
 const { basename } = require("node:path");
+const { guardCallback } = require("internal/shared");
 
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
@@ -158,7 +159,11 @@ class FSWatcher extends EventEmitter {
     this.#ignoreMatcher = createIgnoreMatcher(options?.ignore);
     this.#listener = listener;
     try {
-      this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
+      // guardCallback: a throw from a "change"/"error" listener is a fatal
+      // uncaught exception, as in node (FSEventWrap invokes onchange via
+      // MakeCallback). Without it the watcher's ref keeps the loop alive and
+      // the process hangs after reporting.
+      this.#watcher = fs.watch(path, options || {}, guardCallback(this.#onEvent.bind(this)));
     } catch (e: any) {
       e.path = path;
       e.filename = path;

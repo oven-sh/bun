@@ -496,3 +496,30 @@ describe("fs.watchFile", () => {
     });
   }, 30_000);
 });
+
+// A throw from a watchFile listener is a fatal uncaught exception, as in node.
+// Previously it was reported but the stat poller kept the event loop alive, so
+// the process hung (and kept polling and rethrowing).
+test("fs.watchFile listener throw is a fatal uncaught exception", async () => {
+  const fixture = `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const dir = fs.mkdtempSync(require("node:os").tmpdir() + "/watchfile-throw-");
+    const file = path.join(dir, "target.txt");
+    fs.writeFileSync(file, "0");
+    fs.watchFile(file, { interval: 20 }, () => {
+      throw new Error("watchfile-boom");
+    });
+    // Grow the file until a poll observes a change; the fatal exit ends the process.
+    setInterval(() => fs.appendFileSync(file, "x"), 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("watchfile-boom");
+  expect(exitCode).toBe(1);
+}, 15_000);

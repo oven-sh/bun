@@ -1488,7 +1488,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
                                 }
-                            } else if str_.eql_comptime(b"use asm") {
+                            } else if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
+                                // In the REPL the directive stays a string
+                                // statement so it evaluates as the result,
+                                // like node ('use asm' prints 'use asm').
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {

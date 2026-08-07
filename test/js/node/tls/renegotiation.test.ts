@@ -486,6 +486,9 @@ it.concurrent("should complete a quiet renegotiation over a duplex socket (SSLWr
   const { promise: renegotiated, resolve, reject } = Promise.withResolvers<void>();
   let secure = 0;
   const errors: string[] = [];
+  raw.on("error", (e: any) =>
+    reject(new Error(`raw socket failed before the second 'secure' (secure=${secure}, error=${e.code ?? e.message})`)),
+  );
   const socket = tlsConnect({ socket: duplex, rejectUnauthorized: false });
   socket.on("secure", () => {
     secure++;

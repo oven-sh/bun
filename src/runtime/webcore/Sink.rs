@@ -293,6 +293,14 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     fn source(&mut self) -> Option<&mut SourceHandle> {
         None
     }
+    /// Called from `js_controller_detached`: once per JS-pump controller, on
+    /// every detach path including its GC destructor. A sink co-owned by
+    /// another GC cell releases the controller's claim here (sweep order
+    /// between the two cells is unspecified, so neither destructor alone may
+    /// free it). Never free the allocation inline: the caller holds
+    /// `&mut Self` and the C++ dispatcher keeps using `m_sinkPtr` in the
+    /// same frame; defer a last-owner free to the event loop.
+    fn controller_detached(&mut self) {}
     fn done(&self) -> bool {
         false
     }
@@ -579,6 +587,7 @@ impl<T: JsSinkType> JSSink<T> {
                 }
             }
         }
+        this.controller_detached();
     }
 
     /// `${abi_name}__close` body — called from

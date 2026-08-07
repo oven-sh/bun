@@ -421,7 +421,10 @@ impl ServerWebSocket {
         let on_open_handler = handler.on_open;
         let on_error = handler.on_error;
         if !vm.script_allowed() {
-            bun_output::scoped_log!(WebSocketServer, "onOpen called after script execution was forbidden");
+            bun_output::scoped_log!(
+                WebSocketServer,
+                "onOpen called after script execution was forbidden"
+            );
             ws.close();
             return;
         }
@@ -494,7 +497,10 @@ impl ServerWebSocket {
         // This is the start of a task.
         let vm = self.handler().vm();
         if !vm.script_allowed() {
-            bun_output::scoped_log!(WebSocketServer, "onMessage called after script execution was forbidden");
+            bun_output::scoped_log!(
+                WebSocketServer,
+                "onMessage called after script execution was forbidden"
+            );
             ws.close();
             return;
         }

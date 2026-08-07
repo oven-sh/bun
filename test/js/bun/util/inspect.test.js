@@ -803,3 +803,36 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+// A property getter that throws while Bun.inspect enumerates an object must not
+// leave the exception pending on the VM: debug builds aborted with "Unexpected
+// exception observed" and release builds silently dropped every property that
+// came after the throwing one. Clobbering `Promise` makes the lazy `Bun.$`
+// getter throw while it is being reified (ShellPromise extends the global
+// Promise); the last check asserts that trigger still holds ($ gets skipped),
+// so the test fails loudly if it ever stops throwing.
+it("Bun.inspect enumeration survives a throwing lazy property getter", async () => {
+  const code = `
+    globalThis.Promise = undefined;
+    const s = Bun.inspect(Bun);
+    console.log(
+      s.includes("argv: ["),
+      s.includes("gc: [Function: gc]"),
+      s.includes("version: \\""),
+      s.includes("semver: "),
+      !s.includes("$: [Function"),
+    );
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "true true true true true",
+    stderr: "",
+    exitCode: 0,
+  });
+});

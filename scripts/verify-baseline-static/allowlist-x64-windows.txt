@@ -437,7 +437,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Highway. MSVC-mangled bun::N_AVX* names.
-# (243 symbols)
+# (249 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX10_2::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::CopyAsciiPrefixImpl                                  [AVX, AVX512BW, AVX512F, AVX512VL]
@@ -467,6 +467,7 @@ bun::N_AVX10_2::IndexOfInterestingCharacterInMultilineCommentImpl    [AVX, AVX51
 bun::N_AVX10_2::IndexOfInterestingCharacterInStringLiteralImpl       [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::IndexOfNeedsEscapeForJavaScriptStringImplBacktick    [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::IndexOfNeedsEscapeForJavaScriptStringImplQuote       [AVX, AVX512BW, AVX512F]
+bun::N_AVX10_2::IndexOfHttpCtlImpl                                   [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::IndexOfNewlineOrNonASCIIImpl                         [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl               [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::IndexOfSpaceOrNewlineOrNonASCIIImpl                  [AVX, AVX512BW, AVX512F]
@@ -504,6 +505,7 @@ bun::N_AVX2::IndexOfInterestingCharacterInMultilineCommentImpl       [AVX, AVX2]
 bun::N_AVX2::IndexOfInterestingCharacterInStringLiteralImpl          [AVX, AVX2]
 bun::N_AVX2::IndexOfNeedsEscapeForJavaScriptStringImplBacktick       [AVX, AVX2]
 bun::N_AVX2::IndexOfNeedsEscapeForJavaScriptStringImplQuote          [AVX, AVX2]
+bun::N_AVX2::IndexOfHttpCtlImpl                                      [AVX, AVX2]
 bun::N_AVX2::IndexOfNewlineOrNonASCIIImpl                            [AVX, AVX2]
 bun::N_AVX2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl                  [AVX, AVX2]
 bun::N_AVX2::IndexOfSpaceOrNewlineOrNonASCIIImpl                     [AVX, AVX2]
@@ -545,6 +547,7 @@ bun::N_AVX3::IndexOfInterestingCharacterInMultilineCommentImpl       [AVX, AVX51
 bun::N_AVX3::IndexOfInterestingCharacterInStringLiteralImpl          [AVX, AVX512BW, AVX512F]
 bun::N_AVX3::IndexOfNeedsEscapeForJavaScriptStringImplBacktick       [AVX, AVX512BW, AVX512F]
 bun::N_AVX3::IndexOfNeedsEscapeForJavaScriptStringImplQuote          [AVX, AVX512BW, AVX512F]
+bun::N_AVX3::IndexOfHttpCtlImpl                                      [AVX, AVX512BW, AVX512F]
 bun::N_AVX3::IndexOfNewlineOrNonASCIIImpl                            [AVX, AVX512BW, AVX512F]
 bun::N_AVX3::IndexOfNewlineOrNonASCIIOrHashOrAtImpl                  [AVX, AVX512BW, AVX512F]
 bun::N_AVX3::IndexOfSpaceOrNewlineOrNonASCIIImpl                     [AVX, AVX512BW, AVX512F]
@@ -587,6 +590,7 @@ bun::N_AVX3_DL::IndexOfInterestingCharacterInMultilineCommentImpl    [AVX, AVX51
 bun::N_AVX3_DL::IndexOfInterestingCharacterInStringLiteralImpl       [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::IndexOfNeedsEscapeForJavaScriptStringImplBacktick    [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::IndexOfNeedsEscapeForJavaScriptStringImplQuote       [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_DL::IndexOfHttpCtlImpl                                   [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::IndexOfNewlineOrNonASCIIImpl                         [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::IndexOfNewlineOrNonASCIIOrHashOrAtImpl               [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::IndexOfSpaceOrNewlineOrNonASCIIImpl                  [AVX, AVX512BW, AVX512F]
@@ -628,6 +632,7 @@ bun::N_AVX3_SPR::IndexOfInterestingCharacterInMultilineCommentImpl   [AVX, AVX51
 bun::N_AVX3_SPR::IndexOfInterestingCharacterInStringLiteralImpl      [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_SPR::IndexOfNeedsEscapeForJavaScriptStringImplBacktick   [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_SPR::IndexOfNeedsEscapeForJavaScriptStringImplQuote      [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_SPR::IndexOfHttpCtlImpl                                  [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_SPR::IndexOfNewlineOrNonASCIIImpl                        [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_SPR::IndexOfNewlineOrNonASCIIOrHashOrAtImpl              [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_SPR::IndexOfSpaceOrNewlineOrNonASCIIImpl                 [AVX, AVX512BW, AVX512F]
@@ -669,6 +674,7 @@ bun::N_AVX3_ZEN4::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX51
 bun::N_AVX3_ZEN4::IndexOfInterestingCharacterInStringLiteralImpl     [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_ZEN4::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_ZEN4::IndexOfNeedsEscapeForJavaScriptStringImplQuote     [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_ZEN4::IndexOfHttpCtlImpl                                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_ZEN4::IndexOfNewlineOrNonASCIIImpl                       [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_ZEN4::IndexOfNewlineOrNonASCIIOrHashOrAtImpl             [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_ZEN4::IndexOfSpaceOrNewlineOrNonASCIIImpl                [AVX, AVX512BW, AVX512F]

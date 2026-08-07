@@ -321,10 +321,14 @@ impl EncodedPattern {
                     i += 1 + expect.len();
                 }
                 Part::Param(name) => {
-                    if i > path.len() {
+                    if i >= path.len() {
                         return false;
                     }
                     let end = strings::index_of_char_pos(path, b'/', i).unwrap_or(path.len());
+                    // A parameter matches exactly one non-empty segment.
+                    if end == i {
+                        return false;
+                    }
                     // Check if we're about to exceed the maximum number of parameters
                     if param_num >= MatchedParams::MAX_COUNT {
                         // TODO: ideally we should throw a nice user message
@@ -343,6 +347,7 @@ impl EncodedPattern {
                     i = if end == path.len() { end } else { end + 1 };
                 }
                 Part::CatchAllOptional(name) | Part::CatchAll(name) => {
+                    let params_before = param_num;
                     // Capture remaining path segments as individual parameters
                     if i < path.len() {
                         let mut segment_start = i;
@@ -370,7 +375,10 @@ impl EncodedPattern {
                             };
                         }
                     }
-                    return true;
+                    // A required catch-all ([...name]) must capture at least
+                    // one segment; only [[...name]] matches zero segments.
+                    return matches!(part, Part::CatchAllOptional(_))
+                        || param_num > params_before;
                 }
                 Part::Group(_) => continue,
             }
@@ -1864,22 +1872,9 @@ impl JSFrameworkRouter {
         };
         if let Some(index) = self.router.match_slow(path.slice(), &mut params_out) {
             let obj = JSValue::create_empty_object(global, 2);
-            obj.put(
-                global,
-                b"params",
-                if params_out.params.len() > 0 {
-                    let params_obj =
-                        JSValue::create_empty_object(global, params_out.params.len() as usize);
-                    for param in params_out.params.slice() {
-                        // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
-                        let value_str = bun_core::String::clone_utf8(param.value.slice());
-                        params_obj.put(global, param.key.slice(), value_str.to_js(global)?);
-                    }
-                    params_obj
-                } else {
-                    JSValue::NULL
-                },
-            );
+            // Use the same conversion as the dev server so repeated catch-all
+            // keys aggregate into arrays instead of overwriting each other.
+            obj.put(global, b"params", params_out.to_js(global));
             obj.put(global, b"route", self.route_to_json_inverse(global, index)?);
             return Ok(obj);
         }

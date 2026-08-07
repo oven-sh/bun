@@ -133,3 +133,93 @@ test("discovers from filesystem paths", () => {
     ],
   });
 });
+
+describe("url matching", () => {
+  // Builds a router over `files` and returns match(url) normalized to
+  // { file: <relative page path>, params } or null for no match.
+  const makeMatcher = (...files: string[]) => {
+    const dir = tempDir("fsr-match", Object.fromEntries(files.map(file => [file, "1"])));
+    const router = new FrameworkRouter({ root: String(dir), style: "nextjs-pages" });
+    return {
+      match(url: string): { file: string; params: Record<string, string | string[]> | null } | null {
+        const result = router.match(url);
+        if (result === null) return null;
+        return {
+          file: path.relative(String(dir), result.route.page).replaceAll("\\", "/"),
+          params: result.params,
+        };
+      },
+      [Symbol.dispose]() {
+        dir[Symbol.dispose]();
+      },
+    };
+  };
+
+  test("every dynamic segment must be present in the url", () => {
+    using r = makeMatcher("[category]/[year]/[slug].tsx");
+    expect(r.match("/a/b/c")).toEqual({
+      file: "[category]/[year]/[slug].tsx",
+      params: { category: "a", year: "b", slug: "c" },
+    });
+    // Missing segments must not match as empty params.
+    expect(r.match("/first-post")).toBe(null);
+    expect(r.match("/a/b")).toBe(null);
+    expect(r.match("/a/b/c/d")).toBe(null);
+  });
+
+  test("a url with fewer segments matches the shorter pattern, not a longer one with empty params", () => {
+    using r = makeMatcher("[slug].tsx", "[category]/[year]/[slug].tsx");
+    expect(r.match("/first-post")).toEqual({
+      file: "[slug].tsx",
+      params: { slug: "first-post" },
+    });
+    expect(r.match("/a/b/c")).toEqual({
+      file: "[category]/[year]/[slug].tsx",
+      params: { category: "a", year: "b", slug: "c" },
+    });
+  });
+
+  test("params never match an empty segment", () => {
+    using r = makeMatcher("[slug].tsx", "a/[b].tsx");
+    expect(r.match("/")).toBe(null);
+    expect(r.match("//")).toBe(null);
+    expect(r.match("/a//")).toBe(null);
+    expect(r.match("/a/b")).toEqual({ file: "a/[b].tsx", params: { b: "b" } });
+  });
+
+  test("required catch-all needs at least one segment", () => {
+    using r = makeMatcher("docs/[...slug].tsx");
+    expect(r.match("/docs")).toBe(null);
+    expect(r.match("/docs/")).toBe(null);
+    expect(r.match("/docs/a")).toEqual({
+      file: "docs/[...slug].tsx",
+      params: { slug: "a" },
+    });
+    expect(r.match("/docs/a/b")).toEqual({
+      file: "docs/[...slug].tsx",
+      params: { slug: ["a", "b"] },
+    });
+  });
+
+  test("required catch-all at the root does not match /", () => {
+    using r = makeMatcher("[...slug].tsx");
+    expect(r.match("/")).toBe(null);
+    expect(r.match("/a/b")).toEqual({
+      file: "[...slug].tsx",
+      params: { slug: ["a", "b"] },
+    });
+  });
+
+  test("optional catch-all matches zero segments", () => {
+    using r = makeMatcher("blog/[[...slug]].tsx");
+    expect(r.match("/blog")).toEqual({ file: "blog/[[...slug]].tsx", params: null });
+    expect(r.match("/blog/a")).toEqual({
+      file: "blog/[[...slug]].tsx",
+      params: { slug: "a" },
+    });
+    expect(r.match("/blog/a/b")).toEqual({
+      file: "blog/[[...slug]].tsx",
+      params: { slug: ["a", "b"] },
+    });
+  });
+});

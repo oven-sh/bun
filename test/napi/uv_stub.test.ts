@@ -14,18 +14,21 @@ import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_
 //    (dlsym/dladdr) in-process and asserts each one lands in the same binary
 //    that provides N-API, i.e. bun itself. This is the all-symbols guarantee
 //    that every stub is exported and reachable, and it costs no subprocesses.
+//    It covers the full list, including the test_skipped symbols: those are
+//    exported stubs too, they just have no generated typed call in plugin.c,
+//    so only layers 1 and 3 exempt them.
 // 3. The abort path (stub -> CrashHandler__unsupportedUVFunction -> crash
 //    message naming the symbol) costs one aborted bun process per symbol, so
 //    it runs for a fixed sample: the first symbol of every 8th API family
 //    (uv_fs_*, uv_tcp_*, ...) plus the last symbol in the list. The formatter
 //    is shared by all stubs, so the sample exercises the mechanism while
 //    layers 1 and 2 keep per-symbol coverage.
-const all_symbols = symbols.filter(s => !test_skipped.includes(s));
+const callable_symbols = symbols.filter(s => !test_skipped.includes(s));
 
 const family_reps: string[] = [];
 {
   const seen = new Set<string>();
-  for (const s of all_symbols) {
+  for (const s of callable_symbols) {
     const family = /^uv_[a-z0-9]+/.exec(s)![0];
     if (!seen.has(family)) {
       seen.add(family);
@@ -33,7 +36,9 @@ const family_reps: string[] = [];
     }
   }
 }
-const abort_sample = [...new Set([...family_reps.filter((_, i) => i % 8 === 0), all_symbols[all_symbols.length - 1]])];
+const abort_sample = [
+  ...new Set([...family_reps.filter((_, i) => i % 8 === 0), callable_symbols[callable_symbols.length - 1]]),
+];
 
 const fixtures = path.join(import.meta.dir, "uv-stub-stuff");
 const napiInclude = path.join(import.meta.dir, "../../src/runtime/napi");
@@ -85,10 +90,10 @@ describe.if(!isWindows)("uv stubs", () => {
 
   test("every stub symbol resolves into the bun binary", () => {
     const { checkSymbols } = require(addon("symbol_check"));
-    const { missing, modules, napiModule } = checkSymbols(all_symbols);
+    const { missing, modules, napiModule } = checkSymbols(symbols);
     expect(missing).toEqual([]);
     expect([...new Set(modules)]).toEqual([napiModule]);
-    expect(modules).toHaveLength(all_symbols.length);
+    expect(modules).toHaveLength(symbols.length);
   });
 
   // The bodies share no mutable state (tempdir is read-only after beforeAll),
@@ -126,15 +131,20 @@ describe.if(!isWindows)("uv stubs", () => {
         cmd: [bunExe(), "-e", `require(${JSON.stringify(addon("good_plugin"))}); console.log("HI!")`],
         env: bunEnv,
         stdout: "pipe",
-        stderr: "ignore",
+        stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // good_plugin's init calls uv_os_getpid (a real implementation, not a
-      // stub) and prints the pid; C stdio may flush it after console.log's
-      // output, so don't assert ordering.
-      expect(stdout).toContain("HI!");
-      expect(stdout).toMatch(/(^|\n)\d+\n/);
-      expect(exitCode).toBe(0);
+      // stub) and prints the pid, which is proc.pid since Bun.spawn execs the
+      // child directly. C stdio may flush it after console.log's output, so
+      // don't assert ordering. stderr is part of the assertion so a crash
+      // banner shows up in the failure diff, but debug builds may print
+      // benign noise there, so its contents aren't pinned.
+      expect({ exitCode, lines: stdout.split("\n"), stderr }).toEqual({
+        exitCode: 0,
+        lines: expect.arrayContaining([String(proc.pid), "HI!"]),
+        stderr: expect.any(String),
+      });
     },
     90_000,
   );

@@ -96,6 +96,7 @@ public:
     void* m_value;
     NapiFinalizer m_finalizer;
     WTF::RefPtr<NapiEnv> m_env;
+    const NapiEnv::BoundFinalizer* m_boundCleanup = nullptr;
 
 #if ASSERT_ENABLED
     String sourceOriginURL = String();

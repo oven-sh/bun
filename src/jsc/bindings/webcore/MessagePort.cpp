@@ -31,7 +31,7 @@
 
 #include "BunClientData.h"
 #include "EventNames.h"
-#include "BunWorkerGlobalScope.h"
+#include "GlobalEventScope.h"
 #include "JSMessagePort.h"
 #include "MessageEvent.h"
 #include "MessagePortPipe.h"

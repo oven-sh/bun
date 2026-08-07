@@ -189,6 +189,23 @@ impl VmHandle {
         Posted::Queued
     }
 
+    /// Queue a C++ `EventLoopTask` from another thread (WebCore's
+    /// `postTaskConcurrently`), or delete it unrun if the VM is gone — the
+    /// same release teardown applies to queued C++ tasks.
+    pub fn post_cpp_task(&self, task: *mut crate::cpp_task::CppTask) {
+        unsafe extern "C" {
+            fn Bun__deleteEventLoopTask(task: *mut crate::cpp_task::CppTask);
+        }
+        let ct = ConcurrentTaskItem::create(bun_event_loop::Task::init(task));
+        if let Posted::Refused(ct) = self.post(LoopKind::Regular, ct) {
+            // SAFETY: refused ⇒ we own both boxes.
+            unsafe {
+                drop(bun_core::heap::take(ct.as_ptr()));
+                Bun__deleteEventLoopTask(task);
+            }
+        }
+    }
+
     /// Wake the VM's loop (no-op once closed).
     pub fn wake(&self) {
         if let Some(_a) = self.enter() {

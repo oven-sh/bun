@@ -798,8 +798,18 @@ impl VirtualMachine {
 
     /// May native code enter user JavaScript right now? `true` in normal
     /// operation and during the stop phase of teardown (close/exit handlers
-    /// run); `false` once teardown has forbidden execution. Node's
-    /// `can_call_into_js()`. JS thread.
+    /// run); `false` once teardown has forbidden execution — phase B of
+    /// [`teardown`](Self::teardown), or `on_exit` for a worker its parent
+    /// terminated. Node's `can_call_into_js()`. JS thread.
+    ///
+    /// This is **not** something callers of `JSValue::call` consult: once
+    /// script is forbidden, the native→JS boundary itself
+    /// (`Bun__JSValue__call`, WebCore's `JSEventListener`) turns a call into a
+    /// silent no-op and JSC discards microtasks — the same model as Node's
+    /// `InternalMakeCallback` and WebCore's `isJSExecutionForbidden`. Read it
+    /// only for a *resource* decision that differs during teardown (e.g.
+    /// "release this parked request instead of waiting for a JS consumer"),
+    /// never as a guard in front of a call.
     #[inline]
     pub fn script_allowed(&self) -> bool {
         self.handle.script_allowed()
@@ -1686,8 +1696,11 @@ impl VirtualMachine {
         // Each sweep below dispatches close handlers, and a handler may open
         // something an earlier sweep already emptied (a socket from a DNS
         // rejection, a server from an on_close). Repeat until a whole round
-        // finds nothing to stop, so nothing survives into B — bounded, so a
-        // handler that reopens forever cannot wedge teardown.
+        // finds nothing to stop, so nothing survives into B. The bound only
+        // exists so a handler that reopens on every close cannot wedge
+        // teardown (the same bound `close_all_socket_groups` uses internally);
+        // whatever is still open after it is closed with script already
+        // refused, by finalizers and the loop free.
         let mut rounds = 0u8;
         loop {
             let mut round = SweepResult::Idle;
@@ -3815,7 +3828,7 @@ impl VirtualMachine {
             is_main_thread: false,
             // The global is created with the worker's messaging proxy, context id
             // and `mini` so the C++ ZigGlobalObject is born with its options wired.
-            worker_ptr: worker.proxy(),
+            worker_ptr: worker.messaging_proxy(),
             context_id: Some(worker.execution_context_id() as i32),
             mini_mode: worker.mini(),
             ..Default::default()

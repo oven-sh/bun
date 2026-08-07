@@ -5198,14 +5198,9 @@ impl c_ares::ChannelContainer for Resolver {
         self.channel.set(Some(channel));
         // A live channel has sockets, timers and queries in flight whose
         // callbacks need this VM: the stop phase closes it (any resolver, not
-        // just the VM-global one) if nobody did before.
-        // SAFETY: this thread's live runtime state; unregistered in `destroy_channel`.
-        unsafe {
-            (*crate::jsc_hooks::runtime_state()).active_handles.insert(
-                crate::jsc_hooks::ActiveHandle::DnsResolver(core::ptr::NonNull::from(self)),
-                (),
-            );
-        }
+        // just the VM-global one) if nobody did before. Unregistered in
+        // `destroy_channel`.
+        crate::jsc_hooks::ActiveHandle::DnsResolver(core::ptr::NonNull::from(self)).register();
     }
 }
 
@@ -5218,17 +5213,7 @@ impl Resolver {
         let Some(channel) = self.channel.take() else {
             return false;
         };
-        let state = crate::jsc_hooks::runtime_state();
-        if !state.is_null() {
-            // SAFETY: this thread's live runtime state; registered in `set_channel`.
-            unsafe {
-                (*state)
-                    .active_handles
-                    .swap_remove(&crate::jsc_hooks::ActiveHandle::DnsResolver(
-                        core::ptr::NonNull::from(self),
-                    ));
-            }
-        }
+        crate::jsc_hooks::ActiveHandle::DnsResolver(core::ptr::NonNull::from(self)).unregister();
         // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
         unsafe { c_ares::Channel::destroy(channel) };
         true

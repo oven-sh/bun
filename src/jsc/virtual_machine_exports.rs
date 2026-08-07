@@ -1,6 +1,5 @@
 use core::ffi::c_void;
 
-use crate::event_loop::ConcurrentTask;
 use crate::plugin_runner::PluginRunner;
 use crate::{
     CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
@@ -93,27 +92,14 @@ pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask)
     this.event_loop_mut().enqueue_task(Task::init(task));
 }
 
-unsafe extern "C" {
-    fn Bun__deleteEventLoopTask(task: *mut crate::cpp_task::CppTask);
-}
-
-/// Off-thread counterpart of [`vm_queue_task`], through the VM's handle: the
-/// task is queued, or — if the VM has been torn down — deleted here unrun.
+/// Off-thread counterpart of [`vm_queue_task`]: see [`crate::VmHandle::post_cpp_task`].
 // HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
 pub fn vm_handle_queue_task_concurrently(
     handle: &crate::VmHandle,
     task: *mut crate::cpp_task::CppTask,
 ) {
     crate::mark_binding!();
-    let ct = ConcurrentTask::create(Task::init(task));
-    if let crate::vm_handle::Posted::Refused(ct) = handle.post(crate::LoopKind::Regular, ct) {
-        // SAFETY: refused ⇒ we own the box; the C++ task is deleted unrun
-        // (same as the teardown's release of queued C++ tasks).
-        unsafe {
-            drop(bun_core::heap::take(ct.as_ptr()));
-            Bun__deleteEventLoopTask(task);
-        }
-    }
+    handle.post_cpp_task(task);
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)

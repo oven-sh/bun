@@ -296,17 +296,9 @@ impl WindowsNamedPipeContext {
         // arm; `this` is the live ctx pointer registered in create()
         match unsafe { (*this).task_event } {
             EventState::Deinit => {
-                let state = crate::jsc_hooks::runtime_state();
-                if !state.is_null() {
-                    // SAFETY: this thread's live runtime state; registered in create().
-                    unsafe {
-                        (*state).active_handles.swap_remove(
-                            &crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(
-                                core::ptr::NonNull::new_unchecked(this),
-                            ),
-                        );
-                    }
-                }
+                // SAFETY: `this` is the live allocation registered in create().
+                crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe { core::ptr::NonNull::new_unchecked(this) })
+                    .unregister();
                 // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
                 // and this deferred task is the sole remaining owner. Drop runs field destructors.
                 drop(unsafe { bun_core::heap::take(this) });
@@ -412,15 +404,9 @@ impl WindowsNamedPipeContext {
 
             // A socket over a Windows named pipe is in no uSockets group: the VM's
             // stop phase closes it through this owner (unregistered when freed).
-            // SAFETY: this thread's live runtime state; `this` fully initialised.
-            unsafe {
-                (*crate::jsc_hooks::runtime_state()).active_handles.insert(
-                    crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(
-                        core::ptr::NonNull::new_unchecked(this),
-                    ),
-                    (),
-                );
-            }
+            // SAFETY: non-null, fully initialised above.
+            crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe { core::ptr::NonNull::new_unchecked(this) })
+                .register();
 
             this
         }

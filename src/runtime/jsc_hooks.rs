@@ -196,6 +196,23 @@ pub(crate) fn active_handles() -> Option<&'static mut ActiveHandles> {
     Some(unsafe { &mut (*state).active_handles })
 }
 
+impl ActiveHandle {
+    /// This owner now holds something the stop phase must stop (JS thread).
+    pub(crate) fn register(self) {
+        if let Some(handles) = active_handles() {
+            bun_core::handle_oom(handles.put(self, ()));
+        }
+    }
+
+    /// The owner closed it itself (JS thread; a no-op off-thread, where the
+    /// registry is unreachable and the owner must already have unregistered).
+    pub(crate) fn unregister(&self) {
+        if let Some(handles) = active_handles() {
+            handles.swap_remove(self);
+        }
+    }
+}
+
 /// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
 /// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.

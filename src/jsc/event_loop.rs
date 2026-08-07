@@ -404,7 +404,7 @@ impl EventLoop {
         // exception already pending — a prior callback's microtasks can request
         // termination (worker.terminate()), and entering JS then would trip
         // executeCallImpl's `assertNoException`.
-        if !global_object.bun_vm().script_allowed() || global_object.has_exception() {
+        if global_object.has_exception() {
             return;
         }
         // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
@@ -440,7 +440,7 @@ impl EventLoop {
         arguments: &[JSValue],
     ) -> JSValue {
         // Same gate as `run_callback`.
-        if !global_object.bun_vm().script_allowed() || global_object.has_exception() {
+        if global_object.has_exception() {
             return JSValue::ZERO;
         }
         // R-2 noalias mitigation — see `run_callback` above.
@@ -1116,7 +1116,7 @@ impl EventLoop {
         arguments: &[JSValue],
     ) -> JsResult<JSValue> {
         // Same gate as `run_callback`.
-        if !global_object.bun_vm().script_allowed() || global_object.has_exception() {
+        if global_object.has_exception() {
             return Ok(JSValue::UNDEFINED);
         }
         let result = callback.call(global_object, this_value, arguments)?;

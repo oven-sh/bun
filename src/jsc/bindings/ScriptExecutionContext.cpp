@@ -7,7 +7,7 @@
 #include "libusockets.h"
 #include "_libusockets.h"
 #include "BunClientData.h"
-#include "BunWorkerGlobalScope.h"
+#include "GlobalEventScope.h"
 #include "EventLoopTask.h"
 #include "Performance.h"
 #include "ZigGlobalObject.h"

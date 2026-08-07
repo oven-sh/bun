@@ -42,7 +42,7 @@
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include "MessageEvent.h"
-#include "BunWorkerGlobalScope.h"
+#include "GlobalEventScope.h"
 #include "CloseEvent.h"
 #include "JSDOMConvertObject.h"
 #include "JSDOMConvertSequences.h"

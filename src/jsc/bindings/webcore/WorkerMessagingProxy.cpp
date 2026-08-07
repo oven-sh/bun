@@ -28,7 +28,7 @@
 #include "WorkerMessagingProxy.h"
 
 #include "BunClientData.h"
-#include "BunWorkerGlobalScope.h"
+#include "GlobalEventScope.h"
 #include "CloseEvent.h"
 #include "ErrorCode.h"
 #include "ErrorEvent.h"

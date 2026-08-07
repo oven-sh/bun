@@ -71,7 +71,7 @@
 #include "BunSecureContextCache.h"
 #include "NodeV8.h"
 #include "ProcessIdentifier.h"
-#include "BunWorkerGlobalScope.h"
+#include "GlobalEventScope.h"
 #include "CallSite.h"
 #include "CallSitePrototype.h"
 #include "FormatStackTraceForJS.h"
@@ -1041,7 +1041,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
-    , globalEventScope(adoptRef(*new Bun::WorkerGlobalScope(m_scriptExecutionContext)))
+    , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
@@ -1056,7 +1056,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
-    , globalEventScope(adoptRef(*new Bun::WorkerGlobalScope(m_scriptExecutionContext)))
+    , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);

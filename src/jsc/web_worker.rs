@@ -37,7 +37,7 @@ use crate::JsCell;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
 use bun_core::{String as BunString, WTFStringImpl};
@@ -49,11 +49,12 @@ use crate::{self as jsc, JSGlobalObject, JSValue, JsError, LogJsc};
 
 bun_core::define_scoped_log!(log, Worker, hidden);
 
+#[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct WebWorker {
     // ---- Immutable after `create()` (any thread) ----------------------------
     /// The C++ `WorkerMessagingProxy`; the thread holds a ref on it, so it is
     /// valid for as long as this thread runs. Opaque here.
-    proxy: *mut c_void,
+    messaging_proxy: *mut c_void,
     /// The `VirtualMachine` of the thread that created this worker. Read on the
     /// worker thread by `start_vm()` (transform options, env, standalone graph)
     /// and on the parent thread for `parent_poll_ref` / `child_workers`. Valid
@@ -74,7 +75,7 @@ pub struct WebWorker {
     name: bun_core::ZBox,
 
     // ---- Cross-thread ----------------------------------------------------------
-    ref_count: AtomicU32,
+    ref_count: bun_ptr::ThreadSafeRefCount<WebWorker>,
     /// Set by the parent (`requestTermination`), by an exiting ancestor, or by
     /// the worker itself (`process.exit()`); polled by the worker loop between
     /// ticks and turned into a JSC TerminationException for running script.
@@ -164,8 +165,8 @@ pub fn join_child_workers(parent: &mut VirtualMachine) {
     for child in children {
         // SAFETY: registered children are live until the parent releases them
         // (the proxy's ref); this is that release.
-        let proxy = unsafe { (*child).proxy };
-        WebWorker__parentContextWillDestroy(proxy);
+        let messaging_proxy = unsafe { (*child).messaging_proxy };
+        WebWorker__parentContextWillDestroy(messaging_proxy);
     }
 }
 
@@ -175,8 +176,18 @@ pub fn join_child_workers(parent: &mut VirtualMachine) {
 #[unsafe(no_mangle)]
 extern "C" fn WebWorker__getMessagingProxy(vm: &VirtualMachine) -> *mut c_void {
     vm.worker_ref()
-        .map(|w| w.proxy)
+        .map(|w| w.messaging_proxy)
         .unwrap_or(core::ptr::null_mut())
+}
+
+impl Drop for WebWorker {
+    fn drop(&mut self) {
+        log!("[{}] destroy", self.execution_context_id);
+        debug_assert!(
+            self.join_handle.with_mut(|h| h.is_none()),
+            "worker thread was never joined"
+        );
+    }
 }
 
 impl WebWorker {
@@ -318,7 +329,7 @@ impl WebWorker {
         let store_fd = unsafe { (*parent).transpiler.resolver.store_fd };
 
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
-            proxy,
+            messaging_proxy: proxy,
             // `parent` is the calling thread's live VM; non-null by FFI contract.
             parent: bun_ptr::BackRef::from(NonNull::new(parent).expect("parent VM")),
             execution_context_id: this_context_id,
@@ -337,7 +348,7 @@ impl WebWorker {
             } else {
                 name_str.to_owned_slice_z()
             },
-            ref_count: AtomicU32::new(1),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
             requested_terminate: AtomicBool::new(false),
             vm: Cell::new(core::ptr::null_mut()),
             vm_lock: Mutex::new(),
@@ -398,27 +409,18 @@ impl WebWorker {
     }
 
     fn ref_(&self) {
-        self.ref_count.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: `self` is live; the count is atomic.
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
     }
 
-    /// Drop one ref; the last one frees the allocation. Any thread.
+    /// Drop one ref; the last one frees the allocation (`Drop` below). Any thread.
     ///
     /// # Safety
     /// `this` came from `create()` and the caller owns one ref on it.
     #[unsafe(export_name = "WebWorker__deref")]
     pub(crate) unsafe extern "C" fn deref(this: *mut WebWorker) {
-        // SAFETY: caller owns a ref, so `this` is live for this read-modify-write.
-        if unsafe { (*this).ref_count.fetch_sub(1, Ordering::AcqRel) } != 1 {
-            return;
-        }
-        // SAFETY: that was the last ref; nobody else can reach `this`.
-        let this = unsafe { bun_core::heap::take(this) };
-        log!("[{}] destroy", this.execution_context_id);
-        debug_assert!(
-            this.join_handle.with_mut(|h| h.is_none()),
-            "worker thread was never joined"
-        );
-        drop(this);
+        // SAFETY: fn contract.
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     /// Block until the OS thread has returned. Parent thread; the worker has
@@ -513,8 +515,8 @@ impl WebWorker {
     /// The C++ `WorkerMessagingProxy`, handed to `Zig__GlobalObject__create` so
     /// the worker's global is born knowing its options (env, argv, workerData).
     #[inline]
-    pub(crate) fn proxy(&self) -> *mut c_void {
-        self.proxy
+    pub(crate) fn messaging_proxy(&self) -> *mut c_void {
+        self.messaging_proxy
     }
 
     #[inline]
@@ -898,7 +900,7 @@ impl WebWorker {
         // that arrived while the entry point was loading are delivered. After the
         // entry point on purpose, so the parent observes 'online' only once the
         // worker's top-level code has run (up to its first top-level await).
-        WebWorker__workerGlobalScopeStarted(self.proxy, vm.global());
+        WebWorker__workerGlobalScopeStarted(self.messaging_proxy, vm.global());
         self.set_status(Status::Running);
 
         // don't run the GC if we don't actually need to
@@ -1055,7 +1057,7 @@ impl WebWorker {
         // its forced unwind would cross `extern "C"` frames and abort).
         // A worker stopped by its parent that never called process.exit() did
         // not choose `exit_code`; the proxy decides what that reads as per kind.
-        WebWorker__workerGlobalScopeDestroyed(self.proxy, exit_code, self.stopped_by_parent());
+        WebWorker__workerGlobalScopeDestroyed(self.messaging_proxy, exit_code, self.stopped_by_parent());
     }
 
     /// worker.terminate() from the parent, and the worker did not also exit on
@@ -1120,7 +1122,7 @@ impl WebWorker {
         };
         let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
-            WebWorker__dispatchError(global, self.proxy, &mut str, err)
+            WebWorker__dispatchError(global, self.messaging_proxy, &mut str, err)
         });
         if let Err(e) = dispatch {
             // `take_exception` on a `JsError` always returns an Exception
@@ -1207,7 +1209,7 @@ fn on_unhandled_rejection(
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         WebWorker__dispatchError(
             global_object,
-            worker.proxy,
+            worker.messaging_proxy,
             &mut error_message,
             error_instance,
         );

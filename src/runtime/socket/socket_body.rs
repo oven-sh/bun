@@ -4547,18 +4547,9 @@ impl DuplexUpgradeContext {
     }
 
     unsafe fn deinit(this: *mut Self) {
-        let state = crate::jsc_hooks::runtime_state();
-        if !state.is_null() {
-            // SAFETY: this thread's live runtime state; `this` was registered
-            // in `js_upgrade_duplex_to_tls`.
-            unsafe {
-                (*state).active_handles.swap_remove(
-                    &crate::jsc_hooks::ActiveHandle::DuplexUpgrade(
-                        core::ptr::NonNull::new_unchecked(this),
-                    ),
-                );
-            }
-        }
+        // SAFETY: fn contract — the live allocation registered in `js_upgrade_duplex_to_tls`.
+        crate::jsc_hooks::ActiveHandle::DuplexUpgrade(unsafe { core::ptr::NonNull::new_unchecked(this) })
+            .unregister();
         {
             // SAFETY: `this` is live; each field access is scoped to its own
             // statement, so nothing spans the `heap::take` free below.
@@ -4869,16 +4860,11 @@ pub fn js_upgrade_duplex_to_tls(
     // A TLS socket over a JS duplex is in no uSockets group, so the VM's stop
     // phase closes it through this owner (see `stop_for_vm_teardown`) rather
     // than leaving it to a GC finalizer.
-    // SAFETY: `runtime_state()` is this thread's live state; `duplex_context`
-    // is the fully-initialised allocation, unregistered again in `deinit`.
-    unsafe {
-        (*crate::jsc_hooks::runtime_state()).active_handles.insert(
-            crate::jsc_hooks::ActiveHandle::DuplexUpgrade(core::ptr::NonNull::new_unchecked(
-                duplex_context,
-            )),
-            (),
-        );
-    }
+    // SAFETY: non-null, fully initialised; unregistered again in `deinit`.
+    crate::jsc_hooks::ActiveHandle::DuplexUpgrade(unsafe {
+        core::ptr::NonNull::new_unchecked(duplex_context)
+    })
+    .register();
     // SAFETY: `duplex_context` is the freshly built live allocation.
     unsafe { DuplexUpgradeContext::start_tls(duplex_context) };
 

@@ -617,7 +617,9 @@ impl TranspilerJob {
         // wrote the handle before handing the job to the pool, and the teardown
         // joins/waits on pool work it owns before freeing the store.
         let handle = unsafe { (*this).vm_handle.clone() };
-        let Some(_vm_alive) = handle.borrow() else {
+        // Held (RAII) for the rest of this fn: `close()` cannot complete while
+        // the job reads VM-owned memory below.
+        let Some(_borrow) = handle.borrow() else {
             return;
         };
         // SAFETY: borrow held ⇒ VM (and this slot) alive for the rest of this fn.

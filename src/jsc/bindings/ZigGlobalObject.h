@@ -25,7 +25,7 @@ class ScriptExecutionContext;
 class DOMGuardedObject;
 class EventLoopTask;
 class DOMWrapperWorld;
-class WorkerGlobalScope;
+class GlobalEventScope;
 class SubtleCrypto;
 class EventTarget;
 class Performance;
@@ -81,7 +81,7 @@ class JSMockFunction;
 }
 
 namespace WebCore {
-class WorkerGlobalScope;
+class GlobalEventScope;
 class SubtleCrypto;
 class EventTarget;
 }
@@ -382,7 +382,7 @@ public:
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
-    Ref<Bun::WorkerGlobalScope> globalEventScope;
+    Ref<Bun::GlobalEventScope> globalEventScope;
     RefPtr<WebCore::MessagePort> m_nodeParentPort;
     bool m_nodeWorkerEntrySettled { false };
 

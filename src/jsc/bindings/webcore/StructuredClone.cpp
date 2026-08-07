@@ -57,7 +57,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     RETURN_IF_EXCEPTION(throwScope, {});
 
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(serializeOptions.transfer), ports);
+    // structuredClone never leaves this agent cluster, so SABs may share their backing store per
+    // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal —
+    // only the WorkerPostMessage context takes the SAB-sharing path; Default would copy to a plain AB.
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(serializeOptions.transfer), ports,
+        SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});

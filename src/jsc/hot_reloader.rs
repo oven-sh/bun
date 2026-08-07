@@ -203,6 +203,9 @@ impl HotReloaderCtx for VirtualMachine {
 /// The dyn trait below is the type-erased view used by
 /// `HotReloaderCtx::reload`.
 pub type HotReloadTask = Task<VirtualMachine, EventLoop, false>;
+/// `bun run --watch` reload routed through the event loop (only when
+/// `--watch-kill-signal` listeners exist; see `Task::enqueue`).
+pub type WatchReloadTask = Task<VirtualMachine, EventLoop, true>;
 
 /// Trait bound on `Ctx` exposing the operations the reloader needs.
 /// Implemented by `VirtualMachine` and `bun.bake.DevServer`.
@@ -580,7 +583,11 @@ where
             return;
         }
 
-        if RELOAD_IMMEDIATELY {
+        // With --watch-kill-signal listeners registered, reload via the event
+        // loop so the JS thread emits them before execve (node runs the child's
+        // handlers on kill); otherwise execve immediately (node's default kill).
+        if RELOAD_IMMEDIATELY && !crate::posix_signal_handle::watch_kill_signal_has_listeners() {
+            crate::node_compile_cache::persist_now();
             Output::flush();
             flush_changed_paths_for_reload();
             bun_core::reload_process(
@@ -605,8 +612,13 @@ where
             // Note: `JscTask::init` requires `Taskable`, but const-generic
             // `Task<Ctx, _, _>` can't implement it (one tag per monomorphization).
             // Use the raw `(tag, ptr)` constructor.
+            let tag = if RELOAD_IMMEDIATELY {
+                task_tag::WatchReloadTask
+            } else {
+                task_tag::HotReloadTask
+            };
             let concurrent = (*that).concurrent_task.insert(ConcurrentTask {
-                task: JscTask::new(task_tag::HotReloadTask, that.cast::<()>()),
+                task: JscTask::new(tag, that.cast::<()>()),
                 ..Default::default()
             });
             // `&that.concurrent_task` is an interior pointer into the
@@ -626,6 +638,73 @@ where
             }
         }
         self.count = 0;
+
+        // The JS thread emits kill-signal listeners then execve; if it's stuck in sync code it
+        // never drains the posted task. Arm a one-shot timer that forces the reload after a
+        // bounded window (node's watcher SIGKILLs an unresponsive child after its grace period).
+        if RELOAD_IMMEDIATELY {
+            arm_watch_reload_grace_timer();
+        }
+    }
+}
+
+static WATCH_RELOAD_GRACE_ARMED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+fn arm_watch_reload_grace_timer() {
+    if WATCH_RELOAD_GRACE_ARMED.load(core::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let reload_started = bun_core::is_process_reload_in_progress_on_another_thread;
+    let handler_running = crate::posix_signal_handle::is_emitting_watch_kill_signal;
+    let force = || -> ! {
+        // Same as the sibling reload paths: execve never reaches on_exit, so
+        // flush the compile cache first (safe off the JS thread; generation
+        // runs on its own worker VM).
+        crate::node_compile_cache::persist_now();
+        Output::flush();
+        bun_core::reload_process(
+            CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
+            false,
+        );
+        unreachable!();
+    };
+    let spawned = std::thread::Builder::new()
+        .name("WatchReloadGrace".into())
+        .spawn(move || {
+            const STEP_MS: u64 = 10;
+            // Budget to drain the posted WatchReloadTask; extended once when
+            // the kill-signal emit is observed so a bounded synchronous
+            // handler has time to finish before being torn down mid-run.
+            const DRAIN_MS: u64 = 500;
+            const HANDLER_MS: u64 = 2000;
+            let mut deadline = DRAIN_MS;
+            let mut extended = false;
+            let mut waited = 0u64;
+            while waited < deadline {
+                if reload_started() {
+                    // execve prep has begun; park until it tears this thread down.
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(3600));
+                    }
+                }
+                if !extended && handler_running() {
+                    deadline = waited + HANDLER_MS;
+                    extended = true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(STEP_MS));
+                waited += STEP_MS;
+            }
+            // Deadline hit without reload_process starting: either the task
+            // never drained, or the handler itself is wedged. Force it (node
+            // SIGKILLs the child after its own grace period either way).
+            force();
+        })
+        .is_ok();
+    if spawned {
+        WATCH_RELOAD_GRACE_ARMED.store(true, core::sync::atomic::Ordering::Relaxed);
+    } else {
+        force();
     }
 }
 
@@ -688,7 +767,12 @@ where
         // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
         if let Err(err) = unsafe { (*watcher_ptr).start() } {
             bun_core::handle_error_return_trace(&err);
-            Output::panic(format_args!("Failed to start File Watcher: {}", err.name()));
+            bun_core::pretty_errorln!(
+                "<red>error<r><d>:<r> Failed to start File Watcher: {}",
+                err.name()
+            );
+            Output::flush();
+            bun_core::Global::exit(1);
         }
     }
 
@@ -1222,8 +1306,8 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     type EventLoop = bun_event_loop::AnyEventLoop;
 
     fn reload_handle(&self) -> Option<crate::VmHandle> {
-        // RELOAD_IMMEDIATELY=true: the process is re-exec'd before any task
-        // would be enqueued.
+        // RELOAD_IMMEDIATELY=true, and BundleV2 never has watch-kill-signal
+        // listeners: `Task::enqueue` re-execs the process before it would post.
         None
     }
 
@@ -1238,7 +1322,8 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
-        // RELOAD_IMMEDIATELY=true → `Task::run` is never enqueued.
+        // RELOAD_IMMEDIATELY=true never enqueues `Task::run` for BundleV2
+        // (diverges or kill-signal branch; no listeners registered there).
         unreachable!()
     }
 

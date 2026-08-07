@@ -77,6 +77,7 @@ pub mod task_tag {
         FSWatchTask,
         GetAddrInfoLibuvComplete,
         HotReloadTask,
+        WatchReloadTask,
         ImmediateObject,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,

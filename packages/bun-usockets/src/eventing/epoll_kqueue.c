@@ -349,15 +349,27 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                    | (bits.writable ? LIBUS_SOCKET_WRITABLE : 0);
 
         int error = bits.error;
+        int eof = bits.eof;
         /* Write side dead without our own shutdown(): peer reset (or connect refused). Surface it as the poll error epoll would report as EPOLLERR. */
         if (bits.send_eof) {
             int type = us_internal_poll_type(poll);
-            if (type == POLL_TYPE_SOCKET || type == POLL_TYPE_SEMI_SOCKET) error = 1;
+            if (type == POLL_TYPE_SOCKET || type == POLL_TYPE_SEMI_SOCKET) {
+                error = 1;
+            } else if (type == POLL_TYPE_SOCKET_SHUT_DOWN) {
+                /* We already sent our FIN, so a dead write side just means the
+                 * connection is over: treat it as the peer's FIN (eof on a
+                 * shut-down socket closes with CLEAN_SHUTDOWN in loop.c).
+                 * Dropping the event instead left the socket open forever when
+                 * the peer died while our reads were paused (node:http's
+                 * res.socket.end() mid-upload); epoll closes the same state
+                 * via EPOLLHUP. */
+                eof = 1;
+            }
         }
 
         events &= us_poll_events(poll);
-        if (events || error || bits.eof) {
-            us_internal_dispatch_ready_poll(poll, error, bits.eof, events);
+        if (events || error || eof) {
+            us_internal_dispatch_ready_poll(poll, error, eof, events);
         }
     }
 #endif

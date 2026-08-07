@@ -224,9 +224,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     auto bufferedSize = thisObject->streamBuffer.bufferedSize();
     if (bufferedSize == 0) {
         // Pause so the shutdown cycles kqueue's EVFILT_READ (pause drops it;
-        // us_internal_socket_raw_shutdown's teardown transition re-adds it
-        // before SHUT_WR), without which macOS 26 does not deliver the
-        // peer's close.
+        // us_internal_socket_raw_shutdown's teardown transition re-adds it,
+        // ordering documented there), without which macOS 26 does not
+        // deliver the peer's close.
         if (thisObject->socket && !thisObject->upgraded) {
             us_socket_pause(thisObject->socket);
         }

@@ -1834,11 +1834,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
 
   void us_socket_mark_needs_more_not_ssl(uws_res_r res)
   {
-    us_socket_r s = (us_socket_t *)res;
-    if(us_socket_is_closed(s)) return;
-    s->flags.last_write_failed = 1;
-    us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    us_socket_mark_writable_pending((us_socket_t *)res);
   }
 
   void uws_res_override_write_offset(int ssl, uws_res_r res, uint64_t offset)

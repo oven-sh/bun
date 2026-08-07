@@ -118,6 +118,9 @@ pub(crate) enum ActiveHandle {
     /// TLS over a JS duplex (`tls.connect({ socket })`, `new TLSSocket(duplex)`):
     /// not in any uSockets group, so closed through its owner.
     DuplexUpgrade(ptr::NonNull<crate::socket::DuplexUpgradeContext>),
+    /// A socket over a Windows named pipe: not in any uSockets group either.
+    #[cfg(windows)]
+    WindowsNamedPipe(ptr::NonNull<crate::socket::WindowsNamedPipeContext>),
 }
 
 pub(crate) type ActiveHandles = bun_collections::ArrayHashMap<ActiveHandle, ()>;
@@ -1721,6 +1724,11 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) {
             // Live until it unregisters in `deinit`.
             ActiveHandle::DuplexUpgrade(c) => unsafe {
                 crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c.as_ptr())
+            },
+            // Live until it unregisters when its deinit task runs.
+            #[cfg(windows)]
+            ActiveHandle::WindowsNamedPipe(c) => unsafe {
+                crate::socket::WindowsNamedPipeContext::stop_for_vm_teardown(c.as_ptr())
             },
         }
     }

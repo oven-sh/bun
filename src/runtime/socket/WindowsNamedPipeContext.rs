@@ -232,9 +232,25 @@ impl WindowsNamedPipeContext {
         ));
     }
 
+    /// VM stop phase: close the pipe now (its socket's close/error handlers run
+    /// while script is still allowed) instead of during the final collection.
+    ///
+    /// # Safety
+    /// `this` is a registered live context (see `create`).
+    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
+        // SAFETY: fn contract; `close` re-enters `on_close`, which may free `this`.
+        unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close() };
+    }
+
     fn on_error(this: *mut Self, err: &SysError) {
         // SAFETY: see `on_open`. `is_open`/`socket` are Copy field reads.
         let (is_open, socket) = unsafe { ((*this).is_open, (*this).socket) };
+        // Once teardown has forbidden script there is nobody to hand a JS error
+        // to (and no heap to build it in); the close that follows still runs.
+        // SAFETY: `this` is live; shared read of `vm`.
+        if !unsafe { (*this).vm }.script_allowed() {
+            return;
+        }
         if is_open {
             match_socket!(socket, |s: NewSocket<SSL>| {
                 // SAFETY: `this` is live; `global_this` is disjoint from the caller's
@@ -286,6 +302,15 @@ impl WindowsNamedPipeContext {
         // arm; `this` is the live ctx pointer registered in create()
         match unsafe { (*this).task_event } {
             EventState::Deinit => {
+                let state = crate::jsc_hooks::runtime_state();
+                if !state.is_null() {
+                    // SAFETY: this thread's live runtime state; registered in create().
+                    unsafe {
+                        (*state).active_handles.swap_remove(&crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(
+                            core::ptr::NonNull::new_unchecked(this),
+                        ));
+                    }
+                }
                 // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
                 // and this deferred task is the sole remaining owner. Drop runs field destructors.
                 drop(unsafe { bun_core::heap::take(this) });
@@ -388,6 +413,16 @@ impl WindowsNamedPipeContext {
 
             // Take a +1 intrusive ref so the wrapped JS socket outlives this context.
             match_socket!(socket, |s: NewSocket<SSL>| s.ref_());
+
+            // A socket over a Windows named pipe is in no uSockets group: the VM's
+            // stop phase closes it through this owner (unregistered when freed).
+            // SAFETY: this thread's live runtime state; `this` fully initialised.
+            unsafe {
+                (*crate::jsc_hooks::runtime_state()).active_handles.insert(
+                    crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(core::ptr::NonNull::new_unchecked(this)),
+                    (),
+                );
+            }
 
             this
         }

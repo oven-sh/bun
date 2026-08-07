@@ -163,7 +163,22 @@ unsafe extern "C" {
         root: *const E::JsonValue,
         props: *const E::PropertyJSON,
         items: *const E::JsonValue,
+        encoding: u8,
     ) -> JSValue;
+}
+
+/// For `JSONRowsToJS.cpp`: a UTF-8 tape string that strict UTF-8 decoding
+/// rejected, i.e. WTF-8 carrying a lone surrogate from a JSON `\uD800`-style
+/// escape. Decoded the way every other WTF-8 string in the runtime is.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__JSONRows__wtf8ToJS(
+    global: &JSGlobalObject,
+    ptr: *const u8,
+    len: usize,
+) -> JSValue {
+    // SAFETY: the C++ caller passes a live tape string.
+    let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+    utf8_bytes_to_js(bytes, global).unwrap_or(JSValue::ZERO)
 }
 
 /// The whole document under `root` in one call into C++ (keys and short
@@ -174,10 +189,11 @@ fn json_rows_to_js(
     global: &JSGlobalObject,
 ) -> Result<JSValue, ToJSError> {
     let (props, items) = tape.raw_rows();
+    let encoding = tape.encoding as u8;
     // SAFETY: `root`, `props` and `items` all belong to `tape`, which is complete
     // and outlives the call; the C++ side only reads them.
     bun_jsc::from_js_host_call(global, || unsafe {
-        Bun__JSONRows__toJS(global, &raw const root, props, items)
+        Bun__JSONRows__toJS(global, &raw const root, props, items, encoding)
     })
     .map_err(js_err)
 }

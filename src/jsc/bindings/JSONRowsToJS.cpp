@@ -5,12 +5,12 @@
 #include "root.h"
 
 #include <JavaScriptCore/IdentifierInlines.h>
+#include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSONAtomStringCacheInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/text/ASCIIFastPath.h>
-#include <wtf/text/StringBuilder.h>
 
 namespace Bun {
 using namespace JSC;
@@ -70,6 +70,16 @@ static_assert(offsetof(RowValue, tag) == 0 && offsetof(RowValue, string) == 4);
 static_assert(offsetof(RowProperty, key) == 0 && offsetof(RowProperty, keyLoc) == 12 && offsetof(RowProperty, value) == 16);
 static_assert(offsetof(RowSpan, tape) == 0 && offsetof(RowSpan, first) == 8 && offsetof(RowSpan, count) == 12);
 
+// `E::StrEncoding`: how the bytes behind every string on one tape are encoded.
+enum class RowEncoding : uint8_t {
+    Utf8 = 0,
+    Latin1 = 1,
+    Utf16 = 2,
+};
+
+extern "C" EncodedJSValue Bun__JSONRows__wtf8ToJS(JSGlobalObject*, const Latin1Character*, size_t);
+
+template<RowEncoding encoding>
 class RowsToJS {
 public:
     RowsToJS(JSGlobalObject* globalObject, const RowProperty* props, const RowValue* items)
@@ -90,7 +100,7 @@ public:
         case RowValue::Number:
             return jsNumber(v.number.value);
         case RowValue::String:
-            return string(v.string.span());
+            return string(v.string);
         case RowValue::Object:
             return object(*static_cast<const RowSpan*>(v.object.ptr));
         case RowValue::Array:
@@ -109,8 +119,10 @@ public:
         const RowProperty* rows = m_props + o.first;
         JSObject* object = constructEmptyObject(m_globalObject, m_globalObject->objectPrototype(),
             std::min<unsigned>(o.count, JSFinalObject::maxInlineCapacity));
+        RETURN_IF_EXCEPTION(scope, {});
         for (uint32_t i = 0; i < o.count; ++i) {
-            Identifier ident = identifier(rows[i].key.span());
+            Identifier ident = identifier(rows[i].key);
+            RETURN_IF_EXCEPTION(scope, {});
             JSValue v = value(rows[i].value);
             RETURN_IF_EXCEPTION(scope, {});
             if (std::optional<uint32_t> index = parseIndex(ident)) [[unlikely]] {
@@ -130,81 +142,69 @@ public:
             return {};
         }
         const RowValue* rows = m_items + a.first;
-        JSArray* array = constructEmptyArray(m_globalObject, nullptr, a.count);
-        RETURN_IF_EXCEPTION(scope, {});
+        MarkedArgumentBuffer elements;
+        elements.ensureCapacity(a.count);
         for (uint32_t i = 0; i < a.count; ++i) {
             JSValue v = value(rows[i]);
             RETURN_IF_EXCEPTION(scope, {});
-            array->putDirectIndex(m_globalObject, i, v);
-            RETURN_IF_EXCEPTION(scope, {});
+            elements.append(v);
         }
-        return array;
+        if (elements.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(m_globalObject, scope);
+            return {};
+        }
+        RELEASE_AND_RETURN(scope, constructArray(m_globalObject, static_cast<ArrayAllocationProfile*>(nullptr), elements));
     }
 
 private:
-    ALWAYS_INLINE Identifier identifier(std::span<const Latin1Character> key)
+    // The three encodings: Latin-1 and UTF-16 strings are the characters as they stand; UTF-8 is
+    // Latin-1 when it is ASCII (nearly always, for keys) and decoded otherwise.
+
+    ALWAYS_INLINE Identifier identifier(const RowStr& key)
     {
-        if (charactersAreAllASCII(key)) [[likely]]
-            return Identifier::fromString(m_vm, m_vm.jsonAtomStringCache.makeIdentifier(key));
-        return Identifier::fromString(m_vm, decodeWTF8(key));
+        if constexpr (encoding == RowEncoding::Utf16)
+            return Identifier::fromString(m_vm, m_vm.jsonAtomStringCache.makeIdentifier(utf16(key)));
+        else {
+            if (encoding == RowEncoding::Latin1 || charactersAreAllASCII(key.span())) [[likely]]
+                return Identifier::fromString(m_vm, m_vm.jsonAtomStringCache.makeIdentifier(key.span()));
+            JSValue decoded = utf8(key);
+            if (!decoded) [[unlikely]]
+                return {};
+            return asString(decoded)->toIdentifier(m_globalObject);
+        }
     }
 
-    ALWAYS_INLINE JSValue string(std::span<const Latin1Character> s)
+    ALWAYS_INLINE JSValue string(const RowStr& s)
     {
-        if (charactersAreAllASCII(s)) [[likely]] {
-            if (JSString* result = m_vm.jsonAtomStringCache.tryMakeJSString(s)) [[likely]]
-                return result;
+        JSString* result;
+        if constexpr (encoding == RowEncoding::Utf16)
+            result = m_vm.jsonAtomStringCache.tryMakeJSString(utf16(s));
+        else {
+            if (encoding == RowEncoding::Utf8 && !charactersAreAllASCII(s.span())) [[unlikely]]
+                return utf8(s);
+            result = m_vm.jsonAtomStringCache.tryMakeJSString(s.span());
+        }
+        if (!result) [[unlikely]] {
             auto scope = DECLARE_THROW_SCOPE(m_vm);
             throwOutOfMemoryError(m_globalObject, scope);
             return {};
         }
-        return jsString(m_vm, decodeWTF8(s));
+        return result;
     }
 
-    // The parsers hand over WTF-8: UTF-8 that may also encode lone surrogates (from JSON
-    // `\uD800`-style escapes). Anything malformed becomes U+FFFD, one per offending byte.
-    static String decodeWTF8(std::span<const Latin1Character> bytes)
+    static std::span<const char16_t> utf16(const RowStr& s)
     {
-        String strict = String::fromUTF8(bytes);
+        return { reinterpret_cast<const char16_t*>(s.ptr), s.len / 2 };
+    }
+
+    // Non-ASCII UTF-8. Strict first (simdutf); what that rejects is WTF-8 from a JSON escape
+    // naming a lone surrogate, which the runtime's WTF-8 path decodes.
+    JSValue utf8(const RowStr& s)
+    {
+        String strict = String::fromUTF8(s.span());
         if (!strict.isNull()) [[likely]]
-            return strict;
-        StringBuilder out;
-        out.reserveCapacity(bytes.size());
-        size_t i = 0;
-        while (i < bytes.size()) {
-            uint8_t b = bytes[i];
-            if (b < 0x80) {
-                out.append(static_cast<char16_t>(b));
-                i += 1;
-                continue;
-            }
-            size_t n = (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3
-                : (b & 0xF8) == 0xF0                               ? 4
-                                                                   : 0;
-            uint32_t cp = n == 2 ? (b & 0x1F) : n == 3 ? (b & 0x0F)
-                                                       : (b & 0x07);
-            bool ok = n != 0 && i + n <= bytes.size();
-            for (size_t k = 1; ok && k < n; ++k) {
-                ok = (bytes[i + k] & 0xC0) == 0x80;
-                cp = (cp << 6) | (bytes[i + k] & 0x3F);
-            }
-            // Overlong forms and values past U+10FFFF are malformed; encoded surrogates
-            // (the WTF-8 extension) are kept.
-            ok = ok && (n == 2 ? cp >= 0x80 : n == 3 ? cp >= 0x800
-                                                     : (cp >= 0x10000 && cp <= 0x10FFFF));
-            if (!ok) {
-                out.append(static_cast<char16_t>(0xFFFD));
-                i += 1;
-                continue;
-            }
-            i += n;
-            if (cp >= 0x10000) {
-                out.append(U16_LEAD(cp));
-                out.append(U16_TRAIL(cp));
-            } else
-                out.append(static_cast<char16_t>(cp));
-        }
-        return out.toString();
+            return jsString(m_vm, WTF::move(strict));
+        return JSValue::decode(Bun__JSONRows__wtf8ToJS(m_globalObject, s.ptr, s.len));
     }
 
     JSGlobalObject* m_globalObject;
@@ -213,10 +213,17 @@ private:
     const RowValue* m_items;
 };
 
-extern "C" EncodedJSValue Bun__JSONRows__toJS(JSGlobalObject* globalObject, const RowValue* root, const RowProperty* props, const RowValue* items)
+extern "C" EncodedJSValue Bun__JSONRows__toJS(JSGlobalObject* globalObject, const RowValue* root, const RowProperty* props, const RowValue* items, uint8_t encoding)
 {
-    RowsToJS converter(globalObject, props, items);
-    return JSValue::encode(converter.value(*root));
+    switch (static_cast<RowEncoding>(encoding)) {
+    case RowEncoding::Latin1:
+        return JSValue::encode(RowsToJS<RowEncoding::Latin1>(globalObject, props, items).value(*root));
+    case RowEncoding::Utf16:
+        return JSValue::encode(RowsToJS<RowEncoding::Utf16>(globalObject, props, items).value(*root));
+    case RowEncoding::Utf8:
+        break;
+    }
+    return JSValue::encode(RowsToJS<RowEncoding::Utf8>(globalObject, props, items).value(*root));
 }
 
 } // namespace Bun

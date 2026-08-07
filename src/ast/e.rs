@@ -973,6 +973,17 @@ unsafe impl core::alloc::Allocator for TapeAlloc {
     }
 }
 
+/// How the bytes behind every [`Str`] on one tape are encoded. JSON tapes are
+/// UTF-8 (WTF-8 where an escape named a lone surrogate); the XML parser also
+/// produces Latin-1 tapes when its input was a Latin-1 string.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum StrEncoding {
+    Utf8 = 0,
+    Latin1 = 1,
+    Utf16 = 2,
+}
+
 /// Everything one parsed JSON document allocates that does not borrow the source.
 pub struct JsonTape {
     props: Vec<PropertyJSON, TapeAlloc>,
@@ -981,6 +992,7 @@ pub struct JsonTape {
     item_locs: Vec<crate::Loc, TapeAlloc>,
     str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
     str_used: usize,
+    pub encoding: StrEncoding,
 }
 
 // SAFETY: only the parsing thread writes it; shared use afterwards is read-only.
@@ -1003,6 +1015,7 @@ impl JsonTape {
             item_locs: Vec::new_in(alloc),
             str_chunks: Vec::new_in(alloc),
             str_used: 0,
+            encoding: StrEncoding::Utf8,
         }
     }
 

@@ -165,7 +165,10 @@ it("console.log(Bun) prints remaining properties when a lazy property fails to i
 
 it.concurrent.each([
   ["replaced with a non-function", `require("node:util").inspect = 42;`],
-  ["a throwing getter", `Object.defineProperty(require("node:util"), "inspect", { get() { throw new Error("boom"); } });`],
+  [
+    "a throwing getter",
+    `Object.defineProperty(require("node:util"), "inspect", { get() { throw new Error("boom"); } });`,
+  ],
 ])("console.log survives node:util inspect being %s", async (_label, sabotage) => {
   // util.inspect is cached lazily when a custom inspect runs; a tampered
   // export must produce a catchable error, not a crash.

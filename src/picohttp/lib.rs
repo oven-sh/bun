@@ -18,6 +18,7 @@ pub use bun_core::StringBuilder;
 mod chunked;
 mod parse;
 
+pub use bun_http_types::HeaderName::HeaderName;
 pub use chunked::{ChunkedDecoder, ChunkedEncodingError, Decoded};
 
 use bun_core::strings;
@@ -30,6 +31,10 @@ use bun_core::strings;
 /// so it can sit in `'static` scratch arrays and be handed to C++ as
 /// `PicoHTTPHeader` (bindings.cpp); the backing bytes are owned by whoever
 /// built the header (parse buffer, `StringBuilder`, HPACK decode buffer).
+///
+/// The name is classified against WebCore's well-known set once, at
+/// construction, so the HTTP client and `FetchHeaders` can switch on
+/// [`Header::well_known`] instead of re-comparing strings.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Header {
@@ -37,7 +42,14 @@ pub struct Header {
     name_len: usize,
     value_ptr: *const u8,
     value_len: usize,
+    /// `HeaderName as u8`, or [`Header::OTHER`].
+    name_id: u8,
 }
+
+const _: () = assert!(
+    core::mem::size_of::<Header>() == 40,
+    "PicoHTTPHeader in bindings.cpp"
+);
 
 impl Default for Header {
     #[inline]
@@ -58,7 +70,11 @@ impl Header {
         name_len: 0,
         value_ptr: core::ptr::null(),
         value_len: 0,
+        name_id: Self::OTHER,
     };
+
+    /// `name_id` for a name outside the well-known set.
+    pub const OTHER: u8 = u8::MAX;
 
     /// Construct a `Header` from borrowed name/value slices. The caller is
     /// responsible for keeping the backing storage alive for as long as the
@@ -70,7 +86,16 @@ impl Header {
             name_len: name.len(),
             value_ptr: value.as_ptr(),
             value_len: value.len(),
+            name_id: match HeaderName::classify(name) {
+                Some(known) => known as u8,
+                None => Self::OTHER,
+            },
         }
+    }
+
+    #[inline]
+    pub const fn well_known(&self) -> Option<HeaderName> {
+        HeaderName::from_index(self.name_id)
     }
 
     #[inline]
@@ -103,6 +128,7 @@ impl Header {
             name_len: name.len(),
             value_ptr: value.as_ptr(),
             value_len: value.len(),
+            name_id: self.name_id,
         }
     }
 
@@ -163,6 +189,16 @@ pub struct HeaderList<'a> {
 }
 
 impl<'a> HeaderList<'a> {
+    /// First value for a well-known name, by tag rather than string compare.
+    #[inline]
+    pub fn find(&self, name: HeaderName) -> Option<&'a [u8]> {
+        let id = name as u8;
+        self.list
+            .iter()
+            .find(|h| h.name_id == id)
+            .map(Header::value)
+    }
+
     pub fn get(&self, name: &[u8]) -> Option<&'a [u8]> {
         for header in self.list {
             if strings::eql_case_insensitive_ascii(header.name(), name, true) {

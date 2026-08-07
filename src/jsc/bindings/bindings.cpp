@@ -139,6 +139,7 @@
 #include "wtf/text/AtomString.h"
 #include "wtf/Scope.h"
 #include "HTTPHeaderNames.h"
+#include <bitset>
 #include "JSDOMPromiseDeferred.h"
 #include "JavaScriptCore/TestRunnerUtils.h"
 #include "JavaScriptCore/DateInstance.h"
@@ -2097,10 +2098,13 @@ typedef struct ZigSliceString {
     size_t len;
 } ZigSliceString;
 
+// bun_picohttp::Header
 typedef struct PicoHTTPHeader {
     ZigSliceString name;
     ZigSliceString value;
+    uint8_t name_id; // HTTPHeaderName, or 0xFF when not well-known
 } PicoHTTPHeader;
+static_assert(sizeof(PicoHTTPHeader) == 40, "bun_picohttp::Header");
 
 typedef struct PicoHTTPHeaders {
     const PicoHTTPHeader* ptr;
@@ -2117,6 +2121,12 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
         HTTPHeaderMap map = HTTPHeaderMap();
 
         size_t end = pico_headers.len;
+        size_t commonCount = 0;
+        for (size_t j = 0; j < end; j++)
+            commonCount += pico_headers.ptr[j].name_id < numHTTPHeaderNames;
+        map.commonHeaders().reserveInitialCapacity(commonCount);
+        map.uncommonHeaders().reserveInitialCapacity(end - commonCount);
+        std::bitset<numHTTPHeaderNames> seen;
 
         for (size_t j = 0; j < end; j++) {
             PicoHTTPHeader header = pico_headers.ptr[j];
@@ -2127,24 +2137,24 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
             if (header.name.len == 0)
                 continue;
 
-            StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
-
             std::span<Latin1Character> data;
             auto value = String::createUninitialized(header.value.len, data);
             if (header.value.len > 0)
                 memcpy(data.data(), header.value.ptr, header.value.len);
 
-            HTTPHeaderName name;
-
-            // memory safety: the header names must be cloned if they're not statically known
-            // the value must also be cloned
-            // isolatedCopy() doesn't actually clone, it's only for threadlocal isolation
-            if (WebCore::findHTTPHeaderName(nameView, name)) {
-                map.add(name, value);
+            if (header.name_id < numHTTPHeaderNames) {
+                auto name = static_cast<HTTPHeaderName>(header.name_id);
+                // First occurrence appends without the map's linear duplicate
+                // scan; repeats go through add() so values combine.
+                if (name != HTTPHeaderName::SetCookie && !seen[header.name_id]) {
+                    seen.set(header.name_id);
+                    map.commonHeaders().append(HTTPHeaderMap::CommonHeader { name, WTF::move(value) });
+                } else {
+                    map.add(name, value);
+                }
             } else {
-                // the case where we do not need to clone the name
-                // when the header name is already present in the list
-                // we don't have that information here, so map.addUncommonHeaderCloneName exists
+                // Clones the name unless an entry for it already exists.
+                StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
                 map.addUncommonHeaderCloneName(nameView, value);
             }
         }

@@ -1439,6 +1439,7 @@ dependencies = [
  "bstr",
  "bun_core",
  "bun_highway",
+ "bun_http_types",
  "strum",
 ]
 

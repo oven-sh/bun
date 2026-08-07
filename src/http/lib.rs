@@ -87,6 +87,7 @@ pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
 pub use bun_http_types::FetchRedirect::FetchRedirect;
 pub use bun_http_types::Method::Method;
 pub use bun_picohttp as picohttp;
+use picohttp::HeaderName;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -631,14 +632,6 @@ trait SocketTimeout {
     fn set_timeout(&self, seconds: core::ffi::c_uint);
 }
 
-// lowercase hash header names so that we can be sure
-pub(crate) fn hash_header_name(name: &[u8]) -> u64 {
-    // Uses the std Wyhash algorithm; safe —
-    // every comparison hash is computed by this same fn at runtime, no
-    // persisted hashes.
-    bun_wyhash::hash_ascii_lowercase(0, name)
-}
-
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
 // The heavy `impl HTTPClient` (socket dispatch / state machine) remains
 // gated below until the missing
@@ -1046,15 +1039,6 @@ fn get_user_agent_header() -> picohttp::Header {
             Global::user_agent.as_bytes()
         },
     )
-}
-
-// ── header-hash constants ───────────────────────────────────────────────
-// `Wyhash` is not `const fn`, so the per-header `match` arms inside
-// `build_request` / `handle_response_metadata` call this runtime alias of
-// `hash_header_name`.
-#[inline(always)]
-fn hash_header_const(name: &[u8]) -> u64 {
-    hash_header_name(name)
 }
 
 bun_core::comptime_string_map! {
@@ -2379,9 +2363,8 @@ impl<'a> HTTPClient<'a> {
         const MAX_USER_HEADERS: usize = MAX_REQUEST_HEADERS - MAX_DEFAULT_HEADERS;
 
         for (i, head) in header_names.iter().enumerate() {
-            let name = self.header_str(*head);
-            // Hash it as lowercase
-            let hash = hash_header_name(name);
+            let header =
+                picohttp::Header::new(self.header_str(*head), self.header_str(header_values[i]));
 
             // Whether this header will actually be written to the buffer.
             // Override flags must only be set when the header is kept, otherwise
@@ -2391,13 +2374,13 @@ impl<'a> HTTPClient<'a> {
 
             // Skip host and connection header
             // we manage those
-            match hash {
-                h if h == hash_header_const(b"Content-Length") => {
+            match header.well_known() {
+                Some(HeaderName::ContentLength) => {
                     // Content-Length is always consumed (never written to the buffer).
                     original_content_length = Some(self.header_str(header_values[i]));
                     continue;
                 }
-                h if h == hash_header_const(b"Connection") => {
+                Some(HeaderName::Connection) => {
                     if will_append {
                         override_connection_header = true;
                         match connection_header_keep_alive(self.header_str(header_values[i])) {
@@ -2412,7 +2395,7 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
-                h if h == hash_header_const(b"if-modified-since") => {
+                Some(HeaderName::IfModifiedSince) => {
                     if self.flags.force_last_modified && self.if_modified_since.is_empty() {
                         // SAFETY: header_str() returns a slice into self.header_buf which outlives
                         // this client; lifetime is erased here only because we don't yet thread
@@ -2421,34 +2404,34 @@ impl<'a> HTTPClient<'a> {
                             unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
                     }
                 }
-                h if h == hash_header_const(HOST_HEADER_NAME) => {
+                Some(HeaderName::Host) => {
                     if will_append {
                         override_host_header = true;
                     }
                 }
-                h if h == hash_header_const(b"Accept") => {
+                Some(HeaderName::Accept) => {
                     if will_append {
                         override_accept_header = true;
                     }
                 }
-                h if h == hash_header_const(b"User-Agent") => {
+                Some(HeaderName::UserAgent) => {
                     if will_append {
                         override_user_agent = true;
                     }
                 }
-                h if h == hash_header_const(b"Accept-Encoding") => {
+                Some(HeaderName::AcceptEncoding) => {
                     if will_append {
                         override_accept_encoding = true;
                     }
                 }
-                h if h == hash_header_const(b"Upgrade") => {
+                Some(HeaderName::Upgrade) => {
                     if will_append {
                         if upgrade_header_is_not_h2(self.header_str(header_values[i])) {
                             self.flags.upgrade_state = HTTPUpgradeState::Pending;
                         }
                     }
                 }
-                h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
+                Some(HeaderName::TransferEncoding) => {
                     if !self.flags.is_streaming_request_body {
                         continue;
                     }
@@ -2465,8 +2448,7 @@ impl<'a> HTTPClient<'a> {
                 continue;
             }
 
-            request_headers_buf[header_count] =
-                picohttp::Header::new(name, self.header_str(header_values[i]));
+            request_headers_buf[header_count] = header;
 
             header_count += 1;
         }
@@ -4755,8 +4737,8 @@ impl<'a> HTTPClient<'a> {
         let mut is_server_sent_events = false;
         let mut content_codings: u32 = 0;
         for (header_i, header) in response.headers.list.iter().enumerate() {
-            match hash_header_name(header.name()) {
-                h if h == hash_header_const(b"Content-Length") => {
+            match header.well_known() {
+                Some(HeaderName::ContentLength) => {
                     // RFC 9110 section 9.3.6: a client MUST ignore
                     // Content-Length in a successful response to CONNECT —
                     // the connection becomes an opaque tunnel and is never
@@ -4795,12 +4777,15 @@ impl<'a> HTTPClient<'a> {
                         self.state.content_length = Some(0);
                     }
                 }
-                h if h == hash_header_const(b"Content-Type") => {
-                    if strings::index_of(header.value(), b"text/event-stream").is_some() {
+                Some(HeaderName::ContentType) => {
+                    if strings::starts_with_case_insensitive_ascii(
+                        header.value(),
+                        b"text/event-stream",
+                    ) {
                         is_server_sent_events = true;
                     }
                 }
-                h if h == hash_header_const(b"Content-Encoding") => {
+                Some(HeaderName::ContentEncoding) => {
                     if !self.flags.disable_decompression {
                         for token in HeaderValueIterator::init(header.value()) {
                             match Encoding::from_token(token) {
@@ -4820,7 +4805,7 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
-                h if h == hash_header_const(b"Transfer-Encoding") => {
+                Some(HeaderName::TransferEncoding) => {
                     // RFC 9110 section 9.3.6: as with Content-Length above, a
                     // client MUST ignore Transfer-Encoding in a successful
                     // response to CONNECT.
@@ -4844,23 +4829,23 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
-                h if h == hash_header_const(b"Location") => {
+                Some(HeaderName::Location) => {
                     location = header.value();
                 }
-                h if h == hash_header_const(b"Connection") => {
+                Some(HeaderName::Connection) => {
                     // `close` on any field line, any status, is sticky (RFC 9110 §5.3, RFC 9112 §9.6).
                     if connection_header_keep_alive(header.value()) == Some(false) {
                         self.state.flags.allow_keepalive = false;
                     }
                 }
-                h if h == hash_header_const(b"Last-Modified") => {
+                Some(HeaderName::LastModified) => {
                     pretend_304 = self.flags.force_last_modified
                         && response.status_code > 199
                         && response.status_code < 300
                         && !self.if_modified_since.is_empty()
                         && self.if_modified_since == header.value();
                 }
-                h if h == hash_header_const(b"Alt-Svc") => {
+                None if header.name().eq_ignore_ascii_case(b"alt-svc") => {
                     // Record regardless of *this* request's shape — a future
                     // request to the same origin may be h3-eligible even if this
                     // one was pinned/proxied/sendfile.

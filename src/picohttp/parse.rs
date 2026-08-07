@@ -457,6 +457,26 @@ mod tests {
     }
 
     #[test]
+    fn names_are_classified() {
+        use crate::HeaderName;
+        let buf = b"HTTP/1.1 200 OK\r\ncontent-LENGTH: 5\r\nX-Custom: 1\r\nSet-Cookie: a=b\r\n\r\n";
+        let mut headers = [Header::ZERO; 4];
+        let r = Response::parse(buf, &mut headers).unwrap();
+        let tags: Vec<_> = r.headers.list.iter().map(Header::well_known).collect();
+        assert_eq!(
+            tags,
+            [
+                Some(HeaderName::ContentLength),
+                None,
+                Some(HeaderName::SetCookie)
+            ]
+        );
+        assert_eq!(r.headers.find(HeaderName::SetCookie), Some(&b"a=b"[..]));
+        assert_eq!(r.headers.find(HeaderName::ContentType), None);
+        assert_eq!(Header::ZERO.well_known(), None);
+    }
+
+    #[test]
     fn consumed_length_stops_at_blank_line() {
         let buf = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhelloHTTP/1.1 ";
         let mut headers = [Header::ZERO; 4];

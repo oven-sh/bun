@@ -1815,6 +1815,79 @@ it("cloned response headers are independent after accessing", () => {
   expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
 });
 
+// A fetched Response builds its Headers object only when something asks for
+// it; every path that can observe the headers without going through
+// `response.headers` first must still see them.
+describe("fetched response headers are available on every path", () => {
+  async function fetched() {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response("<p>hi</p>", {
+          headers: { "Content-Type": "text/html; charset=utf-8", "X-Custom": "1", "Set-Cookie": "a=b" },
+        }),
+    });
+    // Fully buffered before the server goes away, headers untouched.
+    const res = await fetch(server.url);
+    const body = await res.clone().arrayBuffer();
+    expect(body.byteLength).toBe(9);
+    return res;
+  }
+
+  it("blob() type without touching .headers", async () => {
+    const res = await fetched();
+    expect((await res.blob()).type).toBe("text/html;charset=utf-8");
+  });
+
+  it("clone() before touching .headers", async () => {
+    const res = await fetched();
+    const clone = res.clone();
+    clone.headers.set("x-custom", "2");
+    expect(clone.headers.get("set-cookie")).toBe("a=b");
+    expect(res.headers.get("x-custom")).toBe("1");
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+  });
+
+  it("new Response(body, fetchedResponse)", async () => {
+    const res = await fetched();
+    const derived = new Response("x", res);
+    expect(derived.headers.get("x-custom")).toBe("1");
+  });
+
+  it("served back out of Bun.serve", async () => {
+    const upstream = await fetched();
+    using proxy = Bun.serve({ port: 0, fetch: () => upstream });
+    const res = await fetch(proxy.url);
+    expect(res.headers.get("x-custom")).toBe("1");
+    expect(res.headers.getSetCookie()).toEqual(["a=b"]);
+    expect(await res.text()).toBe("<p>hi</p>");
+  });
+
+  it("HTMLRewriter transform", async () => {
+    const res = new HTMLRewriter().on("p", { text: t => t.replace("bye") }).transform(await fetched());
+    expect(res.headers.get("x-custom")).toBe("1");
+    expect(await res.text()).toContain("bye");
+  });
+
+  it("repeated Content-Type combines the same way whether or not .headers was read", async () => {
+    await using server = net
+      .createServer(sock => {
+        sock.on("error", () => {});
+        sock.on("data", () =>
+          sock.end("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Type: x/y\r\nContent-Length: 1\r\n\r\na"),
+        );
+      })
+      .listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    const untouched = await fetch(url);
+    const touched = await fetch(url);
+    const combined = touched.headers.get("content-type");
+    expect(combined).toBe("text/plain, x/y");
+    expect((await untouched.blob()).type).toBe((await touched.blob()).type);
+  });
+});
+
 it("should work with http 100 continue", async () => {
   let server: net.Server | undefined;
   try {

@@ -13,6 +13,8 @@ use crate::webcore::jsc::{
 };
 use bun_core::Output;
 use bun_core::{OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice};
+use bun_http::HTTPResponseMetadata;
+use bun_http_types::HeaderName::HeaderName;
 use bun_http_types::Method::Method;
 
 use super::blob::Internal as InternalBlob;
@@ -65,6 +67,14 @@ impl HeadersRef {
     pub(crate) fn create_from_uws(uws_request: *mut core::ffi::c_void) -> Self {
         // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
         unsafe { Self::adopt(FetchHeaders::create_from_uws(uws_request)) }
+    }
+
+    /// `FetchHeaders.createFromPicoHeaders(list)` — fresh C++ allocation,
+    /// refcount 1; names and values are copied.
+    #[inline]
+    pub(crate) fn create_from_pico_headers(list: &[bun_picohttp::Header]) -> Self {
+        // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
+        unsafe { Self::adopt(FetchHeaders::create_from_pico_headers(list)) }
     }
 
     /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
@@ -296,10 +306,14 @@ impl BodyMixin for Response {
         // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
         // going through `as_deref()` would derive it from a `&FetchHeaders`
         // and make the later `as_mut()` UB under Stacked Borrows.
-        self.init.get().headers.as_ref().map(|h| {
+        self.realized_init().headers.as_ref().map(|h| {
             core::ptr::NonNull::new(h.as_ptr())
                 .expect("HeadersRef wraps a non-null *mut FetchHeaders")
         })
+    }
+    #[inline]
+    fn get_content_type_header(&self) -> Option<ZigStringSlice> {
+        Response::get_content_type_header(self)
     }
     #[inline]
     fn get_form_data_encoding(
@@ -340,7 +354,10 @@ impl Response {
     #[inline]
     pub(crate) fn set_init_headers(&self, headers: Option<HeadersRef>) {
         // old headers dropped (HeadersRef::Drop derefs the C++ handle)
-        self.init.with_mut(|init| init.headers = headers);
+        self.init.with_mut(|init| {
+            init.wire_headers = None;
+            init.headers = headers;
+        });
     }
 
     #[inline]
@@ -381,7 +398,46 @@ impl Response {
 
     #[inline]
     pub(crate) fn get_init_headers(&self) -> Option<&FetchHeaders> {
-        self.init.get().headers.as_deref()
+        self.realized_init().headers.as_deref()
+    }
+
+    /// `init` with a fetch response's parsed head turned into `FetchHeaders`
+    /// (once). Every path that hands `init.headers` out goes through here;
+    /// only [`get_content_type_header`] answers from the wire form directly.
+    #[inline]
+    fn realized_init(&self) -> &mut Init {
+        let init = self.init_mut();
+        init.realize_headers();
+        init
+    }
+
+    /// `Content-Type` without materialising `FetchHeaders`: `blob()`,
+    /// `formData()` and body sniffing ask for it on responses whose headers
+    /// are otherwise never touched.
+    pub(crate) fn get_content_type_header(&self) -> Option<ZigStringSlice> {
+        let init = self.init_mut();
+        if let Some(wire) = &init.wire_headers {
+            let mut values = wire
+                .response
+                .headers
+                .list
+                .iter()
+                .filter(|h| h.well_known() == Some(HeaderName::ContentType));
+            match (values.next(), values.next()) {
+                (None, _) => return None,
+                // Owned copy: the wire buffer is freed when the headers are realised.
+                (Some(only), None) => {
+                    return Some(ZigStringSlice::init_owned(only.value().to_vec()));
+                }
+                // Repeated fields combine; let the map do that so the answer
+                // doesn't depend on whether `.headers` was touched first.
+                (Some(_), Some(_)) => init.realize_headers(),
+            }
+        }
+        init.headers
+            .as_mut()?
+            .fast_get(HTTPHeaderName::ContentType)
+            .map(|value| value.to_slice())
     }
 
     /// R-2 `JsCell` escape hatch — single-JS-thread invariant. Centralises the
@@ -404,7 +460,7 @@ impl Response {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_init_headers_mut(&self) -> Option<&mut FetchHeaders> {
-        self.init_mut().headers.as_deref_mut()
+        self.realized_init().headers.as_deref_mut()
     }
 
     /// Deep-copy this response's init headers (if any) into a fresh
@@ -415,7 +471,7 @@ impl Response {
         &self,
         global: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
-        match self.init_mut().headers.as_ref() {
+        match self.realized_init().headers.as_ref() {
             Some(headers) => headers.clone_this(global),
             None => Ok(None),
         }
@@ -423,7 +479,7 @@ impl Response {
 
     #[inline]
     pub(crate) fn swap_init_headers(&self) -> Option<HeadersRef> {
-        self.init.with_mut(|init| init.headers.take())
+        self.realized_init().headers.take()
     }
 
     #[inline]
@@ -468,10 +524,12 @@ impl Response {
     }
 
     pub(crate) fn calculate_estimated_byte_size(&self) {
+        let init = self.init.get();
         self.reported_estimated_size.set(
             self.body.get().value.get().estimated_size()
                 + self.url.get().byte_slice().len()
-                + self.init.get().status_text.byte_slice().len()
+                + init.status_text.byte_slice().len()
+                + init.wire_headers.as_ref().map_or(0, |w| w.owned_buf.len())
                 + mem::size_of::<Response>(),
         );
     }
@@ -630,10 +688,6 @@ mod _jsc_host_fns {
 } // mod _jsc_host_fns
 
 impl Response {
-    pub(crate) fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        self.init.get().headers.as_deref()
-    }
-
     #[inline]
     pub(crate) fn status_code(&self) -> u16 {
         self.init.get().status_code
@@ -692,7 +746,7 @@ impl Response {
         // R-2 escape hatch via `init_mut()` — the returned `&mut HeadersRef`
         // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
         // hold the borrow across calls that re-enter Response host-fns.
-        let init = self.init_mut();
+        let init = self.realized_init();
         if init.headers.is_none() {
             init.headers = Some(HeadersRef::create_empty());
 
@@ -716,12 +770,8 @@ impl Response {
     }
 
     pub(crate) fn get_content_type(&self) -> JsResult<Option<ZigStringSlice>> {
-        // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
-        // does not re-enter JS.
-        if let Some(headers) = self.init_mut().headers.as_mut() {
-            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_slice()));
-            }
+        if let Some(value) = self.get_content_type_header() {
+            return Ok(Some(value));
         }
 
         if let BodyValue::Blob(blob) = self.body.get().value.get() {
@@ -899,7 +949,7 @@ impl Response {
         // `Body` has NO `Drop`; arm a guard so the
         // `?` below releases the cloned body payload.
         let body = scopeguard::guard(body, |b| b.reset());
-        let init = self.init.get().clone(global_this)?;
+        let init = self.realized_init().clone(global_this)?;
         // Init's drop glue (HeadersRef + OwnedString)
         // handles cleanup on `?` below
         Ok(Response {
@@ -1378,6 +1428,11 @@ impl Response {
 // the remaining `status_text` is still dropped at scope end via field drop glue.
 pub struct Init {
     pub(crate) headers: Option<HeadersRef>,
+    /// A fetch response's head as parsed on the HTTP thread. Building
+    /// `FetchHeaders` from it (a WTF string per value plus the map) is deferred
+    /// to [`Init::realize_headers`] because most consumers only read the
+    /// status and body.
+    pub(crate) wire_headers: Option<HTTPResponseMetadata>,
     pub(crate) status_code: u16,
     pub(crate) status_text: OwnedString,
     pub method: Method,
@@ -1387,6 +1442,7 @@ impl Default for Init {
     fn default() -> Self {
         Self {
             headers: None,
+            wire_headers: None,
             status_code: 0,
             status_text: OwnedString::new(BunString::empty()),
             method: Method::GET,
@@ -1395,7 +1451,18 @@ impl Default for Init {
 }
 
 impl Init {
+    #[inline]
+    pub(crate) fn realize_headers(&mut self) {
+        if let Some(wire) = self.wire_headers.take() {
+            debug_assert!(self.headers.is_none());
+            self.headers = Some(HeadersRef::create_from_pico_headers(
+                wire.response.headers.list,
+            ));
+        }
+    }
+
     pub(crate) fn clone(&self, ctx: &JSGlobalObject) -> JsResult<Init> {
+        debug_assert!(self.wire_headers.is_none(), "realize_headers() first");
         let headers = match &self.headers {
             // `clone_this` does a deep copy on the C++ side and may return
             // null on OOM/throw. Flatten the
@@ -1405,6 +1472,7 @@ impl Init {
         };
         Ok(Init {
             headers,
+            wire_headers: None,
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,
@@ -1453,7 +1521,7 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
+                return Ok(Some(resp.realized_init().clone(global_this)?));
             }
         }
 

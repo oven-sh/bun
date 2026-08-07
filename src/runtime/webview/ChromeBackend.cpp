@@ -393,7 +393,7 @@ static void wsOnMessage(void* ctx, std::span<const char> utf8)
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     t.handleMessage(utf8);
     if (auto* ex = catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
+        if (!catchScope.clearExceptionExceptTermination()) return;
         Bun__reportError(t.m_global, JSC::JSValue::encode(JSC::JSValue(ex)));
     }
 }

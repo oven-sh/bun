@@ -5558,7 +5558,14 @@ restart:
                 }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-                bool hasProperty = object->getPropertySlot(globalObject, property, slot);
+                // Not getPropertySlot(PropertyName): reifying a static lazy property can
+                // run JS that transitions this object's structure, and that walk reads
+                // the prototype from the structure it captured before the reify.
+                bool hasProperty;
+                if (std::optional<uint32_t> index = parseIndex(property))
+                    hasProperty = object->getPropertySlot(globalObject, index.value(), slot);
+                else
+                    hasProperty = object->getNonIndexPropertySlot(globalObject, property, slot);
                 // Ignore exceptions from "Get" proxy traps and static property reification.
                 CLEAR_IF_EXCEPTION(scope);
                 if (!hasProperty)
@@ -5722,7 +5729,12 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
             continue;
 
         JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-        bool hasProperty = object->getPropertySlot(globalObject, property, slot);
+        // See JSC__JSValue__forEachPropertyImpl for why this is not getPropertySlot(PropertyName).
+        bool hasProperty;
+        if (std::optional<uint32_t> index = parseIndex(property))
+            hasProperty = object->getPropertySlot(globalObject, index.value(), slot);
+        else
+            hasProperty = object->getNonIndexPropertySlot(globalObject, property, slot);
         (void)scope.tryClearException();
         if (!hasProperty) {
             continue;
@@ -6777,6 +6789,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
 
     if (!inspectFn || !inspectFn.isCallable()) {
         // Fallback to toString if util.inspect is not available
+        CLEAR_IF_EXCEPTION(scope);
         JSC::JSValue value = JSC::JSValue::decode(valueEncoded);
         JSString* str = value.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));

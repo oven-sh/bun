@@ -249,13 +249,16 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
   }
 
-  var defaultEnv = process.env || {};
-  const originalDefaultEnv = defaultEnv;
-  var defaultCwd: string | undefined = undefined;
-
+  // Create the symbols before touching process.env: a clobbered Symbol global
+  // must throw before env materialization, which can reify other lazy Bun
+  // properties and transition the Bun object mid-lookup.
   const cwdSymbol = Symbol("cwd");
   const envSymbol = Symbol("env");
   const throwsSymbol = Symbol("throws");
+
+  var defaultEnv = process.env || {};
+  const originalDefaultEnv = defaultEnv;
+  var defaultCwd: string | undefined = undefined;
 
   class ShellPrototype {
     [cwdSymbol]: string | undefined;

@@ -362,6 +362,13 @@ describe.concurrent("socket", () => {
     expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
   });
 
+  // ssl_update_handshake set last_write_failed on SSL_ERROR_WANT_READ, so a
+  // paused (writable-armed) socket with a stalled handshake re-fired writable
+  // every tick at 100% CPU until the peer's handshake bytes arrived.
+  it("paused TLS socket with a stalled handshake must not spin the event loop", async () => {
+    expect(await bunRun(fileURLToPath(new URL("./tls-handshake-pause-spin-fixture.ts", import.meta.url)))).toSpawn();
+  });
+
   it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), fileURLToPath(new URL("./socket-reload-fixture.ts", import.meta.url))],

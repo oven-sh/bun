@@ -97,6 +97,22 @@ describe("spawnSync", () => {
       expect({ stdout: stdout.toString(), exitedDueToTimeout }).toEqual({ stdout: "A", exitedDueToTimeout: true });
     });
   });
+
+  // The result object used to get a zero-inline-capacity structure, which
+  // trips ASSERT(hasInlineStorage()) in JSC's object spread fast path on
+  // debug builds.
+  it("result object can be spread", async () => {
+    const fixture = `
+      const result = Bun.spawnSync({ cmd: [process.execPath, "--version"] });
+      const copy = { ...result };
+      Bun.gc(true);
+      console.log(JSON.stringify({ success: copy.success, exitCode: copy.exitCode, pid: copy.pid === result.pid }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe('{"success":true,"exitCode":0,"pid":true}');
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("uid/gid", () => {

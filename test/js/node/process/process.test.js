@@ -659,6 +659,17 @@ it("process.binding", () => {
   expect(() => process.binding(Object.freeze({ __proto__: null }))).toThrow();
 });
 
+// The binding object used to get a zero-inline-capacity structure, which
+// trips ASSERT(hasInlineStorage()) in JSC's object spread fast path on
+// debug builds.
+it("process.binding('uv') can be spread", async () => {
+  await runInlineFixture(
+    `const copy = { ...process.binding("uv") };
+     console.log(typeof copy.errname, copy.UV_EACCES < 0);`,
+    "function true\n",
+  );
+});
+
 it("process.argv in testing", () => {
   expect(process.argv).toBeInstanceOf(Array);
   expect(process.argv[0]).toBe(process.execPath);

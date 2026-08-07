@@ -831,7 +831,7 @@ fn match_sni<'a>(entries: &'a [(Vec<u8>, TlsContext)], host: &[u8]) -> Option<&'
     if let Some((_, ctx)) = entries.iter().find(|(h, _)| eq(h, host)) {
         return Some(ctx);
     }
-    if let Some(dot) = host.iter().position(|&b| b == b'.') {
+    if let Some(dot) = bun_core::strings::index_of_char_usize(host, b'.') {
         let suffix = &host[dot..];
         if let Some((_, ctx)) = entries
             .iter()

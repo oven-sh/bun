@@ -115,7 +115,7 @@ mod posix {
         let mut read = [0u8; 256];
         let n = bun_sys::read(fd, &mut read).unwrap_or(0);
         let _ = bun_sys::close(fd);
-        for line in read[..n].split(|&b| b == b'\n') {
+        for line in bun_core::strings::split(&read[..n], b"\n") {
             let Some(rest) = line.strip_prefix(b"0::") else {
                 continue;
             };

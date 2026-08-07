@@ -212,6 +212,9 @@ export const createSocketPair: () => [number, number] = $newRustFunction(
   0,
 );
 
+/** Live us_poll_t count on the libuv (Windows) eventing backend; -1 elsewhere. */
+export const uvPollLiveCount: () => number = $newRustFunction("runtime/socket/socket.rs", "jsUvPollLiveCount", 0);
+
 export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
   "NodeModuleModule.cpp",
   "jsFunctionIsModuleResolveFilenameSlowPathEnabled",

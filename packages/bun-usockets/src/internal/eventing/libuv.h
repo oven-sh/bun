@@ -27,6 +27,10 @@
 /* Defined in eventing/libuv.c; used by the sweep escalation in loop.c. */
 int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd);
 
+/* Defined in eventing/libuv.c; number of live us_poll_t allocations on this
+ * backend. Read by leak tests via bun:internal-for-testing. */
+long us_internal_uv_poll_live_count(void);
+
 struct us_loop_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_internal_loop_data_t data;
 

@@ -188,8 +188,17 @@ impl TimerObjectInternals {
 
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
+        // On Windows `increment_*_ref` ignores `uws_loop` (it ref/unrefs the
+        // by-value `uv_timer`/`uv_idle` in `RuntimeState` instead), and
+        // `uws_loop()` there is `WindowsLoop::get()` which lazily creates the
+        // wrapper + `uv_loop_t`. Computing it here after `Loop::shutdown()`
+        // (the pending-immediate drain in `event_loop.deinit()`) would
+        // re-allocate both and leak them. POSIX reads a stored field.
+        #[cfg(not(windows))]
         // SAFETY: `vm` is the live per-thread VM (hook contract); field read only.
         let uws_loop = unsafe { (*vm).uws_loop() };
+        #[cfg(windows)]
+        let (uws_loop, _) = (core::ptr::null_mut(), vm);
         let delta = if enable { 1 } else { -1 };
         match self.flags.get().kind() {
             // SAFETY: `state` points at the boxed per-thread `RuntimeState`;

@@ -201,7 +201,7 @@ static PlatformRSAKeyPair generatePlatformKeyPair(unsigned modulusLength, const 
 {
     auto exponent = convertToBigNumber(publicExponent);
     auto privateRSA = RSAPtr(RSA_new());
-    if (!exponent || RSA_generate_key_ex(privateRSA.get(), modulusLength, exponent.get(), nullptr) <= 0)
+    if (!exponent || !privateRSA || RSA_generate_key_ex(privateRSA.get(), modulusLength, exponent.get(), nullptr) <= 0)
         return {};
 
     auto publicRSA = RSAPtr(RSAPublicKey_dup(privateRSA.get()));
@@ -209,11 +209,11 @@ static PlatformRSAKeyPair generatePlatformKeyPair(unsigned modulusLength, const 
         return {};
 
     auto privatePKey = EvpPKeyPtr(EVP_PKEY_new());
-    if (EVP_PKEY_set1_RSA(privatePKey.get(), privateRSA.get()) <= 0)
+    if (!privatePKey || EVP_PKEY_set1_RSA(privatePKey.get(), privateRSA.get()) <= 0)
         return {};
 
     auto publicPKey = EvpPKeyPtr(EVP_PKEY_new());
-    if (EVP_PKEY_set1_RSA(publicPKey.get(), publicRSA.get()) <= 0)
+    if (!publicPKey || EVP_PKEY_set1_RSA(publicPKey.get(), publicRSA.get()) <= 0)
         return {};
 
     return { WTF::move(publicPKey), WTF::move(privatePKey) };

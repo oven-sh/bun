@@ -1281,10 +1281,12 @@ describe("RSA generateKey", () => {
   };
 
   it("resolves asynchronously instead of inside the generateKey call", async () => {
+    const order: string[] = [];
     const pending = crypto.subtle.generateKey(rsaParams, true, ["sign", "verify"]);
     let settled = false;
     pending.then(() => {
       settled = true;
+      order.push("keygen");
     });
     // With synchronous keygen the promise is already fulfilled when the call
     // returns, so its reaction runs at this microtask checkpoint. Off-thread
@@ -1293,7 +1295,19 @@ describe("RSA generateKey", () => {
     await Promise.resolve();
     expect(settled).toBe(false);
 
+    // A 0ms timer armed right after the call must fire before the keygen
+    // resolves. A synchronous keygen that merely posted its resolution as a
+    // task would have enqueued the completion before this timer existed and
+    // would flip the order.
+    await new Promise<void>(resolve =>
+      setTimeout(() => {
+        order.push("timer");
+        resolve();
+      }, 0),
+    );
     const { publicKey, privateKey } = (await pending) as CryptoKeyPair;
+    expect(order).toEqual(["timer", "keygen"]);
+
     const data = new Uint8Array([1, 2, 3]);
     const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", privateKey, data);
     expect(await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, signature, data)).toBe(true);
@@ -1313,6 +1327,26 @@ describe("RSA generateKey", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("public private\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps the process alive for a floating generateKey promise", async () => {
+    // No top-level await: the process lifetime rides entirely on the work-pool
+    // task's event-loop ref. If that ref were lost, the process would exit
+    // silently before the keygen completes.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `crypto.subtle.generateKey({ name: "RSA-PSS", hash: "SHA-256", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) }, true, ["sign", "verify"]).then(pair => console.log(pair.publicKey.type));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("public\n");
     expect(exitCode).toBe(0);
   });
 
@@ -1343,32 +1377,33 @@ describe("RSA generateKey", () => {
   });
 
   it("generates keys inside a Worker", async () => {
-    const worker = new Worker(
-      URL.createObjectURL(
-        new Blob(
-          [
-            `(async () => {
-              const pair = await crypto.subtle.generateKey(
-                { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) },
-                true,
-                ["sign", "verify"],
-              );
-              const data = new Uint8Array([1, 2, 3]);
-              const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, data);
-              postMessage({ verified: await crypto.subtle.verify("RSASSA-PKCS1-v1_5", pair.publicKey, signature, data) });
-            })().catch(e => postMessage({ error: String(e) }));`,
-          ],
-          { type: "application/javascript" },
-        ),
+    const workerUrl = URL.createObjectURL(
+      new Blob(
+        [
+          `(async () => {
+            const pair = await crypto.subtle.generateKey(
+              { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) },
+              true,
+              ["sign", "verify"],
+            );
+            const data = new Uint8Array([1, 2, 3]);
+            const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, data);
+            postMessage({ verified: await crypto.subtle.verify("RSASSA-PKCS1-v1_5", pair.publicKey, signature, data) });
+          })().catch(e => postMessage({ error: String(e) }));`,
+        ],
+        { type: "application/javascript" },
       ),
     );
+    let worker: Worker | undefined;
     try {
+      worker = new Worker(workerUrl);
       const { promise, resolve, reject } = Promise.withResolvers<any>();
       worker.onmessage = e => resolve(e.data);
       worker.onerror = e => reject(new Error(e.message));
       expect(await promise).toEqual({ verified: true });
     } finally {
-      worker.terminate();
+      worker?.terminate();
+      URL.revokeObjectURL(workerUrl);
     }
   });
 });

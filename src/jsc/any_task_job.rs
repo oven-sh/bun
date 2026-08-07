@@ -42,6 +42,7 @@ pub trait AnyTaskJobCtx: Sized {
 #[repr(C)]
 pub struct AnyTaskJob<C> {
     run_from_js_erased: fn(*mut ()) -> JsResult<()>,
+    release_erased: fn(*mut ()),
     /// How the pool thread reaches the VM to deliver the completion.
     vm: crate::VmHandle,
     loop_kind: crate::LoopKind,
@@ -66,7 +67,24 @@ pub unsafe fn dispatch_erased(ptr: *mut ()) -> JsResult<()> {
     entry(ptr)
 }
 
+/// Free a queued job at VM shutdown without running its completion; the ctx
+/// `Drop` needs the still-live VM to release its JSC handles and resources.
+///
+/// # Safety
+/// `ptr` must be a live `*mut AnyTaskJob<C>` from [`AnyTaskJob::create`],
+/// popped from the event-loop queue (so it held exclusive ownership); frees it.
+pub unsafe fn release_erased(ptr: *mut ()) {
+    // SAFETY: `AnyTaskJob<C>` is `#[repr(C)]` with `release_erased` second;
+    // caller contract that `ptr` is such an allocation.
+    let entry = unsafe { *ptr.cast::<fn(*mut ())>().add(1) };
+    entry(ptr)
+}
+
 const _: () = assert!(core::mem::offset_of!(AnyTaskJob<()>, run_from_js_erased) == 0);
+const _: () = assert!(
+    core::mem::offset_of!(AnyTaskJob<()>, release_erased)
+        == core::mem::size_of::<fn(*mut ()) -> JsResult<()>>()
+);
 
 impl<C> bun_event_loop::Taskable for AnyTaskJob<C> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
@@ -92,6 +110,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         let vm = global.bun_vm();
         let job = bun_core::heap::into_raw(Box::new(Self {
             run_from_js_erased: |p| Self::run_from_js(p.cast::<Self>()),
+            release_erased: |p| Self::release(p.cast::<Self>()),
             vm: vm.handle(),
             loop_kind: vm.as_mut().current_loop_kind(),
             global: core::ptr::from_ref(global).cast_mut(),
@@ -192,5 +211,12 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
             return Ok(());
         }
         this.ctx.then(global)
+    }
+
+    /// [`release_erased`]'s monomorphic body.
+    fn release(this: *mut Self) {
+        // SAFETY: `this` was produced by `heap::into_raw` in `create`; the
+        // caller (the popped queue entry) held exclusive ownership.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }

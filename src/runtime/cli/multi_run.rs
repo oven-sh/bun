@@ -317,7 +317,7 @@ impl<'a> State<'a> {
         };
 
         // Process complete lines
-        while let Some(newline_pos) = pipe.line_buffer.iter().position(|&b| b == b'\n') {
+        while let Some(newline_pos) = strings::index_of_char_usize(&pipe.line_buffer, b'\n') {
             let line = &pipe.line_buffer[0..newline_pos + 1];
             // SAFETY: pipe.handle backref set in ProcessHandle::start()
             let handle = unsafe { &*pipe.handle };
@@ -957,7 +957,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         // Phase 3: Build configs from sorted packages
         for pkg in &matched_packages {
             for raw_name in &script_names {
-                if raw_name.contains(&b'*') {
+                if strings::contains_char(raw_name, b'*') {
                     // Glob: expand against this package's scripts
                     let mut matches: Vec<&[u8]> = Vec::new();
                     for key in pkg.scripts.keys() {
@@ -1039,7 +1039,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
         for raw_name in &script_names {
             // Check if this is a glob pattern
-            if raw_name.contains(&b'*') {
+            if strings::contains_char(raw_name, b'*') {
                 if let Some(sm) = scripts_map {
                     // Collect matching script names
                     let mut matches: Vec<&[u8]> = Vec::new();

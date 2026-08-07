@@ -1652,7 +1652,13 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   using packageDir = tempDir("transitive-peer-test-", {});
   const packageJson = join(String(packageDir), "package.json");
   const cacheDir = join(String(packageDir), ".bun-cache");
-  const bunfig = `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nregistry = "http://localhost:${server.port}/"\nlinker = "isolated"\n`;
+  const bunfig = Bun.TOML.stringify({
+    install: {
+      cache: cacheDir,
+      registry: `http://localhost:${server.port}/`,
+      linker: "isolated",
+    },
+  });
   await write(join(String(packageDir), "bunfig.toml"), bunfig);
 
   await write(
@@ -1698,6 +1704,56 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   expect(withoutEntryHash(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep")))).toBe(
     join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),
   );
+});
+
+// https://github.com/oven-sh/bun/issues/36987
+// A tarball URL with a query string must not put a literal `?` in the .bun
+// store directory name: module resolution parses `?` as a query-string
+// delimiter (truncating the path), and `?` is invalid in Windows filenames.
+test("tarball URL with query string resolves at runtime", async () => {
+  const tarball = file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz"));
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (new URL(req.url).pathname !== "/pkg.tgz") {
+        return new Response("Not found", { status: 404 });
+      }
+      return new Response(tarball, {
+        headers: { "Content-Type": "application/octet-stream" },
+      });
+    },
+  });
+
+  using cacheDir = tempDir("tarball-query-cache-", {});
+  using packageDir = tempDir("tarball-query-test-", {
+    "bunfig.toml": `[install]\ncache = "${String(cacheDir).replaceAll("\\", "\\\\")}"\nlinker = "isolated"\n`,
+    "package.json": JSON.stringify({
+      name: "test-tarball-query",
+      dependencies: {
+        "no-deps": `http://localhost:${server.port}/pkg.tgz?x=y`,
+      },
+    }),
+    "index.mjs": `import pkg from "no-deps";\nconsole.log(pkg.version);`,
+  });
+
+  await runBunInstall(bunEnv, String(packageDir));
+
+  const bunDir = join(String(packageDir), "node_modules", ".bun");
+  const storeEntries = (await readdirSorted(bunDir)).filter(entry => entry !== "node_modules");
+  expect(storeEntries).toEqual([`no-deps@http+++localhost+${server.port}+pkg.tgz+x=y`]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env: bunEnv,
+    cwd: String(packageDir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("1.0.0\n");
+  expect(exitCode).toBe(0);
 });
 
 describe("global virtual store", () => {
@@ -2073,7 +2129,14 @@ describe("global virtual store", () => {
     const sharedCache = join(a.packageDir, ".bun-cache");
     await write(
       join(b.packageDir, "bunfig.toml"),
-      `[install]\ncache = "${sharedCache.replaceAll("\\", "\\\\")}"\nregistry = "${registry.registryUrl()}"\nlinker = "isolated"\nglobalStore = true\n`,
+      Bun.TOML.stringify({
+        install: {
+          cache: sharedCache,
+          registry: registry.registryUrl(),
+          linker: "isolated",
+          globalStore: true,
+        },
+      }),
     );
 
     for (const { packageJson } of [a, b]) {

@@ -303,28 +303,30 @@ fn is_valid_gating_identifier(s: &[u8]) -> bool {
 /// `(` for the `@key(value)` form).
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 fn split_pragma(pragma: &[u8]) -> impl Iterator<Item = (&[u8], Option<&[u8]>)> {
-    pragma.split(|&b| b == b'@').skip(1).filter_map(|entry| {
-        let entry = trim_ascii(entry);
-        if entry.is_empty() {
-            return None;
-        }
-        if let Some(i) = entry.iter().position(|&b| b == b':' || b == b'(') {
-            let key = &entry[..i];
-            let mut val = &entry[i + 1..];
-            if entry[i] == b'(' {
-                if let Some(close) = val.iter().position(|&b| b == b')') {
-                    val = &val[..close];
-                }
+    bun_core::strings::split(pragma, b"@")
+        .skip(1)
+        .filter_map(|entry| {
+            let entry = trim_ascii(entry);
+            if entry.is_empty() {
+                return None;
             }
-            Some((key, Some(trim_ascii(val))))
-        } else {
-            let key = entry
-                .iter()
-                .position(|b| b.is_ascii_whitespace())
-                .map_or(entry, |i| &entry[..i]);
-            Some((key, None))
-        }
-    })
+            if let Some(i) = bun_core::strings::index_of_any(entry, b":(") {
+                let key = &entry[..i];
+                let mut val = &entry[i + 1..];
+                if entry[i] == b'(' {
+                    if let Some(close) = bun_core::strings::index_of_char_usize(val, b')') {
+                        val = &val[..close];
+                    }
+                }
+                Some((key, Some(trim_ascii(val))))
+            } else {
+                let key = entry
+                    .iter()
+                    .position(|b| b.is_ascii_whitespace())
+                    .map_or(entry, |i| &entry[..i]);
+                Some((key, None))
+            }
+        })
 }
 
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
@@ -372,7 +374,7 @@ fn pragma_bool(val: Option<&[u8]>) -> Option<bool> {
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 fn leading_comment_pragma(source: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
-    for line in source.split(|&b| b == b'\n') {
+    for line in bun_core::strings::split(source, b"\n") {
         let t = trim_ascii(line);
         if t.is_empty() {
             continue;
@@ -450,9 +452,9 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
                 let parsed = val.and_then(|v| {
                     let i = bun_core::strings::index_of(v, b"\"source\"")?;
                     let rest = &v[i + b"\"source\"".len()..];
-                    let open = rest.iter().position(|&b| b == b'"')?;
+                    let open = bun_core::strings::index_of_char_usize(rest, b'"')?;
                     let rest = &rest[open + 1..];
-                    let close = rest.iter().position(|&b| b == b'"')?;
+                    let close = bun_core::strings::index_of_char_usize(rest, b'"')?;
                     core::str::from_utf8(&rest[..close]).ok().map(str::to_owned)
                 });
                 if let Some(source) = parsed {
@@ -568,7 +570,10 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
             b"validateBlocklistedImports" => {}
             b"customMacros" => {
                 if let Some(v) = val.and_then(pragma_string_value) {
-                    let head = v.split('.').next().unwrap_or(&v).to_owned();
+                    let head = match bun_core::strings::index_of_char_usize(v.as_bytes(), b'.') {
+                        Some(dot) => v[..dot].to_owned(),
+                        None => v,
+                    };
                     env.custom_macros = Some(vec![head]);
                 }
             }

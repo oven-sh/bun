@@ -748,9 +748,9 @@ impl EventLoop {
     ///
     /// Tags `__bun_release_task_at_shutdown` doesn't claim are likewise
     /// re-queued so they remain reachable from the static-rooted VM box (the
-    /// pre-`532a5411961b` state). Consuming them silently here unhooked that
-    /// root and surfaced the boxes as direct leaks (e.g. `AnyTaskJob<_>`); the
-    /// definer can't safely dispatch every erased callback at shutdown.
+    /// pre-`532a5411961b` state). Consuming them without freeing unhooked that
+    /// root and surfaced the boxes as direct leaks; the definer can't safely
+    /// dispatch every erased callback at shutdown.
     pub fn release_queued_tasks(&mut self) {
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
@@ -1240,19 +1240,6 @@ extern "C" fn noop_forever_timer(_: *mut uws::Timer) {
     // do nothing
 }
 
-// HOST_EXPORT(Bun__EventLoop__runCallback1, c)
-pub fn event_loop_run_callback1(
-    global: &JSGlobalObject,
-    callback: JSValue,
-    this_value: JSValue,
-    arg0: JSValue,
-) {
-    global
-        .bun_vm()
-        .event_loop_mut()
-        .run_callback(callback, global, this_value, &[arg0]);
-}
-
 // HOST_EXPORT(Bun__EventLoop__runCallback2, c)
 pub fn event_loop_run_callback2(
     global: &JSGlobalObject,
@@ -1265,23 +1252,6 @@ pub fn event_loop_run_callback2(
         .bun_vm()
         .event_loop_mut()
         .run_callback(callback, global, this_value, &[arg0, arg1]);
-}
-
-// HOST_EXPORT(Bun__EventLoop__runCallback3, c)
-pub fn event_loop_run_callback3(
-    global: &JSGlobalObject,
-    callback: JSValue,
-    this_value: JSValue,
-    arg0: JSValue,
-    arg1: JSValue,
-    arg2: JSValue,
-) {
-    global.bun_vm().event_loop_mut().run_callback(
-        callback,
-        global,
-        this_value,
-        &[arg0, arg1, arg2],
-    );
 }
 
 // HOST_EXPORT(Bun__EventLoop__enter, c)

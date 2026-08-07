@@ -463,12 +463,10 @@ pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> cra
     }
 }
 
-/// `Platform.kernelVersion().orderWithoutTag(.{ major, minor }).compare(.gte)`.
-/// `bun_analytics::generate_header::Platform` (T6) is the canonical
-/// source; T1 routes through `bun_core::linux_kernel_version()` (TYPE_ONLY
-/// move-down) so this crate stays leaf. Compare is
-/// lexicographic on major→minor→patch,
-/// with patch defaulting to 0 in the comparand.
+/// Same probe as `bun_analytics::generate_header::generate_platform::kernel_version()`,
+/// routed through `bun_core::linux_kernel_version()` so this crate stays leaf.
+/// Compare is lexicographic on major→minor→patch, with patch defaulting to 0
+/// in the comparand.
 #[inline]
 fn kernel_at_least(major: u32, minor: u32) -> bool {
     let v = bun_core::linux_kernel_version();

@@ -101,7 +101,10 @@ impl FSWatcher {
     /// task; the queue takes ownership unless the VM has been torn down, in
     /// which case the caller gets it back.
     #[cfg(not(windows))]
-    pub(crate) fn post(&self, task: core::ptr::NonNull<ConcurrentTask>) -> bun_jsc::vm_handle::Posted {
+    pub(crate) fn post(
+        &self,
+        task: core::ptr::NonNull<ConcurrentTask>,
+    ) -> bun_jsc::vm_handle::Posted {
         self.vm_handle.post(self.loop_kind, task)
     }
 
@@ -227,7 +230,9 @@ impl FSWatchTaskPosix {
             // until the JS thread drains and `heap::take`s it in `dispatch`.
             unsafe {
                 (*that).concurrent_task.task = Task::init(that);
-                let node = core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!((*that).concurrent_task));
+                let node = core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!(
+                    (*that).concurrent_task
+                ));
                 if let bun_jsc::vm_handle::Posted::Refused(_) = self.ctx().post(node) {
                     // VM torn down: nobody will emit these events. Free the batch
                     // (its entries own their paths) and drop the activity ref.

@@ -430,11 +430,12 @@ unsafe fn init_runtime_state(
                     // from CLI args to the resolver so symlinked node_modules
                     // entries resolve via their link path (peer deps stay reachable).
                     t.resolver.opts.preserve_symlinks = preserve_symlinks;
-                    let wake_ctx = bun_core::heap::into_raw(Box::new(bun_jsc::async_module::WakeContext {
-                        queue: ptr::addr_of_mut!((*vm).modules),
-                        vm: (*vm).handle(),
-                        loop_kind: bun_jsc::LoopKind::Regular,
-                    }));
+                    let wake_ctx =
+                        bun_core::heap::into_raw(Box::new(bun_jsc::async_module::WakeContext {
+                            queue: ptr::addr_of_mut!((*vm).modules),
+                            vm: (*vm).handle(),
+                            loop_kind: bun_jsc::LoopKind::Regular,
+                        }));
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(wake_ctx.cast()),
                         handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
@@ -448,7 +449,11 @@ unsafe fn init_runtime_state(
                                 // SAFETY: `ctx` is the `WakeContext` set just above; its queue is `(*vm).modules`.
                                 unsafe {
                                     bun_jsc::async_module::Queue::on_dependency_error(
-                                        bun_jsc::async_module::Queue::queue_from_wake_context(ctx).cast(), dep, id, err,
+                                        bun_jsc::async_module::Queue::queue_from_wake_context(ctx)
+                                            .cast(),
+                                        dep,
+                                        id,
+                                        err,
                                     )
                                 }
                             }

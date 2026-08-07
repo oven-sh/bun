@@ -7,9 +7,9 @@
 //
 // This asserts on the bytes the client emits, which only a mock server can
 // observe: CI's real-server suites run MySQL, which accepts either type code,
-// so a container test cannot catch a regression here. The MariaDB-visible
-// behavior (binding an object succeeds) is covered by the "JSON" test in
-// sql-mysql.test.ts when the mysql service is backed by MariaDB.
+// so a container test cannot catch a regression here. (The "JSON" test in
+// sql-mysql.test.ts is MySQL-only: CAST(? AS JSON) is a 1064 syntax error on
+// MariaDB, whose json columns are LONGTEXT and read back as strings.)
 // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
 // Buffer.alloc frame construction here.
 

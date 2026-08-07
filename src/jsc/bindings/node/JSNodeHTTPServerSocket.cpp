@@ -500,6 +500,11 @@ static void onNodeHttpReadsPaused(us_socket_t* socket)
     auto* d = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
     d->nodeHttpParkAtNextBoundary = true;
     d->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+    // The replay of parked requests (and the eventual read resume) runs from
+    // onWritable, but the queued pipelined responses live in the JS pipeline
+    // queue: no socket write happens here to arm the poll, so ask for the
+    // writable event explicitly.
+    us_socket_mark_writable_pending(socket);
 }
 
 extern "C" void Bun__NodeHTTP__onReadsPaused(int ssl, us_socket_t* socket)

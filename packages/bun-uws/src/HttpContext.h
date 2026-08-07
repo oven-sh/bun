@@ -421,6 +421,11 @@ private:
                      * right now — pausing the socket alone cannot bound it. */
                     httpResponseData->nodeHttpParkAtNextBoundary = true;
                     ((HttpResponse<SSL> *) s)->pause();
+                    /* The buffered bytes were queued without a kernel write
+                     * (response ordering), so no write failure armed the poll;
+                     * the onWritable that flushes them and replays the parked
+                     * requests needs explicit writable interest. */
+                    us_socket_mark_writable_pending((us_socket_t *) s);
                 }
                 }
             } else {
@@ -454,6 +459,10 @@ private:
                         httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
                         httpResponseData->nodeHttpParkAtNextBoundary = true;
                         ((HttpResponse<SSL> *) s)->pause();
+                        /* Same as the pipelined branch above: the queued bytes
+                         * never hit the kernel, so arm the writable that will
+                         * flush them and replay the parked requests. */
+                        us_socket_mark_writable_pending((us_socket_t *) s);
                     }
                 }
             }

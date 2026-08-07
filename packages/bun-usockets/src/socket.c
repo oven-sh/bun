@@ -418,6 +418,17 @@ static void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+/* See libusockets.h. last_write_failed makes the writable dispatch keep the
+ * interest armed until a flush succeeds (it is cleared at writable-event
+ * entry and re-set by any failing write). */
+void us_socket_mark_writable_pending(struct us_socket_t *s) {
+    if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+        return;
+    }
+    s->flags.last_write_failed = 1;
+    us_internal_rearm_writable(s);
+}
+
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;
@@ -710,6 +721,28 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
+#ifdef LIBUS_USE_KQUEUE
+        /* A socket already at 0 events (paused with nothing buffered) diffs
+         * to a no-op above, leaving no kqueue filter at all; arm the
+         * read-side teardown watch directly so the peer's FIN/RST still
+         * closes us (epoll's implicit EPOLLHUP|EPOLLERR needs no filter).
+         * AFTER the shutdown(2): macOS 26 only delivers the peer's close on
+         * a filter registered after SHUT_WR (node-http-halfclose-midupload
+         * timed out with the watch armed before it), and EV_EOF is level
+         * state, so a FIN landing in the gap is still reported by the fresh
+         * registration. */
+        if (us_poll_events(&s->p) == 0) {
+            kqueue_change(s->group->loop->fd, us_poll_fd(&s->p), 0, 0, &s->p);
+        } else {
+            /* Still reading: scrub any phantom write one-shot the 0-event
+             * fallback armed during an earlier pause (poll_events never
+             * records it, so the diff above cannot see it; ENOENT is
+             * harmless when none exists). */
+            kqueue_change(s->group->loop->fd, us_poll_fd(&s->p),
+                          LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+                          LIBUS_SOCKET_READABLE, &s->p);
+        }
+#endif
     }
 }
 
@@ -840,8 +873,14 @@ void us_socket_pause(struct us_socket_t *s) {
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if (us_socket_is_closed(s)) return;
-    // we are readable and writable so we can just pause readable side
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_WRITABLE);
+    /* Drop readable interest but only KEEP writable interest, never add it:
+     * forcing WRITABLE here dispatched a bogus writable (a JS drain event
+     * with nothing buffered) on every pause, and on a shut-down socket the
+     * fresh kqueue EVFILT_WRITE one-shot reported our own SS_CANTSENDMORE
+     * as EV_EOF immediately, closing a half-closed socket whose peer was
+     * still alive (libuv's uv_read_stop only removes read interest). A
+     * backpressured write keeps its interest; none means nothing to drain. */
+    us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
     s->flags.is_paused = 1;
 }
 
@@ -864,6 +903,11 @@ void us_socket_resume(struct us_socket_t *s) {
         us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
         return;
     }
-    // we are readable and writable so we resume everything
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    /* Re-add readable, but like pause() only KEEP writable interest: any
+     * backpressure during the pause already armed it via
+     * us_internal_rearm_writable, and manufacturing it here fired a bogus
+     * drain on every pause/resume round trip (libuv's uv_read_start only
+     * adds POLLIN). */
+    us_poll_change(&s->p, s->group->loop,
+                   LIBUS_SOCKET_READABLE | (us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE));
 }

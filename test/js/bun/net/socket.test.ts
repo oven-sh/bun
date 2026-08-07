@@ -362,6 +362,240 @@ describe.concurrent("socket", () => {
     expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
   });
 
+  // Deterministic checkpoint for the negative assertions below: an echo round
+  // trip through an independent pair on the SAME event loop cannot complete
+  // before events that were already ready for other sockets have dispatched,
+  // so N round trips prove N full poll cycles ran.
+  async function loopCycles(n: number) {
+    using echo = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {},
+        data(s, d) {
+          s.write(d);
+        },
+        end() {},
+        error() {},
+        close() {},
+      },
+    });
+    const done = Promise.withResolvers<void>();
+    let count = 0;
+    const opened = Promise.withResolvers<any>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: echo.port,
+      socket: {
+        open: s => opened.resolve(s),
+        data(s) {
+          if (++count >= n) done.resolve();
+          else s.write("p");
+        },
+        end() {},
+        error() {},
+        close() {},
+      },
+    });
+    const probe = await opened.promise;
+    probe.write("p");
+    await done.promise;
+    probe.terminate();
+  }
+
+  // us_socket_pause armed WRITABLE unconditionally; the always-writable socket
+  // then dispatched a bogus drain with nothing buffered.
+  it("pause() with nothing buffered must not fire a drain event", async () => {
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
+    });
+    let drains = 0;
+    const opened = Promise.withResolvers<any>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open: s => opened.resolve(s),
+        drain() {
+          drains++;
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {},
+      },
+    });
+    const s = await opened.promise;
+    await loopCycles(2); // any connect-time writable has dispatched
+    const before = drains;
+    s.pause();
+    await loopCycles(3); // the buggy pause-armed writable would have fired
+    s.resume();
+    await loopCycles(3); // resume() manufacturing WRITABLE would have too
+    const delta = drains - before;
+    s.terminate(); // release before asserting so a failure does not leak the socket
+    expect(delta).toBe(0);
+  });
+
+  // On kqueue, pause() after shutdown() armed an EVFILT_WRITE one-shot that
+  // reported our own SS_CANTSENDMORE as EV_EOF immediately: the half-closed
+  // socket closed within milliseconds even though the peer was alive and
+  // silent. Linux always kept it open; this pins the behavior on both.
+  it("shutdown() then pause() keeps a half-closed socket open while the peer is silent", async () => {
+    let closedEarly = false;
+    const opened = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.shutdown();
+          s.pause();
+          opened.resolve();
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {
+          closedEarly = true;
+        },
+      },
+    });
+    // allowHalfOpen peer ignores our FIN and stays silently connected.
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
+    });
+    await opened.promise;
+    // The buggy kqueue EV_EOF close dispatched in the first poll cycle after
+    // the pause; several full cycles prove it is not coming.
+    await loopCycles(3);
+    const closed = closedEarly;
+    peer.terminate(); // release before asserting so a failure does not leak the socket
+    expect(closed).toBe(false);
+  });
+
+  // The sibling ordering: pause() first arms the 0-event fallback write
+  // one-shot before the socket is shut down, and the teardown transition must
+  // still scrub it or it echoes our own SS_CANTSENDMORE as EV_EOF.
+  it("pause() then shutdown() keeps a half-closed socket open while the peer is silent", async () => {
+    let closedEarly = false;
+    const opened = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.pause();
+          s.shutdown();
+          opened.resolve();
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {
+          closedEarly = true;
+        },
+      },
+    });
+    // allowHalfOpen peer ignores our FIN and stays silently connected.
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
+    });
+    await opened.promise;
+    // Same checkpoint rationale as the shutdown-then-pause test.
+    await loopCycles(3);
+    const closed = closedEarly;
+    peer.terminate();
+    expect(closed).toBe(false);
+  });
+
+  // Third ordering: pause() then resume() leaves the 0-event fallback's
+  // write one-shot armed but unrecorded; shutdown() must scrub it or it
+  // echoes our own SS_CANTSENDMORE.
+  it("pause() then resume() then shutdown() keeps a half-closed socket open while the peer is silent", async () => {
+    let closedEarly = false;
+    const opened = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.pause();
+          s.resume();
+          s.shutdown();
+          opened.resolve();
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {
+          closedEarly = true;
+        },
+      },
+    });
+    // allowHalfOpen peer ignores our FIN and stays silently connected.
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: { open() {}, data() {}, end() {}, error() {}, close() {} },
+    });
+    await opened.promise;
+    // Same checkpoint rationale as the shutdown-then-pause test.
+    await loopCycles(3);
+    const closed = closedEarly;
+    peer.terminate();
+    expect(closed).toBe(false);
+  });
+
+  // The flip side: with the write filter unusable after our own shutdown()
+  // (its EV_EOF echoes SS_CANTSENDMORE), the read-side teardown watch must
+  // still deliver the peer's actual termination to a paused half-closed
+  // socket (epoll gets this via the implicit EPOLLHUP|EPOLLERR). Windows is
+  // excluded: the libuv backend has no event for a reset against a paused
+  // 0-event poll (AFD only reports subscribed events), a pre-existing gap
+  // tracked separately from this change.
+  it.skipIf(isWindows)("shutdown() then pause() still closes when the peer terminates", async () => {
+    const closed = Promise.withResolvers<void>();
+    const opened = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.shutdown();
+          s.pause();
+          opened.resolve();
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {
+          closed.resolve();
+        },
+      },
+    });
+    const peerOpened = Promise.withResolvers<any>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: { open: s => peerOpened.resolve(s), data() {}, end() {}, error() {}, close() {} },
+    });
+    const peer = await peerOpened.promise;
+    await opened.promise;
+    peer.terminate(); // RST; the victim's close must still fire while paused
+    await closed.promise;
+  });
+
   it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), fileURLToPath(new URL("./socket-reload-fixture.ts", import.meta.url))],

@@ -353,9 +353,14 @@ fn on_handshake(
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
     // Do NOT form `&mut ProxyTunnel` (see ALIASING NOTE).
     let _guard = ProxyTunnel::ref_scope(proxy_nn);
-    this.state.response_stage = HTTPStage::ProxyHeaders;
-    this.state.request_stage = HTTPStage::ProxyHeaders;
-    this.state.request_sent_len = 0;
+    // on_handshake fires once per completed handshake, including TLS 1.2
+    // renegotiations. Only the first dispatch may rewind the stages and
+    // re-send the request (same first-call gate as HTTPContext::first_call).
+    if this.state.request_stage == HTTPStage::ProxyHandshake {
+        this.state.response_stage = HTTPStage::ProxyHeaders;
+        this.state.request_stage = HTTPStage::ProxyHeaders;
+        this.state.request_sent_len = 0;
+    }
     let handshake_error = HTTPCertError::from_verify_error(ssl_error);
     if handshake_success {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake success");

@@ -448,7 +448,12 @@ it.concurrent(
       killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "drained-ok", exitCode: 0 });
+    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode, stderr }).toEqual({
+      stdout: "drained-ok",
+      exitCode: 0,
+      signalCode: null,
+      stderr: expect.any(String),
+    });
   },
   30_000,
 );
@@ -478,7 +483,7 @@ it.concurrent("should complete a quiet renegotiation over a duplex socket (SSLWr
   raw.on("end", () => duplex.push(null));
   raw.on("close", () => duplex.destroy());
 
-  const { promise: renegotiated, resolve } = Promise.withResolvers<void>();
+  const { promise: renegotiated, resolve, reject } = Promise.withResolvers<void>();
   let secure = 0;
   const errors: string[] = [];
   const socket = tlsConnect({ socket: duplex, rejectUnauthorized: false });
@@ -490,11 +495,17 @@ it.concurrent("should complete a quiet renegotiation over a duplex socket (SSLWr
     if (secure === 2) resolve();
   });
   socket.on("error", (e: any) => errors.push(e.code ?? e.message));
+  socket.on("close", () =>
+    reject(new Error(`closed before the second 'secure' (secure=${secure}, errors=${JSON.stringify(errors)})`)),
+  );
 
-  await renegotiated;
-  expect(errors).toEqual([]);
-  socket.destroy();
-  raw.destroy();
+  try {
+    await renegotiated;
+    expect(errors).toEqual([]);
+  } finally {
+    socket.destroy();
+    raw.destroy();
+  }
 });
 
 it("should terminate the connection when the peer exceeds the renegotiation limit over a duplex socket", async () => {

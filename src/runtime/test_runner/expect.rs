@@ -471,6 +471,36 @@ impl Expect {
         }
     }
 
+    /// `wait_for_promise` bounded by the test's deadline; returns `true` if still pending.
+    fn wait_for_promise_bounded_by_test(
+        global_this: &JSGlobalObject,
+        promise: bun_jsc::AnyPromise,
+    ) -> bool {
+        use bun_core::{Timespec, TimespecMockMode};
+        if promise.status() != js_promise::Status::Pending {
+            return false;
+        }
+        let deadline = Jest::runner().map_or(Timespec::EPOCH, |r| r.get_active_timeout());
+        let jsc_vm = global_this.vm();
+        let bun_vm = global_this.bun_vm().as_mut();
+        while promise.status() == js_promise::Status::Pending {
+            if jsc_vm.execution_forbidden() {
+                break;
+            }
+            if !deadline.eql(&Timespec::EPOCH)
+                && deadline.order(&Timespec::now(TimespecMockMode::ForceRealTime))
+                    == core::cmp::Ordering::Less
+            {
+                break;
+            }
+            bun_vm.event_loop_mut().tick();
+            if promise.status() == js_promise::Status::Pending {
+                bun_vm.event_loop_mut().auto_tick();
+            }
+        }
+        promise.status() == js_promise::Status::Pending
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -489,8 +519,17 @@ impl Expect {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
 
-                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this.bun_vm().as_mut().wait_for_promise(promise);
+                    if Self::wait_for_promise_bounded_by_test(global_this, promise) {
+                        if !silent {
+                            return Err(Self::throw_promise_matcher_error(
+                                global_this, custom_label, matcher_name, matcher_params, flags,
+                                "Expected promise to settle within the test timeout",
+                                "Received promise that is still pending: ",
+                                "[Promise]",
+                            ));
+                        }
+                        return Err(JsError::Thrown);
+                    }
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -893,8 +932,14 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            vm.wait_for_promise(promise);
+            promise.set_handled(global_this.vm());
+            let still_pending = Self::wait_for_promise_bounded_by_test(global_this, promise);
             scope.apply(vm);
+            if still_pending {
+                return Err(global_this.throw(format_args!(
+                    "Received function returned a promise that did not settle within the test timeout",
+                )));
+            }
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));
@@ -1487,8 +1532,12 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this.bun_vm().as_mut().wait_for_promise(promise);
+            if Self::wait_for_promise_bounded_by_test(global_this, promise) {
+                return Err(global_this.throw(format_args!(
+                    "Matcher `{}` returned a promise that did not settle within the test timeout",
+                    matcher_name,
+                )));
+            }
 
             result = promise.result(vm);
             result.ensure_still_alive();

@@ -4923,16 +4923,14 @@ pub fn js_get_buffered_amount(global: &JSGlobalObject, callframe: &CallFrame) ->
     Ok(JSValue::js_number(0.0))
 }
 
-/// Exposed via `bun:internal-for-testing` so Windows leak tests can assert
-/// the libuv eventing backend frees every `us_poll_t` it allocates. -1 on
-/// platforms without that backend.
+/// `bun:internal-for-testing` poll-leak probe; -1 on platforms without the
+/// libuv eventing backend.
 #[bun_jsc::host_fn]
 pub fn js_uv_poll_live_count(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
     #[cfg(windows)]
     {
-        // Declared `safe fn` (reads a process-global atomic counter).
         Ok(JSValue::js_number(
             bun_uws_sys::socket_context::c::us_internal_uv_poll_live_count() as f64,
         ))

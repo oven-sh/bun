@@ -328,9 +328,8 @@ pub mod c {
         ) -> *mut SSL_CTX;
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
-        /// Live `us_poll_t` count on the libuv backend (`eventing/libuv.c`);
-        /// the symbol only exists on Windows.
         // safe: no args; reads a process-global counter — no preconditions.
+        // The symbol (eventing/libuv.c) only exists on Windows.
         #[cfg(windows)]
         pub safe fn us_internal_uv_poll_live_count() -> c_long;
         /// Appends the certificates in the NUL-terminated PEM `content` to

@@ -355,25 +355,37 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                    | (bits.writable ? LIBUS_SOCKET_WRITABLE : 0);
 
         int error = bits.error;
+        int eof = bits.eof;
         /* Write side dead without our own shutdown(): peer reset (or connect refused). Surface it as the poll error epoll would report as EPOLLERR. */
         if (bits.send_eof) {
             int type = us_internal_poll_type(poll);
             if (type == POLL_TYPE_SOCKET || type == POLL_TYPE_SEMI_SOCKET) {
                 error = 1;
-            } else if (type == POLL_TYPE_SOCKET_SHUT_DOWN && bits.send_eof_err) {
+            } else if (type == POLL_TYPE_SOCKET_SHUT_DOWN) {
                 /* After our own shutdown() every armed write filter reports
-                 * EV_EOF (SS_CANTSENDMORE is ours), so that alone proves
-                 * nothing; a socket error alongside it is the peer dying
-                 * hard. Close through the error path like epoll's EPOLLERR:
-                 * with reads paused (node:http half-closing mid-upload) this
-                 * is the only signal left that the peer is gone. */
-                error = 1;
+                 * EV_EOF (SS_CANTSENDMORE is ours), so the event alone proves
+                 * nothing about the peer. */
+                if (bits.send_eof_err) {
+                    /* A socket error alongside it is the peer dying hard:
+                     * close through the error path like epoll's EPOLLERR. */
+                    error = 1;
+                } else if (!(us_poll_events(poll) & LIBUS_SOCKET_READABLE)) {
+                    /* We shut down and reads are off (node:http half-closes
+                     * with the request body unconsumed), so no peer event can
+                     * ever reach this socket again: this stale write event is
+                     * the last signal it will get. Close clean, as the peer's
+                     * FIN would have; epoll closes the same deaf state via
+                     * EPOLLHUP. A shut-down socket that still reads (a client
+                     * awaiting its response) ignores its own-shutdown echo
+                     * here and learns of the peer through the read filter. */
+                    eof = 1;
+                }
             }
         }
 
         events &= us_poll_events(poll);
-        if (events || error || bits.eof) {
-            us_internal_dispatch_ready_poll(poll, error, bits.eof, events);
+        if (events || error || eof) {
+            us_internal_dispatch_ready_poll(poll, error, eof, events);
         }
     }
 #endif

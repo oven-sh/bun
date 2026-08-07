@@ -90,6 +90,7 @@ describe("transpiler cache", () => {
     // The second run loads the entry point from the transpiler cache; the
     // unknown extension must still get the file loader, not the tsx fallback.
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("string");
+    expect(newCacheCount()).toBe(0);
   });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));

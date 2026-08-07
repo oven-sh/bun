@@ -1429,20 +1429,17 @@ describe.concurrent("fetch() with streaming", () => {
 // (seen as a crash when aborting fetches with parked reads on streaming
 // bodies). The race is timing-dependent, so this stress fixture exercises the
 // abort paths and asserts every parked consumer settles with exit code 0.
-test.concurrent(
-  "aborting streaming fetches with parked body consumers settles them without crashing",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fetch-abort-parked-reads-fixture.ts")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+test.concurrent("aborting streaming fetches with parked body consumers settles them without crashing", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fetch-abort-parked-reads-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout).toBe("done 12\n");
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("done 12\n");
+  expect(exitCode).toBe(0);
+});

@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "d078ad066752ea7fd06acb2323b7a90c49d7d8e4";
+const MIMALLOC_COMMIT = "1803341d6241d8fa4b3f65fa68cb13a32ad92f04";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -54,11 +54,15 @@ export const mimalloc: Dependency = {
       ...(cfg.release && { MI_BUILD_RELEASE: true }),
     };
 
-    // Disable Transparent Huge Pages. Measured impact:
-    //   bun --eval 1:  THP off = 30MB peak,  THP on = 52MB peak
-    //   http-hello.js: THP off = 52MB peak,  THP on = 74MB peak
-    // THP trades memory for (sometimes) latency; for a JS runtime the
-    // memory cost isn't worth it. The cmake option only applies on Linux.
+    // Opt mimalloc's arenas out of Transparent Huge Pages. Only matters when
+    // /sys/kernel/mm/transparent_hugepage/enabled is `always` (RHEL, Amazon
+    // Linux, Arch); under `madvise` nothing in bun asks for huge pages anyway.
+    // Measured on an `always` box (release, x64):
+    //   bun -e 1:           THP off = 30MB peak,  THP on = 54MB peak
+    //   Bun.serve hello:    THP off = 46MB rss,   THP on = 68MB rss
+    // mimalloc does this per mapping (MADV_NOHUGEPAGE), not per process, so
+    // spawned children keep the system THP policy. JSC's reservations and
+    // bun_alloc's lazy arena opt out the same way on their side.
     if (cfg.linux) defines.MI_DEFAULT_ALLOW_THP = 0;
 
     // Skip prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, ...) after each mmap.

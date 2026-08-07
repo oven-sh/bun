@@ -1268,6 +1268,111 @@ describe("crypto.getRandomValues argument types", () => {
   }
 });
 
+// RSA key generation runs in the work pool instead of synchronously on the JS
+// thread. Before, generateKey returned an already-resolved promise: the keygen
+// (tens to hundreds of ms for 2048 bits) blocked the event loop and serialized
+// concurrent calls.
+describe("RSA generateKey", () => {
+  const rsaParams: RsaHashedKeyGenParams = {
+    name: "RSASSA-PKCS1-v1_5",
+    hash: "SHA-256",
+    modulusLength: 2048,
+    publicExponent: new Uint8Array([1, 0, 1]),
+  };
+
+  it("resolves asynchronously instead of inside the generateKey call", async () => {
+    const pending = crypto.subtle.generateKey(rsaParams, true, ["sign", "verify"]);
+    let settled = false;
+    pending.then(() => {
+      settled = true;
+    });
+    // With synchronous keygen the promise is already fulfilled when the call
+    // returns, so its reaction runs at this microtask checkpoint. Off-thread
+    // keygen cannot resolve during a microtask drain; it needs a full
+    // event-loop turn to deliver the result.
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    const { publicKey, privateKey } = (await pending) as CryptoKeyPair;
+    const data = new Uint8Array([1, 2, 3]);
+    const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", privateKey, data);
+    expect(await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, signature, data)).toBe(true);
+  });
+
+  it("keeps the process alive until pending key generation resolves", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const pair = await crypto.subtle.generateKey({ name: "RSA-OAEP", hash: "SHA-256", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) }, true, ["encrypt", "decrypt"]); console.log(pair.publicKey.type, pair.privateKey.type);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("public private\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("still rejects empty usages after generating the pair", async () => {
+    const result = await crypto.subtle.generateKey(rsaParams, true, []).then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
+    expect(result).toBe("SyntaxError: Usages cannot be empty when creating a key.");
+  });
+
+  it("rejects invalid generation parameters with OperationError", async () => {
+    const probe = (params: RsaHashedKeyGenParams) =>
+      crypto.subtle.generateKey(params, true, ["encrypt", "decrypt"]).then(
+        () => "resolved",
+        e => e.name,
+      );
+    expect({
+      // Rejected synchronously before any keygen is dispatched.
+      evenExponent: await probe({ ...rsaParams, name: "RSA-OAEP", publicExponent: new Uint8Array([4]) }),
+      // Makes RSA_generate_key_ex itself fail, on the failure path of the
+      // dispatched keygen.
+      tinyModulus: await probe({ ...rsaParams, name: "RSA-OAEP", modulusLength: 8 }),
+    }).toEqual({
+      evenExponent: "OperationError",
+      tinyModulus: "OperationError",
+    });
+  });
+
+  it("generates keys inside a Worker", async () => {
+    const worker = new Worker(
+      URL.createObjectURL(
+        new Blob(
+          [
+            `(async () => {
+              const pair = await crypto.subtle.generateKey(
+                { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) },
+                true,
+                ["sign", "verify"],
+              );
+              const data = new Uint8Array([1, 2, 3]);
+              const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, data);
+              postMessage({ verified: await crypto.subtle.verify("RSASSA-PKCS1-v1_5", pair.publicKey, signature, data) });
+            })().catch(e => postMessage({ error: String(e) }));`,
+          ],
+          { type: "application/javascript" },
+        ),
+      ),
+    );
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      worker.onmessage = e => resolve(e.data);
+      worker.onerror = e => reject(new Error(e.message));
+      expect(await promise).toEqual({ verified: true });
+    } finally {
+      worker.terminate();
+    }
+  });
+});
+
 describe("exception scope discipline", () => {
   // BUN_JSC_validateExceptionChecks=1 aborts on the first unchecked throw scope, so the
   // fixture (every SubtleCrypto op, success and normalize-failure) only produces the full

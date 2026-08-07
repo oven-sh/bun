@@ -64,10 +64,6 @@ macro_rules! __fs_pat {
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)
 
-use crate::api::archive::{
-    AsyncTask as ArchiveAsyncTask, BlobTask as ArchiveBlobTask, ExtractTask as ArchiveExtractTask,
-    FilesTask as ArchiveFilesTask, WriteTask as ArchiveWriteTask,
-};
 
 use crate::shell::builtins::{
     cp::ShellCpTask,
@@ -306,20 +302,6 @@ pub(crate) fn run_task(
             }
             .run();
         }
-        task_tag::PasswordHashResult => {
-            crate::crypto::password_object::PasswordResult::<crate::crypto::password_object::HashOp>::run_from_js(
-                cast_ptr!(crate::crypto::password_object::PasswordResult<crate::crypto::password_object::HashOp>),
-            )?;
-        }
-        task_tag::PasswordVerifyResult => {
-            crate::crypto::password_object::PasswordResult::<
-                crate::crypto::password_object::VerifyOp,
-            >::run_from_js(cast_ptr!(
-                crate::crypto::password_object::PasswordResult<
-                    crate::crypto::password_object::VerifyOp,
-                >
-            ))?;
-        }
         task_tag::ManagedTask => {
             // SAFETY: `task.ptr` was produced by `heap::alloc` in `ManagedTask::new`
             // and enqueued under `task_tag::ManagedTask`; `run` consumes/frees it.
@@ -336,18 +318,6 @@ pub(crate) fn run_task(
         // ── archive ──────────────────────────────────────────────────────
         // `cast_ptr!` yields the heap-allocated task registered with this
         // tag; the JS-thread dispatch is the sole owner at this point.
-        task_tag::ArchiveExtractTask => {
-            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveExtractTask))?;
-        }
-        task_tag::ArchiveBlobTask => {
-            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveBlobTask))?;
-        }
-        task_tag::ArchiveWriteTask => {
-            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveWriteTask))?;
-        }
-        task_tag::ArchiveFilesTask => {
-            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveFilesTask))?;
-        }
 
         // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
         task_tag::ShellAsync
@@ -639,7 +609,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 69,
+    task_tag::COUNT == 63,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 

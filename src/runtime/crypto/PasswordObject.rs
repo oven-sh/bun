@@ -3,18 +3,14 @@ use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_core::ZigString;
-use bun_io::KeepAlive;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult,
-    WorkPoolTask,
+    ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult,
 };
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
-use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{JSPromise, JSPromiseStrong};
-use bun_threading::work_pool::WorkPool;
 
 use crate::node::StringOrBuffer;
 
@@ -484,12 +480,11 @@ extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JSValu
 // both into one `PasswordJob<Op>` / `PasswordResult<Op>` parameterised on a
 // `PasswordOp` carrying exactly those three axes.
 
-pub(crate) trait PasswordOp: 'static {
+pub(crate) trait PasswordOp: Send + 'static {
     /// Success payload (`Box<[u8]>` for hash, `bool` for verify).
-    type Value;
+    type Value: Send;
     /// "hashing" | "verification" — slotted into the JS Error message.
     const ERR_VERB: &'static str;
-    const TASK_TAG: bun_event_loop::TaskTag;
     /// Off-thread compute. `self` borrows the op so its inputs stay owned by
     /// the job and are `free_sensitive`d in the job's / op's `Drop`.
     fn compute(&self, password: &[u8]) -> Result<Self::Value, HashError>;
@@ -503,7 +498,6 @@ pub(crate) struct HashOp {
 impl PasswordOp for HashOp {
     type Value = Box<[u8]>;
     const ERR_VERB: &'static str = "hashing";
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PasswordHashResult;
     fn compute(&self, password: &[u8]) -> Result<Box<[u8]>, HashError> {
         PasswordObject::hash(password, self.algorithm)
     }
@@ -527,7 +521,6 @@ impl Drop for VerifyOp {
 impl PasswordOp for VerifyOp {
     type Value = bool;
     const ERR_VERB: &'static str = "verification";
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PasswordVerifyResult;
     fn compute(&self, password: &[u8]) -> Result<bool, HashError> {
         PasswordObject::verify(password, &self.prev_hash, self.algorithm)
     }
@@ -556,20 +549,16 @@ fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> J
     instance
 }
 
+/// `Bun.password.hash/verify` off the JS thread: the op and the password are
+/// owned copies (zeroed on drop); the promise is the JS side.
 struct PasswordJob<Op: PasswordOp> {
     op: Op,
     password: Box<[u8]>,
-    promise: JSPromiseStrong,
-    /// How the pool thread delivers the result.
-    loop_handle: bun_jsc::LoopHandle,
-    global: *const JSGlobalObject,
-    r#ref: KeepAlive,
-    task: WorkPoolTask,
+    value: Option<Result<Op::Value, HashError>>,
 }
 
 impl<Op: PasswordOp> Drop for PasswordJob<Op> {
     fn drop(&mut self) {
-        // promise: Drop on JSPromiseStrong handles deinit.
         // bun.freeSensitive — volatile-zero the buffer then free; take the Box so
         // the field's own Drop sees an empty slice afterwards. Any op-owned
         // sensitive buffers (`prev_hash`) are freed by the op's own `Drop`.
@@ -577,70 +566,20 @@ impl<Op: PasswordOp> Drop for PasswordJob<Op> {
     }
 }
 
-bun_threading::owned_task!([Op: PasswordOp] PasswordJob<Op>, task);
-
-impl<Op: PasswordOp> PasswordJob<Op> {
-    // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local
-    // is a false positive on this macro contract.
-    #[allow(clippy::boxed_local)]
-    fn run_owned(mut self: Box<Self>) {
-        let value = self.op.compute(&self.password);
-        let result = Box::new(PasswordResult::<Op> {
-            value,
-            promise: core::mem::take(&mut self.promise),
-            global: self.global,
-            r#ref: core::mem::take(&mut self.r#ref),
-        });
-        // Ownership of `result` transfers to the event loop — unless the VM has
-        // been torn down, in which case nobody will settle the promise: drop the
-        // hash value here and forget the JS-side members (their heap/loop are gone).
-        let result = bun_core::heap::into_raw(result);
-        let ct = ConcurrentTask::create(bun_event_loop::Task::new(
-            <PasswordResult<Op> as bun_event_loop::Taskable>::TAG,
-            result.cast::<()>(),
-        ));
-        if let bun_jsc::vm_handle::Posted::Refused(ct) = self.loop_handle.post_task(ct) {
-            // SAFETY: refused ⇒ we own both boxes.
-            unsafe {
-                drop(bun_core::heap::take(ct.as_ptr()));
-                core::ptr::drop_in_place(&raw mut (*result).value);
-                std::alloc::dealloc(
-                    result.cast(),
-                    std::alloc::Layout::new::<PasswordResult<Op>>(),
-                );
-            }
-        }
-        // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
+impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
+    type OffThread = Self;
+    type Js = JSPromiseStrong;
+    fn run(
+        this: &mut Self,
+        _vm: &bun_jsc::vm_handle::Borrow,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        this.value = Some(this.op.compute(&this.password));
+        Some(done)
     }
-}
-
-pub(crate) struct PasswordResult<Op: PasswordOp> {
-    value: Result<Op::Value, HashError>,
-    r#ref: KeepAlive,
-    promise: JSPromiseStrong,
-    global: *const JSGlobalObject,
-}
-
-impl<Op: PasswordOp> bun_event_loop::Taskable for PasswordResult<Op> {
-    const TAG: bun_event_loop::TaskTag = Op::TASK_TAG;
-}
-
-impl<Op: PasswordOp> PasswordResult<Op> {
-    pub(crate) fn run_from_js(this: *mut Self) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `this` was produced by heap::into_raw in `run_owned` and the
-        // event loop hands sole ownership to this callback. Reclaim the Box once
-        // up-front so all fields drop on scope exit (no `mem::replace` dance).
-        let this = *unsafe { bun_core::heap::take(this) };
-        let PasswordResult {
-            value,
-            mut r#ref,
-            mut promise,
-            global,
-        } = this;
-        // SAFETY: `global` stored from a live `&JSGlobalObject`; VM outlives the task.
-        let global = unsafe { &*global };
-        r#ref.unref(bun_io::js_vm_ctx());
-        match value {
+    fn then(mut this: Self, mut promise: JSPromiseStrong, cx: &bun_jsc::JsThread<'_>) -> JsResult<()> {
+        let global = cx.global();
+        match this.value.take().expect("computed") {
             Err(err) => {
                 let error_instance = password_error_instance(&err, Op::ERR_VERB, global);
                 promise.reject_with_async_stack(global, Ok(error_instance))?;
@@ -679,20 +618,15 @@ impl JSPasswordObject {
 
         let promise = JSPromiseStrong::init(global_object);
         let promise_value = promise.value();
-
-        let mut job = Box::new(PasswordJob::<Op> {
-            op,
-            password,
+        bun_jsc::Job::<PasswordJob<Op>>::schedule(
+            &global_object.js_thread(),
+            PasswordJob {
+                op,
+                password,
+                value: None,
+            },
             promise,
-            // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
-            loop_handle: global_object.bun_vm().loop_handle(),
-            global: std::ptr::from_ref(global_object),
-            r#ref: KeepAlive::default(),
-            task: WorkPoolTask::default(),
-        });
-        job.r#ref.ref_(bun_io::js_vm_ctx());
-        WorkPool::schedule_owned(job);
-
+        );
         Ok(promise_value)
     }
 

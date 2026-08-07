@@ -62,10 +62,6 @@ pub mod task_tag {
     tags! {
         AnyTaskJob,               // bun_jsc::AnyTaskJob<C> (typed job, one erased slot inside)
         AsyncModule,
-        ArchiveExtractTask,
-        ArchiveBlobTask,
-        ArchiveWriteTask,
-        ArchiveFilesTask,
         BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
         BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
@@ -92,8 +88,6 @@ pub mod task_tag {
         NativeZlib,
         NativeZstd,
         Open,
-        PasswordHashResult,
-        PasswordVerifyResult,
         PollPendingModulesTask,
         PosixSignalTask,
         MemoryPressureTask,

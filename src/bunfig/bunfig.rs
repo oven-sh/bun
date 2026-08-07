@@ -239,7 +239,7 @@ impl<'a> Parser<'a> {
             _ => {
                 return self.add_error(
                     expr.loc,
-                    b"Invalid log level, must be one of debug, error, or warn",
+                    b"Invalid log level, must be one of debug, info, warn, or error",
                 );
             }
         };

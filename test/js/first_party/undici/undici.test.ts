@@ -295,6 +295,35 @@ describe.concurrent("undici WebSocket ping", () => {
     }
   });
 
+  it("publishes a Buffer payload even when binaryType is 'arraybuffer'", async () => {
+    await using server = serveWebSocket({
+      open(ws) {
+        ws.ping(Buffer.from("typed"));
+      },
+    });
+
+    const ws = new UndiciWebSocket(`ws://localhost:${server.port}/`);
+    ws.binaryType = "arraybuffer";
+    const pingMessage = Promise.withResolvers<{ payload: Buffer; websocket: unknown }>();
+    const pingChannel = diagnosticsChannel.channel("undici:websocket:ping");
+    const onPing = (message: any) => {
+      if (message.websocket === ws) pingMessage.resolve(message);
+    };
+    pingChannel.subscribe(onPing);
+    try {
+      ws.addEventListener("error", (e: any) => pingMessage.reject(e.error ?? new Error(e.message)));
+      ws.addEventListener("close", (e: any) =>
+        pingMessage.reject(new Error(`socket closed before ping: ${e.code} ${e.reason}`)),
+      );
+      const message = await pingMessage.promise;
+      expect(Buffer.isBuffer(message.payload)).toBe(true);
+      expect(message.payload.toString()).toBe("typed");
+    } finally {
+      pingChannel.unsubscribe(onPing);
+      ws.close();
+    }
+  });
+
   it("ping() validates its arguments like undici", async () => {
     await using server = serveWebSocket();
     const ws = new UndiciWebSocket(`ws://localhost:${server.port}/`);

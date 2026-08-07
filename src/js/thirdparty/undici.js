@@ -376,17 +376,25 @@ const util = {
 const pingChannel = diagnosticsChannel.channel("undici:websocket:ping");
 const pongChannel = diagnosticsChannel.channel("undici:websocket:pong");
 
+// undici publishes a Buffer regardless of the socket's binaryType
+function controlFramePayload(data) {
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  return data;
+}
+
 class WebSocket extends BunWebSocket {
   constructor(...args) {
     super(...args);
     this.addEventListener("ping", ({ data }) => {
       if (pingChannel.hasSubscribers) {
-        pingChannel.publish({ payload: data, websocket: this });
+        pingChannel.publish({ payload: controlFramePayload(data), websocket: this });
       }
     });
     this.addEventListener("pong", ({ data }) => {
       if (pongChannel.hasSubscribers) {
-        pongChannel.publish({ payload: data, websocket: this });
+        pongChannel.publish({ payload: controlFramePayload(data), websocket: this });
       }
     });
   }

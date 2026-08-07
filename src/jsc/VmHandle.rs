@@ -157,7 +157,9 @@ impl VmHandle {
             match kind {
                 LoopKind::Regular => &(*vm).regular_event_loop,
                 LoopKind::Macro => &(*vm).macro_event_loop,
-                LoopKind::Isolated(_) => unreachable!("isolated loops are posted to through their own poster"),
+                LoopKind::Isolated(_) => {
+                    unreachable!("isolated loops are posted to through their own poster")
+                }
             }
         }
     }
@@ -171,7 +173,11 @@ impl VmHandle {
 
     pub fn post_ref(&self, kind: &LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
         if let LoopKind::Isolated(p) = kind {
-            return if p.post(task) { Posted::Queued } else { Posted::Refused(task) };
+            return if p.post(task) {
+                Posted::Queued
+            } else {
+                Posted::Refused(task)
+            };
         }
         let Some(_a) = self.enter() else {
             return Posted::Refused(task);
@@ -476,7 +482,11 @@ unsafe impl Sync for IsolatedPosterInner {}
 
 impl IsolatedPosterInner {
     pub(crate) fn new(event_loop: *const EventLoop) -> Arc<Self> {
-        Arc::new(Self { open: core::sync::atomic::AtomicBool::new(true), active: AtomicU32::new(0), event_loop })
+        Arc::new(Self {
+            open: core::sync::atomic::AtomicBool::new(true),
+            active: AtomicU32::new(0),
+            event_loop,
+        })
     }
 
     /// JS thread, before the isolated loop is freed: refuse further posts and
@@ -537,4 +547,3 @@ static ISOLATED_POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::
     clone: isolated_clone,
     drop: isolated_drop,
 };
-

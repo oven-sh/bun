@@ -767,7 +767,9 @@ impl<C: TaskContext> AsyncTask<C> {
             let ct = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            if let bun_jsc::vm_handle::Posted::Refused(_) = (*this).vm.post_ref(&(*this).loop_kind, ct) {
+            if let bun_jsc::vm_handle::Posted::Refused(_) =
+                (*this).vm.post_ref(&(*this).loop_kind, ct)
+            {
                 // VM torn down: nobody will settle the promise. Release the
                 // context (portable) and the task's storage; the promise handle
                 // and keep-alive belong to a heap/loop that are gone.

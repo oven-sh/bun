@@ -2806,7 +2806,9 @@ impl ThreadSafeFunction {
                     return;
                 }
                 let ct = ConcurrentTask::create_from(self_ptr);
-                if let bun_jsc::vm_handle::Posted::Refused(ct) = self.vm.post_ref(&self.loop_kind, ct) {
+                if let bun_jsc::vm_handle::Posted::Refused(ct) =
+                    self.vm.post_ref(&self.loop_kind, ct)
+                {
                     // VM torn down before the env cleanup hook ran here: no
                     // dispatch will happen; the queued calls are released by the
                     // teardown path. Free the task and fall back to Idle.

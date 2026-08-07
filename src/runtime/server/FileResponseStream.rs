@@ -541,15 +541,11 @@ impl FileResponseStream {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             let resp = self.resp.get();
-            // Reached when the reader hits EOF with no trailing data (e.g. a
-            // FIFO whose writer closed after the last chunk was already
-            // streamed). `end_without_body` writes a bare CRLF and marks the
-            // response done without ever finishing the body framing: a
-            // chunk-framed body never gets its terminating 0-chunk, and a
-            // body with no writes at all gets neither Content-Length nor
-            // Transfer-Encoding, so clients hang or fail parsing. `end` with
-            // empty data emits the terminating chunk when chunked and
-            // `Content-Length: 0` when nothing was written.
+            // EOF with no trailing data (e.g. a FIFO writer that closed after
+            // the last chunk was streamed). Empty-body `end` completes the
+            // framing: the terminating 0-chunk when chunked, `Content-Length:
+            // 0` when nothing was written. `end_without_body` completes
+            // neither.
             resp.end(b"", resp.should_close_connection());
             (self.on_complete.get())(self.ctx.get(), resp);
         }

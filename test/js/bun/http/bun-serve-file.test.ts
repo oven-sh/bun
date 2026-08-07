@@ -1222,9 +1222,8 @@ describe.skipIf(isWindows)("Response(Bun.file(FIFO)) ends the response when the 
       const { promise: wireDone, resolve: resolveWire } = Promise.withResolvers<string>();
       const { promise: payloadSeen, resolve: resolvePayloadSeen } = Promise.withResolvers<void>();
       let wire = "";
-      // A broken build never completes the response, so resolve with whatever
-      // arrived once the deadline passes and let the assertions report it.
-      const deadline = setTimeout(() => resolveWire(wire), 3000);
+      // On a broken build the response never becomes complete, `wireDone`
+      // never resolves, and the runner timeout fails the test.
       await using client = await Bun.connect({
         hostname: "127.0.0.1",
         port: server.port,
@@ -1260,7 +1259,6 @@ describe.skipIf(isWindows)("Response(Bun.file(FIFO)) ends the response when the 
       await writer.close();
 
       const captured = await wireDone;
-      clearTimeout(deadline);
 
       const decoded = decodeBody(captured);
       expect({

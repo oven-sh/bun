@@ -5422,9 +5422,9 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      const [err, exitCode, out] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
       expect(err).toContain(`"git checkout" for "my-git-dep" failed`);
-      expect(exitCode).not.toBe(0);
+      expect({ out, err, exitCode }).not.toMatchObject({ exitCode: 0 });
     }
     expect((await readdirSorted(cacheDir)).filter(entry => entry.startsWith("@G@") || entry.endsWith(".tmp"))).toEqual(
       [],

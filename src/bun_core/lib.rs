@@ -1637,42 +1637,41 @@ pub(crate) mod strings_impl {
         convert_utf16_to_utf8(Vec::new(), utf16)
     }
 
-    /// Transcode raw UTF-16-LE *bytes* (no alignment requirement) to a fresh
-    /// UTF-8 `Vec`.
-    ///
-    /// `to_utf8_alloc` takes `&[u16]`, but constructing a `&[u16]` from a
-    /// `&[u8]` whose pointer is not 2-byte-aligned is immediate language-level
-    /// UB (`core::slice::from_raw_parts` requires `data` be aligned for `T`),
-    /// regardless of how the consumer reads the memory. Callers that hold a
-    /// `Vec<u8>` / `&[u8]` of LE bytes (e.g. BOM-stripping a file buffer) MUST
-    /// route through this helper instead of casting.
-    ///
-    /// The bytes are first copied into a freshly-allocated, properly-aligned
-    /// `Vec<u16>` via a raw byte `memcpy` (no per-element decode — simdutf
-    /// interprets the buffer as little-endian and Bun targets only LE hosts),
-    /// then handed to `to_utf8_alloc`. An odd trailing byte is dropped, which
-    /// matches the prior `len() / 2` truncation.
-    pub fn to_utf8_alloc_from_le_bytes(le_bytes: &[u8]) -> Vec<u8> {
-        let n_u16 = le_bytes.len() / 2;
-        if n_u16 == 0 {
-            return Vec::new();
-        }
+    /// Copy possibly-unaligned UTF-16 bytes into a fresh, aligned `Vec<u16>`,
+    /// dropping an odd trailing byte. Forming a `&[u16]` directly over a
+    /// `&[u8]` is UB unless the pointer is 2-byte-aligned, so byte-slice
+    /// callers must copy first.
+    fn utf16_units_from_bytes(bytes: &[u8]) -> Vec<u16> {
+        let n_u16 = bytes.len() / 2;
         let mut aligned: Vec<u16> = Vec::with_capacity(n_u16);
-        // SAFETY: `aligned.as_mut_ptr()` is a fresh `Vec<u16>` allocation, so it
-        // is 2-byte-aligned and has `n_u16 * 2` writable bytes of capacity. We
-        // copy exactly that many bytes from `le_bytes` (which has at least
-        // `n_u16 * 2` readable bytes) into it as raw `u8`, then expose them as
-        // initialized `u16` via `set_len`. No `&[u16]` is ever formed over the
-        // possibly-misaligned source.
+        // SAFETY: the fresh `Vec<u16>` allocation is 2-byte-aligned with
+        // `n_u16 * 2` writable bytes of capacity; we copy exactly that many
+        // bytes from `bytes` before exposing them as initialized via `set_len`.
         unsafe {
             core::ptr::copy_nonoverlapping(
-                le_bytes.as_ptr(),
+                bytes.as_ptr(),
                 aligned.as_mut_ptr().cast::<u8>(),
                 n_u16 * 2,
             );
             aligned.set_len(n_u16);
         }
-        to_utf8_alloc(&aligned)
+        aligned
+    }
+
+    /// Transcode raw UTF-16-LE bytes (no alignment requirement) to a fresh
+    /// UTF-8 `Vec`.
+    pub fn to_utf8_alloc_from_le_bytes(le_bytes: &[u8]) -> Vec<u8> {
+        to_utf8_alloc(&utf16_units_from_bytes(le_bytes))
+    }
+
+    /// Transcode raw UTF-16-BE bytes (no alignment requirement) to a fresh
+    /// UTF-8 `Vec`.
+    pub fn to_utf8_alloc_from_be_bytes(be_bytes: &[u8]) -> Vec<u8> {
+        let mut units = utf16_units_from_bytes(be_bytes);
+        for unit in units.iter_mut() {
+            *unit = unit.swap_bytes();
+        }
+        to_utf8_alloc(&units)
     }
 
     pub fn to_utf8_append_to_list(list: &mut Vec<u8>, utf16: &[u16]) {

@@ -560,6 +560,45 @@ test("Blob.slice at an odd byte offset decodes UTF-16LE (BOM) content with text(
   expect(exitCode).toBe(0);
 });
 
+test("Bun.file() text()/json() decode UTF-16BE (BOM) content", async () => {
+  using dir = tempDir("bun-file-utf16be", {
+    // UTF-16BE BOM (FE FF) followed by "hi" / "42" / "é汉字🎉".
+    "a.txt": new Uint8Array([0xfe, 0xff, 0x00, 0x68, 0x00, 0x69]),
+    "b.json": new Uint8Array([0xfe, 0xff, 0x00, 0x34, 0x00, 0x32]),
+    "c.txt": Buffer.from("\uFEFFé汉字🎉", "utf16le").swap16(),
+    // slice(1) starts the FE FF at an odd offset into the backing store.
+    "d.txt": new Uint8Array([0x41, 0xfe, 0xff, 0x00, 0x68, 0x00, 0x69]),
+    // BOM with no payload decodes to the empty string.
+    "e.txt": new Uint8Array([0xfe, 0xff]),
+    "f.txt": new Uint8Array([0xff, 0xfe]),
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const text = await Bun.file("a.txt").text();
+        const json = await Bun.file("b.json").json();
+        const wide = await Bun.file("c.txt").text();
+        const odd  = await Bun.file("d.txt").slice(1).text();
+        const beEmpty = await Bun.file("e.txt").text();
+        const leEmpty = await Bun.file("f.txt").text();
+        console.log(JSON.stringify({ text, json, wide, odd, beEmpty, leEmpty }));
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(
+    JSON.stringify({ text: "hi", json: 42, wide: "é汉字🎉", odd: "hi", beEmpty: "", leEmpty: "" }),
+  );
+  expect(exitCode).toBe(0);
+});
+
 // structuredClone/postMessage of sliced Blobs and Files is covered by
 // test/js/web/structured-clone-blob-file.test.ts. These tests focus on the
 // consumer paths that go through resolve_size()/resolved_size() rather than

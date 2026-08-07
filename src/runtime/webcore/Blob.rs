@@ -2609,27 +2609,13 @@ impl BlobExt for Blob {
             return Ok(ZigString::EMPTY.to_js(global));
         }
 
-        if bom == Some(strings::BOM::Utf16Le) {
+        if let Some(bom @ (strings::BOM::Utf16Le | strings::BOM::Utf16Be)) = bom {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
-            // Reinterpret as u16: drop a trailing odd byte.
             // +1 WTF ref; `OwnedString` releases it on scope exit.
             //
             // This branch intentionally does NOT `self.detach()` for
             // `Lifetime::Transfer`, unlike the toJSON path.
-            let buf = &buf[..buf.len() & !1];
-            let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
-                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
-                Err(_) => {
-                    let units: Vec<u16> = buf
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|pair| u16::from_le_bytes(*pair))
-                        .collect();
-                    OwnedString::new(BunString::clone_utf16(&units))
-                }
-            };
-            return out.to_js(global);
+            return utf16_bom_payload_to_owned_string(bom, buf).to_js(global);
         }
 
         // null == unknown
@@ -2847,22 +2833,9 @@ impl BlobExt for Blob {
             );
         }
 
-        if bom == Some(strings::BOM::Utf16Le) {
-            // Reinterpret as u16: drop a trailing odd byte.
+        if let Some(bom @ (strings::BOM::Utf16Le | strings::BOM::Utf16Be)) = bom {
             // +1 WTF ref; `OwnedString` releases it on scope exit.
-            let buf = &buf[..buf.len() & !1];
-            let mut out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
-                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
-                Err(_) => {
-                    let units: Vec<u16> = buf
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|pair| u16::from_le_bytes(*pair))
-                        .collect();
-                    OwnedString::new(BunString::clone_utf16(&units))
-                }
-            };
+            let mut out = utf16_bom_payload_to_owned_string(bom, buf);
             // Compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.
@@ -6261,6 +6234,27 @@ impl Drop for TemporaryBytes {
         // caller passed ownership of a leaked default-allocator `Box<[u8]>`.
         unsafe { drop(bun_core::heap::take(self.0)) };
     }
+}
+
+/// Decode BOM-stripped UTF-16 payload bytes (possibly odd-aligned) to an `OwnedString`.
+fn utf16_bom_payload_to_owned_string(bom: strings::BOM, buf: &[u8]) -> OwnedString {
+    debug_assert!(matches!(bom, strings::BOM::Utf16Le | strings::BOM::Utf16Be));
+    let buf = &buf[..buf.len() & !1];
+    if bom == strings::BOM::Utf16Le {
+        if let Ok(units) = bytemuck::try_cast_slice::<u8, u16>(buf) {
+            return OwnedString::new(BunString::clone_utf16(units));
+        }
+    }
+    let units: Vec<u16> = buf
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| match bom {
+            strings::BOM::Utf16Be => u16::from_be_bytes(*pair),
+            _ => u16::from_le_bytes(*pair),
+        })
+        .collect();
+    OwnedString::new(BunString::clone_utf16(&units))
 }
 
 // Marker types for static fn dispatch through do_read_file/do_read_from_s3.

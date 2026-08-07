@@ -302,6 +302,16 @@ pub(crate) fn run_task(
             }
             .run();
         }
+        task_tag::StatWatcherHop => {
+            // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
+            if let Err(err) = unsafe {
+                crate::node::node_fs_stat_watcher::StatWatcher::run_hop(cast_ptr!(
+                    crate::node::node_fs_stat_watcher::StatWatcher
+                ))
+            } {
+                report_error_or_terminate(global, bun_jsc::JsError::from(err))?;
+            }
+        }
         task_tag::ManagedTask => {
             // SAFETY: `task.ptr` was produced by `heap::alloc` in `ManagedTask::new`
             // and enqueued under `task_tag::ManagedTask`; `run` consumes/frees it.
@@ -609,7 +619,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 63,
+    task_tag::COUNT == 64,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1303,6 +1313,12 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         task_tag::NativeZstd => {
             // SAFETY: as above.
             unsafe { node_zlib_binding::CompressionStream::<NativeZstd>::release_unrun(task.ptr.cast()) };
+            true
+        }
+        // A stat-watcher continuation the pool posted: drop the ref it carries.
+        task_tag::StatWatcherHop => {
+            // SAFETY: as the dispatch arm.
+            unsafe { crate::node::node_fs_stat_watcher::StatWatcher::release_hop(task.ptr.cast()) };
             true
         }
         // The transpiler store's "drain my queue" ping owns nothing; the jobs

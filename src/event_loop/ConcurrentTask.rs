@@ -116,6 +116,7 @@ pub mod task_tag {
         ShellTouchTask,
         StatFS,
         StatWatcherTimerUpdate,
+        StatWatcherHop,
         StreamPending,
         ThreadSafeFunction,
         TimeoutObject,

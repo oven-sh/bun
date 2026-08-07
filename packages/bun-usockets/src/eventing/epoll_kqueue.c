@@ -608,13 +608,10 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     }
 #else
     /* Re-register each filter with new_p as udata (EV_ADD on an existing knote
-     * updates udata in place), arming exactly the poll's current interest.
-     * Arming READABLE|WRITABLE unconditionally here desynced kernel vs poll
-     * state for a poll not watching both directions: the dispatcher masks
-     * delivered events with us_poll_events() but never deletes the filter, and
-     * us_poll_change cannot diff away a filter the poll state says was never
-     * armed, so a level-triggered EVFILT_READ with data or a FIN pending would
-     * re-fire on every kevent call forever.
+     * updates udata in place), arming exactly the poll's current interest: the
+     * registration must match us_poll_events, because the dispatcher masks
+     * delivered events with it but never deletes an over-armed filter, and
+     * us_poll_change cannot diff away a filter the poll state never armed.
      * The deletes drop filters the poll does not want, so a stale FIN-detector
      * oneshot (kqueue_change arms EVFILT_WRITE at 0 events, and that knote
      * survives a later 0 -> READABLE transition) cannot keep the old poll as
@@ -628,9 +625,10 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
         EV_SET64(&change_list[change_length++], new_p->state.fd, EVFILT_READ,
             EV_ADD, 0, 0, (uint64_t)(void *)new_p, 0, 0);
     }
-    /* At 0 events the FIN-detector oneshot is the poll's only kernel presence;
-     * re-add it so its udata moves to new_p, matching what kqueue_change
-     * maintains for that state. */
+    /* A 0-event poll may still have a pending FIN-detector oneshot in the
+     * kernel (kqueue_change arms one on transitions to 0 events; delivery
+     * consumes it). EV_ADD moves a pending knote's udata off the soon-freed
+     * old poll, and re-arms the detector when it was already consumed. */
     if ((events & LIBUS_SOCKET_WRITABLE) || events == 0) {
         EV_SET64(&change_list[change_length++], new_p->state.fd, EVFILT_WRITE,
             EV_ADD | EV_ONESHOT, 0, 0, (uint64_t)(void *)new_p, 0, 0);

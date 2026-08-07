@@ -5098,11 +5098,13 @@ pub mod testing_apis {
                 fi::POLL_START
             } else if syscall_str.eql_comptime(b"session_buffer") {
                 fi::SESSION_BUFFER
+            } else if syscall_str.eql_comptime(b"adopt_grow") {
+                fi::ADOPT_GROW
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer, adopt_grow"
                 )));
             };
 
@@ -5131,11 +5133,24 @@ pub mod testing_apis {
                 )));
             };
 
-            // "short" clamps a byte count, which only recv/send have; arming it
-            // on any other syscall would silently never fire.
-            if action == fi::ACTION_SHORT && syscall != fi::RECV && syscall != fi::SEND {
+            // "short" carries a byte count, which only recv/send (clamp) and
+            // adopt_grow (growth) have; arming it on any other syscall would
+            // silently never fire.
+            if action == fi::ACTION_SHORT
+                && !matches!(syscall, fi::RECV | fi::SEND | fi::ADOPT_GROW)
+            {
                 return Err(global.throw(format_args!(
-                    "rule.action \"short\" is only supported for syscall \"recv\" or \"send\""
+                    "rule.action \"short\" is only supported for syscall \"recv\", \"send\" or \"adopt_grow\""
+                )));
+            }
+
+            // adopt_grow has exactly one meaningful action: "short" with the
+            // byte count to add. The other actions would arm a rule whose
+            // effect (errno/zero short-circuit) the adopt hook never reads.
+            if syscall == fi::ADOPT_GROW && action != fi::ACTION_SHORT && action != fi::ACTION_NONE
+            {
+                return Err(global.throw(format_args!(
+                    "rule.action must be \"short\" for syscall \"adopt_grow\""
                 )));
             }
 

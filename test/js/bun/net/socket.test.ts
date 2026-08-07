@@ -708,27 +708,98 @@ describe.concurrent("socket", () => {
       await new Promise(resolve => setImmediate(resolve));
     }
 
-    socket.upgradeTLS({
-      tls: { cert: tls.cert, key: tls.key },
-      isServer: true,
-      data: {},
-      socket: {
-        data() {},
-        end() {},
-        close() {
-          onTeardown("close");
+    // Grow the adopted ext so us_poll_resize actually reallocates and must
+    // re-register the kernel poll under the new pointer (no in-tree adopter
+    // grows on its own). The rule is armed and consumed inside this
+    // synchronous block, so concurrent tests cannot hit it.
+    if (socketFaultInjection.available()) {
+      socketFaultInjection.set({ syscall: "adopt_grow", action: "short", bytes: 512, repeat: 1 });
+    }
+    try {
+      socket.upgradeTLS({
+        tls: { cert: tls.cert, key: tls.key },
+        isServer: true,
+        data: {},
+        socket: {
+          data() {},
+          end() {},
+          close() {
+            onTeardown("close");
+          },
+          error() {
+            onTeardown("error");
+          },
         },
-        error() {
-          onTeardown("error");
-        },
-      },
-    });
+      });
+    } finally {
+      if (socketFaultInjection.available()) {
+        socketFaultInjection.clear();
+      }
+    }
+
+    // Let the loop retire the replaced socket (freed at the outermost
+    // loop_post) before the peer resets, so the reset must find the live
+    // registration rather than racing the retirement.
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
 
     // The reset must reach the adopted socket (EPOLLHUP/EPOLLERR have no mask).
     client.resetAndDestroy();
     expect(["close", "error"]).toContain(await torndown);
     expect(endCount).toBe(1);
   });
+
+  // Same forced reallocation on a socket that is actively polling readable: a
+  // full TLS handshake and an echo must flow through the relocated socket
+  // (covers the grow path's normal-interest re-registration on every backend).
+  it.skipIf(!socketFaultInjection.available())(
+    "upgradeTLS survives a forced poll reallocation (handshake + echo)",
+    async () => {
+      const { promise: echoed, resolve: onEcho, reject: onEchoFail } = Promise.withResolvers<string>();
+
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socketFaultInjection.set({ syscall: "adopt_grow", action: "short", bytes: 512, repeat: 1 });
+            try {
+              socket.upgradeTLS({
+                tls: { cert: tls.cert, key: tls.key },
+                isServer: true,
+                data: {},
+                socket: {
+                  data(tlsSocket, chunk) {
+                    tlsSocket.write(chunk);
+                  },
+                  close() {},
+                  error(_socket, error) {
+                    onEchoFail(error);
+                  },
+                },
+              });
+            } finally {
+              socketFaultInjection.clear();
+            }
+          },
+          data() {},
+          close() {},
+          error() {},
+        },
+      });
+
+      const client = tlsConnect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+        client.write("ping");
+      });
+      client.on("error", onEchoFail);
+      client.on("data", data => {
+        onEcho(String(data));
+        client.end();
+      });
+      expect(await echoed).toBe("ping");
+    },
+  );
 
   it("upgradeTLS handles errors", async () => {
     using server = Bun.serve({

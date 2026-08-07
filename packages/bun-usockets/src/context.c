@@ -16,8 +16,10 @@
  */
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #include "libusockets.h"
 #include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #ifndef _WIN32
@@ -302,6 +304,22 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
     struct us_connecting_socket_t *c = s->connect_state;
     struct us_socket_t *new_s = s;
     if (ext_size != -1) {
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+        /* US_FAULT_ADOPT_GROW (action "short", bytes = N) inflates the new ext
+         * size by N so us_poll_resize below takes its grow path, which no
+         * in-tree adopter reaches (all pass equal or smaller ext sizes). The
+         * SHORT action writes the rule's byte count through the clamp
+         * out-param; INT_MAX is the did-not-fire sentinel, unreachable as a
+         * real count because the JS setter requires bytes > 0 and the rule
+         * field is a plain int. Over-allocating is safe: us_calloc zeroes the
+         * tail and the memcpy in us_poll_resize copies old_size bytes. */
+        ssize_t fault_out_unused = 0;
+        int fault_grow_bytes = INT_MAX;
+        (void) US_FAULT_CHECK(US_FAULT_ADOPT_GROW, us_poll_fd(&s->p), fault_out_unused, fault_grow_bytes);
+        if (fault_grow_bytes != INT_MAX) {
+            ext_size += fault_grow_bytes;
+        }
+#endif
         struct us_poll_t *poll_ref = &s->p;
         new_s = (struct us_socket_t *) us_poll_resize(poll_ref, loop,
             sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + old_ext_size,

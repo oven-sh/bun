@@ -34,7 +34,7 @@ use bun_event_loop::{Task, task_tag};
 use bun_io::posix_event_loop::{FilePoll, Flags as PollFlag, poll_tag};
 
 use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, Tag as EventLoopTimerTag, TimerCallback, Timespec as ElTimespec,
+    EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec,
 };
 
 use bun_jsc::JSGlobalObject;
@@ -463,6 +463,14 @@ pub(crate) fn run_task(
             unsafe { hot_reloader::HotReloadTask::deinit(t) };
             return Ok(RunTaskResult::EarlyReturn);
         }
+        task_tag::WatchReloadTask => {
+            let t = cast_ptr!(hot_reloader::WatchReloadTask);
+            // SAFETY: tag identifies pointee; live Box'd WatchReloadTask.
+            unsafe { (*t).run() };
+            // SAFETY: paired with heap::alloc in `Task::enqueue`.
+            unsafe { hot_reloader::WatchReloadTask::deinit(t) };
+            return Ok(RunTaskResult::EarlyReturn);
+        }
         // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
         task_tag::BakeHotReloadEvent => run_task_cold(task),
         task_tag::FSWatchTask => {
@@ -690,7 +698,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 111,
+    task_tag::COUNT == 112,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1052,13 +1060,6 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
             // SAFETY: see TimeoutObject arm.
             unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
-        }
-        // Spec `inline else` fallthrough: `container.callback(container)`.
-        EventLoopTimerTag::TimerCallback => {
-            timer_arm!(TimerCallback, event_loop_timer, |c, _now, _vm| ((*c)
-                .callback)(
-                c
-            ))
         }
         EventLoopTimerTag::WTFTimer => {
             timer_arm!(WTFTimer, event_loop_timer, |c, now, vm| WTFTimer::fire(

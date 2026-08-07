@@ -362,8 +362,6 @@ pub enum Error {
     WatchFailed,
     #[error("Unsupported")]
     Unsupported,
-    #[error("ExceptionOcurred")]
-    ExceptionOcurred,
     #[error("EscapeCalledTwice")]
     EscapeCalledTwice,
     #[error("UnsupportedAlgorithm")]
@@ -764,7 +762,6 @@ impl Error {
             Self::ChromeNotFound => "ChromeNotFound",
             Self::WatchFailed => "WatchFailed",
             Self::Unsupported => "Unsupported",
-            Self::ExceptionOcurred => "ExceptionOcurred",
             Self::EscapeCalledTwice => "EscapeCalledTwice",
             Self::UnsupportedAlgorithm => "UnsupportedAlgorithm",
             Self::PasswordVerificationFailed => "PasswordVerificationFailed",

@@ -1112,10 +1112,14 @@ impl WebWorker {
         unsafe {
             let status = (*promise).status();
             if status == jsc::js_promise::Status::Rejected {
+                // Same rule as the main thread (run_command): a CJS worker
+                // entry's top-level throw is an uncaughtException; only an
+                // ESM entry rejection reports origin "unhandledRejection".
+                let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs;
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
-                    true,
+                    is_rejection,
                 );
                 if !handled {
                     // exit_code is already 1 from uncaught_exception; re-setting it here
@@ -1303,13 +1307,11 @@ impl WebWorker {
             // or observes m_isShuttingDown under m_lock and drops. Idempotent;
             // teardownJSCVM sets it again.
             Bun__JSCTaskScheduler__markShuttingDown(vm.global());
-            // Reclaim queued CppTasks (the per-worker stdio/messaging
-            // MessagePort drain tasks that can be in self.tasks mid-tick when
-            // terminate() lands, and any Worker dispatchExit close task from a
-            // sub-worker) while JSC is still live: ~Ref<Worker> walks
-            // ~JSEventListener Weak<> handles, and after teardownJSCVM the
-            // worker VM is dealloc'd-without-Drop so anything still in
-            // self.tasks leaks. Mirrors the global_exit() ordering.
+            // Reclaim queued CppTasks while JSC is still live (after teardownJSCVM the worker VM is
+            // dealloc'd-without-Drop so anything still in self.tasks leaks). Work-pool fs completions
+            // post without a shutdown check; wait for in-flight ones so the drain below sees every
+            // post.
+            vm.event_loop_mut().wait_for_concurrent_posters();
             vm.event_loop_mut().release_queued_tasks_for_shutdown();
             if let Some(rare) = vm.rare_data.as_deref_mut() {
                 rare.release_js_handles();

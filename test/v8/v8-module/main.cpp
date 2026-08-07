@@ -729,6 +729,99 @@ void test_v8_locals_survive_nested_call(
   LOG_EXPR(buf);
 }
 
+// Regression tests: GetReturnValue().Set() copies the Local's value into the
+// callback frame, and V8 guarantees the returned value outlives any handle
+// scope that closes before the callback returns (the stock nan idiom opens a
+// HandleScope, materializes a persistent with Nan::New, and returns a local
+// made inside that scope). The inline grant forces the scope's inline
+// destructor to run DeleteExtensions.
+
+// Calls info[1] (the JS driver passes a function that forces GC under bun)
+// while the callback is still on the stack, after the inner scope already
+// closed: the preserved return value must stay GC-visited until the runtime
+// reads the callback frame.
+static void call_gc_callback(const FunctionCallbackInfo<Value> &info) {
+  if (info.Length() > 1 && info[1]->IsFunction()) {
+    Isolate *isolate = info.GetIsolate();
+    Local<Context> context = isolate->GetCurrentContext();
+    (void)info[1].As<Function>()->Call(context, Undefined(isolate), 0, nullptr);
+  }
+}
+
+void return_string_from_inner_scope(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  {
+    HandleScope hs(isolate);
+    Local<Value> grant = Local<Value>::New(isolate, info[0]);
+    (void)grant;
+    info.GetReturnValue().Set(
+        String::NewFromUtf8(isolate, "returned-from-inner-scope")
+            .ToLocalChecked());
+  }
+  call_gc_callback(info);
+}
+
+void return_heap_number_from_inner_scope(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  {
+    HandleScope hs(isolate);
+    Local<Value> grant = Local<Value>::New(isolate, info[0]);
+    (void)grant;
+    info.GetReturnValue().Set(Number::New(isolate, 3.25));
+  }
+  call_gc_callback(info);
+}
+
+// The return value must also survive runtime-internal scopes that pop while
+// the callback frame is live: Array::Iterate runs the iteration callback
+// inside one, and the element locals it passes are created there.
+void return_array_element_from_iterate(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Array> array = info[0].As<Array>();
+  (void)array->Iterate(
+      context,
+      [](uint32_t index, Local<Value> element, void *data) {
+        auto *outer = static_cast<const FunctionCallbackInfo<Value> *>(data);
+        if (index == 1) {
+          outer->GetReturnValue().Set(element);
+        }
+        return Array::CallbackResult::kContinue;
+      },
+      const_cast<void *>(static_cast<const void *>(&info)));
+  call_gc_callback(info);
+}
+
+static void inner_scope_native_getter(Local<Name> property,
+                                      const PropertyCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  HandleScope hs(isolate);
+  Local<Value> grant = Local<Value>::New(isolate, Local<Value>::Cast(property));
+  (void)grant;
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(isolate, "accessor-from-inner-scope")
+          .ToLocalChecked());
+}
+
+// Same scenario through a native-data-property accessor's
+// PropertyCallbackInfo.
+void return_accessor_value_from_inner_scope(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<FunctionTemplate> ctor_t = FunctionTemplate::New(isolate);
+  ctor_t->PrototypeTemplate()->SetNativeDataProperty(
+      String::NewFromUtf8Literal(isolate, "prop"), inner_scope_native_getter);
+  Local<Function> ctor = ctor_t->GetFunction(context).ToLocalChecked();
+  Local<Object> inst = ctor->NewInstance(context).ToLocalChecked();
+  Local<Value> value =
+      inst->Get(context, String::NewFromUtf8(isolate, "prop").ToLocalChecked())
+          .ToLocalChecked();
+  info.GetReturnValue().Set(value);
+}
+
 void test_uv_os_getpid(const FunctionCallbackInfo<Value> &info) {
 #ifndef _WIN32
   assert(getpid() == uv_os_getpid());
@@ -1804,6 +1897,14 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_escapable_handle_scope_inline_grants);
   NODE_SET_METHOD(exports, "test_v8_locals_survive_nested_call",
                   test_v8_locals_survive_nested_call);
+  NODE_SET_METHOD(exports, "return_string_from_inner_scope",
+                  return_string_from_inner_scope);
+  NODE_SET_METHOD(exports, "return_heap_number_from_inner_scope",
+                  return_heap_number_from_inner_scope);
+  NODE_SET_METHOD(exports, "return_array_element_from_iterate",
+                  return_array_element_from_iterate);
+  NODE_SET_METHOD(exports, "return_accessor_value_from_inner_scope",
+                  return_accessor_value_from_inner_scope);
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_key",

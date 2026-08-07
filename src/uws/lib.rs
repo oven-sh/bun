@@ -1001,6 +1001,22 @@ pub mod ssl_wrapper {
                         && err != boring_sys::SSL_ERROR_WANT_WRITE
                     {
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
+                            // The initial handshake can complete inside this
+                            // same SSL_read with the HelloRequest coalesced
+                            // right behind the peer's Finished; report it
+                            // before the renegotiation state overwrites it.
+                            if self.flags.handshake_state() == HandshakeState::HandshakePending
+                                // SAFETY: ssl is still valid.
+                                && unsafe { boring_sys::SSL_is_init_finished(ssl.as_ptr()) } != 0
+                            {
+                                self.flags
+                                    .set_handshake_state(HandshakeState::HandshakeCompleted);
+                                let verify = self.get_verify_error();
+                                self.trigger_handshake_callback(true, verify);
+                                if self.ssl.get().is_none() || self.flags.closed_notified() {
+                                    return false;
+                                }
+                            }
                             self.flags
                                 .set_handshake_state(HandshakeState::HandshakeRenegotiationPending);
                             // An over-limit renegotiation request is treated

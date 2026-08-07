@@ -2293,6 +2293,25 @@ restart:
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE &&
           err != SSL_ERROR_PENDING_CERTIFICATE) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
+          /* The initial handshake can complete inside this same SSL_read with
+           * the HelloRequest coalesced into the batch right behind the
+           * server's Finished. None of the completion checks have run yet and
+           * ssl_renegotiate is about to overwrite the state, so report the
+           * initial handshake first or its dispatch is lost for good. The
+           * save/restore mirrors the app-data branch below: the BIO still
+           * holds the renegotiation records and a JS write from the callback
+           * must not clobber them. */
+          if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
+            char *saved_input = loop_ssl_data->ssl_read_input;
+            unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
+            unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
+            ssl_trigger_handshake(s, 1);
+            if (ssl_gone(s)) return NULL;
+            loop_ssl_data->ssl_read_input = saved_input;
+            loop_ssl_data->ssl_read_input_length = saved_length;
+            loop_ssl_data->ssl_read_input_offset = saved_offset;
+            loop_ssl_data->ssl_socket = s;
+          }
           if (ssl_renegotiate(s)) continue;
           if (ssl_gone(s)) return NULL;
           err = SSL_ERROR_SSL;

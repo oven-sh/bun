@@ -305,16 +305,16 @@ impl ByteStream {
         }
 
         if self.buffer_action.get().is_some() {
-            self.signal_drained();
+            // R-2: `signal_drained` notifies the source and may re-enter (fulfilling or rejecting the pending read itself),
+            // so decide on — and, for the error path, take — the action before signalling.
             if let streams::Result::Err(err) = &stream {
-                // Explicit post-reject cleanup; runs after `action.reject`
-                // (`?` would skip it).
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData err  action.reject()");
-
                 let global = self.parent_const().global_this();
-                // R-2: move the action out of the cell *before* calling
-                // `reject` (which resolves a JS promise and may re-enter).
-                let mut action = self.buffer_action.replace(None).unwrap();
+                let taken = self.buffer_action.replace(None);
+                self.signal_drained();
+                let Some(mut action) = taken else {
+                    return Ok(());
+                };
                 let res = action.reject(global, err);
 
                 self.buffer.with_mut(|b| {
@@ -330,9 +330,12 @@ impl ByteStream {
                 return res;
             }
 
+            self.signal_drained();
             if self.has_received_last_chunk.get() {
                 // `defer { this.buffer_action = null; }` — handled by `replace(None)` below.
-                let mut action = self.buffer_action.replace(None).unwrap();
+                let Some(mut action) = self.buffer_action.replace(None) else {
+                    return Ok(()); // consumed by a re-entrant read during signal_drained
+                };
 
                 if self.buffer.get().capacity() == 0 && matches!(stream, streams::Result::Done) {
                     bun_output::scoped_log!(

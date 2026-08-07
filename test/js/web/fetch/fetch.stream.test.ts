@@ -1422,3 +1422,39 @@ describe.concurrent("fetch() with streaming", () => {
     server.kill("SIGTERM");
   });
 });
+
+// Regression: erroring a response body ByteStream (abort) while a read is pending must not panic in
+// ByteStream::on_data when signalling "drained" re-enters and consumes the pending read first.
+it("aborting a streaming response with a parked read does not crash", async () => {
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch: () =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode("event: hello\n\n"));
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+  });
+  const runs = [];
+  for (let i = 0; i < 24; i++) {
+    const outer = new AbortController();
+    const inner = new AbortController();
+    outer.signal.addEventListener("abort", () => inner.abort(new DOMException("closed", "AbortError")));
+    const res = await fetch(`http://127.0.0.1:${server.port}/sse${i}`, { signal: inner.signal });
+    const reader = (i % 2 ? res.body!.pipeThrough(new TextDecoderStream()) : res.body!).getReader();
+    await reader.read();
+    const parked = reader.read().then(
+      () => "resolved",
+      e => "rejected:" + e?.name,
+    );
+    runs.push({ outer, parked });
+  }
+  Bun.gc(true);
+  for (const r of runs) r.outer.abort();
+  const results = await Promise.all(runs.map(r => r.parked));
+  expect(results.every(r => r.startsWith("rejected") || r === "resolved")).toBe(true);
+});

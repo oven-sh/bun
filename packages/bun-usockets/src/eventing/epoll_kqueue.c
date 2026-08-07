@@ -282,8 +282,8 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         uint8_t eof      : 1;
         uint8_t send_eof : 1;
         uint8_t send_eof_err : 1;
+        uint8_t eof_err  : 1;
         uint8_t skip     : 1;
-        uint8_t _pad     : 1;
     };
 
     _Static_assert(sizeof(struct kevent_flags) == 1, "kevent_flags must be 1 byte");
@@ -314,6 +314,8 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
              * alongside a write-filter EV_EOF means the connection died hard,
              * not just that our own shutdown() set SS_CANTSENDMORE. */
             .send_eof_err = (flags & EV_EOF) && filter == EVFILT_WRITE && loop->ready_polls[i].fflags != 0,
+            /* Same on the read filter: a reset, which epoll reports as EPOLLERR. */
+            .eof_err = (flags & EV_EOF) && filter == EVFILT_READ && loop->ready_polls[i].fflags != 0,
         };
 
         /* Look backward for a prior entry with the same poll to coalesce into.
@@ -327,6 +329,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 coalesced[j].eof |= bits.eof;
                 coalesced[j].send_eof |= bits.send_eof;
                 coalesced[j].send_eof_err |= bits.send_eof_err;
+                coalesced[j].eof_err |= bits.eof_err;
                 coalesced[i] = (struct kevent_flags){ .skip = 1 };
                 merged = 1;
                 break;
@@ -356,29 +359,29 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 
         int error = bits.error;
         int eof = bits.eof;
-        /* Write side dead without our own shutdown(): peer reset (or connect refused). Surface it as the poll error epoll would report as EPOLLERR. */
-        if (bits.send_eof) {
+        if (bits.send_eof || bits.eof_err) {
             int type = us_internal_poll_type(poll);
             if (type == POLL_TYPE_SOCKET || type == POLL_TYPE_SEMI_SOCKET) {
-                error = 1;
-            } else if (type == POLL_TYPE_SOCKET_SHUT_DOWN) {
-                /* After our own shutdown() every armed write filter reports
-                 * EV_EOF (SS_CANTSENDMORE is ours), so the event alone proves
-                 * nothing about the peer. */
-                if (bits.send_eof_err) {
-                    /* A socket error alongside it is the peer dying hard:
-                     * close through the error path like epoll's EPOLLERR. */
-                    error = 1;
-                } else if (!(us_poll_events(poll) & LIBUS_SOCKET_READABLE)) {
-                    /* We shut down and reads are off (node:http half-closes
-                     * with the request body unconsumed), so no peer event can
-                     * ever reach this socket again: this stale write event is
-                     * the last signal it will get. Close clean, as the peer's
-                     * FIN would have; epoll closes the same deaf state via
-                     * EPOLLHUP. A shut-down socket that still reads (a client
-                     * awaiting its response) ignores its own-shutdown echo
-                     * here and learns of the peer through the read filter. */
+                /* Write side dead without our own shutdown() (peer reset /
+                 * connect refused), or a read-filter EV_EOF carrying the
+                 * socket error in fflags: both are epoll's EPOLLERR. */
+                if (bits.send_eof && !bits.send_eof_err && !bits.eof_err && type == POLL_TYPE_SOCKET &&
+                    ((struct us_socket_t *) poll)->flags.is_paused) {
+                    /* fflags==0 with reads paused is AF_UNIX's graceful peer
+                     * close (TCP only gets SS_CANTSENDMORE from RST, which
+                     * carries the error): the receive buffer survives, so
+                     * defer like epoll's EPOLLHUP - resume() delivers the
+                     * tail + end instead of an error close discarding it. */
                     eof = 1;
+                } else {
+                    error = 1;
+                }
+            } else if (type == POLL_TYPE_SOCKET_SHUT_DOWN) {
+                /* Our own shutdown() sets SS_CANTSENDMORE, so a write-side
+                 * EV_EOF alone proves nothing here; a socket error in fflags
+                 * (either filter) is the peer dying hard: EPOLLERR parity. */
+                if (bits.send_eof_err || bits.eof_err) {
+                    error = 1;
                 }
             }
         }
@@ -606,6 +609,20 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 
     return ret;
 }
+
+/* Kqueue's stand-in for epoll's implicit EPOLLHUP/EPOLLERR: an EV_CLEAR read
+ * filter re-fires on peer FIN/RST but not forever on a consumed EOF; the
+ * dispatcher masks its readable bit out via us_poll_events (no reads). */
+void us_internal_kqueue_socket_arm_read_sentinel(struct us_socket_t *s) {
+    struct us_loop_t *loop = s->group->loop;
+    struct kevent64_s event;
+    EV_SET64(&event, us_poll_fd(&s->p), EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, (uint64_t)(void *)&s->p, 0, 0);
+    int ret;
+    do {
+        ret = kevent64(loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(ret));
+}
+
 #endif
 
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int old_ext_size, unsigned int ext_size) {

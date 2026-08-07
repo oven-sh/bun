@@ -605,7 +605,10 @@ impl<Op: PasswordOp> PasswordJob<Op> {
             unsafe {
                 drop(bun_core::heap::take(ct.as_ptr()));
                 core::ptr::drop_in_place(&raw mut (*result).value);
-                std::alloc::dealloc(result.cast(), std::alloc::Layout::new::<PasswordResult<Op>>());
+                std::alloc::dealloc(
+                    result.cast(),
+                    std::alloc::Layout::new::<PasswordResult<Op>>(),
+                );
             }
         }
         // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).

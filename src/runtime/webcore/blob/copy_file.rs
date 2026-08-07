@@ -1374,7 +1374,9 @@ impl<'a> CopyFileWindows<'a> {
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             vm_handle: jsc::VirtualMachine::VirtualMachine::get().handle(),
-            loop_kind: jsc::VirtualMachine::VirtualMachine::get().as_mut().current_loop_kind(),
+            loop_kind: jsc::VirtualMachine::VirtualMachine::get()
+                .as_mut()
+                .current_loop_kind(),
             event_loop,
             mkdirp_if_not_exists,
             destination_mode,
@@ -1923,7 +1925,10 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         unsafe { (*this).on_mkdirp_complete() };
         Ok(())
     }
-    let ct = jsc::ConcurrentTask::create(jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased));
+    let ct = jsc::ConcurrentTask::create(jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(
+        this,
+        call_erased,
+    ));
     if let jsc::vm_handle::Posted::Refused(ct) = this.vm_handle.post(this.loop_kind, ct) {
         // VM torn down: nobody will settle the promise; free the hop.
         // SAFETY: refused ⇒ we own the task box.

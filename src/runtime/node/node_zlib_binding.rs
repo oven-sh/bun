@@ -498,7 +498,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `deref()`; if the VM has been torn down that never happens, so drop
         // the task and that ref here.
         let ct = ConcurrentTask::create(Task::init(this));
-        if let bun_jsc::vm_handle::Posted::Refused(ct) = this_ref.vm_handle().post(this_ref.loop_kind(), ct) {
+        if let bun_jsc::vm_handle::Posted::Refused(ct) =
+            this_ref.vm_handle().post(this_ref.loop_kind(), ct)
+        {
             // SAFETY: refused ⇒ we own the task box; `this` is live (ref held).
             unsafe {
                 drop(bun_core::heap::take(ct.as_ptr()));

@@ -313,7 +313,9 @@ mod windows {
                 break;
             }
             let task = ConcurrentTask::create(super::pressure_task(super::level::CRITICAL));
-            if let bun_jsc::vm_handle::Posted::Refused(task) = vm.post(bun_jsc::LoopKind::Regular, task) {
+            if let bun_jsc::vm_handle::Posted::Refused(task) =
+                vm.post(bun_jsc::LoopKind::Regular, task)
+            {
                 // VM torn down (uninstall joins us right after): drop the notification.
                 // SAFETY: refused ⇒ we own the task box.
                 unsafe { drop(bun_core::heap::take(task.as_ptr())) };
@@ -345,7 +347,11 @@ mod windows {
         }
         let shutdown = OwnedHandle(shutdown);
 
-        let (vm, n, s) = (global.bun_vm().handle(), notify.0 as usize, shutdown.0 as usize);
+        let (vm, n, s) = (
+            global.bun_vm().handle(),
+            notify.0 as usize,
+            shutdown.0 as usize,
+        );
         let Ok(thread) = std::thread::Builder::new()
             .name("MemoryPressure".into())
             .stack_size(64 * 1024)

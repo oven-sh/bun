@@ -434,13 +434,13 @@ unsafe fn init_runtime_state(
                     // from CLI args to the resolver so symlinked node_modules
                     // entries resolve via their link path (peer deps stay reachable).
                     t.resolver.opts.preserve_symlinks = preserve_symlinks;
-                    let wake_ctx: *mut bun_jsc::async_module::WakeContext = &mut **(*state).wake_ctx.insert(Box::new(
-                        bun_jsc::async_module::WakeContext {
+                    let wake_ctx: *mut bun_jsc::async_module::WakeContext = &mut **(*state)
+                        .wake_ctx
+                        .insert(Box::new(bun_jsc::async_module::WakeContext {
                             queue: ptr::addr_of_mut!((*vm).modules),
                             vm: (*vm).handle(),
                             loop_kind: bun_jsc::LoopKind::Regular,
-                        },
-                    ));
+                        }));
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(wake_ctx.cast()),
                         handler: Some(bun_jsc::async_module::Queue::on_wake_handler),

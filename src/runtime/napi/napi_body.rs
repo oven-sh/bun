@@ -1827,7 +1827,10 @@ impl napi_async_work {
     /// (as when Node tears an env down with work outstanding) and the work
     /// object stays with the addon that owns it.
     fn post_to_js_thread(&mut self, self_ptr: *mut Self) {
-        let ct = core::ptr::NonNull::from(self.concurrent_task.from(self_ptr, AutoDeinit::ManualDeinit));
+        let ct = core::ptr::NonNull::from(
+            self.concurrent_task
+                .from(self_ptr, AutoDeinit::ManualDeinit),
+        );
         let _ = self.vm.post(self.loop_kind, ct);
     }
 
@@ -2809,7 +2812,8 @@ impl ThreadSafeFunction {
                     // teardown path. Free the task and fall back to Idle.
                     // SAFETY: refused ⇒ we own the task box.
                     unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
-                    self.dispatch_state.store(DispatchState::Idle as u8, Ordering::SeqCst);
+                    self.dispatch_state
+                        .store(DispatchState::Idle as u8, Ordering::SeqCst);
                 }
             }
             x if x == DispatchState::Running as u8 => {
@@ -5132,7 +5136,9 @@ impl NapiFinalizerTask {
             let handle = unsafe { &*self.finalizer.env.get() }.vm_handle().clone();
             let this = bun_core::heap::into_raw(self);
             let ct = ConcurrentTask::create(Task::init(this));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) = handle.post(bun_jsc::LoopKind::Regular, ct) {
+            if let bun_jsc::vm_handle::Posted::Refused(ct) =
+                handle.post(bun_jsc::LoopKind::Regular, ct)
+            {
                 // SAFETY: refused ⇒ we own both boxes.
                 unsafe {
                     drop(bun_core::heap::take(ct.as_ptr()));

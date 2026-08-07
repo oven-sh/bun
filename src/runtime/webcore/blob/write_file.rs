@@ -694,7 +694,9 @@ mod windows_impl {
                     len: 0,
                 }],
                 vm_handle: bun_jsc::virtual_machine::VirtualMachine::get().handle(),
-                loop_kind: bun_jsc::virtual_machine::VirtualMachine::get().as_mut().current_loop_kind(),
+                loop_kind: bun_jsc::virtual_machine::VirtualMachine::get()
+                    .as_mut()
+                    .current_loop_kind(),
                 event_loop,
                 fd: -1,
                 err: None,
@@ -1034,7 +1036,8 @@ mod windows_impl {
                 this,
                 Self::on_mkdirp_complete_task,
             ));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) = this.vm_handle.post(this.loop_kind, ct) {
+            if let bun_jsc::vm_handle::Posted::Refused(ct) = this.vm_handle.post(this.loop_kind, ct)
+            {
                 // VM torn down: nobody will settle the promise. Free the hop (the
                 // ConcurrentTask owns the boxed ManagedTask); the operation's
                 // buffers/fd go with the process's teardown of its owner.

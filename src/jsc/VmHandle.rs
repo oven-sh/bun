@@ -323,7 +323,9 @@ impl ConcurrentPoster {
     /// (a JS-thread-owned handle knows its VM); the mini arm posts directly.
     pub fn from_event_loop_handle(h: &bun_event_loop::EventLoopHandle) -> Self {
         match h {
-            bun_event_loop::EventLoopHandle::Js { owner } => ConcurrentPoster::Js(owner.js_poster()),
+            bun_event_loop::EventLoopHandle::Js { owner } => {
+                ConcurrentPoster::Js(owner.js_poster())
+            }
             bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(*mini),
         }
     }

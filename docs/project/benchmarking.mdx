@@ -261,13 +261,19 @@ bun --cpu-prof --cpu-prof-dir ./profiles script.js
 
 ## Heap profiling
 
-Generate heap snapshots on exit to analyze memory usage and find memory leaks.
+Write a heap profile on exit to analyze memory usage and find memory leaks.
 
 ```sh terminal icon="terminal"
 bun --heap-prof script.js
 ```
 
-`--heap-prof` writes a V8 `.heapsnapshot` file you can load in Chrome DevTools (Memory tab → Load).
+`--heap-prof` writes a full V8-format heap snapshot on exit, using Node.js's
+diagnostic filename format
+(`Heap.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq>.heapprofile`). The content is the
+same as `v8.writeHeapSnapshot()` / `Bun.generateHeapSnapshot("v8")`: load it in
+Chrome DevTools via Memory tab → Load (pick "All Files" or rename to
+`.heapsnapshot` — the extension follows Node's `--heap-prof` filename contract,
+which the harness and tooling key on).
 
 ### Markdown output
 
@@ -282,13 +288,14 @@ bun --heap-prof-md script.js
 ### Options
 
 ```sh terminal icon="terminal"
-bun --heap-prof --heap-prof-name my-snapshot.heapsnapshot script.js
+bun --heap-prof --heap-prof-name my-profile.heapprofile script.js
 bun --heap-prof --heap-prof-dir ./profiles script.js
 ```
 
-| Flag                          | Description                                |
-| ----------------------------- | ------------------------------------------ |
-| `--heap-prof`                 | Generate a V8 `.heapsnapshot` file on exit |
-| `--heap-prof-md`              | Generate a markdown heap profile on exit   |
-| `--heap-prof-name <filename>` | Set output filename                        |
-| `--heap-prof-dir <dir>`       | Set output directory                       |
+| Flag                           | Description                                                                                                                                |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--heap-prof`                  | Write a `.heapprofile` file on exit                                                                                                        |
+| `--heap-prof-md`               | Generate a markdown heap profile on exit                                                                                                   |
+| `--heap-prof-name <filename>`  | Set output filename                                                                                                                        |
+| `--heap-prof-dir <dir>`        | Set output directory                                                                                                                       |
+| `--heap-prof-interval <bytes>` | Accepted for Node.js compatibility (the snapshot is taken once at exit; JavaScriptCore has no allocation sampling to apply an interval to) |

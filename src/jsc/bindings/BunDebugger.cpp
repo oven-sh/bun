@@ -648,9 +648,12 @@ static void inProcessRunWhilePaused(JSC::JSGlobalObject& globalObject, bool& isD
         return;
     }
     auto& channel = inProcessInspectorChannel();
+    // Save-restore: a paused listener can evaluate a nested `debugger` statement,
+    // re-entering here while the outer pause is still on the stack.
+    bool wasInPauseLoop = channel.inPauseLoop;
     channel.inPauseLoop = true;
     channel.drainSynchronously();
-    channel.inPauseLoop = false;
+    channel.inPauseLoop = wasInPauseLoop;
     // continueProgram() clears next-pause state, so auto-continue only when no listener
     // already ended the pause (Debugger.resume/step) — otherwise a step becomes a full resume.
     if (!isDoneProcessingEvents) {
@@ -658,8 +661,8 @@ static void inProcessRunWhilePaused(JSC::JSGlobalObject& globalObject, bool& isD
             debugger->continueProgram();
         isDoneProcessingEvents = true;
     }
-    // A session.disconnect() from a paused listener is deferred until here.
-    if (channel.dispatchDepth == 0)
+    // A session.disconnect() from a paused listener is deferred until the outermost pause unwinds.
+    if (!wasInPauseLoop && channel.dispatchDepth == 0)
         finishDeferredInProcessDetach(static_cast<Zig::GlobalObject*>(&globalObject));
 }
 

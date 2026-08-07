@@ -235,7 +235,7 @@ impl Default for OutputCode {
 }
 
 impl OutputCode {
-    pub(crate) fn byte_slice(&self) -> &[u8] {
+    pub fn byte_slice(&self) -> &[u8] {
         match self {
             OutputCode::Utf8(b) => b,
             OutputCode::String(s) => s.byte_slice(),

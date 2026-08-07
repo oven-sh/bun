@@ -92,6 +92,9 @@ pub struct BundleV2<'a> {
     pub bun_watcher: Option<NonNull<bun_watcher::Watcher>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
     pub completion: Option<dispatch::CompletionHandle>,
+    /// When this bundle's owning loop is a JS event loop (bake / dev server):
+    /// how parse worker threads deliver work back to it.
+    pub js_poster: Option<bun_event_loop::JsPoster>,
     /// CYCLEBREAK GENUINE: erased `bake::DevServer` (see `dispatch::DevServerHandle`).
     /// Populated from `transpiler.options.dev_server` + the runtime-registered vtable at
     /// construction. All ~15 DevServer call sites go through this.
@@ -1478,13 +1481,15 @@ pub mod bv2_impl {
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
             // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
-            match &*self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
-                    owner.enqueue_task_concurrent(task);
-                }
-                bun_event_loop::AnyEventLoop::Mini(_) => {
-                    panic!("No JavaScript event loop for transpiler plugins to run on");
-                }
+            let poster = self
+                .js_poster
+                .as_ref()
+                .expect("No JavaScript event loop for transpiler plugins to run on");
+            if let Err(task) = poster.post(task) {
+                // The JS VM running the plugins was torn down mid-bundle; the
+                // plugin hop will never run. Free the task if it is heap-owned.
+                // SAFETY: refused ⇒ still ours.
+                unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task) };
             }
         }
 
@@ -2695,6 +2700,9 @@ pub mod bv2_impl {
                 bun_watcher: None,
                 plugins: None,
                 completion: None,
+                // SAFETY: `event_loop`, when set, points at the caller's live loop
+                // (owning thread == this thread).
+                js_poster: event_loop.and_then(|l| unsafe { l.as_ref() }.js_poster()),
                 dev_server: None,
                 file_map: None,
                 source_code_length: 0,
@@ -4171,13 +4179,17 @@ pub mod bv2_impl {
             // `on_load` must land there — not on the JS plugin loop — or it will
             // mutate `graph` / allocate from `graph.heap` off-thread.
             match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
-                    owner.enqueue_task_concurrent(
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                            std::ptr::from_mut(load),
-                            on_load_from_js_loop_raw,
-                        ),
+                bun_event_loop::AnyEventLoop::Js { .. } => {
+                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                        std::ptr::from_mut(load),
+                        on_load_from_js_loop_raw,
                     );
+                    let poster = self.js_poster.as_ref().expect("JS-owned bundle has a poster");
+                    if let Err(ct) = poster.post(ct) {
+                        // Owning JS VM torn down mid-bundle: the hop never runs.
+                        // SAFETY: refused ⇒ we own the task box.
+                        unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
+                    }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `load` is a valid &mut for the duration of the enqueue;
@@ -4196,13 +4208,17 @@ pub mod bv2_impl {
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
-                    owner.enqueue_task_concurrent(
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                            std::ptr::from_mut(resolve),
-                            on_resolve_from_js_loop_raw,
-                        ),
+                bun_event_loop::AnyEventLoop::Js { .. } => {
+                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                        std::ptr::from_mut(resolve),
+                        on_resolve_from_js_loop_raw,
                     );
+                    let poster = self.js_poster.as_ref().expect("JS-owned bundle has a poster");
+                    if let Err(ct) = poster.post(ct) {
+                        // Owning JS VM torn down mid-bundle: the hop never runs.
+                        // SAFETY: refused ⇒ we own the task box.
+                        unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
+                    }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;

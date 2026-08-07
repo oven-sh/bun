@@ -297,3 +297,115 @@ pub extern "C" fn Bun__VmHandle__refKeepAlive(handle: &VmHandle, delta: core::ff
         handle.unref_keep_alive(LoopKind::Regular);
     }
 }
+
+// ── Producers that serve either a JS VM or a MiniEventLoop ────────────────
+//
+// fs.cp (also used by the shell), shell builtins, password hashing, zlib run
+// on the work pool for whichever loop created them. For the JS case the
+// completion goes through the VM's handle; a MiniEventLoop (bundler / shell /
+// install threads) is owned by its thread and outlives the work it schedules,
+// so its concurrent queue is posted to directly, as before.
+
+/// Where an off-thread completion goes: a JS VM (through its handle) or a
+/// mini event loop. Captured on the owning thread when the work is created.
+#[derive(Clone)]
+pub enum ConcurrentPoster {
+    Js(VmHandle, LoopKind),
+    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop, bun_ptr::Mut>),
+}
+
+impl ConcurrentPoster {
+    /// JS thread: the current VM and whichever of its loops is current.
+    pub fn current_js() -> Self {
+        let vm = VirtualMachine::get();
+        ConcurrentPoster::Js(vm.handle(), vm.as_mut().current_loop_kind())
+    }
+
+    /// Owning thread: from an `EventLoopHandle` (JS arm ⇒ the current VM,
+    /// which is the VM that handle refers to on this thread).
+    pub fn from_event_loop_handle(h: &bun_event_loop::EventLoopHandle) -> Self {
+        match h {
+            bun_event_loop::EventLoopHandle::Js { .. } => Self::current_js(),
+            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(*mini),
+        }
+    }
+
+    pub fn is_js(&self) -> bool {
+        matches!(self, ConcurrentPoster::Js(..))
+    }
+
+    /// Post a JS-loop `ConcurrentTask`. `Refused` ⇒ VM torn down, caller
+    /// releases. Panics (debug) if this poster is `Mini`.
+    pub fn post_js(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
+        match self {
+            ConcurrentPoster::Js(h, kind) => h.post(*kind, task),
+            ConcurrentPoster::Mini(_) => {
+                debug_assert!(false, "post_js on a Mini poster");
+                Posted::Refused(task)
+            }
+        }
+    }
+
+    /// Post a mini-loop task (always accepted; the mini loop outlives its work).
+    pub fn post_mini(&self, task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>) {
+        match self {
+            ConcurrentPoster::Mini(mini) => {
+                let mut mini = *mini;
+                // SAFETY: per `EventLoopHandle::Mini` invariant — the mini loop is
+                // alive for as long as work it created runs; its concurrent queue
+                // push is thread-safe.
+                unsafe { mini.get_mut() }.enqueue_task_concurrent(task);
+            }
+            ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
+        }
+    }
+}
+
+// ── Erased form for crates below bun_jsc (spawn, bundler) ─────────────────
+
+struct PosterData {
+    handle: VmHandle,
+    kind: LoopKind,
+}
+
+unsafe fn poster_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> bool {
+    // SAFETY: `data` is a leaked `Arc<PosterData>` pointer (see `to_js_poster`).
+    let d = unsafe { &*(data as *const PosterData) };
+    matches!(d.handle.post(d.kind, task), Posted::Queued)
+}
+unsafe fn poster_wake(data: *const ()) {
+    // SAFETY: as above.
+    unsafe { &*(data as *const PosterData) }.handle.wake();
+}
+unsafe fn poster_clone(data: *const ()) -> *const () {
+    // SAFETY: as above; bump the Arc count and hand out the same pointer.
+    unsafe { Arc::increment_strong_count(data as *const PosterData) };
+    data
+}
+unsafe fn poster_drop(data: *const ()) {
+    // SAFETY: as above; balances `into_raw`/`increment_strong_count`.
+    unsafe { drop(Arc::from_raw(data as *const PosterData)) };
+}
+static POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
+    post: poster_post,
+    wake: poster_wake,
+    clone: poster_clone,
+    drop: poster_drop,
+};
+
+impl VmHandle {
+    /// An erased poster for `kind`, for code that cannot name `VmHandle`.
+    pub fn to_js_poster(&self, kind: LoopKind) -> bun_event_loop::JsPoster {
+        let data = Arc::into_raw(Arc::new(PosterData { handle: self.clone(), kind })) as *const ();
+        // SAFETY: `data`/vtable pair as documented on `JsPoster::from_raw`.
+        unsafe { bun_event_loop::JsPoster::from_raw(data, &POSTER_VTABLE) }
+    }
+}
+
+impl VirtualMachine {
+    /// JS thread: an erased poster for the current loop of this VM.
+    pub fn js_poster(&self) -> bun_event_loop::JsPoster {
+        self.handle().to_js_poster(self.current_loop_kind())
+    }
+}
+

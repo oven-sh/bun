@@ -2569,6 +2569,8 @@ pub struct ShellTask {
     /// no-op`).
     pub task: WorkPoolTask,
     pub(crate) event_loop: EventLoopHandle,
+    /// How the pool thread bounces the task back to its owning loop.
+    pub(crate) poster: bun_jsc::ConcurrentPoster,
     pub(crate) keep_alive: bun_io::KeepAlive,
     /// Back-ref to the owning [`Interpreter`]. The high-tier dispatch
     /// (`runtime::dispatch::run_task`) recovers `&mut Interpreter` from this
@@ -2590,6 +2592,7 @@ impl ShellTask {
                 // fires if a caller forgets the `<C>` (debug-asserted there).
                 callback: shell_task_unset_callback,
             },
+            poster: bun_jsc::ConcurrentPoster::from_event_loop_handle(&event_loop),
             event_loop,
             keep_alive: Default::default(),
             interp: core::ptr::null_mut(),
@@ -2644,34 +2647,32 @@ impl ShellTask {
     /// [`schedule`](Self::schedule); not touched again on the worker thread
     /// after this returns.
     pub(crate) unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
+        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask};
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
         // main thread may already be touching `*this`, so no live `&mut`
         // into it may span that call. `this` is live and exclusively owned by
         // this thread until the enqueue below.
-        let (event_loop, task_ptr) = unsafe {
+        unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            let event_loop = (*this).event_loop;
-            let task_ptr = match &mut (*this).concurrent_task {
+            let poster = (*this).poster.clone();
+            match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
                     // Tag resolved via `C: Taskable`.
                     ct.from(ctx, AutoDeinit::ManualDeinit);
-                    EventLoopTaskPtr {
-                        js: std::ptr::from_mut(ct),
-                    }
+                    // Refused ⇒ the owning JS VM was torn down; the intrusive task
+                    // stays unqueued inside its context, which belongs to the
+                    // interpreter the dead VM owned. Nothing to run.
+                    let _ = poster.post_js(core::ptr::NonNull::from(ct));
                 }
                 EventLoopTask::Mini(at) => {
                     // Pass the monomorphised callback explicitly.
-                    EventLoopTaskPtr {
-                        mini: at.from(this, shell_task_run_from_main_thread_mini::<C>),
-                    }
+                    let at = at.from(this, shell_task_run_from_main_thread_mini::<C>);
+                    poster.post_mini(core::ptr::NonNull::new(at).expect("intrusive task"));
                 }
-            };
-            (event_loop, task_ptr)
-        };
-        event_loop.enqueue_task_concurrent(task_ptr);
+            }
+        }
     }
 
     /// Unrefs the

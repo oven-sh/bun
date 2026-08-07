@@ -15,7 +15,6 @@ use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
-use bun_jsc::EventLoopTaskPtr;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, Task, ThreadSafe, Unprotect};
@@ -1258,7 +1257,11 @@ mod _async_tasks {
         pub(crate) promise: JSPromiseStrong,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<A>,
+        /// JS thread only (`run_from_js_thread`).
         pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
+        /// How the pool thread reaches the VM to deliver the result.
+        pub(crate) vm: bun_jsc::VmHandle,
+        pub(crate) loop_kind: bun_jsc::LoopKind,
         pub task: WorkPoolTask,
         pub(crate) result: Maybe<R>,
         pub(crate) r#ref: KeepAlive,
@@ -1278,11 +1281,10 @@ mod _async_tasks {
         /// the functions to check .signal.aborted() for early returns.
         pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
 
-        /// Deref the raw `global_object` pointer.
+        /// Deref the raw `global_object` pointer — JS thread only.
         ///
-        /// Invariant: set from a live `&JSGlobalObject` in `create()` and never
-        /// null; the JSC global outlives every task (JSC_BORROW per LIFETIMES.tsv).
-        /// Safe to call from the work-pool thread for `bun_vm_concurrently()`.
+        /// Invariant: set from a live `&JSGlobalObject` in `create()`; the task is
+        /// dispatched on that global's VM, which is alive while it dispatches.
         #[inline]
         pub(crate) fn global_object(&self) -> &JSGlobalObject {
             self.global_object.get()
@@ -1302,6 +1304,8 @@ mod _async_tasks {
                 // niche-optimised; never construct an all-zero `Result` value.
                 result: Err(sys::Error::default()),
                 global_object: bun_ptr::BackRef::new(global_object),
+                vm: vm.handle(),
+                loop_kind: vm.current_loop_kind(),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -1331,16 +1335,37 @@ mod _async_tasks {
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
-            // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
-            // documented accessor for off-thread (work-pool) callers; the
-            // event-loop's concurrent queue is MPSC-safe.
+            // Deliver the result to the VM. Ownership of `this` transfers to the JS
+            // thread on Queued; on Refused (VM torn down) it stays here and is
+            // released without touching JSC.
             // SAFETY: `this` is still exclusively owned here (see above).
-            let vm = unsafe { (*this).global_object().bun_vm_concurrently() };
-            // SAFETY: VirtualMachine and its event loop are process-static
-            // (LIFETIMES.tsv); the concurrent queue is MPSC-safe. Ownership of
-            // `this` transfers to the JS thread here — no use after this call.
+            let ct = ConcurrentTask::create_from(this);
+            let posted = unsafe { (*this).vm.post((*this).loop_kind, ct) };
+            if let bun_jsc::vm_handle::Posted::Refused(ct) = posted {
+                // SAFETY: refused ⇒ we own the ConcurrentTask box and `this`.
+                unsafe {
+                    drop(bun_core::heap::take(ct.as_ptr()));
+                    Self::release_off_thread(this);
+                }
+            }
+        }
+
+        /// Off the JS thread, VM gone: free what the task owns that is portable
+        /// (the operation's result and its arguments' own storage) and the task's
+        /// storage. The promise handle, keep-alive and protected argument values
+        /// belong to a heap/loop that no longer exist and are forgotten.
+        ///
+        /// # Safety
+        /// The pool thread owns `this` and nothing else references it.
+        unsafe fn release_off_thread(this: *mut Self) {
+            // SAFETY: fn contract.
             unsafe {
-                (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(this));
+                core::ptr::drop_in_place(&raw mut (*this).result);
+                // `args` is `ThreadSafe<A>` whose Drop would `unprotect()` JS values
+                // via the (dead) VM; drop the value's own storage without that.
+                drop(core::ptr::read(&raw const (*this).args).into_inner_without_unprotect());
+                core::ptr::drop_in_place(&raw mut (*this).vm);
+                std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
             }
         }
 
@@ -1417,7 +1442,10 @@ mod _async_tasks {
         pub(crate) promise: JSPromiseStrong,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<args::Cp>,
+        /// Owning-thread uses (global object, keep-alive context).
         pub(crate) evtloop: EventLoopHandle,
+        /// How the last subtask's thread delivers the completion.
+        pub(crate) poster: bun_jsc::ConcurrentPoster,
         pub task: WorkPoolTask,
         /// Written from any workpool thread (first `finish_concurrently` caller wins via
         /// `has_result` CAS); read on the JS thread in `run_from_js_thread`. Wrapped in
@@ -1609,6 +1637,7 @@ mod _async_tasks {
                 result: core::cell::Cell::new(Ok(())),
                 // `vm.event_loop` is the live per-thread `jsc::EventLoop` field.
                 evtloop: EventLoopHandle::init(vm.event_loop.cast()),
+                poster: bun_jsc::ConcurrentPoster::Js(vm.handle(), vm.current_loop_kind()),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -1644,6 +1673,7 @@ mod _async_tasks {
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
                 evtloop: EventLoopHandle::init_mini(mini),
+                poster: bun_jsc::ConcurrentPoster::from_event_loop_handle(&EventLoopHandle::init_mini(mini)),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker { id: 0 },
@@ -1720,25 +1750,47 @@ mod _async_tasks {
             // Count reached zero ⇒ exclusive access. `this` carries mutable
             // provenance from `Box::leak`, so the enqueued callback may safely
             // form `&mut *this` on the JS thread.
-            if matches!(this_ref.evtloop, EventLoopHandle::Js { .. }) {
-                this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
-                    js: ConcurrentTask::from_callback(this, |p| {
-                        // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
-                        // JS-thread callback holds the only live reference (exclusive `&mut`).
-                        unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) }
-                    })
-                    .as_ptr(),
+            if this_ref.poster.is_js() {
+                let ct = ConcurrentTask::from_callback(this, |p| {
+                    // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
+                    // JS-thread callback holds the only live reference (exclusive `&mut`).
+                    unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) }
                 });
+                if let bun_jsc::vm_handle::Posted::Refused(ct) = this_ref.poster.post_js(ct) {
+                    // VM torn down: nobody will settle the promise. Free the task box
+                    // and this task's portable storage here.
+                    // SAFETY: refused ⇒ we own `ct`; count hit zero ⇒ exclusive `this`.
+                    unsafe {
+                        drop(bun_core::heap::take(ct.as_ptr()));
+                        Self::release_off_thread(this);
+                    }
+                }
             } else {
-                this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
-                    mini: AnyTaskWithExtraContext::from_callback_auto_deinit(
-                        this,
-                        |p: *mut Self, ctx| {
-                            // SAFETY: subtask count hit zero ⇒ exclusive access to the leaked task.
-                            unsafe { (*p).run_from_js_thread_mini(ctx) }
-                        },
-                    ),
-                });
+                let at = AnyTaskWithExtraContext::from_callback_auto_deinit(
+                    this,
+                    |p: *mut Self, ctx| {
+                        // SAFETY: subtask count hit zero ⇒ exclusive access to the leaked task.
+                        unsafe { (*p).run_from_js_thread_mini(ctx) }
+                    },
+                );
+                // `from_callback_auto_deinit` heap-allocates; never null.
+                this_ref.poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
+            }
+        }
+
+        /// Off the JS thread, VM gone: drop the arguments' own storage (without
+        /// unprotecting through the dead heap), the result, and the task storage;
+        /// the promise handle and keep-alive are forgotten.
+        ///
+        /// # Safety
+        /// Exclusive access to the leaked task; nothing else references it.
+        unsafe fn release_off_thread(this: *mut Self) {
+            // SAFETY: fn contract.
+            unsafe {
+                drop(core::ptr::read(&raw const (*this).args).into_inner_without_unprotect());
+                core::ptr::drop_in_place(&raw mut (*this).result);
+                core::ptr::drop_in_place(&raw mut (*this).poster);
+                std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
             }
         }
 

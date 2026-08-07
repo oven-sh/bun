@@ -1470,12 +1470,12 @@ impl DirTask {
     /// `this` is a live DirTask; the pending-main-callback count on the
     /// owning ShellRmTask was bumped before calling.
     unsafe fn queue_for_write(this: *mut DirTask) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
+        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask};
         // SAFETY: caller contract — `this` is live; `task_manager` is live
         // (pending count > 0). On the early-return path `deinit` reclaims a
         // non-root Box and `decr_pending_and_maybe_deinit` releases the
         // pending count taken in `post_run`.
-        let (me, event_loop) = unsafe {
+        let (me, poster) = unsafe {
             let me = &mut *this;
             if me.deleted_entries.is_empty() {
                 // Deinit non-root and bail. The pending count was already
@@ -1489,21 +1489,20 @@ impl DirTask {
                 ShellRmTask::decr_pending_and_maybe_deinit(tm);
                 return;
             }
-            let event_loop = (*me.task_manager).event_loop;
-            (me, event_loop)
+            let poster = (*me.task_manager).task.poster.clone();
+            (me, poster)
         };
-        let task_ptr = match &mut me.concurrent_task {
+        match &mut me.concurrent_task {
             EventLoopTask::Js(ct) => {
                 ct.from(this, AutoDeinit::ManualDeinit);
-                EventLoopTaskPtr {
-                    js: std::ptr::from_mut(ct),
-                }
+                // Refused ⇒ owning JS VM torn down; intrusive task stays unqueued.
+                let _ = poster.post_js(core::ptr::NonNull::from(ct));
             }
-            EventLoopTask::Mini(at) => EventLoopTaskPtr {
-                mini: at.from(this, dir_task_run_from_main_thread_mini),
-            },
-        };
-        event_loop.enqueue_task_concurrent(task_ptr);
+            EventLoopTask::Mini(at) => {
+                let at = at.from(this, dir_task_run_from_main_thread_mini);
+                poster.post_mini(core::ptr::NonNull::new(at).expect("intrusive task"));
+            }
+        }
     }
 
     /// Flush verbose output.

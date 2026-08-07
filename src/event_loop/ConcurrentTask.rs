@@ -336,6 +336,20 @@ impl ConcurrentTask {
 
     /// Returns whether this task should be automatically deallocated after execution.
     #[inline]
+    /// A poster got `task` back because the target VM is gone: free it if it
+    /// is a heap task (`create*`); an intrusive one belongs to its container.
+    ///
+    /// # Safety
+    /// `task` was just refused and is not queued anywhere.
+    pub unsafe fn release_refused(task: core::ptr::NonNull<ConcurrentTask>) {
+        // SAFETY: fn contract.
+        unsafe {
+            if task.as_ref().auto_delete() {
+                drop(bun_core::heap::take(task.as_ptr()));
+            }
+        }
+    }
+
     pub fn auto_delete(&self) -> bool {
         self.auto_delete
     }

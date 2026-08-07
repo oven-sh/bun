@@ -128,6 +128,10 @@ pub struct Process {
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Process>,
     pub exit_handler: ProcessExitHandler,
     pub(crate) event_loop: EventLoopHandle,
+    /// How the waiter thread delivers this process's exit to a JS VM
+    /// (`None` when owned by a mini event loop, which it posts to directly).
+    #[cfg(unix)]
+    pub(crate) js_poster: Option<bun_event_loop::JsPoster>,
 }
 
 impl Drop for Process {
@@ -223,6 +227,7 @@ impl Process {
             pid: posix.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             pidfd: posix.pidfd.unwrap_or(0),
+            js_poster: event_loop.js_poster(),
             event_loop,
             poller: Poller::Detached,
             status,
@@ -1047,6 +1052,14 @@ pub mod waiter_thread_posix {
         const TASK_TAG: TaskTag;
         fn pid(&self) -> PidT;
         fn event_loop(&self) -> EventLoopHandle;
+        /// The poster for a JS-owned process (see `Process::js_poster`).
+        fn js_poster(&self) -> Option<&bun_event_loop::JsPoster>;
+        /// Waiter thread, VM gone: release the strong ref the result would have
+        /// consumed on the JS thread.
+        ///
+        /// # Safety
+        /// `this` is a live, strong-ref'd pointer; callee releases one ref.
+        unsafe fn release_ref_from_waiter_thread(this: *mut Self);
         /// # Safety
         /// `this` must be a live, strong-ref'd pointer; callee releases one ref.
         unsafe fn on_wait_pid_from_waiter_thread(
@@ -1065,6 +1078,15 @@ pub mod waiter_thread_posix {
         #[inline]
         fn event_loop(&self) -> EventLoopHandle {
             self.event_loop
+        }
+        #[inline]
+        fn js_poster(&self) -> Option<&bun_event_loop::JsPoster> {
+            self.js_poster.as_ref()
+        }
+        #[inline]
+        unsafe fn release_ref_from_waiter_thread(this: *mut Self) {
+            // SAFETY: fn contract.
+            unsafe { Process::deref(this) };
         }
         #[inline]
         unsafe fn on_wait_pid_from_waiter_thread(
@@ -1137,17 +1159,24 @@ pub mod waiter_thread_posix {
                         remove = true;
 
                         match T::event_loop(process_ref) {
-                            EventLoopHandle::Js { owner } => {
-                                let ct = ConcurrentTask::create(Task::new(
-                                    T::TASK_TAG,
-                                    ResultTask::<T>::new(ResultTask {
-                                        result,
-                                        subprocess: process,
-                                        rusage,
-                                    })
-                                    .cast(),
-                                ));
-                                owner.enqueue_task_concurrent(ct);
+                            EventLoopHandle::Js { .. } => {
+                                let rt = ResultTask::<T>::new(ResultTask {
+                                    result,
+                                    subprocess: process,
+                                    rusage,
+                                });
+                                let ct = ConcurrentTask::create(Task::new(T::TASK_TAG, rt.cast()));
+                                let poster = T::js_poster(process_ref).expect("JS-owned process has a poster");
+                                if let Err(ct) = poster.post(ct) {
+                                    // VM torn down: nobody will observe this exit. Free the
+                                    // task and drop the ref its delivery would have released.
+                                    // SAFETY: refused ⇒ we own both boxes; `process` is strong-ref'd.
+                                    unsafe {
+                                        drop(bun_core::heap::take(ct.as_ptr()));
+                                        drop(bun_core::heap::take(rt));
+                                        T::release_ref_from_waiter_thread(process);
+                                    }
+                                }
                             }
                             EventLoopHandle::Mini(mut mini) => {
                                 let out = ResultTaskMini::<T>::new(ResultTaskMini {

@@ -198,7 +198,10 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_ASSUME_PERFECT_INCREMENTAL, "BUN_ASSUME_PERFECT_INCREMENTAL", { default: None });
     new_feature_flag!(pub BUN_BE_BUN, "BUN_BE_BUN", {});
     new_feature_flag!(pub BUN_DEBUG_NO_DUMP, "BUN_DEBUG_NO_DUMP", {});
-    new_feature_flag!(pub BUN_DESTRUCT_VM_ON_EXIT, "BUN_DESTRUCT_VM_ON_EXIT", {});
+    // TODO(before merge): default back to off (`{}`). On while this branch is in
+    // development so every test run tears down every VM, main thread included;
+    // BUN_DESTRUCT_VM_ON_EXIT=0 still disables it.
+    new_feature_flag!(pub BUN_DESTRUCT_VM_ON_EXIT, "BUN_DESTRUCT_VM_ON_EXIT", { default: true });
 
     // Disable "nativeDependencies"
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER, "BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", {});

@@ -4429,6 +4429,10 @@ impl VirtualMachine {
     pub fn destroy(&mut self) {
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
+        // The VM's own clone of its handle; the shared inner is freed when the
+        // last outside holder (C++ client data, a late poster) lets go.
+        // SAFETY: `destroy` runs once; the field is not used afterwards.
+        unsafe { core::mem::ManuallyDrop::drop(&mut self.handle) };
 
         // `ProcessAutoKiller`'s `Drop`
         // is the deinit body; take()+drop runs it without dropping `self`.

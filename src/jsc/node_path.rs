@@ -51,6 +51,16 @@ impl<T: Unprotect> ThreadSafe<T> {
     pub fn adopt(value: T) -> Self {
         Self(value)
     }
+
+    /// Take the value back **without** `unprotect()` — for releasing a task
+    /// off the JS thread after its VM was torn down (the protected values went
+    /// with the heap; the value's own storage still drops normally).
+    #[inline]
+    pub fn into_inner_without_unprotect(self) -> T {
+        let this = core::mem::ManuallyDrop::new(self);
+        // SAFETY: `repr(transparent)` over `T`; `this` is never dropped.
+        unsafe { core::ptr::read(&this.0) }
+    }
 }
 
 impl<T: Unprotect> core::ops::Deref for ThreadSafe<T> {

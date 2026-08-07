@@ -141,6 +141,7 @@ describe("url matching", () => {
     const dir = tempDir("fsr-match", Object.fromEntries(files.map(file => [file, "1"])));
     const router = new FrameworkRouter({ root: String(dir), style: "nextjs-pages" });
     return {
+      router,
       match(url: string): { file: string; params: Record<string, string | string[]> | null } | null {
         const result = router.match(url);
         if (result === null) return null;
@@ -148,6 +149,10 @@ describe("url matching", () => {
           file: path.relative(String(dir), result.route.page).replaceAll("\\", "/"),
           params: result.params,
         };
+      },
+      /** Top-level route parts in scan order (= dynamic candidate order). */
+      rootParts(): string[] {
+        return router.toJSON().children.map((child: { part: string }) => child.part);
       },
       [Symbol.dispose]() {
         dir[Symbol.dispose]();
@@ -199,6 +204,30 @@ describe("url matching", () => {
       file: "docs/[...slug].tsx",
       params: { slug: ["a", "b"] },
     });
+    // Empty segments never match, same as params.
+    expect(r.match("/docs//")).toBe(null);
+    expect(r.match("/docs//a")).toBe(null);
+    expect(r.match("/docs/a//b")).toBe(null);
+  });
+
+  test("params capture before a required catch-all", () => {
+    using r = makeMatcher("docs/[section]/[...rest].tsx");
+    expect(r.match("/docs/x")).toBe(null);
+    expect(r.match("/docs/x/")).toBe(null);
+    expect(r.match("/docs/x/y")).toEqual({
+      file: "docs/[section]/[...rest].tsx",
+      params: { section: "x", rest: "y" },
+    });
+    expect(r.match("/docs/x/y/z")).toEqual({
+      file: "docs/[section]/[...rest].tsx",
+      params: { section: "x", rest: ["y", "z"] },
+    });
+  });
+
+  test("param followed by an optional catch-all with zero segments", () => {
+    using r = makeMatcher("[a]/[[...opt]].tsx");
+    expect(r.match("/v")).toEqual({ file: "[a]/[[...opt]].tsx", params: { a: "v" } });
+    expect(r.match("/v/w")).toEqual({ file: "[a]/[[...opt]].tsx", params: { a: "v", opt: "w" } });
   });
 
   test("required catch-all at the root does not match /", () => {
@@ -220,12 +249,19 @@ describe("url matching", () => {
   });
 
   test("a failed candidate's captures don't leak into a later zero-segment match", () => {
-    // The [category] directory is scanned before blog/ (deterministic hash
-    // order), so the three-param pattern runs first, captures
-    // category="blog", then fails on [year]. The optional catch-all then
-    // matches /blog with zero segments and must not report that capture.
     using r = makeMatcher("[category]/[year]/[slug].tsx", "blog/[[...slug]].tsx");
+    // Premise: candidates run in scan order, so the three-param pattern must
+    // come first for this test to exercise the leak (it captures
+    // category="blog", fails on [year], then the catch-all matches with zero
+    // segments). If this assert breaks, reorder or rename the routes.
+    expect(r.rootParts()).toEqual(["/:category", "/blog"]);
     expect(r.match("/blog")).toEqual({ file: "blog/[[...slug]].tsx", params: null });
+  });
+
+  test("match rejects a path that is empty or does not start with a slash", () => {
+    using r = makeMatcher("docs/[...slug].tsx");
+    expect(() => r.router.match("")).toThrow("should be non-empty and start with a slash");
+    expect(() => r.router.match("docs/a")).toThrow("should be non-empty and start with a slash");
   });
 
   test("optional catch-all matches zero segments", () => {
@@ -240,5 +276,7 @@ describe("url matching", () => {
       file: "blog/[[...slug]].tsx",
       params: { slug: ["a", "b"] },
     });
+    // One trailing slash is tolerated, an empty segment is not.
+    expect(r.match("/blog//")).toBe(null);
   });
 });

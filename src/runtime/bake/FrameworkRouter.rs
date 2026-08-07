@@ -360,20 +360,21 @@ impl EncodedPattern {
                         while segment_start < path.len() {
                             let segment_end = strings::index_of_char_pos(path, b'/', segment_start)
                                 .unwrap_or(path.len());
-                            if segment_start < segment_end {
-                                // Check if we're about to exceed the maximum number of parameters
-                                if param_num >= MatchedParams::MAX_COUNT {
-                                    return false;
-                                }
-                                params.params.resize(param_num + 1).unwrap();
-                                params.params.slice()[param_num] = MatchedParamEntry {
-                                    key: bun_ptr::RawSlice::new(name),
-                                    value: bun_ptr::RawSlice::new(
-                                        &path[segment_start..segment_end],
-                                    ),
-                                };
-                                param_num += 1;
+                            // An empty segment (double slash) never matches,
+                            // same as the Param arm.
+                            if segment_start == segment_end {
+                                return false;
                             }
+                            // Check if we're about to exceed the maximum number of parameters
+                            if param_num >= MatchedParams::MAX_COUNT {
+                                return false;
+                            }
+                            params.params.resize(param_num + 1).unwrap();
+                            params.params.slice()[param_num] = MatchedParamEntry {
+                                key: bun_ptr::RawSlice::new(name),
+                                value: bun_ptr::RawSlice::new(&path[segment_start..segment_end]),
+                            };
+                            param_num += 1;
                             segment_start = if segment_end == path.len() {
                                 segment_end
                             } else {
@@ -1870,6 +1871,14 @@ impl JSFrameworkRouter {
     pub fn r#match(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let path_value = callframe.arguments_as_array::<1>()[0];
         let path = path_value.to_slice(global)?;
+        // match_slow requires an origin-form path; see the same guard in
+        // DevServer's server-side route lookup.
+        if path.slice().is_empty() || path.slice()[0] != b'/' {
+            return Err(global.throw(format_args!(
+                "Invalid path \"{}\" it should be non-empty and start with a slash",
+                bstr::BStr::new(path.slice())
+            )));
+        }
 
         let mut params_out = MatchedParams {
             params: BoundedArray::default(),

@@ -32,9 +32,26 @@ let globalActive: any = null;
 // A stale box.token means node's before() hook would have fired for the callback.
 let currentToken = 0;
 
+// Retire the live token at the tick boundary so callbacks scheduled in this
+// stretch see a restored pairing (node's before() hook) even when an
+// unbalanced enter() / process.domain= leaves no exit() to bump it.
+let tokenRetireQueued = false;
+
+function retireToken() {
+  tokenRetireQueued = false;
+  ++currentToken;
+}
+
+function retireTokenAfterTick() {
+  if (tokenRetireQueued) return;
+  tokenRetireQueued = true;
+  ProcessNextTick.$call(process, retireToken);
+}
+
 function setActive(d: any) {
   globalActive = d;
   AlsEnterWith.$call(als, { d, token: ++currentToken });
+  retireTokenAfterTick();
 }
 
 function isCurrentExecution(box: any): boolean {
@@ -96,21 +113,6 @@ function adopt() {
   }
 }
 
-// The process.domain setter needs a post-tick token bump so callbacks see a
-// restored pairing (node lib/domain.js:102 init hook reads process.domain).
-let tokenRetireQueued = false;
-
-function retireToken() {
-  tokenRetireQueued = false;
-  ++currentToken;
-}
-
-function retireTokenAfterTick() {
-  if (tokenRetireQueued) return;
-  tokenRetireQueued = true;
-  ProcessNextTick.$call(process, retireToken);
-}
-
 // node lib/domain.js backs process.domain with _domain[0].
 ObjectDefineProperty(process, "domain", {
   __proto__: null,
@@ -122,7 +124,6 @@ ObjectDefineProperty(process, "domain", {
   set: function (arg: any) {
     adopt();
     setActive(arg);
-    retireTokenAfterTick();
   },
 } as PropertyDescriptor);
 

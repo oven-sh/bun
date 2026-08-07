@@ -101,6 +101,27 @@ test.concurrent(
   },
 );
 
+test.concurrent("an unbalanced enter() does not leak the previous stack into later callbacks", async () => {
+  // Matches node: A's async pairing is exited at the callback boundary even
+  // though d2.enter() had no exit(), so B sees [d2] and d1's 'error' listener
+  // is never consulted for B's throw.
+  const r = await run(`
+    const domain = require("domain");
+    const d1 = domain.create(); const d2 = domain.create();
+    d1.on("error", e => console.log("d1-handled:" + e.message));
+    d1.run(() => setTimeout(function A() {
+      d2.enter();
+      setTimeout(function B() {
+        console.log("stack:" + domain._stack.map(d => d === d1 ? "d1" : "d2").join(","));
+        throw new Error("boom");
+      }, 1);
+    }, 1));
+  `);
+  expect(r.stdout.trim()).toBe("stack:d2");
+  expect(r.stderr).toContain("boom");
+  expect(r.exitCode).toBe(1);
+});
+
 test.concurrent(
   "child domain added to a parent routes error to the parent's listener without falling through to uncaughtException",
   async () => {

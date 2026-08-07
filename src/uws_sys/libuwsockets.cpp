@@ -1536,6 +1536,10 @@ extern "C"
   }
 
   void uws_res_clear_on_writable(int ssl, uws_res_r res) {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res)) {
+      return;
+    }
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->clearOnWritable();
@@ -1549,6 +1553,14 @@ extern "C"
                           void (*handler)(uws_res_r res, void *optional_data),
                           void *optional_data)
   {
+    /* A closed socket's ext block is already destructed (HttpContext::onClose)
+     * and its callbacks can never fire again; registering or clearing one is a
+     * no-op. Completion bookkeeping runs after ends that may have closed the
+     * socket via a shouldCloseConnection() gate, so this must not touch ext. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1581,6 +1593,11 @@ extern "C"
                           void (*handler)(uws_res_r res, void *optional_data),
                           void *optional_data)
   {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1615,6 +1632,11 @@ extern "C"
                                        void *optional_data),
                        void *optional_data)
   {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

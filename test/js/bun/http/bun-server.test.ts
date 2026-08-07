@@ -729,6 +729,67 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
+  test("a handler rejection on a HEAD request still closes its drained connection", async () => {
+    // The production 500 for a rejected handler renders from the rejection
+    // microtask, uncorked, and a HEAD response ends without a body: no cork
+    // or parser gate runs, so RequestContext::end_without_body has to run the
+    // close gate itself for the stop() mark to take effect.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const inflight = Promise.withResolvers();
+          const release = Promise.withResolvers();
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 255,
+            development: false,
+            async fetch() {
+              inflight.resolve();
+              await release.promise;
+              throw new Error("boom");
+            },
+          });
+          const c = net.connect(server.port, "127.0.0.1");
+          let buf = "";
+          const closed = Promise.withResolvers();
+          c.on("data", d => (buf += d));
+          c.on("close", () => closed.resolve());
+          c.on("error", () => {});
+          await new Promise((resolve, reject) => { c.on("connect", resolve); c.on("error", reject); });
+          c.write("HEAD /slow HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          await inflight.promise;
+          let resolved = false;
+          const stopped = server.stop(false).then(() => { resolved = true; });
+          await new Promise(r => setImmediate(r));
+          const resolvedEarly = resolved;
+          // The handler rejects; the 500 head renders from the microtask and
+          // the drained connection must close on its own.
+          release.resolve();
+          await stopped;
+          await closed.promise;
+          console.log(JSON.stringify({ resolvedEarly, got500: buf.includes(" 500 "), resolved }));
+          // The rejected handler marks the process exit code; the drain
+          // assertions above are what this test is about.
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // The rejected handler is logged to stderr by design; assert only the
+    // drain behavior.
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      out: { resolvedEarly: false, got500: true, resolved: true },
+      exitCode: 0,
+    });
+  });
+
   test("stop(true) after stop(false) force-closes the still-busy connection", async () => {
     expect(await runDrainFixture("force")).toEqual({
       stderr: "",

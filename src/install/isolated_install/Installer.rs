@@ -1206,16 +1206,14 @@ impl Task {
                             }
                         }
 
-                        // Project-local entries are built in place (no
-                        // staging), and the clone/hardlink/copy walk only
-                        // visits names present in the cache folder, so files
-                        // only the previous build produced would survive a
-                        // rebuild. After a patch removal that merge left the
-                        // patched build's `.bun-tag-<hash>` marker (and any
-                        // patch-created files) next to the unpatched files;
-                        // re-adding the patch then saw the stale marker and
-                        // skipped the entry. Delete the previous build so
-                        // the rebuild replaces instead of merges.
+                        // Rebuilds write into the final path in place, and
+                        // the clone/hardlink/copy walk only visits names
+                        // present in the cache folder, so files from the
+                        // previous build would survive — notably a removed
+                        // patch's `.bun-tag-<hash>` marker, which makes the
+                        // install that re-adds the patch skip this entry as
+                        // already patched. Delete so the rebuild replaces
+                        // instead of merges.
                         let mut prev_build = AutoAbsPath::init_top_level_dir();
                         installer.append_real_store_path(
                             &mut prev_build,

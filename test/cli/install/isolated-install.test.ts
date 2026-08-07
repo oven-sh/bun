@@ -2697,11 +2697,9 @@ describe("hoist", () => {
 // install from the lockfile never finishes.
 // Needs an ssh transport for the scp form; GIT_SSH_COMMAND substitutes a shell
 // script that runs git-upload-pack locally, which git for Windows cannot do.
-test.skipIf(isWindows)(
-  "cold cache install from bun.lock with an scp-form git dependency completes",
-  async () => {
-    using dir = tempDir("isolated-scp-git", {
-      "fake-ssh.sh": `#!/bin/sh
+test.skipIf(isWindows)("cold cache install from bun.lock with an scp-form git dependency completes", async () => {
+  using dir = tempDir("isolated-scp-git", {
+    "fake-ssh.sh": `#!/bin/sh
 # "ssh" for tests: log the call, skip options, drop the host, run the command locally.
 echo "$*" >> "$(dirname "$0")/ssh.log"
 while [ $# -gt 1 ]; do
@@ -2714,98 +2712,97 @@ done
 shift
 exec sh -c "$1"
 `,
-      "upstream/package.json": JSON.stringify({ name: "scp-dep", version: "1.0.0" }),
-    });
-    const fakeSsh = join(String(dir), "fake-ssh.sh");
-    chmodSync(fakeSsh, 0o755);
+    "upstream/package.json": JSON.stringify({ name: "scp-dep", version: "1.0.0" }),
+  });
+  const fakeSsh = join(String(dir), "fake-ssh.sh");
+  chmodSync(fakeSsh, 0o755);
 
-    const git = (args: string[], cwd: string) => {
-      const { exitCode, stderr } = Bun.spawnSync({
-        cmd: ["git", ...args],
-        cwd,
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr.toString()}`);
-    };
-    git(["init", "-q"], join(String(dir), "upstream"));
-    git(["add", "package.json"], join(String(dir), "upstream"));
-    git(
-      ["-c", "user.email=test@bun.com", "-c", "user.name=bun-test", "commit", "-qm", "init"],
-      join(String(dir), "upstream"),
-    );
-    git(["clone", "-q", "--bare", "upstream", "repo.git"], String(dir));
-
-    const projectDir = join(String(dir), "project");
-    await write(
-      join(projectDir, "package.json"),
-      JSON.stringify({
-        name: "scp-project",
-        dependencies: {
-          // scp form with an absolute path so the fake ssh finds the repo
-          "scp-dep": `git@localhost:${join(String(dir), "repo.git")}`,
-        },
-      }),
-    );
-
-    const installEnv = (cache: string) => ({
-      ...bunEnv,
-      BUN_INSTALL_CACHE_DIR: join(String(dir), cache),
-      GIT_SSH_COMMAND: fakeSsh,
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_ASKPASS: "echo",
-    });
-
-    await using firstInstall = spawn({
-      cmd: [bunExe(), "install", "--linker", "isolated"],
-      cwd: projectDir,
-      env: installEnv("cache-fresh"),
+  const git = (args: string[], cwd: string) => {
+    const { exitCode, stderr } = Bun.spawnSync({
+      cmd: ["git", ...args],
+      cwd,
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    // stderr is not asserted: the https attempt that precedes the ssh
-    // fallback fails with a git error even on the happy path
-    const firstExitCode = await firstInstall.exited;
-    expect(firstExitCode).toBe(0);
-    expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
-      name: "scp-dep",
-      version: "1.0.0",
-    });
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr.toString()}`);
+  };
+  git(["init", "-q"], join(String(dir), "upstream"));
+  git(["add", "package.json"], join(String(dir), "upstream"));
+  git(
+    ["-c", "user.email=test@bun.com", "-c", "user.name=bun-test", "commit", "-qm", "init"],
+    join(String(dir), "upstream"),
+  );
+  git(["clone", "-q", "--bare", "upstream", "repo.git"], String(dir));
 
-    // the lockfile keeps the ssh:// spelling of the scp form
-    const lockAfterFirst = await file(join(projectDir, "bun.lock")).text();
-    expect(lockAfterFirst).toContain('"scp-dep@git+ssh://git@localhost:');
+  const projectDir = join(String(dir), "project");
+  await write(
+    join(projectDir, "package.json"),
+    JSON.stringify({
+      name: "scp-project",
+      dependencies: {
+        // scp form with an absolute path so the fake ssh finds the repo
+        "scp-dep": `git@localhost:${join(String(dir), "repo.git")}`,
+      },
+    }),
+  );
 
-    // reinstall from the lockfile with a cold cache
-    await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
-    await rm(join(String(dir), "ssh.log"), { force: true });
+  const installEnv = (cache: string) => ({
+    ...bunEnv,
+    BUN_INSTALL_CACHE_DIR: join(String(dir), cache),
+    GIT_SSH_COMMAND: fakeSsh,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "echo",
+  });
 
-    await using secondInstall = spawn({
-      cmd: [bunExe(), "install", "--linker", "isolated"],
-      cwd: projectDir,
-      env: installEnv("cache-cold"),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    // Deadline, not a wait-for-condition: the broken install never exits, so
-    // bound it instead of timing out the whole test.
-    const secondExitCode = await Promise.race([
-      secondInstall.exited,
-      Bun.sleep(60_000).then(() => "install hung" as const),
-    ]);
-    if (secondExitCode === "install hung") secondInstall.kill();
-    expect(secondExitCode).toBe(0);
-    expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
-      name: "scp-dep",
-      version: "1.0.0",
-    });
+  await using firstInstall = spawn({
+    cmd: [bunExe(), "install", "--linker", "isolated"],
+    cwd: projectDir,
+    env: installEnv("cache-fresh"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  // stderr is not asserted: the https attempt that precedes the ssh
+  // fallback fails with a git error even on the happy path
+  const firstExitCode = await firstInstall.exited;
+  expect(firstExitCode).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
+    name: "scp-dep",
+    version: "1.0.0",
+  });
 
-    // both spellings converging on the same clone task means the cold install
-    // clones once (further lines would be git's ssh -G config probe, not a
-    // transfer), and the lockfile round trip is byte-stable
-    const sshLog = await file(join(String(dir), "ssh.log")).text();
-    expect(sshLog.split("\n").filter(line => line.includes("git-upload-pack"))).toHaveLength(1);
-    expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
-  },
-);
+  // the lockfile keeps the ssh:// spelling of the scp form
+  const lockAfterFirst = await file(join(projectDir, "bun.lock")).text();
+  expect(lockAfterFirst).toContain('"scp-dep@git+ssh://git@localhost:');
+
+  // reinstall from the lockfile with a cold cache
+  await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(String(dir), "ssh.log"), { force: true });
+
+  await using secondInstall = spawn({
+    cmd: [bunExe(), "install", "--linker", "isolated"],
+    cwd: projectDir,
+    env: installEnv("cache-cold"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  // Deadline, not a wait-for-condition: the broken install never exits, so
+  // bound it instead of timing out the whole test.
+  const secondExitCode = await Promise.race([
+    secondInstall.exited,
+    Bun.sleep(60_000).then(() => "install hung" as const),
+  ]);
+  if (secondExitCode === "install hung") secondInstall.kill();
+  expect(secondExitCode).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
+    name: "scp-dep",
+    version: "1.0.0",
+  });
+
+  // both spellings converging on the same clone task means the cold install
+  // clones once (further lines would be git's ssh -G config probe, not a
+  // transfer), and the lockfile round trip is byte-stable
+  const sshLog = await file(join(String(dir), "ssh.log")).text();
+  expect(sshLog.split("\n").filter(line => line.includes("git-upload-pack"))).toHaveLength(1);
+  expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
+});

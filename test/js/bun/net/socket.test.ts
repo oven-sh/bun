@@ -686,21 +686,29 @@ describe.concurrent("socket", () => {
     });
 
     const client = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+    // Post-connect teardown errors must not become uncaught exceptions.
     client.on("error", () => {});
-    await new Promise<void>(resolve => client.once("connect", resolve));
-    client.end(); // FIN; the server side stays half-open
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once("connect", resolve);
+        client.once("error", reject);
+      });
+      client.end(); // FIN; the server side stays half-open
 
-    await ended;
-    // Let the server's post-end writable dispatch run so its poll drops to zero
-    // requested events (the state that used to lose the last kqueue filter)
-    // before the reset arrives.
-    await new Promise(resolve => setImmediate(resolve));
-    await new Promise(resolve => setImmediate(resolve));
+      await ended;
+      // Let the server's post-end writable dispatch run so its poll drops to zero
+      // requested events (the state that used to lose the last kqueue filter)
+      // before the reset arrives.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
 
-    client.resetAndDestroy();
+      client.resetAndDestroy();
 
-    // Hangs forever on a deaf socket; the test timeout is the failure signal.
-    expect(await closed).toBeOneOf(["close", "error"]);
+      // Hangs forever on a deaf socket; the test timeout is the failure signal.
+      expect(await closed).toBeOneOf(["close", "error"]);
+    } finally {
+      client.destroy();
+    }
   });
 
   it("upgradeTLS handles errors", async () => {

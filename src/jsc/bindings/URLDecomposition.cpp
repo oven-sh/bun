@@ -25,16 +25,8 @@
 
 #include "URLDecomposition.h"
 
+#include "NodeURLHelpers.h"
 #include <wtf/text/StringToIntegerConversion.h>
-
-namespace Bun {
-bool hasValidPunycodeHost(WTF::StringView);
-}
-
-namespace Bun {
-bool containsUnicode16IDNADeltaSource(WTF::StringView);
-WTF::String applyUnicode16IDNADelta(const WTF::String&);
-}
 
 namespace WebCore {
 

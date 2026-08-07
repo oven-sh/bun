@@ -26,13 +26,8 @@
 #include "config.h"
 #include "DOMURL.h"
 
+#include "NodeURLHelpers.h"
 #include "URLSearchParams.h"
-
-namespace Bun {
-bool hasValidPunycodeHost(WTF::StringView);
-bool containsUnicode16IDNADeltaSource(WTF::StringView);
-WTF::String applyUnicode16IDNADelta(const WTF::String&);
-}
 
 namespace WebCore {
 

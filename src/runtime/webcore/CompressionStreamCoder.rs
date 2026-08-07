@@ -655,11 +655,7 @@ pub extern "C" fn CompressionStreamCoder__create(
     }
 }
 
-/// Releases the C++ cell's reference (the finalizer / eager
-/// `nativeTransformReleaseState` path; the cell clears its pointer before
-/// calling). An in-flight async transform holds its own reference, so the
-/// backend stays alive until that task's ctx drops. See
-/// [`CompressionStreamCoder::ref_count`].
+/// Releases the C++ cell's reference; see [`CompressionStreamCoder::ref_count`].
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
@@ -804,10 +800,8 @@ unsafe extern "C" {
 }
 
 pub struct CompressionAsyncCtx {
-    /// Holds one of the coder's references (`refs`), taken in
-    /// `__transformAsync` and released by `Drop`. The cell's finalizer can
-    /// run at VM teardown while the pool thread is still inside `transform`;
-    /// this reference is what keeps the coder alive through that.
+    /// Holds one coder reference (taken in `__transformAsync`, released by
+    /// `Drop`); see [`CompressionStreamCoder::ref_count`].
     coder: *mut CompressionStreamCoder,
     input: AsyncInput,
     finish: bool,
@@ -890,10 +884,8 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
         // `fallback` is ignored) or copied into an owned Vec.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    // The ctx shares ownership of the coder (released in its `Drop`): VM
-    // teardown runs the cell's finalizer regardless of the `Strong` below,
-    // so the cell's reference alone cannot cover the pool-thread `transform`.
-    // SAFETY: `this` is the live coder owned by the calling JS cell.
+    // SAFETY: `this` is the live coder owned by the calling JS cell; the ctx
+    // takes its own reference (see `CompressionStreamCoder::ref_count`).
     unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::ref_(this) };
     let ctx = bun_core::heap::into_raw(Box::new(CompressionAsyncCtx {
         coder: this,

@@ -17,47 +17,71 @@ const ADDON_C = /* c */ `
 #include <node_api.h>
 #include <uv.h>
 
+#define NODE_API_CALL(env, call)                                               \\
+  do {                                                                         \\
+    if ((call) != napi_ok) {                                                   \\
+      napi_throw_error((env), NULL, #call " failed");                          \\
+      return NULL;                                                             \\
+    }                                                                          \\
+  } while (0)
+
 typedef struct {
   napi_env env;
   napi_value arr;
   uint32_t idx;
+  napi_status status;
+  const char *failed_call;
 } walk_state;
+
+// uv_walk has no way to abort mid-walk, so record the first failure and make
+// the remaining visits no-ops; Timers() turns it into a thrown error.
+#define WALK_CALL(st, call)                                                    \\
+  do {                                                                         \\
+    if ((st)->status == napi_ok) {                                             \\
+      (st)->status = (call);                                                   \\
+      if ((st)->status != napi_ok) (st)->failed_call = #call " failed";        \\
+    }                                                                          \\
+  } while (0)
 
 static void walk_cb(uv_handle_t *handle, void *arg) {
   walk_state *st = (walk_state *)arg;
+  if (st->status != napi_ok) return;
   if (uv_handle_get_type(handle) != UV_TIMER) return;
   uv_timer_t *timer = (uv_timer_t *)handle;
   int active = uv_is_active(handle);
   napi_value obj, v;
-  napi_create_object(st->env, &obj);
-  napi_get_boolean(st->env, active != 0, &v);
-  napi_set_named_property(st->env, obj, "active", v);
-  napi_create_double(st->env, active ? (double)uv_timer_get_due_in(timer) : -1.0, &v);
-  napi_set_named_property(st->env, obj, "dueIn", v);
-  napi_create_double(st->env, (double)uv_timer_get_repeat(timer), &v);
-  napi_set_named_property(st->env, obj, "repeat", v);
-  napi_set_element(st->env, st->arr, st->idx++, obj);
+  WALK_CALL(st, napi_create_object(st->env, &obj));
+  WALK_CALL(st, napi_get_boolean(st->env, active != 0, &v));
+  WALK_CALL(st, napi_set_named_property(st->env, obj, "active", v));
+  WALK_CALL(st, napi_create_double(st->env, active ? (double)uv_timer_get_due_in(timer) : -1.0, &v));
+  WALK_CALL(st, napi_set_named_property(st->env, obj, "dueIn", v));
+  WALK_CALL(st, napi_create_double(st->env, (double)uv_timer_get_repeat(timer), &v));
+  WALK_CALL(st, napi_set_named_property(st->env, obj, "repeat", v));
+  WALK_CALL(st, napi_set_element(st->env, st->arr, st->idx, obj));
+  st->idx++;
 }
 
 static napi_value Timers(napi_env env, napi_callback_info info) {
   uv_loop_t *loop = NULL;
-  napi_status status = napi_get_uv_event_loop(env, &loop);
-  if (status != napi_ok || loop == NULL) {
-    napi_throw_error(env, NULL, "napi_get_uv_event_loop failed");
+  NODE_API_CALL(env, napi_get_uv_event_loop(env, &loop));
+  if (loop == NULL) {
+    napi_throw_error(env, NULL, "napi_get_uv_event_loop returned NULL");
     return NULL;
   }
-  walk_state st;
-  st.env = env;
-  st.idx = 0;
-  napi_create_array(env, &st.arr);
+  walk_state st = {env, NULL, 0, napi_ok, NULL};
+  NODE_API_CALL(env, napi_create_array(env, &st.arr));
   uv_walk(loop, walk_cb, &st);
+  if (st.status != napi_ok) {
+    napi_throw_error(env, NULL, st.failed_call);
+    return NULL;
+  }
   return st.arr;
 }
 
 NAPI_MODULE_INIT() {
   napi_value fn;
-  napi_create_function(env, "timers", NAPI_AUTO_LENGTH, Timers, NULL, &fn);
-  napi_set_named_property(env, exports, "timers", fn);
+  NODE_API_CALL(env, napi_create_function(env, "timers", NAPI_AUTO_LENGTH, Timers, NULL, &fn));
+  NODE_API_CALL(env, napi_set_named_property(env, exports, "timers", fn));
   return exports;
 }
 `;

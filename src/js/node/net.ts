@@ -1197,8 +1197,11 @@ function onconnection(err, clientHandle) {
   }
 
   // Past the drop checks: the accepted socket is now a real handle, as in
-  // node, where dropped connections never surface a wrap.
-  registerHandle(_socket, self[kAcceptedHandleKind] || "TCPSocketWrap", kUserUnrefed);
+  // node, where dropped connections never surface a wrap. The kind sticks to
+  // the socket so a later server-side TLS wrap re-registers with the same
+  // transport (a pipe stays 'PipeWrap').
+  _socket[kHandleKind] = self[kAcceptedHandleKind] || "TCPSocketWrap";
+  registerHandle(_socket, _socket[kHandleKind], kUserUnrefed);
 
   const bunTLS = _socket[bunTlsSymbol];
   const isTLS = typeof bunTLS === "function";
@@ -2410,8 +2413,9 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     this._handle = result;
     // ServerHandlers.open skips onconnection for standalone server-side
     // wraps, so register here too or the duplex-backed TLS socket never
-    // appears in _getActiveHandles()/getActiveResourcesInfo().
-    registerHandle(this, "TCPSocketWrap", kUserUnrefed);
+    // appears in _getActiveHandles()/getActiveResourcesInfo(). The TLS wrap
+    // keeps the wrapped connection's transport kind (a pipe stays 'PipeWrap').
+    registerHandle(this, connection[kHandleKind] || "TCPSocketWrap", kUserUnrefed);
     return;
   }
   this[kupgraded] = connection;
@@ -2440,7 +2444,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
       this._handle = result;
-      registerHandle(this, "TCPSocketWrap", kUserUnrefed);
+      registerHandle(this, connection[kHandleKind] || "TCPSocketWrap", kUserUnrefed);
       this.emit(kUpgradeAttached);
       return;
     }
@@ -2468,8 +2472,9 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     raw.connecting = false;
     this._handle = tlsHandle;
     // ServerHandlers.open skips onconnection for standalone server-side wraps,
-    // so the live TLS socket registers here.
-    registerHandle(this, "TCPSocketWrap", kUserUnrefed);
+    // so the live TLS socket registers here, with the adopted fd's transport
+    // kind (a pipe stays 'PipeWrap').
+    registerHandle(this, connection[kHandleKind] || "TCPSocketWrap", kUserUnrefed);
     this.emit(kUpgradeAttached);
   });
 };

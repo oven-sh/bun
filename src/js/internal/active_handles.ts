@@ -27,10 +27,13 @@ head[kNext] = head;
 class FSReqCallback {}
 class GetAddrInfoReqWrap {}
 class GetNameInfoReqWrap {}
-const pendingRequestWraps = new Set();
+// wrap -> kind string. The kind is captured here, at registration, because the
+// wraps are exposed via _getActiveRequests(): reading wrap.constructor.name at
+// inspection time would run user tampering (a replaced constructor, a getter).
+const pendingRequestWraps = new Map();
 
 function noteRequestStart(wrap) {
-  pendingRequestWraps.add(wrap);
+  pendingRequestWraps.set(wrap, wrap.constructor.name);
   return wrap;
 }
 
@@ -88,8 +91,8 @@ function getActiveResourcesInfo() {
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
     resources.push("FSReqCallback");
   }
-  for (const wrap of pendingRequestWraps) {
-    resources.push(wrap.constructor.name);
+  for (const kind of pendingRequestWraps.values()) {
+    resources.push(kind);
   }
   forEachActive(resources, true);
   for (let i = 0, n = getActiveTimeoutCount(); i < n; i++) {
@@ -108,7 +111,7 @@ function getActiveRequests() {
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
     requests.push(new FSReqCallback());
   }
-  for (const wrap of pendingRequestWraps) {
+  for (const wrap of pendingRequestWraps.keys()) {
     requests.push(wrap);
   }
   return requests;

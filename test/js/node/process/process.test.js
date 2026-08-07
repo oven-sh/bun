@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls as tlsCert, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -1546,6 +1546,17 @@ it("process.execArgv", async () => {
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
     ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
     ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+    // `--` as the pending value of a value-taking option stays; as a bare
+    // terminator it is dropped (node src/node_options.cc).
+    ["--conditions -- index.ts", ["--conditions", "--"], []],
+    ["--smol -- index.ts", ["--smol"], []],
+    ["--conditions foo -- index.ts", ["--conditions", "foo"], []],
+    // A value spelled like a value-taking option is still just a value: the
+    // `--` after it terminates (pending-value state, not prev-token sniffing).
+    ["--conditions --conditions -- index.ts", ["--conditions", "--conditions"], []],
+    ["--conditions --inspect -- index.ts", ["--conditions", "--inspect"], []],
+    // The CLI consumes the next token as the value even when it spells `run`.
+    ["--conditions run index.ts", ["--conditions", "run"], []],
   ];
 
   for (const [cmd, execArgv, argv] of fixtures) {
@@ -1553,6 +1564,22 @@ it("process.execArgv", async () => {
     const result = await Bun.$`${bunExe()} ${{ raw: replacedCmd }}`.json();
     expect(result, `bun ${cmd}`).toEqual({ execArgv, argv });
   }
+});
+
+it.skipIf(isWindows)("process.execArgv drops `--` after a flag whose value is only taken via `=`", async () => {
+  // `--inspect` never consumes the next token (value only via `--inspect=...`),
+  // so a following `--` is the terminator, not its value. BUN_INSPECT points
+  // the debugger at a unix socket so no TCP port is bound.
+  using dir = tempDir("execargv-inspect", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect", "--", join(__dirname, "print-process-execArgv.js")],
+    env: { ...bunEnv, BUN_INSPECT: `unix://${dir}/probe.sock` },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({ execArgv: ["--inspect"], argv: [] });
+  expect(exitCode).toBe(0);
 });
 
 describe("process.exitCode", () => {
@@ -2345,6 +2372,50 @@ it("getActiveResourcesInfo reports a unix-socket http.Server as PipeWrap like no
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe('{"pipe":1,"tcp":0}');
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a server-side TLS wrap", async () => {
+  // Wrapping an accepted unix-socket connection in a server-side TLSSocket
+  // re-registers the handle; the transport kind must survive the swap.
+  using dir = tempDir("tls-pipewrap", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net");
+       const tls = require("tls");
+       const server = net.createServer((conn) => {
+         new tls.TLSSocket(conn, {
+           isServer: true,
+           cert: process.env.FIXTURE_CERT,
+           key: process.env.FIXTURE_KEY,
+         });
+         // The fd-adoption arm defers one tick; sample after it ran.
+         setImmediate(() => {
+           const info = process.getActiveResourcesInfo();
+           console.log(JSON.stringify({
+             pipe: info.filter(x => x === "PipeWrap").length,
+             tcp: info.filter(x => x === "TCPSocketWrap").length,
+           }));
+           process.exit(0);
+         });
+       });
+       server.listen(process.argv[1], () => {
+         net.connect(process.argv[1]);
+       });`,
+      `${dir}/s.sock`,
+    ],
+    env: { ...bunEnv, FIXTURE_CERT: tlsCert.cert, FIXTURE_KEY: tlsCert.key },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Everything in this fixture rides the unix transport: the listener, the
+  // client, and the TLS wrap of the accepted connection. Nothing is TCP.
+  const parsed = JSON.parse(stdout.trim());
+  expect(parsed.tcp).toBe(0);
+  expect(parsed.pipe).toBeGreaterThanOrEqual(2);
   expect(exitCode).toBe(0);
 });
 

@@ -227,13 +227,18 @@ mod _impl {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
     }
 
-    /// execArgv options that consume a following value, so `--` as their pending
-    /// value is kept (not the option terminator). Built from `AUTO_PARAMS`.
+    /// execArgv options that consume the NEXT argv token as their value (clap's
+    /// `One`/`Many` space form), so a following `--` is that value, not the
+    /// option terminator. `OneOptional` options (`--inspect`) only take `=`-form
+    /// values and never consume the next token. Built from `AUTO_PARAMS`.
     static EXEC_ARGV_VALUE_PARAMS: std::sync::LazyLock<bun_collections::StringSet> =
         std::sync::LazyLock::new(|| {
             let mut set = bun_collections::StringSet::new();
             for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-                if param.takes_value != bun_clap::Values::None {
+                if matches!(
+                    param.takes_value,
+                    bun_clap::Values::One | bun_clap::Values::Many
+                ) {
                     if let Some(name) = param.names.long {
                         let mut k = Vec::with_capacity(2 + name.len());
                         k.extend_from_slice(b"--");
@@ -258,26 +263,29 @@ mod _impl {
                 use bun_core::WTFStringImplExt as _;
 
                 // Node truncates a worker's execArgv at the first `--` (src/node_options.cc);
-                // same carve-out as below: `--` as a pending option value stays.
+                // same carve-out as below: `--` consumed as an option's value stays. The
+                // pending-value state is explicit so a value that merely looks like a
+                // value-taking option cannot keep a later `--` alive.
                 let mut end = exec_argv.len();
-                let mut prev: Option<Vec<u8>> = None;
+                let mut awaiting_value = false;
                 for (i, &wtf) in exec_argv.iter().enumerate() {
                     if wtf.is_null() {
-                        prev = None;
+                        awaiting_value = false;
                         continue;
                     }
                     // SAFETY: each entry is a live `WTFStringImpl*` owned by
                     // the worker's options for the worker's lifetime.
-                    let bytes = unsafe { &*wtf }.to_owned_slice_z().as_bytes().to_vec();
-                    if bytes == b"--"
-                        && !prev
-                            .as_deref()
-                            .is_some_and(|p| EXEC_ARGV_VALUE_PARAMS.contains(p))
-                    {
+                    let bytes_z = unsafe { &*wtf }.to_owned_slice_z();
+                    let bytes = bytes_z.as_bytes();
+                    if awaiting_value {
+                        awaiting_value = false;
+                        continue;
+                    }
+                    if bytes == b"--" {
                         end = i;
                         break;
                     }
-                    prev = Some(bytes);
+                    awaiting_value = EXEC_ARGV_VALUE_PARAMS.contains(bytes);
                 }
                 return JSValue::create_array_from_iter(
                     global_object,
@@ -336,40 +344,38 @@ mod _impl {
         );
 
         let mut seen_run = false;
-        let mut prev: Option<&[u8]> = None;
+        let mut awaiting_value = false;
 
         // we re-parse the process argv to extract execArgv, since this is a very uncommon operation
         // it isn't worth doing this as a part of the CLI
         let mut iter = argv.iter();
         let _ = iter.next(); // skip argv[0]
         for arg in iter {
-            // emulate `defer prev = arg` by setting at end of each iteration body
             let arg: &[u8] = arg;
 
-            // `--` terminates option parsing (Node drops it; src/node_options.cc). Exception:
-            // `--` as a pending option value is kept so execArgv round-trips through fork().
-            if arg == b"--" && !prev.is_some_and(|p| EXEC_ARGV_VALUE_PARAMS.contains(p)) {
+            if awaiting_value {
+                // The previous option consumes this token as its value whatever
+                // it looks like (`--`, another option's spelling), matching the
+                // CLI parse, so execArgv round-trips through fork().
+                args.push(BunString::clone_utf8(arg));
+                awaiting_value = false;
+                continue;
+            }
+
+            // `--` terminates option parsing (Node drops it; src/node_options.cc).
+            if arg == b"--" {
                 break;
             }
 
             if arg.len() >= 1 && arg[0] == b'-' {
                 args.push(BunString::clone_utf8(arg));
-                prev = Some(arg);
+                awaiting_value = EXEC_ARGV_VALUE_PARAMS.contains(arg);
                 continue;
             }
 
             if !seen_run && arg == b"run" {
                 seen_run = true;
-                prev = Some(arg);
                 continue;
-            }
-
-            if let Some(p) = prev {
-                if EXEC_ARGV_VALUE_PARAMS.contains(p) {
-                    args.push(BunString::clone_utf8(arg));
-                    prev = Some(arg);
-                    continue;
-                }
             }
 
             // we hit the script name

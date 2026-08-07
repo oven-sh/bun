@@ -365,7 +365,17 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 /* Write side dead without our own shutdown() (peer reset /
                  * connect refused), or a read-filter EV_EOF carrying the
                  * socket error in fflags: both are epoll's EPOLLERR. */
-                error = 1;
+                if (bits.send_eof && !bits.send_eof_err && !bits.eof_err && type == POLL_TYPE_SOCKET &&
+                    ((struct us_socket_t *) poll)->flags.is_paused) {
+                    /* fflags==0 with reads paused is AF_UNIX's graceful peer
+                     * close (TCP only gets SS_CANTSENDMORE from RST, which
+                     * carries the error): the receive buffer survives, so
+                     * defer like epoll's EPOLLHUP - resume() delivers the
+                     * tail + end instead of an error close discarding it. */
+                    eof = 1;
+                } else {
+                    error = 1;
+                }
             } else if (type == POLL_TYPE_SOCKET_SHUT_DOWN) {
                 /* Our own shutdown() sets SS_CANTSENDMORE, so a write-side
                  * EV_EOF alone proves nothing here; a socket error in fflags

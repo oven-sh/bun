@@ -301,7 +301,8 @@ pub(crate) fn list_objects(
         callback_context,
         callback: s3_simple_request::Callback::ListObjects(callback),
         headers,
-        vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
+        vm: VirtualMachine::get().handle(),
+            loop_kind: VirtualMachine::get().as_mut().current_loop_kind(),
         response_buffer: MutableString::default(),
         result: bun_http::HTTPClientResult::default(),
         concurrent_task: Default::default(),
@@ -339,7 +340,8 @@ pub(crate) fn list_objects(
     } else {
         None
     };
-    let vm = task.vm.expect("vm set at task creation");
+    // JS thread (request setup): read options from the current VM.
+    let vm = VirtualMachine::get();
 
     task.http.write(bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
@@ -1227,7 +1229,8 @@ fn download_stream(
             callback,
             headers,
             // `VirtualMachine::get()` returns the live per-thread VM singleton.
-            vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
+            vm: VirtualMachine::get().handle(),
+            loop_kind: VirtualMachine::get().as_mut().current_loop_kind(),
             has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
             signal_store: Default::default(),
             signals: Default::default(),

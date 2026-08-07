@@ -117,7 +117,9 @@ pub struct S3HttpSimpleTask {
     pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub(crate) vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    /// How the HTTP thread reaches the VM to deliver the response.
+    pub(crate) vm: bun_jsc::VmHandle,
+    pub(crate) loop_kind: bun_jsc::LoopKind,
     pub(crate) sign_result: SignResult,
     pub(crate) headers: Headers,
     pub(crate) callback_context: *mut c_void,
@@ -150,7 +152,8 @@ impl Default for S3HttpSimpleTask {
         }
         Self {
             http: core::mem::MaybeUninit::uninit(),
-            vm: None,
+            vm: VirtualMachine::get().handle(),
+            loop_kind: VirtualMachine::get().as_mut().current_loop_kind(),
             sign_result: SignResult::default(),
             headers: Headers::default(),
             callback_context: core::ptr::null_mut(),
@@ -462,16 +465,48 @@ impl S3HttpSimpleTask {
         unsafe { (*this).stage_http_result(async_http, result) };
         if is_done {
             // SAFETY: same exclusivity as above; the queue takes ownership of the inline
-            // `concurrent_task` field's `next` link, and each access is scoped.
-            let (vm, queued) = unsafe {
+            // `concurrent_task` field's `next` link — unless the VM is gone, in which
+            // case the task is released here on the HTTP thread.
+            unsafe {
                 let queued = core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
-                // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-                ((*this).vm.expect("vm set at task creation"), queued)
-            };
-            vm.event_loop_shared().enqueue_task_concurrent(queued);
+                if let bun_jsc::vm_handle::Posted::Refused(_) = (*this).vm.post((*this).loop_kind, queued) {
+                    Self::release_off_thread(this);
+                }
+            }
         }
+    }
+
+    /// The VM was torn down before the response could be delivered: nobody will
+    /// run the callback. Free what the task owns (portable buffers, the HTTP
+    /// client's data) and its storage; the keep-alive belongs to a loop that no
+    /// longer counts and the callback context to a heap that is gone.
+    ///
+    /// # Safety
+    /// HTTP thread holds the only reference; the request is finished.
+    unsafe fn release_off_thread(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).release_portable();
+            core::ptr::drop_in_place(&raw mut (*this).response_buffer);
+            core::ptr::drop_in_place(&raw mut (*this).headers);
+            core::ptr::drop_in_place(&raw mut (*this).sign_result);
+            core::ptr::drop_in_place(&raw mut (*this).result);
+            core::ptr::drop_in_place(&raw mut (*this).vm);
+            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+        }
+    }
+
+    /// The part of teardown that is valid on any thread: the HTTP client's data
+    /// and the header copies `clear_data` skips.
+    fn release_portable(&mut self) {
+        // SAFETY: `http` is always initialised before the task pointer escapes (see
+        // `execute_simple_s3_request`).
+        let http = unsafe { self.http.assume_init_mut() };
+        http.clear_data();
+        http.request_headers = Default::default();
+        http.client.header_entries = Default::default();
     }
 }
 
@@ -488,16 +523,9 @@ impl Drop for S3HttpSimpleTask {
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        // SAFETY: `http` is always initialised before the task pointer escapes (see
-        // `execute_simple_s3_request`); `Drop` only runs via `on_response` after that point.
-        // Only `http.clear_data()` runs here — never a full AsyncHTTP destructor —
-        // so we intentionally do NOT `assume_init_drop` here.
-        let http = unsafe { self.http.assume_init_mut() };
-        http.clear_data();
-        // `init` clones the EntryList into task.headers / request_headers /
-        // client.header_entries, so free the two copies clear_data() skips.
-        http.request_headers = Default::default();
-        http.client.header_entries = Default::default();
+        // Only `http.clear_data()` runs — never a full AsyncHTTP destructor —
+        // so we intentionally do NOT `assume_init_drop`.
+        self.release_portable();
     }
 }
 
@@ -614,7 +642,8 @@ pub(crate) fn execute_simple_s3_request(
         callback_context,
         callback,
         headers,
-        vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
+        vm: VirtualMachine::get().handle(),
+        loop_kind: VirtualMachine::get().as_mut().current_loop_kind(),
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),

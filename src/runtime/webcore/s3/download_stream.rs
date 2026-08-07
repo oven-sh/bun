@@ -20,7 +20,9 @@ pub struct S3HttpDownloadStreamingTask {
     pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub(crate) vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    /// How the HTTP thread reaches the VM to deliver chunks.
+    pub(crate) vm: bun_jsc::VmHandle,
+    pub(crate) loop_kind: bun_jsc::LoopKind,
     pub(crate) sign_result: SignResult,
     pub(crate) headers: Headers,
     pub(crate) callback_context: NonNull<()>,
@@ -59,7 +61,8 @@ impl Default for S3HttpDownloadStreamingTask {
         Self {
             // never read — fully overwritten by `AsyncHTTP::init` before first use.
             http: core::mem::MaybeUninit::uninit(),
-            vm: None,
+            vm: VirtualMachine::get().handle(),
+            loop_kind: VirtualMachine::get().as_mut().current_loop_kind(),
             sign_result: SignResult::default(),
             headers: Headers::default(),
             callback_context: NonNull::dangling(),
@@ -330,17 +333,46 @@ impl S3HttpDownloadStreamingTask {
         if unsafe { (*this).process_http_callback(&mut *async_http, result) } {
             // we are always unlocked here and its safe to enqueue
             // SAFETY: same exclusivity as above; `task` is the inline `concurrent_task` field of
-            // this heap request and the queue takes ownership of its `next` link.
-            let (vm, task) = unsafe {
+            // this heap request and the queue takes ownership of its `next` link — unless the
+            // VM is gone.
+            unsafe {
                 let task = core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
-                ((*this).vm.expect("vm set at task creation"), task)
-            };
-            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-            // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
-            vm.event_loop_shared().enqueue_task_concurrent(task);
+                if let bun_jsc::vm_handle::Posted::Refused(_) = (*this).vm.post((*this).loop_kind, task) {
+                    // Nobody will consume the staged result. If the request is finished
+                    // the HTTP thread holds the last reference: release the task here.
+                    // Otherwise leave it for the final callback, which lands here again.
+                    if !State((*this).state.load(Ordering::Acquire)).has_more() {
+                        Self::release_off_thread(this);
+                    }
+                }
+            }
         }
+    }
+
+    /// See `S3HttpSimpleTask::release_off_thread`.
+    ///
+    /// # Safety
+    /// HTTP thread holds the only reference; the request is finished.
+    unsafe fn release_off_thread(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).release_portable();
+            core::ptr::drop_in_place(&raw mut (*this).reported_response_buffer);
+            core::ptr::drop_in_place(&raw mut (*this).headers);
+            core::ptr::drop_in_place(&raw mut (*this).sign_result);
+            core::ptr::drop_in_place(&raw mut (*this).vm);
+            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
+        }
+    }
+
+    fn release_portable(&mut self) {
+        // SAFETY: `http` is always initialised before the task is scheduled / dropped.
+        let http = unsafe { self.http.assume_init_mut() };
+        http.clear_data();
+        http.request_headers = Default::default();
+        http.client.header_entries = Default::default();
     }
 }
 
@@ -354,14 +386,7 @@ impl Drop for S3HttpDownloadStreamingTask {
         ));
         // reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
-        // SAFETY: `http` is always initialised before the task is scheduled / dropped.
-        let http = unsafe { self.http.assume_init_mut() };
-        http.clear_data();
-        // `init` clones the EntryList into task.headers / request_headers /
-        // client.header_entries, so free the two copies clear_data() skips.
-        // (Same fix as `S3HttpSimpleTask::drop` in simple_request.rs.)
-        http.request_headers = Default::default();
-        http.client.header_entries = Default::default();
+        self.release_portable();
     }
 }
 

@@ -9537,11 +9537,7 @@ it("reinstalls a file: dependency pointing at an ancestor directory", async () =
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [runOut, runErr, runExit] = await Promise.all([
-    runProc.stdout.text(),
-    runProc.stderr.text(),
-    runProc.exited,
-  ]);
+  const [runOut, runErr, runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
   expect(runErr).toBe("");
   expect(runOut).toBe("poto\n");
   expect(runExit).toBe(0);

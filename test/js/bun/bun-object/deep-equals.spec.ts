@@ -78,6 +78,33 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
   });
 });
 
+describe.each([true, false])("DataView comparison (strict: %p)", strict => {
+  const dv = (bytes: number[]) => new DataView(new Uint8Array(bytes).buffer);
+
+  it("equal DataViews are equal", () => {
+    expect(Bun.deepEquals(dv([1, 2, 3]), dv([1, 2, 3]), strict)).toBe(true);
+    expect(Bun.deepEquals(dv([]), dv([]), strict)).toBe(true);
+  });
+
+  it("DataViews with different bytes are not equal", () => {
+    expect(Bun.deepEquals(dv([1, 2, 3]), dv([1, 9, 3]), strict)).toBe(false);
+  });
+
+  it("DataViews with different byteLength are not equal", () => {
+    expect(Bun.deepEquals(dv([1, 2, 3]), dv([1, 2]), strict)).toBe(false);
+  });
+
+  it("a DataView is not equal to a typed array over the same bytes", () => {
+    expect(Bun.deepEquals(dv([1, 2, 3]), new Uint8Array([1, 2, 3]), strict)).toBe(false);
+  });
+
+  it("expect().toEqual compares DataView contents", () => {
+    expect(dv([1, 2, 3])).toEqual(dv([1, 2, 3]));
+    expect(dv([1, 2, 3])).not.toEqual(dv([1, 9, 3]));
+    expect(dv([1, 2, 3])).not.toEqual(dv([1, 2]));
+  });
+});
+
 // The cases documented at https://bun.sh/docs/api/utils#bun-deepequals as the
 // differences between the default and strict modes.
 describe("Bun.deepEquals strict mode", () => {

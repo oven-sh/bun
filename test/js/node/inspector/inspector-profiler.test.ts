@@ -446,15 +446,29 @@ describe("node:inspector", () => {
       session.disconnect();
     });
 
-    test("Profiler.disable stops precise coverage, like V8", () => {
-      const session = new inspector.Session();
-      session.connect();
-      session.post("Profiler.enable");
-      session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
-      session.post("Profiler.disable");
-      session.post("Profiler.enable");
-      expect(() => session.post("Profiler.takePreciseCoverage")).toThrow("Precise coverage has not been started.");
-      session.disconnect();
+    // startPreciseCoverage deletes all compiled code VM-wide so already-loaded
+    // functions recompile instrumented; run it in a child, never in this VM.
+    test.concurrent("Profiler.disable stops precise coverage, like V8", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const s = new (require("node:inspector").Session)();
+s.connect();
+s.post("Profiler.enable");
+s.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+s.post("Profiler.disable");
+s.post("Profiler.enable");
+s.post("Profiler.takePreciseCoverage", (err) =>
+  process.stdout.write(err?.message ?? "no error"));
+`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(stdout).toContain("Precise coverage has not been started.");
     });
 
     // Unlike V8 (which has always-on invocation counters), JSC has none, so
@@ -504,6 +518,37 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       expect(JSON.parse(stdout.trim())).toEqual({ first: 3, second: 1 });
     });
 
+    // CDP contract: startPreciseCoverage also resets execution counters, so a
+    // stop/start restart opens a fresh window (matching V8 and pre-#31823 Bun).
+    test.concurrent("restart (stop then start) resets counters", async () => {
+      using dir = tempDir("inspector-coverage-restart", {
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+const url = "file:///restart-fixture/virtual.js";
+const f = vm.runInThisContext("function f(){return 1}; f", { filename: url });
+f(); f(); f();
+await session.post("Profiler.stopPreciseCoverage");
+f(); f(); // calls while coverage is stopped: must not be counted
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+f(); f(); f(); f();
+const take = await session.post("Profiler.takePreciseCoverage");
+session.disconnect();
+const entry = take.result.find(s => s.url === url);
+const fn = entry?.functions?.find(x => x.functionName === "f");
+console.log(JSON.stringify({ count: fn?.ranges?.[0]?.count }));
+`,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout.trim())).toEqual({ count: 4 });
+    });
+
     test.concurrent("collects block coverage with call counts for vm scripts", async () => {
       using dir = tempDir("inspector-coverage-vm", {
         "fixture.mjs": coverageVmFixture,
@@ -549,7 +594,7 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       // neverCalled() reports a single function-granularity range with count 0.
       const neverCalledEntry = entryCoveringOffset(entry.functions, offsets.neverCalledBody);
       expect(neverCalledEntry).toEqual({
-        functionName: "",
+        functionName: "neverCalled",
         isBlockCoverage: false,
         ranges: [{ startOffset: expect.any(Number), endOffset: expect.any(Number), count: 0 }],
       });
@@ -606,6 +651,127 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       expect(functionCounts).toContain(2);
       expect(functionCounts).toContain(0);
     });
+
+    // entry.mjs is linked (JSModuleEnvironment created) but not yet evaluated
+    // when setup.mjs's TLA-awaited startPreciseCoverage fires deleteAllCode.
+    // Proves the scenario doesn't crash; the clearableCodeSet guard is shared
+    // with BunDebugger for the Debugger-mode case where layout does diverge.
+    test.concurrent("does not corrupt a linked-but-unevaluated module after start", async () => {
+      using dir = tempDir("inspector-coverage-sibling", {
+        "setup.mjs": `import { Session } from "node:inspector/promises";
+const s = new Session();
+s.connect();
+await s.post("Profiler.enable");
+await s.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+globalThis.__coverageSession = s;
+`,
+        "entry.mjs": `import "./setup.mjs";
+import { run } from "./target.mjs";
+for (let i = 0; i < 4; i++) run();
+const { result } = await globalThis.__coverageSession.post("Profiler.takePreciseCoverage");
+const me = result.find(sc => /target\\.mjs$/.test(sc.url));
+const runFn = me?.functions?.find(f => f.functionName === "run");
+process.stdout.write(JSON.stringify({ count: runFn?.ranges?.[0]?.count }));
+`,
+        "target.mjs": `let hits = 0;
+export function run() { hits++; return hits; }
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout)).toEqual({ count: 4 });
+    });
+
+    // The c8 --import / --preload pattern: coverage starts before the entry
+    // graph is even linked, so everything compiles instrumented on first load.
+    test.concurrent("counts calls when coverage is started via --preload", async () => {
+      using dir = tempDir("inspector-coverage-preload", {
+        "setup.mjs": `import { Session } from "node:inspector/promises";
+const s = new Session();
+s.connect();
+await s.post("Profiler.enable");
+await s.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+globalThis.__coverageSession = s;
+`,
+        "entry.mjs": `import { run } from "./target.mjs";
+for (let i = 0; i < 4; i++) run();
+const { result } = await globalThis.__coverageSession.post("Profiler.takePreciseCoverage");
+const me = result.find(sc => /target\\.mjs$/.test(sc.url));
+const runFn = me?.functions?.find(f => f.functionName === "run");
+process.stdout.write(JSON.stringify({ count: runFn?.ranges?.[0]?.count }));
+`,
+        "target.mjs": `let hits = 0;
+export function run() { hits++; return hits; }
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--preload", "./setup.mjs", "entry.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout)).toEqual({ count: 4 });
+    });
+
+    for (const kind of ["mjs", "cjs"] as const) {
+      test.concurrent(`counts calls in a ${kind} module loaded before start`, async () => {
+        const appSource =
+          kind === "mjs"
+            ? `export function warm() { return 1; }
+export function cold() { return 2; }
+export function dead() { return 3; }
+`
+            : `exports.warm = function warm() { return 1; };
+exports.cold = function cold() { return 2; };
+exports.dead = function dead() { return 3; };
+`;
+        const load = kind === "mjs" ? `const A = await import("./app.mjs");` : `const A = require("./app.cjs");`;
+        using dir = tempDir(`inspector-coverage-preloaded-${kind}`, {
+          [`app.${kind}`]: appSource,
+          "driver.mjs": `import { Session } from "node:inspector/promises";
+${load} // loaded BEFORE coverage starts
+const s = new Session();
+s.connect();
+await s.post("Profiler.enable");
+await s.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+for (let i = 0; i < 5; i++) A.warm();
+for (let i = 0; i < 3; i++) A.cold();
+const { result } = await s.post("Profiler.takePreciseCoverage");
+await s.post("Profiler.stopPreciseCoverage");
+const app = result.find(sc => /app\\.${kind}$/.test(sc.url));
+const driver = result.find(sc => /driver\\.mjs$/.test(sc.url));
+process.stdout.write(JSON.stringify({
+  counts: Object.fromEntries(
+    (app?.functions ?? []).filter(f => f.functionName).map(f => [f.functionName, f.ranges[0].count]),
+  ),
+  driverPresent: !!driver,
+}));
+`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "driver.mjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+        const out = JSON.parse(stdout);
+        // warm and cold were compiled before startPreciseCoverage but called
+        // after; their call counts must be exact. dead was never called.
+        expect(out.counts).toEqual({ warm: 5, cold: 3, dead: 0 });
+        // The entry module itself appears in the report.
+        expect(out.driverPresent).toBe(true);
+      });
+    }
   });
 
   describe("exports", () => {

@@ -10,11 +10,17 @@ const EventEmitter = require("node:events");
 const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
 const DateNow = Date.now;
+const setImmediate = globalThis.setImmediate;
 
 // #handleMethod return marker for inspector-protocol errors: the callback
 // receives the plain `{ code, message }` object (Node delivers protocol
 // errors as plain objects, not Error instances).
 const kProtocolError = Symbol("kProtocolError");
+
+// #handleMethod marker: deliver via setImmediate, not queueMicrotask. The
+// native side scheduled VM::whenIdle work (deleteAllCode) and microtasks drain
+// inside the same VMEntryScope, so a microtask callback would run too early.
+const kDeferToImmediate = Symbol("kDeferToImmediate");
 
 // Native profiler functions exposed via $newCppFunction
 const startCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler", 0);
@@ -22,7 +28,6 @@ const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_s
 const setCPUSamplingInterval = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_setCPUSamplingInterval", 1);
 const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_isCPUProfilerRunning", 0);
 const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
-const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
 const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
 
 // Native bindings for inspector.open(): they start Bun's debugger thread with a
@@ -272,19 +277,16 @@ function removeConsoleHooks() {
   hookedConsoleMethods.length = 0;
 }
 
-// Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
-// ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed]] }])
-// into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage:
-// each function gets an entry whose first range spans the whole function with its
-// call count, followed by the basic-block ranges inside it; blocks outside any
-// function go on a synthetic whole-script entry.
+// Reshapes jsFunction_collectPreciseCoverage output ([{ url, scriptId,
+// sourceLength, blocks: [[start,end,count]], functions: [[start,end,name]] }])
+// into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage.
 function buildScriptCoverageList(
   rawScripts: Array<{
     url: string;
     scriptId: number;
     sourceLength: number;
     blocks: Array<[number, number, number]>;
-    functions: Array<[number, number, boolean]>;
+    functions: Array<[number, number, string]>;
   }>,
   callCount: boolean,
   detailed: boolean,
@@ -363,31 +365,28 @@ function buildScriptCoverageList(
     });
 
     for (let i = 0; i < functions.length; i++) {
-      const [startOffset, endOffset, executed] = functions[i];
-      if (!executed) {
+      const [startOffset, endOffset, name] = functions[i];
+      const ownBlocks = blocksPerFunction[i];
+      if (ownBlocks.length === 0) {
         entries.push({
-          functionName: "",
+          functionName: name,
           ranges: [{ startOffset, endOffset, count: 0 }],
           isBlockCoverage: false,
         });
         continue;
       }
 
-      const ownBlocks = blocksPerFunction[i];
       // Approximate the call count from the entry block (the one with the
       // smallest start offset). Diverges from V8 for generators/async
       // functions, which JSC compiles as two nested CodeBlocks whose body
       // entry counts state-0 resumes rather than user-visible calls.
-      let count = 1;
-      if (ownBlocks.length > 0) {
-        let entryBlock = ownBlocks[0];
-        for (const block of ownBlocks) {
-          if (block[0] < entryBlock[0]) entryBlock = block;
-        }
-        count = entryBlock[2];
+      let entryBlock = ownBlocks[0];
+      for (const block of ownBlocks) {
+        if (block[0] < entryBlock[0]) entryBlock = block;
       }
+      const count = entryBlock[2];
       entries.push({
-        functionName: "",
+        functionName: name,
         ranges: [
           { startOffset, endOffset, count: callCount ? count : count > 0 ? 1 : 0 },
           ...(detailed ? ownBlocks.map(toRange) : []),
@@ -419,9 +418,21 @@ class Session extends EventEmitter {
   #preciseCoverageCallCount = false;
   #preciseCoverageDetailed = false;
   #forwardedDebugger = false;
-  // Baseline for delta semantics: takePreciseCoverage must reset counters, but
-  // JSC has no counter-reset API, so subtract the previous take instead.
+  // Baseline for delta semantics: start/takePreciseCoverage must reset counters,
+  // but JSC has no counter-reset API, so subtract a recorded snapshot instead.
   #coverageBaseline: Map<string, number> = new Map();
+
+  #snapshotCoverageBaseline() {
+    const baseline = this.#coverageBaseline;
+    baseline.$clear();
+    const scripts = collectCoverageScripts();
+    if (scripts instanceof Error) return;
+    for (const script of scripts) {
+      for (const block of script.blocks) {
+        baseline.$set(`${script.scriptId}:${block[0]}:${block[1]}`, block[2]);
+      }
+    }
+  }
 
   connect() {
     if (this.#connected) {
@@ -440,10 +451,7 @@ class Session extends EventEmitter {
   disconnect() {
     if (!this.#connected) return;
     if (isCPUProfilerRunning()) stopCPUProfiler();
-    if (this.#preciseCoverageEnabled) {
-      stopPreciseCoverage();
-      this.#preciseCoverageEnabled = false;
-    }
+    this.#preciseCoverageEnabled = false;
     this.#profilerEnabled = false;
     this.#connected = false;
     this.#coverageBaseline.$clear();
@@ -484,30 +492,35 @@ class Session extends EventEmitter {
     }
 
     const result = this.#handleMethod(method, params as object | undefined);
+    const deferred = result !== null && typeof result === "object" && kDeferToImmediate in result;
+    const payload = deferred ? result[kDeferToImmediate] : result;
 
     if (callback) {
-      // Callback API - async
-      queueMicrotask(() => {
-        if (result instanceof Error) {
-          callback(result, undefined);
-        } else if (result !== null && typeof result === "object" && kProtocolError in result) {
-          callback(result[kProtocolError], undefined);
+      // Callback API - async. Deferred results wait one event-loop turn so
+      // deleteAllCode's whenIdle work has run before the callback.
+      const deliver = () => {
+        if (payload instanceof Error) {
+          callback(payload, undefined);
+        } else if (payload !== null && typeof payload === "object" && kProtocolError in payload) {
+          callback(payload[kProtocolError], undefined);
         } else {
-          callback(null, result);
+          callback(null, payload);
         }
-      });
+      };
+      if (deferred) setImmediate(deliver);
+      else queueMicrotask(deliver);
     } else {
       // Sync throw for errors when no callback
-      if (result instanceof Error) {
-        throw result;
+      if (payload instanceof Error) {
+        throw payload;
       }
-      if (result !== null && typeof result === "object" && kProtocolError in result) {
-        const protocolError = result[kProtocolError];
+      if (payload !== null && typeof payload === "object" && kProtocolError in payload) {
+        const protocolError = payload[kProtocolError];
         const error = new Error(protocolError.message);
         error.code = protocolError.code;
         throw error;
       }
-      return result;
+      return payload;
     }
   }
 
@@ -531,12 +544,8 @@ class Session extends EventEmitter {
         if (isCPUProfilerRunning()) {
           stopCPUProfiler();
         }
-        // V8's Profiler agent stops precise coverage on disable; without this
-        // the control-flow profiler keeps instrumenting newly-compiled code.
-        if (this.#preciseCoverageEnabled) {
-          stopPreciseCoverage();
-          this.#preciseCoverageEnabled = false;
-        }
+        // V8's Profiler agent stops precise coverage on disable.
+        this.#preciseCoverageEnabled = false;
         this.#profilerEnabled = false;
         return {};
 
@@ -565,24 +574,27 @@ class Session extends EventEmitter {
 
       case "Profiler.startPreciseCoverage": {
         if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
-        if (!this.#preciseCoverageEnabled) {
-          startPreciseCoverage();
-          this.#preciseCoverageEnabled = true;
-        }
         this.#preciseCoverageCallCount = !!(params as any)?.callCount;
         this.#preciseCoverageDetailed = !!(params as any)?.detailed;
-        this.#coverageBaseline.$clear();
+        // CDP: "resets execution counters". The VM profiler stays on across
+        // stop/start, so snapshot current raw counts as the baseline instead
+        // (the native side returns [] when the profiler is not yet enabled).
+        this.#snapshotCoverageBaseline();
         // CDP: monotonic seconds since an arbitrary origin (V8 uses TimeTicks).
-        return { timestamp: performance.now() / 1000 };
+        const response = { timestamp: performance.now() / 1000 };
+        if (this.#preciseCoverageEnabled) return response;
+        startPreciseCoverage();
+        this.#preciseCoverageEnabled = true;
+        return { [kDeferToImmediate]: response };
       }
 
       case "Profiler.stopPreciseCoverage": {
         if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
-        if (this.#preciseCoverageEnabled) {
-          stopPreciseCoverage();
-          this.#preciseCoverageEnabled = false;
-        }
+        // The VM-level profiler stays enabled for the process lifetime; see
+        // the comment on jsFunction_startPreciseCoverage for why disabling is
+        // unsafe once any async body has compiled under it.
         this.#coverageBaseline.$clear();
+        this.#preciseCoverageEnabled = false;
         return {};
       }
 
@@ -593,8 +605,7 @@ class Session extends EventEmitter {
         if (scripts instanceof Error) return scripts;
         // CDP contract: takePreciseCoverage resets execution counters, so a
         // second take reports the delta. JSC has no counter reset, so subtract
-        // the previous take's raw block counts (function-level call counts are
-        // derived from the entry block, so they follow automatically).
+        // the previous baseline and record the new raw counts as the next one.
         const baseline = this.#coverageBaseline;
         for (const script of scripts) {
           for (const block of script.blocks) {

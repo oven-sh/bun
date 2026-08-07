@@ -5,7 +5,7 @@ use bun_core::Global;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
 use bun_parsers::json;
-use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_paths::{self, PathBuffer, Platform, platform, resolve_path};
 use bun_sys;
 
 const SKIP_LIST: &[&[u8]] = &[
@@ -293,6 +293,42 @@ impl PackageFilterIterator {
         }
     }
 
+    fn can_resolve_pattern_directly(pattern: &[u8]) -> bool {
+        // Keep raw glob tokens on GlobWalker, including escaped tokens that it must unescape.
+        // Relative literals can use the host filesystem's native case semantics directly.
+        !Platform::AUTO.is_absolute(pattern)
+            && pattern.first() != Some(&b'!')
+            && !strings::contains_char(pattern, 0)
+            && strings::index_of_any(pattern, b"*{[?!").is_none()
+            && !strings::split_any(pattern, b"/\\").any(|component| {
+                component.eq_ignore_ascii_case(b"node_modules")
+                    || component.eq_ignore_ascii_case(b".git")
+            })
+    }
+
+    fn resolve_literal_pattern(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
+        let pattern: &[u8] = &self.patterns.slice()[self.pattern_idx];
+        let root_dir = self.root_dir.slice();
+        let mut spill = Vec::new();
+        let path = resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[root_dir, pattern]);
+        let stat_result = bun_sys::stat(path);
+        self.pattern_idx += 1;
+
+        match stat_result {
+            Ok(stat) if bun_sys::S::ISREG(stat.st_mode as _) => {
+                Ok(Some(Box::<[u8]>::from(path.as_bytes())))
+            }
+            Ok(_) => Ok(None),
+            Err(err)
+                if err.get_errno() == bun_sys::E::ENOENT
+                    || err.get_errno() == bun_sys::E::ENOTDIR =>
+            {
+                Ok(None)
+            }
+            Err(err) => Err(err.with_path(path.as_bytes()).into()),
+        }
+    }
+
     fn init_walker(&mut self) -> Result<(), crate::Error> {
         // pattern_idx < patterns.len() checked by caller.
         let pattern: &[u8] = &self.patterns.slice()[self.pattern_idx];
@@ -346,6 +382,13 @@ impl PackageFilterIterator {
                 // Raw slice pointer `len()` reads only metadata — no deref/autoref needed.
                 let patterns_len = self.patterns.len();
                 if self.pattern_idx < patterns_len {
+                    let pattern: &[u8] = &self.patterns.slice()[self.pattern_idx];
+                    if Self::can_resolve_pattern_directly(pattern) {
+                        if let Some(path) = self.resolve_literal_pattern()? {
+                            return Ok(Some(path));
+                        }
+                        continue;
+                    }
                     self.init_walker()?;
                     self.valid = true;
                 } else {

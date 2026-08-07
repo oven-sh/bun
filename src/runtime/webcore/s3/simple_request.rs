@@ -328,7 +328,8 @@ impl S3HttpSimpleTask {
     // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
-        crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(this).expect("task")).unregister();
+        crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(this).expect("task"))
+            .unregister();
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
         // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract;
         // `this` is dropped at scope exit.
@@ -477,7 +478,9 @@ impl S3HttpSimpleTask {
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
                 let bun_jsc::vm_handle::Posted::Queued = handle.post_task(queued) else {
-                    unreachable!("VM handle closed with an S3 request outstanding on the HTTP thread");
+                    unreachable!(
+                        "VM handle closed with an S3 request outstanding on the HTTP thread"
+                    );
                 };
                 // The HTTP thread is done with this request (`this` may already be freed).
                 handle.embedded_work_finished();
@@ -716,7 +719,8 @@ pub(crate) fn execute_simple_s3_request(
     // teardown (registry) and waits for it (embedded work).
     // SAFETY: as above.
     unsafe { (*task_ptr).loop_handle.embedded_work_scheduled() };
-    crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task")).register();
+    crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task"))
+        .register();
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }

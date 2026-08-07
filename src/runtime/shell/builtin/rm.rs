@@ -1498,7 +1498,9 @@ impl DirTask {
             EventLoopTask::Js(ct) => {
                 ct.from(this, AutoDeinit::ManualDeinit);
                 // Posted while the rm task is counted work: the VM has not closed.
-                let bun_jsc::vm_handle::Posted::Queued = poster.post_js(core::ptr::NonNull::from(ct)) else {
+                let bun_jsc::vm_handle::Posted::Queued =
+                    poster.post_js(core::ptr::NonNull::from(ct))
+                else {
                     unreachable!("VM handle closed with shell rm work outstanding");
                 };
             }

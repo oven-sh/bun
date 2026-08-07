@@ -51,7 +51,6 @@ impl<T: Unprotect> ThreadSafe<T> {
     pub fn adopt(value: T) -> Self {
         Self(value)
     }
-
 }
 
 // SAFETY: this is what the type asserts — the JS-backed views inside `T` are

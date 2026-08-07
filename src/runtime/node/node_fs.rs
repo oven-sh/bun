@@ -1228,10 +1228,7 @@ mod _async_tasks {
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadSafe<A>` is Send by its contract.
-    unsafe impl<R: FsReturn, A: Unprotect, const F: NodeFSFunctionEnum> Send
-        for AsyncFSTask<R, A, F>
-    {
-    }
+    unsafe impl<R: FsReturn, A: Unprotect, const F: NodeFSFunctionEnum> Send for AsyncFSTask<R, A, F> {}
 
     /// The JS-thread half of an async fs operation.
     #[derive(bun_jsc::JsAffine)]
@@ -1271,20 +1268,23 @@ mod _async_tasks {
             let success = this.result.is_ok();
             let promise_value = js.promise.value();
             let promise = js.promise.get();
-            let result = match &mut this.result {
-                Err(err) => match err.to_js_with_async_stack(global_object, promise) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Ok(promise.reject(global_object, Ok(global_object.take_exception(e)))?);
-                    }
-                },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Ok(promise.reject(global_object, Ok(global_object.take_exception(e)))?);
-                    }
-                },
-            };
+            let result =
+                match &mut this.result {
+                    Err(err) => match err.to_js_with_async_stack(global_object, promise) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Ok(promise
+                                .reject(global_object, Ok(global_object.take_exception(e)))?);
+                        }
+                    },
+                    Ok(res) => match FsReturn::fs_to_js(res, global_object) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Ok(promise
+                                .reject(global_object, Ok(global_object.take_exception(e)))?);
+                        }
+                    },
+                };
             promise_value.ensure_still_alive();
 
             if Self::HAVE_ABORT_SIGNAL {
@@ -2227,7 +2227,9 @@ mod _async_tasks {
                 match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Ok(global_object.take_exception(e)))?);
+                        return Ok(
+                            promise.reject(global_object, Ok(global_object.take_exception(e)))?
+                        );
                     }
                 }
             } else {
@@ -2244,7 +2246,9 @@ mod _async_tasks {
                 match res.to_js(global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Ok(global_object.take_exception(e)))?);
+                        return Ok(
+                            promise.reject(global_object, Ok(global_object.take_exception(e)))?
+                        );
                     }
                 }
             };
@@ -2418,7 +2422,12 @@ mod _async_tasks {
             value
         }
 
-        pub(crate) fn perform_work(&mut self, basename: &ZStr, buf: &mut PathBuffer, is_root: bool) {
+        pub(crate) fn perform_work(
+            &mut self,
+            basename: &ZStr,
+            buf: &mut PathBuffer,
+            is_root: bool,
+        ) {
             macro_rules! impl_tag {
                 ($T:ty, $variant:ident) => {{
                     // A bare `Vec::new()` here

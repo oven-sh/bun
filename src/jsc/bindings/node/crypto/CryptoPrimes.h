@@ -26,7 +26,6 @@ struct CheckPrimeJobCtx {
 // Opaque struct created zig land
 struct CheckPrimeJob {
     static void createAndSchedule(JSC::JSGlobalObject* globalObject, ncrypto::BignumPointer candidate, int32_t checks, JSC::JSValue callback);
-
 };
 
 struct GeneratePrimeJobCtx {
@@ -52,7 +51,6 @@ struct GeneratePrimeJob {
     static void createAndSchedule(JSC::JSGlobalObject*, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSC::JSValue callback);
 
     static JSC::JSValue result(JSC::JSGlobalObject*, JSC::ThrowScope&, const ncrypto::BignumPointer& prime, bool bigint);
-
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsCheckPrime);

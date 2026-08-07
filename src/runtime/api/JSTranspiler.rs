@@ -686,7 +686,11 @@ impl jsc::JobContext for TransformTask {
         Some(done)
     }
     fn then(mut this: Self, mut js: TransformJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
-        Ok(TransformTask::then(&mut this, js.promise.swap(), cx.global())?)
+        Ok(TransformTask::then(
+            &mut this,
+            js.promise.swap(),
+            cx.global(),
+        )?)
     }
 }
 
@@ -749,7 +753,8 @@ impl TransformTask {
         let resolver_ptr: *mut _ = &raw mut self.transpiler.resolver;
         self.transpiler.linker.resolver = resolver_ptr;
         // SAFETY: the wrapper's config, alive under the borrow (see `schedule`).
-        let tsconfig: Option<&TSConfigJSON> = self.tsconfig.map(|p| &*unsafe { p.under_borrow(vm) });
+        let tsconfig: Option<&TSConfigJSON> =
+            self.tsconfig.map(|p| &*unsafe { p.under_borrow(vm) });
 
         let arena = Arena::new();
 
@@ -862,7 +867,11 @@ impl TransformTask {
         }
     }
 
-    fn then(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> Result<(), bun_jsc::JsTerminated> {
+    fn then(
+        &mut self,
+        promise: &mut JSPromise,
+        global: &JSGlobalObject,
+    ) -> Result<(), bun_jsc::JsTerminated> {
         // After `then` returns, the dispatcher
         // (`run_then_destroy!` for `task_tag::AsyncTransformTask` in
         // runtime/dispatch.rs) unconditionally calls
@@ -896,7 +905,11 @@ impl TransformTask {
         self.finish(promise, global)
     }
 
-    fn finish(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> Result<(), bun_jsc::JsTerminated> {
+    fn finish(
+        &mut self,
+        promise: &mut JSPromise,
+        global: &JSGlobalObject,
+    ) -> Result<(), bun_jsc::JsTerminated> {
         match self.output_code.transfer_to_js(global) {
             Ok(value) => promise.resolve(global, value),
             Err(e) => promise.reject(global, Ok(global.take_exception(e))),

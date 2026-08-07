@@ -742,7 +742,6 @@ pub struct ExtractContext {
 }
 
 impl TaskContext for ExtractContext {
-
     fn run(&mut self) {
         self.result = self.do_run();
     }
@@ -847,7 +846,6 @@ pub struct BlobContext {
 }
 
 impl TaskContext for BlobContext {
-
     fn run(&mut self) {
         self.result = match &self.compress {
             Compression::Gzip(opts) => match compress_gzip(self.store.shared_view(), opts.level) {
@@ -954,7 +952,6 @@ pub struct WriteContext {
 }
 
 impl TaskContext for WriteContext {
-
     fn run(&mut self) {
         self.result = self.do_run();
     }
@@ -1157,7 +1154,6 @@ impl FilesContext {
 }
 
 impl TaskContext for FilesContext {
-
     fn run(&mut self) {
         self.result = match self.do_run() {
             Ok(r) => r,

@@ -132,7 +132,9 @@ macro_rules! extern_crypto_job {
                 ) -> Option<bun_jsc::Completion<Self>> {
                     // SAFETY: the creating global, alive under the borrow; C++
                     // only threads it through to error reporting state.
-                    ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe { this.global.under_borrow(vm) });
+                    ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
+                        this.global.under_borrow(vm)
+                    });
                     Some(done)
                 }
 

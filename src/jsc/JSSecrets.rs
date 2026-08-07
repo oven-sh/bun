@@ -58,7 +58,11 @@ impl crate::JobContext for SecretsJob {
         // scope here, `drainMicrotasks`'s `TopExceptionScope` ctor asserts on the
         // unchecked simulated throw — same shape as `JSCDeferredWorkTask::run`.
         crate::validation_scope!(scope, global);
-        Bun__SecretsJobOptions__runFromJS(SecretsJobOptions::opaque_mut(this.options.0), global, promise.get());
+        Bun__SecretsJobOptions__runFromJS(
+            SecretsJobOptions::opaque_mut(this.options.0),
+            global,
+            promise.get(),
+        );
         scope.assert_no_exception_except_termination()
     }
 }

@@ -1355,13 +1355,13 @@ pub use self::js_property_iterator::{
 pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
-pub use self::job::{Completion, Job, JobContext, JsPtr, JsSide, JsThread, Protected};
 pub use self::event_loop::{
-    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask,
-    ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
+    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
+    DeferredTaskQueue, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
     GarbageCollectionController, JsTerminated, JsTerminatedResult, ManagedTask, MiniEventLoop,
     PosixSignalHandle, PosixSignalTask, Task, WorkPool, WorkPoolTask,
 };
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsSide, JsThread, Protected};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]

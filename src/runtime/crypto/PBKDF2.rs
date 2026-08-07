@@ -2,8 +2,8 @@ use core::ffi::c_uint;
 
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsThread,
-    JsResult,
+    ArrayBuffer, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult,
+    JsThread,
 };
 
 use crate::node::StringOrBuffer;

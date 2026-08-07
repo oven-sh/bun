@@ -833,9 +833,15 @@ impl VirtualMachine {
     /// the loop that was current when their work started.
     #[inline]
     pub fn current_loop_kind(&self) -> crate::LoopKind {
-        if core::ptr::eq(self.event_loop.cast_const(), &raw const self.regular_event_loop) {
+        if core::ptr::eq(
+            self.event_loop.cast_const(),
+            &raw const self.regular_event_loop,
+        ) {
             crate::LoopKind::Regular
-        } else if core::ptr::eq(self.event_loop.cast_const(), &raw const self.macro_event_loop) {
+        } else if core::ptr::eq(
+            self.event_loop.cast_const(),
+            &raw const self.macro_event_loop,
+        ) {
             crate::LoopKind::Macro
         } else {
             // Bun.spawnSync installed its isolated loop for the duration.

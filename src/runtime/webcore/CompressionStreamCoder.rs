@@ -588,7 +588,11 @@ impl Drop for PinnedChunk {
 
 impl AsyncInput {
     /// JS thread: pin `chunk` if it is a pinnable ArrayBuffer/view, else copy `fallback`.
-    pub(crate) fn new(global: &JSGlobalObject, chunk: JSValue, fallback: &[u8]) -> (Self, Option<PinnedChunk>) {
+    pub(crate) fn new(
+        global: &JSGlobalObject,
+        chunk: JSValue,
+        fallback: &[u8],
+    ) -> (Self, Option<PinnedChunk>) {
         if let Some(buf) = chunk.as_pinned_arraybuffer(global) {
             // A resizable non-shared backing can `mprotect()` pages out on
             // `resize()`; pinning does not block that, so spill to a copy.
@@ -814,7 +818,11 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
         Some(done)
     }
 
-    fn then(this: Self, js: CompressionAsyncJs, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
+    fn then(
+        this: Self,
+        js: CompressionAsyncJs,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_jsc::JsResult<()> {
         let global = cx.global();
         let (out, out_len, err) = match &this.error {
             None => {

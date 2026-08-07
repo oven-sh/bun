@@ -237,7 +237,11 @@ pub trait JobContext: Sized + 'static {
     /// finishes on another thread) and call [`Completion::finish`] later to
     /// complete then. Work that outlives this call runs under no borrow and
     /// must touch only `off`.
-    fn run(off: &mut Self::OffThread, vm: &Borrow, done: Completion<Self>) -> Option<Completion<Self>>;
+    fn run(
+        off: &mut Self::OffThread,
+        vm: &Borrow,
+        done: Completion<Self>,
+    ) -> Option<Completion<Self>>;
 
     /// JS thread: the completion. Both partitions are handed over to use and
     /// drop normally.
@@ -387,9 +391,17 @@ impl<C: JobContext> Job<C> {
     unsafe fn complete(this: *mut Self, cx: &JsThread<'_>) -> JsResult<()> {
         // SAFETY: fn contract.
         unsafe {
-            debug_assert!(!(*this).header.js_released, "job dispatched after its VM released it");
+            debug_assert!(
+                !(*this).header.js_released,
+                "job dispatched after its VM released it"
+            );
             cx.vm().jobs().unlink(this.cast());
-            let Job { keep_alive, off, js, .. } = *Box::from_raw(this);
+            let Job {
+                keep_alive,
+                off,
+                js,
+                ..
+            } = *Box::from_raw(this);
             keep_alive.take(cx).unref(bun_io::js_vm_ctx());
             C::then(off, js.take(cx), cx)
         }
@@ -441,7 +453,10 @@ impl<C: JobContext> crate::Postable for Job<C> {
     unsafe fn release_refused(this: *mut Self) {
         // SAFETY: fn contract; refused ⇒ handle closed ⇒ teardown's release ran.
         unsafe {
-            debug_assert!((*this).header.js_released, "VM closed without releasing its jobs");
+            debug_assert!(
+                (*this).header.js_released,
+                "VM closed without releasing its jobs"
+            );
             core::ptr::drop_in_place(&raw mut (*this).off);
             core::ptr::drop_in_place(&raw mut (*this).loop_handle);
             drop(Box::from_raw(this.cast::<ManuallyDrop<Self>>()));

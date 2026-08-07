@@ -373,7 +373,8 @@ pub(crate) fn list_objects(
     // Out on the HTTP thread until its final callback: the VM aborts it at
     // teardown (registry) and waits for it (embedded work).
     task.loop_handle.embedded_work_scheduled();
-    crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task")).register();
+    crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task"))
+        .register();
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }
@@ -1314,7 +1315,8 @@ fn download_stream(
     // Out on the HTTP thread until its final callback: the VM aborts it at
     // teardown (registry) and waits for it (embedded work).
     task.loop_handle.embedded_work_scheduled();
-    crate::jsc_hooks::ActiveHandle::S3Download(core::ptr::NonNull::new(task_ptr).expect("task")).register();
+    crate::jsc_hooks::ActiveHandle::S3Download(core::ptr::NonNull::new(task_ptr).expect("task"))
+        .register();
     bun_http::HTTPThread::schedule(batch);
     task_ptr
 }

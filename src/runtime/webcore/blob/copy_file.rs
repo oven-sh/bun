@@ -86,7 +86,11 @@ impl jsc::JobContext for CopyFile {
         this.run_async();
         Some(done)
     }
-    fn then(mut this: Self, mut promise: jsc::JSPromiseStrong, cx: &jsc::JsThread<'_>) -> jsc::JsResult<()> {
+    fn then(
+        mut this: Self,
+        mut promise: jsc::JSPromiseStrong,
+        cx: &jsc::JsThread<'_>,
+    ) -> jsc::JsResult<()> {
         Ok(CopyFile::then(&mut this, promise.swap(), cx.global())?)
     }
 }
@@ -127,7 +131,11 @@ impl CopyFile {
         value
     }
 
-    pub(crate) fn reject(&mut self, promise: &mut JSPromise, global_this: &JSGlobalObject) -> Result<(), jsc::JsTerminated> {
+    pub(crate) fn reject(
+        &mut self,
+        promise: &mut JSPromise,
+        global_this: &JSGlobalObject,
+    ) -> Result<(), jsc::JsTerminated> {
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
         if matches!(
             self.source_file_store.pathlike,
@@ -150,14 +158,21 @@ impl CopyFile {
         promise.reject(global_this, Ok(instance))
     }
 
-    pub(crate) fn then(&mut self, promise: &mut JSPromise, global_this: &JSGlobalObject) -> Result<(), jsc::JsTerminated> {
+    pub(crate) fn then(
+        &mut self,
+        promise: &mut JSPromise,
+        global_this: &JSGlobalObject,
+    ) -> Result<(), jsc::JsTerminated> {
         drop(self.source_store.take()); // source_store.?.deref()
 
         if self.system_error.is_some() {
             return self.reject(promise, global_this);
         }
 
-        promise.resolve(global_this, JSValue::js_number_from_uint64(self.read_len as u64))
+        promise.resolve(
+            global_this,
+            JSValue::js_number_from_uint64(self.read_len as u64),
+        )
     }
 
     #[cfg(not(windows))]
@@ -1971,4 +1986,3 @@ fn unsupported_non_regular_file_error() -> SystemError {
 }
 // `SystemError` contains `bun_core::String`, which is not const-constructible,
 // so these are constructor fns instead of `const` values.
-

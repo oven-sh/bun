@@ -2097,4 +2097,3 @@ fn apply_orientation(
     }
     Ok(())
 }
-

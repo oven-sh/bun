@@ -2666,7 +2666,9 @@ impl ShellTask {
                     // Tag resolved via `C: Taskable`.
                     ct.from(ctx, AutoDeinit::ManualDeinit);
                     // Counted work: the VM has not closed its handle.
-                    let bun_jsc::vm_handle::Posted::Queued = poster.post_js(core::ptr::NonNull::from(ct)) else {
+                    let bun_jsc::vm_handle::Posted::Queued =
+                        poster.post_js(core::ptr::NonNull::from(ct))
+                    else {
                         unreachable!("VM handle closed with shell pool work outstanding");
                     };
                 }

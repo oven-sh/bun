@@ -692,8 +692,12 @@ impl StatWatcher {
         // SAFETY: fn contract.
         let hop = unsafe { (*this).pending_hop.get() };
         match hop {
-            x if x == StatWatcherHop::InitialStatSuccess as u8 => Self::initial_stat_success_on_main_thread(this),
-            x if x == StatWatcherHop::InitialStatError as u8 => Self::initial_stat_error_on_main_thread(this),
+            x if x == StatWatcherHop::InitialStatSuccess as u8 => {
+                Self::initial_stat_success_on_main_thread(this)
+            }
+            x if x == StatWatcherHop::InitialStatError as u8 => {
+                Self::initial_stat_error_on_main_thread(this)
+            }
             _ => Self::swap_and_call_listener_on_main_thread(this),
         }
     }

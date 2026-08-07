@@ -3,9 +3,7 @@ use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_core::ZigString;
-use bun_jsc::{
-    ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult,
-};
+use bun_jsc::{ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult};
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
 use bun_jsc::ZigStringJsc as _;
@@ -577,7 +575,11 @@ impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
         this.value = Some(this.op.compute(&this.password));
         Some(done)
     }
-    fn then(mut this: Self, mut promise: JSPromiseStrong, cx: &bun_jsc::JsThread<'_>) -> JsResult<()> {
+    fn then(
+        mut this: Self,
+        mut promise: JSPromiseStrong,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> JsResult<()> {
         let global = cx.global();
         match this.value.take().expect("computed") {
             Err(err) => {

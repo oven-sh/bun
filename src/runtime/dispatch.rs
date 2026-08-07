@@ -64,7 +64,6 @@ macro_rules! __fs_pat {
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)
 
-
 use crate::shell::builtins::{
     cp::ShellCpTask,
     ls::ShellLsTask,
@@ -208,7 +207,9 @@ pub(crate) fn run_task(
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
             // its `Completion`; the erased entry runs `then` and frees it.
-            if let Err(err) = unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) } {
+            if let Err(err) =
+                unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) }
+            {
                 report_error_or_terminate(global, err)?;
             }
         }
@@ -308,7 +309,9 @@ pub(crate) fn run_task(
         }
         task_tag::ShellAsyncCpTask => {
             // SAFETY: as above.
-            unsafe { (*task.ptr.cast::<crate::node::fs::ShellAsyncCpTask>()).run_from_js_thread()? };
+            unsafe {
+                (*task.ptr.cast::<crate::node::fs::ShellAsyncCpTask>()).run_from_js_thread()?
+            };
         }
         task_tag::StatWatcherHop => {
             // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
@@ -426,7 +429,6 @@ pub(crate) fn run_task(
             // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
             unsafe { FSWatchTask::deinit(t) };
         }
-
 
         // ── node:fs libuv-request ops (Windows) ──────────────────────────
         #[cfg(windows)]
@@ -1310,17 +1312,23 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         // unpin, unref, drop the write's ref — no callbacks.
         task_tag::NativeZlib => {
             // SAFETY: `task.ptr` is the stream the pool posted (write's ref held).
-            unsafe { node_zlib_binding::CompressionStream::<NativeZlib>::release_unrun(task.ptr.cast()) };
+            unsafe {
+                node_zlib_binding::CompressionStream::<NativeZlib>::release_unrun(task.ptr.cast())
+            };
             true
         }
         task_tag::NativeBrotli => {
             // SAFETY: as above.
-            unsafe { node_zlib_binding::CompressionStream::<NativeBrotli>::release_unrun(task.ptr.cast()) };
+            unsafe {
+                node_zlib_binding::CompressionStream::<NativeBrotli>::release_unrun(task.ptr.cast())
+            };
             true
         }
         task_tag::NativeZstd => {
             // SAFETY: as above.
-            unsafe { node_zlib_binding::CompressionStream::<NativeZstd>::release_unrun(task.ptr.cast()) };
+            unsafe {
+                node_zlib_binding::CompressionStream::<NativeZstd>::release_unrun(task.ptr.cast())
+            };
             true
         }
         // napi async work the pool handed back during teardown: its `complete`

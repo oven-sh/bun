@@ -1779,7 +1779,9 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
             },
             // SAFETY: live until they unregister in `on_response`.
             ActiveHandle::S3Request(t) => unsafe {
-                crate::webcore::s3::simple_request::S3HttpSimpleTask::stop_for_vm_teardown(t.as_ptr())
+                crate::webcore::s3::simple_request::S3HttpSimpleTask::stop_for_vm_teardown(
+                    t.as_ptr(),
+                )
             },
             // SAFETY: as above.
             ActiveHandle::S3Download(t) => unsafe {

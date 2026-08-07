@@ -1586,6 +1586,31 @@ impl JSValue {
             JSC__JSValue__jsonStringifyFast(self, global, out)
         })
     }
+
+    pub fn is_temporal(self) -> bool {
+        crate::cpp::Bun__JSValue__temporalObjectType(self) != 0
+    }
+
+    /// Requires `self.is_temporal()`. `(label, text)`, e.g.
+    /// `("Temporal.PlainDate", "2020-01-02")`: the class label and the value's
+    /// default-options `toString()`, read from internal slots.
+    pub fn temporal_display_string(
+        self,
+        global: &JSGlobalObject,
+    ) -> JsResult<(bun_core::String, bun_core::OwnedString)> {
+        let mut label = bun_core::String::empty();
+        let mut text = bun_core::OwnedString::new(bun_core::String::empty());
+        // SAFETY: both out-pointers are live `BunString`s the callee writes at most once.
+        unsafe {
+            crate::cpp::Bun__Temporal__toDisplayString(
+                global,
+                self,
+                &raw mut label,
+                &raw mut *text,
+            )?
+        };
+        Ok((label, text))
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

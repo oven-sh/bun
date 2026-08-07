@@ -1938,21 +1938,6 @@ pub mod formatter {
         RevokedProxy,
     }
 
-    /// Label for a non-zero `Bun__JSValue__temporalObjectType` discriminant.
-    pub fn temporal_class_label(temporal_type: u8) -> &'static str {
-        match temporal_type {
-            1 => "Temporal.Instant",
-            2 => "Temporal.PlainDateTime",
-            3 => "Temporal.PlainDate",
-            4 => "Temporal.PlainTime",
-            5 => "Temporal.ZonedDateTime",
-            6 => "Temporal.PlainYearMonth",
-            7 => "Temporal.PlainMonthDay",
-            8 => "Temporal.Duration",
-            _ => unreachable!("not a Temporal type discriminant"),
-        }
-    }
-
     impl Tag {
         pub(crate) fn is_primitive(self) -> bool {
             matches!(
@@ -2325,19 +2310,14 @@ pub mod formatter {
                 T::JSPromise => TagPayload::Promise,
 
                 // Temporal cells are plain `ObjectType`; only ClassInfo tells them apart.
-                T::Object => {
-                    if crate::cpp::Bun__JSValue__temporalObjectType(value) != 0 {
-                        TagPayload::Temporal
-                    } else {
-                        TagPayload::Object
-                    }
-                }
+                T::Object if value.is_temporal() => TagPayload::Temporal,
 
                 T::WrapForValidIterator
                 | T::RegExpStringIterator
                 | T::JSArrayIterator
                 | T::Iterator
                 | T::IteratorHelper
+                | T::Object
                 | T::FinalObject
                 | T::ModuleNamespaceObject => TagPayload::Object,
 
@@ -4348,19 +4328,8 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let temporal_type = crate::cpp::Bun__JSValue__temporalObjectType(value);
-            let label = temporal_class_label(temporal_type);
-            let mut str = OwnedString::new(BunString::empty());
-            // SAFETY: the out-pointer is a live `BunString` the callee writes once.
-            unsafe {
-                crate::cpp::Bun__Temporal__toDisplayString(
-                    self.global_this,
-                    value,
-                    temporal_type,
-                    &raw mut *str,
-                )?;
-            }
-            writer.add_for_new_line(label.len() + 1 + str.length());
+            let (label, str) = value.temporal_display_string(self.global_this)?;
+            writer.add_for_new_line(label.length() + 1 + str.length());
             writer.print(format_args!(
                 "{} {}{}{}",
                 label,

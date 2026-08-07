@@ -525,16 +525,11 @@ impl Tag {
             JSType::JSDate => Tag::JSON,
             JSType::JSPromise => Tag::Promise,
             // Temporal cells are plain `ObjectType`; only ClassInfo tells them apart.
-            JSType::Object => {
-                if bun_jsc::cpp::Bun__JSValue__temporalObjectType(value) != 0 {
-                    Tag::Temporal
-                } else {
-                    Tag::Object
-                }
-            }
-            JSType::FinalObject | JSType::ModuleNamespaceObject | JSType::GlobalObject => {
-                Tag::Object
-            }
+            JSType::Object if value.is_temporal() => Tag::Temporal,
+            JSType::Object
+            | JSType::FinalObject
+            | JSType::ModuleNamespaceObject
+            | JSType::GlobalObject => Tag::Object,
 
             JSType::ArrayBuffer
             | JSType::Int8Array
@@ -1055,19 +1050,8 @@ impl<'a> Formatter<'a> {
         value: JSValue,
     ) -> JsResult<()> {
         let mut writer = WrappedWriter::new(writer_);
-        let temporal_type = bun_jsc::cpp::Bun__JSValue__temporalObjectType(value);
-        let label = bun_jsc::temporal_class_label(temporal_type);
-        let mut str = bun_core::OwnedString::new(bun_core::String::empty());
-        // SAFETY: the out-pointer is a live `BunString` the callee writes once.
-        unsafe {
-            bun_jsc::cpp::Bun__Temporal__toDisplayString(
-                self.global_this,
-                value,
-                temporal_type,
-                &raw mut *str,
-            )?;
-        }
-        self.add_for_new_line(label.len() + 1 + str.length());
+        let (label, str) = value.temporal_display_string(self.global_this)?;
+        self.add_for_new_line(label.length() + 1 + str.length());
         writer.print(format_args!(
             "{} {}{}{}",
             label,

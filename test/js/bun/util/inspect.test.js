@@ -884,7 +884,7 @@ describe("Temporal values", () => {
 
   it("does not affect the Temporal namespace objects or prototypes", () => {
     expect(Bun.inspect(Temporal.Now)).toContain("[Function:");
-    expect(Bun.inspect(Temporal.PlainDate.prototype)).not.toContain("Temporal.PlainDate 2");
+    expect(Bun.inspect(Temporal.PlainDate.prototype)).not.toMatch(/^Temporal\.PlainDate [-+\d]/);
   });
 
   it("prints the same text from console.log", async () => {

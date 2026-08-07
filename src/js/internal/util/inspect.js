@@ -182,22 +182,11 @@ const {
   isTypedArray,
 } = require("node:util/types");
 
-// getTemporalType(value) is 0 for non-Temporal values, otherwise an index into
-// kTemporalLabels; getTemporalDisplayString is the value's default-options
+// getTemporalLabel(value) is e.g. "Temporal.PlainDate", or undefined for
+// non-Temporal values; getTemporalDisplayString is the value's default-options
 // toString() text, computed without calling user-observable methods.
-const getTemporalType = $newCppFunction("Temporal.cpp", "jsFunctionTemporalObjectType", 1);
+const getTemporalLabel = $newCppFunction("Temporal.cpp", "jsFunctionTemporalLabel", 1);
 const getTemporalDisplayString = $newCppFunction("Temporal.cpp", "jsFunctionTemporalToDisplayString", 1);
-const kTemporalLabels = [
-  "",
-  "Temporal.Instant",
-  "Temporal.PlainDateTime",
-  "Temporal.PlainDate",
-  "Temporal.PlainTime",
-  "Temporal.ZonedDateTime",
-  "Temporal.PlainYearMonth",
-  "Temporal.PlainMonthDay",
-  "Temporal.Duration",
-];
 
 // We need this duplicate here to avoid a circular dependency between node:assert and node:util.
 class AssertionError extends Error {
@@ -1499,7 +1488,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
   let braces;
   let extraKeys;
   let noIterator = true;
-  let temporalType = 0;
+  let temporalLabel;
   let i = 0;
   const filter = ctx.showHidden ? ALL_PROPERTIES : ONLY_ENUMERABLE;
 
@@ -1649,12 +1638,12 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       if (keys.length === 0 && protoProps === undefined) {
         return base;
       }
-    } else if ((temporalType = getTemporalType(value)) !== 0) {
-      const label = kTemporalLabels[temporalType];
+    } else if ((temporalLabel = getTemporalLabel(value)) !== undefined) {
       // JSC names the constructors `PlainDate` where V8 uses `Temporal.PlainDate`;
       // map direct instances onto the label so the prefix matches Node's output.
-      const effectiveConstructor = constructor !== null && `Temporal.${constructor}` === label ? label : constructor;
-      const prefix = getPrefix(effectiveConstructor, tag, label);
+      const effectiveConstructor =
+        constructor !== null && `Temporal.${constructor}` === temporalLabel ? temporalLabel : constructor;
+      const prefix = getPrefix(effectiveConstructor, tag, temporalLabel);
       base = `${prefix}${getTemporalDisplayString(value)}`;
       if (keys.length === 0 && protoProps === undefined) {
         return ctx.stylize(base, "date");

@@ -1068,18 +1068,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     return true;
 }
 
-static bool isTemporalObject(JSC::JSObject* object)
-{
-    return object->inherits<JSC::TemporalInstant>()
-        || object->inherits<JSC::TemporalPlainDate>()
-        || object->inherits<JSC::TemporalPlainDateTime>()
-        || object->inherits<JSC::TemporalPlainTime>()
-        || object->inherits<JSC::TemporalZonedDateTime>()
-        || object->inherits<JSC::TemporalPlainYearMonth>()
-        || object->inherits<JSC::TemporalPlainMonthDay>()
-        || object->inherits<JSC::TemporalDuration>();
-}
-
 // Temporal objects keep their state in internal slots and have no own
 // properties, so the generic own-property walk would call any two instances
 // of a class equal. Compare the internal fields instead, the way JSDateType
@@ -1128,7 +1116,7 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     }
     // `o1` is not a Temporal object; a Temporal `o2` can then never be equal
     // (and must not reach the own-property walk).
-    if (isTemporalObject(o2))
+    if (Bun__JSValue__temporalObjectType(JSValue::encode(o2)))
         return false;
     return std::nullopt;
 }
@@ -5910,48 +5898,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::
     if (!r)
         return std::numeric_limits<double>::quiet_NaN();
     return static_cast<double>(r->epochMilliseconds());
-}
-
-// Temporal type discriminant of a JSValue: 0 not Temporal, 1 Instant,
-// 2 PlainDateTime, 3 PlainDate, 4 PlainTime, 5 ZonedDateTime,
-// 6 PlainYearMonth, 7 PlainMonthDay, 8 Duration.
-extern "C" [[ZIG_EXPORT(nothrow)]] uint8_t Bun__JSValue__temporalObjectType(JSC::EncodedJSValue encodedValue)
-{
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    if (!value.isCell())
-        return 0;
-    JSC::JSCell* cell = value.asCell();
-    // Every Temporal class is a plain ObjectType cell; anything else short-circuits.
-    if (cell->type() != JSC::ObjectType)
-        return 0;
-    if (cell->inherits<JSC::TemporalInstant>())
-        return 1;
-    if (cell->inherits<JSC::TemporalPlainDateTime>())
-        return 2;
-    if (cell->inherits<JSC::TemporalPlainDate>())
-        return 3;
-    if (cell->inherits<JSC::TemporalPlainTime>())
-        return 4;
-    if (cell->inherits<JSC::TemporalZonedDateTime>())
-        return 5;
-    if (cell->inherits<JSC::TemporalPlainYearMonth>())
-        return 6;
-    if (cell->inherits<JSC::TemporalPlainMonthDay>())
-        return 7;
-    if (cell->inherits<JSC::TemporalDuration>())
-        return 8;
-    return 0;
-}
-
-// Default-options `toString()` text for a Temporal object (see
-// Bun::temporalDisplayString); `temporalType` is a non-zero classifier result.
-extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__Temporal__toDisplayString(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, uint8_t temporalType, BunString* out)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    WTF::String string = Bun::temporalDisplayString(globalObject, JSC::JSValue::decode(encodedValue).asCell(), temporalType);
-    RETURN_IF_EXCEPTION(scope, );
-    *out = Bun::toStringRef(string);
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)

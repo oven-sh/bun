@@ -4,6 +4,7 @@
 
 #include "root.h"
 #include "Temporal.h"
+#include "headers-handwritten.h"
 
 #include "JavaScriptCore/ISO8601.h"
 #include "JavaScriptCore/JSCast.h"
@@ -22,7 +23,57 @@
 #include "JavaScriptCore/TemporalZonedDateTime.h"
 #include <wtf/text/StringBuilder.h>
 
+extern "C" [[ZIG_EXPORT(nothrow)]] uint8_t Bun__JSValue__temporalObjectType(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    // Every Temporal class is a plain ObjectType cell; anything else short-circuits.
+    if (!value.isCell() || value.asCell()->type() != JSC::ObjectType)
+        return 0;
+    JSC::JSCell* cell = value.asCell();
+    if (cell->inherits<JSC::TemporalInstant>())
+        return 1;
+    if (cell->inherits<JSC::TemporalPlainDateTime>())
+        return 2;
+    if (cell->inherits<JSC::TemporalPlainDate>())
+        return 3;
+    if (cell->inherits<JSC::TemporalPlainTime>())
+        return 4;
+    if (cell->inherits<JSC::TemporalZonedDateTime>())
+        return 5;
+    if (cell->inherits<JSC::TemporalPlainYearMonth>())
+        return 6;
+    if (cell->inherits<JSC::TemporalPlainMonthDay>())
+        return 7;
+    if (cell->inherits<JSC::TemporalDuration>())
+        return 8;
+    return 0;
+}
+
 namespace Bun {
+
+static ASCIILiteral temporalLabel(uint8_t temporalType)
+{
+    switch (temporalType) {
+    case 1:
+        return "Temporal.Instant"_s;
+    case 2:
+        return "Temporal.PlainDateTime"_s;
+    case 3:
+        return "Temporal.PlainDate"_s;
+    case 4:
+        return "Temporal.PlainTime"_s;
+    case 5:
+        return "Temporal.ZonedDateTime"_s;
+    case 6:
+        return "Temporal.PlainYearMonth"_s;
+    case 7:
+        return "Temporal.PlainMonthDay"_s;
+    case 8:
+        return "Temporal.Duration"_s;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
 
 // https://tc39.es/proposal-temporal/#sec-temporal-temporalzoneddatetimetostring
 // with every option ~auto~; JSC's own implementation is file-static in
@@ -37,13 +88,12 @@ static WTF::String zonedDateTimeDisplayString(JSC::JSGlobalObject* globalObject,
 
     std::optional<int64_t> offsetOpt = zonedDateTime->getOffsetNanoseconds(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(offsetOpt);
 
     WTF::StringBuilder builder;
     builder.append(JSC::ISO8601::temporalDateTimeToString(date, time, { JSC::Precision::Auto, 0 }));
 
     // FormatDateTimeUTCOffsetRounded: round the offset to the nearest minute.
-    int64_t offsetNs = offsetOpt.value_or(0);
+    int64_t offsetNs = *offsetOpt;
     int64_t offsetMinutes = offsetNs / 60'000'000'000;
     int64_t remainder = offsetNs % 60'000'000'000;
     if (remainder > 30'000'000'000 || (remainder == 30'000'000'000 && offsetNs > 0))
@@ -64,7 +114,8 @@ static WTF::String zonedDateTimeDisplayString(JSC::JSGlobalObject* globalObject,
     return builder.toString();
 }
 
-WTF::String temporalDisplayString(JSC::JSGlobalObject* globalObject, JSC::JSCell* cell, uint8_t temporalType)
+// `temporalType` is the non-zero `Bun__JSValue__temporalObjectType(cell)`.
+static WTF::String temporalDisplayString(JSC::JSGlobalObject* globalObject, JSC::JSCell* cell, uint8_t temporalType)
 {
     switch (temporalType) {
     case 1:
@@ -90,9 +141,25 @@ WTF::String temporalDisplayString(JSC::JSGlobalObject* globalObject, JSC::JSCell
 
 } // namespace Bun
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionTemporalObjectType, (JSC::JSGlobalObject*, JSC::CallFrame* callFrame))
+// `encodedValue` must be a Temporal value (`Bun__JSValue__temporalObjectType` != 0).
+// Writes e.g. `Temporal.PlainDate` to `label` and `2020-01-02` to `text`.
+extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__Temporal__toDisplayString(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* label, BunString* text)
 {
-    return JSC::JSValue::encode(JSC::jsNumber(Bun__JSValue__temporalObjectType(JSC::JSValue::encode(callFrame->argument(0)))));
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint8_t temporalType = Bun__JSValue__temporalObjectType(encodedValue);
+    WTF::String string = Bun::temporalDisplayString(globalObject, JSC::JSValue::decode(encodedValue).asCell(), temporalType);
+    RETURN_IF_EXCEPTION(scope, );
+    *label = Bun::toStringView(Bun::temporalLabel(temporalType));
+    *text = Bun::toStringRef(string);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionTemporalLabel, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    uint8_t temporalType = Bun__JSValue__temporalObjectType(JSC::JSValue::encode(callFrame->argument(0)));
+    if (!temporalType)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(JSC::jsNontrivialString(JSC::getVM(globalObject), Bun::temporalLabel(temporalType)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionTemporalToDisplayString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

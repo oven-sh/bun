@@ -2,20 +2,13 @@
 
 #include "root.h"
 
-// 0 for non-Temporal values, otherwise 1-8 per the discriminant table at the
-// definition in bindings.cpp (shared with the Rust and JS callers).
+// 0 for non-Temporal values, otherwise 1 Instant, 2 PlainDateTime, 3 PlainDate,
+// 4 PlainTime, 5 ZonedDateTime, 6 PlainYearMonth, 7 PlainMonthDay, 8 Duration.
 extern "C" uint8_t Bun__JSValue__temporalObjectType(JSC::EncodedJSValue);
 
-namespace Bun {
-
-// The default-options `toString()` text for a Temporal `cell` whose non-zero
-// classifier result is `temporalType`, built from internal slots. May throw
-// (ZonedDateTime offset lookups, Duration integer formatting).
-WTF::String temporalDisplayString(JSC::JSGlobalObject*, JSC::JSCell*, uint8_t temporalType);
-
-} // namespace Bun
-
-// `jsFunctionTemporalObjectType(value)` -> number 0-8 (the classifier above).
-JSC_DECLARE_HOST_FUNCTION(jsFunctionTemporalObjectType);
-// `jsFunctionTemporalToDisplayString(value)` -> string, undefined if not Temporal.
+// `jsFunctionTemporalLabel(value)` -> e.g. "Temporal.PlainDate", or undefined
+// if not Temporal.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionTemporalLabel);
+// `jsFunctionTemporalToDisplayString(value)` -> the value's default-options
+// `toString()` text, or undefined if not Temporal.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionTemporalToDisplayString);

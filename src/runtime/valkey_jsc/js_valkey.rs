@@ -1201,7 +1201,9 @@ impl JSValkeyClient {
             return;
         }
 
-        if !self.vm().script_allowed() {
+        // No reconnecting on a VM that is exiting: its stop phase would only
+        // have to close the new socket again.
+        if self.vm().is_shutting_down() {
             bun_core::hint::cold();
             return;
         }

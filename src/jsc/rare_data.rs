@@ -862,8 +862,7 @@ impl RareData {
     /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
     /// after `WebWorker__teardownJSCVM`, so doing the closeAll
     /// there would dispatch into freed JSC heap.
-    /// Returns whether any group still had sockets to close.
-    pub(crate) fn close_all_socket_groups(&mut self, vm: &VirtualMachine) -> bool {
+    pub(crate) fn close_all_socket_groups(&mut self, vm: &VirtualMachine) -> crate::virtual_machine::SweepResult {
         // closeAll() dispatches on_close into JS while the VM is still alive, so a
         // handler can call Bun.connect/postgres/etc. and re-populate a group we
         // just drained. Loop until every group is observed empty in the same pass
@@ -887,14 +886,18 @@ impl RareData {
             }
             rounds += 1;
         }
-        let closed_any = rounds > 0;
+        let result = if rounds > 0 {
+            crate::virtual_machine::SweepResult::Stopped
+        } else {
+            crate::virtual_machine::SweepResult::Idle
+        };
         // us_socket_close pushes to loop->data.closed_head; loop_post() normally
         // frees it on the next tick. We're past the last tick, so drain it now —
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
         vm.uws_loop_mut().drain_closed_sockets();
-        closed_any
+        result
     }
 }
 

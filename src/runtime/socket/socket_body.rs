@@ -112,7 +112,7 @@ extern "C" fn select_alpn_callback(
     {
         let handlers = this.get_handlers();
         let callback = handlers.on_alpn_callback();
-        if !callback.is_empty() && handlers.vm.script_allowed() && !in_.is_null() && inlen > 0 {
+        if !callback.is_empty() && !in_.is_null() && inlen > 0 {
             let scope = handlers.enter();
             let global = handlers.global_object;
             let this_value = this.get_this_value(&global);
@@ -330,9 +330,7 @@ impl<const SSL: bool> Drop for CloseTeardown<SSL> {
             // Reconnected: `connect_finish` re-armed `this_value`/`poll_ref`, so
             // skip the idle teardown and only release what we took.
             this.update_flags(|f| f.remove(Flags::IS_ACTIVE));
-            if VirtualMachine::get().script_allowed() {
-                self.entered.mark_inactive();
-            }
+            self.entered.mark_inactive();
         }
         // Last: this can be the final ref, freeing the socket read above.
         this.get().deref();
@@ -840,10 +838,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn handle_error(&self, err_value: JSValue) {
         log!("handleError");
         let handlers = self.get_handlers();
-        let vm = handlers.vm;
-        if !vm.script_allowed() {
-            return;
-        }
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         let scope = handlers.enter();
@@ -881,10 +875,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
 
-        let vm = handlers.vm;
-        if !vm.script_allowed() {
-            return;
-        }
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
         // and the drain callback can both re-enter JS and close it.
         let _keepalive = this.ref_guard();
@@ -972,9 +962,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         let callback = handlers.on_timeout();
         if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
-            return;
-        }
-        if !handlers.vm.script_allowed() {
             return;
         }
 
@@ -1641,8 +1628,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let _keepalive = this.ref_guard();
 
         let callback = handlers.on_end();
-        let vm = handlers.vm;
-        if callback.is_empty() || !vm.script_allowed() {
+        if callback.is_empty() {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
             // If you don't handle TCP fin, we assume you're done.
@@ -2168,9 +2154,6 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let callback = handlers.on_data();
         if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
-            return;
-        }
-        if !handlers.vm.script_allowed() {
             return;
         }
 

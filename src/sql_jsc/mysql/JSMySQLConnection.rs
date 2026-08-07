@@ -669,9 +669,6 @@ impl JSMySQLConnection {
     }
 
     fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
-        if !self.vm().script_allowed() {
-            return None;
-        }
         if let Some(value) = self.js_value.get().try_get() {
             return js::onconnect_take_cached(value, global_object);
         }
@@ -679,9 +676,6 @@ impl JSMySQLConnection {
     }
 
     fn consume_on_close_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
-        if !self.vm().script_allowed() {
-            return None;
-        }
         if let Some(value) = self.js_value.get().try_get() {
             return js::onclose_take_cached(value, global_object);
         }
@@ -689,9 +683,6 @@ impl JSMySQLConnection {
     }
 
     pub(crate) fn get_queries_array(&self) -> JSValue {
-        if !self.vm().script_allowed() {
-            return JSValue::UNDEFINED;
-        }
         if let Some(value) = self.js_value.get().try_get() {
             return js::queries_get_cached(value).unwrap_or(JSValue::UNDEFINED);
         }
@@ -793,9 +784,6 @@ impl JSMySQLConnection {
     }
 
     pub(crate) fn on_connection_estabilished(&self) {
-        if !self.vm().script_allowed() {
-            return;
-        }
         let Some(on_connect) = self.consume_on_connect_callback(&self.global_object) else {
             return;
         };
@@ -892,20 +880,12 @@ impl JSMySQLConnection {
 
     pub(crate) fn on_error(&self, request: Option<&JSMySQLQuery>, err: AnyMySQLErrorT) {
         if let Some(request) = request {
-            if !self.vm().script_allowed() {
-                request.mark_as_failed();
-                return;
-            }
             if let Some(err_) = self.global_object.try_take_exception() {
                 request.reject_with_js_value(self.get_queries_array(), err_);
             } else {
                 request.reject(self.get_queries_array(), err);
             }
         } else {
-            if !self.vm().script_allowed() {
-                self.close();
-                return;
-            }
             if let Some(err_) = self.global_object.try_take_exception() {
                 self.fail_with_js_value(err_);
             } else {
@@ -916,23 +896,15 @@ impl JSMySQLConnection {
 
     pub(crate) fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
         if let Some(request) = request {
-            if !self.vm().script_allowed() {
-                request.mark_as_failed();
+            if let Some(err_) = self.global_object.try_take_exception() {
+                request.reject_with_js_value(self.get_queries_array(), err_);
             } else {
-                if let Some(err_) = self.global_object.try_take_exception() {
-                    request.reject_with_js_value(self.get_queries_array(), err_);
-                } else {
-                    request.reject_with_js_value(
-                        self.get_queries_array(),
-                        err.to_js(&self.global_object),
-                    );
-                }
+                request.reject_with_js_value(
+                    self.get_queries_array(),
+                    err.to_js(&self.global_object),
+                );
             }
         } else {
-            if !self.vm().script_allowed() {
-                self.close();
-                return;
-            }
             if let Some(err_) = self.global_object.try_take_exception() {
                 self.fail_with_js_value(err_);
             } else {
@@ -1064,11 +1036,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.update_reference_type();
             p.register_auto_flusher();
         }
-        if !this.vm().script_allowed() {
-            // we are shutting down lets not process the data
-            return;
-        }
-
         let _loop_guard = this.event_loop().entered();
         this.ensure_js_value_is_alive();
 

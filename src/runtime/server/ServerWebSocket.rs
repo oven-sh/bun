@@ -420,14 +420,6 @@ impl ServerWebSocket {
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
         let on_error = handler.on_error;
-        if !vm.script_allowed() {
-            bun_output::scoped_log!(
-                WebSocketServer,
-                "onOpen called after script execution was forbidden"
-            );
-            ws.close();
-            return;
-        }
 
         self.update_flags(|f| f.set_opened(false));
 
@@ -496,14 +488,6 @@ impl ServerWebSocket {
         let global_object = self.handler().global_object();
         // This is the start of a task.
         let vm = self.handler().vm();
-        if !vm.script_allowed() {
-            bun_output::scoped_log!(
-                WebSocketServer,
-                "onMessage called after script execution was forbidden"
-            );
-            ws.close();
-            return;
-        }
 
         let _loop_guard = vm.enter_event_loop_scope();
 
@@ -568,7 +552,7 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onDrain");
         let handler = self.handler();
         let vm = handler.vm();
-        if self.is_closed() || !vm.script_allowed() {
+        if self.is_closed() {
             return;
         }
 
@@ -616,7 +600,7 @@ impl ServerWebSocket {
         let cb = handler.on_ping;
         let on_error = handler.on_error;
         let vm = handler.vm();
-        if cb.is_empty_or_undefined_or_null() || !vm.script_allowed() {
+        if cb.is_empty_or_undefined_or_null() {
             return;
         }
         let global_this = handler.global_object();
@@ -651,10 +635,6 @@ impl ServerWebSocket {
 
         let global_this = handler.global_object();
         let vm = handler.vm();
-
-        if !vm.script_allowed() {
-            return;
-        }
 
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
@@ -729,9 +709,6 @@ impl ServerWebSocket {
         });
 
         let vm = handler.vm();
-        if !vm.script_allowed() {
-            return;
-        }
 
         // on_open's error branch closes the socket, landing here with the
         // termination from its handler still pending. Both branches below

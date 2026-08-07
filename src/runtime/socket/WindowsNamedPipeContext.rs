@@ -245,12 +245,6 @@ impl WindowsNamedPipeContext {
     fn on_error(this: *mut Self, err: &SysError) {
         // SAFETY: see `on_open`. `is_open`/`socket` are Copy field reads.
         let (is_open, socket) = unsafe { ((*this).is_open, (*this).socket) };
-        // Once teardown has forbidden script there is nobody to hand a JS error
-        // to (and no heap to build it in); the close that follows still runs.
-        // SAFETY: `this` is live; shared read of `vm`.
-        if !unsafe { (*this).vm }.script_allowed() {
-            return;
-        }
         if is_open {
             match_socket!(socket, |s: NewSocket<SSL>| {
                 // SAFETY: `this` is live; `global_this` is disjoint from the caller's

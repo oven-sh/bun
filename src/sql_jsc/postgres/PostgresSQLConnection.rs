@@ -1874,11 +1874,6 @@ impl PostgresSQLConnection {
         while self.requests.get().readable_length() > offset
             && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
         {
-            if !self.vm().script_allowed() {
-                self.close();
-                defer_cleanup!(self);
-                return;
-            }
 
             let req_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(offset);
             // Queue invariant: every stored pointer is non-null and live

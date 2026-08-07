@@ -1943,21 +1943,22 @@ impl Resolver {
         }
     }
 
-    /// Returns whether a channel was open (its pending queries just failed
-    /// with `ARES_EDESTRUCTION` into their callbacks).
-    pub(crate) fn close_channel_for_terminate(&self) -> bool {
-        let had_channel = if let Some(channel) = self.channel.take() {
+    /// `Stopped` if a channel was open (its pending queries just failed with
+    /// `ARES_EDESTRUCTION` into their callbacks).
+    pub(crate) fn close_channel_for_terminate(&self) -> bun_jsc::virtual_machine::SweepResult {
+        use bun_jsc::virtual_machine::SweepResult;
+        let result = if let Some(channel) = self.channel.take() {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
-            true
+            SweepResult::Stopped
         } else {
-            false
+            SweepResult::Idle
         };
         // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
         // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
         // this resolver plus the uws active-handle bump) can still be linked.
         self.remove_timer();
-        had_channel
+        result
     }
 }
 

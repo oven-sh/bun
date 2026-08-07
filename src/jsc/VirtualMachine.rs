@@ -1565,7 +1565,10 @@ impl VirtualMachine {
             let stopped_by_parent = self.worker_ref().is_some_and(|w| w.stopped_by_parent());
             if stopped_by_parent {
                 self.forbid_script();
-            } else if !global.clear_exception_except_termination() {
+            }
+            // Either way the trap has done its job (script was unwound); what
+            // remains pending would only trip native code that runs below.
+            if !global.clear_exception_except_termination() {
                 self.jsc_vm().clear_has_termination_request();
                 global.clear_termination_exception();
             }
@@ -1687,10 +1690,10 @@ impl VirtualMachine {
         // handler that reopens forever cannot wedge teardown.
         let mut rounds = 0u8;
         loop {
-            let mut stopped_any = false;
+            let mut round = SweepResult::Idle;
             if let Some(hooks) = hooks {
                 // SAFETY: fn contract; JSC heap alive.
-                stopped_any |= unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) };
+                round = round.and(unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) });
             }
         // A worker's uv loop is closed in D, so every pipe / tty / child-process
         // handle open on it closes now — through whoever drives it (reader,
@@ -1707,13 +1710,13 @@ impl VirtualMachine {
                 // `close_all_socket_groups` walks the loop's group list through
                 // the VM and never touches `rare_data`, so the re-derived shared
                 // borrow is disjoint. SAFETY: fn contract.
-                stopped_any |= rare.close_all_socket_groups(unsafe { &*this });
+                round = round.and(rare.close_all_socket_groups(unsafe { &*this }));
             }
             if let Some(hooks) = hooks {
-                stopped_any |= (hooks.stop_dns_for_vm_teardown)();
+                round = round.and((hooks.stop_dns_for_vm_teardown)());
             }
             rounds += 1;
-            if !stopped_any || rounds == 8 {
+            if round == SweepResult::Idle || rounds == 8 {
                 break;
             }
         }
@@ -1833,6 +1836,28 @@ impl VirtualMachine {
 pub(crate) enum Teardown {
     Worker,
     MainThreadExit,
+}
+
+/// What one stop-phase sweep found. The stop phase repeats its sweeps until a
+/// whole round comes back `Idle`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum SweepResult {
+    /// Nothing was registered / open / pending; the sweep did no work.
+    Idle,
+    /// The sweep stopped or closed at least one thing (whose close handlers may
+    /// have opened something else).
+    Stopped,
+}
+
+impl SweepResult {
+    pub fn and(self, other: SweepResult) -> SweepResult {
+        if self == SweepResult::Stopped || other == SweepResult::Stopped {
+            SweepResult::Stopped
+        } else {
+            SweepResult::Idle
+        }
+    }
 }
 
 extern crate alloc;
@@ -2031,16 +2056,14 @@ pub struct RuntimeHooks {
     /// runs those callbacks against freed state. No-op when the resolver was
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
-    /// Returns whether it had anything to stop.
-    pub stop_dns_for_vm_teardown: fn() -> bool,
+    pub stop_dns_for_vm_teardown: fn() -> SweepResult,
     /// Stop every registered native handle behind a JS object (servers,
     /// listeners, fs watchers) — the stop phase for Rust-side JS classes, run
     /// with the VM alive right after the WebCore stop phase.
     ///
     /// # Safety
     /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-    /// Returns whether it had anything to stop.
-    pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> bool,
+    pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
     pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):

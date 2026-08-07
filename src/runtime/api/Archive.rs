@@ -796,10 +796,6 @@ impl<C: TaskContext> AsyncTask<C> {
         // exit (ctx implements Drop).
 
         let vm = VirtualMachine::get();
-        if !vm.script_allowed() {
-            return Ok(());
-        }
-
         let global = vm.global();
         let promise = owned.promise.swap();
         let result = match owned.ctx.run_from_js(global) {

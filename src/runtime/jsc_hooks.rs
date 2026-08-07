@@ -32,7 +32,7 @@ use bun_jsc::module_loader::{
 };
 use bun_jsc::resolved_source::OwnedResolvedSource;
 use bun_jsc::virtual_machine::{
-    InitOptions, ResolveMode, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
+    InitOptions, ResolveMode, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult, VirtualMachine,
 };
 use bun_jsc::{
     AnyPromise, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
@@ -1646,7 +1646,7 @@ unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) 
 ///
 /// # Safety
 /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> bool {
+unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> SweepResult {
     // SAFETY: per the contract above.
     stop_active_handles_for_vm_teardown(unsafe { &mut *vm })
 }
@@ -1665,22 +1665,22 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
 /// are all still live. See `Resolver::close_channel_for_terminate`.
-fn stop_dns_for_vm_teardown() -> bool {
+fn stop_dns_for_vm_teardown() -> SweepResult {
     let state = runtime_state();
     if state.is_null() {
-        return false;
+        return SweepResult::Idle;
     }
-    let mut stopped_any = false;
+    let mut result = SweepResult::Idle;
     // SAFETY: `state` is the live per-thread `RuntimeState` box; shared borrow
     // of the `OnceCell` only (the resolver's own state is interior-mutable).
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
-        stopped_any |= gd.resolver.close_channel_for_terminate();
+        result = result.and(gd.resolver.close_channel_for_terminate());
         #[cfg(windows)]
         gd.resolver.cancel_pending_uv_requests_for_teardown();
     }
     #[cfg(target_os = "macos")]
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
-    stopped_any
+    result
 }
 
 /// `--isolate` swap: a microtask still pending at end-of-file (queued by
@@ -1693,13 +1693,12 @@ pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = stop_active_handles_for_vm_teardown(vm);
 }
 
-/// Returns whether anything was registered (and therefore stopped).
-pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> bool {
+pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
     let state = runtime_state();
     if state.is_null() {
-        return false;
+        return SweepResult::Idle;
     }
-    let mut stopped_any = false;
+    let mut result = SweepResult::Idle;
     // Fake-timer state lives in the per-thread `timer::All`, not the JS
     // global, so a file that leaves it active routes every later file's
     // `setTimeout` into the never-driven fake heap. Leave the heap itself
@@ -1724,7 +1723,7 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> bo
         let Some(kv) = (unsafe { &mut (*state).active_handles }).pop() else {
             break;
         };
-        stopped_any = true;
+        result = SweepResult::Stopped;
         match kv.key {
             // SAFETY: live until it unregisters in `detach`.
             ActiveHandle::FsWatcher(w) => unsafe { w.as_ref() }.close_for_isolation(),
@@ -1748,7 +1747,7 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> bo
             },
         }
     }
-    stopped_any
+    result
 }
 
 /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent, next_test_id)`.

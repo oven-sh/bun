@@ -214,11 +214,6 @@ impl Handlers {
     // corker: Corker = .{},
 
     pub(crate) fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
-        let vm = self.vm;
-        if !vm.script_allowed() {
-            return Ok(());
-        }
-
         let Some(promise) = self.take_promise() else {
             return Ok(());
         };
@@ -230,11 +225,6 @@ impl Handlers {
     }
 
     pub(crate) fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
-        let vm = self.vm;
-        if !vm.script_allowed() {
-            return Ok(true);
-        }
-
         let Some(promise) = self.take_promise() else {
             return Ok(false);
         };
@@ -276,11 +266,6 @@ impl Handlers {
     }
 
     pub(crate) fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> bool {
-        let vm = self.vm;
-        if !vm.script_allowed() {
-            return false;
-        }
-
         let global_object = self.global_object;
         // Termination raised inside the preceding callback.call() cannot be
         // cleared; entering JS again trips executeCallImpl's assertNoException.

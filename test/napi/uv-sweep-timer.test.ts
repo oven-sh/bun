@@ -134,7 +134,10 @@ describe.if(isWindows && canBuildNodeAddons())("usockets sweep timer (libuv back
 
     // --ignore-scripts skips the implicit `node-gyp rebuild` bun install runs
     // for a root binding.gyp package; build:napi below is the single build.
-    for (const cmd of [[bunExe(), "install", "--ignore-scripts"], [bunExe(), "run", "build:napi"]]) {
+    for (const cmd of [
+      [bunExe(), "install", "--ignore-scripts"],
+      [bunExe(), "run", "build:napi"],
+    ]) {
       const proc = spawnSync({ cmd, cwd: dir, env: bunEnv, stdout: "inherit", stderr: "inherit" });
       if (!proc.success) throw new Error(`${cmd.join(" ")} failed`);
     }

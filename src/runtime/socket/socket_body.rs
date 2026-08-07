@@ -4548,8 +4548,10 @@ impl DuplexUpgradeContext {
 
     unsafe fn deinit(this: *mut Self) {
         // SAFETY: fn contract — the live allocation registered in `js_upgrade_duplex_to_tls`.
-        crate::jsc_hooks::ActiveHandle::DuplexUpgrade(unsafe { core::ptr::NonNull::new_unchecked(this) })
-            .unregister();
+        crate::jsc_hooks::ActiveHandle::DuplexUpgrade(unsafe {
+            core::ptr::NonNull::new_unchecked(this)
+        })
+        .unregister();
         {
             // SAFETY: `this` is live; each field access is scoped to its own
             // statement, so nothing spans the `heap::take` free below.

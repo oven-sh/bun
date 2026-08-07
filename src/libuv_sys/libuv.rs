@@ -421,7 +421,6 @@ thread_local! {
 #[path = "open_handles.rs"]
 pub mod open_handles;
 
-
 impl Loop {
     /// Returns this thread's
     /// libuv loop, lazily `uv_loop_init`ing it on first call. Each thread owns

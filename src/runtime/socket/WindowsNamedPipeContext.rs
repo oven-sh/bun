@@ -297,8 +297,10 @@ impl WindowsNamedPipeContext {
         match unsafe { (*this).task_event } {
             EventState::Deinit => {
                 // SAFETY: `this` is the live allocation registered in create().
-                crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe { core::ptr::NonNull::new_unchecked(this) })
-                    .unregister();
+                crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe {
+                    core::ptr::NonNull::new_unchecked(this)
+                })
+                .unregister();
                 // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
                 // and this deferred task is the sole remaining owner. Drop runs field destructors.
                 drop(unsafe { bun_core::heap::take(this) });
@@ -405,8 +407,10 @@ impl WindowsNamedPipeContext {
             // A socket over a Windows named pipe is in no uSockets group: the VM's
             // stop phase closes it through this owner (unregistered when freed).
             // SAFETY: non-null, fully initialised above.
-            crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe { core::ptr::NonNull::new_unchecked(this) })
-                .register();
+            crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe {
+                core::ptr::NonNull::new_unchecked(this)
+            })
+            .register();
 
             this
         }

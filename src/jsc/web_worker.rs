@@ -1057,7 +1057,11 @@ impl WebWorker {
         // its forced unwind would cross `extern "C"` frames and abort).
         // A worker stopped by its parent that never called process.exit() did
         // not choose `exit_code`; the proxy decides what that reads as per kind.
-        WebWorker__workerGlobalScopeDestroyed(self.messaging_proxy, exit_code, self.stopped_by_parent());
+        WebWorker__workerGlobalScopeDestroyed(
+            self.messaging_proxy,
+            exit_code,
+            self.stopped_by_parent(),
+        );
     }
 
     /// worker.terminate() from the parent, and the worker did not also exit on

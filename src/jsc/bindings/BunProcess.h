@@ -59,6 +59,10 @@ public:
     // function-local static would be shared across worker threads, so a
     // worker's exit would suppress the main thread's 'exit' event.
     bool m_isExiting = false;
+    // DEP0111/DEP0119 latches. Node's deprecate() closures live in each
+    // Environment's own JS, so every worker warns once itself.
+    bool m_warnedProcessBinding = false;
+    bool m_warnedErrname = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
@@ -79,6 +83,7 @@ public:
 
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
+    void clearCachedCwd() { m_cachedCwd.clear(); }
 
     JSValue getArgv(JSGlobalObject* globalObject);
     void setArgv(JSGlobalObject* globalObject, JSValue argv);
@@ -136,5 +141,10 @@ public:
 };
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
+
+// Routes its argument onto the uncaught-exception path. Used by the
+// process.nextTick drain and, via $newCppFunction, by the node-style
+// callback shims in src/js.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
 } // namespace Bun

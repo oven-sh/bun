@@ -4130,6 +4130,34 @@ pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
 /// Writes the current working directory into the caller's `PathBuffer` and
 /// returns the NUL-terminated slice on success.
 pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
+    let len = getcwd_len(buf)?;
+    Ok(ZStr::from_buf(&buf.0, len))
+}
+
+/// `getcwd` tolerating an unreachable cwd (e.g. deleted while we run): falls
+/// back to the executable's directory like Node's `Environment::GetCwd`, so
+/// startup proceeds and `process.cwd()` surfaces the real error later.
+pub fn getcwd_or_exe_dir(buf: &mut PathBuffer) -> &ZStr {
+    let len = match getcwd_len(buf) {
+        Ok(n) => n,
+        Err(_) => {
+            let dir: &[u8] = self_exe_path()
+                .ok()
+                .and_then(|p| dirname(p.as_bytes()))
+                // Reject a dir that can't fit with its NUL (paths from
+                // /proc/self/exe are not bounded by MAX_PATH_BYTES).
+                .filter(|d| d.len() < buf.0.len())
+                .unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" });
+            buf.0[..dir.len()].copy_from_slice(dir);
+            buf.0[dir.len()] = 0;
+            dir.len()
+        }
+    };
+    ZStr::from_buf(&buf.0, len)
+}
+
+/// Length-returning core of [`getcwd`]; `buf` holds the NUL-terminated path.
+fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     #[cfg(unix)]
     // SAFETY: `buf` provides `MAX_PATH_BYTES` writable bytes for `getcwd`; on
     // success the returned pointer aliases `buf` and is NUL-terminated, so
@@ -4139,8 +4167,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
         if p.is_null() {
             return Err(crate::CrateError::Unexpected);
         }
-        let len = libc::strlen(p);
-        Ok(ZStr::from_buf(&buf.0, len))
+        Ok(libc::strlen(p))
     }
     #[cfg(windows)]
     {
@@ -4176,7 +4203,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
             bi += nb;
         }
         out[bi] = 0;
-        Ok(ZStr::from_buf(&buf.0[..], bi))
+        Ok(bi)
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -4353,14 +4380,25 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// Port of `bun.reloadProcess`. Allocator param dropped (uses libc malloc via
-/// `dupe_z`). `may_return == true` → returns on failure; `false` → panics.
-/// macOS posix_spawn path is deferred to bun_spawn (tier-4); tier-0 falls
-/// back to plain `execve` on all POSIX which is correct on Linux/BSD and
-/// best-effort on macOS (CLOEXEC handled by `on_before_reload_process_linux`
-/// hook on Linux; Darwin gets the simpler path until tier-4 wires spawn).
+/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
+/// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
+/// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
-    RELOAD_IN_PROGRESS.store(true, AOrdering::Relaxed);
+    // Exactly one thread may perform the reload: the JS thread and the watcher's grace-window
+    // fallback can both reach here, and concurrent execve prep crashes on musl. The swap elects a
+    // winner; a loser parks or returns. A thread that already owns the reload may re-enter.
+    let owns_reload = RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get());
+    if !owns_reload && RELOAD_IN_PROGRESS.swap(true, AOrdering::SeqCst) {
+        if may_return {
+            return;
+        }
+        // Park (not pthread_exit): the loser may be the JS main thread, and
+        // running its TLS destructors concurrently with the winner's execve
+        // preparation is the same hazard class the swap exists to avoid.
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
 
     if clear_terminal {
@@ -4401,17 +4439,14 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
-    // SAFETY: the FFI calls below (`on_before_reload_process_linux`, `execve`)
-    // receive only locally-built NUL-terminated argv/envp arrays terminated by
-    // a null pointer; on success `execve` never returns, on failure errno is
-    // read. No borrowed Rust state is observed after the exec.
+    // SAFETY: FFI calls receive only locally-built NUL-terminated argv/envp arrays; on success
+    // `execve` never returns, on failure errno is read. No borrowed Rust state observed after.
     unsafe {
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             unsafe extern "C" {
-                safe fn on_before_reload_process_linux();
+                safe fn on_before_reload_process_posix();
             }
-            on_before_reload_process_linux();
+            on_before_reload_process_posix();
         }
 
         // We clone argv so that the memory address isn't the same as the libc one.

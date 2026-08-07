@@ -755,10 +755,9 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
 }
 
 /// Git checkouts can legitimately lack `package.json`, so their completeness
-/// marker is the `.bun-tag` that `Repository::checkout` writes as the last
-/// step of populating the folder. A bare folder without it is a leftover from
-/// an install that was killed mid-checkout; treating it as cached would
-/// silently install an empty package.
+/// marker is the `.bun-tag` that `Repository::checkout` writes last. A folder
+/// without it is a leftover from an interrupted checkout; installing it would
+/// produce an empty package.
 pub fn is_git_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
     let mut buf = PathBuffer::uninit();
     let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(

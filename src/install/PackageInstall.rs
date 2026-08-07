@@ -2351,9 +2351,8 @@ impl<'a> PackageInstall<'a> {
                             break 'package_json_exists sys::exists_at(self.cache_dir, subpath);
                         }
                         resolution::Tag::Git => {
-                            // Git checkouts can legitimately lack `package.json`;
-                            // the `.bun-tag` written last by `Repository::checkout`
-                            // marks the folder complete.
+                            // See `is_git_folder_in_cache`: `.bun-tag` marks a
+                            // git checkout complete.
                             let mut join_buf = PathBuffer::uninit();
                             let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
                                 &mut join_buf.0,
@@ -2378,8 +2377,7 @@ impl<'a> PackageInstall<'a> {
                 // Use a stack PathBuffer (no shared state).
                 let mut join_buf = PathBuffer::uninit();
                 let exists = if matches!(resolution_tag, resolution::Tag::Git) {
-                    // Same as the unpatched arm above: the base checkout is only
-                    // complete once `.bun-tag` exists.
+                    // Same `.bun-tag` probe as the unpatched Git arm above.
                     let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
                         &mut join_buf.0,
                         &[cache_dir_subpath_without_patch_hash, b".bun-tag"],

@@ -421,13 +421,10 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     Err(crate::Error::InstallFailed)
 }
 
-/// `.bun-tag` (containing `resolved`) is written as the last step of
-/// populating a per-commit cache folder, so it doubles as the completeness
-/// marker: a folder without a matching tag is a leftover from an install that
-/// was killed or failed between `git clone` and `git checkout` (git cannot
-/// clean up after SIGKILL). Such a folder has no `package.json`, and the
-/// missing-`package.json` fallback in `checkout` would silently resolve the
-/// dependency as an empty package.
+/// `.bun-tag` (containing `resolved`) is the last file written when
+/// populating a per-commit cache folder. A folder without a matching tag is a
+/// leftover from an interrupted or failed clone/checkout and would resolve as
+/// an empty package via the missing-`package.json` fallback in `checkout`.
 fn cached_checkout_is_complete(dir: &bun_sys::Dir, resolved: &[u8]) -> bool {
     match bun_sys::File::read_file_from(dir.fd(), b".bun-tag") {
         Ok((file, contents)) => {
@@ -897,8 +894,7 @@ impl RepositoryExt for Repository {
                     if cached_checkout_is_complete(&dir, resolved) {
                         break 'package_dir dir;
                     }
-                    // Leftover from an interrupted or failed clone/checkout.
-                    // Rebuild it; the rename below replaces it.
+                    // Incomplete leftover: rebuild it (the rename below replaces it).
                     dir.close();
                 }
                 Err(err) => {
@@ -908,9 +904,8 @@ impl RepositoryExt for Repository {
                 }
             }
 
-            // Clone + checkout into a temporary sibling and only rename it to
-            // `folder_name` once fully populated, so a killed install can't
-            // leave a half-built folder at the name later installs trust.
+            // Build the checkout in a temporary sibling and rename it into
+            // place once complete, so a kill can't leave a half-built folder.
             let mut tmp_name_buf = [0u8; 64];
             let tmp_name: &[u8] = match bun_resolver::fs::FileSystem::tmpname(
                 b"tmp",
@@ -1028,8 +1023,8 @@ impl RepositoryExt for Repository {
                 return Err(crate::Error::InstallFailed);
             }
 
-            // If a concurrent install won the rename race, the swap left its
-            // folder (or the stale one it replaced) at `tmp_name`; drop it.
+            // A lost rename race (or a replaced stale folder) can leave a
+            // directory at `tmp_name`; drop it.
             let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(tmp_name);
 
             bun_sys::Dir::borrow(&cache_dir)

@@ -55,6 +55,13 @@ module.exports = debugMode => {
       console.log("protoMethod is own =", Object.prototype.hasOwnProperty.call(inst, "protoMethod"));
     },
 
+    test_v8_return_value_from_inner_scope() {
+      console.log("string =", nativeModule.return_string_from_inner_scope(1));
+      console.log("number =", nativeModule.return_heap_number_from_inner_scope(1));
+      console.log("element =", nativeModule.return_array_element_from_iterate(["one", "two", "three"]));
+      console.log("accessor =", nativeModule.return_accessor_value_from_inner_scope());
+    },
+
     test_v8_function_call() {
       function target(a, b, c) {
         if (arguments.length === 0) return this && this.tag;

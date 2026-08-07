@@ -207,6 +207,13 @@ pub struct RareData {
     pub stdout_store: Option<NonNull<c_void>>,
     pub(crate) stdout_mode: Mode,
 
+    /// Erased `*mut bun_runtime::webcore::FileSink` — the per-VM stdio sink for
+    /// fd 1 (`[0]`) and fd 2 (`[1]`). Everything this JS thread writes to those
+    /// fds (console, `process.stdout/stderr`, `Bun.stdout.writer()`, ...) goes
+    /// through these; created lazily by `bun_runtime` (`stdio_sink_for`), one
+    /// intrusive ref owned here and released in `Drop`.
+    pub stdio_sinks: [Option<NonNull<c_void>>; 2],
+
     pub(crate) entropy_cache: Option<Box<EntropyCache>>,
 
     pub(crate) hot_map: Option<HotMap>,
@@ -304,6 +311,7 @@ impl Default for RareData {
             stdin_mode: 0,
             stdout_store: None,
             stdout_mode: 0,
+            stdio_sinks: [None, None],
             entropy_cache: None,
             hot_map: None,
             cron_jobs: Vec::new(),
@@ -624,6 +632,18 @@ impl RareData {
     pub(crate) fn release_js_handles(&mut self) {
         self.s3_default_client.deinit();
         self.node_quic_callbacks.deinit();
+        self.release_stdio_sinks();
+    }
+
+    /// Drop `RareData`'s ref on the stdio sinks. Must run while the event loop
+    /// (poll deregistration) and JSC (a live `JSFileSink` wrapper may hold the
+    /// other ref) are both still up — i.e. from `release_js_handles`, never
+    /// from `Drop`.
+    pub fn release_stdio_sinks(&mut self) {
+        for sink in self.stdio_sinks.iter_mut().filter_map(Option::take) {
+            // SAFETY: `sink` is the +1 pointer `stdio_sink_for` stored.
+            unsafe { __bun_stdio_sink_deinit(sink.as_ptr().cast()) };
+        }
     }
 
     // ── trivial field accessors ────────────────────────────────────────────
@@ -905,6 +925,13 @@ impl RareData {
 
 unsafe extern "Rust" {
     safe fn __bun_stdio_blob_store_deinit(ptr: *mut ());
+    /// Releases `RareData`'s ref on a stdio `FileSink` (defined in
+    /// `bun_runtime::webcore::file_sink`). `ptr` is the exact pointer stored in
+    /// `stdio_sinks`.
+    fn __bun_stdio_sink_deinit(ptr: *mut ());
+    /// Synchronously drain both stdio sinks of `vm` (defined next to the above).
+    pub(crate) fn __bun_stdio_sink_drain(vm: *mut VirtualMachine);
+    pub(crate) fn __bun_stdio_sink_release_js(vm: *mut VirtualMachine);
 }
 
 impl RareData {
@@ -1092,6 +1119,9 @@ impl Drop for RareData {
         {
             __bun_stdio_blob_store_deinit(store.as_ptr().cast());
         }
+        // `release_js_handles()` ran before the loop / JSC went away; a sink
+        // still here would need both to deinit, so it is deliberately leaked.
+        debug_assert!(self.stdio_sinks.iter().all(Option::is_none));
 
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.

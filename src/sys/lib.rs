@@ -3571,7 +3571,8 @@ pub mod sys_uv;
 #[cfg(not(windows))]
 pub mod sys_uv {
     pub use super::{
-        close, fstat, lstat, mkdir, open, pread, pwrite, read, rename, stat, unlink, write,
+        close, fstat, lstat, mkdir, open, pread, pwrite, read, read_retrying, rename, stat, unlink,
+        write, write_retrying,
     };
 }
 
@@ -9497,17 +9498,124 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
     }
 }
 
+/// Runs before this thread's `Output` bytes go to fd 1 / fd 2. The runtime
+/// points it at "flush what this JS thread's `process.stdout`/`stderr` still
+/// has queued for that fd" (`bun_runtime::webcore::file_sink`), which is what
+/// keeps everything Bun itself prints — errors, the test reporter, prompts —
+/// behind output the program already handed to its stdio streams.
+static STDIO_WRITE_HOOK: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+pub fn set_stdio_write_hook(hook: fn(Fd)) {
+    STDIO_WRITE_HOOK.store(hook as *mut (), core::sync::atomic::Ordering::Release);
+}
+
+#[inline]
+fn run_stdio_write_hook(fd: Fd) {
+    if fd != Fd::stdout() && fd != Fd::stderr() {
+        return;
+    }
+    // Debug logging can fire from inside the sink's own I/O callbacks; never
+    // re-enter the sink from there.
+    if bun_core::output::is_inside_scoped_log() {
+        return;
+    }
+    let p = STDIO_WRITE_HOOK.load(core::sync::atomic::Ordering::Acquire);
+    if !p.is_null() {
+        // SAFETY: only ever stored from a `fn(Fd)` in `set_stdio_write_hook`.
+        let hook: fn(Fd) = unsafe { core::mem::transmute::<*mut (), fn(Fd)>(p) };
+        hook(fd);
+    }
+}
+
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
 /// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
+///
+/// `EAGAIN` is not an error here: `O_NONBLOCK` lives on the open file
+/// description, so anything sharing fd 1/2 with us (a parent shell, a child,
+/// libuv in a sibling process, another thread's stdio sink) can flip it at any
+/// time. Wait for `POLLOUT` and keep going, which is exactly what a blocking
+/// `write(2)` would have done.
 fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
+    run_stdio_write_hook(fd);
     while !bytes.is_empty() {
         match write(fd, bytes) {
             Ok(0) => return false, // short write → give up
             Ok(n) => bytes = &bytes[n..],
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EINTR => continue,
+            #[cfg(unix)]
+            Err(e) if e.is_retry() => {
+                if !wait_until_writable(fd) {
+                    return false;
+                }
+            }
             Err(_) => return false,
         }
     }
     true
+}
+
+/// `write(2)` all of `bytes`, waiting out `EAGAIN`/`EINTR`; `false` on a real
+/// error. Does not take ownership of (or close) `fd`.
+#[inline]
+pub fn write_all_retrying(fd: Fd, bytes: &[u8]) -> bool {
+    fd_write_all_quiet(fd, bytes)
+}
+
+/// One `write(2)` that behaves as if `fd` were blocking regardless of the
+/// description's `O_NONBLOCK` bit: `EAGAIN` waits for `POLLOUT`, `EINTR`
+/// retries. For copy loops that run off the JS thread and may be handed a
+/// stdio pipe someone else made non-blocking.
+pub fn write_retrying(fd: Fd, bytes: &[u8]) -> Maybe<usize> {
+    loop {
+        match write(fd, bytes) {
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EINTR => continue,
+            #[cfg(unix)]
+            Err(e) if e.is_retry() => {
+                if !wait_until_writable(fd) {
+                    return Err(e);
+                }
+            }
+            other => return other,
+        }
+    }
+}
+
+/// `read(2)` counterpart of [`write_retrying`].
+pub fn read_retrying(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    loop {
+        match read(fd, buf) {
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EINTR => continue,
+            #[cfg(unix)]
+            Err(e) if e.is_retry() => {
+                if !wait_until(fd, posix::POLL_IN) {
+                    return Err(e);
+                }
+            }
+            other => return other,
+        }
+    }
+}
+
+/// Block until `fd` reports `POLLOUT` (or `POLLERR`/`POLLHUP`, which the next
+/// `write` will turn into a real errno). `false` only if `poll` itself failed.
+#[cfg(unix)]
+#[inline]
+pub fn wait_until_writable(fd: Fd) -> bool {
+    wait_until(fd, posix::POLL_OUT)
+}
+
+#[cfg(unix)]
+fn wait_until(fd: Fd, events: i16) -> bool {
+    let mut pfd = [posix::PollFd {
+        fd: fd.native(),
+        events,
+        revents: 0,
+    }];
+    posix::poll(&mut pfd, -1).is_ok()
 }
 
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`

@@ -482,8 +482,10 @@ pub mod pipes;
 #[cfg(windows)]
 #[path = "source.rs"]
 pub mod source;
+pub mod stdio_lock;
 #[path = "write.rs"]
 pub mod write;
+pub use stdio_lock::StdioLock;
 
 // ── re-exports for higher tiers ─────────────────────────────────────────────
 // Byte-level `Write` trait + helpers. Downstream

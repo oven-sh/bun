@@ -2365,6 +2365,13 @@ impl TestCommand {
             _ = vm.global().set_time_zone(&ZigString::init(tz_name));
         }
 
+        // Materialise the runner's stdio sinks (a dup of fd 1 / fd 2 each) up
+        // front rather than at some test's first `console.log`, so tests that
+        // audit open fds around their own work see a stable set.
+        for fd in [bun_sys::Fd::stdout(), bun_sys::Fd::stderr()] {
+            let _ = crate::webcore::file_sink::stdio_sink_for(vm, fd);
+        }
+
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.

@@ -334,6 +334,19 @@ function resetBuffer(state) {
   state[kState] &= ~kBuffered;
 }
 
+// Detach and return whatever is queued behind the in-flight write (their
+// callbacks will never run). For handing the chunks to another sink when this
+// stream is being abandoned, e.g. stdio at process exit.
+function takeBuffered(state) {
+  if ((state[kState] & kBuffered) === 0) return [];
+  const buffered = ArrayPrototypeSlice.$call(state.buffered, state.bufferedIndex);
+  for (let i = 0; i < buffered.length; i++) {
+    state.length -= (state[kState] & kObjectMode) !== 0 ? 1 : buffered[i].chunk.length;
+  }
+  resetBuffer(state);
+  return buffered;
+}
+
 WritableState.prototype.getBuffer = function getBuffer() {
   return (this[kState] & kBuffered) === 0 ? [] : ArrayPrototypeSlice.$call(this.buffered, this.bufferedIndex);
 };
@@ -397,6 +410,7 @@ function Writable(options): void {
 $toClass(Writable, "Writable", Stream);
 
 Writable.WritableState = WritableState;
+Writable.takeBuffered = takeBuffered;
 
 ObjectDefineProperty(Writable, SymbolHasInstance, {
   __proto__: null,

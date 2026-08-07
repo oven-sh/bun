@@ -2503,6 +2503,12 @@ impl ErrName for crate::CrateError {
 
 // ── ScopedDebugWriter ─────────────────────────────────────────────────────
 
+/// True while this thread is inside a `scoped_log!` write (debug builds).
+#[inline]
+pub fn is_inside_scoped_log() -> bool {
+    crate::env::IS_DEBUG && scoped_debug_writer::DISABLE_INSIDE_LOG.get() > 0
+}
+
 pub mod scoped_debug_writer {
     use super::*;
 

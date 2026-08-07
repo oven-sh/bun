@@ -38,6 +38,8 @@ export function getStdioWriteStream(
 ) {
   $assert(fd === 1 || fd === 2, `Expected fd to be 1 or 2, got ${fd}`);
 
+  // Both constructors below sit on the per-VM stdio FileSink for `fd` (via
+  // `Bun.file(fd).writer()`), the same object console.* writes through.
   let stream;
   if (isTTY) {
     const tty = require("node:tty");
@@ -65,54 +67,136 @@ export function getStdioWriteStream(
           // stdout/stderr don't produce readable data, so yield nothing
         })();
       };
-    } else {
-      // File-backed stdio: Node's SyncWriteStream runs end() -> finish ->
-      // destroy -> the _destroy override below -> _undestroy(), which resets
-      // writable state so later writes succeed. autoClose:false disabled that.
-      stream._writableState.autoDestroy = true;
     }
   }
 
-  if (fd === 1 || fd === 2) {
-    stream.destroySoon = stream.destroy;
-    stream._destroy = function (err, cb) {
-      cb(err);
-      this._undestroy();
+  // Node's stdio streams (net.Socket / SyncWriteStream) run with autoDestroy:
+  // end() -> finish -> destroy -> the _destroy override below -> _undestroy()
+  // resets state so later writes succeed, and a failed write goes
+  // errorOrDestroy -> destroy -> _undestroy -> 'error' *every* time instead
+  // of latching on errorEmitted after the first. autoClose:false turned it off.
+  stream._writableState.autoDestroy = true;
 
-      if (!this._writableState.emitClose) {
-        process.nextTick(() => {
-          this.emit("close");
-        });
-      }
-    };
+  // Node terminates on the first unhandled 'error'; Bun keeps running after an
+  // uncaught exception, so a write loop on a dead pipe would otherwise print
+  // one uncaught EPIPE per write. Surface the first, drop the repeats.
+  let unhandledErrorSeen = false;
+  stream._destroy = function (err, cb) {
+    if (err && this.listenerCount("error") === 0) {
+      if (unhandledErrorSeen) err = null;
+      unhandledErrorSeen = true;
+    }
+    cb(err);
+    this._undestroy();
+    updateObserved(this);
 
-    const kFastPath = require("internal/fs/streams").kWriteStreamFastPath;
-    stream._final = function (cb) {
-      try {
-        const sink = this[kFastPath];
-        if (sink && sink !== true) {
-          const result = sink.flush();
-          if ($isPromise(result)) {
-            result.then(
-              () => cb(null),
-              err => cb(err),
-            );
-            return;
-          }
+    if (!this._writableState.emitClose) {
+      process.nextTick(() => {
+        this.emit("close");
+      });
+    }
+  };
+
+  const { kWriteStreamFastPath, kOnPendingWrite } = require("internal/fs/streams");
+  stream._final = function (cb) {
+    try {
+      const sink = this[kWriteStreamFastPath];
+      if (sink && sink !== true) {
+        const result = sink.flush();
+        if ($isPromise(result)) {
+          result.then(
+            () => cb(null),
+            err => cb(err),
+          );
+          return;
         }
-        cb(null);
-      } catch (err) {
-        cb(err);
       }
-    };
+      cb(null);
+    } catch (err) {
+      cb(err);
+    }
+  };
+
+  // console.* writes straight to the shared native sink unless doing so could
+  // be told apart from a `write()` call: while this Writable is corked, is
+  // ending/ended, or has a write in flight (later chunks queue in *its*
+  // buffer, and a native write would jump that queue). Keep the native side
+  // informed; it checks a bitfield, never these JS objects.
+  const setStdioObserved = $newCppFunction("BunProcess.cpp", "jsFunctionSetStdioObserved", 2);
+  let pendingWrite = false;
+  function updateObserved(stream) {
+    const state = stream._writableState;
+    setStdioObserved(
+      fd,
+      (state.corked ? 1 : 0) | (state.ending || state.ended || state.destroyed ? 2 : 0) | (pendingWrite ? 4 : 0),
+    );
   }
+  stream[kOnPendingWrite] = function (pending) {
+    pendingWrite = pending;
+    updateObserved(this);
+  };
+  const { cork, uncork, end, destroy } = stream;
+  stream.cork = function () {
+    cork.$call(this);
+    updateObserved(this);
+  };
+  stream.uncork = function () {
+    uncork.$call(this);
+    updateObserved(this);
+  };
+  stream.end = function (...args) {
+    const ret = end.$apply(this, args);
+    updateObserved(this);
+    return ret;
+  };
+  stream.destroy = stream.destroySoon = function (...args) {
+    const ret = destroy.$apply(this, args);
+    updateObserved(this);
+    return ret;
+  };
 
   stream._isStdio = true;
   stream.fd = fd;
 
-  const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  $assert(underlyingSink);
-  return [stream, underlyingSink];
+  $assert(stream[kWriteStreamFastPath], "stdio stream must be FileSink-backed");
+  return stream;
+}
+
+// A console.* write on the shared stdio sink failed (EPIPE etc.). Node's
+// console swallows write errors, but the stream still emits 'error' for
+// whoever listens; with nobody listening it must not become an uncaught
+// exception (that is what console's once('error', noop) guard is for).
+// https://github.com/nodejs/node/blob/v24.0.0/lib/internal/console/constructor.js#L380-L399
+export function reportStdioSinkError(stream, err) {
+  if (typeof stream?.listenerCount === "function" && stream.listenerCount("error") > 0) {
+    stream.destroy(err);
+  }
+}
+
+// process.exit() / end of program: chunks this stdio Writable had queued in
+// JS behind an in-flight write are handed to the native sink now, so the exit
+// drain (FileSink::drain_sync) writes them instead of dropping them. Chunks
+// held by an explicit, never-released cork() stay held.
+export function flushStdioWriteStreamOnExit(stream) {
+  const state = stream?._writableState;
+  if (!state || state.corked) return;
+  const sink = stream[require("internal/fs/streams").kWriteStreamFastPath];
+  if (!sink || sink === true) return;
+  const buffered = require("internal/streams/writable").takeBuffered(state);
+  for (let i = 0; i < buffered.length; i++) {
+    const { chunk, encoding } = buffered[i];
+    // A failure here (rejected promise: the sink's latched EPIPE/EIO; throw: a
+    // closed sink) was already surfaced by the write ahead of these chunks;
+    // the exit must go on.
+    try {
+      const result = sink.write(
+        typeof chunk === "string" && encoding !== "utf8" && encoding !== "utf-8" && encoding !== "buffer"
+          ? Buffer.from(chunk, encoding)
+          : chunk,
+      );
+      if ($isPromise(result)) result.then(undefined, () => {});
+    } catch {}
+  }
 }
 
 export function getStdinStream(

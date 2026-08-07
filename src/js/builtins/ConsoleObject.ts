@@ -118,22 +118,78 @@ export function asyncIterator(this: Console) {
 export function write(this: Console, input) {
   if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
 
+  // Same routing as console.log: if the console's stdout is something user code
+  // can observe (a worker's port stream, console._stdout = x, a patched
+  // process.stdout.write, ...) go through its write(); otherwise the shared
+  // native stdout sink.
+  var consoleStream = $getByIdDirectPrivate(this, "consoleStream");
+  if (!consoleStream) {
+    consoleStream = $newCppFunction("BunProcess.cpp", "jsFunctionConsoleStream", 1);
+    $putByIdDirectPrivate(this, "consoleStream", consoleStream);
+  }
+  const observed = consoleStream(1);
+  const count = $argumentCount();
+  if (observed) {
+    var wrote = 0;
+    for (var i = 0; i < count; i++) {
+      const chunk = arguments[i];
+      observed.write(chunk);
+      wrote += typeof chunk === "string" ? Buffer.byteLength(chunk) : $toLength(chunk?.byteLength ?? 0);
+    }
+    return wrote;
+  }
+
   var writer = $getByIdDirectPrivate(this, "writer");
   if (!writer) {
-    var length = $toLength(input?.length ?? 0);
-    writer = Bun.stdout.writer({ highWaterMark: length > 65536 ? length : 65536 });
+    // The per-VM stdout sink, shared with console.log / process.stdout.
+    writer = Bun.stdout.writer();
     $putByIdDirectPrivate(this, "writer", writer);
   }
 
   var wrote = writer.write(input);
-
-  const count = $argumentCount();
   for (var i = 1; i < count; i++) {
     wrote += writer.write(arguments[i]);
   }
 
   writer.flush(true);
   return wrote;
+}
+
+// The global console's slow path: user code can observe the write (patched
+// `process.stdout.write`, `console._stdout = other`, corked/ended stream), so
+// deliver the already-formatted message through `stream.write()` exactly like
+// Node's kWriteToConsole with `ignoreErrors: true`.
+// https://github.com/nodejs/node/blob/v24.0.0/lib/internal/console/constructor.js#L280-L322
+$visibility = "Private";
+export function writeToObservedStream(stream, chunk: string) {
+  const noop = () => {};
+  // There may be an error occurring synchronously (e.g. for files or TTYs
+  // on POSIX systems) or asynchronously (e.g. pipes on POSIX systems), so
+  // handle both situations.
+  const isEmitter = typeof stream?.listenerCount === "function" && typeof stream?.once === "function";
+  try {
+    // Add and later remove a noop error handler to catch synchronous errors.
+    if (isEmitter && stream.listenerCount("error") === 0) {
+      stream.once("error", noop);
+    }
+    stream.write(chunk, err => {
+      // Errors that were not already emitted (async _write callback) surface
+      // as an 'error' event; a `once` noop keeps that from becoming an
+      // uncaught exception without swallowing it for other writers.
+      if (err != null && isEmitter && !stream._writableState?.errorEmitted) {
+        if (stream.listenerCount("error") === 0) {
+          stream.once("error", noop);
+        }
+      }
+    });
+  } catch (e: any) {
+    // Console is a debugging utility, so it swallowing errors is not
+    // desirable even in edge cases such as low stack space.
+    if (e?.name === "RangeError" && e?.message === "Maximum call stack size exceeded.") throw e;
+    // Sorry, there's no proper way to pass along the error here.
+  } finally {
+    if (isEmitter) stream.removeListener("error", noop);
+  }
 }
 
 // This is the `console.Console` constructor. It is mostly copied from Node.

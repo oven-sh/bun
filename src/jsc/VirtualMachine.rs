@@ -1463,6 +1463,22 @@ impl VirtualMachine {
         }
     }
 
+    /// Synchronously flush this VM's stdio sinks (fd 1/2). No-op when they were
+    /// never created. Called before anything that must not overtake or discard
+    /// already-accepted `process.stdout`/`stderr` bytes: fatal-error printing
+    /// and exit.
+    #[inline]
+    pub fn drain_stdio(&mut self) {
+        if self
+            .rare_data
+            .as_ref()
+            .is_some_and(|r| r.stdio_sinks.iter().any(Option::is_some))
+        {
+            // SAFETY: `self` is the live per-thread VM.
+            unsafe { crate::rare_data::__bun_stdio_sink_drain(self) };
+        }
+    }
+
     pub fn on_exit(&mut self) {
         // Write CPU profile if profiling was enabled - do this FIRST before any
         // shutdown begins. Grab the config and null it out to make this
@@ -1492,6 +1508,11 @@ impl VirtualMachine {
             self.event_loop_mut().deferred_tasks.run();
             self.is_inside_deferred_task_queue.set(false);
         }
+
+        // Whatever process.stdout/stderr still had queued behind a slow reader
+        // is written now (blocking), like console.log always has been: an exit
+        // must not silently truncate output that was accepted before it.
+        self.drain_stdio();
 
         self.is_shutting_down = true;
 
@@ -2043,20 +2064,8 @@ impl VirtualMachine {
             MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
         }
 
-        // ConsoleObject is self-referential (buffers + adapters) — allocate
-        // stable storage and init in place.
-        // `console.init(Output.rawErrorWriter(), Output.rawWriter())` must
-        // happen BEFORE the pointer is stored/passed; the previous port left
-        // it as raw `MaybeUninit` (UB on first C++ read).
-        let mut console_box: Box<core::mem::MaybeUninit<crate::console_object::ConsoleObject>> =
-            Box::new(core::mem::MaybeUninit::uninit());
-        crate::console_object::ConsoleObject::init_in_place(
-            &mut console_box,
-            bun_core::Output::raw_error_writer(),
-            bun_core::Output::raw_writer(),
-        );
         let console =
-            bun_core::heap::into_raw(console_box).cast::<crate::console_object::ConsoleObject>();
+            bun_core::heap::into_raw(Box::new(crate::console_object::ConsoleObject::new()));
 
         let context_id = opts
             .context_id
@@ -4641,6 +4650,16 @@ impl VirtualMachine {
                     next
                 };
             }
+        }
+        // The stdio sinks carry over (they own the fd state); their JS wrapper
+        // belongs to the outgoing global and must not.
+        if self
+            .rare_data
+            .as_ref()
+            .is_some_and(|r| r.stdio_sinks.iter().any(Option::is_some))
+        {
+            // SAFETY: `self` is the live per-thread VM.
+            unsafe { crate::rare_data::__bun_stdio_sink_release_js(self) };
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.listening_sockets_for_watch_mode.lock().clear();

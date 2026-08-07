@@ -864,6 +864,19 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
 }
 
+// Run an internal builtin whose failure is not the caller's to propagate: a
+// throw is reported like any other uncaught exception.
+static void callReportingException(Zig::GlobalObject* globalObject, JSFunction* fn, const MarkedArgumentBuffer& args)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::call(globalObject, fn, JSC::getCallData(fn), jsUndefined(), args);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    }
+}
+
 extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
@@ -874,6 +887,24 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     if (exitCode > 0)
         process->m_isExitCodeObservable = true;
     dispatchExitInternal(globalObject, process, exitCode);
+
+    // 'exit' handlers may still write; after them, move whatever the stdio
+    // Writables have queued in JS into the native sinks so the exit drain
+    // (FileSink::drain_sync) delivers it. Only for streams that exist.
+    auto& vm = JSC::getVM(globalObject);
+    if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
+        return;
+    JSFunction* flush = nullptr;
+    for (int fd = 1; fd <= 2; ++fd) {
+        JSObject* stream = process->stdioStream(fd);
+        if (!stream)
+            continue;
+        if (!flush)
+            flush = JSFunction::create(vm, globalObject, processObjectInternalsFlushStdioWriteStreamOnExitCodeGenerator(vm), globalObject);
+        MarkedArgumentBuffer args;
+        args.append(stream);
+        callReportingException(globalObject, flush, args);
+    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1716,6 +1747,8 @@ static int persistStandardStream(int fd)
 }
 #endif
 
+extern "C" void bun_restore_stdio();
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1848,6 +1881,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
         }
         savedStdioFlags[fd] = prev;
     }
+
+    // The new image gets our stdio; hand it over in the state we found it
+    // (termios, O_NONBLOCK), exactly as a normal exit would.
+    bun_restore_stdio();
 
     int savedErrno;
 
@@ -2702,7 +2739,6 @@ enum class BunProcessStdinFdType : int32_t {
 };
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
-extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2725,31 +2761,244 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
         return jsUndefined();
     }
 
-    ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
-    JSC::JSArray* resultObject = uncheckedDowncast<JSC::JSArray>(result);
+    // Everything about how bytes reach fd 1/2 (sync vs. queued, fd flags,
+    // ordering against console.*) is decided by the per-VM stdio FileSink the
+    // stream was built over; see FileSink::create_stdio.
+    if (JSObject* streamObject = result.getObject())
+        uncheckedDowncast<Process>(processObject)->setStdioStream(vm, fd, streamObject);
+    return result;
+}
 
-    // process.stdout and process.stderr differ from other Node.js streams in important ways:
-    // 1. They are used internally by console.log() and console.error(), respectively.
-    // 2. Writes may be synchronous depending on what the stream is connected to and whether the system is Windows or POSIX:
-    // Files: synchronous on Windows and POSIX
-    // TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
-    // Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
-    bool forceSync = false;
-#if OS(WINDOWS)
-    forceSync = fdType == BunProcessStdinFdType::file || fdType == BunProcessStdinFdType::pipe;
-#else
-    // Note: files are always sync anyway.
-    // forceSync = fdType == BunProcessStdinFdType::file || bun_stdio_tty[fd];
+void Process::setStdioStream(JSC::VM& vm, int fd, JSObject* stream)
+{
+    ASSERT(fd == 1 || fd == 2);
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    m_stdioStream[slot].set(vm, this, stream);
+    m_stdioPristineStructureID[slot] = stream->structureID();
+    // The O(1) "is `write` still ours" test in consoleStream() is a structure
+    // compare, which only works if a pristine stream has no *own* `write`
+    // (adding one transitions the structure). See internal/fs/streams.ts.
+    ASSERT_WITH_MESSAGE(stream->getDirectOffset(vm, WebCore::builtinNames(vm).writePublicName()) == invalidOffset, "stdio stream must inherit write() from its prototype");
+}
 
-    // TODO: once console.* is wired up to write/read through the same buffering mechanism as FileSink for process.stdout, process.stderr, we can make this non-blocking for sockets on POSIX.
-    // Until then, we have to force it to be sync EVEN for sockets or else console.log() may flush at a different time than process.stdout.write.
-    forceSync = true;
-#endif
-    if (forceSync) {
-        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+void Process::setConsoleStream(JSC::VM& vm, int fd, JSValue value)
+{
+    ASSERT(fd == 1 || fd == 2);
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    if (value.isEmpty() || value.isUndefined() || (m_stdioStream[slot] && value == m_stdioStream[slot].get())) {
+        // Rebinding to Bun's own stream (or clearing) puts the fast path back.
+        m_consoleStreamState[slot] = ConsoleStreamState::Native;
+        m_consoleStream[slot].clear();
+        return;
     }
+    m_consoleStreamState[slot] = ConsoleStreamState::Custom;
+    m_consoleStream[slot].set(vm, this, value);
+}
 
-    return resultObject->getIndex(globalObject, 0);
+JSValue Process::consoleStream(JSC::JSGlobalObject* globalObject, int fd)
+{
+    ASSERT(fd == 1 || fd == 2);
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    auto& vm = JSC::getVM(globalObject);
+
+    switch (m_consoleStreamState[slot]) {
+    case ConsoleStreamState::Custom:
+        return m_consoleStream[slot].get();
+    case ConsoleStreamState::Unresolved: {
+        // Node binds `console._stdout` to `process.stdout` on first use and
+        // caches it. If nobody has touched `process.stdout` yet the lazy
+        // property is unreified and would produce our own stream, so bind
+        // native *without* building the JS object; if user code already put
+        // something else there, that is what the console is bound to for good.
+        // https://github.com/nodejs/node/blob/v24.0.0/lib/internal/console/constructor.js#L205-L234
+        const Identifier& name = fd == 1 ? WebCore::builtinNames(vm).stdoutPublicName() : WebCore::builtinNames(vm).stderrPublicName();
+        unsigned attributes = 0;
+        JSValue existing;
+        if (invalidOffset != structure()->get(vm, name, attributes)) {
+            if (attributes & PropertyAttribute::Accessor) {
+                // `Object.defineProperty(process, "stdout", { get })`: do the
+                // one [[Get]] Node's lazy binding would. May throw.
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                existing = get(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, {});
+            } else {
+                existing = getDirect(vm, name);
+            }
+        }
+        if (existing && existing.isObject() && (!m_stdioStream[slot] || existing != m_stdioStream[slot].get())) {
+            m_consoleStreamState[slot] = ConsoleStreamState::Custom;
+            m_consoleStream[slot].set(vm, this, existing);
+            return existing;
+        }
+        m_consoleStreamState[slot] = ConsoleStreamState::Native;
+        [[fallthrough]];
+    }
+    case ConsoleStreamState::Native: {
+        JSObject* stream = m_stdioStream[slot].get();
+        if (!stream)
+            return {}; // never materialised: nothing can be observing it
+        if (m_stdioObserved[slot])
+            return stream;
+        // A dictionary structure no longer changes ID per added property, so
+        // it can't vouch for "no own write" — look every time (still O(1)).
+        if (stream->structureID() == m_stdioPristineStructureID[slot] && !stream->structure()->isDictionary()) [[likely]]
+            return {};
+        // Some own property was added/removed. If it wasn't `write`, adopt the
+        // new structure as pristine so the next call is one compare again.
+        if (stream->getDirectOffset(vm, WebCore::builtinNames(vm).writePublicName()) != invalidOffset)
+            return stream;
+        m_stdioPristineStructureID[slot] = stream->structureID();
+        return {};
+    }
+    }
+    return {};
+}
+
+JSValue Process::consoleStreamForGetter(JSC::JSGlobalObject* globalObject, int fd)
+{
+    ASSERT(fd == 1 || fd == 2);
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    auto& vm = JSC::getVM(globalObject);
+    if (m_consoleStreamState[slot] == ConsoleStreamState::Unresolved) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        (void)consoleStream(globalObject, fd);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (m_consoleStreamState[slot] == ConsoleStreamState::Custom)
+        return m_consoleStream[slot].get();
+    // Native: the real stream object (materialising it is fine here — the
+    // caller asked for it by name).
+    return get(globalObject, fd == 1 ? WebCore::builtinNames(vm).stdoutPublicName() : WebCore::builtinNames(vm).stderrPublicName());
+}
+
+// Empty: use the native sink. Otherwise the stream to `write()` to. `*threw`
+// is set (and empty returned) if user code made `process.stdout` a throwing
+// getter and this was the console's first use.
+extern "C" JSC::EncodedJSValue Bun__Process__consoleStream(Zig::GlobalObject* globalObject, int32_t fd, bool* threw)
+{
+    if (!globalObject->hasProcessObject()) [[unlikely]]
+        return JSValue::encode({});
+    auto* process = globalObject->processObject();
+    if (!process->consoleStreamIsResolved(fd)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        JSValue result = process->consoleStream(globalObject, fd);
+        if (scope.exception()) [[unlikely]] {
+            *threw = true;
+            return JSValue::encode({});
+        }
+        RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    }
+    return JSValue::encode(process->consoleStream(globalObject, fd));
+}
+
+// The console's JS slow path: `stream.write(chunk)` with Node's kWriteToConsole
+// error handling. `chunk` is one fully formatted message as a JS string.
+extern "C" void Bun__Console__writeToStream(Zig::GlobalObject* globalObject, JSC::EncodedJSValue stream, JSC::EncodedJSValue chunk)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSFunction* fn = globalObject->processObject()->consoleWriteFunction();
+    JSC::MarkedArgumentBuffer args;
+    args.append(JSValue::decode(stream));
+    args.append(JSValue::decode(chunk));
+    JSC::call(globalObject, fn, JSC::getCallData(fn), jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
+// A console.* write on the shared stdio sink failed terminally (EPIPE, ...):
+// deliver it as 'error' on our process.stdout/stderr object if that exists and
+// is listened to (processObjectInternalsReportStdioSinkError decides).
+extern "C" void Bun__Process__reportStdioSinkError(Zig::GlobalObject* globalObject, int32_t fd, JSC::EncodedJSValue err)
+{
+    if (!globalObject->hasProcessObject()) [[unlikely]]
+        return;
+    JSObject* stream = globalObject->processObject()->stdioStream(fd);
+    if (!stream)
+        return;
+    auto& vm = JSC::getVM(globalObject);
+    // A notification, not part of the console call's contract: a throwing
+    // 'error' listener is reported like any other uncaught exception rather
+    // than surfacing out of console.log().
+    JSFunction* fn = JSFunction::create(vm, globalObject, processObjectInternalsReportStdioSinkErrorCodeGenerator(vm), globalObject);
+    MarkedArgumentBuffer args;
+    args.append(stream);
+    args.append(JSValue::decode(err));
+    callReportingException(globalObject, fn, args);
+}
+
+// (fd) -> the stream console output for `fd` must go through, or undefined
+// when the native sink may be used. Builtin-JS face of Process::consoleStream.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionConsoleStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    int32_t fd = callFrame->argument(0).asInt32();
+    ASSERT(fd == 1 || fd == 2);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue stream = globalObject->processObject()->consoleStream(globalObject, fd);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(stream ? stream : jsUndefined());
+}
+
+// (mask, publish) — see m_consoleChannelMask.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetConsoleChannels, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* publish = dynamicDowncast<JSFunction>(callFrame->argument(1));
+    ASSERT(publish);
+    globalObject->processObject()->setConsoleChannels(JSC::getVM(globalObject), static_cast<uint8_t>(callFrame->argument(0).toUInt32(lexicalGlobalObject)), publish);
+    return JSValue::encode(jsUndefined());
+}
+
+// console.clear() honours the console's *stream's* `isTTY` (Node checks
+// `this._stdout.isTTY`), so hand back whatever object that is if one exists;
+// empty means "nobody has a stream object, use the real fd".
+extern "C" JSC::EncodedJSValue Bun__Process__consoleStreamObject(Zig::GlobalObject* globalObject, int32_t fd, bool* threw)
+{
+    if (!globalObject->hasProcessObject()) [[unlikely]]
+        return JSValue::encode({});
+    auto* process = globalObject->processObject();
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue custom = process->consoleStream(globalObject, fd);
+    if (scope.exception()) [[unlikely]] {
+        *threw = true;
+        return JSValue::encode({});
+    }
+    if (custom)
+        RELEASE_AND_RETURN(scope, JSValue::encode(custom));
+    if (JSObject* stream = process->stdioStream(fd))
+        return JSValue::encode(stream);
+    return JSValue::encode({});
+}
+
+extern "C" void Bun__Process__rawDebug(JSC::JSGlobalObject*, const JSC::EncodedJSValue* values, size_t count);
+
+// process._rawDebug(...args): util.format the args and write straight to fd 2,
+// skipping process.stderr so it works when that stream is broken or replaced.
+// https://github.com/nodejs/node/blob/v24.0.0/lib/internal/process/per_thread.js#L118-L120
+JSC_DEFINE_HOST_FUNCTION(Process_functionRawDebug, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    Bun__Process__rawDebug(globalObject, reinterpret_cast<const JSC::EncodedJSValue*>(callFrame->addressOfArgumentsStart()), callFrame->argumentCount());
+    return JSValue::encode(jsUndefined());
+}
+
+// (fd, bits) — see m_stdioObserved.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetStdioObserved, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    int32_t fd = callFrame->argument(0).asInt32();
+    ASSERT(fd == 1 || fd == 2);
+    globalObject->processObject()->setStdioObserved(fd, static_cast<uint8_t>(callFrame->argument(1).toUInt32(lexicalGlobalObject)));
+    return JSValue::encode(jsUndefined());
+}
+
+// (fd, stream | undefined) — worker_threads rebinding of the native console.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetConsoleStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    int32_t fd = callFrame->argument(0).asInt32();
+    ASSERT(fd == 1 || fd == 2);
+    globalObject->processObject()->setConsoleStream(JSC::getVM(globalObject), fd, callFrame->argument(1));
+    return JSValue::encode(jsUndefined());
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -3415,6 +3664,11 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
+    for (unsigned i = 0; i < 2; ++i) {
+        visitor.append(thisObject->m_consoleStream[i]);
+        visitor.append(thisObject->m_stdioStream[i]);
+    }
+    visitor.append(thisObject->m_consolePublish);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
@@ -3422,6 +3676,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
     thisObject->m_emitHelperFunction.visit(visitor);
+    thisObject->m_consoleWriteFunction.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);
@@ -4483,7 +4738,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _kill                            Process_functionReallyKill                          Function 2
   _linkedBinding                   Process_stubEmptyFunction                           Function 0
   _preload_modules                 Process_stubEmptyArray                              PropertyCallback
-  _rawDebug                        Process_stubEmptyFunction                           Function 0
+  _rawDebug                        Process_functionRawDebug                            Function 0
   _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
@@ -4596,6 +4851,9 @@ void Process::finishCreation(JSC::VM& vm)
     });
     m_emitHelperFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
         init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, "emit"_s, Process_functionEmitHelper, ImplementationVisibility::Private));
+    });
+    m_consoleWriteFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), consoleObjectWriteToObservedStreamCodeGenerator(init.vm), init.owner->globalObject()));
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);

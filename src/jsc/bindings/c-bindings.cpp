@@ -497,12 +497,53 @@ static termios termios_to_restore_later[3];
 // from normal execution; sig_atomic_t is the only integral type POSIX
 // guarantees can be accessed atomically across that boundary.
 extern "C" volatile sig_atomic_t bun_stdio_modified[3] = { 0, 0, 0 };
+
+// Startup snapshot of each stdio fd's file status flags and identity, so the
+// O_NONBLOCK bit can be put back on exit if we (or a child sharing the open
+// file description) changed it. Same contract as Node's ResetStdio():
+// https://github.com/nodejs/node/blob/v24.0.0/src/node.cc#L662-L722
+static struct {
+    int flags; // fcntl(F_GETFL) at startup, or -1
+    dev_t dev;
+    ino_t ino;
+} bun_stdio_startup_state[3] = { { -1, 0, 0 }, { -1, 0, 0 }, { -1, 0, 0 } };
+
+static void bun_restore_stdio_nonblock()
+{
+    for (int fd = 0; fd < 3; fd++) {
+        auto& s = bun_stdio_startup_state[fd];
+        if (s.flags == -1)
+            continue;
+
+        struct stat st;
+        if (fstat(fd, &st) == -1)
+            continue; // Program closed the file descriptor.
+        if (st.st_dev != s.dev || st.st_ino != s.ino)
+            continue; // Program reopened the file descriptor as something else.
+
+        int flags;
+        do
+            flags = fcntl(fd, F_GETFL);
+        while (flags == -1 && errno == EINTR);
+        if (flags == -1)
+            continue;
+
+        if ((flags ^ s.flags) & O_NONBLOCK) {
+            flags = (flags & ~O_NONBLOCK) | (s.flags & O_NONBLOCK);
+            int err;
+            do
+                err = fcntl(fd, F_SETFL, flags);
+            while (err == -1 && errno == EINTR);
+        }
+    }
+}
 #endif
 
 extern "C" void bun_restore_stdio()
 {
 
 #if !OS(WINDOWS)
+    bun_restore_stdio_nonblock();
 
     // Only suppress the restore when Bun is a pipeline producer (stdout is a
     // pipe, not a TTY) and it didn't touch termios itself. That's the #29592
@@ -589,7 +630,7 @@ extern "C" void bun_initialize_process()
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
     int devNullFd_ = -1;
-    bool anyTTYs = false;
+    bool restoreOnSignal = false;
 
     const auto setDevNullFd = [&](int target_fd) -> void {
         bun_is_stdio_null[target_fd] = 1;
@@ -621,8 +662,27 @@ extern "C" void bun_initialize_process()
             if (errno == EBADF) [[unlikely]] {
                 // the fd is invalid, let's make sure it's always valid
                 setDevNullFd(fd);
+                continue;
             }
-        } else {
+        }
+
+        {
+            struct stat st;
+            int flags;
+            do
+                flags = fcntl(fd, F_GETFL);
+            while (flags == -1 && errno == EINTR);
+            if (flags != -1 && fstat(fd, &st) == 0) {
+                bun_stdio_startup_state[fd] = { flags, st.st_dev, st.st_ino };
+                // A FIFO is the one stdio kind whose O_NONBLOCK bit we may flip
+                // (FileSink::stdio_go_nonblocking), so make sure the signal-exit
+                // path restores it.
+                if (S_ISFIFO(st.st_mode))
+                    restoreOnSignal = true;
+            }
+        }
+
+        if (result != 0) {
             bun_stdio_tty[fd] = 1;
             int err = 0;
 
@@ -631,7 +691,7 @@ extern "C" void bun_initialize_process()
             } while (err == -1 && errno == EINTR);
 
             if (err == 0) [[likely]] {
-                anyTTYs = true;
+                restoreOnSignal = true;
             }
         }
     }
@@ -641,8 +701,8 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
-    // Restore TTY state on exit
-    if (anyTTYs) {
+    // Restore TTY state / O_NONBLOCK on exit
+    if (restoreOnSignal) {
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
         sigemptyset(&sa.sa_mask);
@@ -650,8 +710,15 @@ extern "C" void bun_initialize_process()
         sa.sa_flags = SA_RESETHAND;
         sa.sa_handler = onExitSignal;
 
-        sigaction(SIGTERM, &sa, nullptr);
-        sigaction(SIGINT, &sa, nullptr);
+        for (int sig : { SIGTERM, SIGINT }) {
+            // An inherited SIG_IGN (`trap '' INT TERM; bun ... | cat`) means the
+            // signal can't terminate us, so there is nothing to restore on it —
+            // and replacing it would make us (and our children) killable again.
+            struct sigaction current;
+            if (sigaction(sig, nullptr, &current) == 0 && current.sa_handler == SIG_IGN)
+                continue;
+            sigaction(sig, &sa, nullptr);
+        }
     }
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {

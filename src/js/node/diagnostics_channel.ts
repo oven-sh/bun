@@ -62,6 +62,7 @@ function markActive(channel) {
   ObjectSetPrototypeOf.$call(null, channel, ActiveChannel.prototype);
   channel._subscribers = [];
   channel._stores = new SafeMap();
+  updateConsoleChannel(channel, true);
 }
 
 function maybeMarkInactive(channel) {
@@ -70,7 +71,31 @@ function maybeMarkInactive(channel) {
     ObjectSetPrototypeOf.$call(null, channel, Channel.prototype);
     channel._subscribers = undefined;
     channel._stores = undefined;
+    updateConsoleChannel(channel, false);
   }
+}
+
+// The global console publishes its arguments on these channels before
+// formatting, but only while somebody is subscribed:
+// https://github.com/nodejs/node/blob/v24.0.0/lib/internal/console/constructor.js#L66-L70
+// The console is native, so tell it which of the five currently have
+// subscribers (a bitmask it can test for free) and hand it one function to
+// publish through.
+const kConsoleChannelNames = ["console.log", "console.warn", "console.error", "console.debug", "console.info"];
+let consoleChannelMask = 0;
+let setConsoleChannels;
+function publishToConsoleChannel(index: number, args: unknown[]) {
+  channels.get(kConsoleChannelNames[index])?.publish(args);
+}
+function updateConsoleChannel(channel, active: boolean) {
+  const index = kConsoleChannelNames.indexOf(channel.name);
+  if (index === -1) return;
+  const bit = 1 << index;
+  const next = active ? consoleChannelMask | bit : consoleChannelMask & ~bit;
+  if (next === consoleChannelMask) return;
+  consoleChannelMask = next;
+  setConsoleChannels ??= $newCppFunction("BunProcess.cpp", "jsFunctionSetConsoleChannels", 2);
+  setConsoleChannels(consoleChannelMask, publishToConsoleChannel);
 }
 
 function defaultTransform(data) {

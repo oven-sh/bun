@@ -1799,6 +1799,16 @@ impl BlobExt for Blob {
             );
         }
 
+        // fd 1 / fd 2: every writer on this VM shares the one stdio sink, so
+        // `Bun.stdout.writer()`, `process.stdout` and `console.log` can never
+        // reorder or hold separate queues (and never open a second dup / flip
+        // the description's flags a second time).
+        if let Some(stdio_fd) = stdio_fd_of_store(global_this, &store) {
+            if let Some(js) = webcore::file_sink::stdio_sink_js(global_this, stdio_fd) {
+                return Ok(js);
+            }
+        }
+
         #[cfg(windows)]
         {
             use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -4985,6 +4995,33 @@ pub(crate) fn write_file_with_source_destination(
 /// - If `path_or_blob` is a detached blob
 /// ## Panics
 /// - If `path_or_blob` is a `Blob` backed by a byte store
+/// `Some(Fd::stdout()|stderr())` when `store` is this VM's stdout/stderr store
+/// or any fd-backed store on fd 1/2 — i.e. writes to it belong to the stdio sink.
+pub(crate) fn stdio_fd_of_store(global_this: &JSGlobalObject, store: &Store) -> Option<Fd> {
+    let store::Data::File(ref file) = store.data else {
+        return None;
+    };
+    let PathOrFileDescriptor::Fd(fd) = file.pathlike else {
+        return None;
+    };
+    match fd.stdio_tag() {
+        Some(bun_core::Stdio::StdOut) => return Some(Fd::stdout()),
+        Some(bun_core::Stdio::StdErr) => return Some(Fd::stderr()),
+        _ => {}
+    }
+    // SAFETY: bun_vm() never returns null for a Bun-owned global.
+    let vm = global_this.bun_vm().as_mut();
+    let rare = vm.rare_data.as_ref()?;
+    let store_ptr = core::ptr::from_ref(store).cast::<c_void>().cast_mut();
+    if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+        Some(Fd::stdout())
+    } else if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+        Some(Fd::stderr())
+    } else {
+        None
+    }
+}
+
 pub(crate) fn write_file_internal(
     global_this: &JSGlobalObject,
     path_or_blob_: &mut PathOrBlob,
@@ -5028,6 +5065,62 @@ pub(crate) fn write_file_internal(
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Cannot create a directory for a file descriptor"
             )));
+        }
+    }
+
+    // Bun.write(Bun.stdout | Bun.stderr, data): through the stdio sink, so it is
+    // ordered with console.* / process.stdout and gets the same EAGAIN handling
+    // (and never lands on the thread pool, whose LIFO queue reversed
+    // back-to-back writes to a file-backed stdout).
+    if let PathOrBlob::Blob(ref b) = *path_or_blob {
+        if b.offset.get() == 0 && !b.is_s3() {
+            let stdio_fd = b
+                .store
+                .get()
+                .as_deref()
+                .and_then(|st| stdio_fd_of_store(global_this, st));
+            if let Some(stdio_fd) = stdio_fd {
+                // SAFETY: bun_vm() is the live VM owning `global_this`.
+                let vm = global_this.bun_vm().as_mut();
+                if let Some(sink) = webcore::file_sink::stdio_sink_for(vm, stdio_fd) {
+                    // SAFETY: canonical live pointer held by RareData.
+                    if let Some((result, accepted)) =
+                        unsafe { (*sink).write_js_value(global_this, data, true)? }
+                    {
+                        // `Bun.write` resolves once the bytes are written, with
+                        // *this* call's byte count — not whenever (and with
+                        // whatever total) the shared sink's queue drains.
+                        let written = match result {
+                            streams::Writable::Err(err) => Err(err),
+                            other => {
+                                if matches!(other, streams::Writable::Pending(_)) {
+                                    // Settled right here, not through the pending promise.
+                                    // SAFETY: as above.
+                                    unsafe { (*sink).uncredit_pending(accepted) };
+                                }
+                                // SAFETY: as above.
+                                unsafe { webcore::FileSink::drain_sync(sink) }.map(|()| accepted)
+                            }
+                        };
+                        return Ok(match written {
+                            Ok(n) => JSPromise::resolved_promise_value(
+                                global_this,
+                                JSValue::js_number(n as f64),
+                            ),
+                            Err(err) => {
+                                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                    global_this,
+                                    err.to_js(global_this),
+                                )
+                            }
+                        });
+                    }
+                    // A Blob / stream source takes the general path below; at
+                    // least keep it behind anything already queued.
+                    // SAFETY: as above.
+                    let _ = unsafe { webcore::FileSink::drain_sync(sink) };
+                }
+            }
         }
     }
 

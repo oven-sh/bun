@@ -468,8 +468,11 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   if (fastPath) {
     this[kWriteStreamFastPath] = fd != null ? fastWriter : true;
     this._write = underscoreWriteFast;
-    this._writev = undefined;
-    this.write = writeFast as any;
+    this._writev = underscoreWritevFast;
+    // The FileSink encodes strings straight into its own buffer, so skip the
+    // Buffer.from() round-trip. node's process.stdout/stderr (net.Socket) also
+    // run with decodeStrings: false.
+    options.decodeStrings = false;
     if (fd != null) {
       // Already-open fd (stdio): skip the async _construct round-trip so the
       // stream is born constructed, like node's stdio streams (net.Socket /
@@ -587,13 +590,27 @@ function _write(data, encoding, cb) {
 }
 writeStreamPrototype._write = _write;
 
-function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {
+// `_write` for FileSink-backed streams (process.stdout/stderr, tty.WriteStream,
+// child.stdin). Hands the chunk to the fd now: completes synchronously when it
+// all went out, so back-to-back writes don't pile up in the Writable buffer,
+// and on the sink's promise when the fd is backed up — which is what keeps
+// writableLength / writableNeedDrain / 'drain' honest. `kOnPendingWrite`, if the owner set one,
+// hears about a write going async and settling (process.stdout uses it to
+// keep console.* from overtaking chunks queued behind that write).
+const kOnPendingWrite = Symbol("kOnPendingWrite");
+// `FileSink.prototype.write` coalesces small chunks until end of tick (right
+// for a batching `Bun.file(fd).writer()`); a stream's `_write` wants the
+// syscall now, with the same return contract.
+const fileSinkWriteNow = $newRustFunction("runtime/webcore/FileSink.rs", "writeNow", 2);
+function underscoreWriteFast(this: FSStream, chunk: any, encoding: any, cb: any) {
   let fileSink = this[kWriteStreamFastPath];
   if (!fileSink) {
     // When the fast path is disabled, the write function gets reset.
     this._write = _write;
-    return this._write(data, encoding, cb);
+    return this._write(chunk, encoding, cb);
   }
+
+  let maybePromise;
   try {
     if (fileSink === true) {
       fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
@@ -601,83 +618,59 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
       this.fd = fileSink._getFd();
     }
 
-    const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise)) {
-      maybePromise.then(
-        () => {
-          if (cb) cb(null);
-          this.emit("drain");
-        },
-        err => {
-          if (cb) cb(err);
-          require("internal/streams/destroy").errorOrDestroy(this, err);
-        },
-      );
-      return false;
-    } else {
-      if (cb) process.nextTick(cb, null);
-      return true;
+    // decodeStrings is off for this path: the sink encodes UTF-8 itself, but
+    // every other encoding has to be decoded here.
+    if (typeof chunk === "string" && encoding !== "utf8" && encoding !== "utf-8") {
+      chunk = Buffer.from(chunk, encoding);
     }
+
+    maybePromise = fileSinkWriteNow(fileSink, chunk);
   } catch (e) {
-    if (cb) process.nextTick(cb, e);
-    require("internal/streams/destroy").errorOrDestroy(this, e, true);
-    return false;
+    cb(e);
+    return;
   }
+
+  settleFastWrite(this, maybePromise, cb);
 }
 
-// This function implementation is not correct.
-const writablePrototypeWrite = Writable.prototype.write;
-const kWriteMonkeyPatchDefense = Symbol("!");
-function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
-  if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding, cb);
-
-  // After end()/destroy() the Writable contract requires write() to fail with
-  // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
-  const state = this._writableState;
-  if (state !== undefined && (state.ending || state.destroyed)) {
-    return writablePrototypeWrite.$call(this, data, encoding, cb);
-  }
-
-  if (typeof encoding === "function") {
-    cb = encoding;
-    encoding = undefined;
-  }
-  if (typeof cb !== "function") {
-    cb = streamNoop;
-  }
-
-  const fileSink = this[kWriteStreamFastPath];
-  if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise)) {
-      // Two-arg then(): a throw from the fulfillment handler must not be
-      // mistaken for a write failure.
+function settleFastWrite(stream, maybePromise, cb) {
+  if ($isPromise(maybePromise)) {
+    const onPending = stream[kOnPendingWrite];
+    if (onPending) {
+      onPending.$call(stream, true);
       maybePromise.then(
         () => {
-          this.emit("drain"); // Emit drain event
+          onPending.$call(stream, false);
           cb(null);
         },
         err => {
+          onPending.$call(stream, false);
           cb(err);
-          // Node.js onwriteError: callback AND destroy are both invoked; the
-          // callback is additive, not a replacement for the 'error' event.
-          require("internal/streams/destroy").errorOrDestroy(this, err);
         },
       );
-      return false; // Indicate backpressure
     } else {
-      cb(null);
-      return true; // No backpressure
+      maybePromise.then(() => cb(null), cb);
     }
   } else {
-    const result: any = this._write(data, encoding, cb);
-    if (this.write === writeFast) {
-      this.write = writablePrototypeWrite;
-    } else {
-      this[kWriteMonkeyPatchDefense] = true;
-    }
-    return result;
+    cb(null);
   }
+}
+
+// `_writev` for the same streams. A corked burst (and a backlog drained after
+// backpressure) reaches the fd as one write — what cork() is for; node's stdio
+// over a pipe coalesces the same burst into a single writev(2).
+function underscoreWritevFast(this: FSStream, data: any, cb: any) {
+  const len = data.length;
+  if (len === 1) {
+    const { chunk, encoding } = data[0];
+    return underscoreWriteFast.$call(this, chunk, encoding, cb);
+  }
+  const chunks = new Array(len);
+  for (let i = 0; i < len; i++) {
+    const { chunk, encoding } = data[i];
+    chunks[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+  }
+  return underscoreWriteFast.$call(this, Buffer.concat(chunks), "buffer", cb);
 }
 
 writeStreamPrototype._writev = function (data, cb) {
@@ -808,5 +801,6 @@ export default {
   ReadStream,
   WriteStream,
   kWriteStreamFastPath,
+  kOnPendingWrite,
   writableFromFileSink,
 };

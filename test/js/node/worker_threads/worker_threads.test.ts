@@ -1756,3 +1756,61 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
 });
+
+// A worker's console goes through its process.stdout/stderr (port-backed
+// Writables that post to the parent, as in Node) — by rebinding the *native*
+// console's sink, not by swapping globalThis.console for a JS Console. So the
+// worker keeps Bun's console (formatting, console.write, inspector) while its
+// output still lands in worker.stdout / the parent's process.stdout.
+describe.concurrent("worker console", () => {
+  test("keeps Bun's console surface and formatting; {stdout,stderr: true} captures it", async () => {
+    const worker = new Worker(
+      `
+      const util = require("node:util");
+      console.log(typeof console.write, typeof console[Symbol.asyncIterator]);
+      console.log(new Map([["k", "v"]]));                       // Bun: multi-line, JSON-ish keys
+      console.log(Bun.inspect(new Map([["k", "v"]])) === util.inspect(new Map([["k", "v"]])) ? "util-fmt" : "bun-fmt");
+      console.error("to stderr");
+      console.write("raw ");                                     // Bun API, still through worker stdout
+      process.stdout.write("write\\n");
+      `,
+      { eval: true, stdout: true, stderr: true },
+    );
+    let out = "",
+      err = "";
+    worker.stdout.setEncoding("utf8").on("data", c => (out += c));
+    worker.stderr.setEncoding("utf8").on("data", c => (err += c));
+    await once(worker, "exit");
+    expect({ out, err }).toEqual({
+      out: 'function function\nMap(1) {\n  "k": "v",\n}\nbun-fmt\nraw write\n',
+      err: "to stderr\n",
+    });
+  });
+
+  test("without {stdout: true} it flows into the parent's process.stdout, so patching that captures it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const seen = [];
+        const w0 = process.stdout.write;
+        process.stdout.write = function (c) { seen.push(String(c)); return true; };
+        const w = new Worker('console.log("from worker"); process.stdout.write("write from worker\\\\n");', { eval: true });
+        w.on("exit", () => {
+          process.stdout.write = w0;
+          console.log(JSON.stringify(seen));
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('["from worker\\n","write from worker\\n"]\n');
+    expect(exitCode).toBe(0);
+  });
+});

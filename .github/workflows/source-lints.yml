@@ -22,9 +22,6 @@ on:
       - "test/internal/source-lints/**"
       - ".github/workflows/source-lints.yml"
       - ".github/actions/setup-bun/**"
-      - "tsconfig.json"
-      - "src/**/tsconfig.json"
-      - "packages/bun-types/tsconfig.json"
   pull_request:
     paths:
       - "src/**/*.rs"
@@ -37,9 +34,6 @@ on:
       - "test/internal/source-lints/**"
       - ".github/workflows/source-lints.yml"
       - ".github/actions/setup-bun/**"
-      - "tsconfig.json"
-      - "src/**/tsconfig.json"
-      - "packages/bun-types/tsconfig.json"
   merge_group:
 
 env:

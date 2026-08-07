@@ -1882,6 +1882,8 @@ impl Task {
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name =
                             strings::StringOrTinyString::init(dep_name);
+                        bin_linker.err = None;
+                        bin_linker.skipped_due_to_missing_bin = false;
 
                         if manager_ref.options.log_level.is_verbose() {
                             bun_core::pretty_errorln!(
@@ -2377,6 +2379,8 @@ impl<'a> Installer<'a> {
             if bin_linker.should_retry_without_native_binlink() {
                 bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
+                bin_linker.err = None;
+                bin_linker.skipped_due_to_missing_bin = false;
 
                 if self.manager().options.log_level.is_verbose() {
                     bun_core::pretty_errorln!(

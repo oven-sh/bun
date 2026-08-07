@@ -162,6 +162,32 @@ export function setContextHandler(ctx: TestContext, newHandler: Handler): void {
   ctx.handler = newHandler;
 }
 
+function buildVersions(
+  info: DummyRegistryInfo,
+  name: string,
+  tarballPrefix: string,
+): { versions: Record<string, Pkg>; latestVersion: string | undefined } {
+  const versions: Record<string, Pkg> = {};
+  // Without an explicit `info.latest`, `latest` resolves to the last valid
+  // version key in object insertion order, not the highest version.
+  let latestVersion: string | undefined;
+  for (const version in info) {
+    if (!/^[0-9]/.test(version)) continue;
+    const metadata = info[version];
+    if (!metadata || typeof metadata !== "object") continue;
+    latestVersion = version;
+    versions[version] = {
+      name,
+      version,
+      dist: {
+        tarball: `${tarballPrefix}-${metadata.as ?? version}.tgz`,
+      },
+      ...metadata,
+    };
+  }
+  return { versions, latestVersion };
+}
+
 /**
  * Creates a dummy registry handler for a specific test context.
  * This is the concurrent-safe version that uses the context's registry_url for tarballs.
@@ -214,22 +240,7 @@ export function dummyRegistryForContext(
     const pathAfterPrefix = urlObj.pathname.replace(`/${ctx.id}/`, "/");
     const name = pathAfterPrefix.slice(1); // Remove leading slash
 
-    const versions: Record<string, Pkg> = {};
-    let latestVersion: string | undefined;
-    for (const version in info) {
-      if (!/^[0-9]/.test(version)) continue;
-      const metadata = info[version];
-      if (!metadata || typeof metadata !== "object") continue;
-      latestVersion = version;
-      versions[version] = {
-        name,
-        version,
-        dist: {
-          tarball: `${ctx.registry_url}${name}-${metadata.as ?? version}.tgz`,
-        },
-        ...metadata,
-      };
-    }
+    const { versions, latestVersion } = buildVersions(info, name, `${ctx.registry_url}${name}`);
 
     return new Response(
       JSON.stringify({
@@ -290,22 +301,7 @@ export function dummyRegistry(
     expect(await request.text()).toBe("");
 
     const name = url.slice(url.indexOf("/", root_url.length) + 1);
-    const versions: Record<string, Pkg> = {};
-    let latestVersion: string | undefined;
-    for (const version in info) {
-      if (!/^[0-9]/.test(version)) continue;
-      const metadata = info[version];
-      if (!metadata || typeof metadata !== "object") continue;
-      latestVersion = version;
-      versions[version] = {
-        name,
-        version,
-        dist: {
-          tarball: `${url}-${metadata.as ?? version}.tgz`,
-        },
-        ...metadata,
-      };
-    }
+    const { versions, latestVersion } = buildVersions(info, name, url);
 
     return new Response(
       JSON.stringify({

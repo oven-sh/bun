@@ -181,6 +181,7 @@ public:
         : m_globalObject(globalObject)
         , m_napiModule(napiModule)
         , m_vm(JSC::getVM(globalObject))
+        , m_vmHandle(Bun__VmHandle__create(WebCore::clientData(JSC::getVM(globalObject))->bunVM))
     {
         napi_internal_register_cleanup_zig(this);
     }
@@ -193,7 +194,13 @@ public:
     ~NapiEnv()
     {
         delete[] filename;
+        Bun__VmHandle__release(m_vmHandle);
     }
+
+    // This env's own clone of its VM's handle: how a thread holding an env ref
+    // (a finalizer fired off the JS thread) posts work to the VM. Lives as long
+    // as the env, which can outlive the JSC VM's client data.
+    ::BunVmHandle* vmHandle() const { return m_vmHandle; }
 
     void cleanup()
     {
@@ -592,6 +599,7 @@ private:
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
     bool m_isFinishingFinalizers = false;
     JSC::VM& m_vm;
+    ::BunVmHandle* m_vmHandle;
     Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;

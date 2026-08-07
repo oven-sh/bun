@@ -220,8 +220,8 @@ impl YesTask {
                         EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
                         EventLoopTask::Mini(_) => unreachable!(),
                     });
-                    // Same-thread bounce on the VM's own thread: always accepted.
-                    let _ = bun_jsc::ConcurrentPoster::current_js().post_js(ct);
+                    // Same-thread bounce on the loop's own thread: always accepted.
+                    let _ = owner.js_poster().post(ct);
                 }
                 EventLoopHandle::Mini(mut mini) => {
                     (*mini.loop_).tick();

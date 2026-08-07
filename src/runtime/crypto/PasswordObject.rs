@@ -4,7 +4,6 @@ use std::io::Write as _;
 
 use bun_core::ZigString;
 use bun_io::KeepAlive;
-use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult,
     WorkPoolTask,
@@ -561,7 +560,9 @@ struct PasswordJob<Op: PasswordOp> {
     op: Op,
     password: Box<[u8]>,
     promise: JSPromiseStrong,
-    event_loop: *mut EventLoop,
+    /// How the pool thread delivers the result.
+    vm: bun_jsc::VmHandle,
+    loop_kind: bun_jsc::LoopKind,
     global: *const JSGlobalObject,
     r#ref: KeepAlive,
     task: WorkPoolTask,
@@ -591,12 +592,21 @@ impl<Op: PasswordOp> PasswordJob<Op> {
             global: self.global,
             r#ref: core::mem::take(&mut self.r#ref),
         });
-        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the
-        // job; ownership of `result` transfers to the event loop here.
-        unsafe {
-            (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
-                bun_event_loop::Task::from_boxed(result),
-            ));
+        // Ownership of `result` transfers to the event loop — unless the VM has
+        // been torn down, in which case nobody will settle the promise: drop the
+        // hash value here and forget the JS-side members (their heap/loop are gone).
+        let result = bun_core::heap::into_raw(result);
+        let ct = ConcurrentTask::create(bun_event_loop::Task::new(
+            <PasswordResult<Op> as bun_event_loop::Taskable>::TAG,
+            result.cast::<()>(),
+        ));
+        if let bun_jsc::vm_handle::Posted::Refused(ct) = self.vm.post(self.loop_kind, ct) {
+            // SAFETY: refused ⇒ we own both boxes.
+            unsafe {
+                drop(bun_core::heap::take(ct.as_ptr()));
+                core::ptr::drop_in_place(&raw mut (*result).value);
+                std::alloc::dealloc(result.cast(), std::alloc::Layout::new::<PasswordResult<Op>>());
+            }
         }
         // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
     }
@@ -673,7 +683,8 @@ impl JSPasswordObject {
             password,
             promise,
             // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
-            event_loop: global_object.bun_vm().event_loop(),
+            vm: global_object.bun_vm().handle(),
+            loop_kind: global_object.bun_vm().as_mut().current_loop_kind(),
             global: std::ptr::from_ref(global_object),
             r#ref: KeepAlive::default(),
             task: WorkPoolTask::default(),

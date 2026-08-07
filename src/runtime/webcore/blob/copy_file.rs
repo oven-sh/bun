@@ -1065,6 +1065,9 @@ pub struct CopyFileWindows<'a> {
     // TODO(refactor): lifetime — heap-allocated and re-entered from libuv callbacks;
     // likely should be *const jsc::EventLoop.
     pub(crate) event_loop: &'a jsc::event_loop::EventLoop,
+    /// How the mkdirp pool completion gets back to the VM.
+    pub(crate) vm_handle: jsc::VmHandle,
+    pub(crate) loop_kind: jsc::LoopKind,
 
     pub(crate) size: SizeType,
 
@@ -1370,6 +1373,8 @@ impl<'a> CopyFileWindows<'a> {
             promise: jsc::JSPromiseStrong::init(global),
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
+            vm_handle: jsc::VirtualMachine::VirtualMachine::get().handle(),
+            loop_kind: jsc::VirtualMachine::VirtualMachine::get().as_mut().current_loop_kind(),
             event_loop,
             mkdirp_if_not_exists,
             destination_mode,
@@ -1918,10 +1923,12 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         unsafe { (*this).on_mkdirp_complete() };
         Ok(())
     }
-    this.event_loop
-        .enqueue_task_concurrent(jsc::ConcurrentTask::create(
-            jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
-        ));
+    let ct = jsc::ConcurrentTask::create(jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased));
+    if let jsc::vm_handle::Posted::Refused(ct) = this.vm_handle.post(this.loop_kind, ct) {
+        // VM torn down: nobody will settle the promise; free the hop.
+        // SAFETY: refused ⇒ we own the task box.
+        unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct) };
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

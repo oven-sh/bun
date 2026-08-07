@@ -964,11 +964,12 @@ impl WatcherAtomics {
                         task: bun_event_loop::Task::init(ev),
                         ..Default::default()
                     };
-                    // `vm` is a `BackRef` (safe Deref); `event_loop` points at a
-                    // sibling field of `VirtualMachine`. The queued node pointer
-                    // is derived from `ev` (allocation-root provenance) so it
-                    // stays valid across `Drop for DevServer`'s writes.
-                    (*(&(*(*ev).owner).vm).event_loop).enqueue_task_concurrent(
+                    // The queued node pointer is derived from `ev` (allocation-root
+                    // provenance) so it stays valid across `Drop for DevServer`'s
+                    // writes. Refused ⇒ the VM is torn down; the event is one of
+                    // DevServer's inline slots and simply never runs.
+                    let _ = (*(*ev).owner).vm_handle.post(
+                        bun_jsc::LoopKind::Regular,
                         core::ptr::NonNull::new_unchecked(&raw mut (*ev).concurrent_task),
                     );
                 }

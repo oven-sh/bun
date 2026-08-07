@@ -1637,7 +1637,7 @@ mod _async_tasks {
                 result: core::cell::Cell::new(Ok(())),
                 // `vm.event_loop` is the live per-thread `jsc::EventLoop` field.
                 evtloop: EventLoopHandle::init(vm.event_loop.cast()),
-                poster: bun_jsc::ConcurrentPoster::Js(vm.handle(), vm.current_loop_kind()),
+                poster: bun_jsc::ConcurrentPoster::Js(vm.js_poster()),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),

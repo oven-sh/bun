@@ -1364,7 +1364,6 @@ pub mod js_bundler {
         let mut plugins: Option<*mut Plugin> = None;
         let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
 
-        let event_loop = vm.event_loop();
 
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
@@ -1375,7 +1374,6 @@ pub mod js_bundler {
                 config,
                 plugins.and_then(core::ptr::NonNull::new),
                 global_this,
-                event_loop,
             )
             .map_err(|_| JsError::OutOfMemory)?;
         // SAFETY: `completion` is the freshly-boxed allocation returned above;

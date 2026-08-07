@@ -69,8 +69,10 @@ pub struct Inner {
 unsafe impl Send for Inner {}
 unsafe impl Sync for Inner {}
 
-/// See the module documentation.
+/// See the module documentation. `repr(transparent)` over the `Arc` so a
+/// `*const VmHandle` can cross FFI (C++ / napi hold boxed clones).
 #[derive(Clone)]
+#[repr(transparent)]
 pub struct VmHandle(Arc<Inner>);
 
 /// Result of [`VmHandle::post`]: the task was queued, or the VM is closed and
@@ -310,22 +312,18 @@ pub extern "C" fn Bun__VmHandle__refKeepAlive(handle: &VmHandle, delta: core::ff
 /// mini event loop. Captured on the owning thread when the work is created.
 #[derive(Clone)]
 pub enum ConcurrentPoster {
-    Js(VmHandle, LoopKind),
+    /// Erased handle of the JS loop's VM (obtained from the `EventLoopHandle`
+    /// itself, so it is correct whichever thread constructs the poster).
+    Js(bun_event_loop::JsPoster),
     Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop, bun_ptr::Mut>),
 }
 
 impl ConcurrentPoster {
-    /// JS thread: the current VM and whichever of its loops is current.
-    pub fn current_js() -> Self {
-        let vm = VirtualMachine::get();
-        ConcurrentPoster::Js(vm.handle(), vm.as_mut().current_loop_kind())
-    }
-
-    /// Owning thread: from an `EventLoopHandle` (JS arm ⇒ the current VM,
-    /// which is the VM that handle refers to on this thread).
+    /// From an `EventLoopHandle`: the JS arm asks the loop for its VM's poster
+    /// (a JS-thread-owned handle knows its VM); the mini arm posts directly.
     pub fn from_event_loop_handle(h: &bun_event_loop::EventLoopHandle) -> Self {
         match h {
-            bun_event_loop::EventLoopHandle::Js { .. } => Self::current_js(),
+            bun_event_loop::EventLoopHandle::Js { owner } => ConcurrentPoster::Js(owner.js_poster()),
             bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(*mini),
         }
     }
@@ -338,7 +336,10 @@ impl ConcurrentPoster {
     /// releases. Panics (debug) if this poster is `Mini`.
     pub fn post_js(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
         match self {
-            ConcurrentPoster::Js(h, kind) => h.post(*kind, task),
+            ConcurrentPoster::Js(p) => match p.post(task) {
+                Ok(()) => Posted::Queued,
+                Err(task) => Posted::Refused(task),
+            },
             ConcurrentPoster::Mini(_) => {
                 debug_assert!(false, "post_js on a Mini poster");
                 Posted::Refused(task)

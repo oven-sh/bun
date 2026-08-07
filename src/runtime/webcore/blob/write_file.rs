@@ -633,6 +633,9 @@ mod windows_impl {
         pub(crate) err: Option<sys::Error>,
         pub(crate) total_written: usize,
         pub(crate) event_loop: *mut EventLoop,
+        /// How the mkdirp pool completion gets back to the VM.
+        pub(crate) vm_handle: bun_jsc::VmHandle,
+        pub(crate) loop_kind: bun_jsc::LoopKind,
         pub poll_ref: KeepAlive,
 
         pub(crate) owned_fd: bool,
@@ -690,6 +693,8 @@ mod windows_impl {
                     base: null_mut(),
                     len: 0,
                 }],
+                vm_handle: bun_jsc::virtual_machine::VirtualMachine::get().handle(),
+                loop_kind: bun_jsc::virtual_machine::VirtualMachine::get().as_mut().current_loop_kind(),
                 event_loop,
                 fd: -1,
                 err: None,
@@ -1025,11 +1030,16 @@ mod windows_impl {
                 bun_sys::Result::Err(e) => Some(e),
                 bun_sys::Result::Ok(()) => None,
             };
-            // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
-            unsafe {
-                (*this.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
-                    ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
-                ));
+            let ct = ConcurrentTask::create(ManagedTask::new::<WriteFileWindows>(
+                this,
+                Self::on_mkdirp_complete_task,
+            ));
+            if let bun_jsc::vm_handle::Posted::Refused(ct) = this.vm_handle.post(this.loop_kind, ct) {
+                // VM torn down: nobody will settle the promise. Free the hop (the
+                // ConcurrentTask owns the boxed ManagedTask); the operation's
+                // buffers/fd go with the process's teardown of its owner.
+                // SAFETY: refused ⇒ we own the task box.
+                unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct) };
             }
         }
 

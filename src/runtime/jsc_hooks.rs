@@ -99,6 +99,9 @@ pub(crate) struct RuntimeState {
     /// still-occupied slot while still freeing the pool allocation itself.
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
     pub(crate) active_handles: ActiveHandles,
+    /// The resolver's PackageManager wake-handler context (module queue + VM
+    /// handle); the resolver holds a raw pointer to it. Freed with the state.
+    pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -360,6 +363,7 @@ unsafe fn init_runtime_state(
             }
         },
         active_handles: ActiveHandles::default(),
+        wake_ctx: None,
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -430,12 +434,13 @@ unsafe fn init_runtime_state(
                     // from CLI args to the resolver so symlinked node_modules
                     // entries resolve via their link path (peer deps stay reachable).
                     t.resolver.opts.preserve_symlinks = preserve_symlinks;
-                    let wake_ctx =
-                        bun_core::heap::into_raw(Box::new(bun_jsc::async_module::WakeContext {
+                    let wake_ctx: *mut bun_jsc::async_module::WakeContext = &mut **(*state).wake_ctx.insert(Box::new(
+                        bun_jsc::async_module::WakeContext {
                             queue: ptr::addr_of_mut!((*vm).modules),
                             vm: (*vm).handle(),
                             loop_kind: bun_jsc::LoopKind::Regular,
-                        }));
+                        },
+                    ));
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(wake_ctx.cast()),
                         handler: Some(bun_jsc::async_module::Queue::on_wake_handler),

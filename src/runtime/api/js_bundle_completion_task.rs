@@ -24,7 +24,6 @@ use bun_core::String as BunString;
 use bun_core::env::OperatingSystem;
 use bun_io::KeepAlive;
 use bun_jsc::WorkPool;
-use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
@@ -55,9 +54,9 @@ pub struct JSBundleCompletionTask {
     // `unsafe impl Send` below for the thread-affinity constraint this imposes.
     pub(crate) ref_count: RefCount<Self>,
     pub(crate) config: JSBundlerConfig,
-    // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
-    // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
-    pub(crate) jsc_event_loop: BackRef<EventLoop>,
+    /// How the bundle thread (and plugin hops) reach the VM that called Bun.build.
+    pub(crate) vm: jsc::VmHandle,
+    pub(crate) loop_kind: jsc::LoopKind,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -111,16 +110,14 @@ pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
     plugins: Option<NonNull<Plugin>>,
     global_this: &JSGlobalObject,
-    event_loop: *mut EventLoop,
 ) -> crate::Result<*mut JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
     let env = global_this.bun_vm().transpiler.env;
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
-        // `event_loop` is the live JS-thread loop (caller derives it from
-        // `vm.event_loop()`); never null once `Bun.build` is reachable.
-        jsc_event_loop: BackRef::from(core::ptr::NonNull::new(event_loop).expect("event_loop")),
+        vm: global_this.bun_vm().handle(),
+        loop_kind: global_this.bun_vm().as_mut().current_loop_kind(),
         global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
         poll_ref: KeepAlive::init(),
@@ -770,13 +767,15 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
     result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     enqueue_task_concurrent: |c, task| {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
-        // passed through from the bundler vtable; the queue takes ownership.
+        // SAFETY: `task` is a fresh non-null `ConcurrentTaskItem` passed through
+        // from the bundler vtable; the queue takes ownership unless the VM that
+        // called Bun.build has been torn down, in which case a heap task is freed.
         unsafe {
-            from_completion_handle(c)
-                .jsc_event_loop
-                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task))
+            let task = core::ptr::NonNull::new_unchecked(task);
+            let c = from_completion_handle(c);
+            if let jsc::vm_handle::Posted::Refused(task) = c.vm.post(c.loop_kind, task) {
+                bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task);
+            }
         }
     },
 };
@@ -992,12 +991,16 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // `ConcurrentTask::create` heap-allocates a fresh task; the
-        // queue takes ownership of it.
+        // `ConcurrentTask::create` heap-allocates a fresh task; the queue takes
+        // ownership of it — unless the VM that called Bun.build is gone, in which
+        // case the promise can never settle and only the hop is freed here (the
+        // completion task itself is released with the bundle thread's state).
         let this = std::ptr::from_mut::<Self>(self);
-        self.jsc_event_loop
-            .enqueue_task_concurrent(jsc::ConcurrentTask::create(jsc::Task::init(this)));
+        let ct = jsc::ConcurrentTask::create(jsc::Task::init(this));
+        if let jsc::vm_handle::Posted::Refused(ct) = self.vm.post(self.loop_kind, ct) {
+            // SAFETY: refused ⇒ we own the task box.
+            unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
+        }
     }
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;

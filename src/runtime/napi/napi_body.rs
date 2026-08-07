@@ -73,6 +73,8 @@ unsafe extern "C" {
     fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
+    /// Opaque `BunVmHandle*` — a boxed `bun_jsc::VmHandle` owned by the env.
+    fn NapiEnv__vmHandle(env: *mut NapiEnv) -> *const c_void;
     fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
 }
 
@@ -80,6 +82,12 @@ impl NapiEnv {
     pub(crate) fn to_js(&self) -> &JSGlobalObject {
         // SAFETY: NapiEnv__globalObject always returns a valid non-null pointer.
         unsafe { &*NapiEnv__globalObject(self.as_mut_ptr()) }
+    }
+
+    /// Any thread holding an env ref: the env's VM handle.
+    pub(crate) fn vm_handle(&self) -> &bun_jsc::VmHandle {
+        // SAFETY: the env owns a boxed handle for its whole lifetime.
+        unsafe { &*NapiEnv__vmHandle(self.as_mut_ptr()).cast::<bun_jsc::VmHandle>() }
     }
 
     /// Convert err to an extern napi_status, and store the error code in env so that it can be
@@ -1725,8 +1733,11 @@ pub(crate) struct napi_async_work {
     pub task: WorkPoolTask,
     pub(crate) concurrent_task: ConcurrentTask,
     // Note: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
-    pub(crate) event_loop: bun_ptr::BackRef<EventLoop>,
-    pub global: GlobalRef, // JSC_BORROW (lives for vm lifetime)
+    /// How the pool thread delivers completion / cancellation to the VM.
+    pub(crate) vm: bun_jsc::VmHandle,
+    pub(crate) loop_kind: bun_jsc::LoopKind,
+    /// JS thread only.
+    pub global: GlobalRef,
     pub(crate) env: NapiEnvRef,
     pub(crate) execute: napi_async_execute_callback,
     pub(crate) complete: Option<napi_async_complete_callback>,
@@ -1757,9 +1768,8 @@ impl napi_async_work {
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
-            // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
-            // stable address) and outlives every napi_async_work.
-            event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
+            vm: global.bun_vm().handle(),
+            loop_kind: global.bun_vm().as_mut().current_loop_kind(),
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1801,27 +1811,24 @@ impl napi_async_work {
             Ordering::SeqCst,
         ) {
             if state == AsyncWorkStatus::Cancelled as u32 {
-                // `concurrent_task` is the live inline field of this heap work;
-                // the queue takes ownership of its `next` link.
-                self.event_loop
-                    .enqueue_task_concurrent(core::ptr::NonNull::from(
-                        self.concurrent_task
-                            .from(self_ptr, AutoDeinit::ManualDeinit),
-                    ));
+                self.post_to_js_thread(self_ptr);
                 return;
             }
         }
         (self.execute)(self.env.get(), self.data);
         self.status
             .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
+        self.post_to_js_thread(self_ptr);
+    }
 
-        // `concurrent_task` is the live inline field of this heap work; the
-        // queue takes ownership of its `next` link.
-        self.event_loop
-            .enqueue_task_concurrent(core::ptr::NonNull::from(
-                self.concurrent_task
-                    .from(self_ptr, AutoDeinit::ManualDeinit),
-            ));
+    /// Pool thread → JS thread: run `complete` there. `concurrent_task` is the
+    /// live inline field of this heap work; the queue takes ownership of its
+    /// `next` link. If the VM has been torn down, `complete` is never called
+    /// (as when Node tears an env down with work outstanding) and the work
+    /// object stays with the addon that owns it.
+    fn post_to_js_thread(&mut self, self_ptr: *mut Self) {
+        let ct = core::ptr::NonNull::from(self.concurrent_task.from(self_ptr, AutoDeinit::ManualDeinit));
+        let _ = self.vm.post(self.loop_kind, ct);
     }
 
     pub(crate) fn cancel(&mut self) -> bool {
@@ -2399,7 +2406,12 @@ pub(crate) struct ThreadSafeFunction {
     // EventLoop`; reborrowed at use sites (single JS thread). `None` once the
     // owning env is torn down: the loop lives inside a VirtualMachine that a
     // worker's shutdown frees, while addon threads outlive it.
+    /// JS-thread uses; `None` once the env has been torn down.
     pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop, bun_ptr::Mut>>,
+    /// How addon threads (`napi_call_threadsafe_function`) schedule a
+    /// dispatch on the VM.
+    pub(crate) vm: bun_jsc::VmHandle,
+    pub(crate) loop_kind: bun_jsc::LoopKind,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -2778,8 +2790,7 @@ impl ThreadSafeFunction {
     }
 
     /// Caller must hold `lock`. Reached from addon threads (`enqueue`,
-    /// `release_locked`), so it may only take a shared `&EventLoop`: the JS
-    /// thread can be inside `tick()` with its own `&mut` at the same time.
+    /// `release_locked`); the VM is reached only through its handle.
     fn schedule_dispatch(&mut self) {
         let prev = self
             .dispatch_state
@@ -2787,11 +2798,19 @@ impl ThreadSafeFunction {
         match prev {
             x if x == DispatchState::Idle as u8 => {
                 let self_ptr: *mut Self = self;
-                let Some(event_loop) = self.event_loop.as_ref() else {
+                if self.event_loop.is_none() {
                     // env torn down: the loop is gone, nothing to schedule onto.
                     return;
-                };
-                event_loop.enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
+                }
+                let ct = ConcurrentTask::create_from(self_ptr);
+                if let bun_jsc::vm_handle::Posted::Refused(ct) = self.vm.post(self.loop_kind, ct) {
+                    // VM torn down before the env cleanup hook ran here: no
+                    // dispatch will happen; the queued calls are released by the
+                    // teardown path. Free the task and fall back to Idle.
+                    // SAFETY: refused ⇒ we own the task box.
+                    unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
+                    self.dispatch_state.store(DispatchState::Idle as u8, Ordering::SeqCst);
+                }
             }
             x if x == DispatchState::Running as u8 => {
                 // it will check if it has more work to do
@@ -3073,6 +3092,8 @@ extern "C" fn napi_create_threadsafe_function(
         // SAFETY: the loop is live now; `NapiEnv::cleanup()` clears this field
         // (via `env_teardown`) before the VirtualMachine holding it is freed.
         event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
+        vm: vm.handle(),
+        loop_kind: vm.current_loop_kind(),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,
@@ -5102,10 +5123,22 @@ impl NapiFinalizerTask {
         let is_main_thread = VirtualMachine::get_or_null().is_some();
 
         if !is_main_thread {
-            // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
+            // Off the JS thread (e.g. an external buffer finalized from a GC
+            // helper thread): post through the env's VM handle. If the VM is
+            // already torn down the finalizer can never run safely; release the
+            // task (and its env ref) here, as the cleanup-hooks-already-ran case
+            // below does.
+            // SAFETY: env is valid (held by NapiEnvRef).
+            let handle = unsafe { &*self.finalizer.env.get() }.vm_handle().clone();
             let this = bun_core::heap::into_raw(self);
-            vm.event_loop_ref()
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
+            let ct = ConcurrentTask::create(Task::init(this));
+            if let bun_jsc::vm_handle::Posted::Refused(ct) = handle.post(bun_jsc::LoopKind::Regular, ct) {
+                // SAFETY: refused ⇒ we own both boxes.
+                unsafe {
+                    drop(bun_core::heap::take(ct.as_ptr()));
+                    drop(bun_core::heap::take(this));
+                }
+            }
             return;
         }
 

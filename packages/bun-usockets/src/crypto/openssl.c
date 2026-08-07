@@ -2211,9 +2211,13 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
 
   /* Suppress write-completion dispatch only while the INITIAL handshake is
    * in flight (the app hasn't been told the socket is up yet). During a
-   * renegotiation the connection is established and SSL_write still accepts
-   * app data, so a backpressured write's drain callback must flow or it is
-   * lost until the peer happens to send something. */
+   * renegotiation the drain being signaled belongs to bytes SSL accepted
+   * before the renegotiation began, and loop.c consumes the writable event
+   * on dispatch, so suppressing it loses that drain until the peer happens
+   * to send. Mid-renegotiation writes themselves park on WANT_READ (BoringSSL
+   * rejects app data for the whole window) and resume via
+   * ssl_retry_parked_write at completion, which is what makes dispatching
+   * during the window safe as well as necessary. */
   if (s->ssl_handshake_state != HANDSHAKE_PENDING) {
     s = us_dispatch_writable(s);
   }

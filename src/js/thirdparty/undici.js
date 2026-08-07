@@ -384,11 +384,6 @@ class WebSocket extends BunWebSocket {
   }
 }
 
-/**
- * Sends a ping frame on an established WebSocket connection.
- * @param {WebSocket} ws
- * @param {Buffer|undefined} payload
- */
 function ping(ws, payload) {
   if (!(ws instanceof BunWebSocket)) {
     throw new TypeError("Expected a WebSocket instance");

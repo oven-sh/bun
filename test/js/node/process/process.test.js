@@ -2373,6 +2373,7 @@ it("getActiveResourcesInfo reports a unix-socket http.Server as PipeWrap like no
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout.trim()).toBe('{"pipe":1,"tcp":0}');
   expect(exitCode).toBe(0);
 });
@@ -2390,15 +2391,25 @@ it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a client-sid
        const server = net.createServer(() => {});
        server.listen(process.argv[1], () => {
          const raw = net.connect(process.argv[1], () => {
-           tls.connect({ socket: raw, rejectUnauthorized: false });
-           setImmediate(() => {
+           const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
+           // Sample only once the wrap is registered, or the listener and the
+           // accepted socket alone would satisfy the pipe count.
+           let attempts = 0;
+           const inspect = () => {
+             const handles = process._getActiveHandles();
+             if (!handles.includes(tlsSocket) && ++attempts < 50) {
+               setImmediate(inspect);
+               return;
+             }
              const info = process.getActiveResourcesInfo();
              console.log(JSON.stringify({
+               tlsHandle: handles.includes(tlsSocket),
                pipe: info.filter(x => x === "PipeWrap").length,
                tcp: info.filter(x => x === "TCPSocketWrap").length,
              }));
              process.exit(0);
-           });
+           };
+           setImmediate(inspect);
          });
        });`,
       `${dir}/s.sock`,
@@ -2408,9 +2419,10 @@ it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a client-sid
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim(), stderr).not.toBe("");
+  expect(stderr).toBe("");
   // Everything rides the unix transport; nothing may report as TCP.
   const parsed = JSON.parse(stdout.trim());
+  expect(parsed.tlsHandle).toBe(true);
   expect(parsed.tcp).toBe(0);
   expect(parsed.pipe).toBeGreaterThanOrEqual(2);
   expect(exitCode).toBe(0);
@@ -2427,20 +2439,29 @@ it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a server-sid
       `const net = require("net");
        const tls = require("tls");
        const server = net.createServer((conn) => {
-         new tls.TLSSocket(conn, {
+         const wrap = new tls.TLSSocket(conn, {
            isServer: true,
            cert: process.env.FIXTURE_CERT,
            key: process.env.FIXTURE_KEY,
          });
-         // The fd-adoption arm defers one tick; sample after it ran.
-         setImmediate(() => {
+         // The fd-adoption arm defers a tick; sample only once the wrap is
+         // registered so the kind assertion exercises it.
+         let attempts = 0;
+         const inspect = () => {
+           const handles = process._getActiveHandles();
+           if (!handles.includes(wrap) && ++attempts < 50) {
+             setImmediate(inspect);
+             return;
+           }
            const info = process.getActiveResourcesInfo();
            console.log(JSON.stringify({
+             tlsHandle: handles.includes(wrap),
              pipe: info.filter(x => x === "PipeWrap").length,
              tcp: info.filter(x => x === "TCPSocketWrap").length,
            }));
            process.exit(0);
-         });
+         };
+         setImmediate(inspect);
        });
        server.listen(process.argv[1], () => {
          net.connect(process.argv[1]);
@@ -2452,12 +2473,11 @@ it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a server-sid
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // A crashed child leaves stdout empty; surface its stderr instead of a bare
-  // JSON parse error.
-  expect(stdout.trim(), stderr).not.toBe("");
+  expect(stderr).toBe("");
   // Everything in this fixture rides the unix transport: the listener, the
   // client, and the TLS wrap of the accepted connection. Nothing is TCP.
   const parsed = JSON.parse(stdout.trim());
+  expect(parsed.tlsHandle).toBe(true);
   expect(parsed.tcp).toBe(0);
   expect(parsed.pipe).toBeGreaterThanOrEqual(2);
   expect(exitCode).toBe(0);

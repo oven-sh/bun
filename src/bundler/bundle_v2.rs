@@ -4300,8 +4300,10 @@ pub mod bv2_impl {
                         .expect("JS-owned bundle has a poster");
                     if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                         // Owning JS VM torn down mid-bundle: the hop never runs.
-                        // SAFETY: refused ⇒ we own the task box.
-                        unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
+                        // SAFETY: refused ⇒ we own the task.
+                        unsafe {
+                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
+                        };
                     }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
@@ -4332,8 +4334,10 @@ pub mod bv2_impl {
                         .expect("JS-owned bundle has a poster");
                     if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                         // Owning JS VM torn down mid-bundle: the hop never runs.
-                        // SAFETY: refused ⇒ we own the task box.
-                        unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
+                        // SAFETY: refused ⇒ we own the task.
+                        unsafe {
+                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
+                        };
                     }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {

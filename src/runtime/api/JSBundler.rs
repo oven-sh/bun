@@ -1529,7 +1529,7 @@ pub mod js_bundler {
                             .expect("JS-owned bundle has a poster");
                         if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                             // Owning JS VM torn down mid-bundle: the notify never runs.
-                            drop(bun_core::heap::take(ct.as_ptr()));
+                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
                         }
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {

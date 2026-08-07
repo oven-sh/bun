@@ -6094,13 +6094,12 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, J
     return map->size();
 }
 
-CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)
+// Enable only: compiled instrumented code holds raw pointers into the profiler,
+// so it lives as long as the VM (see JSInspectorProfiler.cpp).
+CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* vm)
 {
-    if (isEnabled) {
+    if (!vm->controlFlowProfiler())
         vm->enableControlFlowProfiler();
-    } else {
-        vm->disableControlFlowProfiler();
-    }
 }
 
 CPP_DECL void JSC__VM__performOpportunisticallyScheduledTasks(JSC::VM* vm, double until)

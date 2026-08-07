@@ -132,7 +132,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
                 // Owning JS VM torn down mid-bundle: free the hop and the result.
                 // SAFETY: refused ⇒ we own the task box and the leaked result.
                 unsafe {
-                    drop(bun_core::heap::take(ct.as_ptr()));
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
                     drop(bun_core::heap::take(result));
                 }
             }

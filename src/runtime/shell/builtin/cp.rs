@@ -483,13 +483,15 @@ impl ShellCpTask {
     /// [`schedule`](Self::schedule); not touched again on this thread after
     /// return.
     pub(crate) unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
-        // SAFETY: caller contract — `this` is live and exclusively owned by
-        // this thread until `enqueue_to_event_loop` hands it off.
+        // SAFETY: caller contract — JS thread, from the `ShellAsyncCpTask`'s
+        // completion; `this` is live and ours. The pool side finished (and
+        // stopped counting) when it handed the copy to that task, so continue
+        // in place rather than bouncing through the concurrent queue again.
         unsafe {
             if let Err(e) = result {
                 (*this).err = Some(ShellErr::new_sys(&e));
             }
-            Self::enqueue_to_event_loop(this);
+            ShellTask::run_from_main_thread::<ShellCpTask>(this);
         }
     }
 
@@ -531,9 +533,15 @@ impl ShellCpTask {
                 task,
                 <Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET,
             );
+            let poster = (*this).task.poster.clone();
             if let Some(e) = (*this).run_from_thread_pool_impl() {
                 (*this).err = Some(e);
                 Self::enqueue_to_event_loop(this);
+            } else {
+                // The copy now belongs to a `ShellAsyncCpTask` (counted on its
+                // own, completes on the JS thread via `cp_on_finish`); this
+                // task's pool part is over.
+                poster.embedded_work_finished();
             }
         }
     }

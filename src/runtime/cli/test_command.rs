@@ -2347,7 +2347,7 @@ impl TestCommand {
             vm.transpiler.options.minify_identifiers = false;
             vm.transpiler.options.minify_whitespace = false;
             vm.transpiler.options.dead_code_elimination = false;
-            vm.global().vm().set_control_flow_profiler(true);
+            vm.global().vm().enable_control_flow_profiler();
         }
 
         // For tests, we default to UTC time zone

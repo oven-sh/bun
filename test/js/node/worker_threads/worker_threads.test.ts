@@ -2187,3 +2187,95 @@ test("terminating a worker mid-Bun.build (plugin pending) does not wedge the bun
   expect(stdout).toBe("worker: pending\nparent build: true true\n");
   expect(exitCode).toBe(0);
 });
+
+describe("VM teardown ordering", () => {
+  // The exiting main thread must not park the process-wide HTTP thread while a
+  // child can still start a request: the child then waits for a hand-back that
+  // never comes and the parent waits for the child.
+  test("process.exit() while a worker keeps starting fetches", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker(
+           'const { workerData, parentPort } = require("worker_threads");' +
+           'parentPort.postMessage("ready");' +
+           '(async () => { for (;;) { fetch(workerData.url).catch(() => {}); await 1; } })();',
+           { eval: true, workerData: { url: "${server.url.href}" } });
+         w.once("message", () => setImmediate(() => process.exit(0)));`,
+      ],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+  });
+
+  // A shell `cp` hands its copy to an fs.cp task on the pool; the pool part is
+  // over then, not when the JS-thread continuation runs.
+  test("process.exit() with a shell cp in flight", async () => {
+    const files: Record<string, Buffer> = {};
+    for (let i = 0; i < 60; i++) files[`src/f${i}.bin`] = Buffer.alloc(512 * 1024, 120);
+    using dir = tempDir("exit-shell-cp", files);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         Bun.$\`cp -R src dst\`.then(() => {});
+         // Exit once the copy is visibly under way.
+         (function poll() {
+           fs.existsSync("dst") && fs.readdirSync("dst").length > 0 ? process.exit(0) : setImmediate(poll);
+         })();`,
+      ],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+  });
+
+  // An S3 upload aborted by its worker's teardown must not retry onto the
+  // closed VM: the retry would complete on the HTTP thread against a dead handle.
+  test("terminating a worker mid S3 upload does not retry onto the dead VM", async () => {
+    let first = true;
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        if (first) {
+          first = false;
+          return new Promise(() => {}); // the upload terminate() interrupts
+        }
+        return new Response("no", { status: 503 }); // any retry fails fast
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker(
+           'const { workerData, parentPort } = require("worker_threads");' +
+           'const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: workerData.url, retry: 3 });' +
+           // writer(): a MultiPartUpload, whose single-send failure path retries.
+           'const wr = s3.file("key").writer({ retry: 3 }); wr.write(Buffer.alloc(1024 * 1024)); wr.end().catch(() => {});' +
+           'parentPort.postMessage("uploading");',
+           { eval: true, workerData: { url: "${server.url.href}" } });
+         w.once("message", async () => {
+           console.log("exit", await w.terminate());
+           // Outlive any retry the HTTP thread would complete.
+           setTimeout(() => process.exit(0), 500);
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("exit 1\n");
+    expect(exitCode).toBe(0);
+  });
+});

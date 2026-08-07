@@ -2158,13 +2158,10 @@ impl FetchTasklet {
         this_ref.ref_();
         // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`.
         let task = ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream);
-        if let jsc::vm_handle::Posted::Refused(task) = this_ref.post(task) {
-            // VM gone: nobody will resume the stream; drop the task and the ref
-            // taken for it.
-            // SAFETY: refused ⇒ we own the task box; `this` is live (ref held).
-            unsafe { drop(bun_core::heap::take(task.as_ptr())) };
-            FetchTasklet::deref_from_thread(this);
-        }
+        // In flight ⇒ still counted work of its VM: the handle is open.
+        let jsc::vm_handle::Posted::Queued = this_ref.post(task) else {
+            unreachable!("VM handle closed with a fetch outstanding on the HTTP thread");
+        };
     }
 
     /// This is ALWAYS called from the main thread

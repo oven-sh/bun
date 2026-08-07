@@ -823,13 +823,9 @@ impl EventLoop {
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             if task.tag == bun_event_loop::task_tag::ManagedTask {
-                // SAFETY: every ManagedTask is heap_owned (ManagedTask::new -> heap::into_raw).
-                let managed =
-                    unsafe { bun_core::heap::take(task.ptr.cast::<ManagedTask::ManagedTask>()) };
-                if let (Some(cleanup), Some(ctx)) = (managed.cleanup, managed.ctx) {
-                    cleanup(ctx.as_ptr());
-                }
-                drop(managed);
+                // SAFETY: every ManagedTask is heap-owned (ManagedTask::new -> heap::into_raw)
+                // and this one is no longer queued.
+                unsafe { ManagedTask::ManagedTask::release(task.ptr.cast()) };
             } else {
                 requeue.push(task);
             }

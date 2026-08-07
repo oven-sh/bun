@@ -233,6 +233,15 @@ impl<'a> Graph<'a> {
         if self.deferred_pending > 0 {
             self.pending_items += self.deferred_pending;
             self.deferred_pending = 0;
+            // Their units are back in `pending_items`.
+            let mut load = self.outstanding_loads.head;
+            while !load.is_null() {
+                // SAFETY: linked ⇒ arena-live; bundle thread.
+                unsafe {
+                    (*load).deferred = false;
+                    load = (*load).outstanding.next;
+                }
+            }
 
             transpiler.drain_defer_task.init();
             transpiler.drain_defer_task.schedule();
@@ -253,7 +262,7 @@ use bun_ast::SideEffects;
 /// Intrusive doubly-linked membership in an [`OutstandingList`].
 pub struct OutstandingLink<T> {
     prev: *mut T,
-    next: *mut T,
+    pub(crate) next: *mut T,
     linked: bool,
 }
 impl<T> Default for OutstandingLink<T> {

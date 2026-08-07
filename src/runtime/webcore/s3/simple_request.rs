@@ -604,6 +604,17 @@ pub(crate) fn execute_simple_s3_request(
     callback: Callback,
     callback_context: *mut c_void,
 ) -> JsTerminatedResult<()> {
+    // A multipart/retry continuation can reach here from teardown's queue
+    // release; nothing new leaves a VM that is shutting down.
+    if !VirtualMachine::get().handle().accepting_work() {
+        drop(options.range);
+        callback.fail(
+            b"ERR_S3_VM_SHUTDOWN",
+            b"The JavaScript VM that owns this request is shutting down",
+            callback_context,
+        )?;
+        return Ok(());
+    }
     let result = match this.sign_request::<false>(
         &SignOptions {
             path: options.path,

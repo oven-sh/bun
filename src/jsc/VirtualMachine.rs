@@ -1709,15 +1709,6 @@ impl VirtualMachine {
                 "a native close path registered a stoppable resource during teardown"
             );
         }
-        // The exiting main thread parks the (process-wide) HTTP thread, which
-        // hands back every request it holds; a worker's aborted fetches come
-        // back through their final callbacks instead. If the HTTP thread does
-        // not acknowledge (≤1 s) it may still touch what we would free below:
-        // leave everything to process exit.
-        if matches!(kind, Teardown::MainThreadExit) && !bun_http::shutdown_for_exit() {
-            teardown_log!("teardown: HTTP thread unresponsive; skipping to process exit");
-            return;
-        }
         teardown_log!("teardown: stopped");
 
         // ---- B. release ------------------------------------------------------
@@ -1760,7 +1751,19 @@ impl VirtualMachine {
         // Pool work stored inside JS-owned objects (transpile slots, zlib
         // streams) must be back before the handle closes: it completes into the
         // still-open queue and is released below, on this thread.
+        teardown_log!(
+            "teardown: waiting for {} unit(s) of off-thread work",
+            vm.handle.embedded_work_outstanding()
+        );
         vm.handle.wait_for_embedded_work();
+        // The exiting main thread now parks the process-wide HTTP thread —
+        // after the children it also served are joined and this VM's own
+        // requests are back — so it cannot touch what process exit frees. If
+        // it does not acknowledge (≤1 s), leave the rest to process exit.
+        if matches!(kind, Teardown::MainThreadExit) && !bun_http::shutdown_for_exit() {
+            teardown_log!("teardown: HTTP thread unresponsive; skipping to process exit");
+            return;
+        }
         // From here no other thread reaches this VM: posts are refused (the
         // poster releases its task itself), wake/keep-alive are no-ops, and any
         // job still using VM-owned memory has finished (close waits for it).

@@ -288,9 +288,22 @@ impl VmHandle {
     // pool side never sees a dead VM. Bodies check `borrow_if_running` so a
     // stopping VM only waits for the pool to *reach* the work, not to do it.
 
-    /// JS thread, before handing embedded work to the pool.
+    /// JS thread, before handing embedded work to the pool. Script starts
+    /// such work only while the VM is open; a native continuation that runs
+    /// during teardown (a release arm retrying a request) checks
+    /// [`accepting_work`](Self::accepting_work) first and fails instead.
     pub fn embedded_work_scheduled(&self) {
+        debug_assert!(
+            self.0.state.load(Ordering::SeqCst) != State::Closed as u8,
+            "embedded work started on a closed VM handle"
+        );
         self.0.embedded.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Whether new off-thread work may still be started for this VM (it has
+    /// not begun stopping). JS thread.
+    pub fn accepting_work(&self) -> bool {
+        self.0.state.load(Ordering::SeqCst) == State::Open as u8
     }
 
     /// Pool thread, after its last touch of the embedded storage (i.e. after
@@ -303,6 +316,10 @@ impl VmHandle {
             self.0.drained.1.notify_all();
             self.0.drained.0.unlock();
         }
+    }
+
+    pub(crate) fn embedded_work_outstanding(&self) -> u32 {
+        self.0.embedded.load(Ordering::SeqCst)
     }
 
     /// Teardown (JS thread, stopping, before `close()`): wait until the pool
@@ -657,6 +674,9 @@ impl LoopHandle {
     }
     pub fn borrow_if_running(&self) -> Option<Borrow> {
         self.vm.borrow_if_running()
+    }
+    pub fn accepting_work(&self) -> bool {
+        self.vm.accepting_work()
     }
     pub fn embedded_work_scheduled(&self) {
         self.vm.embedded_work_scheduled()

@@ -467,13 +467,10 @@ impl<'a> Task<'a> {
                                     // without a repository, keeping an earlier
                                     // https error if one was set.
                                     if this.status != Status::Fail {
-                                        this.err =
-                                            Some(crate::Error::RepositoryNotFound);
+                                        this.err = Some(crate::Error::RepositoryNotFound);
                                         this.status = Status::Fail;
                                         this.data = Data {
-                                            git_clone: ManuallyDrop::new(
-                                                Fd::invalid(),
-                                            ),
+                                            git_clone: ManuallyDrop::new(Fd::invalid()),
                                         };
                                     }
                                     break 'body;

@@ -12,5 +12,5 @@
 //! logic.
 
 pub use bun_event_loop::any_event_loop::{
-    EnteredEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
+    EnteredEventLoop, EventLoopHandle, EventLoopTask,
 };

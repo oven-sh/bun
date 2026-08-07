@@ -92,6 +92,7 @@ const {
   (value: unknown) => void,
   (hook: () => void) => void,
   boolean,
+  (port: MessagePort) => void,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -760,8 +761,9 @@ if (
     parentPort = transferredParentPort;
     // node auto-starts parentPort. Registering it natively mirrors its messages
     // onto the global scope so `self.onmessage` keeps working under a node
-    // Worker; unref so an unlistened parentPort does not by itself keep the
-    // thread alive (a 'message' listener re-refs it, as in node).
+    // Worker. The port arrives without a loop ref, so an unlistened parentPort
+    // does not by itself keep the thread alive (a 'message' listener refs it,
+    // as in node).
     _setParentPort(parentPort);
     parentPort.start();
   }

@@ -60,7 +60,7 @@ pub mod task_tag {
         (@count $n:expr,) => { $n };
     }
     tags! {
-        AnyTaskJob,               // bun_jsc::AnyTaskJob<C> (typed job, one erased slot inside)
+        AnyTaskJob,               // bun_jsc::Job<C> (typed pool job, one erased tag)
         AsyncModule,
         BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
@@ -289,8 +289,6 @@ impl ConcurrentTask {
         self
     }
 
-    /// Returns whether this task should be automatically deallocated after execution.
-    #[inline]
     /// A poster got `task` back because the target VM is gone: free it if it
     /// is a heap task (`create*`); an intrusive one belongs to its container.
     ///
@@ -311,6 +309,8 @@ impl ConcurrentTask {
         }
     }
 
+    /// Returns whether this task should be automatically deallocated after execution.
+    #[inline]
     pub fn auto_delete(&self) -> bool {
         self.auto_delete
     }

@@ -336,10 +336,6 @@ pub(crate) fn run_task(
             }
         }
 
-        // ── archive ──────────────────────────────────────────────────────
-        // `cast_ptr!` yields the heap-allocated task registered with this
-        // tag; the JS-thread dispatch is the sole owner at this point.
-
         // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
         task_tag::ShellAsync
         | task_tag::ShellAsyncSubprocessDone
@@ -377,10 +373,6 @@ pub(crate) fn run_task(
         task_tag::S3HttpDownloadStreamingTask => {
             S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
         }
-
-        // ── glob / image / transpiler ────────────────────────────────────
-
-        // ── blob copy/read/write promise tasks ───────────────────────────
 
         // ── napi ─────────────────────────────────────────────────────────
         task_tag::NapiAsyncWork => {

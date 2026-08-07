@@ -195,8 +195,6 @@ public:
 
     ScriptExecutionContext* scriptExecutionContext() const final;
 
-    using RefCounted::deref;
-    using RefCounted::ref;
     void didConnect();
     void didStartClosingHandshake();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);

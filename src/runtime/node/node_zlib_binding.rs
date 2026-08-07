@@ -1066,10 +1066,6 @@ macro_rules! __impl_compression_stream {
             // with their own `#[ref_count(destroy = …)]` (or the default
             // `Box::from_raw` drop) — delegate so the macro doesn't hard-code
             // a `Self::deinit(*mut Self)` signature that only one of them has.
-            // All three `Native*` structs `#[derive(bun_ptr::CellRefCounted)]`
-            // with their own `#[ref_count(destroy = …)]` (or the default
-            // `Box::from_raw` drop) — delegate so the macro doesn't hard-code
-            // a `Self::deinit(*mut Self)` signature that only one of them has.
             #[inline] fn ref_(&self) { <Self as ::bun_ptr::CellRefCounted>::ref_(self) }
             #[inline] unsafe fn deref(this: *mut Self) {
                 // SAFETY: forwarded trait contract — `this` is live; the

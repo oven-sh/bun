@@ -800,10 +800,10 @@ impl VirtualMachine {
     }
 
     /// May native code enter user JavaScript right now? `true` in normal
-    /// operation and during the stop phase of teardown (close/exit handlers
-    /// run); `false` once teardown has forbidden execution — phase B of
-    /// [`teardown`](Self::teardown), or `on_exit` for a worker its parent
-    /// terminated. Node's `can_call_into_js()`. JS thread.
+    /// operation and while the exit handlers run; `false` once teardown has
+    /// forbidden execution — the start of [`teardown`](Self::teardown), or
+    /// already in `on_exit` for a worker its parent terminated. Node's
+    /// `can_call_into_js()`. JS thread.
     ///
     /// This is **not** something callers of `JSValue::call` consult: once
     /// script is forbidden, the native→JS boundary itself
@@ -1661,17 +1661,21 @@ impl VirtualMachine {
 
     /// Tear down this thread's VM: the one sequence both a finished worker
     /// thread and the exiting main thread (under `BUN_DESTRUCT_VM_ON_EXIT`) run.
+    /// The exit handlers ran before this (`on_exit`); nothing below enters script.
     ///
-    ///  A. stop, script allowed — WebCore stop phase (child workers asked to
-    ///     terminate; ports/channels/WebSockets closed without events;
-    ///     listeners stripped), native handles behind JS objects stopped
-    ///     (servers, listeners, watchers; on Windows also every open pipe/tty/
-    ///     process handle through its owner), socket groups closed (JS
-    ///     `on_close` may run), DNS channel closed; main: HTTP thread parked.
-    ///  B. script forbidden — microtasks/modules cleared; cron, user timers and
-    ///     GC-controller timers cancelled; child workers joined; in-flight loop
-    ///     requests completed against the still-live VM; queued tasks and
-    ///     RareData's JS handles released without running.
+    ///  A. stop — script forbidden (microtasks/modules cleared, termination
+    ///     requested), WebCore stop phase (child workers asked to terminate;
+    ///     ports/channels/WebSockets closed without events; listeners stripped),
+    ///     everything registered as stoppable closed natively (servers,
+    ///     listeners, sockets, watchers, subprocess/pipe/tty handles, in-flight
+    ///     fetch/S3/Bun.build aborted or cancelled), socket groups and the DNS
+    ///     channel closed.
+    ///  B. release — cron, user timers and GC-controller timers cancelled; child
+    ///     workers joined; this VM's sqlite connections closed; the JS side of
+    ///     boxed pool jobs released; counted off-thread work waited for; main:
+    ///     HTTP thread parked; the VM handle closed; (Windows worker) in-flight
+    ///     uv requests completed; queued tasks and RareData's JS handles
+    ///     released without running.
     ///  C. JSC VM destroyed (finalizers close what only they own; JSC's RunLoop
     ///     timers ride the timer heap until ~VM returns); sockets they closed
     ///     drained; then the timer heap's loop handles closed.
@@ -1704,8 +1708,9 @@ impl VirtualMachine {
         // SAFETY: fn contract.
         unsafe {
             let _ = Self::stop_phase_sweep(this, kind);
+            let second = Self::stop_phase_sweep(this, kind);
             debug_assert!(
-                Self::stop_phase_sweep(this, kind) == SweepResult::Idle,
+                second == SweepResult::Idle,
                 "a native close path registered a stoppable resource during teardown"
             );
         }

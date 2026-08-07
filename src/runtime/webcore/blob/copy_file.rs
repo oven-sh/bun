@@ -52,9 +52,6 @@ pub struct CopyFile {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) read_off: SizeType,
 
-    // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
-    // TODO(refactor): lifetime — this struct is Box-allocated and crosses threads;
-    // `'a` here is unsound in practice. Likely should be *const JSGlobalObject.
     pub(crate) mkdirp_if_not_exists: bool,
     #[cfg(not(windows))]
     pub(crate) destination_mode: Option<Mode>,

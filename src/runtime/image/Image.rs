@@ -6,7 +6,7 @@
 //! write one slot of `Pipeline` and return `this` — there is no op list, so
 //! calling a setter twice overwrites. The actual decode → transform → encode
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
-//! `toBase64`/`metadata`) is awaited, via `jsc.ConcurrentPromiseTask`.
+//! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
 
 use core::cell::Cell;
 use core::mem;
@@ -1387,8 +1387,6 @@ impl<'a> ReadBytesHandler for BlobReadChain<'a> {
     }
 }
 
-/// `jsc.ConcurrentPromiseTask(PipelineTask)` — the heap object the event-loop
-/// dispatch sees (`task_tag::AsyncImageTask`).
 /// The pool-side work of one `Image` operation: decode → pipeline → encode
 /// (or probe). Also run synchronously by `encode_for_body`.
 pub struct PipelineTask {

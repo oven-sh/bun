@@ -411,7 +411,7 @@ thread_local! {
 // until the `uv_close` for it is issued (`UvHandle::close`,
 // `Pipe::close_and_destroy`). Whoever currently drives the handle records
 // itself with [`open_handles::set_owner`] — readers/writers do so through
-// `Source::set_data`, IPC / named pipes / Process when they take the handle —
+// `Source::set_owner`, IPC / named pipes / Process when they take the handle —
 // so a thread teardown can close each handle through its owner's ordinary
 // close path (parents observe the close; pending writes finish ECANCELED)
 // while the VM is alive, or directly if nothing ever adopted it. Keyed by the

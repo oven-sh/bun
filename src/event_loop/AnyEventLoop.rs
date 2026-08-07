@@ -246,14 +246,6 @@ fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop, Mut>) -> &'a mut MiniEventL
     unsafe { mini.get_mut() }
 }
 
-/// Untagged pointer to either kind of concurrent task. Tag is the surrounding
-/// `EventLoopHandle` discriminant.
-#[derive(Copy, Clone)]
-pub union EventLoopTaskPtr {
-    pub js: *mut ConcurrentTask,
-    pub mini: *mut AnyTaskWithExtraContext,
-}
-
 /// Owned storage for either kind of concurrent task.
 pub enum EventLoopTask {
     Js(ConcurrentTask),

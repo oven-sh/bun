@@ -872,12 +872,8 @@ impl TransformTask {
         promise: &mut JSPromise,
         global: &JSGlobalObject,
     ) -> Result<(), bun_jsc::JsTerminated> {
-        // After `then` returns, the dispatcher
-        // (`run_then_destroy!` for `task_tag::AsyncTransformTask` in
-        // runtime/dispatch.rs) unconditionally calls
-        // `ConcurrentPromiseTask::destroy`, dropping the owned `ctx`
-        // (this `TransformTask`) and running its `Drop` (transpiler deref etc.).
-
+        // The job drops this `TransformTask` (running its `Drop`: transpiler
+        // deref etc.) right after `then` returns.
         if self.log.has_any() || self.err.is_some() {
             let error_value: JsResult<JSValue> = 'brk: {
                 if let Some(err) = &self.err {

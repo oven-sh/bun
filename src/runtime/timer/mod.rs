@@ -1193,17 +1193,6 @@ impl All {
         let _ = uws_loop;
     }
 
-    /// VM-teardown pass: `cancel()` every `TimeoutObject` / `ImmediateObject`
-    /// still linked in `timers` / `fake_timers.timers` so the in-heap `+1` ref
-    /// and the JS pin (`this_value` Strong) are released before the GC sweep.
-    ///
-    /// # Safety
-    /// JS thread only, with the TLS `RuntimeState` still installed and `vm`
-    /// the live per-thread VM. Must run BEFORE JSC teardown
-    /// (`Zig__GlobalObject__destructOnExit` / `WebWorker__teardownJSCVM`) and
-    /// BEFORE `runtime_state` is nulled — the GC sweep frees the
-    /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
-    /// alias.
     /// VM teardown, after `cancel_all_timeout_objects`: unlink every timer still
     /// in either heap, whatever its kind. Owners keep their nodes (now
     /// `CANCELLED`, which their own `state == ACTIVE` checks respect); nothing
@@ -1239,6 +1228,17 @@ impl All {
         }
     }
 
+    /// VM-teardown pass: `cancel()` every `TimeoutObject` / `ImmediateObject`
+    /// still linked in `timers` / `fake_timers.timers` so the in-heap `+1` ref
+    /// and the JS pin (`this_value` Strong) are released before the GC sweep.
+    ///
+    /// # Safety
+    /// JS thread only, with the TLS `RuntimeState` still installed and `vm`
+    /// the live per-thread VM. Must run BEFORE JSC teardown
+    /// (`Zig__GlobalObject__destructOnExit` / `WebWorker__teardownJSCVM`) and
+    /// BEFORE `runtime_state` is nulled — the GC sweep frees the
+    /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
+    /// alias.
     pub(crate) unsafe fn cancel_all_timeout_objects(
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,

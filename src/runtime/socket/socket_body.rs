@@ -4528,15 +4528,8 @@ impl DuplexUpgradeContext {
         unsafe { Self::enqueue_self_task(this) };
     }
 
-    /// # Safety
-    /// `this` must be the unique live pointer to the heap allocation produced
-    /// in `js_upgrade_duplex_to_tls`. Frees the allocation; callers must not
-    /// hold a `&`/`&mut Self` across this call (taking `&mut self` here would
-    /// be a Stacked Borrows protector violation when the backing `Box` is
-    /// reclaimed below).
-    /// VM stop phase: close the upgraded duplex now (its 'close'/error
-    /// handlers run while script is still allowed), so the TLS wrapper's GC
-    /// finalizer finds a closed socket and dispatches nothing.
+    /// VM stop phase: close the upgraded duplex natively, so the TLS wrapper's
+    /// GC finalizer finds a closed socket and dispatches nothing.
     ///
     /// # Safety
     /// `this` is a registered live context (see `js_upgrade_duplex_to_tls`).
@@ -4546,6 +4539,12 @@ impl DuplexUpgradeContext {
         unsafe { (*this).upgrade.close() };
     }
 
+    /// # Safety
+    /// `this` must be the unique live pointer to the heap allocation produced
+    /// in `js_upgrade_duplex_to_tls`. Frees the allocation; callers must not
+    /// hold a `&`/`&mut Self` across this call (taking `&mut self` here would
+    /// be a Stacked Borrows protector violation when the backing `Box` is
+    /// reclaimed below).
     unsafe fn deinit(this: *mut Self) {
         // SAFETY: fn contract — the live allocation registered in `js_upgrade_duplex_to_tls`.
         crate::jsc_hooks::ActiveHandle::DuplexUpgrade(unsafe {

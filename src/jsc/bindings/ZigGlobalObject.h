@@ -349,9 +349,9 @@ public:
     RefPtr<WebCore::Performance> performance();
     WebCore::Performance* existingPerformance() const { return m_performance.get(); }
 
-    // VM teardown, in order: prepareForDestruction() (fence cross-thread producers, stop every
-    // ActiveDOMObject, strip listeners — script still allowed) -> the caller's own sweeps and child
-    // joins -> forbidExecution() (clear microtasks and module caches, request termination).
+    // VM teardown, in order: forbidExecution() (clear microtasks and module caches, forbid script,
+    // request termination) -> prepareForDestruction() (fence cross-thread producers, stop every
+    // ActiveDOMObject, strip listeners) -> the caller's own sweeps and child joins.
     void prepareForDestruction();
     void forbidExecution();
 

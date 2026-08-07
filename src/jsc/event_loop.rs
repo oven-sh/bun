@@ -32,7 +32,7 @@ pub use bun_event_loop::ManagedTask;
 pub use bun_event_loop::MiniEventLoop;
 pub use bun_event_loop::Task;
 pub use bun_event_loop::any_event_loop::{
-    AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
+    AnyEventLoop, EventLoopHandle, EventLoopTask,
 };
 pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
@@ -479,8 +479,8 @@ impl EventLoop {
         let _ = self.tick_concurrent_with_count();
     }
 
-    /// Check whether refConcurrently has been called but the change has not yet been applied to the
-    /// underlying event loop's `active` counter
+    /// Whether a keep-alive delta (`ref_keep_alive`, here or through a
+    /// `VmHandle`) has been queued but not yet applied to the loop's `active` count.
     pub fn has_pending_refs(&self) -> bool {
         self.concurrent_ref.load(Ordering::SeqCst) > 0
     }
@@ -557,14 +557,15 @@ impl EventLoop {
         self.tasks.readable_length() - start_count
     }
 
-    /// Fold refs/unrefs queued through `ref_concurrently`/`unref_concurrently`
-    /// into the platform loop's keep-alive count. Runs at the top of every tick,
+    /// Fold refs/unrefs queued through `ref_keep_alive`/`unref_keep_alive`
+    /// (here, or from another thread through `VmHandle`) into the platform
+    /// loop's keep-alive count. Runs at the top of every tick,
     /// and once more from a worker's shutdown after its stop phase (which unrefs
     /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
     /// torn down still believing something keeps it alive.
     pub(crate) fn apply_concurrent_ref_delta(&self) {
         // Do NOT silently drop the swapped delta when the handle is
-        // missing — refs queued via `ref_concurrently()` would be lost forever.
+        // missing — queued refs would be lost forever.
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
         let loop_ = self
             .vm_ref()

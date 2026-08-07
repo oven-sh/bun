@@ -1,13 +1,11 @@
-use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
+use crate::{JSGlobalObject, JsResult};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
-#[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
+#[allow(improper_ctypes)] // `VmHandle` is an opaque `BunVmHandle*` to C++ (`Bun__VmHandle__create`)
 unsafe extern "C" {
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
-    safe fn Bun__EventLoopTaskNoContext__vmHandle(
-        task: &EventLoopTaskNoContext,
-    ) -> *mut VirtualMachine;
+    safe fn Bun__EventLoopTaskNoContext__vmHandle(task: &EventLoopTaskNoContext) -> *const crate::VmHandle;
 }
 
 bun_opaque::opaque_ffi! {
@@ -45,20 +43,11 @@ impl EventLoopTaskNoContext {
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 
-    /// Get the VM that created this task. `VirtualMachine` is process-lifetime
-    /// (PORTING.md §Global mutable state), so a [`BackRef`] is the right
-    /// non-owning handle: callers project `&VirtualMachine` via `Deref` and
-    /// route mutation through the VM's safe interior accessors (e.g.
-    /// `event_loop_shared()`).
     /// The handle of the VM this task was created in (owned by the C++ task).
     pub(crate) fn vm_handle(&self) -> Option<&crate::VmHandle> {
         // SAFETY: C++ stores a `BunVmHandle*` from `Bun__VmHandle__create`
         // (or null); it lives as long as the task.
-        unsafe {
-            Bun__EventLoopTaskNoContext__vmHandle(self)
-                .cast::<crate::VmHandle>()
-                .as_ref()
-        }
+        unsafe { Bun__EventLoopTaskNoContext__vmHandle(self).as_ref() }
     }
 }
 

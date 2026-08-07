@@ -33,11 +33,11 @@ use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
 enum State {
     /// Normal operation.
     Open = 0,
-    /// Teardown phase A: user close/exit handlers still run; posts accepted so
-    /// completions of already-running work are delivered (and released) normally.
+    /// Teardown has begun: no new off-thread work is started; posts are still
+    /// accepted so completions of already-running work are delivered.
     Stopping = 1,
-    /// Teardown after `forbidExecution`: no user script; posts still accepted
-    /// (released, never run, by the teardown before `close`).
+    /// After `forbidExecution`: no user script; posts still accepted (released,
+    /// never run, by the teardown before `close`).
     ScriptForbidden = 2,
     /// `close()` ran: nothing off-thread reaches the VM any more.
     Closed = 3,

@@ -1103,7 +1103,7 @@ impl<'a> ReadFileUV<'a> {
         log!("ReadFileUV.start");
         // SAFETY: `event_loop` is the per-thread `EventLoop` singleton owned by
         // the VM (`global.bun_vm().event_loop()`); it strictly outlives this
-        // async op, which additionally pins it via `ref_concurrently()` below.
+        // async op, which additionally holds a keep-alive on it below.
         let event_loop: &'a EventLoop = unsafe { &*event_loop };
         let file_store = store.data.as_file().clone();
         let this = Box::new(ReadFileUV {

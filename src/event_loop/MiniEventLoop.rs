@@ -425,9 +425,6 @@ bun_io::link_impl_EventLoopCtx! {
         file_polls_ptr()  => MiniEventLoop::file_polls_raw(this),
         // Mini has no pending_unref_counter; the upstream deliberately panics.
         increment_pending_unref_counter() => panic!("FIXME TODO"),
-        // `KeepAlive::{,un}refConcurrently` is JS-VM-only (statically rejected
-        // on Mini upstream); preserve that invariant rather than racily
-        // mutating uws counters off-thread.
         after_event_loop_callback() => (*this).after_event_loop_callback,
         set_after_event_loop_callback(cb, ctx) => {
             (*this).after_event_loop_callback = cb;

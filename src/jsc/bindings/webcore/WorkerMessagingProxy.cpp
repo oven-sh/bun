@@ -537,9 +537,6 @@ void WorkerMessagingProxy::parentContextWillDestroy()
         Locker lock { m_pendingTasksLock };
         m_state.store(State::Closing);
         m_pendingTasks.clear();
-    }
-    {
-        Locker lock { m_pendingTasksLock };
         m_pendingCrossVMRequests.clear();
     }
     releaseWorkerThread();

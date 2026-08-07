@@ -1271,8 +1271,8 @@ impl GetAddrInfoRequest {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn then(this: *mut Self, _global: &JSGlobalObject) {
         bun_output::scoped_log!(GetAddrInfoRequest, "then");
-        // SAFETY: WorkTask invokes `then` on the JS thread with the heap request it
-        // was created from; `resolver_for_caching` (if set) is the live ctx ref.
+        // SAFETY: called on the JS thread with the heap request the lookup was
+        // created from; `resolver_for_caching` (if set) is the live ctx ref.
         unsafe {
             // Take the backend by value: `Success` holds a `Vec<GetAddrInfoResult>`
             // (not `Clone`) that we move into `GetAddrInfoResultAny::List`. The

@@ -622,7 +622,7 @@ where
                 core::ptr::NonNull::from(concurrent),
             ) {
                 // VM torn down while a change was pending: drop the reload task.
-                HotReloadTask::deinit(that.cast());
+                Self::deinit(that);
             }
         }
         self.count = 0;

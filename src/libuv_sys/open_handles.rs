@@ -9,7 +9,7 @@
 //! construction and `Environment::CleanupHandles()` (node/src/env.cc) walks that
 //! list calling `Close()`; `uv_walk` alone is not enough because it yields bare
 //! `uv_handle_t*`s with no typed owner to close through. Insert on open, remove
-//! on close — both O(1) and off any hot path.
+//! on close (a linear scan over this thread's open handles) — off any hot path.
 
 use super::*;
 

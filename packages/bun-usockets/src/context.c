@@ -671,10 +671,12 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
             /* Synchronous socket()/connect() failure (ENETUNREACH,
-             * EADDRNOTAVAIL, EMFILE, ...): remember the errno so exhausting
+             * EADDRNOTAVAIL, EMFILE, ...): remember the error so exhausting
              * the address list reports it instead of a fabricated
-             * ECONNREFUSED. */
-            if (errno) c->last_candidate_error = errno;
+             * ECONNREFUSED. LIBUS_ERR, not errno: Windows reports these via
+             * WSASetLastError and the CRT errno would be stale. */
+            int candidate_err = LIBUS_ERR;
+            if (candidate_err) c->last_candidate_error = candidate_err;
             continue;
         }
         bsd_socket_nodelay(connect_socket_fd, 1);
@@ -682,7 +684,8 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         struct us_poll_t *poll = &s->p;
         us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
         if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
-            if (errno) c->last_candidate_error = errno;
+            int candidate_err = LIBUS_ERR;
+            if (candidate_err) c->last_candidate_error = candidate_err;
             bsd_close_socket(connect_socket_fd);
             us_poll_free(poll, loop);
             continue;

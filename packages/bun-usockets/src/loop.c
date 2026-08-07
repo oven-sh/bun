@@ -480,25 +480,38 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * rather than exact equality so the connect-complete is still
              * recognized; listen sockets only ever poll READABLE. */
             if (us_poll_events(p) & LIBUS_SOCKET_WRITABLE) {
-                /* The connecting fd became writable with an error/HUP flag also
-                 * set: the handshake may have completed and then been reset
-                 * before we collected the event. Report the kernel's actual
-                 * SO_ERROR (ECONNRESET for that race) instead of the literal
-                 * boolean, which downstream would misreport as ECONNREFUSED.
-                 * libuv does the same getsockopt in uv__stream_connect, and
-                 * like libuv the verdict is SO_ERROR alone: zero means the
-                 * connect itself succeeded and the hint is the peer closing
-                 * right after accepting (deterministic for an AF_UNIX server
-                 * that accepts, writes and closes within one event-loop turn
-                 * of the client - a peer close there raises EPOLLHUP with no
-                 * socket error). Open the socket and let the read path deliver
-                 * the pending data and EOF; fabricating ECONNRESET here
-                 * reported a successful connect as failed and discarded the
-                 * server's reply. A connect that completed and was then RST
-                 * still reports: the reset leaves SO_ERROR nonzero. */
+                /* The connecting fd became writable with an error/HUP flag
+                 * also set. Report the kernel's actual SO_ERROR instead of
+                 * the literal boolean, which downstream would misreport as
+                 * ECONNREFUSED; libuv does the same getsockopt in
+                 * uv__stream_connect. SO_ERROR == 0 is ambiguous:
+                 * - the connect succeeded and the peer already closed (an
+                 *   AF_UNIX server that accepts, replies and closes within
+                 *   one event-loop turn of the client raises EPOLLHUP with
+                 *   no socket error). The connection must OPEN so the read
+                 *   path delivers the reply and EOF; fabricating an error
+                 *   here discarded the server's data.
+                 * - the connect failed but its error was already consumed
+                 *   (Linux then reports a bare EPOLLHUP: observed when the
+                 *   refused candidate of a multi-address attempt is
+                 *   re-reported after the first dispatch cleared sk_err).
+                 *   Opening would hand the caller a dead, never-connected
+                 *   socket.
+                 * getpeername distinguishes: only a connection that actually
+                 * established has a peer address. */
                 int connect_error = 0;
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
+                    if (connect_error == 0) {
+                        struct bsd_addr_t peer;
+                        if (bsd_remote_addr(us_poll_fd(p), &peer)) {
+#ifdef _WIN32
+                            connect_error = WSAECONNRESET;
+#else
+                            connect_error = ECONNRESET;
+#endif
+                        }
+                    }
                 }
                 us_internal_socket_after_open((struct us_socket_t *) p, connect_error);
             } else {

@@ -11,8 +11,14 @@
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 
 const unix = join(tmpdir(), `bun-peer-closed-${process.pid}.sock`);
+// process.exit skips finally blocks, so scrub the socket file on every exit path.
+function bail(code: number): never {
+  rmSync(unix, { force: true });
+  process.exit(code);
+}
 
 await using server = Bun.spawn({
   cmd: [
@@ -42,7 +48,7 @@ const reader = server.stdout.getReader();
 const { value } = await reader.read();
 if (!new TextDecoder().decode(value).includes("ready")) {
   console.error("server failed to start");
-  process.exit(1);
+  bail(1);
 }
 
 let received = "";
@@ -65,7 +71,7 @@ const connecting = Bun.connect({
     },
     connectError(_s, err) {
       console.error(`FAIL: connectError ${(err as any)?.code ?? err} for a successful connect`);
-      process.exit(1);
+      bail(1);
     },
   },
 });
@@ -80,7 +86,7 @@ await done.promise;
 
 if (!gotOpen || received !== "hello") {
   console.error(`FAIL: open=${gotOpen} received=${JSON.stringify(received)}`);
-  process.exit(1);
+  bail(1);
 }
 console.log("ok: open + data delivered");
-process.exit(0);
+bail(0);

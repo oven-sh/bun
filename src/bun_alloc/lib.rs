@@ -1610,6 +1610,14 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     if p == libc::MAP_FAILED {
         crate::out_of_memory();
     }
+    // Under THP `enabled=always` the first write to each 2 MiB stretch would
+    // fault a whole huge page, turning this demand-faulted arena into ~4 MiB of
+    // RSS. Per-VMA opt-out (not `PR_SET_THP_DISABLE`, which children inherit).
+    // SAFETY: `p..p+len` is the mapping created above.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe {
+        libc::madvise(p, len, libc::MADV_NOHUGEPAGE);
+    }
     // LSan only scans data/BSS, stacks, and malloc-tracked heap for live
     // pointers. This anonymous mapping is none of those, so any `Box`/`Vec`
     // whose owning pointer lives inside a `bss_*!` singleton (e.g. the

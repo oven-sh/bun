@@ -23,6 +23,7 @@ use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_core::MutableString;
 use bun_core::String as BunString;
+use bun_core::strings;
 use bun_http::lshpack;
 use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
@@ -653,7 +654,7 @@ fn is_valid_request_pseudo_header(name: &[u8]) -> bool {
 
 #[inline]
 fn is_valid_header_value(value: &[u8]) -> bool {
-    !value.iter().any(|&c| matches!(c, 0 | b'\n' | b'\r'))
+    !strings::contains_any(value, b"\0\n\r")
 }
 
 #[inline]
@@ -690,7 +691,7 @@ pub(crate) fn is_malformed_field_name(name: &[u8]) -> bool {
 
 #[inline]
 pub(crate) fn is_malformed_field_value(value: &[u8]) -> bool {
-    value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
+    strings::contains_any(value, b"\0\r\n")
 }
 
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;

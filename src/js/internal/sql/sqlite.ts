@@ -568,8 +568,4 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
 
 export default {
   SQLiteAdapter,
-  SQLCommand,
-  commandToString,
-  parseSQLQuery,
-  SQLiteQueryHandle,
 };

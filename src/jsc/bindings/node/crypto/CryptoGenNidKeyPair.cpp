@@ -25,9 +25,9 @@ extern "C" void Bun__NidKeyPairJobCtx__runTask(NidKeyPairJobCtx* ctx, JSGlobalOb
     ctx->runTask(globalObject, keyCtx);
 }
 
-extern "C" void Bun__NidKeyPairJobCtx__runFromJS(NidKeyPairJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" void Bun__NidKeyPairJobCtx__runFromJS(NidKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(globalObject, JSValue::decode(callback));
+    *out = ctx->runFromJS(globalObject);
 }
 
 extern "C" NidKeyPairJob* Bun__NidKeyPairJob__create(JSGlobalObject* globalObject, NidKeyPairJobCtx* ctx, EncodedJSValue callback);

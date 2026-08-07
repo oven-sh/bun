@@ -712,7 +712,7 @@ impl TSConfigJSON {
         // foo.bar.baz == 3
         // foo.bar.baz.bun == 4
         let parts_count =
-            text.iter().filter(|&&b| b == b'.').count() + usize::from(text[text.len() - 1] != b'.');
+            strings::count_char(text, b'.') + usize::from(text[text.len() - 1] != b'.');
         let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(parts_count);
 
         if parts_count == 1 {
@@ -733,7 +733,7 @@ impl TSConfigJSON {
             return Ok(parts.into_boxed_slice());
         }
 
-        let iter = text.split(|b| *b == b'.').filter(|s| !s.is_empty());
+        let iter = strings::tokenize(text, b".");
 
         for part in iter {
             if !js_lexer::is_identifier(part) {

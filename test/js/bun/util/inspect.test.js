@@ -821,7 +821,10 @@ it("Bun.inspect enumeration survives a throwing lazy property getter", async () 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout.trim()).toBe("true true");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "true true",
+    stderr: "",
+    exitCode: 0,
+  });
 });

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "JSCallbackArgs.h"
 #include "helpers.h"
 #include "ncrypto.h"
 #include "CryptoUtil.h"
@@ -25,7 +26,7 @@ struct HkdfJobCtx {
     static std::optional<HkdfJobCtx> fromJS(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::ThrowScope&, Mode);
 
     void runTask(JSC::JSGlobalObject*);
-    void runFromJS(JSC::JSGlobalObject*, JSC::JSValue callback);
+    JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
     void deinit();
 
     ncrypto::Digest m_digest;

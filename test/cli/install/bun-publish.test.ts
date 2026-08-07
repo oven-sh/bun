@@ -1,16 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { exists, rm } from "fs/promises";
-import {
-  VerdaccioRegistry,
-  bunExe,
-  bunEnv as env,
-  isWindows,
-  pack,
-  runBunInstall,
-  stderrForInstall,
-  tmpdirSync,
-} from "harness";
+import { VerdaccioRegistry, bunExe, bunEnv as env, isWindows, pack, runBunInstall, tmpdirSync } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -36,9 +27,7 @@ export async function publish(
     env,
   });
 
-  const out = await stdout.text();
-  const err = stderrForInstall(await stderr.text());
-  const exitCode = await exited;
+  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
   return { out, err, exitCode };
 }
 
@@ -114,10 +103,12 @@ describe("otp", async () => {
         fetch: mockRegistryFetch({ token }),
       });
 
-      const bunfig = `
-      [install]
-      cache = false
-      registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
+      const bunfig = Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${mockRegistry.port}`, token },
+        },
+      });
       await Promise.all([
         rm(join(registry.packagesPath, "otp-pkg-1"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
@@ -146,10 +137,12 @@ describe("otp", async () => {
       fetch: mockRegistryFetch({ token, otpFail: true }),
     });
 
-    const bunfig = `
-      [install]
-      cache = false
-      registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
+    const bunfig = Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: { url: `http://localhost:${mockRegistry.port}`, token },
+      },
+    });
 
     await Promise.all([
       rm(join(registry.packagesPath, "otp-pkg-2"), { recursive: true, force: true }),
@@ -199,10 +192,12 @@ describe("otp", async () => {
       },
     });
 
-    const bunfig = `
-      [install]
-      cache = false
-      registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
+    const bunfig = Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: { url: `http://localhost:${mockRegistry.port}`, token },
+      },
+    });
 
     await Promise.all([
       rm(join(registry.packagesPath, "otp-pkg-5"), { recursive: true, force: true }),
@@ -279,7 +274,12 @@ describe("otp", async () => {
     await Promise.all([
       write(
         join(packageDir, "bunfig.toml"),
-        `[install]\ncache = false\nregistry = { url = "http://localhost:${mockRegistry.port}", token = "unused" }\n`,
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: { url: `http://localhost:${mockRegistry.port}`, token: "unused" },
+          },
+        }),
       ),
       write(join(packageDir, "package.json"), JSON.stringify({ name: "otp-pkg-6", version: "6.6.6" })),
     ]);
@@ -317,10 +317,12 @@ describe("otp", async () => {
         fetch: mockRegistryFetch({ token, npmNotice: true, xLocalCache: shouldIgnoreNotice }),
       });
 
-      const bunfig = `
-        [install]
-        cache = false
-        registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
+      const bunfig = Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${mockRegistry.port}`, token },
+        },
+      });
 
       await Promise.all([
         rm(join(registry.packagesPath, "otp-pkg-3"), { recursive: true, force: true }),
@@ -361,10 +363,12 @@ describe("otp", async () => {
         fetch: mockRegistryFetch({ token, expectedCI: envInfo.ci }),
       });
 
-      const bunfig = `
-        [install]
-        cache = false
-        registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
+      const bunfig = Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${mockRegistry.port}`, token },
+        },
+      });
 
       await Promise.all([
         rm(join(registry.packagesPath, "otp-pkg-4"), { recursive: true, force: true }),
@@ -1053,7 +1057,12 @@ describe("readme", () => {
     await Promise.all([
       write(
         join(packageDir, "bunfig.toml"),
-        `[install]\ncache = false\nregistry = { url = "http://localhost:${mock.port}", token = "unused" }\n`,
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: { url: `http://localhost:${mock.port}`, token: "unused" },
+          },
+        }),
       ),
       write(join(packageDir, "package.json"), JSON.stringify({ name: "readme-pkg-1", version: "1.0.0" })),
       write(join(packageDir, "README.md"), readmeContents),
@@ -1089,7 +1098,12 @@ describe("readme", () => {
     await pack(packageDir, env);
     await write(
       join(packageDir, "bunfig.toml"),
-      `[install]\ncache = false\nregistry = { url = "http://localhost:${mock.port}", token = "unused" }\n`,
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${mock.port}`, token: "unused" },
+        },
+      }),
     );
 
     const { err, exitCode } = await publish(env, packageDir, "./readme-pkg-2-2.0.0.tgz");

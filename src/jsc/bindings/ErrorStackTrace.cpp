@@ -723,6 +723,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
 }
 }
 
+// Weak-referenced by JSC::ErrorInstance::finalizeUnconditionally in vendor/WebKit.
 extern "C" void Bun__errorInstance__finalize(void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);

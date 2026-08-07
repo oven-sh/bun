@@ -32,9 +32,8 @@ let globalActive: any = null;
 // A stale box.token means node's before() hook would have fired for the callback.
 let currentToken = 0;
 
-// Retire the live token at the tick boundary so callbacks scheduled in this
-// stretch see a restored pairing (node's before() hook) even when an
-// unbalanced enter() / process.domain= leaves no exit() to bump it.
+// Tick-boundary stand-in for the after() hook:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L106
 let tokenRetireQueued = false;
 
 function retireToken() {
@@ -198,7 +197,6 @@ function fatalErrorDispatch(er: any) {
       setActive(active);
     }
     // node updateExceptionCapture(): route only if some domain has an 'error' listener.
-    // d != null: the _stack setter accepts arbitrary userland arrays.
     for (let i = 0; i < stack.length; i++) {
       const d = stack[i];
       if (d != null && typeof d.listenerCount === "function" && d.listenerCount("error") > 0) {

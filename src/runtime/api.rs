@@ -241,8 +241,11 @@ enum SourceEncoding {
     Bytes,
     /// A JS string, re-encoded as UTF-8.
     Utf8Text,
-    /// A Latin-1 JS string, borrowed as is (only when `latin1_passthrough`).
+    /// A Latin-1 JS string, borrowed as is (only when `string_passthrough`).
     Latin1Text,
+    /// A UTF-16 JS string, borrowed as is: the bytes are its code units
+    /// (only when `string_passthrough`).
+    Utf16Text,
 }
 
 fn with_text_format_source_encoded<R>(
@@ -251,7 +254,7 @@ fn with_text_format_source_encoded<R>(
     path: &'static [u8],
     accept_blob_or_buffer: bool,
     reject_nullish: bool,
-    latin1_passthrough: bool,
+    string_passthrough: bool,
     f: impl FnOnce(
         &bun_alloc::Arena,
         &mut bun_ast::Log,
@@ -302,10 +305,14 @@ fn with_text_format_source_encoded<R>(
             }
         }
         let mut s = input_value.to_bun_string(global)?;
-        if latin1_passthrough && s.is_8bit() {
+        if string_passthrough {
             _latin1_hold = bun_core::OwnedString::new(s);
-            encoding = SourceEncoding::Latin1Text;
-            break 'bytes _latin1_hold.latin1();
+            if _latin1_hold.is_8bit() {
+                encoding = SourceEncoding::Latin1Text;
+                break 'bytes _latin1_hold.latin1();
+            }
+            encoding = SourceEncoding::Utf16Text;
+            break 'bytes bytemuck::cast_slice(_latin1_hold.utf16());
         }
         // `to_slice` moves the +1 ref into the returned slice's
         // `.underlying`, so the temporary `BunString` drop is a no-op.

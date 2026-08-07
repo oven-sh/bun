@@ -75,24 +75,58 @@ pub enum InputEncoding {
 }
 
 impl XML {
-    /// Parses `source` into `E::ObjectJSON` / `E::ArrayJSON` rows whose tape
-    /// (and every string that does not borrow the source) lives in `bump`.
+    /// Parses `source` (UTF-8 bytes, or Latin-1 with `InputEncoding::Latin1`)
+    /// into `E::ObjectJSON` / `E::ArrayJSON` rows whose tape (and every string
+    /// that does not borrow the source) lives in `bump`.
     pub fn parse<'a>(
         source: &'a Source,
         log: &mut Log,
         bump: &'a Bump,
         options: Options,
     ) -> crate::Result<Expr> {
+        let contents: &'a [u8] = source.contents.as_ref();
+        Self::parse_units(source, contents, log, bump, options)
+    }
+
+    /// [`parse`](Self::parse) for a UTF-16 document (a 16-bit JS string):
+    /// the strings in the result are UTF-16 as well. `source` is only what
+    /// diagnostics are attributed to.
+    pub fn parse_utf16<'a>(
+        source: &'a Source,
+        units: &'a [u16],
+        log: &mut Log,
+        bump: &'a Bump,
+        compact: bool,
+    ) -> crate::Result<Expr> {
+        let options = Options {
+            compact,
+            encoding: InputEncoding::Text,
+        };
+        Self::parse_units(source, units, log, bump, options)
+    }
+
+    fn parse_units<'a, U: Unit>(
+        source: &'a Source,
+        contents: &'a [U],
+        log: &mut Log,
+        bump: &'a Bump,
+        options: Options,
+    ) -> crate::Result<Expr> {
         bun_core::analytics::Features::xml_parse_inc();
-        let mut tape = Tape::new_in(bump, source.contents.len());
-        if options.encoding == InputEncoding::Latin1 {
-            // SAFETY: see `Tape::object_from`.
-            unsafe { tape.tape.as_mut() }.encoding = E::StrEncoding::Latin1;
-        }
-        let result = if options.compact {
-            Parser::new(source, log, bump, options, CompactSink::new(tape)).parse_document()
+        let mut tape = Tape::new_in(bump, core::mem::size_of_val(contents));
+        // SAFETY: see `Tape::object_from`.
+        unsafe { tape.tape.as_mut() }.encoding = if U::WIDE {
+            E::StrEncoding::Utf16
+        } else if options.encoding == InputEncoding::Latin1 {
+            E::StrEncoding::Latin1
         } else {
-            Parser::new(source, log, bump, options, NodeSink::new(tape)).parse_document()
+            E::StrEncoding::Utf8
+        };
+        let result = if options.compact {
+            Parser::new(source, contents, log, bump, options, CompactSink::new(tape))
+                .parse_document()
+        } else {
+            Parser::new(source, contents, log, bump, options, NodeSink::new(tape)).parse_document()
         };
         match result {
             Ok(root) => Ok(root),
@@ -132,6 +166,141 @@ const AMPLIFICATION_THRESHOLD: u64 = 1024 * 1024;
 const MAX_AMPLIFICATION: u64 = 100;
 /// Entity references open at any one time (the depth of the reference chain).
 const MAX_ENTITY_DEPTH: usize = 256;
+
+
+// ── code units ──────────────────────────────────────────────────────────────
+
+/// The parser runs over UTF-8 / Latin-1 bytes or UTF-16 code units alike:
+/// it only ever dispatches on ASCII units and hands anything else to
+/// `decode`, so a code unit type just has to say how it maps to those.
+pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
+    /// Two bytes per unit.
+    const WIDE: bool;
+    /// The unit if it is below U+0100, else 0xFF: what byte-oriented
+    /// dispatch (`peek`) sees. Never an ASCII value for a non-ASCII unit.
+    fn low(self) -> u8;
+    fn value(self) -> u32;
+    fn ascii(b: u8) -> Self;
+    /// The units' storage, for tape strings (whose encoding tag says how
+    /// to read them back).
+    fn bytes(units: &[Self]) -> &[u8];
+    /// The fixed keys of the two output shapes, in this unit type.
+    const KEY_TEXT: &'static [Self];
+    const KEY_NAME: &'static [Self];
+    const KEY_ATTRIBUTES: &'static [Self];
+    const KEY_CHILDREN: &'static [Self];
+}
+
+impl Unit for u8 {
+    const WIDE: bool = false;
+    #[inline(always)]
+    fn low(self) -> u8 {
+        self
+    }
+    #[inline(always)]
+    fn value(self) -> u32 {
+        u32::from(self)
+    }
+    #[inline(always)]
+    fn ascii(b: u8) -> Self {
+        b
+    }
+    #[inline(always)]
+    fn bytes(units: &[Self]) -> &[u8] {
+        units
+    }
+    const KEY_TEXT: &'static [Self] = b"#text";
+    const KEY_NAME: &'static [Self] = b"name";
+    const KEY_ATTRIBUTES: &'static [Self] = b"attributes";
+    const KEY_CHILDREN: &'static [Self] = b"children";
+}
+
+macro_rules! utf16 {
+    ($s:literal) => {{
+        const B: &[u8] = $s;
+        const N: usize = B.len();
+        const fn widen() -> [u16; N] {
+            let mut out = [0u16; N];
+            let mut i = 0;
+            while i < N {
+                out[i] = B[i] as u16;
+                i += 1;
+            }
+            out
+        }
+        const W: [u16; N] = widen();
+        &W
+    }};
+}
+
+impl Unit for u16 {
+    const WIDE: bool = true;
+    #[inline(always)]
+    fn low(self) -> u8 {
+        if self < 0x100 { self as u8 } else { 0xFF }
+    }
+    #[inline(always)]
+    fn value(self) -> u32 {
+        u32::from(self)
+    }
+    #[inline(always)]
+    fn ascii(b: u8) -> Self {
+        u16::from(b)
+    }
+    #[inline(always)]
+    fn bytes(units: &[Self]) -> &[u8] {
+        bytemuck::cast_slice(units)
+    }
+    const KEY_TEXT: &'static [Self] = utf16!(b"#text");
+    const KEY_NAME: &'static [Self] = utf16!(b"name");
+    const KEY_ATTRIBUTES: &'static [Self] = utf16!(b"attributes");
+    const KEY_CHILDREN: &'static [Self] = utf16!(b"children");
+}
+
+#[inline(always)]
+fn unit_from_u16<U: Unit>(u: u16) -> U {
+    debug_assert!(U::WIDE);
+    // SAFETY: only called when `U` is `u16` (`U::WIDE`).
+    unsafe { core::mem::transmute_copy(&u) }
+}
+
+/// `units` spell the ASCII `lit`.
+#[inline]
+fn eq_ascii<U: Unit>(units: &[U], lit: &[u8]) -> bool {
+    units.len() == lit.len() && units.iter().zip(lit).all(|(&u, &b)| u.low() == b)
+}
+
+#[inline]
+fn eq_ascii_ignore_case<U: Unit>(units: &[U], lit: &[u8]) -> bool {
+    units.len() == lit.len()
+        && units
+            .iter()
+            .zip(lit)
+            .all(|(&u, &b)| u.low().eq_ignore_ascii_case(&b))
+}
+
+#[inline]
+fn starts_with_ascii<U: Unit>(units: &[U], lit: &[u8]) -> bool {
+    units.len() >= lit.len() && eq_ascii(&units[..lit.len()], lit)
+}
+
+/// The first occurrence of the ASCII `lit` in `units`.
+fn find_ascii<U: Unit>(units: &[U], lit: &[u8]) -> Option<usize> {
+    if !U::WIDE {
+        // SAFETY: `!WIDE` units are bytes.
+        let bytes: &[u8] = unsafe { core::slice::from_raw_parts(units.as_ptr().cast(), units.len()) };
+        return strings::index_of(bytes, lit);
+    }
+    let first = lit[0];
+    let mut i = 0;
+    while i + lit.len() <= units.len() {
+        if units[i].low() == first && eq_ascii(&units[i..i + lit.len()], lit) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
 
 // ── character classes ───────────────────────────────────────────────────────
 
@@ -245,23 +414,23 @@ fn is_pubid_char(c: u8) -> bool {
 
 /// `text` with `S` trimmed from both ends.
 #[inline]
-fn trim_ws(text: &[u8]) -> &[u8] {
+fn trim_ws<U: Unit>(text: &[U]) -> &[U] {
     trim_ws_end(trim_ws_start(text))
 }
 
 #[inline]
-fn trim_ws_start(text: &[u8]) -> &[u8] {
+fn trim_ws_start<U: Unit>(text: &[U]) -> &[U] {
     let mut a = 0;
-    while a < text.len() && is_ws(text[a]) {
+    while a < text.len() && is_ws(text[a].low()) {
         a += 1;
     }
     &text[a..]
 }
 
 #[inline]
-fn trim_ws_end(text: &[u8]) -> &[u8] {
+fn trim_ws_end<U: Unit>(text: &[U]) -> &[U] {
     let mut b = text.len();
-    while b > 0 && is_ws(text[b - 1]) {
+    while b > 0 && is_ws(text[b - 1].low()) {
         b -= 1;
     }
     &text[..b]
@@ -291,8 +460,8 @@ fn name_eq(a: &[u8], b: &[u8]) -> bool {
 /// What the scanner hands the parser: `Scanner::next` produces everything
 /// but `Text`; `Scanner::next_content` produces `Text`, the tags and `Eof`.
 #[derive(Clone, Copy)]
-struct Token<'a> {
-    kind: Kind<'a>,
+struct Token<'a, U: Unit> {
+    kind: Kind<'a, U>,
     /// Byte offset in the document, for diagnostics.
     pos: usize,
     /// The input frame (document or entity replacement text) the token was
@@ -306,27 +475,27 @@ struct Token<'a> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind<'a> {
+enum Kind<'a, U: Unit> {
     /// The end of the document or, with its name, of an entity's replacement
     /// text where that is not simply the end of an inclusion.
-    Eof(Option<&'a [u8]>),
+    Eof(Option<&'a [U]>),
     /// `Name` (§2.3 [5]); keywords such as `SYSTEM` or `CDATA` are names too.
-    Name(&'a [u8]),
+    Name(&'a [U]),
     /// A run of name characters that does not start with a `NameStartChar`,
     /// so only an `Nmtoken` (§2.3 [7]).
-    Nmtoken(&'a [u8]),
+    Nmtoken(&'a [U]),
     /// `#` and a name: `#PCDATA`, `#REQUIRED`, `#IMPLIED`, `#FIXED`.
-    Hash(&'a [u8]),
+    Hash(&'a [U]),
     /// `%Name;` outside parameter-entity replacement text (inside it, a
     /// reference is included in place, §4.4.8, and never surfaces).
-    PeReference(&'a [u8]),
+    PeReference(&'a [U]),
     /// `%` not followed by a name: the parameter-entity declaration marker.
     Percent,
     /// `%Name` with no `;`: a malformed reference — or, right after
     /// `<!ENTITY`, a parameter-entity declaration missing its space.
-    PercentName(&'a [u8]),
+    PercentName(&'a [U]),
     /// A quoted literal, read as the `Literal` kind the parser asked for.
-    Literal(&'a [u8]),
+    Literal(&'a [U]),
     Eq,
     Gt,
     SlashGt,
@@ -348,12 +517,12 @@ enum Kind<'a> {
     Comment,
     Pi,
     /// `<Name`
-    StartTag(&'a [u8]),
+    StartTag(&'a [U]),
     /// `</Name`
-    EndTag(&'a [u8]),
+    EndTag(&'a [U]),
     /// Character data with CDATA sections, references and included entities
     /// folded in.
-    Text(&'a [u8]),
+    Text(&'a [U]),
     /// A character that cannot start any token; always an error, which the
     /// parser reports along with what it expected there.
     Unexpected(u32),
@@ -361,27 +530,34 @@ enum Kind<'a> {
 
 /// Source text (a name, usually) quoted in a diagnostic: UTF-8 as is, or
 /// Latin-1 (`InputEncoding::Latin1`) transcoded so the message stays UTF-8.
-struct Show<'b>(&'b [u8], bool);
+struct Show<'b, U: Unit>(&'b [U], bool);
 
-impl core::fmt::Display for Show<'_> {
+impl<U: Unit> core::fmt::Display for Show<'_, U> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if U::WIDE {
+            let units = self.0.iter().map(|u| u.value() as u16);
+            for c in char::decode_utf16(units) {
+                core::fmt::Write::write_char(f, c.unwrap_or(char::REPLACEMENT_CHARACTER))?;
+            }
+            return Ok(());
+        }
         if !self.1 {
-            return core::fmt::Display::fmt(bstr::BStr::new(self.0), f);
+            return core::fmt::Display::fmt(bstr::BStr::new(U::bytes(self.0)), f);
         }
         for &b in self.0 {
-            core::fmt::Write::write_char(f, char::from(b))?;
+            core::fmt::Write::write_char(f, char::from(b.low()))?;
         }
         Ok(())
     }
 }
 
 /// A token as named in "but found …" diagnostics; `.1` as for `Show`.
-struct KindDisplay<'a>(Kind<'a>, bool);
+struct KindDisplay<'a, U: Unit>(Kind<'a, U>, bool);
 
-impl core::fmt::Display for KindDisplay<'_> {
+impl<U: Unit> core::fmt::Display for KindDisplay<'_, U> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let latin1 = self.1;
-        let name = |f: &mut core::fmt::Formatter<'_>, prefix: &str, name: &[u8], suffix: &str| {
+        let name = |f: &mut core::fmt::Formatter<'_>, prefix: &str, name: &[U], suffix: &str| {
             write!(f, "'{}{}{}'", prefix, Show(name, latin1), suffix)
         };
         match self.0 {
@@ -429,12 +605,12 @@ enum Step {
 }
 
 /// See `Scanner::tag_step`.
-enum TagStep<'a> {
+enum TagStep<'a, U: Unit> {
     End {
         empty: bool,
     },
     Attr {
-        name: &'a [u8],
+        name: &'a [U],
         pos: usize,
         quote: u8,
     },
@@ -489,39 +665,39 @@ enum Literal {
 // ── entities and input frames ───────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
-enum EntityValue<'a> {
+enum EntityValue<'a, U: Unit> {
     /// Replacement text: character references (and, in text that came from
     /// a parameter entity, parameter-entity references) already resolved,
     /// general entity references bypassed (§4.4.7), line ends normalized.
-    Internal(&'a [u8]),
+    Internal(&'a [U]),
     /// Declared SYSTEM/PUBLIC; never read.
     External,
     /// External with NDATA — not a parsed entity at all.
     Unparsed,
 }
 
-struct Entities<'a> {
-    general: HashMap<&'a [u8], EntityValue<'a>>,
-    parameter: HashMap<&'a [u8], EntityValue<'a>>,
+struct Entities<'a, U: Unit> {
+    general: HashMap<&'a [U], EntityValue<'a, U>>,
+    parameter: HashMap<&'a [U], EntityValue<'a, U>>,
 }
 
-fn predefined_entity(name: &[u8]) -> Option<u8> {
-    match name {
-        b"lt" => Some(b'<'),
-        b"gt" => Some(b'>'),
-        b"amp" => Some(b'&'),
-        b"apos" => Some(b'\''),
-        b"quot" => Some(b'"'),
+fn predefined_entity<U: Unit>(name: &[U]) -> Option<u8> {
+    match name.len() {
+        2 if eq_ascii(name, b"lt") => Some(b'<'),
+        2 if eq_ascii(name, b"gt") => Some(b'>'),
+        3 if eq_ascii(name, b"amp") => Some(b'&'),
+        4 if eq_ascii(name, b"apos") => Some(b'\''),
+        4 if eq_ascii(name, b"quot") => Some(b'"'),
         _ => None,
     }
 }
 
 /// What a general entity reference contributes where it is included.
-enum Resolved<'a> {
+enum Resolved<'a, U: Unit> {
     /// A predefined entity's character.
     Byte(u8),
     /// Replacement text to scan in a new input frame.
-    Text(&'a [u8]),
+    Text(&'a [U]),
     /// Nothing known: the reference itself is kept as character data.
     Unexpanded,
 }
@@ -538,13 +714,13 @@ enum FrameKind {
     Declarations,
 }
 
-struct Frame<'a> {
-    src: &'a [u8],
+struct Frame<'a, U: Unit> {
+    src: &'a [U],
     pos: usize,
     id: u32,
     kind: FrameKind,
     /// The entity this frame is the replacement text of: (name, is-parameter).
-    entity: Option<(&'a [u8], bool)>,
+    entity: Option<(&'a [U], bool)>,
     /// Where diagnostics for tokens read from this frame point: the position
     /// of the outermost reference in the document.
     report_pos: usize,
@@ -554,19 +730,19 @@ struct Frame<'a> {
 
 /// Owns the byte cursor, the input-frame stack and the entity tables; the
 /// only component that reads bytes.
-struct Scanner<'a, 'log> {
+struct Scanner<'a, 'log, U: Unit> {
     /// The frame being read (the fields of `Frame`, unpacked for the hot
     /// path); enclosing frames wait in `suspended`.
-    src: &'a [u8],
+    src: &'a [U],
     pos: usize,
     frame_id: u32,
     frame_kind: FrameKind,
-    frame_entity: Option<(&'a [u8], bool)>,
+    frame_entity: Option<(&'a [U], bool)>,
     frame_report_pos: usize,
-    suspended: Vec<Frame<'a>>,
+    suspended: Vec<Frame<'a, U>>,
     next_frame_id: u32,
 
-    entities: Entities<'a>,
+    entities: Entities<'a, U>,
     /// Bytes of replacement text pushed so far, for the amplification limit.
     expanded_bytes: u64,
     document_len: u64,
@@ -593,12 +769,12 @@ struct Scanner<'a, 'log> {
     /// The structural index of the document buffer (`src` of frame 0), built
     /// once the encoding is settled and the input validated; `cursor` is the
     /// scanner's position in it.
-    idx: Option<StructuralIndex<'a>>,
+    idx: Option<StructuralIndex<'a, U>>,
     cursor: usize,
     /// One byte per character (`InputEncoding::Latin1`).
     latin1: bool,
     /// The current token: `next` / `next_content` write it in place.
-    tok: Token<'a>,
+    tok: Token<'a, U>,
     /// A `>` was read as literal data since the last `<`: the index producer
     /// (which does not track quotes — XML has two quote characters that
     /// only mean anything inside tags, so quote state and in-tag state are
@@ -614,7 +790,7 @@ struct Scanner<'a, 'log> {
     log: &'log mut Log,
 }
 
-impl<'a, 'log> Scanner<'a, 'log> {
+impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
     // ── structural index ───────────────────────────────────────────────────
 
     fn build_index(&mut self) {
@@ -647,7 +823,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
     #[inline]
     fn scalar_stop(&self, mask: u8) -> usize {
         let mut p = self.pos;
-        while p < self.src.len() && XML_BYTE_CLASS[self.src[p] as usize] & mask == 0 {
+        while p < self.src.len() && XML_BYTE_CLASS[self.src[p].low() as usize] & mask == 0 {
             p += 1;
         }
         p
@@ -657,7 +833,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// or the last byte of an encoded U+FFFE / U+FFFF.
     #[cold]
     fn err_at_entry(&mut self, c: u8) -> PErr {
-        if c >= 0x80 {
+        if c >= 0x80 && !U::WIDE {
             self.pos -= 2;
         }
         self.err_invalid_char()
@@ -706,7 +882,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
         &mut self,
         pos: usize,
         before: &'static str,
-        name: &[u8],
+        name: &[U],
         after: &'static str,
     ) -> PErr {
         self.err_fmt(
@@ -778,10 +954,16 @@ impl<'a, 'log> Scanner<'a, 'log> {
     #[inline]
     fn peek_at(&self, pos: usize) -> u8 {
         if pos < self.src.len() {
-            self.src[pos]
+            self.src[pos].low()
         } else {
             0
         }
+    }
+
+    /// The code unit at the cursor (which must not be at the end).
+    #[inline]
+    fn unit(&self) -> U {
+        self.src[self.pos]
     }
 
     /// End of the current frame (not necessarily of the document).
@@ -792,7 +974,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
     #[inline]
     fn starts_with(&self, s: &[u8]) -> bool {
-        self.src[self.pos.min(self.src.len())..].starts_with(s)
+        starts_with_ascii(&self.src[self.pos.min(self.src.len())..], s)
     }
 
     #[inline]
@@ -806,16 +988,31 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// the end of the frame, as (lead byte, 1) — never past the end, and
     /// never as a character a name or the parser accepts.
     fn decode_utf8(&self) -> (u32, usize) {
-        let first = self.peek();
-        if self.latin1 {
-            return (u32::from(first), 1);
+        let first = self.unit();
+        if U::WIDE {
+            // UTF-16: a surrogate pair is one character; a lone surrogate
+            // stands for itself (and is no name character).
+            let lead = first.value();
+            if (0xD800..0xDC00).contains(&lead) && self.pos + 1 < self.src.len() {
+                let trail = self.src[self.pos + 1].value();
+                if (0xDC00..0xE000).contains(&trail) {
+                    return (0x10000 + ((lead - 0xD800) << 10) + (trail - 0xDC00), 2);
+                }
+            }
+            return (lead, 1);
         }
+        if self.latin1 {
+            return (first.value(), 1);
+        }
+        let first = first.low();
         let len = strings::wtf8_byte_sequence_length(first);
         if len == 1 || self.pos + usize::from(len) > self.src.len() {
             return (u32::from(first), 1);
         }
         let mut bytes = [0u8; 4];
-        bytes[..usize::from(len)].copy_from_slice(&self.src[self.pos..self.pos + usize::from(len)]);
+        for (i, b) in bytes[..usize::from(len)].iter_mut().enumerate() {
+            *b = self.src[self.pos + i].low();
+        }
         (
             strings::decode_wtf8_rune_t(bytes, len, 0u32),
             usize::from(len),
@@ -831,6 +1028,12 @@ impl<'a, 'log> Scanner<'a, 'log> {
             return Ok(1);
         }
         let (cp, len) = self.decode_utf8();
+        if U::WIDE {
+            if cp == 0xFFFE || cp == 0xFFFF {
+                return Err(self.err_invalid_char());
+            }
+            return Ok(len);
+        }
         if len == 1 || cp == 0 {
             return Err(self.err(self.here(), "Invalid UTF-8"));
         }
@@ -844,9 +1047,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
     fn push_frame(
         &mut self,
-        text: &'a [u8],
+        text: &'a [U],
         kind: FrameKind,
-        entity: (&'a [u8], bool),
+        entity: (&'a [U], bool),
         ref_pos: usize,
     ) -> PResult<()> {
         if self.suspended.len() >= MAX_ENTITY_DEPTH {
@@ -904,10 +1107,10 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// Resolves `&name;` for inclusion in content or an attribute value.
     fn resolve_general_entity(
         &mut self,
-        name: &'a [u8],
+        name: &'a [U],
         ref_pos: usize,
         in_attribute: bool,
-    ) -> PResult<Resolved<'a>> {
+    ) -> PResult<Resolved<'a, U>> {
         if let Some(c) = predefined_entity(name) {
             return Ok(Resolved::Byte(c));
         }
@@ -942,17 +1145,17 @@ impl<'a, 'log> Scanner<'a, 'log> {
     }
 
     /// Appends `&name;` for a reference that is kept rather than expanded.
-    fn push_reference(buf: &mut ArenaVec<'a, u8>, name: &[u8]) {
-        buf.push(b'&');
+    fn push_reference(buf: &mut ArenaVec<'a, U>, name: &[U]) {
+        buf.push(U::ascii(b'&'));
         buf.extend_from_slice(name);
-        buf.push(b';');
+        buf.push(U::ascii(b';'));
     }
 
     /// Includes the parameter entity `name` as declarations (§4.4.8): pushes
     /// its replacement text (the caller accounts for the space it counts as
     /// on either side), or records that an entity that is not read was
     /// referenced.
-    fn include_parameter_entity(&mut self, name: &'a [u8], ref_pos: usize) -> PResult<()> {
+    fn include_parameter_entity(&mut self, name: &'a [U], ref_pos: usize) -> PResult<()> {
         self.saw_pe_reference = true;
         match self.entities.parameter.get(name).copied() {
             Some(EntityValue::Internal(text)) => {
@@ -981,25 +1184,40 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// declaration may follow, in which case validating the input has to
     /// wait for the encoding it declares.
     fn init_document(&mut self) -> PResult<bool> {
-        let bytes = self.src;
-        if bytes.starts_with(b"\xEF\xBB\xBF") {
-            self.pos = 3;
-            self.saw_utf8_bom = true;
-        } else if matches!(self.encoding, InputEncoding::Text | InputEncoding::Latin1) {
-            // A JS string is characters, not bytes: nothing to detect.
-        } else if bytes.starts_with(b"\xFE\xFF") {
-            self.transcode_utf16(&bytes[2..], true)?;
-        } else if bytes.starts_with(b"\xFF\xFE") {
-            self.transcode_utf16(&bytes[2..], false)?;
-        } else if bytes.starts_with(b"\x00<") {
-            self.transcode_utf16(bytes, true)?;
-            self.needs_utf16_declaration = true;
-        } else if bytes.starts_with(b"<\x00") {
-            self.transcode_utf16(bytes, false)?;
-            self.needs_utf16_declaration = true;
+        if U::WIDE {
+            // A UTF-16 JS string: characters, nothing to detect but a BOM.
+            if !self.src.is_empty() && self.src[0].value() == 0xFEFF {
+                self.pos = 1;
+            }
+        } else {
+            let bytes = U::bytes(self.src);
+            if bytes.starts_with(b"\xEF\xBB\xBF") {
+                self.pos = 3;
+                self.saw_utf8_bom = true;
+            } else if matches!(self.encoding, InputEncoding::Text | InputEncoding::Latin1) {
+                // A JS string is characters, not bytes: nothing to detect.
+            } else if bytes.starts_with(b"\xFE\xFF") {
+                self.transcode_utf16(&bytes[2..], true)?;
+            } else if bytes.starts_with(b"\xFF\xFE") {
+                self.transcode_utf16(&bytes[2..], false)?;
+            } else if bytes.starts_with(b"\x00<") {
+                self.transcode_utf16(bytes, true)?;
+                self.needs_utf16_declaration = true;
+            } else if bytes.starts_with(b"<\x00") {
+                self.transcode_utf16(bytes, false)?;
+                self.needs_utf16_declaration = true;
+            }
         }
         self.content_start = self.pos;
         Ok(self.starts_with(b"<?xml") && is_ws(self.peek_at(self.pos + 5)))
+    }
+
+    /// Bytes produced here (a transcoded document) as the unit type, which
+    /// is `u8` whenever this is reached.
+    fn units_of(bytes: &'a [u8]) -> &'a [U] {
+        assert!(!U::WIDE);
+        // SAFETY: `U` is `u8` (asserted).
+        unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len()) }
     }
 
     /// The input must be valid UTF-8 (§4.3.3: malformed byte sequences are
@@ -1008,10 +1226,13 @@ impl<'a, 'log> Scanner<'a, 'log> {
     fn validate_utf8(&mut self) -> PResult<()> {
         // Text re-encoded from a JS string, or transcoded here from UTF-16 /
         // Latin-1, is valid UTF-8 by construction; only raw bytes need it.
-        if matches!(self.encoding, InputEncoding::Text | InputEncoding::Latin1) || self.transcoded {
+        if U::WIDE
+            || matches!(self.encoding, InputEncoding::Text | InputEncoding::Latin1)
+            || self.transcoded
+        {
             return Ok(());
         }
-        let result = simdutf::validate::with_errors::utf8(self.src);
+        let result = simdutf::validate::with_errors::utf8(U::bytes(self.src));
         if result.is_successful() {
             Ok(())
         } else {
@@ -1040,7 +1261,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
             return Err(self.err(result.count * 2, "Invalid UTF-16"));
         }
         utf8.truncate(result.count);
-        self.src = self.bump.alloc_slice_copy(&utf8);
+        self.src = Self::units_of(self.bump.alloc_slice_copy(&utf8));
         self.pos = 0;
         self.transcoded = true;
         Ok(())
@@ -1061,11 +1282,11 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
     /// Acts on the encoding named by the XML declaration (the cursor is just
     /// past the declaration, which is ASCII in every supported encoding).
-    fn apply_declared_encoding(&mut self, name: &[u8], pos: usize) -> PResult<()> {
-        if matches!(self.encoding, InputEncoding::Text | InputEncoding::Latin1) {
+    fn apply_declared_encoding(&mut self, name: &[U], pos: usize) -> PResult<()> {
+        if U::WIDE || matches!(self.encoding, InputEncoding::Text | InputEncoding::Latin1) {
             return Ok(());
         }
-        let is = |canonical: &str| name.eq_ignore_ascii_case(canonical.as_bytes());
+        let is = |canonical: &str| eq_ascii_ignore_case(name, canonical.as_bytes());
         if is("UTF-8") || is("UTF8") || is("US-ASCII") || is("ASCII") {
             if self.transcoded {
                 return Err(self.err_named(
@@ -1104,8 +1325,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     "",
                 ));
             }
-            if let Some(utf8) = strings::to_utf8_from_latin1(&self.src[self.pos..]) {
-                self.src = self.bump.alloc_slice_copy(&utf8);
+            if let Some(utf8) = strings::to_utf8_from_latin1(U::bytes(&self.src[self.pos..])) {
+                self.src = Self::units_of(self.bump.alloc_slice_copy(&utf8));
                 self.pos = 0;
                 self.content_start = usize::MAX;
                 self.transcoded = true;
@@ -1127,7 +1348,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// else (after `<`, `</`, `&`, `%`, `#`, `<?`). `what` phrases the "but
     /// found" error.
     #[inline(always)]
-    fn scan_name(&mut self, what: &'static str) -> PResult<&'a [u8]> {
+    fn scan_name(&mut self, what: &'static str) -> PResult<&'a [U]> {
         let start = self.pos;
         let c = self.peek();
         if is_name_start_ascii(c) {
@@ -1172,7 +1393,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// A maximal run of `NameChar`s at the cursor and whether it starts with
     /// a `NameStartChar` (a `Name`) or not (only an `Nmtoken`); `None` if the
     /// character at the cursor cannot start either.
-    fn scan_name_run(&mut self) -> Option<(&'a [u8], bool)> {
+    fn scan_name_run(&mut self) -> Option<(&'a [U], bool)> {
         let start = self.pos;
         let c = self.peek();
         let (is_name, len) = if c < 0x80 {
@@ -1199,7 +1420,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
     }
 
     /// `Name ';'` after `&` or `%`.
-    fn scan_reference_name(&mut self, what: &'static str) -> PResult<&'a [u8]> {
+    fn scan_reference_name(&mut self, what: &'static str) -> PResult<&'a [U]> {
         let name = self.scan_name(what)?;
         if self.peek() != b';' {
             return Err(self.err_here("Expected ';' after the entity name but found"));
@@ -1250,17 +1471,26 @@ impl<'a, 'log> Scanner<'a, 'log> {
         Ok(value)
     }
 
-    fn push_code_point(&self, buf: &mut ArenaVec<'a, u8>, cp: u32) -> PResult<()> {
+    fn push_code_point(&self, buf: &mut ArenaVec<'a, U>, cp: u32) -> PResult<()> {
+        if U::WIDE {
+            let mut tmp = [0u16; 2];
+            for u in char::from_u32(cp).expect("a Char").encode_utf16(&mut tmp) {
+                buf.push(unit_from_u16::<U>(*u));
+            }
+            return Ok(());
+        }
         if self.latin1 {
             let Ok(byte) = u8::try_from(cp) else {
                 return Err(PErr::NeedsWiderEncoding);
             };
-            buf.push(byte);
+            buf.push(U::ascii(byte));
             return Ok(());
         }
         let mut tmp = [0u8; 4];
         let n = strings::encode_wtf8_rune(&mut tmp, cp);
-        buf.extend_from_slice(&tmp[..n]);
+        for &b in &tmp[..n] {
+            buf.push(U::ascii(b));
+        }
         Ok(())
     }
 
@@ -1268,13 +1498,13 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// time decoding has to diverge from the source bytes.
     fn materialize<'b>(
         bump: &'a Bump,
-        src: &[u8],
+        src: &[U],
         start: usize,
         end: usize,
-        buf: &'b mut Option<ArenaVec<'a, u8>>,
-    ) -> &'b mut ArenaVec<'a, u8> {
+        buf: &'b mut Option<ArenaVec<'a, U>>,
+    ) -> &'b mut ArenaVec<'a, U> {
         if buf.is_none() {
-            let mut b: ArenaVec<'a, u8> = ArenaVec::with_capacity_in(end - start + 32, bump);
+            let mut b: ArenaVec<'a, U> = ArenaVec::with_capacity_in(end - start + 32, bump);
             b.extend_from_slice(&src[start..end]);
             *buf = Some(b);
         }
@@ -1289,7 +1519,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
         quote: u8,
         open: usize,
         literal: Literal,
-    ) -> PResult<&'a [u8]> {
+    ) -> PResult<&'a [U]> {
         let start = self.pos;
         loop {
             match self.peek() {
@@ -1322,13 +1552,13 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// character appends a space; then, for a tokenized type (`collapse`),
     /// spaces are trimmed and collapsed.
     #[inline(always)]
-    fn scan_att_value(&mut self, quote: u8, collapse: bool) -> PResult<&'a [u8]> {
+    fn scan_att_value(&mut self, quote: u8, collapse: bool) -> PResult<&'a [U]> {
         // Nothing but ordinary characters up to the closing quote: the
         // overwhelmingly common case, one index hop.
         if self.in_document() && !self.tag_degraded && self.idx.is_some() && !collapse {
             let start = self.pos;
             let stop = self.next_stop(STOP_ATT_VALUE);
-            if stop < self.src.len() && self.src[stop] == quote {
+            if stop < self.src.len() && self.src[stop].low() == quote {
                 self.pos = stop + 1;
                 return Ok(&self.src[start..stop]);
             }
@@ -1336,13 +1566,13 @@ impl<'a, 'log> Scanner<'a, 'log> {
         self.scan_att_value_general(quote, collapse)
     }
 
-    fn scan_att_value_general(&mut self, quote: u8, collapse: bool) -> PResult<&'a [u8]> {
+    fn scan_att_value_general(&mut self, quote: u8, collapse: bool) -> PResult<&'a [U]> {
         let literal_frame = self.frame_id;
         let open_pos = self.here();
         // The value borrows `src[start..]` until normalization or a
         // reference forces a copy; once `buf` exists everything is appended.
         let start = self.pos;
-        let mut buf: Option<ArenaVec<'a, u8>> = None;
+        let mut buf: Option<ArenaVec<'a, U>> = None;
         loop {
             let stop = self.next_stop(STOP_ATT_VALUE);
             if stop != self.pos {
@@ -1387,7 +1617,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                         let name = self
                             .scan_reference_name("Expected an entity name after '&' but found")?;
                         match self.resolve_general_entity(name, ref_pos, true)? {
-                            Resolved::Byte(byte) => b.push(byte),
+                            Resolved::Byte(byte) => b.push(U::ascii(byte)),
                             Resolved::Text(text) => {
                                 self.push_frame(text, FrameKind::Literal, (name, false), ref_pos)?
                             }
@@ -1398,14 +1628,14 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 b'\r' if self.in_document() => {
                     // A line end in the document (CR or CRLF) is one #xA,
                     // hence one space.
-                    Self::materialize(self.bump, self.src, start, self.pos, &mut buf).push(b' ');
+                    Self::materialize(self.bump, self.src, start, self.pos, &mut buf).push(U::ascii(b' '));
                     self.pos += 1;
                     if self.peek() == b'\n' {
                         self.pos += 1;
                     }
                 }
                 b'\t' | b'\n' | b'\r' => {
-                    Self::materialize(self.bump, self.src, start, self.pos, &mut buf).push(b' ');
+                    Self::materialize(self.bump, self.src, start, self.pos, &mut buf).push(U::ascii(b' '));
                     self.pos += 1;
                 }
                 _ if c < 0x20 || (c >= 0x80 && !self.latin1) => return Err(self.err_at_entry(c)),
@@ -1416,7 +1646,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                         self.saw_gt_in_literal();
                     }
                     if let Some(b) = buf.as_mut() {
-                        b.push(c);
+                        b.push(self.unit());
                     }
                     self.pos += 1;
                 }
@@ -1429,11 +1659,11 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// literal, which is only legal outside the internal subset proper (WFC:
     /// PEs in Internal Subset); general entity references are bypassed —
     /// checked for form and kept verbatim (§4.4.7).
-    fn scan_entity_value(&mut self, quote: u8) -> PResult<&'a [u8]> {
+    fn scan_entity_value(&mut self, quote: u8) -> PResult<&'a [U]> {
         let literal_frame = self.frame_id;
         let in_internal_subset = self.in_document();
         let open_pos = self.here();
-        let mut buf: ArenaVec<'a, u8> = ArenaVec::with_capacity_in(32, self.bump);
+        let mut buf: ArenaVec<'a, U> = ArenaVec::with_capacity_in(32, self.bump);
         loop {
             let c = self.peek();
             match c {
@@ -1494,7 +1724,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     }
                 }
                 b'\r' if self.in_document() => {
-                    buf.push(b'\n');
+                    buf.push(U::ascii(b'\n'));
                     self.pos += 1;
                     if self.peek() == b'\n' {
                         self.pos += 1;
@@ -1538,7 +1768,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
     /// The rest of a comment after `<!--` (§2.5 [15]); dropped.
     fn scan_comment(&mut self, start_pos: usize) -> PResult<()> {
-        let dashes = strings::index_of(&self.src[self.pos..], b"--").map(|i| self.pos + i);
+        let dashes = find_ascii(&self.src[self.pos..], b"--").map(|i| self.pos + i);
         self.skip_dropped(dashes.unwrap_or(self.src.len()))?;
         match dashes {
             None => Err(self.err(start_pos, "Unterminated comment")),
@@ -1558,10 +1788,10 @@ impl<'a, 'log> Scanner<'a, 'log> {
         let at_document_start = self.in_document() && start_pos == self.content_start;
         let target =
             self.scan_name("Expected a processing instruction target after '<?' but found")?;
-        if target == b"xml" && at_document_start {
+        if eq_ascii(target, b"xml") && at_document_start {
             return Ok(true);
         }
-        if target.eq_ignore_ascii_case(b"xml") {
+        if eq_ascii_ignore_case(target, b"xml") {
             return Err(self.err(
                 start_pos,
                 "'<?xml' is reserved for the XML declaration, which is only allowed at the very start of the document",
@@ -1576,7 +1806,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 "Expected whitespace or '?>' after the processing instruction target but found",
             ));
         }
-        let close = strings::index_of(&self.src[self.pos..], b"?>").map(|i| self.pos + i);
+        let close = find_ascii(&self.src[self.pos..], b"?>").map(|i| self.pos + i);
         self.skip_dropped(close.unwrap_or(self.src.len()))?;
         match close {
             None => Err(self.err(start_pos, "Unterminated processing instruction")),
@@ -1589,8 +1819,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
     /// The body of a CDATA section after `<![CDATA[`, appended to `out` with
     /// line ends normalized; the cursor ends after `]]>`.
-    fn scan_cdata(&mut self, start_pos: usize, out: &mut ArenaVec<'a, u8>) -> PResult<()> {
-        let close = strings::index_of(&self.src[self.pos..], b"]]>").map(|i| self.pos + i);
+    fn scan_cdata(&mut self, start_pos: usize, out: &mut ArenaVec<'a, U>) -> PResult<()> {
+        let close = find_ascii(&self.src[self.pos..], b"]]>").map(|i| self.pos + i);
         let limit = close.unwrap_or(self.src.len());
         loop {
             let stop = self.next_stop(STOP_SKIPPED).min(limit);
@@ -1601,7 +1831,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
             }
             match self.peek() {
                 b'\r' if self.in_document() => {
-                    out.push(b'\n');
+                    out.push(U::ascii(b'\n'));
                     self.pos += 1;
                     if self.peek() == b'\n' {
                         self.pos += 1;
@@ -1610,8 +1840,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 c if (c < 0x20 && !is_ws(c)) || (c >= 0x80 && !self.latin1) => {
                     return Err(self.err_at_entry(c));
                 }
-                c => {
-                    out.push(c);
+                _ => {
+                    out.push(self.unit());
                     self.pos += 1;
                 }
             }
@@ -1830,9 +2060,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// includes everything that is an error — is `Slow` with the cursor
     /// unchanged, for the token path to read and report.
     #[inline(always)]
-    fn tag_step(&mut self) -> TagStep<'a> {
+    fn tag_step(&mut self) -> TagStep<'a, U> {
         let src = self.src;
-        let at = |p: usize| if p < src.len() { src[p] } else { 0 };
+        let at = |p: usize| if p < src.len() { src[p].low() } else { 0 };
         let mut p = self.pos;
         let unspaced = p;
         while is_ws(at(p)) {
@@ -1889,10 +2119,10 @@ impl<'a, 'log> Scanner<'a, 'log> {
     #[inline(always)]
     fn take_gt(&mut self) -> bool {
         let mut p = self.pos;
-        while p < self.src.len() && is_ws(self.src[p]) {
+        while p < self.src.len() && is_ws(self.src[p].low()) {
             p += 1;
         }
-        if p < self.src.len() && self.src[p] == b'>' {
+        if p < self.src.len() && self.src[p].low() == b'>' {
             self.pos = p + 1;
             self.tag_degraded &= !self.in_document();
             return true;
@@ -1911,7 +2141,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
         // everything is appended to `buf` and `start` is kept at `pos`.
         let mut start = self.pos;
         let text_pos = self.here();
-        let mut buf: Option<ArenaVec<'a, u8>> = None;
+        let mut buf: Option<ArenaVec<'a, U>> = None;
 
         // Whether any text has been collected so far.
         macro_rules! have_text {
@@ -1933,8 +2163,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
         // An index entry that is ordinary character data in this context.
         macro_rules! data_byte {
             ($c:expr) => {{
+                let _ = $c;
                 if let Some(b) = buf.as_mut() {
-                    b.push($c);
+                    b.push(self.unit());
                     start = self.pos + 1;
                 }
                 self.pos += 1;
@@ -2046,7 +2277,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                         let name = self
                             .scan_reference_name("Expected an entity name after '&' but found")?;
                         match self.resolve_general_entity(name, ref_pos, false)? {
-                            Resolved::Byte(byte) => b.push(byte),
+                            Resolved::Byte(byte) => b.push(U::ascii(byte)),
                             Resolved::Text(text) => {
                                 self.push_frame(text, FrameKind::Content, (name, false), ref_pos)?
                             }
@@ -2056,7 +2287,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     }
                 }
                 b'>' => {
-                    if self.pos >= 2 && &self.src[self.pos - 2..self.pos] == b"]]" {
+                    if self.pos >= 2 && eq_ascii(&self.src[self.pos - 2..self.pos], b"]]") {
                         let at = if self.in_document() {
                             self.pos - 2
                         } else {
@@ -2069,7 +2300,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     data_byte!(c);
                 }
                 b'\r' if self.frame_kind == FrameKind::Document => {
-                    flush!().push(b'\n');
+                    flush!().push(U::ascii(b'\n'));
                     self.pos += 1;
                     if self.peek() == b'\n' {
                         self.pos += 1;
@@ -2083,8 +2314,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
     }
 
-    fn finish_text(&mut self, start: usize, buf: Option<ArenaVec<'a, u8>>, pos: usize) {
-        let text: &'a [u8] = match buf {
+    fn finish_text(&mut self, start: usize, buf: Option<ArenaVec<'a, U>>, pos: usize) {
+        let text: &'a [U] = match buf {
             Some(mut b) => {
                 b.extend_from_slice(&self.src[start..self.pos]);
                 b.into_bump_slice()
@@ -2104,12 +2335,12 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
 /// Receives the document structure from the parser — attributes already
 /// deduplicated, normalized and defaulted — and builds the rows.
-trait Sink<'a> {
+trait Sink<'a, U: Unit> {
     /// `begin_element`, any number of `attribute`s, `end_attributes`; then
     /// content (`text` and child elements); then `end_element`.
-    fn begin_element(&mut self, name: &'a [u8], loc: Loc);
-    fn attribute(&mut self, name: &'a [u8], value: &'a [u8]);
-    fn text(&mut self, text: &'a [u8], loc: Loc);
+    fn begin_element(&mut self, name: &'a [U], loc: Loc);
+    fn attribute(&mut self, name: &'a [U], value: &'a [U]);
+    fn text(&mut self, text: &'a [U], loc: Loc);
     fn end_element(&mut self);
     /// Called once, after the root element has ended.
     fn finish(&mut self) -> Expr;
@@ -2153,8 +2384,8 @@ impl<'a> Tape<'a> {
     }
 
     #[inline]
-    fn str(bytes: &[u8]) -> E::JsonValue {
-        E::JsonValue::String(E::Str::new(bytes))
+    fn str<U: Unit>(units: &[U]) -> E::JsonValue {
+        E::JsonValue::String(E::Str::new(U::bytes(units)))
     }
 
     #[inline]
@@ -2245,13 +2476,13 @@ impl<'a> Tape<'a> {
 
 /// Builds `{ "@attr": .., child: .., "#text": .. }`; the mapping rules are
 /// documented on `Bun.XML.parse` in bun.d.ts.
-struct CompactSink<'a> {
+struct CompactSink<'a, U: Unit> {
     tape: Tape<'a>,
-    stack: Vec<CompactFrame<'a>>,
+    stack: Vec<CompactFrame<'a, U>>,
     /// The text runs of every open element, oldest first; each frame owns
     /// the tail from its `text_mark`. Concatenated (if more than one
     /// survives trimming) when the element ends.
-    text_runs: Vec<&'a [u8]>,
+    text_runs: Vec<&'a [U]>,
     /// Recently built `@name` keys, direct-mapped by a cheap hash of the
     /// name: attribute names repeat, their keys need not be rebuilt.
     key_cache: [Option<E::Str>; KEY_CACHE_SIZE],
@@ -2261,14 +2492,14 @@ struct CompactSink<'a> {
     gathered: Vec<E::JsonValue>,
     gathered_locs: Vec<Loc>,
     group_index: HashMap<&'a [u8], u32>,
-    root: Option<(&'a [u8], E::JsonValue, Loc)>,
+    root: Option<(&'a [U], E::JsonValue, Loc)>,
 }
 
 /// An open element. Its properties are staged on `Tape::props` from
 /// `props_mark`: the `@`-attributes, then one per child element as each one
 /// ends (repeats are folded when this element ends).
-struct CompactFrame<'a> {
-    name: &'a [u8],
+struct CompactFrame<'a, U: Unit> {
+    name: &'a [U],
     loc: Loc,
     attribute_count: u32,
     props_mark: u32,
@@ -2303,7 +2534,7 @@ struct Group {
 /// pairwise; beyond it, through a hash map.
 const LINEAR_CHILD_LIMIT: usize = 16;
 
-impl<'a> CompactSink<'a> {
+impl<'a, U: Unit> CompactSink<'a, U> {
     fn new(tape: Tape<'a>) -> Self {
         CompactSink {
             stack: Vec::with_capacity(64),
@@ -2323,10 +2554,10 @@ impl<'a> CompactSink<'a> {
     /// and trimmed. Only whitespace that trimming removes is ever scanned,
     /// and a single surviving run is borrowed, not copied.
     #[inline]
-    fn take_text(&mut self, mark: usize) -> &'a [u8] {
+    fn take_text(&mut self, mark: usize) -> &'a [U] {
         let runs = &self.text_runs[mark..];
-        let text: &'a [u8] = match runs {
-            [] => b"",
+        let text: &'a [U] = match runs {
+            [] => &[],
             [one] => trim_ws(one),
             _ => self.join_text(mark),
         };
@@ -2335,7 +2566,7 @@ impl<'a> CompactSink<'a> {
     }
 
     #[cold]
-    fn join_text(&mut self, mark: usize) -> &'a [u8] {
+    fn join_text(&mut self, mark: usize) -> &'a [U] {
         let runs = &mut self.text_runs[mark..];
         let mut first = 0;
         let mut last = runs.len();
@@ -2358,11 +2589,11 @@ impl<'a> CompactSink<'a> {
             }
         }
         match &runs[first..last] {
-            [] => b"",
+            [] => &[],
             [one] => one,
             kept => {
                 let len = kept.iter().map(|r| r.len()).sum();
-                let mut buf: ArenaVec<'a, u8> = ArenaVec::with_capacity_in(len, self.tape.bump);
+                let mut buf: ArenaVec<'a, U> = ArenaVec::with_capacity_in(len, self.tape.bump);
                 for r in kept {
                     buf.extend_from_slice(r);
                 }
@@ -2484,9 +2715,9 @@ impl<'a> CompactSink<'a> {
     }
 }
 
-impl<'a> Sink<'a> for CompactSink<'a> {
+impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
     #[inline]
-    fn begin_element(&mut self, name: &'a [u8], loc: Loc) {
+    fn begin_element(&mut self, name: &'a [U], loc: Loc) {
         self.stack.push(CompactFrame {
             name,
             loc,
@@ -2497,19 +2728,23 @@ impl<'a> Sink<'a> for CompactSink<'a> {
     }
 
     #[inline]
-    fn attribute(&mut self, name: &'a [u8], value: &'a [u8]) {
+    fn attribute(&mut self, name: &'a [U], value: &'a [U]) {
         let frame = self
             .stack
             .last_mut()
             .expect("attribute outside a start tag");
         frame.attribute_count += 1;
         let loc = frame.loc;
-        let slot = key_cache_slot(name);
+        let unit = core::mem::size_of::<U>();
+        let slot = key_cache_slot(U::bytes(name));
         let key = match self.key_cache[slot] {
-            Some(key) if name_eq(&key.slice()[1..], name) => key,
+            Some(key) if name_eq(&key.slice()[unit..], U::bytes(name)) => key,
             _ => {
-                // SAFETY: see `Tape::object_from`.
-                let key = unsafe { self.tape.tape.as_mut() }.alloc_str_join(b"@", name);
+                // `@name`, in the tape's encoding.
+                let joined = self.tape.bump.alloc_slice_fill_default::<U>(name.len() + 1);
+                joined[0] = U::ascii(b'@');
+                joined[1..].copy_from_slice(name);
+                let key = E::Str::new(U::bytes(joined));
                 self.key_cache[slot] = Some(key);
                 key
             }
@@ -2518,7 +2753,7 @@ impl<'a> Sink<'a> for CompactSink<'a> {
     }
 
     #[inline]
-    fn text(&mut self, text: &'a [u8], _loc: Loc) {
+    fn text(&mut self, text: &'a [U], _loc: Loc) {
         self.text_runs.push(text);
     }
 
@@ -2536,12 +2771,12 @@ impl<'a> Sink<'a> for CompactSink<'a> {
                 self.fold_repeats(children_mark);
             }
             if !trimmed.is_empty() {
-                self.tape.push_prop(b"#text", Tape::str(trimmed), frame.loc);
+                self.tape.push_prop(U::bytes(U::KEY_TEXT), Tape::str(trimmed), frame.loc);
             }
             E::JsonValue::Object(self.tape.object_from(props_mark, frame.loc))
         };
         match self.stack.last() {
-            Some(_) => self.tape.push_prop(frame.name, value, frame.loc),
+            Some(_) => self.tape.push_prop(U::bytes(frame.name), value, frame.loc),
             None => self.root = Some((frame.name, value, frame.loc)),
         }
     }
@@ -2552,21 +2787,21 @@ impl<'a> Sink<'a> for CompactSink<'a> {
             .take()
             .expect("finish before the root element ended");
         let mark = self.tape.props.len();
-        self.tape.push_prop(name, value, loc);
+        self.tape.push_prop(U::bytes(name), value, loc);
         Tape::root(self.tape.object_from(mark, loc), loc)
     }
 }
 
 /// Builds `{ name, attributes: {..}, children: [..] }` per element; text
 /// children are strings, kept exactly (including whitespace-only runs).
-struct NodeSink<'a> {
+struct NodeSink<'a, U: Unit> {
     tape: Tape<'a>,
-    stack: Vec<NodeFrame<'a>>,
+    stack: Vec<NodeFrame<'a, U>>,
     root: Option<StoreRef<E::ObjectJSON>>,
 }
 
-struct NodeFrame<'a> {
-    name: &'a [u8],
+struct NodeFrame<'a, U: Unit> {
+    name: &'a [U],
     loc: Loc,
     /// The attributes are staged on `Tape::props` from here until the
     /// element ends (nothing else of this element goes on `props`).
@@ -2574,7 +2809,7 @@ struct NodeFrame<'a> {
     children_mark: u32,
 }
 
-impl<'a> NodeSink<'a> {
+impl<'a, U: Unit> NodeSink<'a, U> {
     fn new(tape: Tape<'a>) -> Self {
         NodeSink {
             tape,
@@ -2584,9 +2819,9 @@ impl<'a> NodeSink<'a> {
     }
 }
 
-impl<'a> Sink<'a> for NodeSink<'a> {
+impl<'a, U: Unit> Sink<'a, U> for NodeSink<'a, U> {
     #[inline]
-    fn begin_element(&mut self, name: &'a [u8], loc: Loc) {
+    fn begin_element(&mut self, name: &'a [U], loc: Loc) {
         self.stack.push(NodeFrame {
             name,
             loc,
@@ -2596,16 +2831,16 @@ impl<'a> Sink<'a> for NodeSink<'a> {
     }
 
     #[inline]
-    fn attribute(&mut self, name: &'a [u8], value: &'a [u8]) {
+    fn attribute(&mut self, name: &'a [U], value: &'a [U]) {
         let loc = self
             .stack
             .last()
             .expect("attribute outside a start tag")
             .loc;
-        self.tape.push_prop(name, Tape::str(value), loc);
+        self.tape.push_prop(U::bytes(name), Tape::str(value), loc);
     }
 
-    fn text(&mut self, text: &'a [u8], loc: Loc) {
+    fn text(&mut self, text: &'a [U], loc: Loc) {
         self.tape.push_item(Tape::str(text), loc);
     }
 
@@ -2617,11 +2852,17 @@ impl<'a> Sink<'a> for NodeSink<'a> {
             .array_from(frame.children_mark as usize, frame.loc);
         let mark = self.tape.props.len();
         self.tape
-            .push_prop(b"name", Tape::str(frame.name), frame.loc);
-        self.tape
-            .push_prop(b"attributes", E::JsonValue::Object(attributes), frame.loc);
-        self.tape
-            .push_prop(b"children", E::JsonValue::Array(children), frame.loc);
+            .push_prop(U::bytes(U::KEY_NAME), Tape::str(frame.name), frame.loc);
+        self.tape.push_prop(
+            U::bytes(U::KEY_ATTRIBUTES),
+            E::JsonValue::Object(attributes),
+            frame.loc,
+        );
+        self.tape.push_prop(
+            U::bytes(U::KEY_CHILDREN),
+            E::JsonValue::Array(children),
+            frame.loc,
+        );
         let node = self.tape.object_from(mark, frame.loc);
         match self.stack.last() {
             Some(_) => self.tape.push_item(E::JsonValue::Object(node), frame.loc),
@@ -2643,27 +2884,27 @@ impl<'a> Sink<'a> for NodeSink<'a> {
 /// One declared attribute of an element type: its normalization class and
 /// its (already normalized) default.
 #[derive(Copy, Clone)]
-struct AttDef<'a> {
-    name: &'a [u8],
+struct AttDef<'a, U: Unit> {
+    name: &'a [U],
     cdata: bool,
     /// The default, already normalized.
-    default: Option<&'a [u8]>,
+    default: Option<&'a [U]>,
 }
 
 /// The ATTLIST declarations for one element type, in declaration order (the
 /// first declaration of an attribute is binding, §3.3), indexed by name.
 #[derive(Default)]
-struct AttList<'a> {
-    defs: Vec<AttDef<'a>>,
-    by_name: HashMap<&'a [u8], u32>,
+struct AttList<'a, U: Unit> {
+    defs: Vec<AttDef<'a, U>>,
+    by_name: HashMap<&'a [U], u32>,
 }
 
-impl<'a> AttList<'a> {
-    fn get(&self, name: &[u8]) -> Option<&AttDef<'a>> {
+impl<'a, U: Unit> AttList<'a, U> {
+    fn get(&self, name: &[U]) -> Option<&AttDef<'a, U>> {
         self.by_name.get(name).map(|&i| &self.defs[i as usize])
     }
 
-    fn declare(&mut self, def: AttDef<'a>) {
+    fn declare(&mut self, def: AttDef<'a, U>) {
         if !self.by_name.contains_key(def.name) {
             self.by_name.insert(def.name, self.defs.len() as u32);
             self.defs.push(def);
@@ -2684,32 +2925,32 @@ const MAX_DEPTH: usize = 100_000;
 /// Checks the grammar and the structural well-formedness constraints over
 /// the scanner's tokens (and, in the document entity, its fast paths),
 /// applies DTD information to attributes, and drives a `Sink`.
-struct Parser<'a, 'log, S: Sink<'a>> {
-    scanner: Scanner<'a, 'log>,
+struct Parser<'a, 'log, U: Unit, S: Sink<'a, U>> {
+    scanner: Scanner<'a, 'log, U>,
     /// Inside the document type declaration, for diagnostics.
     in_dtd: bool,
     /// For the content-model parser, which does recurse.
     stack_check: StackCheck,
     sink: S,
-    attlists: HashMap<&'a [u8], AttList<'a>>,
+    attlists: HashMap<&'a [U], AttList<'a, U>>,
     /// The open elements: name and the input frame the start tag was in.
-    open: Vec<(&'a [u8], u32)>,
+    open: Vec<(&'a [U], u32)>,
     /// The current start tag's attribute names: the first few in `first`,
     /// and once there are more than `LINEAR_ATTRIBUTE_LIMIT`, all in `names`.
-    attribute_first: [&'a [u8]; LINEAR_ATTRIBUTE_LIMIT],
-    attribute_names: HashMap<&'a [u8], ()>,
+    attribute_first: [&'a [U]; LINEAR_ATTRIBUTE_LIMIT],
+    attribute_names: HashMap<&'a [U], ()>,
     attribute_count: usize,
 }
 
-impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
+impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn new(
         source: &'a Source,
+        contents: &'a [U],
         log: &'log mut Log,
         bump: &'a Bump,
         options: Options,
         sink: S,
     ) -> Self {
-        let contents: &'a [u8] = source.contents.as_ref();
         Parser {
             scanner: Scanner {
                 src: contents,
@@ -2730,7 +2971,8 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 has_external_subset: false,
                 saw_pe_reference: false,
                 saw_unread_pe: false,
-                transcoded: false,
+                // UTF-16 unit offsets are not byte offsets into `source`.
+                transcoded: U::WIDE,
                 saw_utf8_bom: false,
                 needs_utf16_declaration: false,
                 content_start: 0,
@@ -2754,7 +2996,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             sink,
             attlists: HashMap::default(),
             open: Vec::new(),
-            attribute_first: [b""; LINEAR_ATTRIBUTE_LIMIT],
+            attribute_first: [&[]; LINEAR_ATTRIBUTE_LIMIT],
             attribute_names: HashMap::default(),
             attribute_count: 0,
         }
@@ -2830,7 +3072,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         ))
     }
 
-    fn expect_name(&mut self, expected: &str) -> PResult<&'a [u8]> {
+    fn expect_name(&mut self, expected: &str) -> PResult<&'a [U]> {
         match self.scanner.tok.kind {
             Kind::Name(name) => Ok(name),
             _ => Err(self.unexpected(expected)),
@@ -2942,7 +3184,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         // than 1.0 is processed as 1.0 (§2.8, erratum E10).
         let Some((version, pos)) = self.parse_pseudo_attribute(b"version")? else {
             return Err(match self.scanner.tok.kind {
-                Kind::Name(b"encoding" | b"standalone") => self.scanner.err(
+                Kind::Name(n) if eq_ascii(n, b"encoding") || eq_ascii(n, b"standalone") => self.scanner.err(
                     self.scanner.tok.pos,
                     "The XML declaration must start with version=\"1.0\"",
                 ),
@@ -2954,8 +3196,8 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             });
         };
         if !(version.len() >= 3
-            && version.starts_with(b"1.")
-            && version[2..].iter().all(u8::is_ascii_digit))
+            && starts_with_ascii(version, b"1.")
+            && version[2..].iter().all(|u| u.low().is_ascii_digit()))
         {
             return Err(self.scanner.err_named(
                 pos,
@@ -2968,10 +3210,11 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         // EncodingDecl. EncName ::= [A-Za-z] ([A-Za-z0-9._] | '-')*
         let encoding = self.parse_pseudo_attribute(b"encoding")?;
         if let Some((name, pos)) = encoding {
-            let valid = name.first().is_some_and(u8::is_ascii_alphabetic)
-                && name
-                    .iter()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'));
+            let valid = name.first().is_some_and(|u| u.low().is_ascii_alphabetic())
+                && name.iter().all(|u| {
+                    let c = u.low();
+                    c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-')
+                });
             if !valid {
                 return Err(self.scanner.err_named(
                     pos,
@@ -2985,8 +3228,8 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         // SDDecl.
         if let Some((value, pos)) = self.parse_pseudo_attribute(b"standalone")? {
             match value {
-                b"yes" => self.scanner.standalone = true,
-                b"no" => {}
+                v if eq_ascii(v, b"yes") => self.scanner.standalone = true,
+                v if eq_ascii(v, b"no") => {}
                 _ => {
                     return Err(self.scanner.err_named(
                         pos,
@@ -3006,7 +3249,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                     return Err(self.unexpected("'?>' to end the XML declaration"));
                 }
             }
-            Kind::Name(name @ (b"version" | b"encoding" | b"standalone")) => {
+            Kind::Name(name) if eq_ascii(name, b"version") || eq_ascii(name, b"encoding") || eq_ascii(name, b"standalone") => {
                 return Err(self.scanner.err_named(
                     self.scanner.tok.pos,
                     "Misplaced",
@@ -3043,8 +3286,8 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     fn parse_pseudo_attribute(
         &mut self,
         name: &'static [u8],
-    ) -> PResult<Option<(&'a [u8], usize)>> {
-        if self.scanner.tok.kind != Kind::Name(name) {
+    ) -> PResult<Option<(&'a [U], usize)>> {
+        if !matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, name)) {
             return Ok(None);
         }
         self.require_spaced()?;
@@ -3071,7 +3314,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         self.expect_name("the document type name")?;
         self.require_spaced()?;
         self.advance()?;
-        if let Kind::Name(b"SYSTEM" | b"PUBLIC") = self.scanner.tok.kind {
+        if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC")) {
             self.require_spaced()?;
             self.parse_external_id(false)?;
             self.scanner.has_external_subset = true;
@@ -3098,7 +3341,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// `SYSTEM` or `PUBLIC`. The identifiers are checked and dropped (nothing
     /// external is read). Ends on the token after the last literal.
     fn parse_external_id(&mut self, notation: bool) -> PResult<()> {
-        if let Kind::Name(b"SYSTEM") = self.scanner.tok.kind {
+        if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM")) {
             self.advance_literal(Literal::System)?;
             if !matches!(self.scanner.tok.kind, Kind::Literal(_)) {
                 return Err(self.unexpected("a quoted system identifier after SYSTEM"));
@@ -3190,14 +3433,14 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         self.require_spaced()?;
         self.advance()?;
         match self.scanner.tok.kind {
-            Kind::Name(b"EMPTY" | b"ANY") => {
+            Kind::Name(n) if eq_ascii(n, b"EMPTY") || eq_ascii(n, b"ANY") => {
                 self.require_spaced()?;
                 self.advance()?;
             }
             Kind::ParenOpen => {
                 self.require_spaced()?;
                 self.advance()?;
-                if let Kind::Hash(b"PCDATA") = self.scanner.tok.kind {
+                if matches!(self.scanner.tok.kind, Kind::Hash(n) if eq_ascii(n, b"PCDATA")) {
                     self.parse_mixed()?;
                 } else {
                     self.parse_group()?;
@@ -3266,7 +3509,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// the group's `)` and occurrence indicator.
     fn parse_group(&mut self) -> PResult<()> {
         self.parse_particle()?;
-        let mut separator: Option<Kind<'a>> = None;
+        let mut separator: Option<Kind<'a, U>> = None;
         loop {
             match self.scanner.tok.kind {
                 Kind::ParenClose => {
@@ -3303,7 +3546,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 self.advance()?;
                 self.parse_group()
             }
-            Kind::Hash(b"PCDATA") => Err(self.scanner.err(
+            Kind::Hash(n) if eq_ascii(n, b"PCDATA") => Err(self.scanner.err(
                 self.scanner.tok.pos,
                 "#PCDATA must come first in a content model, as (#PCDATA|a|b)*",
             )),
@@ -3347,18 +3590,15 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             // rest matters, for attribute-value normalization (§3.3.3).
             self.advance()?;
             let cdata = match self.scanner.tok.kind {
-                Kind::Name(b"CDATA") => {
+                Kind::Name(n) if eq_ascii(n, b"CDATA") => {
                     self.require_spaced()?;
                     true
                 }
-                Kind::Name(
-                    b"ID" | b"IDREF" | b"IDREFS" | b"ENTITY" | b"ENTITIES" | b"NMTOKEN"
-                    | b"NMTOKENS",
-                ) => {
+                Kind::Name(n) if eq_ascii(n, b"ID") || eq_ascii(n, b"IDREF") || eq_ascii(n, b"IDREFS") || eq_ascii(n, b"ENTITY") || eq_ascii(n, b"ENTITIES") || eq_ascii(n, b"NMTOKEN") || eq_ascii(n, b"NMTOKENS") => {
                     self.require_spaced()?;
                     false
                 }
-                Kind::Name(b"NOTATION") => {
+                Kind::Name(n) if eq_ascii(n, b"NOTATION") => {
                     self.require_spaced()?;
                     self.advance()?;
                     if self.scanner.tok.kind != Kind::ParenOpen {
@@ -3381,11 +3621,11 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             let literal = Literal::AttValue { collapse: !cdata };
             self.advance_literal(literal)?;
             let default = match self.scanner.tok.kind {
-                Kind::Hash(b"REQUIRED" | b"IMPLIED") => {
+                Kind::Hash(n) if eq_ascii(n, b"REQUIRED") || eq_ascii(n, b"IMPLIED") => {
                     self.require_spaced()?;
                     None
                 }
-                Kind::Hash(b"FIXED") => {
+                Kind::Hash(n) if eq_ascii(n, b"FIXED") => {
                     self.require_spaced()?;
                     self.advance_literal(literal)?;
                     let Kind::Literal(value) = self.scanner.tok.kind else {
@@ -3465,10 +3705,10 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 self.advance()?;
                 EntityValue::Internal(value)
             }
-            Kind::Name(b"SYSTEM" | b"PUBLIC") => {
+            Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC") => {
                 self.require_spaced()?;
                 self.parse_external_id(false)?;
-                if let Kind::Name(b"NDATA") = self.scanner.tok.kind {
+                if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"NDATA")) {
                     self.require_spaced()?;
                     if parameter {
                         return Err(self
@@ -3507,7 +3747,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         self.expect_name("a notation name after '<!NOTATION'")?;
         self.require_spaced()?;
         self.advance()?;
-        if !matches!(self.scanner.tok.kind, Kind::Name(b"SYSTEM" | b"PUBLIC")) {
+        if !matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC")) {
             return Err(self.unexpected("SYSTEM or PUBLIC in the notation declaration"));
         }
         self.require_spaced()?;
@@ -3587,9 +3827,9 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// `name`, its `>`, and pop.
     fn close_element(
         &mut self,
-        name: &'a [u8],
+        name: &'a [U],
         frame: u32,
-        end_name: &[u8],
+        end_name: &[U],
         pos: usize,
         end_frame: u32,
     ) -> PResult<()> {
@@ -3627,15 +3867,15 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// processing instructions, line ends to normalize, errors) is `Slow`
     /// with the cursor back at the start of the run, for `next_content`.
     #[inline(always)]
-    fn content_step(&mut self, name: &'a [u8], frame: u32) -> PResult<Step> {
+    fn content_step(&mut self, name: &'a [U], frame: u32) -> PResult<Step> {
         let sc = &mut self.scanner;
         let src = sc.src;
         let start = sc.pos;
         let stop = sc.next_stop(STOP_CONTENT);
-        if stop + 1 >= src.len() || src[stop] != b'<' {
+        if stop + 1 >= src.len() || src[stop].low() != b'<' {
             return Ok(Step::Slow);
         }
-        let next = src[stop + 1];
+        let next = src[stop + 1].low();
         if next == b'!' || next == b'?' {
             return Ok(Step::Slow);
         }
@@ -3647,9 +3887,9 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             sc.pos = stop + 2;
             let n = name.len();
             let fast_match = src.len() - sc.pos > n
-                && name_eq(&src[sc.pos..sc.pos + n], name)
-                && !is_name_char_ascii(src[sc.pos + n])
-                && src[sc.pos + n] < 0x80;
+                && src[sc.pos..sc.pos + n] == *name
+                && !is_name_char_ascii(src[sc.pos + n].low())
+                && src[sc.pos + n].low() < 0x80;
             let end_name = if fast_match {
                 sc.pos += n;
                 name
@@ -3678,17 +3918,17 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// their declared type (§3.3.3), declared defaults supplied (§3.3.2).
     /// Returns whether the tag was an empty-element tag.
     #[inline]
-    fn parse_attributes(&mut self, element: &'a [u8]) -> PResult<bool> {
+    fn parse_attributes(&mut self, element: &'a [U]) -> PResult<bool> {
         self.attribute_count = 0;
         // The element's ATTLIST, if any. It is not modified while a start tag
         // is read (declarations precede the root element), so a raw pointer
         // sidesteps borrowing `self` for the whole loop.
-        let defs: Option<*const AttList<'a>> = if self.attlists.is_empty() {
+        let defs: Option<*const AttList<'a, U>> = if self.attlists.is_empty() {
             None
         } else {
             self.attlists.get(element).map(core::ptr::from_ref)
         };
-        let collapse_for = |_: &HashMap<&'a [u8], AttList<'a>>, name: &[u8]| {
+        let collapse_for = |_: &HashMap<&'a [U], AttList<'a, U>>, name: &[U]| {
             // SAFETY: see `defs`.
             defs.is_some_and(|d| unsafe { &*d }.get(name).is_some_and(|def| !def.cdata))
         };
@@ -3753,18 +3993,16 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     }
 
     #[inline(always)]
-    fn has_attribute(&self, name: &[u8]) -> bool {
+    fn has_attribute(&self, name: &[U]) -> bool {
         if self.attribute_count <= LINEAR_ATTRIBUTE_LIMIT {
-            self.attribute_first[..self.attribute_count]
-                .iter()
-                .any(|&first| name_eq(first, name))
+            self.attribute_first[..self.attribute_count].contains(&name)
         } else {
             self.attribute_names.contains_key(name)
         }
     }
 
     #[inline(always)]
-    fn push_attribute(&mut self, name: &'a [u8], value: &'a [u8]) {
+    fn push_attribute(&mut self, name: &'a [U], value: &'a [U]) {
         self.sink.attribute(name, value);
         if self.attribute_count < LINEAR_ATTRIBUTE_LIMIT {
             self.attribute_first[self.attribute_count] = name;
@@ -3775,7 +4013,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     }
 
     #[cold]
-    fn spill_attribute_name(&mut self, name: &'a [u8]) {
+    fn spill_attribute_name(&mut self, name: &'a [U]) {
         if self.attribute_count == LINEAR_ATTRIBUTE_LIMIT {
             self.attribute_names.clear();
             for first in self.attribute_first {
@@ -3789,18 +4027,20 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
 /// The extra normalization for attributes declared with a tokenized or
 /// enumerated type (§3.3.3): leading and trailing spaces removed, runs of
 /// spaces collapsed. All whitespace in `value` is already #x20.
-fn collapse_spaces<'a>(bump: &'a Bump, value: &'a [u8]) -> &'a [u8] {
-    let trimmed = strings::trim(value, b" ");
-    if strings::index_of(trimmed, b"  ").is_none() {
+fn collapse_spaces<'a, U: Unit>(bump: &'a Bump, value: &'a [U]) -> &'a [U] {
+    // All whitespace in `value` is already #x20, so `trim_ws` trims spaces.
+    let trimmed = trim_ws(value);
+    if find_ascii(trimmed, b"  ").is_none() {
         return trimmed;
     }
-    let mut out: ArenaVec<'a, u8> = ArenaVec::with_capacity_in(trimmed.len(), bump);
+    let mut out: ArenaVec<'a, U> = ArenaVec::with_capacity_in(trimmed.len(), bump);
     let mut previous_space = false;
     for &c in trimmed {
-        if c != b' ' || !previous_space {
+        let space = c.low() == b' ';
+        if !space || !previous_space {
             out.push(c);
         }
-        previous_space = c == b' ';
+        previous_space = space;
     }
     out.into_bump_slice()
 }

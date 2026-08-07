@@ -57,8 +57,15 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 super::SourceEncoding::Bytes => xml::InputEncoding::Bytes,
                 super::SourceEncoding::Utf8Text => xml::InputEncoding::Text,
                 super::SourceEncoding::Latin1Text => xml::InputEncoding::Latin1,
+                super::SourceEncoding::Utf16Text => xml::InputEncoding::Text,
             };
-            let mut result = XML::parse(source, log, arena, xml::Options { compact, encoding });
+            let mut result = if source_encoding == super::SourceEncoding::Utf16Text {
+                // The scaffold hands the string's code units over as bytes.
+                let units: &[u16] = bytemuck::cast_slice(&source.contents);
+                XML::parse_utf16(source, units, log, arena, compact)
+            } else {
+                XML::parse(source, log, arena, xml::Options { compact, encoding })
+            };
             let utf8;
             let utf8_source;
             if matches!(result, Err(bun_parsers::Error::NeedsWiderEncoding)) {

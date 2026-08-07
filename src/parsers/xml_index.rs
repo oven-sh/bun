@@ -15,9 +15,11 @@ const REFILL_INPUT: usize = 8 * 1024;
 
 const LOOKBEHIND: usize = 4;
 
-/// The streaming structural index over one buffer; ends with two `len` sentinels.
-pub struct StructuralIndex<'c> {
-    contents: &'c [u8],
+/// The streaming structural index over one buffer of code units (`u8` for
+/// UTF-8 / Latin-1, `u16` for UTF-16 — indexed by the scalar producer, whose
+/// non-characters are the units 0xFFFE / 0xFFFF); ends with two `len` sentinels.
+pub struct StructuralIndex<'c, U: crate::xml::Unit = u8> {
+    contents: &'c [U],
     win: Vec<u32>,
     base: usize,
     done: bool,
@@ -27,12 +29,12 @@ pub struct StructuralIndex<'c> {
     s_in_tag: bool,
 }
 
-impl<'c> StructuralIndex<'c> {
-    pub fn new(contents: &'c [u8]) -> Self {
-        Self::with_producer(contents, !bun_core::env::IS_NATIVE)
+impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
+    pub fn new(contents: &'c [U]) -> Self {
+        Self::with_producer(contents, U::WIDE || !bun_core::env::IS_NATIVE)
     }
 
-    fn with_producer(contents: &'c [u8], use_scalar: bool) -> Self {
+    fn with_producer(contents: &'c [U], use_scalar: bool) -> Self {
         debug_assert!(contents.len() <= i32::MAX as usize);
         let win_cap = contents.len().min(REFILL_INPUT) + 64 + SENTINELS + LOOKBEHIND;
         StructuralIndex {
@@ -113,10 +115,10 @@ impl<'c> StructuralIndex<'c> {
         }
         let chunk_len = (len - self.src_off).min(REFILL_INPUT);
         let chunk = &self.contents[self.src_off..self.src_off + chunk_len];
-        if bun_core::env::IS_NATIVE && !self.use_scalar {
+        if bun_core::env::IS_NATIVE && !U::WIDE && !self.use_scalar {
             let filled = self.win.len();
             let n = bun_highway::xml_structural_index_chunk(
-                chunk,
+                U::bytes(chunk),
                 self.src_off,
                 &mut self.win.spare_capacity_mut()[..chunk_len + 64],
                 &mut self.kernel_state,
@@ -136,16 +138,21 @@ impl<'c> StructuralIndex<'c> {
         self.done = true;
     }
 
-    fn scalar_chunk(&mut self, chunk: &[u8], base: usize) {
+    fn scalar_chunk(&mut self, chunk: &[U], base: usize) {
         let mut in_tag = self.s_in_tag;
-        for (i, &c) in chunk.iter().enumerate() {
+        for (i, &u) in chunk.iter().enumerate() {
+            let c = u.low();
             let cls = XML_BYTE_CLASS[c as usize];
             if cls == 0 {
-                if c | 1 == 0xBF
-                    && base + i >= 2
-                    && self.contents[base + i - 1] == 0xBF
-                    && self.contents[base + i - 2] == 0xEF
-                {
+                let nonchar = if U::WIDE {
+                    u.value() | 1 == 0xFFFF
+                } else {
+                    c | 1 == 0xBF
+                        && base + i >= 2
+                        && self.contents[base + i - 1].low() == 0xBF
+                        && self.contents[base + i - 2].low() == 0xEF
+                };
+                if nonchar {
                     self.win.push((base + i) as u32);
                 }
                 continue;

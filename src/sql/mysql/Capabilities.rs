@@ -7,25 +7,32 @@
 use core::fmt;
 
 macro_rules! capabilities {
-    ($($name:ident = $bit:literal),* $(,)?) => {
+    ($struct_name:ident { $($name:ident = $bit:literal),* $(,)? }) => {
         #[derive(Default, Clone, Copy, PartialEq, Eq)]
-        pub struct Capabilities {
+        pub struct $struct_name {
             $(pub $name: bool,)*
         }
 
-        impl Capabilities {
+        impl $struct_name {
             pub fn to_int(self) -> u32 {
                 0 $(| ((self.$name as u32) << $bit))*
             }
 
-            pub fn from_int(flags: u32) -> Capabilities {
-                Capabilities {
+            pub fn from_int(flags: u32) -> $struct_name {
+                $struct_name {
                     $($name: (flags & (1u32 << $bit)) != 0,)*
                 }
             }
+
+            /// Returns the intersection of two capability sets (AND).
+            /// Per MySQL protocol, the client should only request capabilities
+            /// that the server also advertises.
+            pub fn intersect(self, other: $struct_name) -> $struct_name {
+                Self::from_int(self.to_int() & other.to_int())
+            }
         }
 
-        impl fmt::Display for Capabilities {
+        impl fmt::Display for $struct_name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 let mut first = true;
                 $(
@@ -45,7 +52,7 @@ macro_rules! capabilities {
 }
 
 // Bit positions from the MySQL protocol.
-capabilities! {
+capabilities! { Capabilities {
     CLIENT_LONG_PASSWORD                   = 0,
     CLIENT_FOUND_ROWS                      = 1,
     CLIENT_LONG_FLAG                       = 2,
@@ -78,6 +85,32 @@ capabilities! {
     CLIENT_CAPABILITY_EXTENSION            = 29,
     CLIENT_SSL_VERIFY_SERVER_CERT          = 30,
     CLIENT_REMEMBER_OPTIONS                = 31,
+} }
+
+// MariaDB extended capability flags (MariaDB 10.2+). Conceptually bits 32..63
+// of the combined capability value; the handshake carries them in a separate
+// 4-byte field (the tail of the reserved/filler bytes), so bit positions here
+// are relative to that field.
+capabilities! { MariaDBCapabilities {
+    MARIADB_CLIENT_PROGRESS                = 0,
+    MARIADB_CLIENT_COM_MULTI               = 1,
+    MARIADB_CLIENT_STMT_BULK_OPERATIONS    = 2,
+    MARIADB_CLIENT_EXTENDED_TYPE_INFO      = 3,
+    MARIADB_CLIENT_CACHE_METADATA          = 4,
+    MARIADB_CLIENT_BULK_UNIT_RESULTS       = 5,
+} }
+
+impl MariaDBCapabilities {
+    pub fn get_default_capabilities() -> MariaDBCapabilities {
+        MariaDBCapabilities {
+            // Without this, MariaDB has no way to distinguish a JSON column
+            // from the LONGTEXT it is stored as: it reports both as
+            // MYSQL_TYPE_BLOB with a text charset. The extended column
+            // metadata this negotiates carries the "format=json" marker.
+            MARIADB_CLIENT_EXTENDED_TYPE_INFO: true,
+            ..Default::default()
+        }
+    }
 }
 
 impl Capabilities {
@@ -95,13 +128,6 @@ impl Capabilities {
         self.CLIENT_LOCAL_FILES = false;
         self.CLIENT_OPTIONAL_RESULTSET_METADATA = false;
         self.CLIENT_QUERY_ATTRIBUTES = false;
-    }
-
-    /// Returns the intersection of two capability sets (AND).
-    /// Per MySQL protocol, the client should only request capabilities
-    /// that the server also advertises.
-    pub fn intersect(self, other: Capabilities) -> Capabilities {
-        Self::from_int(self.to_int() & other.to_int())
     }
 
     pub fn get_default_capabilities(ssl: bool, has_db_name: bool) -> Capabilities {

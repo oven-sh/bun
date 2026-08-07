@@ -1878,9 +1878,7 @@ impl Task {
 
                     bin_linker.link(false);
 
-                    if target_node_modules_path.is_some()
-                        && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
-                    {
+                    if bin_linker.should_retry_without_native_binlink() {
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name =
                             strings::StringOrTinyString::init(dep_name);
@@ -2376,9 +2374,7 @@ impl<'a> Installer<'a> {
 
             bin_linker.link(false);
 
-            if target_node_modules_path.is_some()
-                && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
-            {
+            if bin_linker.should_retry_without_native_binlink() {
                 bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
 

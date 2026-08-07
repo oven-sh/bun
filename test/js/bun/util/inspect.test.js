@@ -813,7 +813,7 @@ it("Bun.inspect enumeration survives a throwing lazy property getter", async () 
   const code = `
     globalThis.process = undefined;
     const s = Bun.inspect(Bun);
-    console.log(s.includes("argv"), s.includes("gc"));
+    console.log(s.includes("argv: ["), s.includes("gc: [Function: gc]"));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", code],

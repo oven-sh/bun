@@ -2494,6 +2494,26 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode)
     return BunString { BunStringTag::Dead, nullptr };
 }
 
+extern "C" JSC::EncodedJSValue JSC__JSValue__getWrapperInternalValue(EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value.isObject())
+        return encodedValue;
+    if (auto* wrapper = dynamicDowncast<JSWrapperObject>(asObject(value)))
+        return JSValue::encode(wrapper->internalValue());
+    return encodedValue;
+}
+
+extern "C" void JSC__JSValue__getRegExpDisplayString(EncodedJSValue encodedValue, BunString* out)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (auto* object = dynamicDowncast<RegExpObject>(value)) {
+        *out = Bun::toStringRef(object->regExp()->toSourceString());
+        return;
+    }
+    *out = BunString { BunStringTag::Dead, nullptr };
+}
+
 // Taken from unwrapBoxedPrimitive in JSONObject.cpp in WebKit
 extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {

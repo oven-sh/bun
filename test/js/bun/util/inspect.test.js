@@ -803,3 +803,144 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+describe("boxed primitives and RegExp with overridden conversion hooks", () => {
+  it("reads the internal slot, does not run user hooks, does not throw", () => {
+    const calls = [];
+    const throwing = () => {
+      calls.push("THROW");
+      throw new Error("should not be called");
+    };
+
+    const n = new Number(5);
+    n[Symbol.toPrimitive] = throwing;
+    n.toString = throwing;
+    n.valueOf = throwing;
+
+    const bFalse = new Boolean(false);
+    bFalse[Symbol.toPrimitive] = throwing;
+    bFalse.toString = throwing;
+    bFalse.valueOf = throwing;
+
+    const bTrue = new Boolean(true);
+    bTrue.toString = throwing;
+
+    const s = new String("hello");
+    s[Symbol.toPrimitive] = throwing;
+    s.toString = throwing;
+    s.valueOf = throwing;
+
+    const r = /a/g;
+    r[Symbol.toPrimitive] = throwing;
+    r.toString = throwing;
+
+    const nan = new Number(NaN);
+    nan.toString = throwing;
+
+    const inf = new Number(Infinity);
+    inf.toString = throwing;
+
+    expect(Bun.inspect(n)).toBe("[Number: 5]");
+    expect(Bun.inspect(nan)).toBe("[Number: NaN]");
+    expect(Bun.inspect(inf)).toBe("[Number: Infinity]");
+    expect(Bun.inspect(new Number(-Infinity))).toBe("[Number: -Infinity]");
+    expect(Bun.inspect(new Number(-0))).toBe("[Number: -0]");
+    expect(Bun.inspect(bFalse)).toBe("[Boolean: false]");
+    expect(Bun.inspect(bTrue)).toBe("[Boolean: true]");
+    expect(Bun.inspect(s)).toBe('"hello"');
+    expect(Bun.inspect(r)).toBe("/a/g");
+    // nested in an object: must not abort mid-print
+    expect(Bun.inspect({ before: 1, boxed: n, after: 2 })).toBe(
+      "{\n  before: 1,\n  boxed: [Number: 5],\n  after: 2,\n}",
+    );
+
+    const s16 = new String("日本語");
+    s16.toString = throwing;
+    expect(Bun.inspect(s16)).toBe('"日本語"');
+    expect(Bun.inspect({ x: s16 })).toBe('{\n  x: "日本語",\n}');
+
+    class MyNum extends Number {}
+    const mn = new MyNum(3);
+    mn.toString = throwing;
+    expect(Bun.inspect(mn)).toBe("[Number (MyNum): 3]");
+
+    class MyBool extends Boolean {}
+    const mb = new MyBool(false);
+    mb.toString = throwing;
+    expect(Bun.inspect(mb)).toBe("[Boolean (MyBool): false]");
+
+    class MyStr extends String {}
+    const ms = new MyStr("hi");
+    ms.toString = throwing;
+    expect(Bun.inspect(ms)).toBe('"hi"');
+
+    expect(calls).toEqual([]);
+  });
+
+  it("console.log does not run user hooks and does not throw mid-line", async () => {
+    const src = `
+      const calls = [];
+      const hook = tag => () => { calls.push(tag); return "SPOOF"; };
+      const throwing = () => { throw new Error("boom") };
+
+      const n = new Number(5);
+      n[Symbol.toPrimitive] = hook("n");
+      console.log(n);
+
+      const b = new Boolean(false);
+      b.toString = hook("b");
+      console.log(b);
+
+      const s = new String("hi");
+      s.toString = hook("s");
+      console.log(s);
+
+      const t = new Number(7);
+      t.toString = throwing;
+      console.log(t);
+
+      const r = /abc/gi;
+      r.toString = throwing;
+      console.log(r);
+
+      console.log({ before: 1, boxed: t, re: r, after: 2 });
+
+      // As non-last args (must not be promoted to the %-format string path):
+      console.log(r, "x");
+      console.log(s, "x");
+      console.log(new String("%s"), "arg");
+
+      const s16 = new String("😀日本語");
+      s16.toString = throwing;
+      console.log(s16);
+
+      console.log("calls:" + calls.length);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "[Number: 5]
+      [Boolean: false]
+      [String: "hi"]
+      [Number: 7]
+      /abc/gi
+      {
+        before: 1,
+        boxed: [Number: 7],
+        re: /abc/gi,
+        after: 2,
+      }
+      /abc/gi x
+      [String: "hi"] x
+      [String: "%s"] arg
+      [String: "😀日本語"]
+      calls:0"
+    `);
+    expect(exitCode).toBe(0);
+  });
+});

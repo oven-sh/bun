@@ -84,24 +84,43 @@ impl JSGlobalObject {
 /// owning JS thread with the heap alive (and need not be sound elsewhere).
 pub unsafe trait JsAffine {}
 
-// SAFETY (each): a GC/loop handle or plain data.
+// SAFETY (each below): a GC/loop handle or plain data — used and dropped only
+// on the owning JS thread by construction of `JsSide`.
+// SAFETY: see the group note above.
 unsafe impl JsAffine for crate::Strong {}
+// SAFETY: see the group note above.
 unsafe impl JsAffine for crate::StrongOptional {}
+// SAFETY: see the group note above.
 unsafe impl JsAffine for crate::JSPromiseStrong {}
+// SAFETY: see the group note above.
 unsafe impl<T> JsAffine for crate::Weak<T> {}
+// SAFETY: see the group note above.
 unsafe impl JsAffine for crate::JsRef {}
+// SAFETY: see the group note above.
 unsafe impl JsAffine for crate::JSValue {}
+// SAFETY: see the group note above.
 unsafe impl JsAffine for crate::GlobalRef {}
+// SAFETY: see the group note above.
 unsafe impl JsAffine for bun_ptr::BackRef<JSGlobalObject> {}
+// SAFETY: see the group note above.
 unsafe impl JsAffine for KeepAlive {}
+// SAFETY: see the group note above.
 unsafe impl JsAffine for AsyncTaskTracker {}
+// SAFETY: see the group note above.
 unsafe impl JsAffine for () {}
+// SAFETY: see the group note above.
 unsafe impl JsAffine for bool {}
+// SAFETY: see the group note above.
 unsafe impl<T: JsAffine> JsAffine for Option<T> {}
+// SAFETY: see the group note above.
 unsafe impl<T: JsAffine> JsAffine for Box<T> {}
+// SAFETY: see the group note above.
 unsafe impl<A: JsAffine, B: JsAffine> JsAffine for (A, B) {}
+// SAFETY: see the group note above.
 unsafe impl<A: JsAffine, B: JsAffine, C: JsAffine> JsAffine for (A, B, C) {}
+// SAFETY: see the group note above.
 unsafe impl<T: ?Sized> JsAffine for JsPtr<T> {}
+// SAFETY: see the group note above.
 unsafe impl JsAffine for Protected {}
 
 /// A GC-protected value a job's completion needs (Node: a `Global<Value>` on
@@ -318,8 +337,12 @@ impl<C: JobContext> Job<C> {
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
+                // SAFETY (three entries): the erased dispatchers are only reached
+                // through this header, so `p` is this `Job<C>`.
                 complete: |p, cx| unsafe { Self::complete(p.cast::<Self>(), cx) },
+                // SAFETY: as above.
                 release_unrun: |p, cx| unsafe { Self::release_unrun(p.cast::<Self>(), cx) },
+                // SAFETY: as above.
                 release_js: |p, cx| unsafe { Self::release_js(p.cast::<Self>(), cx) },
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),

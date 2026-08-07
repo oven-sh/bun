@@ -1014,14 +1014,14 @@ pub fn derive_js_affine(input: TokenStream) -> TokenStream {
     let checks = field_tys.iter().map(|ty| {
         quote! { __assert_js_affine::<#ty>(); }
     });
+    let turbofish = ty_g.as_turbofish();
     quote! {
         // SAFETY: every field is `JsAffine` (checked below).
         unsafe impl #impl_g ::bun_jsc::job::JsAffine for #name #ty_g #where_g {}
-        const _: () = {
-            #[allow(dead_code)]
+        const _: fn() = {
             fn __assert_js_affine<T: ?Sized + ::bun_jsc::job::JsAffine>() {}
-            #[allow(dead_code)]
             fn __check #impl_g () #where_g { #(#checks)* }
+            __check #turbofish
         };
     }
     .into()

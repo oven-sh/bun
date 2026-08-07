@@ -2202,9 +2202,9 @@ mod _async_tasks {
             this.done = Some(done);
             let mut buf = PathBuffer::uninit();
             let root_path_z = {
-                // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` fixed for the
-                // task's lifetime; `perform_work` mutates other fields only.
                 let bytes: &'static [u8] =
+                    // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` fixed for the
+                    // task's lifetime; `perform_work` mutates other fields only.
                     unsafe { bun_ptr::detach_lifetime(&this.root_path[..]) };
                 ZStr::from_buf(bytes, bytes.len() - 1)
             };

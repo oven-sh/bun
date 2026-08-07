@@ -722,6 +722,7 @@ impl TransformTask {
             tsconfig: config
                 .tsconfig
                 .as_deref()
+                // SAFETY: points into the wrapper's config, kept alive by `TransformJs`.
                 .map(|t| unsafe { jsc::JsPtr::new(core::ptr::NonNull::from(t)) }),
             log,
             err: None,

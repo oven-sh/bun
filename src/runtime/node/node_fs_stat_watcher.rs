@@ -1030,8 +1030,8 @@ impl StatWatcher {
             // for the `rare_data()` call in `deinit`.
             // SAFETY: `bun_vm_ptr()` is the live per-thread VM, non-null, outlives the watcher.
             ctx: unsafe { BackRef::from_raw_mut(vm) },
-            // SAFETY: `vm` is the live per-thread VM; this runs on its thread.
             pending_hop: Cell::new(0),
+            // SAFETY: `vm` is the live per-thread VM; this runs on its thread.
             loop_handle: unsafe { (*vm).loop_handle() },
             ref_count: ThreadSafeRefCount::init(),
             closed: AtomicBool::new(false),

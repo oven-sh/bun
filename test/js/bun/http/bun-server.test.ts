@@ -1135,9 +1135,9 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           const port = server.port;
           const c = net.connect(port, "127.0.0.1");
           let buf = "";
-          let sawClose = false;
+          const closed = Promise.withResolvers();
           c.on("data", d => (buf += d));
-          c.on("close", () => (sawClose = true));
+          c.on("close", () => closed.resolve());
           c.on("error", () => {});
           await new Promise((resolve, reject) => {
             c.on("connect", resolve);
@@ -1150,11 +1150,12 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           server.reload({ fetch: () => new Response("ok") });
           let resolved = false;
           const stopped = server.stop(false).then(() => { resolved = true; });
-          await Promise.race([stopped, new Promise(r => setTimeout(r, 2000))]);
-          // stop() closed the idle connection itself; the client never hung up.
-          const until = Date.now() + 2000;
-          while (!sawClose && Date.now() < until) await new Promise(r => setImmediate(r));
-          console.log(JSON.stringify({ resolved, sawClose }));
+          // stop() closes the idle connection itself; the client never hangs
+          // up, so both awaits are server-driven and the runner timeout is
+          // the stall bound (a stuck count would hang right here).
+          await stopped;
+          await closed.promise;
+          console.log(JSON.stringify({ resolved }));
           process.exit(0);
         `,
       ],
@@ -1165,7 +1166,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       stderr: "",
-      out: { resolved: true, sawClose: true },
+      out: { resolved: true },
       exitCode: 0,
     });
   });

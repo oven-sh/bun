@@ -84,11 +84,9 @@ impl PackageManifestMap {
         self.by_name_hash_allow_expired(ctx, scope, name_hash, None, needs_extended_manifest)
     }
 
-    /// Memory-only lookup — like `by_name_hash`, but without consulting the
-    /// disk cache and without the `ctx`/`scope`
-    /// parameters: the memory-only arm never reads them. Exposed separately so callers
-    /// holding `&mut PackageManager` can borrow only the disjoint
-    /// `pm.manifests` field.
+    /// Memory-only lookup: no disk fallback, so no `ctx`/`scope`. Exposed
+    /// separately so callers holding `&mut PackageManager` can borrow only
+    /// the disjoint `pm.manifests` field.
     pub(crate) fn by_name_hash_in_memory(
         &mut self,
         name_hash: PackageNameHash,

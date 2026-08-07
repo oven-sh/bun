@@ -1066,12 +1066,9 @@ impl FileReader {
                     return streams::Result::Owned(Vec::<u8>::move_from_list(buffered));
                 }
                 ReadDuringJSOnPullResult::None => {
-                    // Falls through to set
-                    // `pending_view = buffer`. The only variant reaching this arm
-                    // is `None` (impossible — we just stored `Js(buffer)` above and
-                    // `on_read_chunk` never sets `None`). Unreachable in the current state
-                    // machine; if that invariant ever changes, the buffer slice must
-                    // be recovered from a captured raw ptr+len before the move.
+                    // `Js(buffer)` was stored above and `on_read_chunk` never
+                    // replaces it with `None`. If that changes, recover the
+                    // buffer slice from a raw ptr+len before this move.
                     unreachable!("on_read_chunk never yields None while read_inside_on_pull == Js");
                 }
             }

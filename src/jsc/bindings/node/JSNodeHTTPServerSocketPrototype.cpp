@@ -223,12 +223,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     }
     auto bufferedSize = thisObject->streamBuffer.bufferedSize();
     if (bufferedSize == 0) {
-        // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
-        // shutdown still cycles kqueue's EVFILT_READ, without which macOS 26
-        // does not deliver the peer's close. The cycle's current mechanics:
-        // pause drops the read filter, the shut-down 0-event teardown
-        // transition (us_internal_socket_raw_shutdown) re-adds it before the
-        // SHUT_WR lands, and resume below makes it level-triggered again.
+        // Pause so the shutdown cycles kqueue's EVFILT_READ (pause drops it;
+        // us_internal_socket_raw_shutdown's teardown transition re-adds it
+        // before SHUT_WR), without which macOS 26 does not deliver the
+        // peer's close.
         if (thisObject->socket && !thisObject->upgraded) {
             us_socket_pause(thisObject->socket);
         }

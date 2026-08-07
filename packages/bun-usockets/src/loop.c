@@ -946,6 +946,15 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 #endif
             if (run_recv && !u->closed) {
 
+                /* Bound one readable dispatch: a peer sending at or above our
+                 * drain rate otherwise keeps recvmmsg returning data forever
+                 * and this loop never exits - timers, every other socket and
+                 * the pre/post callbacks starve. libuv caps a UDP dispatch at
+                 * 32 datagrams ("Prevent loop starvation", unix/udp.c); 4
+                 * batches of LIBUS_UDP_RECV_COUNT(8) matches that. Leftover
+                 * data redelivers on the next tick (level-triggered/persistent
+                 * readable on all three backends). */
+                int recv_batches = 4;
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
@@ -997,7 +1006,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                         break;
                     }
-                } while (!u->closed);
+                } while (!u->closed && --recv_batches);
             }
 
             if (events & LIBUS_SOCKET_WRITABLE && !u->closed) {

@@ -643,3 +643,19 @@ test("sendMany() sends every packet of a larger-than-one-batch call", async () =
     server.close();
   }
 });
+
+// The recv dispatch used to loop until EAGAIN, so a peer sending at or above
+// our drain rate kept the kernel queue non-empty and starved the entire event
+// loop (no timers, no other sockets). It is now bounded per dispatch like
+// libuv (32 datagrams); leftover data redelivers on the next tick.
+test("sustained inbound flood must not starve the event loop", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "udp-flood-starvation-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) console.error(stdout, stderr);
+  expect(exitCode).toBe(0);
+}, 30_000);

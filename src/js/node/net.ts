@@ -2701,14 +2701,10 @@ Socket.prototype.unref = function unref() {
   this[kUserUnrefed] = true;
   const socket = this._handle;
   if (!socket || this.connecting) {
-    // Node keeps the loop alive while a connect is pending (the uv_connect_t
-    // is an active request) even when the handle itself is unref'd; our handle
-    // has no request concept, so unrefing it now would let the process exit
-    // before the connection completes. Apply once "connect" fires - this also
-    // makes an autoSelectFamily retry handle inherit the unref. The listener
-    // re-checks kUserUnrefed so a ref() issued in the meantime wins, which is
-    // also why one pending listener suffices (a keep-alive agent unrefs its
-    // free socket on every request; piling up once() listeners would leak).
+    // Node's pending uv_connect_t keeps the loop alive even when the handle is
+    // unref'd; our handle has no request concept, so apply the unref once
+    // "connect" fires (this also covers autoSelectFamily retry handles). The
+    // listener re-checks kUserUnrefed, so one suffices and a later ref() wins.
     if (!this[kPendingDeferredUnref]) {
       this[kPendingDeferredUnref] = true;
       this.once("connect", applyDeferredUnref);

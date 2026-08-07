@@ -969,7 +969,7 @@ impl WatcherAtomics {
                     // writes. Refused ⇒ the VM is torn down; the event is one of
                     // DevServer's inline slots and simply never runs.
                     let _ = (*(*ev).owner).vm_handle.post(
-                        bun_jsc::LoopKind::Regular,
+                        &bun_jsc::LoopKind::Regular,
                         core::ptr::NonNull::new_unchecked(&raw mut (*ev).concurrent_task),
                     );
                 }

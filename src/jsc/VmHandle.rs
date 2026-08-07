@@ -20,7 +20,9 @@
 
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
+
+use bun_threading::{Condvar, Mutex};
 
 use crate::event_loop::EventLoop;
 use crate::virtual_machine::VirtualMachine;
@@ -68,7 +70,7 @@ pub struct Inner {
     /// [`Borrow`]. `close()` waits for zero after publishing `Closed`.
     active: AtomicU32,
     /// Only for `close()` to sleep on while `active` drains (borrows may be long).
-    drained: (Mutex<()>, Condvar),
+    drained: (Mutex, Condvar),
     /// Dereferenced only while an `Access` guard is held and `state != Closed`,
     /// or on the JS thread. Nulled by `close()`.
     vm: core::cell::UnsafeCell<*mut VirtualMachine>,
@@ -97,8 +99,9 @@ impl Drop for Access<'_> {
         if self.0.active.fetch_sub(1, Ordering::SeqCst) == 1
             && self.0.state.load(Ordering::SeqCst) == State::Closed as u8
         {
-            let _g = self.0.drained.0.lock().unwrap();
+            self.0.drained.0.lock();
             self.0.drained.1.notify_all();
+            self.0.drained.0.unlock();
         }
     }
 }
@@ -124,7 +127,7 @@ impl VmHandle {
         VmHandle(Arc::new(Inner {
             state: AtomicU8::new(State::Open as u8),
             active: AtomicU32::new(0),
-            drained: (Mutex::new(()), Condvar::new()),
+            drained: (Mutex::new(), Condvar::new()),
             vm: core::cell::UnsafeCell::new(vm),
             #[cfg(debug_assertions)]
             js_thread: std::thread::current().id(),
@@ -169,8 +172,8 @@ impl VmHandle {
     // ── off-thread API ────────────────────────────────────────────────────
 
     /// Queue `task` on the VM's `kind` loop and wake it, or hand it back.
-    pub fn post(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
-        self.post_ref(&kind, task)
+    pub fn post(&self, kind: &LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
+        self.post_ref(kind, task)
     }
 
     pub fn post_ref(&self, kind: &LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
@@ -190,12 +193,15 @@ impl VmHandle {
     /// Queue a C++ `EventLoopTask` from another thread (WebCore's
     /// `postTaskConcurrently`), or delete it unrun if the VM is gone — the
     /// same release teardown applies to queued C++ tasks.
-    pub fn post_cpp_task(&self, task: *mut crate::cpp_task::CppTask) {
+    ///
+    /// # Safety
+    /// `task` is a live heap `WebCore::EventLoopTask` the caller hands over.
+    pub unsafe fn post_cpp_task(&self, task: *mut crate::cpp_task::CppTask) {
         unsafe extern "C" {
             fn Bun__deleteEventLoopTask(task: *mut crate::cpp_task::CppTask);
         }
         let ct = ConcurrentTaskItem::create(bun_event_loop::Task::init(task));
-        if let Posted::Refused(ct) = self.post(LoopKind::Regular, ct) {
+        if let Posted::Refused(ct) = self.post(&LoopKind::Regular, ct) {
             // SAFETY: refused ⇒ we own both boxes.
             unsafe {
                 drop(bun_core::heap::take(ct.as_ptr()));
@@ -215,25 +221,25 @@ impl VmHandle {
     /// Keep the VM's loop alive from another thread (no-op once closed; the
     /// teardown ignores keep-alives anyway). Isolated loops need no keep-alive:
     /// spawnSync ticks them until its child is done.
-    pub fn ref_keep_alive(&self, kind: LoopKind) {
+    pub fn ref_keep_alive(&self, kind: &LoopKind) {
         if matches!(kind, LoopKind::Isolated(_)) {
             return;
         }
         if let Some(_a) = self.enter() {
             // SAFETY: inside the gate.
-            let el = Self::loop_of(unsafe { self.vm() }, &kind);
+            let el = Self::loop_of(unsafe { self.vm() }, kind);
             let _ = el.concurrent_ref.fetch_add(1, Ordering::SeqCst);
             el.wakeup();
         }
     }
 
-    pub fn unref_keep_alive(&self, kind: LoopKind) {
+    pub fn unref_keep_alive(&self, kind: &LoopKind) {
         if matches!(kind, LoopKind::Isolated(_)) {
             return;
         }
         if let Some(_a) = self.enter() {
             // SAFETY: inside the gate.
-            let el = Self::loop_of(unsafe { self.vm() }, &kind);
+            let el = Self::loop_of(unsafe { self.vm() }, kind);
             let _ = el.concurrent_ref.fetch_sub(1, Ordering::SeqCst);
             el.wakeup();
         }
@@ -262,11 +268,12 @@ impl VmHandle {
     // ── JS-thread API ─────────────────────────────────────────────────────
 
     #[cfg(debug_assertions)]
-    fn assert_js_thread(&self) {
+    pub(crate) fn assert_js_thread(&self) {
         debug_assert_eq!(std::thread::current().id(), self.0.js_thread);
     }
     #[cfg(not(debug_assertions))]
-    fn assert_js_thread(&self) {}
+    #[inline(always)]
+    pub(crate) fn assert_js_thread(&self) {}
 
     /// Teardown phase A begins.
     pub(crate) fn set_stopping(&self) {
@@ -304,10 +311,11 @@ impl VmHandle {
         self.assert_js_thread();
         self.0.state.store(State::Closed as u8, Ordering::SeqCst);
         if self.0.active.load(Ordering::SeqCst) != 0 {
-            let mut g = self.0.drained.0.lock().unwrap();
+            self.0.drained.0.lock();
             while self.0.active.load(Ordering::SeqCst) != 0 {
-                g = self.0.drained.1.wait(g).unwrap();
+                self.0.drained.1.wait(&self.0.drained.0);
             }
+            self.0.drained.0.unlock();
         }
         // SAFETY: JS thread; no accessor can be inside any more.
         unsafe { *self.0.vm.get() = core::ptr::null_mut() };
@@ -364,9 +372,9 @@ pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine, delta: core:
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__VmHandle__refKeepAlive(handle: &VmHandle, delta: core::ffi::c_int) {
     if delta > 0 {
-        handle.ref_keep_alive(LoopKind::Regular);
+        handle.ref_keep_alive(&LoopKind::Regular);
     } else {
-        handle.unref_keep_alive(LoopKind::Regular);
+        handle.unref_keep_alive(&LoopKind::Regular);
     }
 }
 
@@ -443,21 +451,21 @@ struct PosterData {
 
 unsafe fn poster_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> Posted {
     // SAFETY: `data` is a leaked `Arc<PosterData>` pointer (see `to_js_poster`).
-    let d = unsafe { &*(data as *const PosterData) };
+    let d = unsafe { &*data.cast::<PosterData>() };
     d.handle.post_ref(&d.kind, task)
 }
 unsafe fn poster_wake(data: *const ()) {
     // SAFETY: as above.
-    unsafe { &*(data as *const PosterData) }.handle.wake();
+    unsafe { &*data.cast::<PosterData>() }.handle.wake();
 }
 unsafe fn poster_clone(data: *const ()) -> *const () {
     // SAFETY: as above; bump the Arc count and hand out the same pointer.
-    unsafe { Arc::increment_strong_count(data as *const PosterData) };
+    unsafe { Arc::increment_strong_count(data.cast::<PosterData>()) };
     data
 }
 unsafe fn poster_drop(data: *const ()) {
     // SAFETY: as above; balances `into_raw`/`increment_strong_count`.
-    unsafe { drop(Arc::from_raw(data as *const PosterData)) };
+    unsafe { drop(Arc::from_raw(data.cast::<PosterData>())) };
 }
 static POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
     post: poster_post,
@@ -472,7 +480,8 @@ impl VmHandle {
         let data = Arc::into_raw(Arc::new(PosterData {
             handle: self.clone(),
             kind,
-        })) as *const ();
+        }))
+        .cast::<()>();
         // SAFETY: `data`/vtable pair as documented on `JsPoster::from_raw`.
         unsafe { bun_event_loop::JsPoster::from_raw(data, &POSTER_VTABLE) }
     }
@@ -569,10 +578,10 @@ impl LoopHandle {
         self.vm.is_open()
     }
     pub fn ref_keep_alive(&self) {
-        self.vm.ref_keep_alive(self.kind.clone())
+        self.vm.ref_keep_alive(&self.kind)
     }
     pub fn unref_keep_alive(&self) {
-        self.vm.unref_keep_alive(self.kind.clone())
+        self.vm.unref_keep_alive(&self.kind)
     }
     /// An erased poster for this loop, for code that cannot name `bun_jsc`.
     pub fn to_js_poster(&self) -> bun_event_loop::JsPoster {
@@ -581,6 +590,15 @@ impl LoopHandle {
 }
 
 impl VirtualMachine {
+    /// This VM's live pool jobs. JS thread only.
+    #[allow(clippy::mut_from_ref)]
+    #[inline]
+    pub fn jobs(&self) -> &mut crate::job::JobList {
+        // SAFETY: JS-thread-only intrusive list; callers never hold two at once
+        // (each call is a single push/unlink/release statement).
+        unsafe { &mut *self.jobs.get() }
+    }
+
     /// JS thread: the handle a new job captures — this VM, and the loop it is
     /// currently ticking (regular, macro, or a spawnSync isolated loop).
     pub fn loop_handle(&self) -> LoopHandle {
@@ -645,7 +663,7 @@ impl IsolatedPosterInner {
     }
 
     pub(crate) fn to_js_poster(this: &Arc<Self>) -> bun_event_loop::JsPoster {
-        let data = Arc::into_raw(this.clone()) as *const ();
+        let data = Arc::into_raw(Arc::clone(this)).cast::<()>();
         // SAFETY: data/vtable pair per `JsPoster::from_raw`.
         unsafe { bun_event_loop::JsPoster::from_raw(data, &ISOLATED_POSTER_VTABLE) }
     }
@@ -653,11 +671,11 @@ impl IsolatedPosterInner {
 
 unsafe fn isolated_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> Posted {
     // SAFETY: leaked Arc<IsolatedPosterInner>.
-    unsafe { &*(data as *const IsolatedPosterInner) }.post(task)
+    unsafe { &*data.cast::<IsolatedPosterInner>() }.post(task)
 }
 unsafe fn isolated_wake(data: *const ()) {
     // SAFETY: as above.
-    let d = unsafe { &*(data as *const IsolatedPosterInner) };
+    let d = unsafe { &*data.cast::<IsolatedPosterInner>() };
     d.active.fetch_add(1, Ordering::SeqCst);
     if d.open.load(Ordering::SeqCst) {
         // SAFETY: gate held and open.
@@ -667,12 +685,12 @@ unsafe fn isolated_wake(data: *const ()) {
 }
 unsafe fn isolated_clone(data: *const ()) -> *const () {
     // SAFETY: as above.
-    unsafe { Arc::increment_strong_count(data as *const IsolatedPosterInner) };
+    unsafe { Arc::increment_strong_count(data.cast::<IsolatedPosterInner>()) };
     data
 }
 unsafe fn isolated_drop(data: *const ()) {
     // SAFETY: as above.
-    unsafe { drop(Arc::from_raw(data as *const IsolatedPosterInner)) };
+    unsafe { drop(Arc::from_raw(data.cast::<IsolatedPosterInner>())) };
 }
 static ISOLATED_POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
     post: isolated_post,

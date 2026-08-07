@@ -1361,7 +1361,7 @@ mod _async_tasks {
                 core::ptr::drop_in_place(&raw mut (*this).result);
                 // `args` is `ThreadSafe<A>` whose Drop would `unprotect()` JS values
                 // via the (dead) VM; drop the value's own storage without that.
-                drop(core::ptr::read(&raw const (*this).args).into_inner_without_unprotect());
+                drop(core::ptr::read(&raw const (*this).args));
                 core::ptr::drop_in_place(&raw mut (*this).loop_handle);
                 std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
             }
@@ -1789,7 +1789,7 @@ mod _async_tasks {
         unsafe fn release_off_thread(this: *mut Self) {
             // SAFETY: fn contract.
             unsafe {
-                drop(core::ptr::read(&raw const (*this).args).into_inner_without_unprotect());
+                drop(core::ptr::read(&raw const (*this).args));
                 core::ptr::drop_in_place(&raw mut (*this).result);
                 core::ptr::drop_in_place(&raw mut (*this).poster);
                 std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
@@ -2624,7 +2624,7 @@ mod _async_tasks {
                     drop(bun_core::heap::take(ct.as_ptr()));
                     (*this).clear_result_list();
                     core::ptr::drop_in_place(&raw mut (*this).result_list);
-                    drop(core::ptr::read(&raw const (*this).args).into_inner_without_unprotect());
+                    drop(core::ptr::read(&raw const (*this).args));
                     core::ptr::drop_in_place(&raw mut (*this).loop_handle);
                     std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
                 }

@@ -248,6 +248,8 @@ pub struct VirtualMachine {
     /// modules do not count). What is still pending on the entry promise after
     /// that is a top-level await.
     pub entry_evaluation_started: bool,
+    /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
+    pub(crate) jobs: core::cell::UnsafeCell<crate::job::JobList>,
 
     pub(crate) had_errors: bool,
 
@@ -831,15 +833,9 @@ impl VirtualMachine {
     /// the loop that was current when their work started.
     #[inline]
     pub fn current_loop_kind(&self) -> crate::LoopKind {
-        if core::ptr::eq(
-            self.event_loop,
-            &raw const self.regular_event_loop as *mut EventLoop,
-        ) {
+        if core::ptr::eq(self.event_loop.cast_const(), &raw const self.regular_event_loop) {
             crate::LoopKind::Regular
-        } else if core::ptr::eq(
-            self.event_loop,
-            &raw const self.macro_event_loop as *mut EventLoop,
-        ) {
+        } else if core::ptr::eq(self.event_loop.cast_const(), &raw const self.macro_event_loop) {
             crate::LoopKind::Macro
         } else {
             // Bun.spawnSync installed its isolated loop for the duration.
@@ -1745,11 +1741,12 @@ impl VirtualMachine {
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.
         vm.close_sqlite_databases_for_exit();
+        // Work still out on other threads (pool jobs, fetches): its JS side
+        // — promises, callbacks, pins, protected buffers, keep-alives — is
+        // released here, on this thread with the heap alive. After `close()`
+        // below the other thread cannot hand it back; it frees only its own part.
+        vm.jobs().release_all_js(&vm.global().js_thread());
         if let Some(hooks) = hooks {
-            // In-flight fetches: their promise/response/stream/signal handles
-            // are released here, on this thread, while the heap is alive; the
-            // HTTP thread frees the transport side whenever it is done — after
-            // `close()` below it can no longer hand that back to us.
             // SAFETY: fn contract.
             unsafe { (hooks.abandon_fetch_tasklets_for_vm_teardown)(this) };
         }

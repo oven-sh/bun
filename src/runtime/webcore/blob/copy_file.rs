@@ -29,7 +29,7 @@ use core::marker::ConstParamTy;
 // CopyFile (POSIX, blocking off-thread)
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct CopyFile<'a> {
+pub struct CopyFile {
     #[cfg(not(windows))]
     pub(crate) destination_file_store: store::File,
     pub(crate) source_file_store: store::File,
@@ -55,14 +55,12 @@ pub struct CopyFile<'a> {
     // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
     // TODO(refactor): lifetime — this struct is Box-allocated and crosses threads;
     // `'a` here is unsound in practice. Likely should be *const JSGlobalObject.
-    pub global_this: &'a JSGlobalObject,
-
     pub(crate) mkdirp_if_not_exists: bool,
     #[cfg(not(windows))]
     pub(crate) destination_mode: Option<Mode>,
 }
 
-impl MkdirpTarget for CopyFile<'_> {
+impl MkdirpTarget for CopyFile {
     fn mkdirp_if_not_exists(&self) -> bool {
         self.mkdirp_if_not_exists
     }
@@ -74,39 +72,44 @@ impl MkdirpTarget for CopyFile<'_> {
     }
 }
 
-impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CopyFilePromiseTask;
-    fn run(&mut self) {
-        self.run_async();
+// SAFETY: file stores/paths and blob store refs (atomic counts); nothing thread-affine.
+unsafe impl Send for CopyFile {}
+
+impl jsc::JobContext for CopyFile {
+    type OffThread = Self;
+    type Js = jsc::JSPromiseStrong;
+    fn run(
+        this: &mut Self,
+        _vm: &jsc::vm_handle::Borrow,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        this.run_async();
+        Some(done)
     }
-    fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
-        CopyFile::then(self, promise)
-    }
-    /// Store refs (thread-safe), fds and an error value: all portable.
-    fn release_off_thread(self: Box<Self>) {
-        drop(self);
+    fn then(mut this: Self, mut promise: jsc::JSPromiseStrong, cx: &jsc::JsThread<'_>) -> jsc::JsResult<()> {
+        Ok(CopyFile::then(&mut this, promise.swap(), cx.global())?)
     }
 }
 
-impl<'a> CopyFile<'a> {
+impl CopyFile {
+    /// Schedule the copy on the work pool; returns its promise.
     #[cfg(not(windows))]
     pub(crate) fn create(
         store: StoreRef,
         source_store: StoreRef,
         off: SizeType,
         max_len: SizeType,
-        global_this: &'a JSGlobalObject,
+        global_this: &JSGlobalObject,
         mkdirp_if_not_exists: bool,
         destination_mode: Option<Mode>,
-    ) -> Box<CopyFilePromiseTask<'a>> {
-        let read_file = Box::new(CopyFile {
+    ) -> JSValue {
+        let copy = CopyFile {
             destination_file_store: store.data.as_file().clone(),
             source_file_store: source_store.data.as_file().clone(),
             store: Some(store),
             source_store: Some(source_store),
             offset: off,
             max_length: max_len,
-            global_this,
             mkdirp_if_not_exists,
             destination_mode,
             // defaults:
@@ -116,12 +119,15 @@ impl<'a> CopyFile<'a> {
             read_len: 0,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             read_off: 0,
-        });
-        CopyFilePromiseTask::create_on_js_thread(global_this, read_file)
+        };
+        let cx = global_this.js_thread();
+        let promise = jsc::JSPromiseStrong::init(global_this);
+        let value = promise.value();
+        jsc::Job::<CopyFile>::schedule(&cx, copy, promise);
+        value
     }
 
-    pub(crate) fn reject(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
-        let global_this = self.global_this;
+    pub(crate) fn reject(&mut self, promise: &mut JSPromise, global_this: &JSGlobalObject) -> Result<(), jsc::JsTerminated> {
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
         if matches!(
             self.source_file_store.pathlike,
@@ -137,24 +143,21 @@ impl<'a> CopyFile<'a> {
         }
 
         let instance = jsc::SystemError::from(system_error)
-            .to_error_instance_with_async_stack(self.global_this, promise);
+            .to_error_instance_with_async_stack(global_this, promise);
         if let Some(store) = self.store.take() {
             drop(store); // deref()
         }
         promise.reject(global_this, Ok(instance))
     }
 
-    pub(crate) fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
+    pub(crate) fn then(&mut self, promise: &mut JSPromise, global_this: &JSGlobalObject) -> Result<(), jsc::JsTerminated> {
         drop(self.source_store.take()); // source_store.?.deref()
 
         if self.system_error.is_some() {
-            return self.reject(promise);
+            return self.reject(promise, global_this);
         }
 
-        promise.resolve(
-            self.global_this,
-            JSValue::js_number_from_uint64(self.read_len as u64),
-        )
+        promise.resolve(global_this, JSValue::js_number_from_uint64(self.read_len as u64))
     }
 
     #[cfg(not(windows))]
@@ -1969,5 +1972,3 @@ fn unsupported_non_regular_file_error() -> SystemError {
 // `SystemError` contains `bun_core::String`, which is not const-constructible,
 // so these are constructor fns instead of `const` values.
 
-pub(crate) type CopyFilePromiseTask<'a> =
-    jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;

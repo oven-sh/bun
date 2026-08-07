@@ -40,7 +40,7 @@ use core::ffi::{c_char, c_void};
 // See docs/PORTING.md §JSC types and src/codegen/generate-classes.ts for the
 // symbol-naming contract the macros uphold.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_jsc_macros::{JsClass, codegen_cached_accessors, host_call, host_fn};
+pub use bun_jsc_macros::{JsAffine, JsClass, codegen_cached_accessors, host_call, host_fn};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Submodules. Each `#[path]` points at the actual PascalCase / snake_case
@@ -474,8 +474,6 @@ pub mod bun_heap_profiler;
 pub mod bun_string_jsc;
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
-#[path = "ConcurrentPromiseTask.rs"]
-pub mod concurrent_promise_task;
 #[path = "EventLoopHandle.rs"]
 pub mod event_loop_handle;
 #[path = "FFI.rs"]
@@ -484,8 +482,6 @@ pub mod ffi;
 pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
-#[path = "WorkTask.rs"]
-pub mod work_task;
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
@@ -1358,14 +1354,13 @@ pub use self::js_property_iterator::{
 #[path = "event_loop.rs"]
 pub mod event_loop;
 pub use self::event_loop as EventLoop;
-#[path = "any_task_job.rs"]
-pub mod any_task_job;
-pub use self::any_task_job::{AnyTaskJob, AnyTaskJobCtx};
+pub mod job;
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsSide, JsThread, Protected};
 pub use self::event_loop::{
-    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentPromiseTask,
+    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask,
     ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
     GarbageCollectionController, JsTerminated, JsTerminatedResult, ManagedTask, MiniEventLoop,
-    PosixSignalHandle, PosixSignalTask, Task, WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,
+    PosixSignalHandle, PosixSignalTask, Task, WorkPool, WorkPoolTask,
 };
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;

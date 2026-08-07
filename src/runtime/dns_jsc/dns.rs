@@ -30,7 +30,6 @@ use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_sys::windows::libuv;
 #[cfg(not(windows))]
 use bun_sys::{self as sys};
-use bun_threading::thread_pool;
 use bun_uws::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
@@ -149,11 +148,11 @@ mod lib_c {
 
         let query = query_init.clone();
 
+        // The backend result is filled in by the job's completion; until then
+        // the request (which the pending cache points at) holds a placeholder.
         let request = GetAddrInfoRequest::init(
             cache,
-            get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::Query(
-                query.clone(),
-            )),
+            get_addr_info_request::Backend::CAres,
             Some(this.as_ctx_ptr()),
             &query,
             global_this,
@@ -162,9 +161,13 @@ mod lib_c {
         // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
         let promise_value = unsafe { (*request).head.promise.value() };
 
-        let io = get_addr_info_request::Task::create_on_js_thread(global_this, request);
-        // SAFETY: `io` was just heap-allocated by `create_on_js_thread`.
-        get_addr_info_request::Task::schedule(unsafe { &mut *io });
+        bun_jsc::Job::<get_addr_info_request::LibcLookup>::schedule(
+            &global_this.js_thread(),
+            get_addr_info_request::LibcLookup {
+                backend: get_addr_info_request::LibcBackend::Query(query),
+            },
+            get_addr_info_request::LibcRequest(NonNull::new(request).expect("request")),
+        );
         this.request_sent(this.vm());
 
         promise_value
@@ -914,15 +917,77 @@ pub struct GetAddrInfoRequest {
     pub(crate) cache: CacheConfig,
     pub(crate) head: DNSLookup,
     pub(crate) tail: *mut DNSLookup, // INTRUSIVE
-    pub task: thread_pool::Task,
 }
 
 pub mod get_addr_info_request {
     use super::*;
 
-    /// `bun.jsc.WorkTask(GetAddrInfoRequest)` — runs blocking `getaddrinfo`
-    /// on the work pool, then re-enters the JS thread via `then`.
-    pub type Task = jsc::work_task::WorkTask<super::GetAddrInfoRequest>;
+    /// The blocking `getaddrinfo` of one libc-backend lookup, run on the pool.
+    #[cfg(not(windows))]
+    pub struct LibcLookup {
+        pub(crate) backend: LibcBackend,
+    }
+
+    /// The request a [`LibcLookup`] completes: JS-thread state (promises,
+    /// keep-alive, resolver ref) at a stable address the resolver's pending
+    /// cache points at. Consumed by the completion; dropped unconsumed only
+    /// when the VM tears down first, in which case everything is freed and
+    /// nothing is settled.
+    #[cfg(not(windows))]
+    pub struct LibcRequest(pub(crate) NonNull<super::GetAddrInfoRequest>);
+    // SAFETY: only the JS thread touches the request (see type doc).
+    #[cfg(not(windows))]
+    unsafe impl bun_jsc::job::JsAffine for LibcRequest {}
+    #[cfg(not(windows))]
+    impl Drop for LibcRequest {
+        fn drop(&mut self) {
+            let req = self.0.as_ptr();
+            // SAFETY: JS thread; the live heap request and its coalesced
+            // waiters, none of which anything else will touch again.
+            unsafe {
+                if let Some(resolver) = (*req).resolver_for_caching {
+                    if (*req).cache.pending_cache() {
+                        drop((*resolver).get_key_host(
+                            (*req).cache.pos_in_pending(),
+                            PendingCacheField::PendingHostCacheNative,
+                        ));
+                    }
+                }
+                let mut pending = (*req).head.next;
+                drop(*bun_core::heap::take(req));
+                while let Some(waiter) = pending {
+                    pending = (*waiter.as_ptr()).next;
+                    drop(bun_core::heap::take(waiter.as_ptr()));
+                }
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    impl bun_jsc::JobContext for LibcLookup {
+        type OffThread = Self;
+        type Js = LibcRequest;
+        fn run(
+            this: &mut Self,
+            _vm: &bun_jsc::vm_handle::Borrow,
+            done: bun_jsc::Completion<Self>,
+        ) -> Option<bun_jsc::Completion<Self>> {
+            this.backend.run();
+            Some(done)
+        }
+        fn then(
+            this: Self,
+            request: LibcRequest,
+            cx: &bun_jsc::JsThread<'_>,
+        ) -> bun_jsc::JsResult<()> {
+            let req = request.0.as_ptr();
+            core::mem::forget(request);
+            // SAFETY: the live heap request; `then` consumes it on every path.
+            unsafe { (*req).backend = Backend::Libc(this.backend) };
+            super::GetAddrInfoRequest::then(req, cx.global());
+            Ok(())
+        }
+    }
 
     pub struct PendingCacheKey {
         pub(crate) hash: u64,
@@ -1050,9 +1115,6 @@ pub mod get_addr_info_request {
                 uv: bun_core::ffi::zeroed(),
             }
         }
-        pub(crate) fn run(&mut self) {
-            unreachable!("This path should never be reached on Windows");
-        }
     }
     pub enum Backend {
         CAres,
@@ -1075,42 +1137,6 @@ pub mod get_addr_info_request {
                 Backend::Libc(l) => &mut l.uv,
                 _ => unreachable!(),
             }
-        }
-    }
-}
-
-// `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
-// cannot be marked `unsafe fn` and the parameter type cannot change, so the
-// lint is unsatisfiable here. The pointers come from the work-pool hand-off
-// and are guaranteed live (see SAFETY notes below).
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
-    const TASK_TAG: bun_event_loop::ConcurrentTask::TaskTag =
-        bun_event_loop::ConcurrentTask::task_tag::GetAddrInfoRequestTask;
-
-    #[inline]
-    fn run(this: *mut Self, task: *mut get_addr_info_request::Task) {
-        // SAFETY: `WorkTask` invokes `run` on the threadpool with the live heap
-        // `GetAddrInfoRequest` it was created from and its owning `WorkTask`.
-        GetAddrInfoRequest::run(unsafe { &mut *this }, unsafe { &mut *task });
-    }
-    #[inline]
-    fn then(this: *mut Self, global_this: &JSGlobalObject) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `WorkTask` invokes `then` on the JS thread with the same live
-        // heap request that `run` was given.
-        GetAddrInfoRequest::then(this, global_this);
-        Ok(())
-    }
-    /// The copied addrinfo list (POSIX libc backend) is ours. The lookup
-    /// chain (`head`…) holds promise handles, keep-alives and resolver refs
-    /// that belong to the VM's heap/loop and are forgotten with it; the
-    /// pending-cache slot pointing at this request went with the resolver.
-    fn release_off_thread(this: *mut Self) {
-        // SAFETY: the pool thread owns `this` (heap, from the WorkTask flow).
-        unsafe {
-            #[cfg(not(windows))]
-            core::ptr::drop_in_place(&raw mut (*this).backend);
-            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
         }
     }
 }
@@ -1141,18 +1167,6 @@ impl GetAddrInfoRequest {
                 next: None,
             },
             tail: ptr::null_mut(),
-            // The callback is
-            // overwritten before scheduling; use a trapping stub so the
-            // non-null fn-pointer invariant holds without `mem::zeroed()` UB.
-            task: thread_pool::Task {
-                node: Default::default(),
-                callback: {
-                    unsafe fn unset(_: *mut thread_pool::Task) {
-                        unreachable!("GetAddrInfoRequest.task scheduled without callback");
-                    }
-                    unset
-                },
-            },
         }));
         // SAFETY: request just allocated; head is an inline field.
         unsafe { (*request).tail = &raw mut (*request).head };
@@ -1247,16 +1261,7 @@ impl GetAddrInfoRequest {
         }
     }
 
-    /// `this` must be the live heap `GetAddrInfoRequest` owned by `task`, and
-    /// `task` the live `WorkTask` passed in by `run_from_thread_pool`.
-    pub(crate) fn run(this: &mut Self, task: &mut get_addr_info_request::Task) {
-        match &mut this.backend {
-            get_addr_info_request::Backend::Libc(l) => l.run(),
-            _ => unreachable!(),
-        }
-        get_addr_info_request::Task::on_finish(task);
-    }
-
+    #[cfg(not(windows))]
     /// # Safety
     /// `this` must be the live heap `GetAddrInfoRequest` whose `run` already
     /// completed; consumed (freed) on every path.
@@ -1266,7 +1271,6 @@ impl GetAddrInfoRequest {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn then(this: *mut Self, _global: &JSGlobalObject) {
         bun_output::scoped_log!(GetAddrInfoRequest, "then");
-        #[cfg(not(windows))]
         // SAFETY: WorkTask invokes `then` on the JS thread with the heap request it
         // was created from; `resolver_for_caching` (if set) is the live ctx ref.
         unsafe {
@@ -1320,11 +1324,6 @@ impl GetAddrInfoRequest {
                 }
                 _ => unreachable!(),
             }
-        }
-        #[cfg(windows)]
-        {
-            let _ = this;
-            unreachable!()
         }
     }
 

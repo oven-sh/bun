@@ -34,33 +34,36 @@ pub enum WriteFileResultType {
 pub type WriteFileOnWriteFileCallback =
     fn(ctx: *mut c_void, count: WriteFileResultType) -> Result<(), JsTerminated>;
 
-pub type WriteFileTask = bun_jsc::work_task::WorkTask<WriteFile>;
+/// The completion token a `WriteFile` keeps across its async I/O.
+pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
-// `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
-// cannot be marked `unsafe fn` and the parameter type cannot change, so the
-// lint is unsatisfiable here. The pointers come from the work-pool hand-off
-// and are guaranteed live (see SAFETY notes below).
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-impl bun_jsc::work_task::WorkTaskContext for WriteFile {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileTask;
-    fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
-        // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
-        unsafe { (*this).run(task) }
+// SAFETY: the two blobs are native values holding store refs (atomic counts);
+// io-loop registration state and an opaque completion ctx that only the
+// JS-thread completion dereferences — nothing used off-thread is thread-affine.
+unsafe impl Send for WriteFile {}
+
+impl bun_jsc::JobContext for WriteFile {
+    type OffThread = Self;
+    /// The completion is delivered through `on_complete_callback(ctx, ..)`.
+    type Js = ();
+    fn run(
+        this: &mut Self,
+        _vm: &bun_jsc::vm_handle::Borrow,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        // Starts the write; finishes from the io loop via the token.
+        this.run(done);
+        None
     }
-    fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), JsTerminated> {
-        // SAFETY: `this` was heap-allocated by the WorkTask flow; consumed here.
-        WriteFile::then(unsafe { bun_core::heap::take(this) }, global)
+    fn then(this: Self, _: (), cx: &bun_jsc::JsThread<'_>) -> jsc::JsResult<()> {
+        Ok(WriteFile::then(this, cx.global())?)
     }
-    /// The two blobs hold store refs (thread-safe); the completion ctx belongs
-    /// to a JS-side waiter and is forgotten with the VM.
-    fn release_off_thread(this: *mut Self) {
-        // SAFETY: the pool thread owns `this` (heap, from the WorkTask flow).
-        unsafe {
-            core::ptr::drop_in_place(&raw mut (*this).file_blob);
-            #[cfg(not(windows))]
-            core::ptr::drop_in_place(&raw mut (*this).bytes_blob);
-            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
-        }
+}
+
+impl WriteFile {
+    /// JS thread: hand a prepared `WriteFile` to the work pool.
+    pub fn schedule(this: Box<WriteFile>, global: &JSGlobalObject) {
+        bun_jsc::Job::<WriteFile>::schedule(&global.js_thread(), *this, ());
     }
 }
 
@@ -74,7 +77,7 @@ pub struct WriteFile {
     pub(crate) errno: Option<Error>,
     pub task: WorkPoolTask,
     #[cfg(not(windows))]
-    pub(crate) io_task: Option<*mut WriteFileTask>,
+    pub(crate) io_task: Option<WriteFileTask>,
     pub(crate) io_poll: io::Poll,
     pub(crate) io_request: io::Request,
     pub(crate) state: AtomicU8, // ClosingState
@@ -295,8 +298,8 @@ impl WriteFile {
         on_write_file_context: *mut c_void,
         on_complete_callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
-    ) -> Result<*mut WriteFile, Error> {
-        let write_file = bun_core::heap::into_raw(Box::new(WriteFile {
+    ) -> Result<Box<WriteFile>, Error> {
+        let write_file = Box::new(WriteFile {
             file_blob,
             bytes_blob,
             opened_fd: Fd::INVALID,
@@ -316,11 +319,10 @@ impl WriteFile {
             could_block: false,
             close_after_io: false,
             mkdirp_if_not_exists,
-        }));
+        });
         // No explicit store ref bump: the caller passes a `+1` Blob (via
-        // `borrowed_view()`'s `StoreRef::clone`) and `heap::take(this)` in
-        // `then` runs `StoreRef::drop`, so the ref/deref pair is
-        // folded into RAII.
+        // `borrowed_view()`'s `StoreRef::clone`) and dropping the `WriteFile`
+        // in `then` runs `StoreRef::drop`, so the ref/deref pair is RAII.
         Ok(write_file)
     }
 
@@ -331,7 +333,7 @@ impl WriteFile {
         context: *mut C,
         callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
-    ) -> Result<*mut WriteFile, Error> {
+    ) -> Result<Box<WriteFile>, Error> {
         // The caller supplies a
         // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`),
         // so this is just a `.cast()` on `context`.
@@ -387,10 +389,7 @@ impl WriteFile {
         true
     }
 
-    pub(crate) fn then(
-        mut this: Box<WriteFile>,
-        _global: &JSGlobalObject,
-    ) -> Result<(), JsTerminated> {
+    pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
         let cb = this.on_complete_callback;
         let cb_ctx = this.on_complete_ctx;
         let system_error = this.system_error.take();
@@ -416,11 +415,12 @@ impl WriteFile {
         Ok(())
     }
 
-    pub(crate) fn run(&mut self, task: *mut WriteFileTask) {
+    pub(crate) fn run(&mut self, task: WriteFileTask) {
         #[cfg(windows)]
         {
+            // Windows writes go through WriteFileWindows, never the pool.
             let _ = task;
-            panic!("todo");
+            unreachable!("WriteFile on the work pool (Windows uses WriteFileWindows)");
         }
         #[cfg(not(windows))]
         {
@@ -457,8 +457,7 @@ impl WriteFile {
         }
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
-                // SAFETY: io_task is a backref set in run(); WorkTask owns lifetime.
-                bun_jsc::work_task::WorkTask::on_finish(unsafe { &mut *io_task });
+                io_task.finish();
             }
         }
     }

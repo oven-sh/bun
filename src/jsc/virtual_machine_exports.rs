@@ -99,7 +99,8 @@ pub fn vm_handle_queue_task_concurrently(
     task: *mut crate::cpp_task::CppTask,
 ) {
     crate::mark_binding!();
-    handle.post_cpp_task(task);
+    // SAFETY: C++ hands over a live heap EventLoopTask.
+    unsafe { handle.post_cpp_task(task) };
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)

@@ -68,9 +68,6 @@ pub mod task_tag {
         ArchiveBlobTask,
         ArchiveWriteTask,
         ArchiveFilesTask,
-        AsyncGlobWalkTask,
-        AsyncImageTask,
-        AsyncTransformTask,
         BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
         BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
@@ -80,7 +77,6 @@ pub mod task_tag {
         Chown,
         Close,
         CopyFile,
-        CopyFilePromiseTask,
         CppTask,
         DuplexUpgradeContext,
         Exists,
@@ -96,7 +92,6 @@ pub mod task_tag {
         Fsync,
         FTruncate,
         Futimes,
-        GetAddrInfoRequestTask,
         GetAddrInfoLibuvComplete,
         HotReloadTask,
         ImmediateObject,
@@ -116,7 +111,6 @@ pub mod task_tag {
         NativeBrotli,
         NativeZlib,
         NativeZstd,
-        CompressionStreamCoderTask,
         Open,
         PasswordHashResult,
         PasswordVerifyResult,
@@ -128,7 +122,6 @@ pub mod task_tag {
         Readdir,
         ReaddirRecursive,
         ReadFile,
-        ReadFileTask,
         Readlink,
         Readv,
         FlushPendingFileSinkTask,
@@ -170,7 +163,6 @@ pub mod task_tag {
         WindowsNamedPipeContext,
         Write,
         WriteFile,
-        WriteFileTask,
         Writev,
     }
 }

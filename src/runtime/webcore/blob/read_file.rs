@@ -157,33 +157,36 @@ pub enum ReadFileResultType {
     Err(SystemError),
 }
 
-pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
+/// The completion token a `ReadFile` keeps across its async I/O.
+pub type ReadFileTask = bun_jsc::Completion<ReadFile>;
 
-// `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
-// cannot be marked `unsafe fn` and the parameter type cannot change, so the
-// lint is unsatisfiable here. The pointers come from the work-pool hand-off
-// and are guaranteed live (see SAFETY notes below).
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-impl bun_jsc::work_task::WorkTaskContext for ReadFile {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ReadFileTask;
-    fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
-        // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
-        unsafe { (*this).run(task) }
+// SAFETY: file store / byte store / blob store ref (atomic), the read buffer,
+// io-loop registration state, and an opaque completion ctx that only the
+// JS-thread completion dereferences — nothing used off-thread is thread-affine.
+unsafe impl Send for ReadFile {}
+
+impl bun_jsc::JobContext for ReadFile {
+    type OffThread = Self;
+    /// The completion is delivered through `on_complete_callback(ctx, ..)`.
+    type Js = ();
+    fn run(
+        this: &mut Self,
+        _vm: &bun_jsc::vm_handle::Borrow,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        // Starts the read; finishes from the io loop via the token.
+        this.run(done);
+        None
     }
-    fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `this` was heap-allocated by the WorkTask flow; consumed here.
-        ReadFile::then(unsafe { bun_core::heap::take(this) }, global)
+    fn then(this: Self, _: (), cx: &bun_jsc::JsThread<'_>) -> jsc::JsResult<()> {
+        Ok(ReadFile::then(this, cx.global())?)
     }
-    /// The read buffer and the store ref are ours (this was the in-flight
-    /// `readFile` result that leaked per terminated worker); the completion
-    /// ctx belongs to a JS-side waiter and is forgotten with the VM.
-    fn release_off_thread(this: *mut Self) {
-        // SAFETY: the pool thread owns `this` (heap, from the WorkTask flow).
-        unsafe {
-            drop(core::mem::take(&mut (*this).buffer));
-            drop((*this).store.take());
-            std::alloc::dealloc(this.cast(), std::alloc::Layout::new::<Self>());
-        }
+}
+
+impl ReadFile {
+    /// JS thread: hand a prepared `ReadFile` to the work pool.
+    pub fn schedule(this: Box<ReadFile>, global: &JSGlobalObject) {
+        bun_jsc::Job::<ReadFile>::schedule(&global.js_thread(), *this, ());
     }
 }
 
@@ -215,7 +218,7 @@ pub struct ReadFile {
     pub(crate) on_complete_ctx: *mut c_void,
     pub(crate) on_complete_callback: ReadFileOnReadFileCallback,
     #[cfg(not(windows))]
-    pub(crate) io_task: Option<*mut ReadFileTask>,
+    pub(crate) io_task: Option<ReadFileTask>,
     pub(crate) io_poll: io::Poll,
     pub(crate) io_request: io::Request,
     #[cfg(not(windows))]
@@ -588,7 +591,7 @@ impl ReadFile {
         true
     }
 
-    pub(crate) fn then(this: Box<Self>, _: &JSGlobalObject) -> jsc::JsTerminatedResult<()> {
+    pub(crate) fn then(this: Self, _: &JSGlobalObject) -> jsc::JsTerminatedResult<()> {
         let cb = this.on_complete_callback;
         let cb_ctx = this.on_complete_ctx;
 
@@ -641,15 +644,16 @@ impl ReadFile {
         Ok(())
     }
 
-    pub(crate) fn run(&mut self, task: *mut ReadFileTask) {
+    pub(crate) fn run(&mut self, task: ReadFileTask) {
         self.run_async(task);
     }
 
-    fn run_async(&mut self, task: *mut ReadFileTask) {
+    fn run_async(&mut self, task: ReadFileTask) {
         #[cfg(windows)]
         {
+            // Windows reads go through ReadFileUV, never the pool.
             let _ = task;
-            return; // why
+            unreachable!("ReadFile on the work pool (Windows uses ReadFileUV)");
         }
         #[cfg(not(windows))]
         {
@@ -683,8 +687,7 @@ impl ReadFile {
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
                 bloblog!("ReadFile.onFinish() = immediately");
-                // SAFETY: io_task is a non-null backref set in run(); WorkTask owns lifetime.
-                ReadFileTask::on_finish(unsafe { &mut *io_task });
+                io_task.finish();
             }
         }
     }

@@ -986,3 +986,43 @@ fn classify_uws_arg(ty: &syn::Type) -> UwsArg {
     }
     UwsArg::PassThrough(ty.clone())
 }
+
+/// `#[derive(JsAffine)]` — the struct/enum may live in a job's JS-side
+/// partition (`bun_jsc::job::JsSide`): every field must itself be
+/// `JsAffine`, which the expansion checks with one bound per field type, so
+/// a field that owns process memory (a `Vec`, a `Box`, a C library handle) is
+/// a compile error here rather than a leak-or-UAF decision at teardown.
+#[proc_macro_derive(JsAffine)]
+pub fn derive_js_affine(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as syn::DeriveInput);
+    let name = &input.ident;
+    let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
+    let mut field_tys: Vec<&syn::Type> = Vec::new();
+    match &input.data {
+        syn::Data::Struct(s) => field_tys.extend(s.fields.iter().map(|f| &f.ty)),
+        syn::Data::Enum(e) => {
+            for v in &e.variants {
+                field_tys.extend(v.fields.iter().map(|f| &f.ty));
+            }
+        }
+        syn::Data::Union(u) => {
+            return syn::Error::new_spanned(&u.union_token, "JsAffine: unions are not supported")
+                .to_compile_error()
+                .into();
+        }
+    }
+    let checks = field_tys.iter().map(|ty| {
+        quote! { __assert_js_affine::<#ty>(); }
+    });
+    quote! {
+        // SAFETY: every field is `JsAffine` (checked below).
+        unsafe impl #impl_g ::bun_jsc::job::JsAffine for #name #ty_g #where_g {}
+        const _: () = {
+            #[allow(dead_code)]
+            fn __assert_js_affine<T: ?Sized + ::bun_jsc::job::JsAffine>() {}
+            #[allow(dead_code)]
+            fn __check #impl_g () #where_g { #(#checks)* }
+        };
+    }
+    .into()
+}

@@ -98,9 +98,6 @@ use crate::shell::interpreter::ShellTask;
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
 
-use crate::webcore::blob::copy_file::CopyFilePromiseTask;
-use crate::webcore::blob::read_file::ReadFileTask;
-use crate::webcore::blob::write_file::WriteFileTask;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
 #[cfg(not(windows))]
@@ -109,14 +106,11 @@ use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::streams::Pending as StreamPending;
 
-use crate::api::JSTranspiler::AsyncTransformTask;
 use crate::api::bun_subprocess::Subprocess;
 #[cfg(not(windows))]
 use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::cron::CronJob;
-use crate::api::glob::AsyncGlobWalkTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
-use crate::image::AsyncImageTask;
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
@@ -141,8 +135,6 @@ use crate::node::zlib::{
 };
 
 use crate::dns_jsc::Resolver as DNSResolver;
-#[cfg(not(windows))]
-use crate::dns_jsc::get_addr_info_request;
 use crate::server::ServerAllConnectionsClosedTask;
 
 #[cfg(not(windows))]
@@ -223,36 +215,14 @@ pub(crate) fn run_task(
             };
         }};
     }
-    /// Run the task, destroy it unconditionally (whether or not it errored),
-    /// then propagate. `JsTerminated` tears down the VM, so destroying before
-    /// propagating is safe.
-    macro_rules! run_then_destroy {
-        ($ty:ty) => {{
-            let t = cast_ptr!($ty);
-            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
-            let r = unsafe { (*t).run_from_js() };
-            // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { <$ty>::destroy(t) };
-            r?;
-        }};
-        (work $ty:ty) => {{
-            let t = cast_ptr!($ty);
-            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
-            let r = bun_jsc::work_task::WorkTask::run_from_js(unsafe { &mut *t });
-            // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
-            r?;
-        }};
-    }
-
     // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match
     // eligible, so const patterns work directly.
     match task.tag {
         // ── erased-callback tasks (low-tier types — real) ────────────────
         task_tag::AnyTaskJob => {
-            // SAFETY: §Dispatch — `task.ptr` is a live heap `AnyTaskJob<C>`
-            // enqueued by `AnyTaskJob::run_task`; the erased entry frees it.
-            if let Err(err) = unsafe { bun_jsc::any_task_job::dispatch_erased(task.ptr) } {
+            // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
+            // its `Completion`; the erased entry runs `then` and frees it.
+            if let Err(err) = unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) } {
                 report_error_or_terminate(global, err)?;
             }
         }
@@ -428,14 +398,8 @@ pub(crate) fn run_task(
         }
 
         // ── glob / image / transpiler ────────────────────────────────────
-        task_tag::AsyncGlobWalkTask => run_then_destroy!(AsyncGlobWalkTask<'_>),
-        task_tag::AsyncImageTask => run_then_destroy!(AsyncImageTask<'_>),
-        task_tag::AsyncTransformTask => run_then_destroy!(AsyncTransformTask<'_>),
 
         // ── blob copy/read/write promise tasks ───────────────────────────
-        task_tag::CopyFilePromiseTask => run_then_destroy!(CopyFilePromiseTask<'_>),
-        task_tag::ReadFileTask => run_then_destroy!(work ReadFileTask),
-        task_tag::WriteFileTask => run_then_destroy!(work WriteFileTask),
 
         // ── napi ─────────────────────────────────────────────────────────
         task_tag::NapiAsyncWork => {
@@ -485,13 +449,6 @@ pub(crate) fn run_task(
             unsafe { FSWatchTask::deinit(t) };
         }
 
-        // ── DNS ──────────────────────────────────────────────────────────
-        task_tag::GetAddrInfoRequestTask => {
-            #[cfg(windows)]
-            panic!("This should not be reachable on Windows");
-            #[cfg(not(windows))]
-            run_then_destroy!(work get_addr_info_request::Task);
-        }
 
         // ── node:fs async ops (`runFromJSThread`) ────────────────────────
         // 42 arms stamped from `for_each_fs_async_op!` (module scope). The
@@ -512,9 +469,6 @@ pub(crate) fn run_task(
         task_tag::NativeZlib => compression_arm!(NativeZlib),
         task_tag::NativeBrotli => compression_arm!(NativeBrotli),
         task_tag::NativeZstd => compression_arm!(NativeZstd),
-        task_tag::CompressionStreamCoderTask => {
-            run_then_destroy!(work crate::webcore::compression_stream_coder::CompressionStreamCoderTask)
-        }
 
         // ── process / signals ────────────────────────────────────────────
         task_tag::ProcessWaiterThreadTask => {
@@ -697,7 +651,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 112,
+    task_tag::COUNT == 104,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1268,6 +1222,8 @@ unsafe fn __bun_tick_queue_with_count(
 #[unsafe(no_mangle)]
 fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
     use bun_event_loop::task_tag;
+    // JS thread, heap alive: this is the tearing-down VM.
+    let global = VirtualMachine::get().global();
     match task.tag {
         // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
         // posted this entry, then deref'd its own +1 if final; the JS-side
@@ -1382,9 +1338,9 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         // Queue presence means the work-pool phase finished and the queue
         // owned the job; parking it would strand the ctx's native resources.
         task_tag::AnyTaskJob => {
-            // SAFETY: every queued AnyTaskJob payload is the live heap job
-            // created by `AnyTaskJob::create`; we own it once popped.
-            unsafe { bun_jsc::any_task_job::release_erased(task.ptr) };
+            // SAFETY: every queued payload with this tag is a live heap `Job<C>`
+            // its `Completion` posted; we own it once popped (JS thread, heap alive).
+            unsafe { bun_jsc::job::release_unrun_erased(task.ptr, &global.js_thread()) };
             true
         }
         // Re-queued by the caller; the box stays reachable from the

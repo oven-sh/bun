@@ -2840,76 +2840,77 @@ pub mod JSZstd {
 
     // --- Async versions ---
 
-    pub(crate) struct ZstdCtx {
+    /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
+    pub(crate) struct ZstdJob {
         /// Created with `is_async=true` (JS-backed buffer protected); the
-        /// [`bun_jsc::ThreadSafe`] guard unprotects on drop.
+        /// [`bun_jsc::ThreadSafe`] releases that with the job.
         pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer>,
         pub is_compress: bool,
         pub level: i32,
         pub output: Vec<u8>,
         pub error_message: Option<&'static [u8]>,
-        pub promise: jsc::JSPromiseStrong,
     }
 
-    impl jsc::AnyTaskJobCtx for ZstdCtx {
-        /// The output buffer is ours; the protected input and the promise
-        /// handle went with the VM's heap.
-        fn release_off_thread(&mut self) {
-            drop(core::mem::take(&mut self.output));
-        }
+    impl jsc::JobContext for ZstdJob {
+        type OffThread = Self;
+        type Js = jsc::JSPromiseStrong;
 
-        fn run(&mut self, _global: *mut JSGlobalObject) {
-            let input = self.buffer.slice();
+        fn run(
+            this: &mut Self,
+            _vm: &jsc::vm_handle::Borrow,
+            done: bun_jsc::Completion<Self>,
+        ) -> Option<bun_jsc::Completion<Self>> {
+            let input = this.buffer.slice();
 
-            if self.is_compress {
-                // Compression path
-                // Calculate max compressed size
+            if this.is_compress {
                 let max_size = bun_zstd::compress_bound(input.len());
-                // Surface OOM
-                // as a rejected promise instead of aborting. The zero-fill is
-                // output-irrelevant (zstd overwrites the prefix it reports).
+                // Surface OOM as a rejected promise instead of aborting. The
+                // zero-fill is output-irrelevant (zstd overwrites the prefix it reports).
                 let mut output: Vec<u8> = Vec::new();
                 if output.try_reserve_exact(max_size).is_err() {
-                    self.error_message = Some(b"Out of memory");
-                    return;
+                    this.error_message = Some(b"Out of memory");
+                    return Some(done);
                 }
                 output.resize(max_size, 0);
-                self.output = output;
+                this.output = output;
 
-                // Perform compression
-                self.output = match bun_zstd::compress(&mut self.output, input, Some(self.level)) {
+                this.output = match bun_zstd::compress(&mut this.output, input, Some(this.level)) {
                     bun_zstd::Result::Success(size) => 'blk: {
-                        // Resize to actual compressed size
-                        if size < self.output.len() {
-                            let mut out = core::mem::take(&mut self.output);
+                        if size < this.output.len() {
+                            let mut out = core::mem::take(&mut this.output);
                             out.truncate(size);
                             out.shrink_to_fit();
                             break 'blk out;
                         }
-                        break 'blk core::mem::take(&mut self.output);
+                        break 'blk core::mem::take(&mut this.output);
                     }
                     bun_zstd::Result::Err(err) => {
-                        self.output = Vec::new();
-                        self.error_message = Some(err);
-                        return;
+                        this.output = Vec::new();
+                        this.error_message = Some(err);
+                        return Some(done);
                     }
                 };
             } else {
-                // Decompression path
-                self.output = match bun_zstd::decompress_alloc(input) {
+                this.output = match bun_zstd::decompress_alloc(input) {
                     Ok(v) => v,
                     Err(_) => {
-                        self.error_message = Some(b"Decompression failed");
-                        return;
+                        this.error_message = Some(b"Decompression failed");
+                        return Some(done);
                     }
                 };
             }
+            Some(done)
         }
 
-        fn then(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-            let promise = self.promise.swap();
+        fn then(
+            mut this: Self,
+            mut promise: jsc::JSPromiseStrong,
+            cx: &jsc::JsThread<'_>,
+        ) -> JsResult<()> {
+            let global_this = cx.global();
+            let promise = promise.swap();
 
-            if let Some(err_msg) = self.error_message {
+            if let Some(err_msg) = this.error_message {
                 promise.reject_with_async_stack(
                     global_this,
                     Ok(global_this
@@ -2922,42 +2923,33 @@ pub mod JSZstd {
                 return Ok(());
             }
 
-            let output_slice = core::mem::take(&mut self.output);
+            let output_slice = core::mem::take(&mut this.output);
             let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
             promise.resolve(global_this, buffer_value)?;
             Ok(())
         }
     }
 
-    /// Free fn (not `impl ZstdJob`) because
-    /// `AnyTaskJob<_>` is a foreign type. Returns the promise `JSValue`
-    /// directly so callers stay safe (the only state read back from the heap
-    /// job is `ctx.promise.value()`; capture it before moving the strong into
-    /// the ctx so no post-schedule raw deref is needed).
     fn create_job(
         global_this: &JSGlobalObject,
         buffer: node::StringOrBuffer,
         is_compress: bool,
         level: i32,
     ) -> JSValue {
+        let cx = global_this.js_thread();
         let promise = jsc::JSPromiseStrong::init(global_this);
         let promise_value = promise.value();
-        let job = jsc::AnyTaskJob::create(
-            global_this,
-            ZstdCtx {
-                // Caller passed `from_js_maybe_async(.., is_async=true)`; adopt
-                // so the protect ref is paired with drop.
+        jsc::Job::<ZstdJob>::schedule(
+            &cx,
+            ZstdJob {
                 buffer: bun_jsc::ThreadSafe::adopt(buffer),
                 is_compress,
                 level,
                 output: Vec::new(),
                 error_message: None,
-                promise,
             },
-        )
-        .expect("ZstdCtx::init is infallible");
-        // SAFETY: `job` is a freshly-created live pointer.
-        unsafe { jsc::AnyTaskJob::schedule(job) };
+            promise,
+        );
         promise_value
     }
 

@@ -52,16 +52,13 @@ impl<T: Unprotect> ThreadSafe<T> {
         Self(value)
     }
 
-    /// Take the value back **without** `unprotect()` — for releasing a task
-    /// off the JS thread after its VM was torn down (the protected values went
-    /// with the heap; the value's own storage still drops normally).
-    #[inline]
-    pub fn into_inner_without_unprotect(self) -> T {
-        let this = core::mem::ManuallyDrop::new(self);
-        // SAFETY: `repr(transparent)` over `T`; `this` is never dropped.
-        unsafe { core::ptr::read(&this.0) }
-    }
 }
+
+// SAFETY: this is what the type asserts — the JS-backed views inside `T` are
+// GC-protected for as long as it is held, so they may be read from another
+// thread (under that thread's VM borrow); the protection itself is released
+// only on a JS thread (see `Drop`).
+unsafe impl<T: Unprotect> Send for ThreadSafe<T> {}
 
 impl<T: Unprotect> core::ops::Deref for ThreadSafe<T> {
     type Target = T;
@@ -81,7 +78,11 @@ impl<T: Unprotect> core::ops::DerefMut for ThreadSafe<T> {
 impl<T: Unprotect> Drop for ThreadSafe<T> {
     #[inline]
     fn drop(&mut self) {
-        self.0.unprotect();
+        // The protection is engine state: released here on a JS thread, gone
+        // with the heap anywhere else (a pool thread releasing a dead VM's job).
+        if crate::virtual_machine::VirtualMachine::get_or_null().is_some() {
+            self.0.unprotect();
+        }
         // `self.0: T` drops next (field drop after `Drop::drop`).
     }
 }

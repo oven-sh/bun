@@ -87,7 +87,7 @@ impl ConcurrentCppTask {
         // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
         if let Some(handle) = handle {
-            handle.unref_keep_alive(crate::LoopKind::Regular);
+            handle.unref_keep_alive(&crate::LoopKind::Regular);
         }
     }
 }
@@ -98,7 +98,7 @@ extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoCont
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
     // the centralised non-null deref proof. C++ just handed it over.
     if let Some(handle) = EventLoopTaskNoContext::opaque_ref(cpp_task).vm_handle() {
-        handle.ref_keep_alive(crate::LoopKind::Regular);
+        handle.ref_keep_alive(&crate::LoopKind::Regular);
     }
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,

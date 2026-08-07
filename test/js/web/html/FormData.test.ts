@@ -37,11 +37,27 @@ describe("FormData", () => {
     const blob = new Blob(["bar"]);
     const formData = new FormData();
     formData.append("foo", blob);
-    // @ts-expect-error
-    expect(formData.get("foo").name).toBeUndefined();
+    // FormData entries are always File instances; File.name is always a string.
+    expect((formData.get("foo") as File).name).toBe("");
     formData.append("foo2", new File([blob], "foo.txt"));
     // @ts-expect-error
     expect(formData.get("foo2").name).toBe("foo.txt");
+  });
+
+  it('multipart part with filename="" yields a File whose .name is the empty string', async () => {
+    // Browsers send filename="" for an unfilled <input type="file">.
+    const B = "X";
+    const body = `--${B}\r\nContent-Disposition: form-data; name="f"; filename=""\r\n\r\nDATA\r\n--${B}--\r\n`;
+    const fd = await new Response(body, {
+      headers: { "content-type": `multipart/form-data; boundary=${B}` },
+    }).formData();
+    const f = fd.get("f") as File;
+    expect(f instanceof File).toBe(true);
+    expect(typeof f.name).toBe("string");
+    expect(f.name).toBe("");
+    // The universal extension-check pattern must not throw.
+    expect(f.name.endsWith(".png")).toBe(false);
+    expect(await f.text()).toBe("DATA");
   });
 
   it("should use the correct filenames", async () => {
@@ -52,11 +68,11 @@ describe("FormData", () => {
 
     let b1 = form.get("foo") as any;
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("");
 
     form.set("foo", b1, "foo.txt");
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("");
 
     b1 = form.get("foo") as Blob;
     expect(blob.name).toBeUndefined();

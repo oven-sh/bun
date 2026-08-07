@@ -316,6 +316,36 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!" },
   });
+  itBundled("compile/BunWriteEmbeddedFileRejects", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import p from './asset.file' with {type: "file"};
+        const original = await Bun.file(p).text();
+        if (original !== "ORIGINAL-CONTENT") throw "fail: embedded read";
+
+        async function mustReject(label, fn) {
+          let err;
+          try { await fn(); } catch (e) { err = e; }
+          if (!err) throw "fail: " + label + " did not reject";
+          if (!String(err.message).includes("read-only")) throw "fail: " + label + " message: " + err.message;
+        }
+
+        await mustReject("Bun.write(path, string)", () => Bun.write(p, "REPLACED"));
+        await mustReject("Bun.write(path, largeString)", () => Bun.write(p, Buffer.alloc(300 * 1024, "x").toString()));
+        await mustReject("Bun.write(path, Uint8Array)", () => Bun.write(p, new Uint8Array([1, 2, 3])));
+        await mustReject("Bun.write(path, Blob)", () => Bun.write(p, new Blob(["REPLACED"])));
+        await mustReject("Bun.write(BunFile, string)", () => Bun.write(Bun.file(p), "REPLACED"));
+        await mustReject("Bun.file(path).write(string)", () => Bun.file(p).write("REPLACED"));
+
+        if (await Bun.file(p).text() !== original) throw "fail: content changed";
+        console.log("PASS");
+      `,
+      "/asset.file": "ORIGINAL-CONTENT",
+    },
+    outfile: "dist/out",
+    run: { stdout: "PASS" },
+  });
   itBundled("compile/WorkerRelativePathNoExtension", {
     backend: "cli",
     compile: true,

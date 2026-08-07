@@ -41,7 +41,6 @@
 
 extern "C" void Bun__Process__emitWarning(Zig::GlobalObject*, JSC::EncodedJSValue warning, JSC::EncodedJSValue type, JSC::EncodedJSValue code, JSC::EncodedJSValue ctor);
 
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
 namespace WebCore {
 
@@ -550,7 +549,7 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     if (!m_hasRef) {
         m_hasRef = true;
         ref();
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+        Bun__VmHandle__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->vmHandle, 1);
     }
 }
 
@@ -565,7 +564,7 @@ void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
     if (m_hasRef) {
         m_hasRef = false;
         deref();
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
+        Bun__VmHandle__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->vmHandle, -1);
     }
 }
 

@@ -43,6 +43,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_bunVM(WebCore::clientData(*vm)->bunVM)
+    , m_vmHandle(WebCore::clientData(*vm)->vmHandle)
     , m_identifier(initialIdentifier())
     , m_contextThreadUID(Thread::currentSingleton().uid())
 {
@@ -54,6 +55,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_bunVM(WebCore::clientData(*vm)->bunVM)
+    , m_vmHandle(WebCore::clientData(*vm)->vmHandle)
     , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
     , m_contextThreadUID(Thread::currentSingleton().uid())
 {
@@ -88,17 +90,16 @@ JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
     return m_globalObject;
 }
 
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
-extern "C" void Bun__VM__queueTaskConcurrently(void* bunVM, EventLoopTask*);
+extern "C" void Bun__VmHandle__queueTaskConcurrently(::BunVmHandle*, EventLoopTask*);
 
 void ScriptExecutionContext::refEventLoop()
 {
-    Bun__eventLoop__incrementRefConcurrently(m_bunVM, 1);
+    Bun__VmHandle__refKeepAlive(m_vmHandle, 1);
 }
 void ScriptExecutionContext::unrefEventLoop()
 {
-    Bun__eventLoop__incrementRefConcurrently(m_bunVM, -1);
+    Bun__VmHandle__refKeepAlive(m_vmHandle, -1);
 }
 
 ScriptExecutionContext::~ScriptExecutionContext()
@@ -349,7 +350,7 @@ ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
 
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
 {
-    Bun__VM__queueTaskConcurrently(m_bunVM, new EventLoopTask(WTF::move(lambda)));
+    Bun__VmHandle__queueTaskConcurrently(m_vmHandle, new EventLoopTask(WTF::move(lambda)));
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& lambda)

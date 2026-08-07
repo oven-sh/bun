@@ -257,3 +257,37 @@ impl VmHandle {
         self.0.state.load(Ordering::Acquire) == State::Closed as u8
     }
 }
+
+// ── C++ holds handles as an opaque box of a clone ─────────────────────────
+//
+// `JSVMClientData` (and through it ScriptExecutionContext, the JSC deferred-
+// work scheduler, EventLoopTaskNoContext, the debugger) keep a `BunVmHandle*`
+// created here on the JS thread and released when the client data goes away.
+// The box holds an Arc clone, so it stays valid however long C++ keeps it.
+
+/// JS thread: box a clone of `vm`'s handle for C++ to keep.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VmHandle__create(vm: &VirtualMachine) -> *mut VmHandle {
+    bun_core::heap::into_raw(Box::new(vm.handle()))
+}
+
+/// Any thread: release a box obtained from `Bun__VmHandle__create`.
+///
+/// # Safety
+/// `handle` came from `Bun__VmHandle__create` and is not used afterwards.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__VmHandle__release(handle: *mut VmHandle) {
+    // SAFETY: fn contract.
+    drop(unsafe { bun_core::heap::take(handle) });
+}
+
+/// Any thread: adjust the VM's keep-alive (no-op once the VM is closed).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VmHandle__refKeepAlive(handle: &VmHandle, delta: core::ffi::c_int) {
+    if delta > 0 {
+        handle.ref_keep_alive(LoopKind::Regular);
+    } else {
+        handle.unref_keep_alive(LoopKind::Regular);
+    }
+}
+

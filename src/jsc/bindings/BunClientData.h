@@ -1,5 +1,11 @@
 #pragma once
 
+// Opaque box of the Rust per-VM handle (bun_jsc::VmHandle); see JSVMClientData::vmHandle.
+struct BunVmHandle;
+extern "C" BunVmHandle* Bun__VmHandle__create(void* bunVM);
+extern "C" void Bun__VmHandle__release(BunVmHandle*);
+extern "C" void Bun__VmHandle__refKeepAlive(BunVmHandle*, int delta);
+
 namespace WebCore {
 
 class ExtendedDOMClientIsoSubspaces;
@@ -124,6 +130,10 @@ public:
     WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
 
     void* bunVM;
+    // Opaque box of the Rust VmHandle for this VM: what any *other* thread uses
+    // to post work / ref the loop (never bunVM). Created in create(), released
+    // in the destructor; valid however long C++ holds it.
+    ::BunVmHandle* vmHandle { nullptr };
     Bun::JSCTaskScheduler deferredWorkTimer;
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles

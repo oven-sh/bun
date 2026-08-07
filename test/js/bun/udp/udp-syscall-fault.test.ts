@@ -19,7 +19,7 @@ describe.skipIf(skip)("udp send under injected syscall faults", () => {
   // report backpressure (false) and arm the drain callback, not throw.
   test.each(["ENOBUFS", "ENOMEM"] as const)("udpSocket.send → %s is backpressure, not an error", async errno => {
     const received = Promise.withResolvers<string>();
-    const server = await Bun.udpSocket({
+    using server = await Bun.udpSocket({
       port: 0,
       hostname: "127.0.0.1",
       socket: {
@@ -29,7 +29,7 @@ describe.skipIf(skip)("udp send under injected syscall faults", () => {
       },
     });
     let drained = Promise.withResolvers<void>();
-    const client = await Bun.udpSocket({
+    using client = await Bun.udpSocket({
       port: 0,
       hostname: "127.0.0.1",
       socket: {
@@ -50,14 +50,11 @@ describe.skipIf(skip)("udp send under injected syscall faults", () => {
     await drained.promise;
     expect(client.send("hello", server.port, "127.0.0.1")).toBe(true);
     expect(await received.promise).toBe("hello");
-
-    client.close();
-    server.close();
   });
 
   test("udpSocket.send still throws on a hard errno (EINVAL)", async () => {
-    const server = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
-    const client = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
+    using server = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
+    using client = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
 
     fault.set({ syscall: "sendmsg", action: "errno", errno: "EINVAL", repeat: 1 });
     let thrown: any;
@@ -67,9 +64,6 @@ describe.skipIf(skip)("udp send under injected syscall faults", () => {
       thrown = e;
     }
     expect(thrown?.code).toBe("EINVAL");
-
-    client.close();
-    server.close();
   });
 
   // node:dgram queues a backpressured send and retries it from the drain
@@ -77,11 +71,11 @@ describe.skipIf(skip)("udp send under injected syscall faults", () => {
   // once the kernel recovers (three consecutive failures here: the initial
   // try plus two drain retries).
   test("dgram send callback succeeds after transient ENOBUFS", async () => {
-    const server = dgram.createSocket("udp4");
+    await using server = dgram.createSocket("udp4");
     const messageP = once(server, "message");
     server.bind(0, "127.0.0.1");
     await once(server, "listening");
-    const client = dgram.createSocket("udp4");
+    await using client = dgram.createSocket("udp4");
 
     fault.set({ syscall: "sendmsg", action: "errno", errno: "ENOBUFS", repeat: 3 });
     const cbErr = Promise.withResolvers<Error | null>();
@@ -90,9 +84,6 @@ describe.skipIf(skip)("udp send under injected syscall faults", () => {
     expect(await cbErr.promise).toBeNull();
     const [msg] = await messageP;
     expect(msg.toString()).toBe("ping");
-
-    client.close();
-    server.close();
   });
 
   // More packets than one 16 KiB sendbuf batch holds (~200 on Linux), so
@@ -100,9 +91,9 @@ describe.skipIf(skip)("udp send under injected syscall faults", () => {
   // with ENOBUFS. The partial count must come back without an error and with
   // writable re-armed, so the caller can send the tail from drain.
   test("sendMany resumes after ENOBUFS at a batch boundary", async () => {
-    const server = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
+    using server = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
     let drained = Promise.withResolvers<void>();
-    const client = await Bun.udpSocket({
+    using client = await Bun.udpSocket({
       port: 0,
       hostname: "127.0.0.1",
       socket: {
@@ -132,8 +123,5 @@ describe.skipIf(skip)("udp send under injected syscall faults", () => {
       total += client.sendMany(parts.slice(total * 3));
     }
     expect(total).toBe(N);
-
-    client.close();
-    server.close();
   });
 });

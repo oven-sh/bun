@@ -383,6 +383,7 @@ public:
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<Bun::WorkerGlobalScope> globalEventScope;
     RefPtr<WebCore::MessagePort> m_nodeParentPort;
+    bool m_nodeWorkerEntrySettled { false };
 
     void resetOnEachMicrotaskTick();
 
@@ -779,6 +780,10 @@ public:
     // Web Worker style (`self.onmessage` / global addEventListener) keeps working under a node Worker.
     void setNodeParentPort(WebCore::MessagePort*);
     WebCore::MessagePort* nodeParentPort() const { return m_nodeParentPort.get(); }
+    // A node worker's parentPort delivers nothing until the entry module has evaluated (node's
+    // ordering; a message must not run — or throw — while the entry that handles it is loading).
+    bool nodeWorkerEntrySettled() const { return m_nodeWorkerEntrySettled; }
+    void nodeWorkerEntryDidSettle();
     JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 

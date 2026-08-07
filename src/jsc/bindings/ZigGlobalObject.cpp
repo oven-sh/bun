@@ -4187,6 +4187,13 @@ void GlobalObject::setNodeParentPort(WebCore::MessagePort* port)
         port->setGlobalScopeMessageListenerCount(globalEventScope->messageListenerCount());
 }
 
+void GlobalObject::nodeWorkerEntryDidSettle()
+{
+    m_nodeWorkerEntrySettled = true;
+    if (m_nodeParentPort)
+        m_nodeParentPort->entrySettled();
+}
+
 void GlobalObject::prepareForDestruction()
 {
     auto& vm = this->vm();

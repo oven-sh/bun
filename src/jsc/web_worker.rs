@@ -1014,9 +1014,14 @@ impl WebWorker {
         // its forced unwind would cross `extern "C"` frames and abort).
         // A worker stopped by its parent that never called process.exit() did
         // not choose `exit_code`; the proxy decides what that reads as per kind.
-        let stopped_by_parent = self.terminated_by_parent.load(Ordering::Relaxed)
-            && !self.exit_called.load(Ordering::Relaxed);
-        WebWorker__workerGlobalScopeDestroyed(self.proxy, exit_code, stopped_by_parent);
+        WebWorker__workerGlobalScopeDestroyed(self.proxy, exit_code, self.stopped_by_parent());
+    }
+
+    /// worker.terminate() from the parent, and the worker did not also exit on
+    /// its own (process.exit / uncaught error) — Node's "stopped" case: no exit
+    /// handlers run and the exit code was not the worker's choice.
+    pub fn stopped_by_parent(&self) -> bool {
+        self.terminated_by_parent.load(Ordering::Relaxed) && !self.exit_called.load(Ordering::Relaxed)
     }
 
     /// process.exit() inside the worker. Worker-thread only.

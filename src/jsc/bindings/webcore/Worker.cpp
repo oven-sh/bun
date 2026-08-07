@@ -153,6 +153,8 @@ extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 // leaves its sender's Atomics.waitAsync unresolved.
 extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
 {
+    // parentPort starts delivering now (whatever the parent posted meanwhile is buffered in the pipe).
+    globalObject->nodeWorkerEntryDidSettle();
     auto* hook = globalObject->nodeWorkerEntryEvaluatedHook();
     if (!hook)
         return;

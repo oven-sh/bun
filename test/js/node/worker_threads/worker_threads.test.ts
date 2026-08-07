@@ -1847,3 +1847,24 @@ test("receiveMessageOnPort distinguishes an undefined message from an empty queu
   port1.close();
   port2.close();
 });
+
+// A message the parent posts at construction is delivered only after the
+// worker's entry module has evaluated (Node's ordering). Delivered early, an
+// uncaught throw from the listener raced the still-loading entry and the exit
+// handler's exitCode was overwritten.
+test("parent messages are delivered after the worker's entry evaluated; exit handler's exitCode wins", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.once("message", () => {
+       process.on("exit", () => { process.exitCode = 0; });
+       throw new Error("ok");
+     });`,
+    { eval: true },
+  );
+  const errors: string[] = [];
+  w.on("error", e => errors.push(e.message));
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  w.postMessage(0);
+  expect(await exited).toBe(0);
+  expect(errors).toEqual(["ok"]);
+});

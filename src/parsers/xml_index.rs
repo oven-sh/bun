@@ -59,18 +59,26 @@ impl<'c> StructuralIndex<'c> {
 
     /// The first index `>= logical` whose position is `>= pos`, and that position.
     #[inline(always)]
-    pub fn seek(&mut self, mut logical: usize, pos: usize) -> (usize, usize) {
-        loop {
-            let rel = logical.wrapping_sub(self.base);
-            if rel < self.win.len() {
-                // Scan what is already in the window without re-checking it.
-                for (i, &p) in self.win[rel..].iter().enumerate() {
-                    if p as usize >= pos {
-                        return (logical + i, p as usize);
-                    }
-                }
-                logical = self.base + self.win.len();
+    pub fn seek(&mut self, logical: usize, pos: usize) -> (usize, usize) {
+        let mut rel = logical.wrapping_sub(self.base);
+        let win = self.win.as_slice();
+        // The window ends with the sentinels once the input is exhausted, so
+        // within it this loop needs no end check beyond the length.
+        while rel < win.len() {
+            // SAFETY: `rel < win.len()`.
+            let p = unsafe { *win.get_unchecked(rel) } as usize;
+            if p >= pos {
+                return (self.base + rel, p);
             }
+            rel += 1;
+        }
+        self.seek_refill(self.base + rel.min(win.len()), pos)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn seek_refill(&mut self, mut logical: usize, pos: usize) -> (usize, usize) {
+        loop {
             let p = self.at(logical);
             if p >= pos {
                 return (logical, p);

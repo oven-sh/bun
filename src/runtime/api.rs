@@ -224,8 +224,27 @@ fn with_text_format_source<R>(
 ) -> bun_jsc::JsResult<R> {
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-    let arena = bun_alloc::Arena::new();
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    // A private mi_heap costs microseconds to create, more than parsing a
+    // small document: keep one per thread and recycle it between calls.
+    thread_local! {
+        static ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = const { core::cell::Cell::new(None) };
+    }
+    struct Recycle(Option<bun_alloc::Arena>);
+    impl Drop for Recycle {
+        fn drop(&mut self) {
+            if let Some(mut arena) = self.0.take() {
+                arena.reset_retain_with_limit(8 * 1024 * 1024);
+                ARENA.with(|slot| slot.set(Some(arena)));
+            }
+        }
+    }
+    let recycle = Recycle(Some(
+        ARENA
+            .with(|slot| slot.take())
+            .unwrap_or_else(bun_alloc::Arena::new),
+    ));
+    let arena = recycle.0.as_ref().expect("set above");
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
 
     let input_value = frame.argument(0);
@@ -271,7 +290,7 @@ fn with_text_format_source<R>(
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string(path, bytes);
 
-    f(&arena, &mut log, &source)
+    f(arena, &mut log, &source)
 }
 
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────

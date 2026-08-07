@@ -2075,13 +2075,15 @@ impl<'a> Tape<'a> {
         let alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(bump));
         let tape = bump.alloc(E::JsonTape::empty_in(alloc));
         tape.reserve(source_len / 8, source_len / 16);
+        // The staging stacks peak at the widest element; size them so a
+        // flat document does not regrow them a dozen times.
         Tape {
             tape: tape.root_ptr(),
             bump,
-            props: Vec::new(),
-            prop_locs: Vec::new(),
-            items: Vec::new(),
-            item_locs: Vec::new(),
+            props: Vec::with_capacity(source_len / 16 + 16),
+            prop_locs: Vec::with_capacity(source_len / 16 + 16),
+            items: Vec::with_capacity(source_len / 32 + 16),
+            item_locs: Vec::with_capacity(source_len / 32 + 16),
             empty_object: None,
             empty_array: None,
         }
@@ -2237,9 +2239,9 @@ const LINEAR_CHILD_LIMIT: usize = 16;
 impl<'a> CompactSink<'a> {
     fn new(tape: Tape<'a>) -> Self {
         CompactSink {
+            stack: Vec::with_capacity(64),
+            text_runs: Vec::with_capacity(tape.items.capacity()),
             tape,
-            stack: Vec::new(),
-            text_runs: Vec::new(),
             key_cache: [None; KEY_CACHE_SIZE],
             group_of: Vec::new(),
             groups: Vec::new(),

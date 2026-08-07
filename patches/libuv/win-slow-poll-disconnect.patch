@@ -1,6 +1,6 @@
 --- a/src/win/poll.c
 +++ b/src/win/poll.c
-@@ -269,58 +269,122 @@ static DWORD WINAPI uv__slow_poll_thread_proc(void* arg) {
+@@ -269,58 +269,125 @@ static DWORD WINAPI uv__slow_poll_thread_proc(void* arg) {
    int r;
    uv_single_fd_set_t rfds, wfds, efds;
    struct timeval timeout;
@@ -123,13 +123,16 @@
 +           * from the kernel instead). WSAEWOULDBLOCK: the loop thread
 +           * consumed the data between select() and here. WSAENOTCONN: a
 +           * listening socket, readable on a pending accept with no peer
-+           * to lose. Anything else means the connection is gone. */
++           * to lose. WSAEMSGSIZE: a datagram wider than the 1-byte peek,
++           * which a stream socket can never produce. Anything else means
++           * the connection is gone. */
 +          peeked = recv(handle->socket, &byte, 1, MSG_PEEK);
 +          if (peeked == 0) {
 +            reported_events |= UV_DISCONNECT;
 +          } else if (peeked == SOCKET_ERROR) {
 +            peek_error = WSAGetLastError();
-+            if (peek_error != WSAEWOULDBLOCK && peek_error != WSAENOTCONN)
++            if (peek_error != WSAEWOULDBLOCK && peek_error != WSAENOTCONN &&
++                peek_error != WSAEMSGSIZE)
 +              reported_events |= UV_DISCONNECT;
 +          }
 +        }
@@ -164,7 +167,7 @@
    }
  
    SET_REQ_SUCCESS(req);
-@@ -403,6 +467,25 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+@@ -403,6 +470,25 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
  }
  
  
@@ -190,7 +193,7 @@
  int uv_poll_init(uv_loop_t* loop, uv_poll_t* handle, int fd) {
    return uv_poll_init_socket(loop, handle, (SOCKET) uv__get_osfhandle(fd));
  }
-@@ -457,7 +540,10 @@ int uv_poll_init_socket(uv_loop_t* loop, uv_poll_t* handle,
+@@ -457,7 +543,10 @@ int uv_poll_init_socket(uv_loop_t* loop, uv_poll_t* handle,
    /* Get the peer socket that is needed to enable fast poll. If the returned
     * value is NULL, the protocol is not implemented by MSAFD and we'll have to
     * use slow mode. */

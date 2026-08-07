@@ -407,7 +407,7 @@ const socket = await Bun.connect({
       if (awaitingDrain) resolveDrained();
     },
     error(s, err) {
-      if (!finished) rejectFailed(new Error("socket error before completion: " + (err?.code ?? err)));
+      if (!finished) rejectFailed(new Error("socket error before completion", { cause: err }));
     },
     close() {
       if (!finished) rejectFailed(new Error("socket closed before drain/renegotiation completed"));

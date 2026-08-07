@@ -3,6 +3,8 @@
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { validateString, validateOneOf } = require("internal/validators");
+const { uncurryThis } = require("internal/primordials");
+const { isDataView, isAnyArrayBuffer } = require("node:util/types");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
 const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler } = $cpp(
   "NodeV8.cpp",
@@ -10,6 +12,22 @@ const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardG
 );
 
 const DateNow = Date.now;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const Uint8ArrayCtor = Uint8Array;
+const BufferAllocUnsafe = Buffer.allocUnsafe;
+const TypedArrayProto = Object.getPrototypeOf(Uint8ArrayCtor.prototype);
+const TypedArrayPrototypeGetBuffer = uncurryThis(ObjectGetOwnPropertyDescriptor(TypedArrayProto, "buffer").get);
+const TypedArrayPrototypeGetByteOffset = uncurryThis(ObjectGetOwnPropertyDescriptor(TypedArrayProto, "byteOffset").get);
+const TypedArrayPrototypeGetByteLength = uncurryThis(ObjectGetOwnPropertyDescriptor(TypedArrayProto, "byteLength").get);
+const TypedArrayPrototypeSet = uncurryThis(TypedArrayProto.set);
+const DataViewPrototypeGetBuffer = uncurryThis(ObjectGetOwnPropertyDescriptor(DataView.prototype, "buffer").get);
+const DataViewPrototypeGetByteOffset = uncurryThis(
+  ObjectGetOwnPropertyDescriptor(DataView.prototype, "byteOffset").get,
+);
+const DataViewPrototypeGetByteLength = uncurryThis(
+  ObjectGetOwnPropertyDescriptor(DataView.prototype, "byteLength").get,
+);
+const Uint8ArrayPrototypeSubarray = uncurryThis(Uint8ArrayCtor.prototype.subarray);
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -253,7 +271,9 @@ function getCppHeapStatistics(type = "detailed") {
 const kBufferEnvelopeMagic = [0xff, 0x42, 0x55, 0x4e, 0x01]; // 0xFF "BUN" v1
 
 function hasBufferEnvelopeMagic(view) {
-  if (view.byteLength < kBufferEnvelopeMagic.length) return false;
+  // In-bounds integer-indexed reads on a typed array never consult the
+  // prototype chain, so the indexing is tamper-proof as-is.
+  if (TypedArrayPrototypeGetByteLength(view) < kBufferEnvelopeMagic.length) return false;
   for (let i = 0; i < kBufferEnvelopeMagic.length; i++) {
     if (view[i] !== kBufferEnvelopeMagic[i]) return false;
   }
@@ -262,16 +282,28 @@ function hasBufferEnvelopeMagic(view) {
 
 function deserialize(value) {
   let view;
-  if (ArrayBuffer.isView(value)) {
-    view = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  } else if (value instanceof ArrayBuffer || value instanceof SharedArrayBuffer) {
-    view = new Uint8Array(value);
+  if ($isTypedArrayView(value)) {
+    view = new Uint8ArrayCtor(
+      TypedArrayPrototypeGetBuffer(value),
+      TypedArrayPrototypeGetByteOffset(value),
+      TypedArrayPrototypeGetByteLength(value),
+    );
+  } else if (isDataView(value)) {
+    // $isTypedArrayView excludes DataView, whose accessors live on its own
+    // prototype rather than %TypedArray%.prototype.
+    view = new Uint8ArrayCtor(
+      DataViewPrototypeGetBuffer(value),
+      DataViewPrototypeGetByteOffset(value),
+      DataViewPrototypeGetByteLength(value),
+    );
+  } else if (isAnyArrayBuffer(value)) {
+    view = new Uint8ArrayCtor(value);
   } else {
     // Let jsc.deserialize validate and reject non-buffer input itself.
     return jsc.deserialize(value);
   }
   if (hasBufferEnvelopeMagic(view)) {
-    const envelope = jsc.deserialize(view.subarray(kBufferEnvelopeMagic.length));
+    const envelope = jsc.deserialize(Uint8ArrayPrototypeSubarray(view, kBufferEnvelopeMagic.length));
     return require("internal/serialization_buffers").restoreBuffers(envelope);
   }
   return jsc.deserialize(value);
@@ -288,9 +320,9 @@ function serialize(arg1) {
     return jsc.serialize(arg1, { binaryType: "nodebuffer" });
   }
   const payload = jsc.serialize(tagged, { binaryType: "nodebuffer" });
-  const framed = Buffer.allocUnsafe(kBufferEnvelopeMagic.length + payload.byteLength);
+  const framed = BufferAllocUnsafe(kBufferEnvelopeMagic.length + TypedArrayPrototypeGetByteLength(payload));
   for (let i = 0; i < kBufferEnvelopeMagic.length; i++) framed[i] = kBufferEnvelopeMagic[i];
-  payload.copy(framed, kBufferEnvelopeMagic.length);
+  TypedArrayPrototypeSet(framed, payload, kBufferEnvelopeMagic.length);
   return framed;
 }
 

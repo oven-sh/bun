@@ -1365,10 +1365,12 @@ async function runLateKeepAlive(reqPath: string, serverSnippet: string, secondOu
         })();
         // The only server binding is now out of scope.
 
-        // First request completes; the connection is still open so the
-        // wrapper stays Strong, and the pipelined request dispatches against
-        // it → 200. Previously: panic (or 503 when the gate checked
-        // Strong-only).
+        // First request completes against a live wrapper (the connection is
+        // open, so it stays Strong). What happens to the pipelined request
+        // depends on the caller: Bun.serve's drain closes the connection at
+        // idle and drops it (second = ""), node:http delivers the queued
+        // response (second = 200). Previously the late dispatch could panic
+        // (or 503 when the gate checked Strong-only).
         release.resolve();
         const first = await nextResponse();
         if (!first.includes("200")) throw new Error("first request failed: " + first);
@@ -1481,7 +1483,8 @@ test("stop() closes the drained connection before a late pipelined WebSocket upg
         sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: " + key + "\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n");
         server.stop();
         release.resolve();
-        // Wait for both responses.
+        // Wait for the held response and the server-initiated close (the
+        // pipelined upgrade is dropped by the drain, so no second response).
         while (!sockClosed && (received.match(/\\r\\n\\r\\n/g) || []).length < 2) {
           await waiter.promise; waiter = Promise.withResolvers();
         }

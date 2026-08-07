@@ -1186,6 +1186,11 @@ extern "C"
 
   void uws_res_pause(int ssl, uws_res_r res)
   {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1200,6 +1205,12 @@ extern "C"
 
   void uws_res_resume(int ssl, uws_res_r res)
   {
+    /* No-op on a closed socket (resume's resetTimeout reads the destructed
+     * ext); see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

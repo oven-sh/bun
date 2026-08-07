@@ -181,7 +181,7 @@ pub struct VirtualMachine {
     /// `KeepAlive::unref_on_next_tick_concurrently` increments it from OTHER
     /// threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
-    pub preload: Vec<Box<[u8]>>,
+    pub preload: Vec<bun_options_types::context::Preload>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
     /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.

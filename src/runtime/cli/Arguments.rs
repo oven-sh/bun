@@ -17,7 +17,9 @@ use bun_core::{self, FeatureFlags, Global, Output, env_var};
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
+use bun_options_types::context::{
+    Debugger, DebuggerEnable, HotReload, MacroOptions, Preload, Shard,
+};
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, platform};
@@ -179,7 +181,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "-r, --preload <STR>...            Import a module before other modules are loaded"
     ),
-    parse_param!("--require <STR>...                Alias of --preload, for Node.js compatibility"),
+    parse_param!(
+        "--require <STR>...                Like --preload, but resolves with CommonJS require semantics, for Node.js compatibility"
+    ),
     parse_param!("--import <STR>...                 Alias of --preload, for Node.js compatibility"),
     parse_param!("--inspect <STR>?                  Activate Bun's debugger"),
     parse_param!(
@@ -1028,21 +1032,23 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 + preloads3.len()
                 + (if preload4.is_some() { 1usize } else { 0usize });
             if total_preloads > 0 {
-                let mut all: Vec<Box<[u8]>> = Vec::with_capacity(total_preloads);
+                let mut all: Vec<Preload> = Vec::with_capacity(total_preloads);
                 if !ctx.preloads.is_empty() {
                     all.append(&mut ctx.preloads);
                 }
                 for p in preloads {
-                    all.push(Box::<[u8]>::from(*p));
+                    all.push(Preload::import(Box::<[u8]>::from(*p)));
                 }
+                // `--require` keeps CommonJS semantics (Node parity): it must
+                // resolve package exports with the `require` condition.
                 for p in preloads2 {
-                    all.push(Box::<[u8]>::from(*p));
+                    all.push(Preload::require(Box::<[u8]>::from(*p)));
                 }
                 for p in preloads3 {
-                    all.push(Box::<[u8]>::from(*p));
+                    all.push(Preload::import(Box::<[u8]>::from(*p)));
                 }
                 if let Some(p) = preload4 {
-                    all.push(Box::<[u8]>::from(p));
+                    all.push(Preload::import(Box::<[u8]>::from(p)));
                 }
                 ctx.preloads = all;
             }

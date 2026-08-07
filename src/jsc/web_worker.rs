@@ -105,7 +105,7 @@ pub struct WebWorker {
     inherit_exec_argv: bool,
     /// Heap-owned by this struct; freed in `destroy()`.
     unresolved_specifier: Box<[u8]>,
-    preloads: Vec<Box<[u8]>>,
+    preloads: Vec<bun_options_types::context::Preload>,
     /// Owned NUL-terminated bytes.
     name: bun_core::ZBox,
 
@@ -514,14 +514,17 @@ impl WebWorker {
         let preload_modules: &[BunString] =
             unsafe { bun_core::ffi::slice(preload_modules_ptr, preload_modules_len) };
 
-        let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
+        let mut preloads: Vec<bun_options_types::context::Preload> =
+            Vec::with_capacity(preload_modules_len);
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
             // node: builtin specifiers skip the file resolver — the worker-side
             // module loader resolves them. Lets node:worker_threads run its
             // bootstrap (stdio rebinding) as a preload.
             if utf8_slice.slice().starts_with(b"node:") {
-                preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
+                preloads.push(bun_options_types::context::Preload::import(
+                    utf8_slice.slice().to_vec().into_boxed_slice(),
+                ));
                 continue;
             }
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
@@ -529,7 +532,9 @@ impl WebWorker {
             if let Some(preload) = unsafe {
                 resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message, temp_log)
             } {
-                preloads.push(preload.to_vec().into_boxed_slice());
+                preloads.push(bun_options_types::context::Preload::import(
+                    preload.to_vec().into_boxed_slice(),
+                ));
             }
 
             if !error_message.is_empty() {
@@ -1043,7 +1048,7 @@ impl WebWorker {
         }
 
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
-        // `preload: Vec<Box<[u8]>>` — clone the boxes (cheap, ≤handful).
+        // Clone the entries into the VM (cheap, ≤handful).
         vm.as_mut().preload.clone_from(&self.preloads);
 
         // Resolve the entry point on the worker thread (the parent only stored

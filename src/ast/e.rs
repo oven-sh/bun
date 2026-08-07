@@ -840,15 +840,17 @@ impl BigInt {
 // Compact, read-only object/array nodes: the JSON parser's native output.
 // Children are `PropertyJSON` rows / inline `JsonValue`s in the document's `JsonTape`.
 
-/// A JSON value inside an `ObjectJSON` / `ArrayJSON`.
+/// A JSON value inside an `ObjectJSON` / `ArrayJSON`. The layout is read
+/// from C++ (`JSONRowsToJS.cpp`).
 #[derive(Clone, Copy)]
+#[repr(C, u32)]
 pub enum JsonValue {
-    Null,
-    Boolean(bool),
-    Number(Number),
-    String(Str),
-    Object(StoreRef<ObjectJSON>),
-    Array(StoreRef<ArrayJSON>),
+    Null = 0,
+    Boolean(bool) = 1,
+    Number(Number) = 2,
+    String(Str) = 3,
+    Object(StoreRef<ObjectJSON>) = 4,
+    Array(StoreRef<ArrayJSON>) = 5,
 }
 
 const _: () = assert!(core::mem::size_of::<JsonValue>() == 16);
@@ -912,8 +914,9 @@ impl JsonValue {
     }
 }
 
-/// One `"key": value` row of an [`ObjectJSON`].
+/// One `"key": value` row of an [`ObjectJSON`]. Layout read from C++.
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub struct PropertyJSON {
     pub key: Str,
     pub key_loc: crate::Loc,
@@ -1074,6 +1077,12 @@ impl JsonTape {
         Str::new(out)
     }
 
+    /// The row buffers, for a reader that resolves spans itself.
+    #[inline]
+    pub fn raw_rows(&self) -> (*const PropertyJSON, *const JsonValue) {
+        (self.props.as_ptr(), self.items.as_ptr())
+    }
+
     #[inline]
     fn prop_value_locs_span(&self, first: u32, count: u32) -> Option<&[crate::Loc]> {
         self.prop_value_locs
@@ -1098,6 +1107,7 @@ impl JsonTape {
 }
 
 /// `Data::EObjectJSON`: a `(first, count)` span of the document's property-row tape.
+#[repr(C)]
 pub struct ObjectJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
@@ -1138,6 +1148,13 @@ impl ObjectJSON {
         }
     }
 
+    /// The tape this node's rows live on.
+    #[inline]
+    pub fn tape(&self) -> &JsonTape {
+        // SAFETY: per the constructor's contract the tape outlives this node.
+        unsafe { self.tape.as_ref() }
+    }
+
     #[inline]
     pub fn properties(&self) -> &[PropertyJSON] {
         if self.count == 0 {
@@ -1167,6 +1184,7 @@ impl ObjectJSON {
 }
 
 /// `Data::EArrayJSON`: a `(first, count)` span of the document's item tape.
+#[repr(C)]
 pub struct ArrayJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
@@ -1200,6 +1218,13 @@ impl ArrayJSON {
             close_bracket_loc,
             is_single_line,
         }
+    }
+
+    /// The tape this node's rows live on.
+    #[inline]
+    pub fn tape(&self) -> &JsonTape {
+        // SAFETY: see `ObjectJSON::properties`.
+        unsafe { self.tape.as_ref() }
     }
 
     #[inline]

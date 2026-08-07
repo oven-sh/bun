@@ -42,10 +42,8 @@ impl ExecCommand {
             exec_arena(),
             ctx.log,
             {
-                // `configure_transform_options_for_bun_vm` (3 field writes).
                 let mut args = ctx.args.clone();
                 args.write = Some(false);
-                args.resolve = Some(api::ResolveMode::Lazy);
                 args.target = Some(api::Target::Bun);
                 args
             },

@@ -1951,7 +1951,7 @@ pub mod internal {
 
     // The stack key borrows the caller's host string; `to_owned()` copies
     // before storing on the heap `Request`.
-    pub struct RequestKey<'a> {
+    struct RequestKey<'a> {
         pub(crate) host: Option<&'a ZStr>,
         /// Used for getaddrinfo() to avoid glibc UDP port 0 bug, but NOT included in hash
         pub(crate) port: u16,
@@ -5049,7 +5049,7 @@ impl Resolver {
         // stack before null-terminating it. Reject anything that cannot fit so we never
         // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
         // is 1025, so this never rejects a name that could have resolved.
-        if name.len() >= MAX_PATH_BYTES || name.contains(&0) {
+        if name.len() >= MAX_PATH_BYTES || strings::contains_char(name, 0) {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
             error_to_deferred(

@@ -802,7 +802,7 @@ impl Style {
             NextRoutingConvention::Pages => b"[",
             NextRoutingConvention::App => b"[(@",
         };
-        while let Some(start) = strings::index_of_any_pos_comptime(route_segment, stop_chars, i) {
+        while let Some(start) = strings::index_of_any_pos(route_segment, stop_chars, i) {
             if matches!(CONVENTIONS, NextRoutingConvention::Pages) || route_segment[start] == b'[' {
                 let mut end = match strings::index_of_char_pos(route_segment, b']', start + 1) {
                     Some(e) => e,
@@ -914,7 +914,7 @@ impl Style {
                 }
 
                 let between = &route_segment[i..start];
-                for part in between.split(|b| *b == b'/').filter(|s| !s.is_empty()) {
+                for part in strings::tokenize(between, b"/") {
                     parts.push(Part::Text(part));
                 }
                 parts.push(if is_optional {
@@ -968,7 +968,7 @@ impl Style {
                 }
 
                 let between = &route_segment[i..start];
-                for part in between.split(|b| *b == b'/').filter(|s| !s.is_empty()) {
+                for part in strings::tokenize(between, b"/") {
                     parts.push(Part::Text(part));
                 }
                 parts.push(Part::Group(group_name));
@@ -990,10 +990,7 @@ impl Style {
             }
         }
         if !route_segment[i..].is_empty() {
-            for part in route_segment[i..]
-                .split(|b| *b == b'/')
-                .filter(|s| !s.is_empty())
-            {
+            for part in strings::tokenize(&route_segment[i..], b"/") {
                 parts.push(Part::Text(part));
             }
         }

@@ -54,6 +54,27 @@ impl JSValueCryptoExt for JSValue {
 // ExternCryptoJob — token-pastes C symbol names (`Bun__<name>Ctx__runTask`
 // etc.), so a `macro_rules!` is the right shape.
 // ───────────────────────────────────────────────────────────────────────────
+
+/// Completion-callback arguments produced by a job ctx's JS-thread half
+/// (`runFromJS`). Layout mirrors `Bun::JSCallbackArgs` (JSCallbackArgs.h),
+/// which fills it through the extern "C" out-pointer.
+#[repr(C)]
+struct JsCallbackArgs {
+    argv: [JSValue; 3],
+    argc: u32,
+}
+
+impl JsCallbackArgs {
+    const EMPTY: Self = Self {
+        argv: [JSValue::UNDEFINED; 3],
+        argc: 0,
+    };
+
+    fn as_slice(&self) -> &[JSValue] {
+        &self.argv[..(self.argc as usize).min(self.argv.len())]
+    }
+}
+
 macro_rules! extern_crypto_job {
     ($Name:ident, $name_str:literal) => {
         pub mod $Name {
@@ -66,18 +87,35 @@ macro_rules! extern_crypto_job {
             // to a non-null pointer and discharges the validity proof at the
             // type level. `global` in `runTask` is forwarded raw (the trait
             // hands us `*mut`; C++ never reads through it off-thread).
+            //
+            // `runFromJS` (the JS-thread half; `runTask` is the work-pool
+            // half) returns the completion callback's arguments by value. It
+            // never sees the callback, so it cannot run user JS; `then` frees
+            // the ctx and then invokes.
             unsafe extern "C" {
                 #[link_name = concat!("Bun__", $name_str, "Ctx__runTask")]
                 safe fn ctx_run_task(ctx: &Ctx, global: *mut JSGlobalObject);
                 #[link_name = concat!("Bun__", $name_str, "Ctx__runFromJS")]
-                safe fn ctx_run_from_js(ctx: &Ctx, global: &JSGlobalObject, callback: JSValue);
+                safe fn ctx_run_from_js(
+                    ctx: &Ctx,
+                    global: &JSGlobalObject,
+                    out: &mut JsCallbackArgs,
+                );
                 #[link_name = concat!("Bun__", $name_str, "Ctx__deinit")]
                 safe fn ctx_deinit(ctx: &Ctx);
             }
 
             pub(crate) struct ExternCtx {
+                // Null once `then` has freed it.
                 ctx: *mut Ctx,
                 callback: StrongOptional,
+            }
+
+            impl ExternCtx {
+                fn deinit_ctx(&mut self) {
+                    ctx_deinit(Ctx::opaque_ref(self.ctx));
+                    self.ctx = core::ptr::null_mut();
+                }
             }
 
             impl AnyTaskJobCtx for ExternCtx {
@@ -88,11 +126,24 @@ macro_rules! extern_crypto_job {
                     let Some(callback) = self.callback.try_swap() else {
                         return Ok(());
                     };
-                    let ctx = Ctx::opaque_ref(self.ctx);
-                    if let Err(err) = jsc::from_js_host_call_generic(global, || {
-                        ctx_run_from_js(ctx, global, callback);
-                    }) {
-                        global.report_active_exception_as_unhandled(err);
+                    let mut args = JsCallbackArgs::EMPTY;
+                    let produced = jsc::from_js_host_call_generic(global, || {
+                        ctx_run_from_js(Ctx::opaque_ref(self.ctx), global, &mut args);
+                    });
+                    // Free the ctx before user JS (the callback, or an
+                    // uncaughtException handler) — user code may never return
+                    // (`process.exit()`).
+                    self.deinit_ctx();
+                    match produced {
+                        Ok(()) => {
+                            global.bun_vm().event_loop_mut().run_callback(
+                                callback,
+                                global,
+                                JSValue::UNDEFINED,
+                                args.as_slice(),
+                            );
+                        }
+                        Err(err) => global.report_active_exception_as_unhandled(err),
                     }
                     Ok(())
                 }
@@ -100,7 +151,11 @@ macro_rules! extern_crypto_job {
 
             impl Drop for ExternCtx {
                 fn drop(&mut self) {
-                    ctx_deinit(Ctx::opaque_ref(self.ctx));
+                    // Non-null when the job dies without completing (shutdown
+                    // early-out, `init` failure, missing callback).
+                    if !self.ctx.is_null() {
+                        self.deinit_ctx();
+                    }
                     self.callback.deinit();
                 }
             }
@@ -168,7 +223,7 @@ extern_crypto_job!(SignJob, "SignJob");
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Trait expressing the interface `CryptoJob` expects of `Ctx`.
-pub trait CryptoJobCtx: Sized {
+trait CryptoJobCtx: Sized {
     fn init(&mut self, global: &JSGlobalObject) -> JsResult<()>;
     /// The impl reads its own `result` field directly.
     fn run_task(&mut self);
@@ -178,7 +233,7 @@ pub trait CryptoJobCtx: Sized {
 
 /// Adapter binding a [`CryptoJobCtx`] + JS callback into an [`AnyTaskJobCtx`].
 /// `Drop` runs `inner.deinit()` then releases the callback handle.
-pub struct CallbackCtx<C: CryptoJobCtx> {
+struct CallbackCtx<C: CryptoJobCtx> {
     callback: StrongOptional,
     inner: C,
 }
@@ -233,7 +288,7 @@ pub mod random {
     // No `Clone`: `value` is JSC-protected in `init`/unprotected in `deinit`, and
     // `bytes` borrows into that ArrayBuffer. Cloning would alias the protect/unprotect
     // pair and the borrowed buffer. `CryptoJob::init` moves the ctx by value.
-    pub struct JobCtx {
+    struct JobCtx {
         pub value: JSValue,
         pub(crate) bytes: *mut u8,
         pub offset: u32,

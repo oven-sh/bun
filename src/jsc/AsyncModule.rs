@@ -6,11 +6,7 @@ use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_install::dependency::Dependency;
 use bun_install::{DependencyID, Resolution};
 use bun_io::KeepAlive;
-use bun_options_types::LoaderExt as _;
-use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
-use bun_resolver::package_json::PackageJSON;
-use bun_sys::Fd;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
@@ -26,10 +22,6 @@ pub struct InitOpts<'a> {
     pub specifier: &'a [u8],
     pub path: Fs::Path<'a>,
     pub promise_ptr: Option<*mut *mut JSInternalPromise>,
-    pub fd: Option<Fd>,
-    pub package_json: Option<&'a PackageJSON>,
-    pub loader: bun_ast::Loader,
-    pub hash: u32,
     pub arena: Box<ArenaAllocator>,
     /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
     /// alive alongside `arena` until the module finishes loading.
@@ -46,14 +38,9 @@ pub struct AsyncModule {
     pub(crate) string_buf: Box<[u8]>,
     referrer_len: u32,
     specifier_len: u32,
-    // `?*PackageJSON` / `*JSGlobalObject` — both are VM-lifetime
-    // backrefs (BACKREF/JSC_BORROW class in LIFETIMES.tsv). `package_json` is
-    // stored as a raw ptr so `AsyncModule` is `'static`-embeddable in
-    // `Queue`/`VirtualMachine` without a phantom lifetime; `global_this` uses
-    // [`crate::GlobalRef`] which encapsulates the single audited deref.
-    pub(crate) package_json: Option<core::ptr::NonNull<PackageJSON>>,
-    pub(crate) loader: api::Loader,
-    pub(crate) hash: u32, // default = u32::MAX
+    // `*JSGlobalObject` is a VM-lifetime backref (BACKREF/JSC_BORROW class in
+    // LIFETIMES.tsv); [`crate::GlobalRef`] encapsulates the single audited
+    // deref.
     pub global_this: crate::GlobalRef,
     pub(crate) arena: Box<ArenaAllocator>,
     /// See [`InitOpts::ast_alloc_state`].
@@ -255,7 +242,6 @@ unsafe extern "C" {
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
-use bun_core::strings;
 use bun_install::package_manager::run_tasks;
 use bun_install::{self as install, LogLevel, PackageID};
 
@@ -654,9 +640,6 @@ impl AsyncModule {
             string_buf,
             referrer_len,
             specifier_len,
-            package_json: opts.package_json.map(core::ptr::NonNull::from),
-            loader: opts.loader.to_api(),
-            hash: opts.hash,
             // .stmt_blocks = stmt_blocks,
             // .expr_blocks = expr_blocks,
             global_this: crate::GlobalRef::new(global_object),
@@ -1228,11 +1211,10 @@ impl AsyncModule {
         self.parse_result = parse_result;
         // `print_with_source_map` consumes `ParseResult` by
         // value (it moves `ast` into `print_ast`). Hoist the post-print
-        // reads (`is_commonjs_module` / `input_fd`) above the move so we
+        // read (`is_commonjs_module`) above the move so we
         // can `mem::take` instead of cloning.
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-        let input_fd = self.parse_result.input_fd;
         let arena = *self.parse_result.ast.parts.allocator();
         let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
@@ -1303,6 +1285,10 @@ impl AsyncModule {
             );
         }
 
+        // No watcher registration here: `maybe_watch_file` already ran before
+        // the enqueue, and the fd the parse opened may have been closed (and
+        // the number recycled) by the transpile frame's fd guard.
+
         // SAFETY: per-thread VM.
         if unsafe { (*jsc_vm).is_watcher_enabled() } {
             // SAFETY: per-thread VM.
@@ -1314,37 +1300,6 @@ impl AsyncModule {
                     None,
                 )
             };
-
-            if let Some(fd_) = input_fd {
-                if bun_paths::is_absolute(path.text)
-                    && !strings::contains(path.text, b"node_modules")
-                {
-                    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set
-                    // when `is_watcher_enabled()`; cast recovers the
-                    // concrete type (matches VirtualMachine.rs:2301).
-                    let watcher = unsafe {
-                        &mut *(*jsc_vm)
-                            .bun_watcher
-                            .cast::<crate::hot_reloader::ImportWatcher>()
-                    };
-                    // `bun_watcher::PackageJSON` is an opaque
-                    // forward-decl of `bun_resolver::PackageJSON`;
-                    // the watcher only stores the pointer, so cast through.
-                    // SAFETY: `package_json` (when set) is a VM-lifetime
-                    // backref — outlives the watcher entry.
-                    let package_json = self
-                        .package_json
-                        .map(|p| unsafe { &*p.as_ptr().cast::<bun_watcher::PackageJSON>() });
-                    let _ = watcher.add_file::<true>(
-                        fd_,
-                        path.text,
-                        self.hash,
-                        bun_ast::Loader::from_api(self.loader),
-                        Fd::INVALID,
-                        package_json,
-                    );
-                }
-            }
 
             resolved_source.is_commonjs_module = is_commonjs_module;
 

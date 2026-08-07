@@ -41,6 +41,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_core::ZStr;
+use bun_core::strings;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(target_os = "macos")]
 use bun_sys::FdDirExt as _;
@@ -209,7 +210,7 @@ enum JobAction {
 // CronRegisterJob
 // ============================================================================
 
-pub struct CronRegisterJob {
+struct CronRegisterJob {
     promise: jsc::JSPromiseStrong,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
@@ -1054,7 +1055,7 @@ const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
 // CronRemoveJob
 // ============================================================================
 
-pub struct CronRemoveJob {
+struct CronRemoveJob {
     promise: jsc::JSPromiseStrong,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
@@ -2609,7 +2610,7 @@ pub(crate) fn filter_crontab(
     let mut marker = Vec::new();
     let _ = write!(&mut marker, "# bun-cron: {}", bstr::BStr::new(title));
     let mut skip_next = false;
-    for line in content.split(|&b| b == b'\n') {
+    for line in strings::split(content, b"\n") {
         if skip_next {
             skip_next = false;
             continue;
@@ -2666,7 +2667,7 @@ pub enum CalendarError {
 pub(crate) fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarError> {
     let mut fields: [&[u8]; 5] = [b""; 5];
     let mut count: usize = 0;
-    for field in schedule.split(|&b| b == b' ').filter(|s| !s.is_empty()) {
+    for field in strings::tokenize(schedule, b" ") {
         if count >= 5 {
             return Err(CalendarError::InvalidCron);
         }
@@ -2684,7 +2685,7 @@ pub(crate) fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, Cale
             continue;
         }
         let mut vals: Vec<i32> = Vec::new();
-        for part in field.split(|&b| b == b',') {
+        for part in strings::split(field, b",") {
             // parse_unsigned (not parse_int) keeps '-5' → InvalidCron.
             let val: i32 =
                 bun_core::parse_unsigned(part, 10).map_err(|_| CalendarError::InvalidCron)?;

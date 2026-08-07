@@ -417,6 +417,31 @@ describe("object URL prefix check", () => {
     expect(resolveObjectURL(real)).toBeUndefined();
   });
 
+  // `is_string()` admits `StringObject`, so `to_bun_string` can hit a user
+  // `toString` that throws; that must surface as a catchable JS exception.
+  test("revokeObjectURL propagates a throwing toString on a String object", async () => {
+    const fixture = `
+      const s = new String("blob:x");
+      s.toString = () => { throw new Error("boom"); };
+      s[Symbol.toPrimitive] = () => { throw new Error("boom"); };
+      try { URL.revokeObjectURL(s); } catch (e) { console.log("caught", e.message); }
+      console.log("survived");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "caught boom\nsurvived\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   // bun_core::String::{has_prefix_comptime, eql_comptime} used to scan or
   // transcode the entire string before comparing a short ASCII literal. With
   // an O(literal) check this workload is effectively free; with an O(n) check

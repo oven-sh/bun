@@ -82,7 +82,6 @@ public:
 
     DOMHighResTimeStamp now() const;
     DOMHighResTimeStamp timeOrigin() const;
-    // ReducedResolutionSeconds nowInReducedResolutionSeconds() const;
 
     // PerformanceNavigation* navigation();
     PerformanceTiming* timing();
@@ -116,8 +115,6 @@ public:
 
     using RefCounted::deref;
     using RefCounted::ref;
-
-    // void scheduleNavigationObservationTaskIfNeeded();
 
     // PerformanceNavigationTiming* navigationTiming() { return m_navigationTiming.get(); }
 

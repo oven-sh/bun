@@ -130,7 +130,22 @@ function IncomingMessage(socket) {
 
     Readable.$call(this, streamOptions);
 
-    this[fakeSocketSymbol] = socket;
+    if (socket) {
+      // Node.js assigns `this.socket = socket` directly, so it's an own data
+      // property. Define it explicitly here (instead of going through the
+      // prototype getter/setter, which stores it on fakeSocketSymbol) so that
+      // response.hasOwnProperty('socket') is true — postman-request and
+      // similar libraries rely on this for SSL verification, reading
+      // response.socket.authorized / .encrypted off the real TLS socket.
+      Object.defineProperty(this, "socket", {
+        value: socket,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    } else {
+      this[fakeSocketSymbol] = socket;
+    }
 
     this.httpVersionMajor = null;
     this.httpVersionMinor = null;

@@ -830,6 +830,47 @@ test("--parallel: a test writing garbage to fd 3 does not hang the coordinator",
   expect(exitCode).toBe(1);
 });
 
+// After the last file, the worker flushes its aggregate frames (repeat bufs,
+// junit/coverage chunks) and ticks the event loop until the IPC backlog
+// drains. Those ticks run JS teardown (microtasks, weak-ref release) and must
+// hold the JSC API lock like the ticks during the run; debug builds assert
+// (currentThreadIsHoldingAPILock in VM::finalizeSynchronousJSExecution) into
+// the worker's stderr otherwise, which the coordinator streams through. On
+// Windows every frame takes the async uv_write path so the drain loop runs on
+// every worker exit; on POSIX it only runs when a frame overflows the
+// socketpair send buffer (~208KB on Linux), hence the ~1MB todo repeat
+// buffer. Debug-only: release builds compile the assertion out.
+test.skipIf(!isDebug)("--parallel: worker drains a backpressured final frame without JSC lock assertions", async () => {
+  using dir = tempDir("parallel-drain-lock", {
+    "big.test.js": `import {test} from "bun:test";
+      const pad = Buffer.alloc(340, "t").toString();
+      for (let i = 0; i < 3000; i++) test.todo(pad + "-" + i);
+      test("real", () => {});`,
+    "other.test.js": `import {test,expect} from "bun:test"; test("b1",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  // Filter instead of not.toContain so a failure prints the assertion lines,
+  // not the ~1MB of todo lines around them.
+  const assertionLines = stderr
+    .split("\n")
+    .filter(line => line.includes("ASSERTION FAILED") || line.includes("currentThreadIsHoldingAPILock"));
+  expect(assertionLines).toEqual([]);
+  // The backpressured frame is still delivered in full.
+  expect(stderr).toContain("3000 todo");
+  expect(stderr).toContain("-2999");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel --randomize without --seed is reproducible via the printed seed", async () => {
   const mk = (tag: string) =>
     `import {test,expect} from "bun:test";\n` +

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test"
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { open as fsOpen } from "node:fs/promises";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1159,6 +1160,121 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
     });
   } finally {
     closeSync(writerFd);
+  }
+});
+
+// When a FIFO's writer closes right after its last write (write()+close, the
+// common producer pattern), the EOF reaches the pipe reader as a separate
+// poll event with no pending bytes, and the stream completion path (not the
+// data path) has to end the response. The broken build ended it with a bare
+// CRLF and no terminating 0-chunk, so a chunk-framed body never became
+// parseable (curl: "chunk hex-length char not a hex digit"), and a pipe that
+// closed without writing produced a head with neither Content-Length nor
+// Transfer-Encoding that never completes. Either chunked-with-terminator or
+// Content-Length framing is acceptable; the response just has to be complete.
+describe.skipIf(isWindows)("Response(Bun.file(FIFO)) ends the response when the pipe writer closes", () => {
+  // Returns the decoded body, or null if the wire bytes do not form a
+  // complete HTTP/1.1 message (the failure mode under test).
+  function decodeBody(wire: string): { status: string; body: string } | null {
+    const headEnd = wire.indexOf("\r\n\r\n");
+    if (headEnd === -1) return null;
+    const head = wire.slice(0, headEnd);
+    const status = head.split("\r\n")[0];
+    const body = wire.slice(headEnd + 4);
+    const contentLength = head.match(/^content-length:\s*(\d+)/im);
+    if (contentLength !== null) {
+      return body.length === Number(contentLength[1]) ? { status, body } : null;
+    }
+    if (!/^transfer-encoding:\s*chunked/im.test(head)) return null;
+    let out = "";
+    let i = 0;
+    while (true) {
+      const sizeEnd = body.indexOf("\r\n", i);
+      if (sizeEnd === -1) return null;
+      const sizeText = body.slice(i, sizeEnd);
+      if (!/^[0-9a-f]+$/i.test(sizeText)) return null;
+      const size = parseInt(sizeText, 16);
+      i = sizeEnd + 2;
+      if (size === 0) return { status, body: out };
+      if (i + size + 2 > body.length) return null;
+      out += body.slice(i, i + size);
+      i += size + 2;
+    }
+  }
+
+  for (const [name, payload] of [
+    ["write then close", "hello"],
+    ["close with no writes", ""],
+  ] as const) {
+    test.concurrent(name, async () => {
+      using dir = tempDir("serve-fifo-eof", {});
+      const fifoPath = join(String(dir), "body.fifo");
+      mkfifo(fifoPath);
+
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch() {
+          return new Response(Bun.file(fifoPath));
+        },
+      });
+
+      const { promise: wireDone, resolve: resolveWire } = Promise.withResolvers<string>();
+      const { promise: payloadSeen, resolve: resolvePayloadSeen } = Promise.withResolvers<void>();
+      let wire = "";
+      // A broken build never completes the response, so resolve with whatever
+      // arrived once the deadline passes and let the assertions report it.
+      const deadline = setTimeout(() => resolveWire(wire), 3000);
+      await using client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(s) {
+            s.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+          },
+          data(_s, d) {
+            wire += Buffer.from(d).toString("latin1");
+            if (payload.length > 0 && wire.includes(payload)) resolvePayloadSeen();
+            if (decodeBody(wire) !== null) resolveWire(wire);
+          },
+          close() {
+            resolveWire(wire);
+          },
+          error() {
+            resolveWire(wire);
+          },
+        },
+      });
+
+      // Opening the FIFO's write end blocks (in the fs thread pool) until the
+      // fetch handler above opens the read end, so the write below always
+      // lands while the server is already streaming the pipe. Closing only
+      // after the payload came out the other side pins down the shape under
+      // test: the pipe EOF reaches the server strictly after the data did, as
+      // its own poll event with no bytes left to read.
+      const writer = await fsOpen(fifoPath, "w");
+      if (payload.length > 0) {
+        await writer.write(payload);
+        await payloadSeen;
+      }
+      await writer.close();
+
+      const captured = await wireDone;
+      clearTimeout(deadline);
+
+      const decoded = decodeBody(captured);
+      expect({
+        complete: decoded !== null,
+        status: decoded?.status,
+        bodyLength: decoded?.body.length,
+        bodyMatches: decoded?.body === payload,
+      }).toEqual({
+        complete: true,
+        status: "HTTP/1.1 200 OK",
+        bodyLength: payload.length,
+        bodyMatches: true,
+      });
+    });
   }
 });
 

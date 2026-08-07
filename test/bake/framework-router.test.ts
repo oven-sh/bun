@@ -210,6 +210,15 @@ describe("url matching", () => {
     });
   });
 
+  test("dynamic pattern ending in a static segment matches without a trailing slash", () => {
+    using r = makeMatcher("[user]/posts.tsx");
+    expect(r.match("/joe/posts")).toEqual({ file: "[user]/posts.tsx", params: { user: "joe" } });
+    expect(r.match("/joe/posts/")).toEqual({ file: "[user]/posts.tsx", params: { user: "joe" } });
+    expect(r.match("/joe")).toBe(null);
+    expect(r.match("/joe/other")).toBe(null);
+    expect(r.match("/joe/posts/extra")).toBe(null);
+  });
+
   test("a failed candidate's captures don't leak into a later zero-segment match", () => {
     // The [category] directory is scanned before blog/ (deterministic hash
     // order), so the three-param pattern runs first, captures

@@ -320,7 +320,11 @@ impl EncodedPattern {
                     if !strings::eql(&path[i..i + expect.len()], expect) {
                         return false;
                     }
-                    i += 1 + expect.len();
+                    i += expect.len();
+                    if i < path.len() {
+                        // Consume the separator unless the text ends the path.
+                        i += 1;
+                    }
                 }
                 Part::Param(name) => {
                     if i >= path.len() {

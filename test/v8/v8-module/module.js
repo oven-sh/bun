@@ -56,9 +56,18 @@ module.exports = debugMode => {
     },
 
     test_v8_return_value_from_inner_scope() {
-      console.log("string =", nativeModule.return_string_from_inner_scope(1));
-      console.log("number =", nativeModule.return_heap_number_from_inner_scope(1));
-      console.log("element =", nativeModule.return_array_element_from_iterate(["one", "two", "three"]));
+      // The native functions invoke this after their inner handle scope closed,
+      // while the callback is still on the stack, so the collection runs in the
+      // window where only the preserved return value keeps the cell alive.
+      // No-op under Node so the output matches.
+      const maybeGc = () => {
+        if (process.isBun) {
+          Bun.gc(true);
+        }
+      };
+      console.log("string =", nativeModule.return_string_from_inner_scope(1, maybeGc));
+      console.log("number =", nativeModule.return_heap_number_from_inner_scope(1, maybeGc));
+      console.log("element =", nativeModule.return_array_element_from_iterate(["one", "two", "three"], maybeGc));
       console.log("accessor =", nativeModule.return_accessor_value_from_inner_scope());
     },
 

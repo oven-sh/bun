@@ -736,23 +736,41 @@ void test_v8_locals_survive_nested_call(
 // made inside that scope). The inline grant forces the scope's inline
 // destructor to run DeleteExtensions.
 
+// Calls info[1] (the JS driver passes a function that forces GC under bun)
+// while the callback is still on the stack, after the inner scope already
+// closed: the preserved return value must stay GC-visited until the runtime
+// reads the callback frame.
+static void call_gc_callback(const FunctionCallbackInfo<Value> &info) {
+  if (info.Length() > 1 && info[1]->IsFunction()) {
+    Isolate *isolate = info.GetIsolate();
+    Local<Context> context = isolate->GetCurrentContext();
+    (void)info[1].As<Function>()->Call(context, Undefined(isolate), 0, nullptr);
+  }
+}
+
 void return_string_from_inner_scope(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
-  HandleScope hs(isolate);
-  Local<Value> grant = Local<Value>::New(isolate, info[0]);
-  (void)grant;
-  info.GetReturnValue().Set(
-      String::NewFromUtf8(isolate, "returned-from-inner-scope")
-          .ToLocalChecked());
+  {
+    HandleScope hs(isolate);
+    Local<Value> grant = Local<Value>::New(isolate, info[0]);
+    (void)grant;
+    info.GetReturnValue().Set(
+        String::NewFromUtf8(isolate, "returned-from-inner-scope")
+            .ToLocalChecked());
+  }
+  call_gc_callback(info);
 }
 
 void return_heap_number_from_inner_scope(
     const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
-  HandleScope hs(isolate);
-  Local<Value> grant = Local<Value>::New(isolate, info[0]);
-  (void)grant;
-  info.GetReturnValue().Set(Number::New(isolate, 3.25));
+  {
+    HandleScope hs(isolate);
+    Local<Value> grant = Local<Value>::New(isolate, info[0]);
+    (void)grant;
+    info.GetReturnValue().Set(Number::New(isolate, 3.25));
+  }
+  call_gc_callback(info);
 }
 
 // The return value must also survive runtime-internal scopes that pop while
@@ -773,6 +791,7 @@ void return_array_element_from_iterate(
         return Array::CallbackResult::kContinue;
       },
       const_cast<void *>(static_cast<const void *>(&info)));
+  call_gc_callback(info);
 }
 
 static void inner_scope_native_getter(Local<Name> property,

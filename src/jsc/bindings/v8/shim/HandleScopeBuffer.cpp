@@ -111,6 +111,12 @@ void HandleScopeBuffer::deleteGrantsBack(Isolate* isolate, const uintptr_t* limi
                 rescues.append({ returnSlot, *layout });
             }
         }
+        // From here until appendRescuedLayout() re-roots it below, a rescued
+        // cell may be referenced only by the copy in `rescues`, which the GC
+        // does not visit. That is safe: nothing in this window allocates from
+        // the JSC heap or reaches a safepoint, so a collection cannot complete
+        // before the copy is re-rooted through the write-barriered Handle
+        // constructor.
         while (m_storage.size() > cut) {
             m_storage.last() = Handle();
             m_storage.removeLast();

@@ -9489,6 +9489,59 @@ it("does not install transitive file: dependencies with overlong folder targets"
   expect(exitCode).toBe(1);
 });
 
+it("reinstalls a file: dependency pointing at an ancestor directory", async () => {
+  // "sample" depends on its own parent package via `file:../`, so the copy
+  // source contains the destination node_modules. The walk must skip
+  // node_modules directories: descending into them copied every installed
+  // package into node_modules/poto itself, and on reinstall raced the
+  // asynchronous deletion of the renamed previous install (ENOENT).
+  using dir = tempDir("file-dep-ancestor", {
+    "package.json": JSON.stringify({ name: "poto", version: "1.0.0" }),
+    "index.js": "module.exports = 'poto';",
+    "sample/package.json": JSON.stringify({
+      name: "sample",
+      version: "1.0.0",
+      dependencies: { poto: "file:../" },
+    }),
+  });
+  const projectDir = join(String(dir), "sample");
+
+  for (let i = 0; i < 3; i++) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).not.toContain("ENOENT");
+    expect(err).not.toContain("Failed to install");
+    expect(out).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+
+    // The copy contains the package's files but never a snapshot of the
+    // project's own node_modules.
+    expect(await exists(join(projectDir, "node_modules", "poto", "package.json"))).toBe(true);
+    expect(await exists(join(projectDir, "node_modules", "poto", "index.js"))).toBe(true);
+    expect(await exists(join(projectDir, "node_modules", "poto", "sample", "node_modules"))).toBe(false);
+  }
+
+  // The installed copy resolves at runtime.
+  await using runProc = spawn({
+    cmd: [bunExe(), "-e", "console.log(require('poto'))"],
+    cwd: projectDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [runOut, runExit] = await Promise.all([runProc.stdout.text(), runProc.exited]);
+  expect(runOut).toBe("poto\n");
+  expect(runExit).toBe(0);
+});
+
 for (const field of ["resolutions", "overrides"]) {
   it(`installs a file: dependency pointing outside the project when it came from root package.json "${field}"`, async () => {
     // `overrides` / `resolutions` can only be declared in the root package.json,

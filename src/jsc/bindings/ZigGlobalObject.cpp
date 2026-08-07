@@ -13,6 +13,7 @@
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/DeferredWorkTimer.h"
+#include "JavaScriptCore/DeferTermination.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/Exception.h"
@@ -3590,11 +3591,19 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
+// The module loader's host *lookup* hooks (resolve / importModule / fetch) run with
+// termination deferred: JSC treats whatever they throw as a catchable resolution or
+// fetch error (rejectWithCaughtException, resolution-failure cache, ContinueDynamicImport)
+// and asserts nothing is left pending — which a TerminationException, being unclearable,
+// would violate when worker.terminate() lands mid-lookup. The request stays armed and
+// fires at the next script entry (DeferForAWhile). Module *evaluation* is not covered:
+// script running there is exactly what termination should interrupt.
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+    JSC::DeferTerminationForAWhile deferTermination(JSC::getVM(globalObject));
 
     ErrorableString res;
     res.success = false;
@@ -3686,6 +3695,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
     VM& vm = JSC::getVM(globalObject);
+    JSC::DeferTerminationForAWhile deferTermination(vm); // see moduleLoaderResolve
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     {
@@ -3815,6 +3825,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher>)
 {
     auto& vm = JSC::getVM(globalObject);
+    JSC::DeferTerminationForAWhile deferTermination(vm); // see moduleLoaderResolve
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 

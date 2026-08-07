@@ -1006,7 +1006,7 @@ pub fn derive_js_affine(input: TokenStream) -> TokenStream {
             }
         }
         syn::Data::Union(u) => {
-            return syn::Error::new_spanned(&u.union_token, "JsAffine: unions are not supported")
+            return syn::Error::new_spanned(u.union_token, "JsAffine: unions are not supported")
                 .to_compile_error()
                 .into();
         }

@@ -56,62 +56,46 @@ test("zstd decompress: estimated size stays tied to construction mode across clo
 // ASAN under `bun bd`).
 //
 // The guarded race is marking-thread vs work-pool timing, not compression
-// effort, so quality/level are set low and both classes share one process:
-// spawn + module load dominate the fixture's cost, which matters on slow
-// contended CI runners (this file used to time out in parallel batches on
-// Windows).
+// effort, so quality/level are set low and both classes share one child
+// process: spawn + module load dominate the fixture's cost, which matters on
+// slow contended CI runners. A failed group names itself, either in the
+// stderr of its rejection or as the missing "<group> OK" line.
 const gcFixture = /* js */ `
   const zlib = require("zlib");
   const compressible = Buffer.alloc(128 * 1024, "abcdefgh");
   const random = require("crypto").randomBytes(128 * 1024);
-  function drive(z, buf, bucket) {
+  function drive(z, buf, name, bucket) {
     bucket.push(new Promise((resolve, reject) => {
+      const fail = why => reject(new Error(name + ": " + why));
       let out = 0;
       let sampled = false;
-      z.on("error", reject);
+      z.on("error", e => fail(e.message || e));
       z.on("data", c => {
         out += c.length;
         if (!sampled) { sampled = true; Bun.gc(true); }
       });
-      z.on("end", () => (out > 0 ? resolve() : reject(new Error("stream produced no output"))));
+      z.on("end", () => (out > 0 ? resolve() : fail("stream produced no output")));
       z.write(buf, () => z.end());
       Bun.gc(true);
     }));
   }
   const brotli = [], zstd = [];
   for (let i = 0; i < 8; i++) {
-    drive(zlib.createBrotliCompress({ chunkSize: 32 * 1024, params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 2 } }), compressible, brotli);
-    drive(zlib.createZstdCompress({ chunkSize: 32 * 1024, params: { [zlib.constants.ZSTD_c_compressionLevel]: 1 } }), random, zstd);
+    drive(zlib.createBrotliCompress({ chunkSize: 32 * 1024, params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 2 } }), compressible, "brotli", brotli);
+    drive(zlib.createZstdCompress({ chunkSize: 32 * 1024, params: { [zlib.constants.ZSTD_c_compressionLevel]: 1 } }), random, "zstd", zstd);
   }
   Promise.all(brotli).then(() => { Bun.gc(true); console.log("brotli OK"); });
   Promise.all(zstd).then(() => { Bun.gc(true); console.log("zstd OK"); });
 `;
 
-// Both fixture tests share one child process; a failed group is identified by
-// its missing "<group> OK" line in the assertion diff.
-let gcRunPromise: Promise<{ stdout: string; stderr: string; exitCode: number }> | undefined;
-function gcRun() {
-  return (gcRunPromise ??= (async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", gcFixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  })());
-}
-
-test.concurrent("brotli: estimatedSize during GC while a stream is live exits cleanly", async () => {
-  const { stdout, stderr, exitCode } = await gcRun();
-  expect(stderr).toBe("");
-  expect(stdout.split("\n").filter(Boolean).toSorted()).toEqual(["brotli OK", "zstd OK"]);
-  expect(exitCode).toBe(0);
-});
-
-test.concurrent("zstd: estimatedSize during GC while a stream is live exits cleanly", async () => {
-  const { stdout, stderr, exitCode } = await gcRun();
+test.concurrent("brotli+zstd: estimatedSize during GC while streams are live exits cleanly", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", gcFixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout.split("\n").filter(Boolean).toSorted()).toEqual(["brotli OK", "zstd OK"]);
   expect(exitCode).toBe(0);

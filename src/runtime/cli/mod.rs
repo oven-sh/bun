@@ -509,6 +509,11 @@ pub use bun_install::PRETEND_TO_BE_NODE;
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// argv index of the subcommand keyword as located by `Command::which()`.
+/// `bun test …` → 1; `bun --cwd ./dir test …` → 3.
+static SUBCOMMAND_ARGV_INDEX: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(1);
+
 bun_core::declare_scope!(CLI, hidden);
 
 pub(crate) type LoaderColonList =
@@ -763,20 +768,8 @@ pub mod reserved_command {
 
     #[cold]
     pub(crate) fn exec() -> crate::Result<()> {
-        let mut command_name: &[u8] = b"";
-        for (i, arg) in bun::argv().iter().enumerate() {
-            if i == 0 {
-                continue;
-            }
-            if arg.len() > 1 && arg[0] == b'-' {
-                continue;
-            }
-            command_name = arg;
-            break;
-        }
-        if command_name.is_empty() {
-            command_name = bun::argv().get(1).map(|z| z.as_bytes()).unwrap_or(b"");
-        }
+        let idx = super::command::subcommand_argv_index();
+        let command_name: &[u8] = bun::argv().get(idx).map(|z| z.as_bytes()).unwrap_or(b"");
         pretty_error!(
             "<r><red>Uh-oh<r>. <b><yellow>bun {0}<r> is a subcommand reserved for future use by Bun.\n\nIf you were trying to run a package.json script called {0}, use <b><magenta>bun run {0}<r>.\n",
             bstr::BStr::new(command_name)
@@ -800,6 +793,46 @@ pub mod command {
     fn argv_zslice() -> Vec<&'static bun_core::ZStr> {
         let a = bun::argv();
         (0..a.len()).map(|i| a.get(i).unwrap()).collect()
+    }
+
+    /// See [`SUBCOMMAND_ARGV_INDEX`](super::SUBCOMMAND_ARGV_INDEX).
+    #[inline]
+    pub(crate) fn subcommand_argv_index() -> usize {
+        super::SUBCOMMAND_ARGV_INDEX.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Apply a `--cwd <dir>` / `--cwd=<dir>` that preceded the subcommand
+    /// keyword, for handlers that don't route through `arguments::parse` /
+    /// `CommandLineArguments::parse`. Last occurrence wins (clap semantics).
+    #[cold]
+    pub(crate) fn apply_leading_cwd() {
+        let argv = bun::argv();
+        let end = subcommand_argv_index().min(argv.len());
+        let mut last: Option<&[u8]> = None;
+        let mut i = 1;
+        while i < end {
+            let a = argv.get(i).map(|z| z.as_bytes()).unwrap_or(b"");
+            if a == b"--cwd" {
+                if let Some(dir) = argv.get(i + 1).filter(|_| i + 1 < end) {
+                    last = Some(dir.as_bytes());
+                    i += 1;
+                }
+            } else if let Some(dir) = a.strip_prefix(b"--cwd=") {
+                last = Some(dir);
+            }
+            i += 1;
+        }
+        if let Some(dir) = last {
+            let dir_z = bun_core::ZBox::from_bytes(dir);
+            if let bun_sys::Result::Err(err) = bun_sys::chdir(&dir_z) {
+                Output::err(
+                    err,
+                    "Could not change directory to \"{}\"\n",
+                    format_args!("{}", bstr::BStr::new(dir)),
+                );
+                Global::exit(1);
+            }
+        }
     }
 
     pub use bun_options_types::command_tag::Tag;
@@ -947,6 +980,7 @@ pub mod command {
             return Tag::RunAsNodeCommand;
         }
 
+        let mut idx: usize = 1;
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
@@ -954,11 +988,24 @@ pub mod command {
             && first_arg_name[0] == b'-'
             && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
         {
+            // Step past the value of the required-value `BASE_PARAMS_` flags.
+            // `-c, --config` is `Values::OneOptional`: clap never consumes a
+            // separate token for it, so it's intentionally not listed.
+            if matches!(first_arg_name, b"--cwd" | b"--env-file") {
+                if iter.next().is_none() {
+                    return Tag::AutoCommand;
+                }
+                idx += 1;
+            }
             match iter.next() {
-                Some(n) => first_arg_name = n,
+                Some(n) => {
+                    idx += 1;
+                    first_arg_name = n;
+                }
                 None => return Tag::AutoCommand,
             }
         }
+        SUBCOMMAND_ARGV_INDEX.store(idx, core::sync::atomic::Ordering::Relaxed);
 
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;
         let x = RootCommandMatcher::r#match(first_arg_name);
@@ -1504,8 +1551,10 @@ pub mod command {
     #[inline(never)]
     fn exec_init() -> CmdResult {
         // InitCommand parses its own argv (no Context).
+        apply_leading_cwd();
         let argv = argv_zslice();
-        super::init_command::InitCommand::exec(&argv[2.min(argv.len())..])
+        let start = (subcommand_argv_index() + 1).min(argv.len());
+        super::init_command::InitCommand::exec(&argv[start..])
     }
 
     #[cold]
@@ -1515,7 +1564,7 @@ pub mod command {
         // exec handles both the non-tty path (dump the embedded completion
         // script to stdout) and the tty install path (bunx symlink, fpath/XDG
         // dir search, profile patching).
-        for a in bun::argv().iter().skip(2) {
+        for a in bun::argv().iter().skip(subcommand_argv_index() + 1) {
             if matches!(a, b"--help" | b"-h") {
                 tag_print_help(Tag::InstallCompletionsCommand, true);
                 Global::exit(0);
@@ -1535,6 +1584,7 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
+        apply_leading_cwd();
         let ctx = init(Tag::BunxCommand, log)?;
         let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
             0
@@ -1785,10 +1835,12 @@ pub mod command {
         }
 
         // Create command wraps bunx
+        apply_leading_cwd();
         let ctx = init(Tag::CreateCommand, log)?;
         let args = argv_zslice();
+        let cmd_idx = subcommand_argv_index();
 
-        if args.len() <= 2 {
+        if args.len() <= cmd_idx + 1 {
             tag_print_help(Tag::CreateCommand, false);
             Global::exit(1);
         }
@@ -1799,7 +1851,7 @@ pub mod command {
         let mut dash_dash_bun = false;
         let mut print_help = false;
 
-        if args.len() > 2 {
+        {
             let remainder = &args[1..];
             let mut remainder_i: usize = 0;
             while remainder_i < remainder.len() && positional_i < positionals.len() {
@@ -1817,6 +1869,8 @@ pub mod command {
                             dash_dash_bun = true;
                         } else if slice == b"--help" || slice == b"-h" {
                             print_help = true;
+                        } else if slice == b"--cwd" || slice == b"--env-file" {
+                            remainder_i += 1;
                         }
                     }
                 }
@@ -1935,29 +1989,15 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // Parse arguments manually since the standard flow doesn't work for standalone commands
         let cli = CommandLineArguments::parse(PmSubcommand::Info)?;
         let json_output = cli.json_output;
+        // `positionals[0]` is the `info` keyword itself.
+        let positionals = match cli.positionals {
+            [b"info", rest @ ..] => rest,
+            rest => rest,
+        };
+        let package_name: &[u8] = positionals.first().copied().unwrap_or(b"");
+        let property_path: Option<&[u8]> = positionals.get(1).copied();
         let ctx = init(Tag::InfoCommand, log)?;
         let (pm, _) = PackageManager::init(ctx, cli, Subcommand::Info)?;
-
-        // Handle arguments correctly for standalone info command
-        let mut package_name: &[u8] = b"";
-        let mut property_path: Option<&[u8]> = None;
-
-        // Find non-flag arguments starting from argv[2] (after "bun info").
-        let mut found_package = false;
-        let argv = bun::argv();
-        for arg in argv.iter().skip(2) {
-            // Skip flags
-            if !arg.is_empty() && arg[0] == b'-' {
-                continue;
-            }
-            if !found_package {
-                package_name = arg;
-                found_package = true;
-            } else {
-                property_path = Some(arg);
-                break;
-            }
-        }
 
         super::pm_view_command::view(pm, package_name, property_path, json_output)
     }

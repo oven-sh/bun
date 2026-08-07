@@ -93,6 +93,7 @@ const SHARED_PARAMS: &[ParamType] = &[
     ),
     clap::param!("-g, --global                          Install globally"),
     clap::param!("--cwd <STR>                           Set a specific cwd"),
+    clap::param!("--env-file <STR>..."),
     BACKEND_PARAM,
     clap::param!(
         "--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables"

@@ -190,15 +190,18 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
     }
 
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
-        // `bun_core::argv()` includes argv[0]; skip it and collect into a
-        // borrowed-slice Vec so `&[&[u8]]` callers (TrustCommand/UntrustedCommand,
-        // `left_has_any_in_right`) keep their shape.
-        let args_vec: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(1).collect();
-        let args: &[&[u8]] = &args_vec;
+        // `bun_core::argv()` includes argv[0]; skip to the subcommand keyword and
+        // collect into a borrowed-slice Vec so `&[&[u8]]` callers
+        // (TrustCommand/UntrustedCommand) index `args[2..]` relative to the
+        // keyword. Flag probes (`--all`, `--trusted`) scan `all_args` instead
+        // so a flag placed before the keyword is still seen.
+        let cmd_idx = Command::subcommand_argv_index();
+        let all_args: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(1).collect();
+        let args: &[&[u8]] = &all_args[(cmd_idx - 1).min(all_args.len())..];
 
         // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
         let is_direct_whoami = bun_core::argv()
-            .get(1)
+            .get(cmd_idx)
             .is_some_and(|arg| strings::eql_comptime(arg.as_bytes(), b"whoami"));
 
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
@@ -534,9 +537,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 more_packages[0] = true;
             }
 
-            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
+            let trusted_only = strings::left_has_any_in_right(&all_args, &[b"--trusted"]);
 
-            if strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]) {
+            if strings::left_has_any_in_right(&all_args, &[b"-A", b"-a", b"--all"]) {
                 if trusted_only {
                     // Trust is by package name, not tree position, so a trusted
                     // package nested under an untrusted parent must still be

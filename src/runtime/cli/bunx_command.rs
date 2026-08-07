@@ -115,6 +115,11 @@ impl Options {
                     ctx.debug.run_in_bun = true;
                 } else if positional == b"--no-install" {
                     opts.no_install = true;
+                } else if positional == b"--cwd" || positional == b"--env-file" {
+                    // Step past the value so it isn't mistaken for the package
+                    // name. `--cwd` before `x` was applied by the caller's
+                    // `apply_leading_cwd()`; after `x` it is not honored yet.
+                    i += 1;
                 } else if positional == b"--package" || positional == b"-p" {
                     // Next argument should be the package name
                     i += 1;

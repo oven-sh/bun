@@ -410,9 +410,6 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
     if (auto* queue = globalObject->m_nextTickQueue.get()) {
-        // enterWith(x); process.nextTick(cb) previously left the queue
-        // undrained with the microtask-tick hook cleared, so cb only ran if
-        // some later work re-armed the drain.
         vm.setOnEachMicrotaskTick(nullptr);
         queue->drain(vm, globalObject);
     } else {
@@ -3821,10 +3818,6 @@ static JSC::JSPromise* moduleLoaderImportModuleImpl(Zig::GlobalObject* globalObj
     return result;
 }
 
-// Node publishes the "module.import" tracing channel around dynamic import().
-// Only called when globalObject->hasModuleImportSubscribers is true (set from
-// JS when tracing:module.import:* gains subscribers). Returns null to fall
-// through to the untraced import.
 static JSC::JSPromise* tryTraceModuleImport(Zig::GlobalObject* globalObject,
     JSString* moduleNameValue,
     RefPtr<JSC::ScriptFetchParameters> parameters,
@@ -3844,9 +3837,6 @@ static JSC::JSPromise* tryTraceModuleImport(Zig::GlobalObject* globalObject,
     if (!traceImport || !traceImport.isCallable())
         return nullptr;
 
-    // traceImport normally runs doImport synchronously, but a tampered
-    // TracingChannel.prototype.tracePromise could stash doImport past this
-    // frame; root the module-name string.
     SourceOrigin sourceOriginCopy = sourceOrigin;
     JSC::Strong<JSString> strongModuleName(vm, moduleNameValue);
     auto* doImport = JSC::JSNativeStdFunction::create(vm, globalObject, 0, String(),
@@ -3870,8 +3860,6 @@ static JSC::JSPromise* tryTraceModuleImport(Zig::GlobalObject* globalObject,
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     if (auto* promise = dynamicDowncast<JSC::JSPromise>(result))
         return promise;
-    // tracePromise returns a promise for a promise-returning callback; adopt
-    // whatever came back rather than importing a second time.
     JSPromise* adopted = JSPromise::resolvedPromise(globalObject, result);
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);

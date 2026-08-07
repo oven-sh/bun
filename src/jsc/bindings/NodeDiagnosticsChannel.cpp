@@ -5,9 +5,6 @@ namespace Bun {
 
 using namespace JSC;
 
-// Flipped from node:diagnostics_channel when the "module.import" tracing
-// channel gains or loses subscribers, so moduleLoaderImportModule's fast path
-// is a single bool read.
 JSC_DEFINE_HOST_FUNCTION(jsSetHasModuleImportSubscribers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ASSERT(callFrame->argumentCount() == 1);

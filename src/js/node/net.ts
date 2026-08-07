@@ -3794,8 +3794,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
 
   if (!netServerListen) initNetChannels();
   if (netServerListen.hasSubscribers) {
-    // Node publishes the options object produced by normalizeArgs(); reuse the
-    // caller's object when one was given, otherwise reconstruct its shape.
     const options =
       typeof listenArg0 === "object" && listenArg0 !== null
         ? listenArg0

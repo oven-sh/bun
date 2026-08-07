@@ -22,9 +22,6 @@ const { ConnResetException, hasObserver, startPerf, stopPerf } = require("intern
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 let onServerRequestStartChannel, onServerResponseCreatedChannel, onServerResponseFinishChannel;
-// In Node http.Server inherits listen() from net.Server, so http servers
-// publish on the net.server.listen tracing channel too; Bun's http.Server is
-// backed by Bun.serve and has its own listen(), so it publishes here directly.
 let netServerListenChannel;
 function initHttpServerChannels() {
   const dc = require("node:diagnostics_channel");
@@ -970,9 +967,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         if (!is_upgrade) {
           if (!onServerResponseCreatedChannel) initHttpServerChannels();
-          // Node publishes response.created from the ServerResponse constructor,
-          // which it only reaches after the upgrade check; Bun constructs the
-          // response unconditionally, so publish here instead.
           if (onServerResponseCreatedChannel.hasSubscribers) {
             onServerResponseCreatedChannel.publish({
               request: http_req,
@@ -987,8 +981,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
               server,
             });
           }
-          // Node's resOnFinish is always attached and checks hasSubscribers at
-          // 'finish' time, so a subscriber added mid-request still observes it.
           http_res.on("finish", publishServerResponseFinish);
         }
 
@@ -2213,8 +2205,6 @@ Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
 
 function publishServerResponseFinish(this: any) {
   if (!onServerResponseFinishChannel.hasSubscribers) return;
-  // Same socket lookup as emitResponseFinishHandleSocket (req.socket may be
-  // nulled by the stream destroyer; this.socket is the assignSocket fallback).
   const socket = this.req?.socket ?? this.socket;
   onServerResponseFinishChannel.publish({
     request: this.req,

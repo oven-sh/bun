@@ -10,8 +10,6 @@ namespace Bun {
 
 using namespace JSC;
 
-// Backs v8.queryObjects(): returns an array of every live object whose
-// prototype chain contains the given prototype, like V8's QueryObjects.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionQueryObjects, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -19,15 +17,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionQueryObjects, (JSGlobalObject * globalObject,
 
     JSValue prototypeValue = callFrame->argument(0);
     if (!prototypeValue.isObject()) {
-        // The JS wrapper passes ctor.prototype; a non-object prototype can't
-        // appear in any prototype chain.
         JSArray* empty = constructEmptyArray(globalObject, nullptr, 0);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(empty);
     }
 
-    // Like V8's QueryObjects, settle the heap first so already-collectable
-    // instances are not reported as live.
     vm.heap.collectNow(Sync, CollectionScope::Full);
 
     // No GC allocation may happen while iterating the heap; collect matches

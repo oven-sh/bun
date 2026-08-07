@@ -12,11 +12,7 @@ export function require(this: JSCommonJSModule, _: string) {
   return $overridableRequire.$apply(this, arguments);
 }
 
-// overridableRequire can be overridden by setting `Module.prototype.require`.
-// When the "module.require" diagnostics tracing channel gains subscribers,
-// node:diagnostics_channel swaps this out for a tracing wrapper via that
-// setter (see internal/module_tracing), so the no-subscriber path has no
-// per-call overhead here.
+// overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {

@@ -20,9 +20,6 @@ const PromiseReject = Promise.$reject.bind(Promise);
 const SymbolDispose = Symbol.dispose;
 const SymbolHasInstance = Symbol.hasInstance;
 
-// Mirrors Node's native WeakReference (src/node_util.h): the target is held
-// strongly while the ref count is non-zero (an active subscription must keep
-// its channel alive), and only weakly once it drops back to zero.
 class WeakReference<T extends WeakKey> {
   #weak: WeakRef<T>;
   #strong: T | undefined = undefined;
@@ -222,9 +219,6 @@ class ActiveChannel {
 class Channel {
   _subscribers;
   _stores;
-  // Optional internal hook called whenever subscribe/unsubscribe/bindStore/
-  // unbindStore changes this channel's subscriber set (Bun-internal; see
-  // internal/module_tracing).
   _onSubscribersChanged;
   name;
 
@@ -239,8 +233,6 @@ class Channel {
 
   static [SymbolHasInstance](instance) {
     if (instance == null) {
-      // Node's primordial ObjectGetPrototypeOf throws V8's ToObject error here;
-      // match the message since tests assert on it.
       throw new TypeError("Cannot convert undefined or null to object");
     }
     const prototype = ObjectGetPrototypeOf.$call(null, instance);
@@ -662,10 +654,6 @@ function tracingChannel(nameOrChannels) {
   return new TracingChannel(nameOrChannels);
 }
 
-// Hand the module loaders their tracing channels. module_tracing swaps the
-// require() implementation and flips the C++ import flag only when these gain
-// subscribers, so the loaders carry no per-call check. In Node the CJS and ESM
-// loaders own these channels instead.
 {
   const moduleTracing = require("internal/module_tracing");
   const names = ["start", "end", "asyncStart", "asyncEnd", "error"];

@@ -348,8 +348,6 @@ describe("TracingChannel", () => {
   test.todo("TODO");
 
   test("tracingChannel(null) throws ERR_INVALID_ARG_TYPE like Node", () => {
-    // typeof null === "object": without a null guard the constructor would
-    // read null.start and throw a bare TypeError instead of the typed error.
     for (const bad of [null, 0, Symbol("x")]) {
       expect(() => tracingChannel(bad as any)).toThrow(
         expect.objectContaining({
@@ -384,14 +382,10 @@ describe("node:http server channels", () => {
     expect(events).toHaveLength(1);
     expect(events[0].request).toBeInstanceOf(IncomingMessage);
     expect(events[0].response).toBeInstanceOf(ServerResponse);
-    // The channel fires while the response is still being constructed, so the
-    // request must already be attached to it.
     expect((events[0].response as ServerResponse).req).toBe(events[0].request);
   });
 
   test("http.server.* channels do not publish for accepted upgrades", async () => {
-    // Node's parserOnIncoming returns early for upgrades before the response
-    // is constructed, so only the normal request should publish here.
     const counts = { created: 0, start: 0, finish: 0 };
     let upgradeSeen = false;
     const onCreated = () => counts.created++;
@@ -437,9 +431,6 @@ describe("node:http server channels", () => {
   });
 
   test("http.Server.listen() publishes on net.server.listen", async () => {
-    // In Node http.Server inherits listen() from net.Server, so it publishes on
-    // the net.server.listen tracing channel. Bun's http.Server has its own
-    // Bun.serve-backed listen(), which mirrors the publish.
     const events: string[] = [];
     let startMessage: any, endMessage: any;
     const onStart = (m: any) => {

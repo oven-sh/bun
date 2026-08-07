@@ -16,6 +16,10 @@
 #include "BunInjectedScriptHost.h"
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include <wtf/JSONValues.h>
+#include <wtf/text/StringBuilder.h>
+#include <JavaScriptCore/StackVisitor.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/UnlinkedCodeBlock.h>
 
 #include "InspectorLifecycleAgent.h"
 #include "InspectorTestReporterAgent.h"
@@ -233,10 +237,62 @@ public:
         return globalObject->inspectorDebuggable();
     }
 
+    // JSC splits an `async function` that uses `await` into a wrapper and a
+    // body function (Parser.cpp parseAsyncFunctionSourceElements). Before the
+    // first suspend both sit on the VM stack, so Debugger.paused lists the
+    // function twice. The parse mode is not exposed in the inspector protocol,
+    // so walk the paused stack here and report each wrapper frame's location as
+    // a Bun-specific event the debugger-thread CDP adapter consumes to present
+    // V8's one-frame-per-async-function view.
+    String asyncWrapperFrameLocationsEvent()
+    {
+        JSC::VM& vm = this->globalObject->vm();
+        JSC::CallFrame* topFrame = vm.topCallFrame;
+        if (!topFrame)
+            return String();
+        StringBuilder locations;
+        bool calleeIsBody = false;
+        StackVisitor::visit(topFrame, vm, [&](StackVisitor& visitor) -> IterationStatus {
+            JSC::CodeBlock* codeBlock = visitor->codeBlock();
+            if (!codeBlock) {
+                calleeIsBody = false;
+                return IterationStatus::Continue;
+            }
+            JSC::SourceParseMode parseMode = codeBlock->unlinkedCodeBlock()->parseMode();
+            // A no-await async function has its body inlined into the wrapper,
+            // so a lone wrapper-mode frame is the user's frame; only the
+            // wrapper half of a body/wrapper pair (callee is the body) is
+            // redundant.
+            if (calleeIsBody && isGeneratorOrAsyncFunctionWrapperParseMode(parseMode)) {
+                JSC::LineColumn lineColumn = visitor->computeLineAndColumn();
+                if (!locations.isEmpty())
+                    locations.append(',');
+                locations.append("{\"scriptId\":\""_s);
+                locations.append(String::number(codeBlock->ownerExecutable()->sourceID()));
+                locations.append("\",\"lineNumber\":"_s);
+                locations.append(String::number(lineColumn.line ? lineColumn.line - 1 : 0));
+                locations.append(",\"columnNumber\":"_s);
+                locations.append(String::number(lineColumn.column ? lineColumn.column - 1 : 0));
+                locations.append('}');
+            }
+            calleeIsBody = isGeneratorOrAsyncFunctionBodyParseMode(parseMode);
+            return IterationStatus::Continue;
+        });
+        if (locations.isEmpty())
+            return String();
+        return makeString("{\"method\":\"Bun.asyncWrapperFrames\",\"params\":{\"locations\":["_s, locations.toString(), "]}}"_s);
+    }
+
     void sendMessageToFrontend(const String& message) override
     {
         if (message.length() == 0)
             return;
+
+        if (message.startsWith("{\"method\":\"Debugger.paused\""_s)) {
+            String hint = asyncWrapperFrameLocationsEvent();
+            if (!hint.isEmpty())
+                this->sendMessageToDebuggerThread(WTF::move(hint));
+        }
 
         this->sendMessageToDebuggerThread(message.isolatedCopy());
     }

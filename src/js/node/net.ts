@@ -156,6 +156,8 @@ const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
 const kerrorEmitted = Symbol("kerrorEmitted");
 const kUserUnrefed = Symbol("kUserUnrefed");
+const kPendingDeferredUnref = Symbol("kPendingDeferredUnref");
+const kPendingDeferredRef = Symbol("kPendingDeferredRef");
 // Set when pause() dropped the handle's hold on the loop, so the read paths
 // only restore a hold they actually removed - re-refing a handle that never
 // held the loop (a wrapped duplex with no fd) would pin the process.
@@ -2502,7 +2504,10 @@ Socket.prototype.ref = function ref() {
   this[kUserUnrefed] = false;
   const socket = this._handle;
   if (!socket) {
-    this.once("connect", applyDeferredRef);
+    if (!this[kPendingDeferredRef]) {
+      this[kPendingDeferredRef] = true;
+      this.once("connect", applyDeferredRef);
+    }
     return this;
   }
   socket.ref();
@@ -2701,8 +2706,13 @@ Socket.prototype.unref = function unref() {
     // has no request concept, so unrefing it now would let the process exit
     // before the connection completes. Apply once "connect" fires - this also
     // makes an autoSelectFamily retry handle inherit the unref. The listener
-    // re-checks kUserUnrefed so a ref() issued in the meantime wins.
-    this.once("connect", applyDeferredUnref);
+    // re-checks kUserUnrefed so a ref() issued in the meantime wins, which is
+    // also why one pending listener suffices (a keep-alive agent unrefs its
+    // free socket on every request; piling up once() listeners would leak).
+    if (!this[kPendingDeferredUnref]) {
+      this[kPendingDeferredUnref] = true;
+      this.once("connect", applyDeferredUnref);
+    }
     return this;
   }
   socket.unref();
@@ -2710,10 +2720,12 @@ Socket.prototype.unref = function unref() {
 };
 
 function applyDeferredUnref(this: any) {
+  this[kPendingDeferredUnref] = false;
   if (this[kUserUnrefed]) this.unref();
 }
 
 function applyDeferredRef(this: any) {
+  this[kPendingDeferredRef] = false;
   if (!this[kUserUnrefed]) this.ref();
 }
 

@@ -437,7 +437,11 @@ mod _impl {
 
         let mut worker_args: Vec<bun_core::OwnedString> = Vec::new();
         if let Some(worker) = worker {
-            worker_args = worker.argv().iter().map(|&arg| super::worker_option_string(arg)).collect();
+            worker_args = worker
+                .argv()
+                .iter()
+                .map(|&arg| super::worker_option_string(arg))
+                .collect();
             args_list.extend(worker_args.iter().map(|s| **s));
         } else {
             for arg in &vm.argv {

@@ -2201,9 +2201,7 @@ test("worker argv/execArgv option strings, read repeatedly in the worker", async
     (_, i) => new Worker(src, { eval: true, argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] }),
   );
   const got = await Promise.all(ws.map(w => new Promise(res => w.once("message", res))));
-  expect(got).toEqual(
-    [0, 1, 2, 3].map(i => ({ argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] })),
-  );
+  expect(got).toEqual([0, 1, 2, 3].map(i => ({ argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] })));
   await Promise.all(ws.map(w => w.terminate()));
 });
 

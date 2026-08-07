@@ -1,5 +1,3 @@
-diff --git a/src/win/poll.c b/src/win/poll.c
-index a20867a..01b7c6c 100644
 --- a/src/win/poll.c
 +++ b/src/win/poll.c
 @@ -269,58 +269,122 @@ static DWORD WINAPI uv__slow_poll_thread_proc(void* arg) {

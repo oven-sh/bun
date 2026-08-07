@@ -63,6 +63,11 @@ export const libuv: Dependency = {
   // Synthesize UV_DISCONNECT from select() readability + MSG_PEEK, and add
   // the UV_FORCE_SLOW_POLL=1 hook so tests reach the path without an LSP.
   // Upstreamable to libuv/libuv (minus the hook).
+  //
+  // Patch files here must use traditional `--- a/` / `+++ b/` headers, not
+  // `diff --git` ones: fetch-cli's `git apply` runs from vendor/<dep> inside
+  // this repo, and git resolves git-style paths against the enclosing repo
+  // root, silently skipping them with exit 0.
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",

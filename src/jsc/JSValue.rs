@@ -1587,11 +1587,11 @@ impl JSValue {
         })
     }
 
-    pub fn is_temporal(self) -> bool {
-        crate::cpp::Bun__JSValue__temporalObjectType(self) != 0
+    pub fn temporal_type(self) -> TemporalType {
+        crate::cpp::Bun__JSValue__temporalObjectType(self)
     }
 
-    /// Requires `self.is_temporal()`; e.g. `("Temporal.PlainDate", "2020-01-02")`.
+    /// Requires `self.temporal_type() != TemporalType::None`; e.g. `("Temporal.PlainDate", "2020-01-02")`.
     pub fn temporal_display_string(
         self,
         global: &JSGlobalObject,
@@ -2159,6 +2159,21 @@ unsafe extern "C" {
 pub enum ProxyField {
     Target = 0,
     Handler = 1,
+}
+
+/// `Bun::TemporalType` (Temporal.h) — result of [`JSValue::temporal_type`].
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporalType {
+    None = 0,
+    Instant = 1,
+    PlainDateTime = 2,
+    PlainDate = 3,
+    PlainTime = 4,
+    ZonedDateTime = 5,
+    PlainYearMonth = 6,
+    PlainMonthDay = 7,
+    Duration = 8,
 }
 
 /// `JSValue.SerializedFlags`.

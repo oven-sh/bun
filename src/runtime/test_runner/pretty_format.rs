@@ -525,7 +525,7 @@ impl Tag {
             JSType::JSDate => Tag::JSON,
             JSType::JSPromise => Tag::Promise,
             // Temporal cells are plain `ObjectType`; only ClassInfo tells them apart.
-            JSType::Object if value.is_temporal() => Tag::Temporal,
+            JSType::Object if value.temporal_type() != bun_jsc::TemporalType::None => Tag::Temporal,
             JSType::Object
             | JSType::FinalObject
             | JSType::ModuleNamespaceObject

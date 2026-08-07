@@ -2310,7 +2310,9 @@ pub mod formatter {
                 T::JSPromise => TagPayload::Promise,
 
                 // Temporal cells are plain `ObjectType`; only ClassInfo tells them apart.
-                T::Object if value.is_temporal() => TagPayload::Temporal,
+                T::Object if value.temporal_type() != crate::TemporalType::None => {
+                    TagPayload::Temporal
+                }
 
                 T::WrapForValidIterator
                 | T::RegExpStringIterator

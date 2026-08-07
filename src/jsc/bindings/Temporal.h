@@ -3,8 +3,22 @@
 #include "root.h"
 
 namespace Bun {
-// 0 = not Temporal; 1 Instant, 2 PlainDateTime, 3 PlainDate, 4 PlainTime, 5 ZonedDateTime, 6 PlainYearMonth, 7 PlainMonthDay, 8 Duration.
-uint8_t temporalObjectType(JSC::JSValue);
+
+// Shared with Rust (`bun_jsc::TemporalType`); keep the discriminants in sync.
+enum class TemporalType : uint8_t {
+    None = 0,
+    Instant = 1,
+    PlainDateTime = 2,
+    PlainDate = 3,
+    PlainTime = 4,
+    ZonedDateTime = 5,
+    PlainYearMonth = 6,
+    PlainMonthDay = 7,
+    Duration = 8,
+};
+
+TemporalType temporalObjectType(JSC::JSValue);
+
 }
 
 // (value) -> "Temporal.PlainDate" etc., or undefined if not Temporal.

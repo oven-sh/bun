@@ -11,7 +11,6 @@
 
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::work_task::{WorkTask, WorkTaskContext};
@@ -73,6 +72,7 @@ enum Backend {
     ZstdDecode(NonNull<zstd::ZSTD_DStream>),
 }
 
+#[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct CompressionStreamCoder {
     backend: Backend,
     /// Shared-ownership count: 1 for the JS cell (released by its finalizer /
@@ -80,7 +80,7 @@ pub struct CompressionStreamCoder {
     /// `CompressionAsyncCtx`. VM teardown (`lastChanceToFinalize`) runs the
     /// cell's finalizer even while a pool thread is inside `transform` — the
     /// ctx's reference is what keeps the coder alive through that.
-    refs: AtomicU32,
+    ref_count: bun_ptr::ThreadSafeRefCount<CompressionStreamCoder>,
     /// DecompressionStream only: the codec has reported end-of-stream. Any
     /// further input is the spec's "trailing junk" TypeError.
     ended: bool,
@@ -208,7 +208,7 @@ impl CompressionStreamCoder {
         };
         Ok(Box::new(Self {
             backend,
-            refs: AtomicU32::new(1),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
             ended: false,
             zstd_head: [0; 4],
             zstd_head_len: 0,
@@ -655,31 +655,18 @@ pub extern "C" fn CompressionStreamCoder__create(
     }
 }
 
-/// Drops one reference; frees the coder when it was the last. See
-/// [`CompressionStreamCoder::refs`].
-unsafe fn release(this: *mut CompressionStreamCoder) {
-    // SAFETY: the caller holds one of the coder's references, so `this` is
-    // live. `Release`/`Acquire` pair so the freeing thread observes every
-    // write made under the other references before the backend is torn down.
-    if unsafe { &(*this).refs }.fetch_sub(1, Ordering::Release) == 1 {
-        core::sync::atomic::fence(Ordering::Acquire);
-        // SAFETY: `this` came from `Box::into_raw` in `__create` and the last
-        // reference is gone; no other thread can reach the coder now.
-        drop(unsafe { Box::from_raw(this) });
-    }
-}
-
 /// Releases the C++ cell's reference (the finalizer / eager
 /// `nativeTransformReleaseState` path; the cell clears its pointer before
 /// calling). An in-flight async transform holds its own reference, so the
-/// backend stays alive until that task's ctx drops.
+/// backend stays alive until that task's ctx drops. See
+/// [`CompressionStreamCoder::ref_count`].
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
         // the cell's reference has not been released yet.
-        unsafe { release(this) };
+        unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::deref(this) };
     }
 }
 
@@ -837,7 +824,7 @@ impl Drop for CompressionAsyncCtx {
         // SAFETY: `coder` was ref'd in `__transformAsync`; this ctx owns that
         // reference and drops exactly once (JS thread, in `then` or the
         // shutdown drain).
-        unsafe { release(self.coder) };
+        unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::deref(self.coder) };
     }
 }
 
@@ -907,7 +894,7 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
     // teardown runs the cell's finalizer regardless of the `Strong` below,
     // so the cell's reference alone cannot cover the pool-thread `transform`.
     // SAFETY: `this` is the live coder owned by the calling JS cell.
-    unsafe { &(*this).refs }.fetch_add(1, Ordering::Relaxed);
+    unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::ref_(this) };
     let ctx = bun_core::heap::into_raw(Box::new(CompressionAsyncCtx {
         coder: this,
         input: AsyncInput::new(global, chunk, fallback),

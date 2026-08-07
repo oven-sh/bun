@@ -1,8 +1,7 @@
 import { spawn, spawnSync } from "bun";
-import { cc, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDirWithFiles } from "harness";
-import { closeSync, readSync } from "node:fs";
+import { bunEnv, bunExe, isASAN, isPosix, tempDirWithFiles } from "harness";
+import { closeSync, constants as fsConstants, openSync, readSync } from "node:fs";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
@@ -172,22 +171,22 @@ describe.concurrent("process-stdio", () => {
 describe.skipIf(!isPosix).concurrent("stdio sink", () => {
   // The describe body runs at collection time even when skipped.
   if (!isPosix) return;
+  // Children that need to read/flip O_NONBLOCK on an fd get these helpers.
   // fcntl(2) is variadic; Apple's arm64 ABI passes variadic args on the stack,
-  // so a fixed-arity dlopen binding gets F_SETFL wrong there. Compile tiny
-  // non-variadic wrappers instead (shared with the spawned children).
+  // so a fixed-arity dlopen binding gets F_SETFL wrong there — compile tiny
+  // non-variadic wrappers instead. `cc()` is unavailable under ASAN, so tests
+  // that use the prelude skip there.
   const dir = tempDirWithFiles("stdio-sink", {
     "fdutil.c": `
 #include <fcntl.h>
 #include <unistd.h>
 int fd_is_nonblock(int fd) { int fl = fcntl(fd, F_GETFL); return fl >= 0 && (fl & O_NONBLOCK) != 0; }
 int fd_set_nonblock(int fd, int on) { int fl = fcntl(fd, F_GETFL); if (fl < 0) return fl; return fcntl(fd, F_SETFL, on ? (fl | O_NONBLOCK) : (fl & ~O_NONBLOCK)); }
-int fd_pipe(int* fds) { return pipe(fds); }
 `,
   });
-  const fdutil = path.join(dir, "fdutil.c");
   const prelude = `
 const { fd_is_nonblock, fd_set_nonblock } = require("bun:ffi").cc({
-  source: ${JSON.stringify(fdutil)},
+  source: ${JSON.stringify(path.join(dir, "fdutil.c"))},
   symbols: {
     fd_is_nonblock: { args: ["int"], returns: "int" },
     fd_set_nonblock: { args: ["int", "int"], returns: "int" },
@@ -195,37 +194,34 @@ const { fd_is_nonblock, fd_set_nonblock } = require("bun:ffi").cc({
 }).symbols;
 const nonblock = fd => fd_is_nonblock(fd) !== 0;
 `;
-  const { fd_pipe, fd_set_nonblock } = cc({
-    source: fdutil,
-    symbols: {
-      fd_pipe: { args: ["ptr"], returns: "int" },
-      fd_set_nonblock: { args: ["int", "int"], returns: "int" },
-    },
-  }).symbols;
+  const needsPrelude = { skip: isASAN };
+  let fifoCounter = 0;
 
   /**
-   * Run `src` in a child whose stdout is the write end of a raw pipe(2) that
-   * only this function reads, a small slice at a time, so a child writing more
-   * than the pipe holds is queued behind us for most of its life. (Tests that
-   * need proof of backpressure assert on `write()`'s return value.)
+   * Run `src` in a child whose stdout is the write end of a FIFO that only
+   * this function reads, a small slice at a time, so a child writing more than
+   * the pipe holds is queued behind us for most of its life. (Tests that need
+   * proof of backpressure assert on `write()`'s return value.)
    * `Bun.spawn({ stdout: "pipe" })` can't do this: it drains the child eagerly
    * into memory. Returns everything the child wrote to fd 1, its stderr, and
    * its exit code.
    */
   async function runWithSlowStdout(src: string, opts: { env?: Record<string, string> } = {}) {
-    const fds = new Int32Array(2);
-    expect(fd_pipe(ptr(fds))).toBe(0);
-    const [r, w] = fds;
-    fd_set_nonblock(r, 1);
-    let wClosed = false;
+    const fifo = path.join(dir, `stdout-${fifoCounter++}.fifo`);
+    expect(spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    // Reader first (a non-blocking open of the read side never waits for a
+    // writer), then the writer end for the child, which now opens instantly.
+    const r = openSync(fifo, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    let w = -1;
     try {
+      w = openSync(fifo, "w");
       await using proc = spawn({
-        cmd: [bunExe(), "-e", prelude + src],
+        cmd: [bunExe(), "-e", src],
         env: { ...bunEnv, ...opts.env },
         stdio: ["ignore", w, "pipe"],
       });
       closeSync(w);
-      wClosed = true;
+      w = -1;
       let exited = false;
       const exitedP = proc.exited.then(code => ((exited = true), code));
       const stderrP = proc.stderr.text();
@@ -261,7 +257,7 @@ const nonblock = fd => fd_is_nonblock(fd) !== 0;
       const [stderr, exitCode] = await Promise.all([stderrP, exitedP]);
       return { stdout: Buffer.concat(chunks), stderr, exitCode };
     } finally {
-      if (!wClosed) closeSync(w);
+      if (w !== -1) closeSync(w);
       closeSync(r);
     }
   }
@@ -342,14 +338,17 @@ const nonblock = fd => fd_is_nonblock(fd) !== 0;
     expect(exitCode).toBe(1);
   });
 
-  test("materialising process.stdout / process.stderr does not touch fd flags of a tty/file, and stdio-inheriting children get blocking fds", async () => {
-    // stdout here is a pipe: Bun may make *its* description non-blocking
-    // (that is how a slow reader queues instead of stalling the loop), but a
-    // child handed the fd must see it blocking, and stderr (a file below)
-    // must never be touched.
-    const errPath = path.join(tempDirWithFiles("stdio-sink-err", { "err.txt": "" }), "err.txt");
-    const { stdout, exitCode } = await runWithSlowStdout(
-      `
+  test.skipIf(needsPrelude.skip)(
+    "materialising process.stdout / process.stderr does not touch fd flags of a tty/file, and stdio-inheriting children get blocking fds",
+    async () => {
+      // stdout here is a pipe: Bun may make *its* description non-blocking
+      // (that is how a slow reader queues instead of stalling the loop), but a
+      // child handed the fd must see it blocking, and stderr (a file below)
+      // must never be touched.
+      const errPath = path.join(tempDirWithFiles("stdio-sink-err", { "err.txt": "" }), "err.txt");
+      const { stdout, exitCode } = await runWithSlowStdout(
+        prelude +
+          `
       const fs = require("node:fs");
       const errfd = fs.openSync(${JSON.stringify(errPath)}, "w");
       const before = { out: nonblock(1), file: nonblock(errfd) };
@@ -360,18 +359,23 @@ const nonblock = fd => fd_is_nonblock(fd) !== 0;
       const child = Bun.spawnSync([process.execPath, "-e", ${JSON.stringify(prelude + `process.stderr.write(String(nonblock(1)))`)}], { stdio: ["ignore", "inherit", "pipe"], env: process.env });
       console.log(JSON.stringify({ before, after, childSeesNonblock: child.stderr.toString() }));
     `,
-    );
-    const line = stdout.toString().trim().split("\n").pop()!;
-    expect(JSON.parse(line.replace(/^x/, ""))).toEqual({
-      before: { out: false, file: false },
-      after: { file: false },
-      childSeesNonblock: "false",
-    });
-    expect(exitCode).toBe(0);
-  });
+      );
+      const line = stdout.toString().trim().split("\n").pop()!;
+      expect(JSON.parse(line.replace(/^x/, ""))).toEqual({
+        before: { out: false, file: false },
+        after: { file: false },
+        childSeesNonblock: "false",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 
-  test("console.log delivers every byte when something else made fd 1 O_NONBLOCK and the pipe is full", async () => {
-    const { stdout, stderr, exitCode } = await runWithSlowStdout(`
+  test.skipIf(needsPrelude.skip)(
+    "console.log delivers every byte when something else made fd 1 O_NONBLOCK and the pipe is full",
+    async () => {
+      const { stdout, stderr, exitCode } = await runWithSlowStdout(
+        prelude +
+          `
       const fs = require("node:fs");
       fd_set_nonblock(1, 1);
       // Fill the pipe until the kernel refuses.
@@ -380,16 +384,22 @@ const nonblock = fd => fd_is_nonblock(fd) !== 0;
       for (;;) { try { filled += fs.writeSync(1, fill); } catch { break; } }
       process.stderr.write(String(filled));
       for (let i = 0; i < 10; i++) console.log("marker " + i);
-    `);
-    const filled = Number(stderr);
-    expect(filled).toBeGreaterThan(0);
-    expect(stdout.subarray(0, filled).equals(Buffer.alloc(filled, "x"))).toBe(true);
-    expect(stdout.subarray(filled).toString()).toBe(Array.from({ length: 10 }, (_, i) => `marker ${i}\n`).join(""));
-    expect(exitCode).toBe(0);
-  });
+    `,
+      );
+      const filled = Number(stderr);
+      expect(filled).toBeGreaterThan(0);
+      expect(stdout.subarray(0, filled).equals(Buffer.alloc(filled, "x"))).toBe(true);
+      expect(stdout.subarray(filled).toString()).toBe(Array.from({ length: 10 }, (_, i) => `marker ${i}\n`).join(""));
+      expect(exitCode).toBe(0);
+    },
+  );
 
-  test("an idle Worker / worker_threads.Worker does not perturb the parent's stdio", async () => {
-    const { stdout, stderr, exitCode } = await runWithSlowStdout(`
+  test.skipIf(needsPrelude.skip)(
+    "an idle Worker / worker_threads.Worker does not perturb the parent's stdio",
+    async () => {
+      const { stdout, stderr, exitCode } = await runWithSlowStdout(
+        prelude +
+          `
       const { Worker } = require("node:worker_threads");
       const before = [nonblock(1), nonblock(2)];
       const w = new Worker("setTimeout(() => {}, 10)", { eval: true });
@@ -400,11 +410,13 @@ const nonblock = fd => fd_is_nonblock(fd) !== 0;
       const filler = Buffer.alloc(4000, "p").toString();
       for (let i = 0; i < 40; i++) console.log("line " + i + " " + filler);
       process.stderr.write(JSON.stringify({ before, during }));
-    `);
-    expect(JSON.parse(stderr)).toEqual({ before: [false, false], during: [false, false] });
-    expect(stdout.toString().split("\n").filter(Boolean).length).toBe(40);
-    expect(exitCode).toBe(0);
-  });
+    `,
+      );
+      expect(JSON.parse(stderr)).toEqual({ before: [false, false], during: [false, false] });
+      expect(stdout.toString().split("\n").filter(Boolean).length).toBe(40);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("Bun.stdout.writer() is the shared sink: same object every time; end()/close() only flush; writes coalesce until flushed", async () => {
     await using proc = spawn({

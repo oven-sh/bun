@@ -3009,16 +3009,16 @@ JSValue Process::consoleStreamForGetter(JSC::JSGlobalObject* globalObject, int f
     ASSERT(fd == 1 || fd == 2);
     unsigned slot = static_cast<unsigned>(fd) - 1;
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (m_consoleStreamState[slot] == ConsoleStreamState::Unresolved) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         (void)consoleStream(globalObject, fd);
         RETURN_IF_EXCEPTION(scope, {});
     }
     if (m_consoleStreamState[slot] == ConsoleStreamState::Custom)
-        return m_consoleStream[slot].get();
+        RELEASE_AND_RETURN(scope, m_consoleStream[slot].get());
     // Native: the real stream object (materialising it is fine here — the
     // caller asked for it by name).
-    return get(globalObject, fd == 1 ? WebCore::builtinNames(vm).stdoutPublicName() : WebCore::builtinNames(vm).stderrPublicName());
+    RELEASE_AND_RETURN(scope, get(globalObject, fd == 1 ? WebCore::builtinNames(vm).stdoutPublicName() : WebCore::builtinNames(vm).stderrPublicName()));
 }
 
 // Empty: use the native sink. Otherwise the stream to `write()` to. `*threw`
@@ -3030,13 +3030,15 @@ extern "C" JSC::EncodedJSValue Bun__Process__consoleStream(Zig::GlobalObject* gl
         return JSValue::encode({});
     auto* process = globalObject->processObject();
     if (!process->consoleStreamIsResolved(fd)) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        // Top scope: the Rust caller learns about a throw through `*threw`
+        // (and propagates the pending exception), not through a ThrowScope.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
         JSValue result = process->consoleStream(globalObject, fd);
         if (scope.exception()) [[unlikely]] {
             *threw = true;
             return JSValue::encode({});
         }
-        RELEASE_AND_RETURN(scope, JSValue::encode(result));
+        return JSValue::encode(result);
     }
     return JSValue::encode(process->consoleStream(globalObject, fd));
 }
@@ -3107,14 +3109,14 @@ extern "C" JSC::EncodedJSValue Bun__Process__consoleStreamObject(Zig::GlobalObje
     if (!globalObject->hasProcessObject()) [[unlikely]]
         return JSValue::encode({});
     auto* process = globalObject->processObject();
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject)); // see Bun__Process__consoleStream
     JSValue custom = process->consoleStream(globalObject, fd);
     if (scope.exception()) [[unlikely]] {
         *threw = true;
         return JSValue::encode({});
     }
     if (custom)
-        RELEASE_AND_RETURN(scope, JSValue::encode(custom));
+        return JSValue::encode(custom);
     if (JSObject* stream = process->stdioStream(fd))
         return JSValue::encode(stream);
     return JSValue::encode({});

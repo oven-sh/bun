@@ -4339,6 +4339,12 @@ impl VirtualMachine {
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
+        // Stdio sinks need the loop (poll teardown) and `RareData.file_polls`;
+        // the usual exit paths released them in `release_js_handles()` already,
+        // this covers VMs torn down directly (e.g. `bun build`'s bake VM).
+        if let Some(rare) = self.rare_data.as_deref_mut() {
+            rare.release_stdio_sinks();
+        }
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
 

@@ -4930,7 +4930,7 @@ impl NodeFS {
         }
         if !broke {
             'outer: loop {
-                let amt = match Syscall::read(src_fd, buf) {
+                let amt = match Syscall::read_retrying(src_fd, buf) {
                     Ok(result) => result,
                     Err(err) => {
                         return Err(if !src.is_empty() {
@@ -4949,7 +4949,7 @@ impl NodeFS {
 
                 let mut slice = &buf[..amt];
                 while !slice.is_empty() {
-                    let written = match Syscall::write(dest_fd, slice) {
+                    let written = match Syscall::write_retrying(dest_fd, slice) {
                         Ok(result) => result,
                         Err(err) => {
                             return Err(if !dest.is_empty() {

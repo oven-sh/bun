@@ -39,6 +39,7 @@ it.concurrent("console.timeEnd / timeLog for a missing label warn instead of pri
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
+      "--no-warnings", // only our listener prints
       "-e",
       `process.on("warning", w => process.stderr.write("warning: " + w.message + "\\n")); console.timeEnd("nope"); console.timeLog("nope"); console.time("dup"); console.time("dup"); console.timeEnd("dup");`,
     ],

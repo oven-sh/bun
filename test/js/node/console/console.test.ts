@@ -331,7 +331,8 @@ test("bun:test spyOn(process.stdout, 'write') captures console.log", () => {
   try {
     console.log("captured %s", "yes");
     console.info({ k: "v" });
-    calls = spy.mock.calls.map((c: unknown[]) => String(c[0]));
+    // The runner's own stdout may be a colour TTY; the capture is what matters.
+    calls = spy.mock.calls.map((c: unknown[]) => Bun.stripANSI(String(c[0])));
   } finally {
     spy.mockRestore();
   }

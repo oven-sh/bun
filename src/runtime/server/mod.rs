@@ -4179,8 +4179,7 @@ impl ServerAllConnectionsClosedTask {
         fn call_erased(this: *mut ServerAllConnectionsClosedTask) -> bun_event_loop::JsResult<()> {
             // `this` is the unique owning pointer heap-allocated below
             // in `schedule()`; `ManagedTask::new_owned` invokes this exactly once.
-            ServerAllConnectionsClosedTask::run_from_js_thread(this)
-                .map_err(Into::into)
+            ServerAllConnectionsClosedTask::run_from_js_thread(this).map_err(Into::into)
         }
         let ptr = bun_core::heap::into_raw(Box::new(this));
         vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_owned(

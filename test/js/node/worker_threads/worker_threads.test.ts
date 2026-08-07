@@ -1959,4 +1959,3 @@ parentPort.on("message", m => parentPort.postMessage("got " + m + " " + listener
   expect(await reply).toBe("got hi 0");
   await w.terminate();
 });
-

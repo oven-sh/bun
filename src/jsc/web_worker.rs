@@ -857,7 +857,8 @@ impl WebWorker {
         let mut observe_entry = |vm: &VirtualMachine| -> EntryOutcome {
             // SAFETY: `promise` is a live JSC heap cell, rooted below for the loop's duration.
             unsafe {
-                if entry_rejection_seen || (*promise).status() != jsc::js_promise::Status::Rejected {
+                if entry_rejection_seen || (*promise).status() != jsc::js_promise::Status::Rejected
+                {
                     return EntryOutcome::Continue;
                 }
                 entry_rejection_seen = true;
@@ -865,9 +866,16 @@ impl WebWorker {
                 // entry's top-level throw is an uncaughtException; only an
                 // ESM entry rejection reports origin "unhandledRejection".
                 let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs;
-                let handled =
-                    vm.as_mut().uncaught_exception(vm.global(), (*promise).result(vm.jsc_vm()), is_rejection);
-                if handled { EntryOutcome::Continue } else { EntryOutcome::Stop }
+                let handled = vm.as_mut().uncaught_exception(
+                    vm.global(),
+                    (*promise).result(vm.jsc_vm()),
+                    is_rejection,
+                );
+                if handled {
+                    EntryOutcome::Continue
+                } else {
+                    EntryOutcome::Stop
+                }
             }
         };
         if let EntryOutcome::Stop = observe_entry(vm) {
@@ -879,7 +887,10 @@ impl WebWorker {
         // Node the worker counts as started once its module graph is executing,
         // and the await continues in the normal event loop below — messages,
         // timers and I/O keep flowing meanwhile. Rooted for the loop's duration.
-        let entry_promise = crate::Strong::create(JSValue::from_cell(promise.cast::<crate::JSCell>()), vm.global());
+        let entry_promise = crate::Strong::create(
+            JSValue::from_cell(promise.cast::<crate::JSCell>()),
+            vm.global(),
+        );
 
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);

@@ -539,7 +539,9 @@ pub(crate) fn run_task(
 
         // ── server / bundler / streams ───────────────────────────────────
         task_tag::ServerAllConnectionsClosedTask => {
-            ServerAllConnectionsClosedTask::run_from_js_thread(cast_ptr!(ServerAllConnectionsClosedTask))?;
+            ServerAllConnectionsClosedTask::run_from_js_thread(cast_ptr!(
+                ServerAllConnectionsClosedTask
+            ))?;
         }
         task_tag::BundleV2DeferredBatchTask => {
             // `bun_bundler` is JSC-free so the exception-scope check is hoisted

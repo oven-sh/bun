@@ -899,10 +899,8 @@ impl JSMySQLConnection {
             if let Some(err_) = self.global_object.try_take_exception() {
                 request.reject_with_js_value(self.get_queries_array(), err_);
             } else {
-                request.reject_with_js_value(
-                    self.get_queries_array(),
-                    err.to_js(&self.global_object),
-                );
+                request
+                    .reject_with_js_value(self.get_queries_array(), err.to_js(&self.global_object));
             }
         } else {
             if let Some(err_) = self.global_object.try_take_exception() {

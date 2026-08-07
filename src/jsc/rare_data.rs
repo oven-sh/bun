@@ -862,7 +862,10 @@ impl RareData {
     /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
     /// after `WebWorker__teardownJSCVM`, so doing the closeAll
     /// there would dispatch into freed JSC heap.
-    pub(crate) fn close_all_socket_groups(&mut self, vm: &VirtualMachine) -> crate::virtual_machine::SweepResult {
+    pub(crate) fn close_all_socket_groups(
+        &mut self,
+        vm: &VirtualMachine,
+    ) -> crate::virtual_machine::SweepResult {
         // closeAll() dispatches on_close into JS while the VM is still alive, so a
         // handler can call Bun.connect/postgres/etc. and re-populate a group we
         // just drained. Loop until every group is observed empty in the same pass

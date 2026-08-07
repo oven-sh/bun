@@ -211,6 +211,8 @@ unsafe extern "Rust" {
     /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_wtf_timer(timer: *mut (), vm: *mut VirtualMachine);
+    /// `timer::All::has_due_regular_timer`. Defined in `bun_runtime::dispatch`.
+    safe fn __bun_has_due_timer() -> bool;
     /// Tag-specific shutdown release for a queued-but-never-run task. Called
     /// from `release_queued_tasks_for_shutdown` (after `shutdown_for_exit`,
     /// before `destructOnExit`) for every entry left in `self.tasks`.
@@ -475,6 +477,24 @@ impl EventLoop {
         let _ = self.tick_concurrent_with_count();
     }
 
+    /// Mid-tick re-drain: the ref-count/signal/GC maintenance always runs;
+    /// only the `concurrent_tasks` pop is skipped when a `setImmediate` is
+    /// pending or a JS timer is due, so `tick()` returns and `auto_tick*`
+    /// can run them (Node interleaves timers/check between thread-pool
+    /// completion batches). `immediate_tasks` is same-thread and checked
+    /// first so a late cross-thread push cannot slip ahead of it; the
+    /// `concurrent_tasks` guard keeps the clock read off the path when
+    /// nothing arrived.
+    fn tick_concurrent_unless_due(&mut self) {
+        self.tick_concurrent_maintenance();
+        if !self.immediate_tasks.is_empty()
+            || (!self.concurrent_tasks.is_empty() && __bun_has_due_timer())
+        {
+            return;
+        }
+        let _ = self.tick_concurrent_pop_batch();
+    }
+
     /// Check whether refConcurrently has been called but the change has not yet been applied to the
     /// underlying event loop's `active` counter
     pub fn has_pending_refs(&self) -> bool {
@@ -494,7 +514,7 @@ impl EventLoop {
         }
     }
 
-    pub fn tick_concurrent_with_count(&mut self) -> usize {
+    fn tick_concurrent_maintenance(&mut self) {
         self.update_counts();
 
         #[cfg(unix)]
@@ -509,7 +529,14 @@ impl EventLoop {
         }
 
         self.run_imminent_gc_timer();
+    }
 
+    pub fn tick_concurrent_with_count(&mut self) -> usize {
+        self.tick_concurrent_maintenance();
+        self.tick_concurrent_pop_batch()
+    }
+
+    fn tick_concurrent_pop_batch(&mut self) -> usize {
         let concurrent = self.concurrent_tasks.pop_batch();
         let count = concurrent.count;
         if count == 0 {
@@ -641,7 +668,7 @@ impl EventLoop {
 
         loop {
             while self.tick_with_count(ctx) > 0 {
-                self.tick_concurrent();
+                self.tick_concurrent_unless_due();
                 self.global_ref().handle_rejected_promises();
             }
             if self
@@ -652,7 +679,7 @@ impl EventLoop {
                 self.entered_event_loop_count -= 1;
                 return;
             }
-            self.tick_concurrent();
+            self.tick_concurrent_unless_due();
             if self.tasks.readable_length() > 0 {
                 continue;
             }
@@ -660,7 +687,7 @@ impl EventLoop {
         }
 
         while self.tick_with_count(ctx) > 0 {
-            self.tick_concurrent();
+            self.tick_concurrent_unless_due();
         }
 
         self.global_ref().handle_rejected_promises();

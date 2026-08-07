@@ -1013,6 +1013,21 @@ impl All {
         }
     }
 
+    /// `EventLoop::tick()`'s mid-tick yield probe. WTF timers are skipped to
+    /// avoid the `wtf_timers` lock; they drain at the next `get_timeout`.
+    pub(crate) fn has_due_regular_timer(&self) -> bool {
+        let Some(timer) = self.timers.peek() else {
+            return false;
+        };
+        // SAFETY: `peek` returns a live heap node.
+        let next = unsafe { &(*timer).next };
+        let next = Timespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        };
+        !next.greater(&Timespec::now(TimespecMockMode::ForceRealTime))
+    }
+
     /// Pop the next due timer. `now` is filled lazily on first call so we
     /// don't pay for `clock_gettime` when the heap is empty.
     fn next(&mut self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {

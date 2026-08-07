@@ -318,3 +318,70 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
 });
+
+test("chained thread-pool callbacks yield to due timers", async () => {
+  // crypto.pbkdf2 completes via enqueue_task_concurrent on every platform
+  // (fs.read on Windows goes through libuv's callback and would not exercise
+  // the mid-tick re-drain path).
+  const script = `
+    const crypto = require('crypto');
+    let order = '';
+    setInterval(() => { order += 'T'; }, 1).unref();
+    setTimeout(() => {
+      (function go(i) {
+        if (i >= 20) {
+          const runs = order.match(/R+/g) || [];
+          const maxRun = Math.max(0, ...runs.map(r => r.length));
+          console.log(JSON.stringify({ order, maxRun }));
+          process.exit(0);
+        }
+        crypto.pbkdf2('a', 'b', 1, 8, 'sha256', () => {
+          order += 'R';
+          go(i + 1);
+        });
+        // Spin so the 1ms interval is overdue and the thread-pool job has
+        // landed before the mid-tick re-drain decision.
+        const s = Date.now(); while (Date.now() - s < 3);
+      })(0);
+    }, 5);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const out = JSON.parse(stdout.trim());
+  // Due timers must break the chain every iteration; allow small jitter.
+  expect({ maxRunAtMost3: out.maxRun <= 3, order: out.order }).toEqual({ maxRunAtMost3: true, order: out.order });
+  expect(exitCode).toBe(0);
+});
+
+test("chained thread-pool callbacks yield to pending setImmediate", async () => {
+  const script = `
+    const crypto = require('crypto');
+    let order = '';
+    setTimeout(() => {
+      (function go(i) {
+        if (i >= 20) { console.log(JSON.stringify({ order })); process.exit(0); }
+        crypto.pbkdf2('a', 'b', 1, 8, 'sha256', () => {
+          order += 'R';
+          if (i === 0) setImmediate(() => { order += 'I'; });
+          go(i + 1);
+        });
+        const s = Date.now(); while (Date.now() - s < 3);
+      })(0);
+    }, 1);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const out = JSON.parse(stdout.trim());
+  expect(out.order.slice(0, 2)).toBe("RI");
+  expect(exitCode).toBe(0);
+});

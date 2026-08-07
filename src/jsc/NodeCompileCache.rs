@@ -363,11 +363,11 @@ pub fn enable(explicit_dir: Option<&[u8]>, portable: Option<bool>) -> EnableResu
     enable_with_dir(dir, portable.unwrap_or_else(portable_from_env))
 }
 
-/// Node's `GetTempDir` order: TMPDIR -> TMP -> TEMP -> /tmp on POSIX
-/// (TMPDIR is skipped on Windows), trailing separator stripped.
+/// Node's `os.tmpdir()` order: TEMP -> TMP on Windows, TMPDIR -> TMP ->
+/// TEMP -> /tmp on POSIX; trailing separator stripped.
 fn platform_tmp_dir() -> &'static [u8] {
     #[cfg(windows)]
-    let candidate = env_var::TMP::get_not_empty().or_else(env_var::TEMP::get_not_empty);
+    let candidate = env_var::TEMP::get_not_empty().or_else(env_var::TMP::get_not_empty);
     #[cfg(not(windows))]
     let candidate = env_var::TMPDIR::get_not_empty()
         .or_else(env_var::TMP::get_not_empty)

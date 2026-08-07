@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath, tempDir } from "harness";
+import fs from "fs";
+import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -136,6 +137,30 @@ console.log("survived", require("./late.js"));`,
       expect(files.length).toBe(2);
     },
   );
+
+  test.skipIf(!isWindows)("enableCompileCache default dir prefers TEMP over TMP like os.tmpdir", async () => {
+    using dir = tempDir("compile-cache-tmporder", {});
+    const temp = path.join(String(dir), "from-temp");
+    const tmp = path.join(String(dir), "from-tmp");
+    fs.mkdirSync(temp);
+    fs.mkdirSync(tmp);
+    const env = { ...bunEnv, TEMP: temp, TMP: tmp };
+    delete env.NODE_COMPILE_CACHE;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = require("module").enableCompileCache();
+        console.log(JSON.stringify(r.directory));`,
+      ],
+      env,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toStartWith(path.join(temp, "node-compile-cache"));
+    expect(exitCode).toBe(0);
+  });
 
   test("compile cache entries are keyed by sha256 and accepted on re-run", async () => {
     using dir = tempDir("compile-cache-sha", {

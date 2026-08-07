@@ -18,7 +18,7 @@ const kProtocolError = Symbol("kProtocolError");
 
 // Native profiler functions exposed via $newCppFunction
 const startCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler", 0);
-const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler", 0);
+const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler", 1);
 const setCPUSamplingInterval = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_setCPUSamplingInterval", 1);
 const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_isCPUProfilerRunning", 0);
 const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
@@ -415,6 +415,9 @@ function collectCoverageScripts(): any[] | Error {
 class Session extends EventEmitter {
   #connected = false;
   #profilerEnabled = false;
+  // startCPUProfiler()'s returned timestamp for this session's Profiler.start;
+  // the shared sampling profiler is refcounted (see BunCPUProfiler.h).
+  #cpuProfileStartTime: number | undefined;
   #preciseCoverageEnabled = false;
   #preciseCoverageCallCount = false;
   #preciseCoverageDetailed = false;
@@ -439,7 +442,10 @@ class Session extends EventEmitter {
 
   disconnect() {
     if (!this.#connected) return;
-    if (isCPUProfilerRunning()) stopCPUProfiler();
+    if (this.#cpuProfileStartTime !== undefined) {
+      stopCPUProfiler(this.#cpuProfileStartTime);
+      this.#cpuProfileStartTime = undefined;
+    }
     if (this.#preciseCoverageEnabled) {
       stopPreciseCoverage();
       this.#preciseCoverageEnabled = false;
@@ -528,8 +534,9 @@ class Session extends EventEmitter {
         return {};
 
       case "Profiler.disable":
-        if (isCPUProfilerRunning()) {
-          stopCPUProfiler();
+        if (this.#cpuProfileStartTime !== undefined) {
+          stopCPUProfiler(this.#cpuProfileStartTime);
+          this.#cpuProfileStartTime = undefined;
         }
         // V8's Profiler agent stops precise coverage on disable; without this
         // the control-flow profiler keeps instrumenting newly-compiled code.
@@ -542,16 +549,19 @@ class Session extends EventEmitter {
 
       case "Profiler.start":
         if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
-        if (!isCPUProfilerRunning()) startCPUProfiler();
+        if (this.#cpuProfileStartTime === undefined) this.#cpuProfileStartTime = startCPUProfiler();
         return {};
 
-      case "Profiler.stop":
-        if (!isCPUProfilerRunning()) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not started");
+      case "Profiler.stop": {
+        if (this.#cpuProfileStartTime === undefined) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not started");
+        const since = this.#cpuProfileStartTime;
+        this.#cpuProfileStartTime = undefined;
         try {
-          return { profile: JSON.parse(stopCPUProfiler()) };
+          return { profile: JSON.parse(stopCPUProfiler(since)) };
         } catch (e) {
           return $ERR_INSPECTOR_COMMAND(`-32000: Failed to parse profile JSON: ${e}`);
         }
+      }
 
       case "Profiler.setSamplingInterval": {
         if (isCPUProfilerRunning())

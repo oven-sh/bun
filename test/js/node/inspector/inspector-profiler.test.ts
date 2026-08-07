@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
+import { join } from "node:path";
 
 // Mirrors how vitest's @vitest/coverage-v8 provider drives the inspector: a
 // promise Session, Profiler.enable, startPreciseCoverage, evaluating modules
@@ -383,6 +385,208 @@ describe("node:inspector", () => {
       const result = session2.post("Profiler.setSamplingInterval", { interval: 500 });
       expect(result).toEqual({});
       session2.disconnect();
+    });
+
+    // The VM has one JSC::SamplingProfiler shared by --cpu-prof and every
+    // Session. A session that never posted Profiler.* must not touch that
+    // shared profiler, and one session's Profiler.stop/disable/disconnect must
+    // not tear down another session's profile.
+    describe("shared sampling profiler ownership", () => {
+      test("a session's disconnect()/Profiler.disable only stops a profile it started", () => {
+        const a = new inspector.Session();
+        a.connect();
+        a.post("Profiler.enable");
+        a.post("Profiler.start");
+
+        const b = new inspector.Session();
+        b.connect();
+        // B never posted Profiler.*: disconnect() must not touch A's profile.
+        b.disconnect();
+
+        const c = new inspector.Session();
+        c.connect();
+        c.post("Profiler.enable");
+        // C enabled but never started: disable must not touch A's profile.
+        c.post("Profiler.disable");
+        c.disconnect();
+
+        const { profile } = a.post("Profiler.stop");
+        expect(profile).toHaveProperty("nodes");
+        a.disconnect();
+      });
+
+      test("one session's Profiler.stop does not stop another session's profile", () => {
+        const a = new inspector.Session();
+        a.connect();
+        a.post("Profiler.enable");
+        a.post("Profiler.start");
+
+        const b = new inspector.Session();
+        b.connect();
+        b.post("Profiler.enable");
+        b.post("Profiler.start");
+        const { profile: profileB } = b.post("Profiler.stop");
+        b.disconnect();
+
+        // A's profile must still be running.
+        const { profile: profileA } = a.post("Profiler.stop");
+        a.disconnect();
+
+        expect(profileB).toHaveProperty("nodes");
+        expect(profileA).toHaveProperty("nodes");
+      });
+
+      // --cpu-prof starts the profiler before any user code runs, so a
+      // Profiler.start issued later must not adopt those earlier samples.
+      test.concurrent("Profiler.stop excludes samples taken before Profiler.start under --cpu-prof", async () => {
+        using dir = tempDir("inspector-profile-window", {
+          "fixture.mjs": `
+import { Session } from "node:inspector";
+function before() { const t = performance.now(); let x = 0; while (performance.now() - t < 200) x += Math.sqrt(x + 1); }
+function after()  { const t = performance.now(); let x = 0; while (performance.now() - t < 200) x += Math.sqrt(x + 1); }
+before();
+const s = new Session();
+s.connect();
+s.post("Profiler.enable");
+s.post("Profiler.start");
+after();
+const { profile } = s.post("Profiler.stop");
+s.disconnect();
+const names = profile.nodes.map(n => n.callFrame.functionName);
+console.log(JSON.stringify({
+  startLEend: profile.startTime <= profile.endTime,
+  hasBefore: names.includes("before"),
+  hasAfter: names.includes("after"),
+}));
+`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", String(dir), "fixture.mjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+        expect(JSON.parse(stdout.trim())).toEqual({ startLEend: true, hasBefore: false, hasAfter: true });
+      });
+
+      test.concurrent("connect()+disconnect() with no Profiler.* does not empty --cpu-prof", async () => {
+        using dir = tempDir("inspector-cpuprof-disconnect", {
+          "fixture.mjs": `
+import { Session } from "node:inspector";
+function work() { const t = performance.now(); let x = 0; while (performance.now() - t < 200) x += Math.sqrt(x + 1); }
+work();
+const s = new Session();
+s.connect();
+s.disconnect();
+work();
+`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", String(dir), "fixture.mjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+        const file = readdirSync(String(dir)).find(f => f.endsWith(".cpuprofile"));
+        expect(file).toBeDefined();
+        const profile = JSON.parse(readFileSync(join(String(dir), file!), "utf-8"));
+        // Before the fix, the disconnect() released --cpu-prof's hold on the
+        // profiler and the file had a single (root) node with zero samples.
+        expect(profile.samples.length).toBeGreaterThan(0);
+        expect(profile.nodes.length).toBeGreaterThan(1);
+        expect(profile.endTime).toBeGreaterThan(profile.startTime);
+      });
+
+      test.concurrent("a session's Profiler.stop leaves --cpu-prof's samples intact", async () => {
+        using dir = tempDir("inspector-cpuprof-session-stop", {
+          "fixture.mjs": `
+import { Session } from "node:inspector";
+function phase1() { const t = performance.now(); let x = 0; while (performance.now() - t < 200) x += Math.sqrt(x + 1); }
+function phase2() { const t = performance.now(); let x = 0; while (performance.now() - t < 200) x += Math.sqrt(x + 1); }
+phase1();
+const s = new Session();
+s.connect();
+s.post("Profiler.enable");
+s.post("Profiler.start");
+s.post("Profiler.stop");
+s.disconnect();
+phase2();
+`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", String(dir), "fixture.mjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+        const file = readdirSync(String(dir)).find(f => f.endsWith(".cpuprofile"));
+        expect(file).toBeDefined();
+        const profile = JSON.parse(readFileSync(join(String(dir), file!), "utf-8"));
+        const names: string[] = profile.nodes.map((n: any) => n.callFrame.functionName);
+        // --cpu-prof spans the whole run, so both phases must be present. Before
+        // the fix, Profiler.stop consumed the shared buffer and then released
+        // --cpu-prof's hold, so neither phase appeared.
+        expect(names).toContain("phase1");
+        expect(names).toContain("phase2");
+      });
+
+      test.concurrent("worker.startCpuProfile()'s stop does not tear down an in-worker Session's profile", async () => {
+        using dir = tempDir("inspector-worker-cpuprofile", {
+          "fixture.mjs": `
+import { Worker } from "node:worker_threads";
+import { once } from "node:events";
+const worker = new Worker(\`
+  const { parentPort } = require("node:worker_threads");
+  const { Session } = require("node:inspector");
+  function inWorker() { const t = performance.now(); let x = 0; while (performance.now() - t < 200) x += Math.sqrt(x + 1); }
+  const s = new Session();
+  s.connect();
+  s.post("Profiler.enable");
+  s.post("Profiler.start");
+  parentPort.postMessage("started");
+  parentPort.once("message", () => {
+    inWorker();
+    const { profile } = s.post("Profiler.stop");
+    s.disconnect();
+    parentPort.postMessage({ samples: profile.samples.length, names: profile.nodes.map(n => n.callFrame.functionName) });
+  });
+\`, { eval: true });
+await once(worker, "message");
+const handle = await worker.startCpuProfile();
+JSON.parse(await handle.stop());
+worker.postMessage("go");
+const [result] = await once(worker, "message");
+await worker.terminate();
+console.log(JSON.stringify(result));
+`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fixture.mjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+          stderrIfFailed: "",
+          exitCode: 0,
+        });
+        const result = JSON.parse(stdout.trim());
+        // With the old isCPUProfilerRunning() guards in JSWorker.cpp, the
+        // parent's handle.stop() decremented the ref the Session took, so the
+        // Session's own Profiler.stop found the sampler paused and the buffer
+        // cleared.
+        expect(result.samples).toBeGreaterThan(0);
+        expect(result.names).toContain("inWorker");
+      });
     });
   });
 

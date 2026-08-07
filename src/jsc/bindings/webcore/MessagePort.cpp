@@ -584,6 +584,11 @@ void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
         m_isRefd = false;
         updateListenerEventLoopRef();
     }
+    jsUnrefHandler(lexicalGlobalObject);
+}
+
+void MessagePort::jsUnrefHandler(JSGlobalObject* lexicalGlobalObject)
+{
     if (m_hasRef) {
         m_hasRef = false;
         deref();

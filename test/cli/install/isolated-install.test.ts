@@ -858,8 +858,9 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
 // Same deadlock through the git: task-id space (clone + checkout tasks
 // instead of a tarball download). The repo is served over git's dumb HTTP
 // protocol: after `git update-server-info`, a bare repo is plain static
-// files.
-test("adding and removing a patch for a git dependency in a workspace completes", async () => {
+// files. Requires the git executable to build the fixture repository.
+const gitExecutable = Bun.which("git");
+test.skipIf(!gitExecutable)("adding and removing a patch for a git dependency in a workspace completes", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   const srcDir = join(packageDir, "git-src");
@@ -879,7 +880,7 @@ test("adding and removing a patch for a git dependency in a workspace completes"
     GIT_COMMITTER_EMAIL: "test@bun.sh",
   };
   async function git(args: string[], cwd: string): Promise<string> {
-    await using proc = spawn({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+    await using proc = spawn({ cmd: [gitExecutable!, ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).not.toContain("fatal:");
     expect(exitCode).toBe(0);
@@ -969,6 +970,14 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
       },
     }),
   );
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
+
+  // Cold cache with the patch still in the lockfile: the install phase
+  // clones and checks out itself, applying the patch after the checkout.
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "packages", "member", "node_modules"), { recursive: true, force: true });
   await install();
   expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 

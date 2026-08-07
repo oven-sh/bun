@@ -182,6 +182,8 @@ pub struct VirtualMachine {
     /// threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
+    /// Resolved path of the preload entry `load_preloads` is currently importing.
+    pub currently_loading_preload: Vec<u8>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
     /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
@@ -651,6 +653,13 @@ unsafe impl Sync for VirtualMachine {}
 unsafe impl Send for VirtualMachine {}
 
 impl VirtualMachine {
+    /// True while `load_preloads` is importing `specifier` as a preload entry.
+    #[inline]
+    pub fn is_loading_preload_entry(&self, specifier: &[u8]) -> bool {
+        !self.currently_loading_preload.is_empty()
+            && self.currently_loading_preload.as_slice() == specifier
+    }
+
     /// Safe `&'static` accessor for the current thread's VM. The VM is a
     /// per-thread singleton allocated once in [`init`] and never freed until
     /// thread teardown, so the `'static` lifetime is sound. Mutation goes
@@ -2144,6 +2153,7 @@ impl VirtualMachine {
             // their validity invariants even when len/cap are 0. Write the
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
+            addr_of_mut!((*vm).currently_loading_preload).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
@@ -4417,6 +4427,7 @@ impl VirtualMachine {
         // time and `load_preloads` clears the boxes but keeps the Vec buffer,
         // so reclaim it here or every Worker leaks it.
         drop(core::mem::take(&mut self.preload));
+        drop(core::mem::take(&mut self.currently_loading_preload));
 
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
         // `transpiler` is never auto-dropped after `deinit` clears its fields.

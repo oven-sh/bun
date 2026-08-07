@@ -678,6 +678,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     scopeguard::defer! {
         // SAFETY: per fn contract.
         unsafe { (*vm_for_guard).is_in_preload = false };
+        // SAFETY: per fn contract.
+        unsafe { (*vm_for_guard).currently_loading_preload.clear() };
     }
 
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
@@ -770,6 +772,14 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 .text;
             bun_core::String::from_bytes(path_text)
         };
+        // Runtime plugin hooks skip exactly this preload entry, not its imports.
+        {
+            let name_utf8 = module_name.to_utf8();
+            // SAFETY: per fn contract.
+            let slot = unsafe { &mut (*vm).currently_loading_preload };
+            slot.clear();
+            slot.extend_from_slice(name_utf8.slice());
+        }
         // Note: use `import_ptr` (not `import`) so the `*mut` we store in
         // `pending_internal_promise` keeps the FFI's mutable provenance instead
         // of being laundered through `&JSInternalPromise -> *const -> *mut`

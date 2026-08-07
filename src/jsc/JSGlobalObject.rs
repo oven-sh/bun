@@ -718,6 +718,13 @@ impl JSGlobalObject {
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
+        let vm = self.bun_vm();
+        if !vm.currently_loading_preload.is_empty()
+            && namespace_.length() == 0
+            && path.eql_utf8(&vm.currently_loading_preload)
+        {
+            return Ok(None);
+        }
         let ns = (namespace_.length() > 0).then_some(&namespace_);
         let result = crate::from_js_host_call(self, || {
             Bun__runOnResolvePlugins(self, ns, &path, &source, target)

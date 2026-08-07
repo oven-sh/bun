@@ -591,7 +591,8 @@ unsafe extern "C" fn Bun__runVirtualModule(
     specifier_ptr: *const bun_core::String,
 ) -> JSValue {
     jsc::mark_binding();
-    if global.bun_vm().plugin_runner.is_none() {
+    let vm = global.bun_vm();
+    if vm.plugin_runner.is_none() {
         return JSValue::ZERO;
     }
 
@@ -600,6 +601,9 @@ unsafe extern "C" fn Bun__runVirtualModule(
     let specifier = specifier_slice.slice();
 
     if !PluginRunner::could_be_plugin(specifier) {
+        return JSValue::ZERO;
+    }
+    if vm.is_loading_preload_entry(specifier) {
         return JSValue::ZERO;
     }
 

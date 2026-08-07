@@ -281,8 +281,9 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         uint8_t error    : 1;
         uint8_t eof      : 1;
         uint8_t send_eof : 1;
+        uint8_t send_eof_err : 1;
         uint8_t skip     : 1;
-        uint8_t _pad     : 2;
+        uint8_t _pad     : 1;
     };
 
     _Static_assert(sizeof(struct kevent_flags) == 1, "kevent_flags must be 1 byte");
@@ -309,6 +310,10 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
             /* EV_EOF on EVFILT_READ is the peer's FIN; on EVFILT_WRITE it is SS_CANTSENDMORE (peer gone, or our own shutdown) - not a read EOF (libuv kqueue.c ignores it there too). */
             .eof = (flags & EV_EOF) && filter == EVFILT_READ,
             .send_eof = (flags & EV_EOF) && filter == EVFILT_WRITE,
+            /* kevent(2): with EV_EOF, fflags carries the socket error. Nonzero
+             * alongside a write-filter EV_EOF means the connection died hard,
+             * not just that our own shutdown() set SS_CANTSENDMORE. */
+            .send_eof_err = (flags & EV_EOF) && filter == EVFILT_WRITE && loop->ready_polls[i].fflags != 0,
         };
 
         /* Look backward for a prior entry with the same poll to coalesce into.
@@ -321,6 +326,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 coalesced[j].error |= bits.error;
                 coalesced[j].eof |= bits.eof;
                 coalesced[j].send_eof |= bits.send_eof;
+                coalesced[j].send_eof_err |= bits.send_eof_err;
                 coalesced[i] = (struct kevent_flags){ .skip = 1 };
                 merged = 1;
                 break;
@@ -349,27 +355,25 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                    | (bits.writable ? LIBUS_SOCKET_WRITABLE : 0);
 
         int error = bits.error;
-        int eof = bits.eof;
         /* Write side dead without our own shutdown(): peer reset (or connect refused). Surface it as the poll error epoll would report as EPOLLERR. */
         if (bits.send_eof) {
             int type = us_internal_poll_type(poll);
             if (type == POLL_TYPE_SOCKET || type == POLL_TYPE_SEMI_SOCKET) {
                 error = 1;
-            } else if (type == POLL_TYPE_SOCKET_SHUT_DOWN) {
-                /* We already sent our FIN, so a dead write side just means the
-                 * connection is over: treat it as the peer's FIN (eof on a
-                 * shut-down socket closes with CLEAN_SHUTDOWN in loop.c).
-                 * Dropping the event instead left the socket open forever when
-                 * the peer died while our reads were paused (node:http's
-                 * res.socket.end() mid-upload); epoll closes the same state
-                 * via EPOLLHUP. */
-                eof = 1;
+            } else if (type == POLL_TYPE_SOCKET_SHUT_DOWN && bits.send_eof_err) {
+                /* After our own shutdown() every armed write filter reports
+                 * EV_EOF (SS_CANTSENDMORE is ours), so that alone proves
+                 * nothing; a socket error alongside it is the peer dying
+                 * hard. Close through the error path like epoll's EPOLLERR:
+                 * with reads paused (node:http half-closing mid-upload) this
+                 * is the only signal left that the peer is gone. */
+                error = 1;
             }
         }
 
         events &= us_poll_events(poll);
-        if (events || error || eof) {
-            us_internal_dispatch_ready_poll(poll, error, eof, events);
+        if (events || error || bits.eof) {
+            us_internal_dispatch_ready_poll(poll, error, bits.eof, events);
         }
     }
 #endif

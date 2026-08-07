@@ -68,6 +68,10 @@ pub type ExceptionList = Vec<crate::exception_list::JsException>;
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
+    /// True when the entry module evaluated as CommonJS: Node reports a CJS
+    /// entry's top-level throw with origin `uncaughtException` but an ESM
+    /// entry rejection with `unhandledRejection`; the run command consults this.
+    pub evaluated_as_cjs: bool,
 }
 
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
@@ -4682,6 +4686,7 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
+        self.entry_point_result.evaluated_as_cjs = false;
         if let Some(promise) = self.pending_internal_promise {
             if self.pending_internal_promise_is_protected {
                 JSValue::from_cell(promise).unprotect();

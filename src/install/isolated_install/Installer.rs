@@ -903,22 +903,16 @@ impl Task {
                             let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
 
                             // The hardlink/copy walk below only visits names
-                            // present in the source folder, so rebuilding in
-                            // place merges: a file deleted from the folder
-                            // dependency would survive in the store entry
-                            // forever. Delete to replace, matching the hoisted
-                            // linker's uninstall-before-install. (Lifecycle
-                            // scripts re-run on every install for folder
-                            // entries, so artifacts they write are recreated.)
+                            // in the source folder, so rebuilding in place
+                            // merges: a file deleted from the folder
+                            // dependency would survive every reinstall.
+                            // Delete to replace, like the hoisted linker's
+                            // uninstall-before-install.
                             let mut prev_build = AutoPath::init_top_level_dir();
                             let top_level_len = prev_build.len();
                             installer.append_store_path(&mut prev_build, self.entry_id);
-                            // `append_store_path` appends the entry's package
-                            // dir for everything that reaches LinkPackage
-                            // (Root entries only reach it as a dependency on
-                            // the root package, `"x": "file:."`). Release-mode
-                            // assert: through an unextended path the delete
-                            // below would remove the project directory itself.
+                            // Unextended = the project dir itself; never
+                            // delete that.
                             assert!(prev_build.len() > top_level_len);
                             if let Some(e) = Fd::cwd().delete_tree(prev_build.slice()).err() {
                                 return Ok(Yield::failure(TaskError::LinkPackage(e)));

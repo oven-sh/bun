@@ -807,12 +807,13 @@ it("CustomEvent", () => {
 // A property getter that throws while Bun.inspect enumerates an object must not
 // leave the exception pending on the VM: debug builds aborted with "Unexpected
 // exception observed" and release builds silently dropped every property that
-// came after the throwing one. Clobbering `process` makes the lazy `Bun.$`
-// getter throw while it is being reified; the third check asserts that trigger
-// still holds ($ gets skipped), so the test fails loudly if it ever stops throwing.
+// came after the throwing one. Clobbering `Promise` makes the lazy `Bun.$`
+// getter throw while it is being reified (ShellPromise extends the global
+// Promise); the last check asserts that trigger still holds ($ gets skipped),
+// so the test fails loudly if it ever stops throwing.
 it("Bun.inspect enumeration survives a throwing lazy property getter", async () => {
   const code = `
-    globalThis.process = undefined;
+    globalThis.Promise = undefined;
     const s = Bun.inspect(Bun);
     console.log(
       s.includes("argv: ["),

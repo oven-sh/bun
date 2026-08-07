@@ -610,8 +610,17 @@ impl Drop for FileResponseStream {
         self.reader
             .with_mut(|reader| reader.handle.release_poll_keep_fd());
         if self.auto_close.get() {
+            // uv_cancel cannot stop a read already running on the threadpool,
+            // and Closer::close is an async uv_fs_close on that same pool:
+            // with an op in flight, the detached File closes the fd instead,
+            // after the op completes.
             #[cfg(windows)]
-            Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
+            if !self
+                .reader
+                .with_mut(|reader| reader.close_fd_after_pending_op())
+            {
+                Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
+            }
             #[cfg(not(windows))]
             Closer::close(self.fd.get(), ());
         }

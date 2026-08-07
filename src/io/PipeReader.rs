@@ -2094,6 +2094,23 @@ impl WindowsBufferedReader {
         }
     }
 
+    /// If a threadpool file op is still in flight, transfer fd-close duty to
+    /// the File source: `complete()` honors `close_after_operation` once the
+    /// op's callback fires, and `on_close_complete` then reclaims the box.
+    /// Returns false when idle; the caller then still owns closing the fd.
+    pub fn close_fd_after_pending_op(&mut self) -> bool {
+        if let Some(Source::File(file) | Source::SyncFile(file)) = self.source.as_mut() {
+            if matches!(
+                file.state,
+                crate::source::FileState::Operating | crate::source::FileState::Canceling
+            ) {
+                file.close_after_operation = true;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Close the reader and call the done callback.
     /// If a file operation is in progress, defers the done callback until
     /// the operation completes to ensure proper cleanup ordering.

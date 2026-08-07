@@ -38,6 +38,159 @@ test("support eval in worker", async () => {
   await worker.terminate();
 });
 
+// Node documents 'online' as firing once the worker has started executing JS,
+// i.e. strictly before any 'message' the worker produces. Pool implementations
+// attach their real 'message' handler inside 'online'.
+test("'online' is emitted before any 'message' from the worker", async () => {
+  const worker = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     parentPort.postMessage("a");
+     parentPort.postMessage("b");`,
+    { eval: true },
+  );
+  const events: string[] = [];
+  worker.on("online", () => events.push("online"));
+  worker.on("message", m => events.push("msg:" + m));
+  worker.on("error", e => events.push("error:" + e?.message));
+  const [code] = await once(worker, "exit");
+  events.push("exit:" + code);
+  expect(events).toEqual(["online", "msg:a", "msg:b", "exit:0"]);
+});
+
+test("'online' and a message posted before module evaluation completes are delivered", async () => {
+  // The worker's module never finishes evaluating (same shape as Node's
+  // test-worker-message-port-terminate-transfer-list.js).
+  const worker = new Worker(`require("node:worker_threads").parentPort.postMessage("ready"); for (;;);`, {
+    eval: true,
+  });
+  try {
+    const events: string[] = [];
+    worker.on("online", () => events.push("online"));
+    worker.on("message", m => events.push("msg:" + m));
+    const [message] = await once(worker, "message");
+    expect(message).toBe("ready");
+    expect(events).toEqual(["online", "msg:ready"]);
+  } finally {
+    // The for(;;) worker only stops on terminate(); register it before the
+    // assertions so a failure does not leave a thread spinning at 100% CPU
+    // for the rest of the test file.
+    await worker.terminate();
+  }
+});
+
+test("'online' precedes a message posted before a module evaluation error", async () => {
+  // In a subprocess so the worker's uncaught-exception path is the runtime
+  // one, not the bun:test variant.
+  const src = /* js */ `
+    const { Worker } = require("node:worker_threads");
+    const body = 'require("node:worker_threads").parentPort.postMessage("before-throw"); throw new Error("boom");';
+    const w = new Worker(body, { eval: true });
+    const ev = [];
+    w.on("online", () => ev.push("online"));
+    w.on("message", m => ev.push("msg:" + m));
+    w.on("error", () => ev.push("error"));
+    w.on("exit", c => { ev.push("exit:" + c); console.log(JSON.stringify(ev)); });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify(["online", "msg:before-throw", "error", "exit:1"]),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+});
+
+test("'online' is emitted for a worker that fails before posting any message", async () => {
+  // Node emits 'online' before the entry point even loads, so it precedes
+  // 'error' and 'exit' for every failure mode, including ones where no user
+  // code ran. In a subprocess so the worker's uncaught-exception path is the
+  // runtime one, not the bun:test variant.
+  const src = /* js */ `
+    const { Worker } = require("node:worker_threads");
+    function run(arg, opts) {
+      return new Promise(resolve => {
+        const ev = [];
+        const w = new Worker(arg, opts);
+        w.on("online", () => ev.push("online"));
+        w.on("message", m => ev.push("msg:" + m));
+        w.on("error", () => ev.push("error"));
+        w.on("exit", c => { ev.push("exit:" + c); resolve(ev); });
+      });
+    }
+    Promise.all([
+      run('throw new Error("boom")', { eval: true }),
+      run("/nonexistent/worker-online-32908.js"),
+      run("process.exit(0)", { eval: true }),
+      run("process.exit(3)", { eval: true }),
+    ]).then(r => console.log(JSON.stringify(r)));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([
+      ["online", "error", "exit:1"], // entry point throws
+      ["online", "error", "exit:1"], // entry point fails to resolve
+      ["online", "exit:0"], // process.exit(0) during module evaluation
+      ["online", "exit:3"], // process.exit(3) during module evaluation
+    ]),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+}, 30_000);
+
+test("a 'message' handler attached from a microtask queued by 'online' sees the first message", async () => {
+  // 'online' and the first message can share one parent task; Node still
+  // runs a microtask checkpoint between the two deliveries.
+  const worker = new Worker(`require("node:worker_threads").parentPort.postMessage("first")`, { eval: true });
+  const received: string[] = [];
+  worker.on("online", () => {
+    queueMicrotask(() => worker.on("message", m => received.push("micro:" + m)));
+  });
+  const [code] = await once(worker, "exit");
+  expect(received).toEqual(["micro:first"]);
+  expect(code).toBe(0);
+});
+
+test("an 'online' handler that runs during module evaluation can call getHeapSnapshot()", async () => {
+  // 'online' can fire from the first message drain while the worker is still
+  // evaluating its module; isOnline() must already be true there or
+  // getHeapSnapshot() rejects with ERR_WORKER_NOT_RUNNING.
+  const sab = new SharedArrayBuffer(4);
+  const worker = new Worker(
+    `const { parentPort, workerData } = require("node:worker_threads");
+     parentPort.postMessage("evaluating");
+     Atomics.wait(new Int32Array(workerData), 0, 0);`,
+    { eval: true, workerData: sab },
+  );
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  worker.on("online", () => worker.getHeapSnapshot().then(resolve, reject));
+  // Release the worker from module evaluation only once the parent has
+  // observed its message (and therefore 'online', which precedes it).
+  worker.on("message", () => {
+    Atomics.store(new Int32Array(sab), 0, 1);
+    Atomics.notify(new Int32Array(sab), 0);
+  });
+  worker.on("error", reject);
+  try {
+    const stream = (await promise) as Readable;
+    expect(stream.constructor.name).toBe("HeapSnapshotStream");
+  } finally {
+    // The worker sits in Atomics.wait until terminated; terminate it even if
+    // the assertions fail so it cannot outlive this test.
+    await worker.terminate();
+  }
+});
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
@@ -331,20 +484,27 @@ describe("execArgv option", async () => {
     expect(await proc.stdout.text()).toBe(expected);
   }
 
+  // Each run() spawns a bun process that itself spawns a worker VM: ~100ms
+  // released, ~3s under a debug ASAN build. Two in sequence overrun the 5s
+  // default; the workload is the point of the test, so budget it instead.
   it("inherits the parent's execArgv when falsy or unspecified", async () => {
     await run("null", '["--smol"]\n');
     await run("0", '["--smol"]\n');
-  });
+  }, 30_000);
   it("provides empty execArgv when passed an empty array", async () => {
     // empty array should result in empty execArgv, not inherited from parent thread
     await run("[]", "[]\n");
-  });
+  }, 30_000);
   it("can specify an array of strings", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
-  });
+  }, 30_000);
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
+// The fixture cycles 6 workers holding 100 MiB of eval source each and forces
+// 3 full GCs after every one: ~2s under a release build, ~36s under a debug
+// ASAN build. The workload cannot be shrunk (smaller source sizes fall under
+// the process's RSS noise floor and false-positive the leak threshold).
 test("eval does not leak source code", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],
@@ -357,7 +517,7 @@ test("eval does not leak source code", async () => {
   const errors = await proc.stderr.text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
-});
+}, 120_000);
 
 describe("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is
@@ -553,6 +713,8 @@ describe("environmentData", () => {
     expect(getEnvironmentData("does_not_exist")).toBeUndefined();
   });
 
+  // 5 nested worker VMs at roughly 1s each under a debug ASAN build sits
+  // right at the 5s default, so this flakes there while taking 80ms released.
   test("is deeply inherited", async () => {
     const proc = Bun.spawn({
       cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
@@ -567,7 +729,7 @@ describe("environmentData", () => {
     expect(proc.exitCode).toBe(0);
     const out = await proc.stdout.text();
     expect(out).toBe("foo\n".repeat(5));
-  });
+  }, 30_000);
 
   test("can be used if parent thread had not imported worker_threads", async () => {
     const proc = Bun.spawn({

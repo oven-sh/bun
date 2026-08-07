@@ -356,6 +356,12 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         m_toParent.drainScheduled.store(false, std::memory_order_relaxed);
         return;
     }
+    // A worker that posts during module evaluation reaches here before
+    // dispatchOnline() has posted the 'open' task: emit 'open' first, then run
+    // microtasks the 'online' handler queued, before the first message (as
+    // Node does between the two deliveries).
+    if (dispatchOpenIfNeeded())
+        globalObject->drainMicrotasks();
     bool reschedule = drainInbox(m_toParent, globalObject, context, [&](Event& event) {
         dispatchEvent(event);
     });
@@ -392,6 +398,33 @@ void Worker::dispatchEvent(Event& event)
     if (m_terminateRequested.load() || m_state.load() == State::Closed)
         return;
     EventTargetWithInlineData::dispatchEvent(event);
+}
+
+// Dispatch 'open' (node's 'online') at most once, on the parent thread. Node
+// emits 'online' before the entry point even loads, so it strictly precedes
+// every event the worker produces ('message', 'error', 'close'). Each
+// parent-side task that can be the first one delivered therefore calls this:
+// dispatchOnline()'s task, drainToParent(), the error tasks, and the close task.
+// Returns whether the event was dispatched by this call.
+bool Worker::dispatchOpenIfNeeded()
+{
+    if (m_openDispatched)
+        return false;
+    m_openDispatched = true;
+    // The 'online' handler may immediately call getHeapSnapshot(), or anything
+    // else gated on isOnline(), so Running must be visible before the event:
+    // the same ordering dispatchOnline() establishes on the worker thread.
+    {
+        Locker lock(m_pendingTasksMutex);
+        // Only Pending -> Running; never walk Closing/Closed back to Running.
+        auto expected = State::Pending;
+        m_state.compare_exchange_strong(expected, State::Running);
+    }
+    if (!hasEventListeners(eventNames().openEvent))
+        return false;
+    auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
+    dispatchEvent(event);
+    return true;
 }
 
 bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
@@ -451,24 +484,15 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
     // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
     // a message post racing this transition either queues (drained below by
     // fireEarlyMessages) or posts directly — never both, never neither.
-    //
-    // This MUST happen BEFORE the open event is posted to the parent: the
-    // parent's `online` handler may immediately call getHeapSnapshot() (or
-    // anything else gated on isOnline() / postTaskToWorkerGlobalScope()). If
-    // the state flip happens after the post, a fast parent thread can run the
-    // open task while m_state is still Pending and observe
-    // ERR_WORKER_NOT_RUNNING — flaky `await once(worker, "online");
-    // worker.getHeapSnapshot()` in worker_threads.test.ts.
+    // dispatchOpenIfNeeded() takes the same edge on the parent thread, so an
+    // 'online' handler always observes isOnline() whichever side flips first.
     {
         Locker lock(m_pendingTasksMutex);
         m_state.store(State::Running);
     }
 
     postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext&) {
-        if (protectedThis->hasEventListeners(eventNames().openEvent)) {
-            auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
-            protectedThis->dispatchEvent(event);
-        }
+        protectedThis->dispatchOpenIfNeeded();
     });
 
     auto* thisContext = workerGlobalObject->scriptExecutionContext();
@@ -519,7 +543,14 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 
 void Worker::dispatchErrorWithMessage(WTF::String message)
 {
-    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext&) {
+    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext& context) {
+        // A worker whose entry point fails to load or evaluate posts this
+        // before dispatchOnline() ever runs; Node still emits 'online' first.
+        if (protectedThis->dispatchOpenIfNeeded()) {
+            // Nullable for the same reason as in drainToParent().
+            if (auto* globalObject = defaultGlobalObject(context.jsGlobalObject()))
+                globalObject->drainMicrotasks();
+        }
         ErrorEvent::Init init;
         init.message = message;
 
@@ -557,6 +588,12 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     }
 
     return postTaskToParent([protectedThis = Ref { *this }, serialized, errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
+        // See dispatchErrorWithMessage: 'online' precedes a module-load error.
+        if (protectedThis->dispatchOpenIfNeeded()) {
+            // Nullable for the same reason as in drainToParent().
+            if (auto* zigGlobalObject = defaultGlobalObject(context.jsGlobalObject()))
+                zigGlobalObject->drainMicrotasks();
+        }
         auto* globalObject = context.globalObject();
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -602,7 +639,17 @@ bool Worker::dispatchExit(int32_t exitCode)
     return ScriptExecutionContext::postTaskTo(
         m_parentContextId,
         [this] { this->deref(); },
-        [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
+        [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            // A worker that never reached dispatchOnline (its entry point
+            // called process.exit() or failed to load) still started, so Node
+            // emits 'online' before 'exit'. No-op once 'open' has fired, and
+            // suppressed by dispatchEvent() after terminate().
+            if (protectedThis->dispatchOpenIfNeeded()) {
+                // Nullable for the same reason as in drainToParent().
+                if (auto* globalObject = defaultGlobalObject(context.jsGlobalObject()))
+                    globalObject->drainMicrotasks();
+            }
+
             // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
             // handlers observe threadId == -1 and isOnline() == false while
             // postMessage() (gated only on Closed) still accepts and drops the

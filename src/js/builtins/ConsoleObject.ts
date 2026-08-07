@@ -185,11 +185,16 @@ export function writeToObservedStream(stream, chunk: string) {
   // There may be an error occurring synchronously (e.g. for files or TTYs
   // on POSIX systems) or asynchronously (e.g. pipes on POSIX systems), so
   // handle both situations.
-  const isEmitter = typeof stream?.listenerCount === "function" && typeof stream?.once === "function";
+  const isEmitter =
+    typeof stream?.listenerCount === "function" &&
+    typeof stream?.once === "function" &&
+    typeof stream?.removeListener === "function";
+  let guarded = false;
   try {
     // Add and later remove a noop error handler to catch synchronous errors.
     if (isEmitter && stream.listenerCount("error") === 0) {
       stream.once("error", noop);
+      guarded = true;
     }
     stream.write(chunk, err => {
       // Errors that were not already emitted (async _write callback) surface
@@ -207,7 +212,7 @@ export function writeToObservedStream(stream, chunk: string) {
     if (e?.name === "RangeError" && e?.message === "Maximum call stack size exceeded.") throw e;
     // Sorry, there's no proper way to pass along the error here.
   } finally {
-    if (isEmitter) stream.removeListener("error", noop);
+    if (guarded) stream.removeListener("error", noop);
   }
 }
 

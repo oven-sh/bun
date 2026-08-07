@@ -3667,3 +3667,89 @@ describe.concurrent("connect() failure promise settlement", () => {
     ).rejects.toBe(boom);
   });
 });
+
+// A paused socket polls without READABLE, so a peer FIN arriving while the
+// receive buffer is empty is only reported through AFD's one-shot DISCONNECT.
+// The eof is deferred until resume (pause contract), which consumes the only
+// event the poll had; when the connection later dies, nothing is subscribed
+// that could report it, so the 4s sweep has to probe the socket. Writing one
+// byte into the dead connection resets the victim's TCB the same way a remote
+// peer's RST segment would (Windows emits no RST from FIN_WAIT_2 on loopback,
+// so the peer's abort alone is invisible to an idle victim here). The sleeps
+// are structural: the sweep runs on a fixed 4s cadence, and the FIN window
+// asserts the absence of a close across one full sweep.
+it.concurrent.skipIf(!isWindows)(
+  "paused socket with a deferred empty-buffer FIN still closes when the connection later dies",
+  async () => {
+    const victimClosed = Promise.withResolvers<string>();
+    const victimOpen = Promise.withResolvers<Socket>();
+    let closedHow: string | null = null;
+    let endFired = false;
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.pause(); // receive backpressure; rx buffer stays empty
+          victimOpen.resolve(s);
+        },
+        data() {},
+        end() {
+          endFired = true;
+        },
+        error() {
+          closedHow ??= "error";
+          victimClosed.resolve("error");
+        },
+        close() {
+          closedHow ??= "close";
+          victimClosed.resolve("close");
+        },
+      },
+    });
+
+    const peerOpened = Promise.withResolvers<Socket>();
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          peerOpened.resolve(s);
+        },
+        data() {},
+        end() {},
+        error() {},
+        close() {},
+      },
+    });
+    await peerOpened.promise;
+    const victim = await victimOpen.promise;
+
+    // Let the pause settle: the writable dispatch drops WRITABLE, leaving the
+    // victim's poll subscribed to DISCONNECT only.
+    await Bun.sleep(200);
+
+    // Clean FIN with the victim's receive buffer empty.
+    peer.shutdown();
+
+    // A full sweep period passes: the deferred FIN alone must not close the
+    // paused victim (its peer is alive and half-closed; the sweep's probe has
+    // to keep it deferred).
+    await Bun.sleep(4600);
+    expect(closedHow).toBeNull();
+
+    // Peer dies; the victim streams on, and the byte's RST reply resets its
+    // TCB. Without the sweep escalation nothing is ever delivered and the
+    // socket strands, so a bounded race is the condition check.
+    peer.terminate();
+    await Bun.sleep(100);
+    victim.write("x");
+
+    const result = await Promise.race([victimClosed.promise, Bun.sleep(12_000).then(() => "stranded")]);
+    expect(result).not.toBe("stranded");
+    // The deferred eof must not have been delivered as end; the socket died.
+    expect(endFired).toBe(false);
+  },
+  40_000,
+);

@@ -103,14 +103,23 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
        * until resume; pending data keeps the pause honored untouched. */
       char probe;
       ssize_t peeked = bsd_recv(us_poll_fd(wp), &probe, 1, MSG_PEEK);
+      struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
       if (peeked == 0) {
+        /* Graceful FIN with nothing buffered: the shared dispatch defers the
+         * eof until resume (paused-EOF contract), which leaves this socket in
+         * the same consumed-DISCONNECT state as the data-deferred branch
+         * below - a LATER reset has no event left to ride. Hand it to the
+         * sweep as well. */
+        if (!sock->fin_deferred) {
+          sock->fin_deferred = 1;
+          sock->group->loop->data.fin_deferred_count++;
+        }
         eof = 1;
         events |= UV_READABLE;
       } else if (peeked < 0 && !bsd_would_block()) {
         error = 1;
         events |= UV_READABLE;
       } else if (peeked > 0) {
-        struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
         if (us_socket_get_error(sock) != 0 || us_internal_libuv_peer_reset_probe(us_poll_fd(wp))) {
           /* Data is buffered ahead of whatever ended the connection. If the
            * peer ABORTED, the kernel already discarded the stream's tail and

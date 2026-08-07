@@ -89,6 +89,7 @@
 #include <wtf/threads/BinarySemaphore.h>
 
 #include "ZigGlobalObject.h"
+#include "JSEnvironmentVariableMap.h"
 #include "blob.h"
 #include "ZigGeneratedClasses.h"
 #include "JSX509Certificate.h"
@@ -2080,15 +2081,10 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             JSObject* inObject = asObject(inValue);
             if (!startObject(inObject))
                 break;
-            // At this point, all supported objects other than Object
-            // objects have been handled. If we reach this point and
-            // the input is not an Object object then we should throw
-            // a DataCloneError.
-            // NapiPrototype is allowed because napi_create_object should behave
-            // like a plain object from JS's perspective (matches Node.js).
-            // ObjectPrototype is allowed because %Object.prototype% is an immutable
-            // prototype exotic object that the spec carves out of this rejection.
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info())
+            // All supported objects other than plain Object have been handled; throw
+            // DataCloneError otherwise. NapiPrototype, ObjectPrototype, and process.env
+            // are allowed (Node supports structuredClone(process.env) as a plain object).
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()))
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);

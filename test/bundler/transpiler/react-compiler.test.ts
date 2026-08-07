@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
 import { itBundled } from "../expectBundled";
 
 // The React Compiler emits `import { c as _c } from "react/compiler-runtime"` and
@@ -128,6 +129,58 @@ describe("bundler", () => {
       // no compiler-runtime import; useState lowered to its initial value).
       expect(out).not.toContain("react/compiler-runtime");
       expect(out).not.toMatch(/\b_c\(\d+\)/);
+    },
+  });
+
+  // https://github.com/oven-sh/bun/issues/37022
+  // A full-stack build (--target=bun with an HTML import) bundles the browser
+  // graph through a separate client transpiler. That transpiler must run the
+  // React Compiler in client mode: the SSR pass inlines useState and drops the
+  // setter binding, leaving `setIsAuth` as a dangling identifier in the client
+  // bundle (ReferenceError at render).
+  itBundled("react-compiler/FullstackHtmlImportCompilesClientGraphInClientMode", {
+    outdir: "/out",
+    entryPoints: ["/server.ts"],
+    files: {
+      "/server.ts": `
+        import index from "./index.html";
+        console.log(typeof index);
+      `,
+      "/index.html": `<!DOCTYPE html><html><head><script type="module" src="./main.jsx"></script></head><body><div id="root"></div></body></html>`,
+      "/main.jsx": /* jsx */ `
+        import { useState } from "react";
+        function Login({ setAuth }) {
+          return <button onClick={() => setAuth(true)}>login</button>;
+        }
+        export function App() {
+          const [isAuth, setIsAuth] = useState(false);
+          return isAuth === false ? <Login setAuth={setIsAuth} /> : <div>in</div>;
+        }
+        globalThis.App = App;
+      `,
+      "/node_modules/react/index.js": `exports.useState = i => [i, () => {}]; exports.default = exports;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "bun",
+    backend: "cli",
+    onAfterBundle(api) {
+      const chunks = readdirSync(api.outdir)
+        .filter(f => f.endsWith(".js"))
+        .map(f => api.readFile("/out/" + f));
+      const chunk = chunks.find(c => c.includes("setIsAuth"));
+      expect(chunk).toBeDefined();
+      // Client mode keeps the useState destructure, so the setter has a
+      // declaration in addition to its prop use. In SSR mode the destructure
+      // is inlined away and only the dangling use remains.
+      expect(chunk!).toMatch(/\[isAuth,\s*setIsAuth\]/);
+      expect(chunk!.match(/\bsetIsAuth\b/g)!.length).toBeGreaterThanOrEqual(2);
+      // Client mode memoizes through the compiler runtime; the SSR pass never
+      // references the memo cache sentinel.
+      expect(chunk!).toContain("react.memo_cache_sentinel");
     },
   });
 

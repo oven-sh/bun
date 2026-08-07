@@ -650,10 +650,8 @@ pub mod ssl_wrapper {
                 match self.flags.handshake_state() {
                     HandshakeState::HandshakeCompleted => {}
                     HandshakeState::HandshakeRenegotiationPending => {
-                        // The initial handshake completed long ago: this
-                        // teardown must not be reported as a handshake
-                        // failure. A renegotiation that already finished
-                        // still reports its success.
+                        // The initial handshake completed; a finished
+                        // renegotiation reports success, never a failure.
                         self.handle_end_of_renegotiation();
                         self.flags
                             .set_handshake_state(HandshakeState::HandshakeCompleted);
@@ -1071,11 +1069,8 @@ pub mod ssl_wrapper {
                         return false;
                     } else {
                         log!("wanna read/write just break");
-                        // A renegotiation can finish inside this SSL_read with
-                        // no app data to deliver (the peer's Finished arrived
-                        // alone); unlatch and fire on_handshake like the
-                        // app-data path below, or the state stays
-                        // HandshakeRenegotiationPending forever.
+                        // A renegotiation can finish inside SSL_read with no
+                        // app data to deliver; unlatch like the paths below.
                         self.handle_end_of_renegotiation();
                         // we wanna read/write just break
                         break;

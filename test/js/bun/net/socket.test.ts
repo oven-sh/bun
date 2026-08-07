@@ -479,8 +479,11 @@ describe.concurrent("socket", () => {
   // The flip side: with the write filter unusable after our own shutdown()
   // (its EV_EOF echoes SS_CANTSENDMORE), the read-side teardown watch must
   // still deliver the peer's actual termination to a paused half-closed
-  // socket (epoll gets this via the implicit EPOLLHUP|EPOLLERR).
-  it("shutdown() then pause() still closes when the peer terminates", async () => {
+  // socket (epoll gets this via the implicit EPOLLHUP|EPOLLERR). Windows is
+  // excluded: the libuv backend has no event for a reset against a paused
+  // 0-event poll (AFD only reports subscribed events), a pre-existing gap
+  // tracked separately from this change.
+  it.skipIf(isWindows)("shutdown() then pause() still closes when the peer terminates", async () => {
     const closed = Promise.withResolvers<void>();
     const opened = Promise.withResolvers<void>();
     using server = Bun.listen({

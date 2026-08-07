@@ -1,15 +1,24 @@
 import { expect, test } from "bun:test";
-import { bunRun } from "harness";
+import { bunEnv, bunRun } from "harness";
 import path from "path";
 
 test.concurrent(
   "pathToFileURL doesn't leak memory",
   async () => {
-    const { stdout, stderr, exitCode } = await bunRun(path.join(import.meta.dir, "pathToFileURL-leak-fixture.js"));
-    if (exitCode !== 0) console.error(stderr || stdout);
+    const { stdout, stderr, exitCode } = await bunRun(path.join(import.meta.dir, "pathToFileURL-leak-fixture.js"), {
+      // ASAN holds freed allocations in a 256 MB quarantine by default, which
+      // inflates the fixture's RSS delta and previously forced a separate
+      // isASAN threshold. Disabling the quarantine keeps the delta build-type
+      // agnostic and lets the fixture use ~40x fewer iterations.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith("RSS delta");
     expect(exitCode).toBe(0);
   },
-  300_000,
+  60_000,
 );
 
 test("pathToFileURL escapes special characters", () => {

@@ -1135,7 +1135,10 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
     const branchRequestsBefore = branchRequests;
     const githubDownloadsBefore = githubDownloads;
     await using proc = spawn({
-      cmd: [bunExe(), "install"],
+      // Explicit linker: the cold-cache stage below regresses only under the
+      // isolated linker's store (its entry waits on the locked commit's
+      // checkout id).
+      cmd: [bunExe(), "install", "--linker", "isolated"],
       cwd: packageDir,
       env: installEnv,
       stdout: "pipe",
@@ -1205,14 +1208,49 @@ it("re-resolving reuses branch and bare ref git dependencies from the lockfile i
   const lockAfter = await file(join(packageDir, "bun.lock")).text();
   expect(lockAfter).toContain(`bare-dep@git+http://127.0.0.1:${gitServer.port}/bare-dep.git#${bareSha}`);
   expect(lockAfter).toContain(`branch-dep@git+http://127.0.0.1:${gitServer.port}/branch-dep.git#${branchSha}`);
-  expect(await file(join(packageDir, "node_modules", "bare-dep", "index.js")).text()).toBe(
-    "module.exports = 'bare-dep';\n",
-  );
-  expect(await file(join(packageDir, "node_modules", "branch-dep", "index.js")).text()).toBe(
-    "module.exports = 'branch-dep';\n",
-  );
-  expect(await file(join(packageDir, "node_modules", "gh-dep", "index.js")).text()).toBe("module.exports = 'gh';\n");
-});
+  const memberModules = join(packageDir, "packages", "member", "node_modules");
+  expect(await file(join(memberModules, "bare-dep", "index.js")).text()).toBe("module.exports = 'bare-dep';\n");
+  expect(await file(join(memberModules, "branch-dep", "index.js")).text()).toBe("module.exports = 'branch-dep';\n");
+  expect(await file(join(memberModules, "gh-dep", "index.js")).text()).toBe("module.exports = 'gh';\n");
+
+  // Changing a dependency's ref is the boundary the reuse must not cross: a
+  // different literal consults the remote again (here the same commit wins,
+  // so only the request counter moves).
+  memberDeps["branch-dep"] = `git+http://127.0.0.1:${gitServer.port}/branch-dep.git`;
+  await writeMember();
+  const beforeRefChange = { bareRequests, branchRequests, githubDownloads };
+  await install();
+  expect(branchRequests).toBeGreaterThan(beforeRefChange.branchRequests);
+  expect({ bareRequests, githubDownloads }).toEqual({
+    bareRequests: beforeRefChange.bareRequests,
+    githubDownloads: beforeRefChange.githubDownloads,
+  });
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain(`branch-dep.git#${branchSha}`);
+
+  // Cold cache with a moved branch head: the lockfile pin must win and the
+  // install must terminate. The isolated store waits on the locked commit's
+  // checkout; a re-enqueued dependency that follows the moved ref instead of
+  // the bound package's commit starves it forever (and without the reuse the
+  // pin silently floats to the new head).
+  const branchSrc = join(packageDir, "branch-dep-src");
+  await write(join(branchSrc, "index.js"), "module.exports = 'branch-dep-v2';\n");
+  await git(["add", "-A"], branchSrc);
+  await git(["commit", "-qm", "move"], branchSrc);
+  const movedSha = (await git(["rev-parse", "HEAD"], branchSrc)).trim();
+  await git(["fetch", "-q", branchSrc, "+refs/heads/*:refs/heads/*"], join(packageDir, "branch-dep.git"));
+  await git(["update-server-info"], join(packageDir, "branch-dep.git"));
+
+  delete memberDeps["dummy"];
+  await writeMember();
+  await rm(installEnv.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true });
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(memberModules, { recursive: true, force: true });
+  await install();
+  const lockCold = await file(join(packageDir, "bun.lock")).text();
+  expect(lockCold).toContain(`branch-dep.git#${branchSha}`);
+  expect(lockCold).not.toContain(movedSha);
+  expect(await file(join(memberModules, "branch-dep", "index.js")).text()).toBe("module.exports = 'branch-dep';\n");
+}, 30_000);
 
 // `bun update` must keep going to the remote for a branch-tracking ref: the
 // reuse above is explicitly skipped for update targets.
@@ -1282,12 +1320,12 @@ it("`bun update` still re-resolves a branch ref git dependency against the remot
   expect(gitRequests).toBeGreaterThan(requestsAfterInstall);
 });
 
-// A changed override that moves a git dependency to a different ref of the
-// same repository must re-resolve every dependent. Several dependencies
-// sharing one name is the interesting case: the reuse above must not rebind a
-// cleared dependency to a sibling's not-yet-cleared binding from the old
-// override.
-it("a changed git override re-resolves every dependent instead of reusing the old pin", async () => {
+// A changed override or catalog entry that moves a git dependency to a
+// different ref of the same repository must re-resolve every dependent.
+// Several dependencies sharing one name is the interesting case: the reuse
+// above must not rebind a cleared dependency to a sibling's not-yet-cleared
+// binding from the old entry.
+async function changedEntryReResolves(mode: "overrides" | "catalog") {
   const { packageDir, packageJson } = await registry.createTestDir();
   const { gitEnv, git } = await makeGitFixture(packageDir);
 
@@ -1342,17 +1380,25 @@ it("a changed git override re-resolves every dependent instead of reusing the ol
 
   const repoUrl = `git+http://127.0.0.1:${server.port}/repo.git`;
   function rootPackageJson(ref: string) {
-    return JSON.stringify({
-      name: "ws-root",
-      workspaces: ["packages/*"],
-      overrides: { "over-dep": `${repoUrl}#${ref}` },
-    });
+    return JSON.stringify(
+      mode === "overrides"
+        ? {
+            name: "ws-root",
+            workspaces: ["packages/*"],
+            overrides: { "over-dep": `${repoUrl}#${ref}` },
+          }
+        : {
+            name: "ws-root",
+            workspaces: { packages: ["packages/*"], catalog: { "over-dep": `${repoUrl}#${ref}` } },
+          },
+    );
   }
+  const memberSpec = mode === "overrides" ? "^1.0.0" : "catalog:";
   await write(packageJson, rootPackageJson("v1"));
   for (const member of ["member-a", "member-b"]) {
     await write(
       join(packageDir, "packages", member, "package.json"),
-      JSON.stringify({ name: member, version: "1.0.0", dependencies: { "over-dep": "^1.0.0" } }),
+      JSON.stringify({ name: member, version: "1.0.0", dependencies: { "over-dep": memberSpec } }),
     );
   }
 
@@ -1366,4 +1412,10 @@ it("a changed git override re-resolves every dependent instead of reusing the ol
   expect(lockAfter).toContain(`#${sha2}`);
   expect(lockAfter).not.toContain(`#${sha1}`);
   expect(await file(join(packageDir, "node_modules", "over-dep", "index.js")).text()).toBe("module.exports = 'V2';\n");
-});
+}
+
+it("a changed git override re-resolves every dependent instead of reusing the old pin", () =>
+  changedEntryReResolves("overrides"));
+
+it("a changed git catalog entry re-resolves every dependent instead of reusing the old pin", () =>
+  changedEntryReResolves("catalog"));

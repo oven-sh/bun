@@ -1218,14 +1218,41 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
-                let resolved = Repository::find_commit(
-                    this.env_mut(),
-                    this.log_mut(),
-                    repo_fd,
-                    alias,
-                    this.lockfile.str(&dep.committish),
-                    clone_id,
-                )?;
+                // A dependency already bound to a package checks out that
+                // package's locked commit. `find_commit` follows the ref,
+                // which may have moved since it was locked, and the isolated
+                // installer's store entry waits on the locked checkout id
+                // (the clone-failure drain in runTasks.rs keys the same way).
+                let bound_resolved: Option<Vec<u8>> = {
+                    let bound = this.lockfile.buffers.resolutions[id as usize];
+                    if bound != invalid_package_id
+                        && (bound as usize) < this.lockfile.packages.len()
+                    {
+                        let bound_res = &this.lockfile.packages.items_resolution()[bound as usize];
+                        if bound_res.tag == ResolutionTag::Git {
+                            let locked = bound_res
+                                .git()
+                                .resolved
+                                .slice(this.lockfile.buffers.string_bytes.as_slice());
+                            (!locked.is_empty()).then(|| locked.to_vec())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+                let resolved = match bound_resolved {
+                    Some(resolved) => resolved,
+                    None => Repository::find_commit(
+                        this.env_mut(),
+                        this.log_mut(),
+                        repo_fd,
+                        alias,
+                        this.lockfile.str(&dep.committish),
+                        clone_id,
+                    )?,
+                };
                 let checkout_id = Task::Id::for_git_checkout(url, &resolved);
 
                 let needs_ctx =

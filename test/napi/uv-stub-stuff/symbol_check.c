@@ -5,7 +5,22 @@
 #include <node_api.h>
 
 #include <dlfcn.h>
+#include <stdbool.h>
 #include <stdint.h>
+
+// Bail on any napi failure without using its output: throw `message` unless
+// the failing call already left a JavaScript exception pending (e.g. an
+// accessor on the names array threw inside napi_get_element).
+#define CHECK_NAPI(call, message)                                             \
+  do {                                                                        \
+    if ((call) != napi_ok) {                                                  \
+      bool pending = false;                                                   \
+      if (napi_is_exception_pending(env, &pending) != napi_ok || !pending) {  \
+        napi_throw_error(env, NULL, (message));                               \
+      }                                                                       \
+      return NULL;                                                            \
+    }                                                                         \
+  } while (0)
 
 static const char *module_of(void *addr) {
   Dl_info info;
@@ -24,62 +39,67 @@ static const char *module_of(void *addr) {
 static napi_value check_symbols(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value args[1];
-  if (napi_get_cb_info(env, info, &argc, args, NULL, NULL) != napi_ok ||
-      argc < 1) {
+  CHECK_NAPI(napi_get_cb_info(env, info, &argc, args, NULL, NULL),
+             "expected an array of symbol names");
+  if (argc < 1) {
     napi_throw_error(env, NULL, "expected an array of symbol names");
     return NULL;
   }
 
   uint32_t len = 0;
-  if (napi_get_array_length(env, args[0], &len) != napi_ok) {
-    napi_throw_error(env, NULL, "expected an array of symbol names");
-    return NULL;
-  }
+  CHECK_NAPI(napi_get_array_length(env, args[0], &len),
+             "expected an array of symbol names");
 
   napi_value result, missing, modules, napi_module;
-  napi_create_object(env, &result);
-  napi_create_array(env, &missing);
-  napi_create_array(env, &modules);
+  CHECK_NAPI(napi_create_object(env, &result), "failed to build result");
+  CHECK_NAPI(napi_create_array(env, &missing), "failed to build result");
+  CHECK_NAPI(napi_create_array(env, &modules), "failed to build result");
   uint32_t missing_count = 0, modules_count = 0;
 
   for (uint32_t i = 0; i < len; i++) {
     napi_value name_value;
     char name[256];
     size_t copied = 0;
-    if (napi_get_element(env, args[0], i, &name_value) != napi_ok ||
-        napi_get_value_string_utf8(env, name_value, name, sizeof(name),
-                                   &copied) != napi_ok) {
-      napi_throw_error(env, NULL, "symbol names must be strings");
-      return NULL;
-    }
+    CHECK_NAPI(napi_get_element(env, args[0], i, &name_value),
+               "symbol names must be strings");
+    CHECK_NAPI(napi_get_value_string_utf8(env, name_value, name, sizeof(name),
+                                          &copied),
+               "symbol names must be strings");
 
     void *addr = dlsym(RTLD_DEFAULT, name);
     if (addr == NULL) {
-      napi_set_element(env, missing, missing_count++, name_value);
+      CHECK_NAPI(napi_set_element(env, missing, missing_count++, name_value),
+                 "failed to build result");
     } else {
       napi_value module_name;
-      napi_create_string_utf8(env, module_of(addr), NAPI_AUTO_LENGTH,
-                              &module_name);
-      napi_set_element(env, modules, modules_count++, module_name);
+      CHECK_NAPI(napi_create_string_utf8(env, module_of(addr),
+                                         NAPI_AUTO_LENGTH, &module_name),
+                 "failed to build result");
+      CHECK_NAPI(napi_set_element(env, modules, modules_count++, module_name),
+                 "failed to build result");
     }
   }
 
-  napi_create_string_utf8(env, module_of(dlsym(RTLD_DEFAULT, "napi_create_function")),
-                          NAPI_AUTO_LENGTH, &napi_module);
+  CHECK_NAPI(napi_create_string_utf8(
+                 env, module_of(dlsym(RTLD_DEFAULT, "napi_create_function")),
+                 NAPI_AUTO_LENGTH, &napi_module),
+             "failed to build result");
 
-  napi_set_named_property(env, result, "missing", missing);
-  napi_set_named_property(env, result, "modules", modules);
-  napi_set_named_property(env, result, "napiModule", napi_module);
+  CHECK_NAPI(napi_set_named_property(env, result, "missing", missing),
+             "failed to build result");
+  CHECK_NAPI(napi_set_named_property(env, result, "modules", modules),
+             "failed to build result");
+  CHECK_NAPI(napi_set_named_property(env, result, "napiModule", napi_module),
+             "failed to build result");
   return result;
 }
 
 NAPI_MODULE_INIT() {
   napi_value fn;
-  if (napi_create_function(env, "checkSymbols", NAPI_AUTO_LENGTH,
-                           check_symbols, NULL, &fn) != napi_ok ||
-      napi_set_named_property(env, exports, "checkSymbols", fn) != napi_ok) {
-    napi_throw_error(env, NULL, "failed to register checkSymbols");
-    return NULL;
-  }
+  CHECK_NAPI(napi_create_function(env, "checkSymbols", NAPI_AUTO_LENGTH,
+                                  check_symbols, NULL, &fn),
+             "failed to register checkSymbols");
+  CHECK_NAPI(napi_set_named_property(env, exports, "checkSymbols", fn),
+             "failed to register checkSymbols");
   return exports;
 }

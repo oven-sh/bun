@@ -730,89 +730,87 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 // re-enqueued the same tarball task and parked the store entry on the
 // completed task's already-drained callback list, so the pending-task count
 // never reached zero.
-test(
-  "adding and removing a patch for a github dependency in a workspace completes",
-  async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+test("adding and removing a patch for a github dependency in a workspace completes", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
-    // Minimal gzipped tarball shaped like a github codeload tarball: a single
-    // root directory wrapping the package contents.
-    function tarHeader(name: string, size: number, isDir: boolean): Uint8Array {
-      const header = new Uint8Array(512);
-      const encoder = new TextEncoder();
-      header.set(encoder.encode(name), 0);
-      header.set(encoder.encode(isDir ? "0000755 " : "0000644 "), 100);
-      header.set(encoder.encode("0000000 "), 108);
-      header.set(encoder.encode("0000000 "), 116);
-      header.set(encoder.encode(size.toString(8).padStart(11, "0") + " "), 124);
-      header.set(encoder.encode("00000000000 "), 136);
-      header.set(encoder.encode("        "), 148);
-      header[156] = (isDir ? "5" : "0").charCodeAt(0);
-      header.set(encoder.encode("ustar"), 257);
-      header.set(encoder.encode("00"), 263);
-      let checksum = 0;
-      for (const byte of header) checksum += byte;
-      header.set(encoder.encode(checksum.toString(8).padStart(6, "0") + "\0 "), 148);
-      return header;
-    }
-    const blocks: Uint8Array[] = [];
-    blocks.push(tarHeader("testowner-testrepo-aaaaaaa/", 0, true));
-    for (const [name, contents] of [
-      ["package.json", JSON.stringify({ name: "gh-dep", version: "1.0.0" })],
-      ["index.js", 'console.log("original");\n'],
-    ]) {
-      const bytes = new TextEncoder().encode(contents);
-      blocks.push(tarHeader(`testowner-testrepo-aaaaaaa/${name}`, bytes.length, false));
-      blocks.push(bytes);
-      if (bytes.length % 512 !== 0) blocks.push(new Uint8Array(512 - (bytes.length % 512)));
-    }
-    blocks.push(new Uint8Array(1024));
-    const tarball = Bun.gzipSync(Buffer.concat(blocks));
+  // Minimal gzipped tarball shaped like a github codeload tarball: a single
+  // root directory wrapping the package contents.
+  function tarHeader(name: string, size: number, isDir: boolean): Uint8Array {
+    const header = new Uint8Array(512);
+    const encoder = new TextEncoder();
+    header.set(encoder.encode(name), 0);
+    header.set(encoder.encode(isDir ? "0000755 " : "0000644 "), 100);
+    header.set(encoder.encode("0000000 "), 108);
+    header.set(encoder.encode("0000000 "), 116);
+    header.set(encoder.encode(size.toString(8).padStart(11, "0") + " "), 124);
+    header.set(encoder.encode("00000000000 "), 136);
+    header.set(encoder.encode("        "), 148);
+    header[156] = (isDir ? "5" : "0").charCodeAt(0);
+    header.set(encoder.encode("ustar"), 257);
+    header.set(encoder.encode("00"), 263);
+    let checksum = 0;
+    for (const byte of header) checksum += byte;
+    header.set(encoder.encode(checksum.toString(8).padStart(6, "0") + "\0 "), 148);
+    return header;
+  }
+  const blocks: Uint8Array[] = [];
+  blocks.push(tarHeader("testowner-testrepo-aaaaaaa/", 0, true));
+  for (const [name, contents] of [
+    ["package.json", JSON.stringify({ name: "gh-dep", version: "1.0.0" })],
+    ["index.js", 'console.log("original");\n'],
+  ]) {
+    const bytes = new TextEncoder().encode(contents);
+    blocks.push(tarHeader(`testowner-testrepo-aaaaaaa/${name}`, bytes.length, false));
+    blocks.push(bytes);
+    if (bytes.length % 512 !== 0) blocks.push(new Uint8Array(512 - (bytes.length % 512)));
+  }
+  blocks.push(new Uint8Array(1024));
+  const tarball = Bun.gzipSync(Buffer.concat(blocks));
 
-    using server = Bun.serve({
-      port: 0,
-      fetch: () => new Response(tarball, { headers: { "Content-Type": "application/gzip" } }),
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(tarball, { headers: { "Content-Type": "application/gzip" } }),
+  });
+
+  const env = {
+    ...bunEnv,
+    GITHUB_API_URL: `http://localhost:${server.port}`,
+    // CI exports BUN_INSTALL_CACHE_DIR; pin it so this test's cache state is
+    // its own.
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+  };
+
+  async function install() {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
     });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
 
-    const env = {
-      ...bunEnv,
-      GITHUB_API_URL: `http://localhost:${server.port}`,
-      // CI exports BUN_INSTALL_CACHE_DIR; pin it so this test's cache state is
-      // its own.
-      BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
-    };
-
-    async function install() {
-      await using proc = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(err).not.toContain("error:");
-      expect(exitCode).toBe(0);
-    }
-
-    const rootPackageJson = {
-      name: "patched-github-workspace",
-      workspaces: ["packages/*"],
-    };
-    await write(packageJson, JSON.stringify(rootPackageJson));
-    await write(
-      join(packageDir, "packages", "member", "package.json"),
-      JSON.stringify({
-        name: "member",
-        version: "1.0.0",
-        dependencies: {
-          "gh-dep": "github:testowner/testrepo#aaaaaaa",
-        },
-      }),
-    );
-    await write(
-      join(packageDir, "patches", "gh-dep.patch"),
-      `diff --git a/index.js b/index.js
+  const rootPackageJson = {
+    name: "patched-github-workspace",
+    workspaces: ["packages/*"],
+  };
+  await write(packageJson, JSON.stringify(rootPackageJson));
+  await write(
+    join(packageDir, "packages", "member", "package.json"),
+    JSON.stringify({
+      name: "member",
+      version: "1.0.0",
+      dependencies: {
+        "gh-dep": "github:testowner/testrepo#aaaaaaa",
+      },
+    }),
+  );
+  await write(
+    join(packageDir, "patches", "gh-dep.patch"),
+    `diff --git a/index.js b/index.js
 index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1d 100644
 --- a/index.js
 +++ b/index.js
@@ -820,36 +818,34 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
 -console.log("original");
 +console.log("patched");
 `,
-    );
+  );
 
-    const installedIndexJs = file(join(packageDir, "packages", "member", "node_modules", "gh-dep", "index.js"));
+  const installedIndexJs = file(join(packageDir, "packages", "member", "node_modules", "gh-dep", "index.js"));
 
-    await install();
-    expect(await installedIndexJs.text()).toBe('console.log("original");\n');
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("original");\n');
 
-    // Adding the patch triggers a re-resolution; this install hung forever
-    // before the fix.
-    await write(
-      packageJson,
-      JSON.stringify({
-        ...rootPackageJson,
-        patchedDependencies: {
-          "gh-dep@github:testowner/testrepo#aaaaaaa": "patches/gh-dep.patch",
-        },
-      }),
-    );
-    await install();
-    expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
+  // Adding the patch triggers a re-resolution; this install hung forever
+  // before the fix.
+  await write(
+    packageJson,
+    JSON.stringify({
+      ...rootPackageJson,
+      patchedDependencies: {
+        "gh-dep@github:testowner/testrepo#aaaaaaa": "patches/gh-dep.patch",
+      },
+    }),
+  );
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 
-    // Removing the patch re-resolves again and rebuilds the store entry from
-    // the unpatched cache folder (the PatchInfo::Remove path, which hung the
-    // same way).
-    await write(packageJson, JSON.stringify(rootPackageJson));
-    await install();
-    expect(await installedIndexJs.text()).toBe('console.log("original");\n');
-  },
-  90_000,
-);
+  // Removing the patch re-resolves again and rebuilds the store entry from
+  // the unpatched cache folder (the PatchInfo::Remove path, which hung the
+  // same way).
+  await write(packageJson, JSON.stringify(rootPackageJson));
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("original");\n');
+}, 90_000);
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test(`isolated install with backend: ${backend}`, async () => {

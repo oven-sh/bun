@@ -37,10 +37,26 @@ int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd) {
   if (send(fd, "", 0, 0) != SOCKET_ERROR) {
     return 0;
   }
-  int err = WSAGetLastError();
-  /* WSAESHUTDOWN means our own shutdown(SD_SEND) ran; that is not a peer
-   * reset. The fin_deferred sweep probes sockets after local shutdown. */
-  return err != WSAEWOULDBLOCK && err != WSAESHUTDOWN;
+  /* Allowlist of definitely-peer-gone codes, the WSA mirror of
+   * us_internal_send_errno_is_peer_gone (socket.c). A transient failure must
+   * not count - WSAENOBUFS is documented transient-on-healthy
+   * (bsd_send_is_transient_error) - because the sweep re-probes every 4s, so
+   * a missed detection self-heals, while a false positive reset-closes a
+   * healthy paused connection. WSAESHUTDOWN is our own shutdown(SD_SEND),
+   * not the peer; the sweep probes sockets after local shutdown. */
+  switch (WSAGetLastError()) {
+  case WSAECONNRESET:
+  case WSAECONNABORTED:
+  case WSAENETRESET:
+  case WSAENOTCONN:
+  case WSAETIMEDOUT:
+  case WSAENETDOWN:
+  case WSAENETUNREACH:
+  case WSAEHOSTUNREACH:
+    return 1;
+  default:
+    return 0;
+  }
 }
 
 static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *wp) {

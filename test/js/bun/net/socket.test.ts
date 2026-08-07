@@ -3768,11 +3768,13 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via UV_FORC
           port: 0,
           socket: {
             open(s) {
-              // Send our FIN with reads parked: the poll ends up subscribed to
-              // UV_DISCONNECT only, so the peer's answering FIN is exactly the
-              // event the slow path used to never deliver (hanging teardown).
+              // Half-close (FIN) with reads parked: the poll ends up
+              // subscribed to UV_DISCONNECT only, so the peer's answering FIN
+              // is exactly the event the slow path used to never deliver
+              // (hanging teardown). end() would flush-and-close outright;
+              // shutdown() keeps the socket waiting for that FIN.
               s.pause();
-              s.end();
+              s.shutdown();
             },
             data() {},
             error(s, e) {

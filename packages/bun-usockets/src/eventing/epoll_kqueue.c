@@ -782,13 +782,16 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     kern_return_t kr = mach_port_allocate(self, MACH_PORT_RIGHT_RECEIVE, &cb->port);
 
     if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
+        // The loop is unusable without wakeup_async and the sole caller
+        // doesn't NULL-check. Crash loudly like the eventfd arm above rather
+        // than NULL-deref in the caller.
+        BUN_PANIC("mach_port_allocate() failed during loop init (mach port space exhausted?)");
     }
 
     // Insert a send right into the port since we also use this to send
     kr = mach_port_insert_right(self, cb->port, cb->port, MACH_MSG_TYPE_MAKE_SEND);
     if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
+        BUN_PANIC("mach_port_insert_right() failed during loop init");
     }
 
     // Modify the port queue size to be 1 because we are only
@@ -797,7 +800,7 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     kr = mach_port_set_attributes(self, cb->port, MACH_PORT_LIMITS_INFO, (mach_port_info_t)&limits, MACH_PORT_LIMITS_INFO_COUNT);
 
     if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
+        BUN_PANIC("mach_port_set_attributes() failed during loop init");
     }
 
     return (struct us_internal_async *) cb;
@@ -807,16 +810,24 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 void us_internal_async_close(struct us_internal_async *a) {
     struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) a;
 
+    /* kqueue keys knotes by (ident, filter) and us_internal_async_set
+     * registered with the mach port as ident - deleting by the callback
+     * pointer misses, leaving a knote that points at the freed machport_buf.
+     * The receipt is ignored: ENOENT just means the async was never set. */
     struct kevent64_s event;
-    uint64_t ptr = (uint64_t)(void*)internal_cb;
-    EV_SET64(&event, ptr, EVFILT_MACHPORT, EV_DELETE, 0, 0, (uint64_t)(void*)internal_cb, 0,0);
+    EV_SET64(&event, internal_cb->port, EVFILT_MACHPORT, EV_DELETE, 0, 0, (uint64_t)(void*)internal_cb, 0, 0);
 
     int ret;
     do {
         ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
 
-    mach_port_deallocate(mach_task_self(), internal_cb->port);
+    /* mach_port_deallocate only drops the send right inserted at creation;
+     * the receive right allocated there must be destroyed separately or
+     * every destroyed loop leaks its kernel port. */
+    mach_port_t self = mach_task_self();
+    mach_port_deallocate(self, internal_cb->port);
+    mach_port_mod_refs(self, internal_cb->port, MACH_PORT_RIGHT_RECEIVE, -1);
     us_free(internal_cb->machport_buf);
 
     /* (regular) sockets are the only polls which are not freed immediately */
@@ -847,8 +858,11 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
         ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
 
-    if (UNLIKELY(ret == -1)) {
-       abort();
+    /* With KEVENT_FLAG_ERROR_EVENTS a failed change comes back as an EV_ERROR
+     * receipt (ret == 1, errno in .data), not ret == -1. Either way the loop
+     * would be left with no cross-thread wakeup channel, so fail loudly. */
+    if (UNLIKELY(ret != 0)) {
+        BUN_PANIC("kevent64() failed to register the loop's wakeup mach port");
     }
 }
 
@@ -863,34 +877,40 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
         .msgh_id = 0,
     };
 
-    mach_msg_return_t kr = mach_msg(
-        &msg,
-        MACH_SEND_MSG | MACH_SEND_TIMEOUT,
-        msg.msgh_size,
-        0,
-        MACH_PORT_NULL,
-        0, // Fail instantly if the port is full
-        MACH_PORT_NULL
-    );
+    for (;;) {
+        mach_msg_return_t kr = mach_msg(
+            &msg,
+            MACH_SEND_MSG | MACH_SEND_TIMEOUT,
+            msg.msgh_size,
+            0,
+            MACH_PORT_NULL,
+            0, // Fail instantly if the port is full
+            MACH_PORT_NULL
+        );
 
-    switch (kr) {
-        case KERN_SUCCESS: {
-            break;
-        }
+        switch (kr) {
+            case KERN_SUCCESS: {
+                return;
+            }
 
-        // This means that the send would've blocked because the
-        // queue is full. We assume success because the port is full.
-        case MACH_SEND_TIMED_OUT: {
-            break;
-        }
+            // The queue is full (qlimit is 1), so a wakeup is already
+            // pending and the loop is guaranteed to run.
+            case MACH_SEND_TIMED_OUT: {
+                return;
+            }
 
-        // No space means it will wake up.
-        case MACH_SEND_NO_BUFFER: {
-            break;
-        }
+            // The kernel couldn't allocate the message, so nothing was
+            // queued. Returning would silently lose the wakeup and stall
+            // the loop; retry until it queues or the queue reports full.
+            case MACH_SEND_NO_BUFFER: {
+                continue;
+            }
 
-        default: {
-            break;
+            default: {
+                // MACH_SEND_INVALID_DEST and friends mean the port is gone
+                // and this loop can never be woken again.
+                BUN_PANIC("mach_msg() failed to post a loop wakeup");
+            }
         }
     }
 }

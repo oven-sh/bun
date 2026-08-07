@@ -289,8 +289,6 @@ mod _impl {
             return JSValue::create_empty_array(global_object, 0);
         }
 
-        // Shared token builder so `process.execArgv` and the worker inherit-path
-        // honoring scan see identical tokens.
         let tokens = crate::cli::worker_exec_argv::collect_process_exec_argv_tokens();
         // `defer args.deinit()` + `defer for args |*a| a.deref()`
         let args = scopeguard::guard(

@@ -73,9 +73,6 @@
 #include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/JSMap.h>
 
-// Worker execArgv / NODE_OPTIONS policy (src/runtime/cli/worker_exec_argv.rs).
-// Both return true when valid; otherwise write the ERR_WORKER_INVALID_EXEC_ARGV
-// message tail into outMessage.
 extern "C" bool Bun__Worker__validateExecArgv(WTF::StringImpl* const* argv, size_t len, BunString* outMessage);
 extern "C" bool Bun__Worker__validateWorkerNodeOptions(WTF::StringImpl* nodeOptions, BunString* outMessage);
 
@@ -353,9 +350,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 execArgv.append(str);
             });
             RETURN_IF_EXCEPTION(throwScope, {});
-            // node_worker.cc: an explicit execArgv is validated synchronously
-            // against the worker flag policy table (unknown flags, flags Bun or
-            // node cannot honour in a worker, and missing required values).
             BunString invalidExecArgv = BunStringEmpty;
             static_assert(sizeof(WTF::String) == sizeof(WTF::StringImpl*));
             if (!Bun__Worker__validateExecArgv(reinterpret_cast<WTF::StringImpl* const*>(execArgv.begin()), execArgv.size(), &invalidExecArgv)) {

@@ -106,11 +106,7 @@ pub struct WebWorker {
     /// Heap-owned by this struct; freed in `destroy()`.
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
-    /// `--expose-gc` for this worker: own execArgv wins; an inheriting
-    /// worker takes the immediate parent's value (nested workers chain).
     expose_gc: bool,
-    /// Honored options parsed once from an explicit execArgv in `create()`
-    /// (defaults for an inheriting worker); read again in `start_vm`.
     own_exec_argv_options: virtual_machine::WorkerExecArgv,
     /// Owned NUL-terminated bytes.
     name: bun_core::ZBox,
@@ -586,9 +582,6 @@ impl WebWorker {
             }
         }
 
-        // execArgv honouring: an explicit list contributes its preload flags
-        // (raw specifiers — `load_preloads` resolves worker-side, so a bad path
-        // fails at runtime like node) and `--expose-gc`; inherit chains the parent.
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         let mut own_exec_argv_options = virtual_machine::WorkerExecArgv::default();
         let expose_gc = if inherit_exec_argv {
@@ -936,9 +929,6 @@ impl WebWorker {
         // and passes the owned struct as `args` to the new VM.
         let mut transform_options = (*parent.transpiler.options.transform_options).clone();
 
-        // Honored execArgv options were parsed once in `create()`; an explicit
-        // list — even an empty one — replaces the parent's, as node resets to
-        // fresh defaults whenever execArgv is given (node_worker.cc).
         let own_exec_argv = self.exec_argv();
         let exec_argv = &self.own_exec_argv_options;
         if let Some(allow_addons) = exec_argv.allow_addons {
@@ -1063,9 +1053,6 @@ impl WebWorker {
                 crate::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm_ref.jsc_vm });
             }
 
-            // `--expose-gc` is per-global in JSC, so a worker can honour its
-            // own execArgv (or the inherited setting) independently of the
-            // main thread — same helper `add_conditional_globals` uses.
             if self.expose_gc {
                 crate::cpp::JSC__JSGlobalObject__addGc(vm_ref.global());
             }

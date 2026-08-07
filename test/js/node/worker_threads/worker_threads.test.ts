@@ -368,8 +368,6 @@ describe("execArgv option", async () => {
   });
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 
-  // Validation below matches node_worker.cc: unknown flags, flags a worker
-  // cannot use, and missing required values throw ERR_WORKER_INVALID_EXEC_ARGV.
   it("throws ERR_WORKER_INVALID_EXEC_ARGV for unknown flags", () => {
     let err: any;
     try {
@@ -435,10 +433,6 @@ describe("execArgv option", async () => {
   });
 
   it("accepts Bun run-surface flags in execArgv and NODE_OPTIONS", async () => {
-    // Next.js forwards `--bun` from process.execArgv into its build workers'
-    // NODE_OPTIONS; rejecting it broke `bun --bun next build`. `--silent` and
-    // `--cwd` land in `process.execArgv` the same way (create_exec_argv reads
-    // the full AUTO_PARAMS surface), so they must round-trip too.
     const workers = [
       new Worker("1", { eval: true, execArgv: ["--bun"] }),
       new Worker("1", { eval: true, env: { NODE_OPTIONS: "--bun" } }),
@@ -460,8 +454,6 @@ describe("execArgv option", async () => {
   });
 
   it("SHARE_ENV process.env validates descriptors like node", async () => {
-    // Founding a SHARE_ENV tree permanently swaps the founding thread's
-    // process.env; run in a subprocess so the test runner stays untouched.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -502,9 +494,6 @@ describe("execArgv option", async () => {
   });
 
   it("a bare optional-value flag does not swallow the next flag", async () => {
-    // `--config` takes a value only via `=` (OneOptional in bun_clap), so the
-    // `-r <p>` after it must stay a preload and the round-trip must accept
-    // the reported execArgv.
     using dir = tempDir("worker-execargv-optval", {
       "preload-o.js": "globalThis.__o = 'O';",
       "main.js": `console.log(JSON.stringify(process.execArgv));
@@ -529,9 +518,6 @@ describe("execArgv option", async () => {
   });
 
   it("bun's own glued short flags round-trip through process.execArgv", async () => {
-    // bun_clap accepts -r<path> at the CLI (node's CLI rejects it), so
-    // process.execArgv normalizes it to the separate-token form node's
-    // validator shape accepts; the verbatim glued token would throw.
     using dir = tempDir("worker-execargv-roundtrip", {
       "preload-rt.js": "globalThis.__rt = 'R';",
       "main.js": `console.log(JSON.stringify(process.execArgv));
@@ -544,14 +530,11 @@ describe("execArgv option", async () => {
     const cases: [string[], string[]][] = [
       [[`-r${p}`], ["-r", p]],
       [[`-r=${p}`], ["-r", p]],
-      // chained boolean short before the value-taking short, glued value
       [[`-br${p}`], ["-b", "-r", p]],
-      // chained, value in the next argv token
       [
         ["-br", p],
         ["-b", "-r", p],
       ],
-      // same round-trip on the `bun run` entry point
       [
         ["run", `-r${p}`],
         ["-r", p],
@@ -575,9 +558,6 @@ describe("execArgv option", async () => {
   });
 
   it("rejects a glued short-flag value like node", async () => {
-    // node v26.3.0 rejects -r<path> and -r=<path> in execArgv with the whole
-    // token in the message (its CLI rejects glued shorts too); only the
-    // separate-token form is valid.
     using dir = tempDir("worker-execargv-glued", { "preload-g.js": "globalThis.__glued = 'G';" });
     const p = join(String(dir), "preload-g.js");
     for (const form of [`-r${p}`, `-r=${p}`]) {
@@ -599,9 +579,6 @@ describe("execArgv option", async () => {
   });
 
   it("accepts node's whole-token short aliases", async () => {
-    // `-pe` is emitted verbatim into process.execArgv (process.test.js pins
-    // it); node's option parser recognizes it as a whole-token alias, so the
-    // worker validator accepts it too.
     const w = new Worker("require('worker_threads').parentPort.postMessage(process.execArgv);", {
       eval: true,
       execArgv: ["-pe", "1"],
@@ -611,11 +588,6 @@ describe("execArgv option", async () => {
   });
 
   it("rejects glued short flags in NODE_OPTIONS like node", async () => {
-    // node v26.3.0 rejects the glued forms with the whole token in the
-    // message; the space-separated form is accepted. Relative paths only:
-    // NODE_OPTIONS goes through the quote-aware tokenizer, which treats
-    // backslash as an escape, so a Windows absolute path would be echoed
-    // back without its separators.
     for (const form of ["-r./nope.js", "-r=./nope.js", "-e1+1"]) {
       let err: any;
       try {
@@ -635,8 +607,6 @@ describe("execArgv option", async () => {
   });
 
   it("rejects chained or glued boolean short flags like node", () => {
-    // node rejects any short token it cannot match whole; there is no
-    // chaining in worker execArgv validation (verified on v26.3.0).
     for (const bad of ["-br./nope.js", "-bz", "-b=x"]) {
       let err: any;
       try {
@@ -696,9 +666,6 @@ describe("execArgv option", async () => {
   });
 
   it("inheriting workers take --expose-gc behind a value-taking Bun flag", async () => {
-    // `--cwd <dir>` is outside RUNTIME_PARAMS_/TRANSPILER_PARAMS_; if the
-    // scanner does not know its arity it treats the directory as the first
-    // positional and never reaches --expose-gc.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -716,9 +683,6 @@ describe("execArgv option", async () => {
   });
 
   it("inheriting workers take --expose-gc behind a chained short whose value is the next token", async () => {
-    // `-br <path>` is a bun_clap short chain with the value in the next argv
-    // token; the inherit-path scanner sees the same normalized stream as
-    // process.execArgv, so the following --expose-gc is still reached.
     using dir = tempDir("worker-inherit-chained-short", { "noop.js": "" });
     await using proc = Bun.spawn({
       cmd: [

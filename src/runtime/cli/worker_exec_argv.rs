@@ -1,6 +1,4 @@
 //! Worker `execArgv` policy — parity with <https://github.com/nodejs/node/blob/main/src/node_worker.cc>.
-//! Accept set = Bun's `AUTO_PARAMS` ∪ `NODE_FLAGS`; Bun-only flags and per-worker
-//! `--expose-gc`/`--stack-trace-limit` are deliberate supersets of node.
 
 use std::sync::LazyLock;
 
@@ -9,8 +7,6 @@ use bun_jsc::virtual_machine::WorkerExecArgv;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ValueMode {
-    /// Boolean flag; a `--flag=value` form is tolerated (node accepts
-    /// `--no-warnings=x`).
     None,
     /// Value only via `--flag=value`; a following token is not consumed.
     Optional,
@@ -31,8 +27,6 @@ pub struct FlagSpec {
     pub value: ValueMode,
     pub policy: Policy,
     /// Accepted inside a worker's explicit `env: { NODE_OPTIONS }` check.
-    /// Mirrors node: per-isolate kAllowedInEnvvar options and the V8 options
-    /// node registers as allowed-in-NODE_OPTIONS.
     pub env: bool,
 }
 
@@ -44,15 +38,10 @@ const ALLOW: FlagSpec = spec(ValueMode::None, Policy::Allow, true);
 const ALLOW_ARG: FlagSpec = spec(ValueMode::Required, Policy::Allow, true);
 const ALLOW_NO_ENV: FlagSpec = spec(ValueMode::None, Policy::Allow, false);
 const ALLOW_ARG_NO_ENV: FlagSpec = spec(ValueMode::Required, Policy::Allow, false);
-/// V8 flags: rejected in worker execArgv, silently tolerated in NODE_OPTIONS.
 const V8_REJECT: FlagSpec = spec(ValueMode::None, Policy::Reject, true);
 const V8_REJECT_ARG: FlagSpec = spec(ValueMode::Required, Policy::Reject, true);
 
-/// Node options that are not in Bun's runtime param tables (or that need a
-/// different worker policy than the table default). Attributes follow
-/// node v26.3.0 `node_options.cc` (verified empirically; see module doc).
 static NODE_FLAGS: &[(&[u8], FlagSpec)] = &[
-    // ── env/isolate options node workers accept; no-op in Bun unless noted ──
     (b"--no-warnings", ALLOW),
     (b"--trace-warnings", ALLOW),
     (b"--pending-deprecation", ALLOW),
@@ -134,14 +123,12 @@ static NODE_FLAGS: &[(&[u8], FlagSpec)] = &[
     (b"--heap-prof-interval", ALLOW_ARG),
     (b"--tls-keylog", ALLOW_ARG),
     (b"-C", ALLOW_ARG),
-    // ── node workers accept these, but they are not NODE_OPTIONS material ──
     (b"--test", ALLOW_NO_ENV),
     (b"--check", ALLOW_NO_ENV),
     (b"--interactive", ALLOW_NO_ENV),
     (b"--env-file", ALLOW_ARG_NO_ENV),
     (b"--env-file-if-exists", ALLOW_ARG_NO_ENV),
     (b"--watch-path", ALLOW_ARG_NO_ENV),
-    // ── V8 flags ──
     (b"--max-old-space-size", V8_REJECT_ARG),
     (b"--max-semi-space-size", V8_REJECT_ARG),
     (b"--stack-size", V8_REJECT_ARG),
@@ -156,8 +143,6 @@ static NODE_FLAGS: &[(&[u8], FlagSpec)] = &[
     (b"--huge-max-old-generation-size", V8_REJECT),
 ];
 
-/// Bun runtime-table flags that are process-global in Bun AND rejected by
-/// node workers — the table-derived Allow default would be a lie for these.
 static BUN_TABLE_REJECTS: &[&[u8]] = &[
     b"--title",
     b"--zero-fill-buffers",
@@ -165,8 +150,6 @@ static BUN_TABLE_REJECTS: &[&[u8]] = &[
     b"--use-bundled-ca",
 ];
 
-/// env-policy overrides for table-derived entries: node reports these as
-/// "not allowed in NODE_OPTIONS" in the worker env check.
 static ENV_DISALLOWED: &[&[u8]] = &[b"--eval", b"-e", b"--print", b"-p"];
 
 fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
@@ -175,9 +158,6 @@ fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
         let mut put = |key: Vec<u8>, spec: FlagSpec| {
             bun_core::handle_oom(map.put(&key, spec));
         };
-        // AUTO_PARAMS first (covers everything `create_exec_argv` can emit —
-        // tooling like Next.js forwards process.execArgv into worker execArgv/
-        // NODE_OPTIONS), then NODE_FLAGS overrides.
         for param in crate::cli::arguments::AUTO_PARAMS.iter() {
             let value = match param.takes_value {
                 bun_clap::Values::None => ValueMode::None,
@@ -207,9 +187,6 @@ fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
         for &(name, spec) in NODE_FLAGS {
             put(name.to_vec(), spec);
         }
-        // `create_exec_argv` emits NODE_SHORT_ALIASES tokens verbatim (`-pe`);
-        // node's option parser recognizes them as whole-token aliases, so
-        // accept them with the target's spec.
         for &(from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
             if let Some(&s) = map.get(to) {
                 bun_core::handle_oom(map.put(from, s));
@@ -220,9 +197,6 @@ fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
     &MAP
 }
 
-/// Raw process argv → canonical `process.execArgv` tokens: skip argv[0]/`run`,
-/// split bun_clap glued/chained shorts into node-shape separate tokens, stop at
-/// the script name. Shared by `process.execArgv` and the inherit-path scan.
 pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
     fn short_takes_value(c: u8) -> Option<bun_clap::Values> {
         crate::cli::arguments::AUTO_PARAMS
@@ -230,8 +204,6 @@ pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
             .find(|p| p.names.short == Some(c))
             .map(|p| p.takes_value)
     }
-    /// Normalize a chained/glued short token. `None` → not a valid chain (push
-    /// verbatim); `Some(needs_next)` → pushed, value is the next argv token.
     fn push_normalized_short_token(arg: &[u8], out: &mut Vec<Vec<u8>>) -> Option<bool> {
         let mut flags: Vec<u8> = Vec::new();
         let mut value: Option<&[u8]> = None;
@@ -243,15 +215,11 @@ pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
             match takes {
                 bun_clap::Values::None => {
                     if next < arg.len() && arg[next] == b'=' {
-                        // bun_clap errors on `-b=x` at launch; unreachable in a
-                        // running process, keep the token verbatim.
                         return None;
                     }
                     flags.push(arg[j]);
                     j = next;
                 }
-                // A glued remainder after an optional-value short is dropped
-                // by bun_clap; the canonical form is the bare flag.
                 bun_clap::Values::OneOptional => {
                     flags.push(arg[j]);
                     break;
@@ -281,8 +249,6 @@ pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
         Some(needs_next_value)
     }
 
-    // AUTO_PARAMS flags whose value bun_clap takes from the NEXT token (One/Many
-    // only; OneOptional takes a value solely via `=`) — decides value vs. script.
     static TAKES_VALUE: LazyLock<bun_collections::StringSet> = LazyLock::new(|| {
         let mut set = bun_collections::StringSet::new();
         for param in crate::cli::arguments::AUTO_PARAMS.iter() {
@@ -309,20 +275,15 @@ pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
     let mut seen_run = false;
     let mut prev_takes_value = false;
     let mut iter = argv.iter();
-    let _ = iter.next(); // argv[0]
+    let _ = iter.next();
     for arg in iter {
         let arg: &[u8] = arg;
-        // bun_clap consumes the next token as a One/Many value unconditionally
-        // (no leading-`-` check), so a `-`-prefixed value is still a value,
-        // not a new flag to normalize.
         if prev_takes_value {
             out.push(arg.to_vec());
             prev_takes_value = false;
             continue;
         }
         if arg.len() >= 1 && arg[0] == b'-' {
-            // NODE_SHORT_ALIASES (`-pe`) are substituted pre-clap on the bun/node
-            // entry points — keep verbatim, resolve takes-value via the target.
             let node_alias_to = crate::cli::arguments::NODE_SHORT_ALIASES
                 .iter()
                 .find_map(|(from, to)| (*from == arg).then_some(*to));
@@ -335,8 +296,6 @@ pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
                 Some(needs_next) => needs_next,
                 None => {
                     out.push(arg.to_vec());
-                    // The aliases only apply on the bun/node entry points
-                    // (Arguments::parse scopes them the same way).
                     TAKES_VALUE.contains(arg)
                         || (!seen_run && node_alias_to.is_some_and(|to| TAKES_VALUE.contains(to)))
                 }
@@ -347,21 +306,17 @@ pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
             seen_run = true;
             continue;
         }
-        // we hit the script name
         break;
     }
     out
 }
 
-/// Node normalizes `_` to `-` in long option names.
 fn normalized(name: &[u8]) -> Vec<u8> {
     name.iter()
         .map(|&b| if b == b'_' { b'-' } else { b })
         .collect()
 }
 
-/// `--x=v` → (`--x`, `Some(v)`). Shorts are never split: node rejects glued
-/// short values (`-r./s.js`) with the whole token in the message.
 fn split_token(tok: &[u8]) -> (&[u8], Option<&[u8]>) {
     if tok.starts_with(b"--") {
         if let Some(pos) = bun_core::strings::index_of_char_usize(tok, b'=') {
@@ -375,7 +330,6 @@ fn split_token(tok: &[u8]) -> (&[u8], Option<&[u8]>) {
 pub struct ScanOutcome {
     pub honored: WorkerExecArgv,
     /// `<flag> requires an argument` entries; take precedence over `invalid`
-    /// in the ERR_WORKER_INVALID_EXEC_ARGV message (node_worker.cc).
     pub errors: Vec<Vec<u8>>,
     /// Raw rejected tokens.
     pub invalid: Vec<Vec<u8>>,
@@ -394,9 +348,6 @@ impl ScanOutcome {
     }
 }
 
-/// Scan an execArgv token list with node's worker rules: stop at `--`/`-`/the
-/// first positional; classify each flag; collect the honored per-worker
-/// options along the way.
 pub fn scan_exec_argv<T: AsRef<[u8]>>(tokens: &[T]) -> ScanOutcome {
     let map = table_map();
     let mut out = ScanOutcome::default();
@@ -416,9 +367,6 @@ pub fn scan_exec_argv<T: AsRef<[u8]>>(tokens: &[T]) -> ScanOutcome {
         };
         if spec.policy == Policy::Reject {
             out.invalid.push(tok.to_vec());
-            // A rejected flag still owns its value token (node consumes it by
-            // arity); skip it so scanning continues at the next flag and the
-            // error lists every invalid flag.
             if spec.value == ValueMode::Required && eq_value.is_none() && i < tokens.len() {
                 i += 1;
             }
@@ -442,7 +390,6 @@ pub fn scan_exec_argv<T: AsRef<[u8]>>(tokens: &[T]) -> ScanOutcome {
             },
             _ => eq_value.map(<[u8]>::to_vec),
         };
-        // ── honored per-worker options ──
         match &key[..] {
             b"--no-addons" => saw_no_addons = true,
             b"--use-system-ca" => out.honored.use_system_ca = Some(true),
@@ -463,15 +410,10 @@ pub fn scan_exec_argv<T: AsRef<[u8]>>(tokens: &[T]) -> ScanOutcome {
             _ => {}
         }
     }
-    // An explicit execArgv resets to fresh defaults (node_worker.cc), so
-    // allow_addons is always set: `--no-addons` wins, else the default true.
     out.honored.allow_addons = Some(!saw_no_addons);
     out
 }
 
-/// Honored options for an inheriting worker, derived like `create_exec_argv`
-/// (standalone: `compile_exec_argv`+`BUN_OPTIONS`; else process argv). Cached.
-/// Preloads/cpu-prof excluded — the parent VM already carries both.
 pub fn scan_process_exec_argv() -> WorkerExecArgv {
     static CACHED: LazyLock<WorkerExecArgv> = LazyLock::new(|| {
         let mut tokens: Vec<Vec<u8>> = Vec::new();
@@ -504,8 +446,6 @@ pub fn scan_process_exec_argv() -> WorkerExecArgv {
     });
     CACHED.clone()
 }
-
-// ═══════════════════════════ C++ entry points ═══════════════════════════
 
 /// `WTF::StringImpl*[]` → owned UTF-8 tokens (nulls skipped); shared by validation + honoring.
 /// # Safety
@@ -558,8 +498,6 @@ pub unsafe extern "C" fn Bun__Worker__validateWorkerNodeOptions(
     let value = unsafe { &*node_options }.to_owned_slice_z();
     let value = value.as_bytes();
 
-    // `env_loader().map` is the OS-startup snapshot (runtime process.env writes
-    // don't reach it), so a miss just re-validates against the full table.
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
     if let Some(parent) = vm.env_loader().map.get(b"NODE_OPTIONS") {
         if parent == value {
@@ -567,7 +505,6 @@ pub unsafe extern "C" fn Bun__Worker__validateWorkerNodeOptions(
         }
     }
 
-    // Quote-aware tokenization, same routine BUN_OPTIONS uses.
     let mut tokens: Vec<Box<bun_core::ZStr>> =
         vec![<Box<bun_core::ZStr> as bun_core::OptionsEnvArg>::from_slice(b"")];
     bun_core::append_options_env(value, &mut tokens);
@@ -587,20 +524,16 @@ pub unsafe extern "C" fn Bun__Worker__validateWorkerNodeOptions(
     };
 
     let map = table_map();
-    let mut i = 1usize; // [0] is the placeholder
+    let mut i = 1usize;
     while i < tokens.len() {
         // `OptionsEnvArg for Box<ZStr>` keeps the trailing NUL in the slice
         // metadata (see util.rs) — strip it before classifying.
         let tok = tokens[i].as_bytes();
         let tok = tok.strip_suffix(b"\0").unwrap_or(tok);
         i += 1;
-        // node's env branch only surfaces option errors; bare positionals in
-        // NODE_OPTIONS pass through the worker check untouched.
         if !tok.starts_with(b"-") || tok == b"-" || tok == b"--" {
             continue;
         }
-        // A quoted value can be glued to its flag in one token
-        // (`--flag "a b"`); split it off so the name lookup still works.
         let (tok, glued_value) = match tok.iter().position(u8::is_ascii_whitespace) {
             Some(pos) if tok.starts_with(b"--") => (&tok[..pos], true),
             _ => (tok, false),
@@ -612,8 +545,6 @@ pub unsafe extern "C" fn Bun__Worker__validateWorkerNodeOptions(
             _ => return fail(not_allowed(name, eq_value.is_some())),
         };
         if spec.value == ValueMode::Required && !glued_value && eq_value.is_none() {
-            // node takes the value from `=`/quoting or a following non-flag
-            // token; a following flag is NOT consumed (verified on v26.3.0).
             let next_is_value = tokens.get(i).is_some_and(|t| {
                 let t = t.as_bytes();
                 let t = t.strip_suffix(b"\0").unwrap_or(t);

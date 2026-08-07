@@ -9,8 +9,6 @@ const process_sleep = resolve(import.meta.dir, "process-sleep.js");
 it.skipIf(!isWindows)("a rejected process.env defineProperty leaves no phantom key", () => {
   const key = "BUN_TEST_PHANTOM_DEFINE";
   expect(key in process.env).toBe(false);
-  // Partial data descriptors are rejected (ERR_INVALID_OBJECT_DEFINE_PROPERTY);
-  // the windowsEnv proxy must not record the key before the define runs.
   expect(() => Object.defineProperty(process.env, key, { value: "42" })).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" }),
   );
@@ -33,11 +31,6 @@ it.skipIf(!isWindows)("a rejected process.env defineProperty leaves no phantom k
 it.skipIf(!isWindows)(
   "process.env defineProperty enumerates special-accessor keys and rejects accessor descriptors",
   async () => {
-    // HTTP_PROXY and friends exist on the underlying env object as DontEnum
-    // CustomAccessors even when unset; the defineProperty trap must use the
-    // envMapList predicate (like the set trap) so a first-time define still
-    // makes the key enumerable. Run in a subprocess with proxy vars stripped so
-    // the var is guaranteed absent from the OS env block at startup.
     const env = { ...bunEnv };
     for (const k of Object.keys(env)) if (/^(https?|no)_proxy$/i.test(k)) delete env[k];
     await using proc = Bun.spawn({
@@ -209,8 +202,6 @@ it("process.env defineProperty matches assignment semantics", () => {
     }),
   ).toThrow(TypeError);
 
-  // ...the descriptor is validated before the key is coerced, so a symbol
-  // key with an invalid descriptor reports the descriptor error...
   expect(() => Object.defineProperty(process.env, Symbol("env"), {})).toThrow(
     expect.objectContaining({
       code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
@@ -243,8 +234,6 @@ it("process.env defineProperty matches assignment semantics", () => {
 });
 
 it("process.env refuses [[PreventExtensions]] like node", () => {
-  // Node throws at the [[PreventExtensions]] step (plain TypeError, no code)
-  // and the env stays extensible, so freeze/seal must not leave it locked.
   for (const op of ["preventExtensions", "freeze", "seal"]) {
     let err;
     try {
@@ -1640,8 +1629,6 @@ it("process.execArgv", async () => {
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
     ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
     ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
-    // a `-`-prefixed value is still a value (bun_clap consumes it by arity),
-    // not a short chain to normalize
     ["--define -d:1 index.ts", ["--define", "-d:1"], []],
   ];
 

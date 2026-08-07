@@ -608,8 +608,6 @@ public:
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
-    // Node's env stores refuse [[PreventExtensions]], so freeze/seal throw and
-    // the map stays extensible.
     static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*)
     {
         return false;
@@ -734,9 +732,6 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* uid = propertyName.uid();
-    // Node's EnvSetter coerces the key, so a symbol key throws the plain
-    // conversion TypeError, same as defineOwnProperty below and the other
-    // env maps.
     if (propertyName.isSymbol()) {
         throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
         return false;
@@ -820,8 +815,6 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
         return false;
     }
 
-    // Node's EnvDefiner also requires a [[Value]] plus all three attributes true,
-    // on every env store, like the regular map.
     if (!descriptor.value()
         || !descriptor.writablePresent() || !descriptor.writable()
         || !descriptor.enumerablePresent() || !descriptor.enumerable()
@@ -830,8 +823,6 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
         return false;
     }
 
-    // Node coerces the key to a string after validating the descriptor, so a
-    // symbol key throws the plain conversion TypeError (no code).
     if (propertyName.isSymbol()) {
         throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
         return false;
@@ -1136,8 +1127,6 @@ JSValue wrapInWindowsEnvProxy(Zig::GlobalObject* globalObject, JSC::JSObject* ob
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // A worker's env is a thread-local snapshot (node semantics): its writes
-    // must not reach the process-wide OS env block, so the sink is a no-op.
     auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), syncOSEnv ? jsEditWindowsEnvVar : jsNoopEditWindowsEnvVar, ImplementationVisibility::Public);
 
     JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);

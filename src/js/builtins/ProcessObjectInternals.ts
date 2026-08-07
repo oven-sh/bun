@@ -599,8 +599,6 @@ export function windowsEnv(
       return envMapList.slice();
     },
     preventExtensions() {
-      // Node's env stores refuse [[PreventExtensions]], so freeze/seal throw
-      // and the env stays extensible (same as the POSIX exotic map).
       return false;
     },
   });

@@ -592,11 +592,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 }
 
 #if OS(WINDOWS)
-                // Same shape as createEnvironmentVariablesMap: an uppercased-key
-                // target wrapped in the windowsEnv Proxy (case-insensitivity,
-                // set/defineProperty validation), with the original-case names in
-                // keyArray for enumeration. Writes stay thread-local (snapshot
-                // semantics), so the OS-env sink is disabled.
                 JSC::JSObject* env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
                 JSC::JSArray* keyArray = JSC::constructEmptyArray(globalObject, nullptr, size);
                 scope.assertNoException();

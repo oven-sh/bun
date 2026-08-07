@@ -45,8 +45,6 @@ public:
     static bool putByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
     static bool defineOwnProperty(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
     static bool deleteProperty(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
-    // Node's env stores refuse [[PreventExtensions]], so freeze/seal throw and
-    // the map stays extensible.
     static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*)
     {
         return false;
@@ -62,10 +60,6 @@ private:
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
 #if OS(WINDOWS)
-// Wrap a populated env target (uppercased keys) + original-case key array in
-// the windowsEnv Proxy that carries the case-insensitivity and
-// set/defineProperty validation. `syncOSEnv` false keeps writes thread-local
-// (worker env snapshots, node semantics).
 JSC::JSValue wrapInWindowsEnvProxy(Zig::GlobalObject* globalObject, JSC::JSObject* object, JSC::JSArray* keyArray, bool syncOSEnv);
 #endif
 

@@ -31,10 +31,14 @@ function collectRules(steps: unknown, rules: RetryRule[] = []): RetryRule[] {
   for (const step of steps as Record<string, any>[]) {
     if (step.group) collectRules(step.steps, rules);
     const automatic = step.retry?.automatic;
-    if (Array.isArray(automatic)) {
-      for (const rule of automatic) {
-        rules.push({ stepKey: step.key ?? step.label ?? "<unknown>", ...rule });
-      }
+    // Buildkite also accepts `automatic: true` (blanket retry, the worst
+    // case this lint exists for) and a bare rule object; normalize both so
+    // no stanza shape can slip past the assertions unseen. `false`/absent
+    // disables automatic retry and contributes nothing.
+    if (automatic === undefined || automatic === false) continue;
+    const ruleList = Array.isArray(automatic) ? automatic : automatic === true ? [{}] : [automatic];
+    for (const rule of ruleList) {
+      rules.push({ stepKey: step.key ?? step.label ?? "<unknown>", ...rule });
     }
   }
   return rules;
@@ -99,9 +103,10 @@ test("every automatic retry rule in the generated pipeline is scoped by signal_r
     const allowlisted = rules.filter(rule => rule.stepKey === "binary-size");
     expect(allowlisted).toEqual([{ stepKey: "binary-size", exit_status: "*", limit: 2 }]);
 
-    const unscoped = rules.filter(
-      rule => rule.stepKey !== "binary-size" && "exit_status" in rule && !("signal_reason" in rule),
-    );
+    // A rule without `signal_reason` matches `cancel` (timeout kills)
+    // whether or not it names an exit_status; `{ limit: 2 }` or a blanket
+    // `automatic: true` is as unscoped as #32072's rule was.
+    const unscoped = rules.filter(rule => rule.stepKey !== "binary-size" && !("signal_reason" in rule));
     expect(unscoped).toEqual([]);
 
     // Retries hold an agent for up to the full step timeout; keep them bounded.

@@ -160,8 +160,11 @@ export function getStdinStream(
     source?.updateRef?.(false);
   }
 
-  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(null, { fd, autoClose: false });
+  // tty.ReadStream takes the fd as its first argument; fs.ReadStream takes a
+  // path and reads the fd from options.
+  const stream = isTTY
+    ? new (require("node:tty").ReadStream)(fd)
+    : new (require("node:fs").ReadStream)(null, { fd, autoClose: false });
 
   const originalOn = stream.on;
 

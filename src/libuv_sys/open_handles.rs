@@ -85,7 +85,10 @@ pub(super) fn remove(handle: *mut uv_handle_t) {
 pub fn add_file_reader(owner: *mut c_void, close: CloseViaOwner) {
     OPEN.with(|o| {
         let mut o = o.borrow_mut();
-        if let Some(e) = o.iter_mut().find(|e| e.kind == Kind::FileRead && e.owner == owner) {
+        if let Some(e) = o
+            .iter_mut()
+            .find(|e| e.kind == Kind::FileRead && e.owner == owner)
+        {
             e.close_via_owner = Some(close);
             return;
         }
@@ -101,7 +104,10 @@ pub fn add_file_reader(owner: *mut c_void, close: CloseViaOwner) {
 pub fn remove_file_reader(owner: *mut c_void) {
     OPEN.with(|o| {
         let mut o = o.borrow_mut();
-        if let Some(i) = o.iter().position(|e| e.kind == Kind::FileRead && e.owner == owner) {
+        if let Some(i) = o
+            .iter()
+            .position(|e| e.kind == Kind::FileRead && e.owner == owner)
+        {
             o.swap_remove(i);
         }
     });

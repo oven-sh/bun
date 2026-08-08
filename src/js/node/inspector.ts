@@ -36,11 +36,28 @@ const waitForNodeInspectorConnection = $newCppFunction(
 );
 const postNodeInspectorControl = $newCppFunction("BunDebugger.cpp", "jsFunction_postNodeInspectorControl", 1);
 const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeNodeInspector", 0);
+const nativeGetNodeInspectorUrl = $newCppFunction("BunDebugger.cpp", "jsFunction_getNodeInspectorUrl", 0);
 
-let activeInspectorUrl: string | undefined;
+// The ws:// URL published by inspector.open() or CLI --inspect, or undefined.
+// nodeInspectorState is process-global, so a Worker must not read or act on the
+// main thread's server: Node's per-worker inspectors are independent (and Bun
+// does not support them yet).
+const getNodeInspectorUrl = Bun.isMainThread ? nativeGetNodeInspectorUrl : () => undefined;
+
+// Reflect the CLI --inspect port in process.debugPort, like Node does at
+// bootstrap (Bun's debugPort is otherwise a static 9229).
+{
+  const initialUrl = getNodeInspectorUrl();
+  if (typeof initialUrl === "string") {
+    try {
+      const port = new URL(initialUrl).port;
+      if (port) process.debugPort = Number(port);
+    } catch {}
+  }
+}
 
 function open(port?: number, host?: string, wait?: boolean) {
-  if (activeInspectorUrl !== undefined) {
+  if (getNodeInspectorUrl() !== undefined) {
     throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
   }
   if (!Bun.isMainThread) {
@@ -79,18 +96,11 @@ function open(port?: number, host?: string, wait?: boolean) {
     return disposable;
   }
   if (resolvedUrl === null) {
-    // A prior inspector.open() success is caught by the top guard above, so
-    // null here means the debugger thread was started outside node:inspector
-    // (CLI --inspect / BUN_INSPECT). That server speaks the JSC protocol and
-    // never registered a controlCallback, so inspector.close() cannot shut it
-    // down; the default ERR_INSPECTOR_ALREADY_ACTIVATED message would send the
-    // user to a no-op close().
-    throw $ERR_INSPECTOR_ALREADY_ACTIVATED(
-      "An inspector was already started via --inspect and cannot be reopened from node:inspector",
-    );
+    // The top guard above catches a listening server; null here means a
+    // debugger thread exists without one (BUN_INSPECT connect-mode).
+    throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
   }
 
-  activeInspectorUrl = resolvedUrl;
   // Node writes the resolved port back so process.debugPort reflects it after
   // open(0) picks an ephemeral port.
   try {
@@ -106,22 +116,24 @@ function open(port?: number, host?: string, wait?: boolean) {
 }
 
 function close() {
-  if (activeInspectorUrl === undefined) {
+  if (!Bun.isMainThread) {
+    throw $ERR_WORKER_UNSUPPORTED_OPERATION("inspector.close() is not supported in workers");
+  }
+  if (getNodeInspectorUrl() === undefined) {
     return;
   }
   // Sends the "close" control message and blocks until the debugger thread has
   // stopped the server, so the port is already refused when close() returns.
   closeNodeInspector();
-  activeInspectorUrl = undefined;
 }
 
 function url() {
   // https://nodejs.org/api/inspector.html#inspectorurl
-  return activeInspectorUrl;
+  return getNodeInspectorUrl();
 }
 
 function waitForDebugger() {
-  if (activeInspectorUrl === undefined) {
+  if (getNodeInspectorUrl() === undefined) {
     throw $ERR_INSPECTOR_NOT_ACTIVE();
   }
   waitForNodeInspectorConnection();
@@ -471,7 +483,7 @@ class Session extends EventEmitter {
     // Forwarded Debugger.* state (breakpoints etc.) lives on a shared backend
     // on the debugger thread; release it so a disconnected session cannot keep
     // pausing the process, matching Node's disconnect() contract.
-    if (this.#forwardedDebugger && activeInspectorUrl !== undefined) {
+    if (this.#forwardedDebugger && getNodeInspectorUrl() !== undefined) {
       postNodeInspectorControl(JSON.stringify({ type: "session-disconnect" }));
     }
     this.#forwardedDebugger = false;
@@ -648,7 +660,7 @@ class Session extends EventEmitter {
       case "Debugger.setSkipAllPauses":
       case "Debugger.setAsyncCallStackDepth":
       case "Debugger.setBlackboxPatterns": {
-        if (activeInspectorUrl === undefined) {
+        if (getNodeInspectorUrl() === undefined) {
           return $ERR_INSPECTOR_COMMAND(
             `-32000: Inspector method "${method}" requires an active inspector (call inspector.open() first)`,
           );

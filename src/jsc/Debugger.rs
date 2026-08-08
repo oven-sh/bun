@@ -198,10 +198,29 @@ impl Debugger {
             return;
         };
         bun_analytics::features::debugger.fetch_add(1, Ordering::Relaxed);
-        if !dbg.must_block_until_connected {
+        // End the `&mut Debugger` borrow before the futex wait: `start()` reads
+        // the same struct from the debugger thread while this thread is parked.
+        let (ctx_id, wait, must_block) = (
+            dbg.script_execution_context_id,
+            dbg.wait_for_connection,
+            dbg.must_block_until_connected,
+        );
+
+        // Always wait for the debugger thread to finish `internal/debugger.ts`
+        // (which publishes the inspector URL) before user code runs; `start()`
+        // clears this after it has. Node's `--inspect` is synchronous too.
+        bun_core::scoped_log!(debugger, "spin");
+        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
+            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
+        }
+
+        // Install Bun's inspector controller before any client can connect to
+        // JSC's default one; later calls hit the `bunControllerInstalled` guard.
+        Bun__ensureDebugger(ctx_id, wait != Wait::Off);
+
+        if !must_block {
             return;
         }
-        let (ctx_id, wait) = (dbg.script_execution_context_id, dbg.wait_for_connection);
         // Reset `must_block_until_connected` on every exit path.
         let _reset = scopeguard::guard((), |()| {
             if let Some(d) = this.debugger_mut() {
@@ -209,12 +228,6 @@ impl Debugger {
             }
         });
 
-        bun_core::scoped_log!(debugger, "spin");
-        // `FUTEX_ATOMIC` starts at 0 and nothing ever stores `1` before this
-        // load, so this loop is a no-op on first call.
-        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
-            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
-        }
         if bun_core::Environment::ENABLE_LOGS {
             bun_core::scoped_log!(
                 debugger,
@@ -228,8 +241,6 @@ impl Debugger {
                 }
             );
         }
-
-        Bun__ensureDebugger(ctx_id, wait != Wait::Off);
 
         // Sleep up to 30ms for automatic inspection.
         const WAIT_FOR_CONNECTION_DELAY_MS: i64 = 30;
@@ -383,6 +394,9 @@ impl Debugger {
 
         if !this_ref.has_started_debugger {
             this_ref.as_mut().has_started_debugger = true;
+            // Cleared by `start()` once `internal/debugger.ts` has published the
+            // inspector URL; `wait_for_debugger_if_necessary` blocks on it.
+            FUTEX_ATOMIC.store(1, Ordering::Relaxed);
             // `std::thread::spawn` requires `Send`; raw `*mut
             // VirtualMachine` is `!Send`. Wrap in a `Send` newtype — the
             // pointer is only ever dereferenced on the debugger thread under
@@ -403,7 +417,13 @@ impl Debugger {
                     let send_vm = send_vm;
                     Debugger::start_js_debugger_thread(send_vm.0);
                 })
-                .map_err(|_| crate::CrateError::ThreadSpawnFailed)?;
+                .map_err(|_| {
+                    // No debugger thread will ever publish; release anyone that
+                    // later reaches `wait_for_debugger_if_necessary`.
+                    FUTEX_ATOMIC.store(0, Ordering::Relaxed);
+                    bun_threading::Futex::wake(&FUTEX_ATOMIC, 1);
+                    crate::CrateError::ThreadSpawnFailed
+                })?;
             // The `JoinHandle` is dropped here, detaching the thread.
         }
         this_ref.event_loop_mut().ensure_waker();

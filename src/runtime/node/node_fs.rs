@@ -511,6 +511,16 @@ pub enum Flavor {
 // ──────────────────────────────────────────────────────────────────────────
 // Async task type aliases
 // ──────────────────────────────────────────────────────────────────────────
+thread_local! {
+    static PENDING_ASYNC_REQUESTS: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+}
+
+/// `process._getActiveRequests()` / `getActiveResourcesInfo()`: in-flight
+/// async fs request count for this JS thread.
+pub(crate) fn pending_request_count() -> u32 {
+    PENDING_ASYNC_REQUESTS.get()
+}
+
 // AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
 // `cp` builtin).
@@ -717,6 +727,7 @@ mod _async_tasks {
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get() + 1));
             let _ = vm;
             task.tracker.did_schedule(global_object);
 
@@ -1014,6 +1025,10 @@ mod _async_tasks {
             let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| {
+                debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
+                c.set(c.get().saturating_sub(1));
+            });
         }
     }
 
@@ -1309,6 +1324,7 @@ mod _async_tasks {
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get() + 1));
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
             // Counted so shutdown's `wait_for_concurrent_posters` covers the
@@ -1404,6 +1420,10 @@ mod _async_tasks {
             let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| {
+                debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
+                c.set(c.get().saturating_sub(1));
+            });
         }
     }
 
@@ -1625,6 +1645,7 @@ mod _async_tasks {
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
+                super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get() + 1));
             }
             task.tracker.did_schedule(global_object);
 
@@ -1773,6 +1794,10 @@ mod _async_tasks {
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 return Ok(());
             }
+            // SAFETY: self was Box::leak'd in create*(); destroy() runs exactly once on
+            // scope exit, including the early-return reject arms below.
+            let _deinit =
+                scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
             let go_ptr = self.evtloop.global_object();
             if go_ptr.is_null() {
                 panic!(
@@ -1783,9 +1808,8 @@ mod _async_tasks {
             let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
             let success = (*self.result.get_mut()).is_ok();
             let promise_value = self.promise.value();
-            // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
-            // resolve/reject. The `JSPromise` itself lives on the JS heap
-            // and is kept alive past `destroy` by `promise_value.ensure_still_alive()`.
+            // Raw pointer: the scope guard's `destroy(self)` drops the `Strong` wrapper at
+            // exit; the `JSPromise` cell is kept alive by `promise_value.ensure_still_alive()`.
             let promise: *mut bun_jsc::JSPromise = self.promise.get();
             let result = match self.result.get_mut() {
                 // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
@@ -1812,8 +1836,6 @@ mod _async_tasks {
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             if success {
                 bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
@@ -1832,6 +1854,10 @@ mod _async_tasks {
             if !IS_SHELL {
                 let ctx = event_loop_handle_to_ctx(task.evtloop);
                 task.r#ref.unref(ctx);
+                super::PENDING_ASYNC_REQUESTS.with(|c| {
+                    debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
+                    c.set(c.get().saturating_sub(1));
+                });
             }
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
             // `to_thread_safe()` when `src`/`dest` are Buffers, so nothing leaks here.
@@ -2407,6 +2433,7 @@ mod _async_tasks {
                 pending_err_mutex: bun_threading::Mutex::default(),
             });
             task.r#ref.ref_(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get() + 1));
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
             // Counted so shutdown's `wait_for_concurrent_posters` covers the
@@ -2628,6 +2655,10 @@ mod _async_tasks {
         }
 
         pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+            // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on
+            // scope exit, including the early-return reject arms below.
+            let _deinit =
+                scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
             // NOTE: cannot route through `self.global_object()` here -- the returned
             // borrow would be tied to `&self` and conflict with the `&mut self.*`
             // field accesses below, and it must also stay valid past `Self::destroy`.
@@ -2636,9 +2667,8 @@ mod _async_tasks {
             let global_object = global_object.get();
             let success = self.pending_err.is_none();
             let promise_value = self.promise.value();
-            // Raw-pointer capture: see `AsyncCpTask::run_from_js_thread` for rationale —
-            // `Self::destroy` must run before resolve/reject, and the `JSPromise` cell
-            // outlives the `Strong` wrapper via `promise_value.ensure_still_alive()`.
+            // Raw-pointer capture: see `AsyncCpTask::run_from_js_thread` — the guard's destroy
+            // drops the `Strong` wrapper; the cell outlives it via `promise_value.ensure_still_alive()`.
             let promise: *mut bun_jsc::JSPromise = self.promise.get();
             let result = if let Some(err) = &mut self.pending_err {
                 // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
@@ -2676,8 +2706,6 @@ mod _async_tasks {
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             if success {
                 bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
@@ -2697,6 +2725,10 @@ mod _async_tasks {
             // `KeepAlive::unref` takes the type-erased
             // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
             task.r#ref.unref(bun_io::js_vm_ctx());
+            super::PENDING_ASYNC_REQUESTS.with(|c| {
+                debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
+                c.set(c.get().saturating_sub(1));
+            });
             task.free_root_path();
             task.clear_result_list();
         }

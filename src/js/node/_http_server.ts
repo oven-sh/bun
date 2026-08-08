@@ -91,6 +91,15 @@ const {
   closeAllHttp1Connections,
 } = require("internal/http1_server_fallback");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
+
+// Node ref: https://github.com/nodejs/node/blob/main/lib/_http_server.js
+let activeHandles;
+function registerServerHandle(server, kind) {
+  (activeHandles ??= require("internal/active_handles")).registerHandle(server, kind, "_unref");
+}
+function unregisterServerHandle(server) {
+  if (activeHandles) activeHandles.unregisterHandle(server);
+}
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
@@ -323,6 +332,7 @@ function Server(options, callback): void {
 
   this.listening = false;
   this._unref = false;
+  this._handle = null;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
   this.maxHeadersCount = null;
@@ -500,6 +510,8 @@ Server.prototype.closeAllConnections = function () {
   this[serverSymbol] = undefined;
   clearInterval(this[kConnectionsCheckingInterval]);
   this.listening = false;
+  this._handle = null;
+  unregisterServerHandle(this);
 
   server.stop(true);
 };
@@ -534,6 +546,8 @@ Server.prototype.close = function (optionalCallback?) {
   this[serverSymbol] = undefined;
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
   this.listening = false;
+  this._handle = null;
+  unregisterServerHandle(this);
   server.closeIdleConnections();
   server.stop();
   return this;
@@ -1126,6 +1140,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     });
 
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
+    this._handle = this[serverSymbol];
+    registerServerHandle(this, socketPath ? "PipeWrap" : "TCPServerWrap");
     isHTTPS = this[serverSymbol].protocol === "https";
     applyServerCustomOptions(this);
 

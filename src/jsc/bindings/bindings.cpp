@@ -111,6 +111,9 @@
 #include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
+#include "JavaScriptCore/RegExpPrototype.h"
+#include "JavaScriptCore/AsyncIteratorPrototype.h"
+#include "JavaScriptCore/JSPromisePrototype.h"
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "DOMURL.h"
@@ -5407,6 +5410,55 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
+// Built-in prototype objects that the console formatter should print as a
+// plain `{}` and never enumerate as part of a prototype walk. Identity-compared
+// against the global's well-known prototypes so user classes are unaffected.
+static bool isBuiltinPrototypeForFormatting(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    return object == globalObject->objectPrototype()
+        || object == globalObject->functionPrototype()
+        || object == globalObject->arrayPrototype()
+        || object == globalObject->stringPrototype()
+        || object == globalObject->bigIntPrototype()
+        || object == globalObject->symbolPrototype()
+        || object == globalObject->regExpPrototype()
+        || object == globalObject->iteratorPrototype()
+        || object == globalObject->asyncIteratorPrototype()
+        || object == globalObject->promisePrototype()
+        || object == globalObject->numberPrototype()
+        || object == globalObject->booleanPrototype()
+        || object == globalObject->datePrototype()
+        || object == globalObject->errorPrototype()
+        || object == globalObject->mapPrototype()
+        || object == globalObject->jsSetPrototype();
+}
+
+// Stop condition for the formatter's prototype walk: built-in prototypes plus
+// any boxed-primitive wrapper sitting in the chain (e.g. Object.create(new String("a"))
+// should not inherit the wrapper's index/length or String.prototype's methods).
+static bool shouldStopFormattingPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    if (isBuiltinPrototypeForFormatting(globalObject, object))
+        return true;
+    switch (object->type()) {
+    case StringObjectType:
+    case DerivedStringObjectType:
+    case NumberObjectType:
+    case BooleanObjectType:
+        return true;
+    default:
+        return false;
+    }
+}
+
+extern "C" bool JSC__JSValue__isBuiltinPrototypeForFormatting(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
+    if (!object)
+        return false;
+    return isBuiltinPrototypeForFormatting(globalObject, object);
+}
+
 template<bool nonIndexedOnly>
 static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
@@ -5436,7 +5488,8 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
             fast = false;
 
             if (JSValue proto = object->getPrototype(globalObject)) {
-                if ((structure = proto.structureOrNull())) {
+                JSObject* protoObject = proto.getObject();
+                if (protoObject && !shouldStopFormattingPrototypeWalk(globalObject, protoObject) && (structure = protoObject->structure())) {
                     prototypeObject = proto;
                     fast = canPerformFastPropertyEnumerationForIterationBun(structure);
                     prototypeCount = 1;
@@ -5531,8 +5584,9 @@ restart:
             if (prototypeCount++ < 5) {
 
                 if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
-                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
-                        if ((structure = proto.structureOrNull())) {
+                    JSObject* protoObject = proto.getObject();
+                    if (protoObject && !shouldStopFormattingPrototypeWalk(globalObject, protoObject) && !(proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject)) {
+                        if ((structure = protoObject->structure())) {
                             prototypeObject = proto;
                             fast = canPerformFastPropertyEnumerationForIterationBun(structure);
                             goto restart;
@@ -5552,11 +5606,16 @@ restart:
 
         JSObject* iterating = prototypeObject.getObject();
 
-        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
+        while (iterating && !((iterating != object && shouldStopFormattingPrototypeWalk(globalObject, iterating)) || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
+            // Node hides the DontEnum members of a built-in prototype but shows any
+            // enumerable properties the user has added to it.
+            DontEnumPropertiesMode dontEnum = (iterating == object && isBuiltinPrototypeForFormatting(globalObject, iterating))
+                ? DontEnumPropertiesMode::Exclude
+                : DontEnumPropertiesMode::Include;
             if constexpr (nonIndexedOnly) {
-                iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+                iterating->getOwnNonIndexPropertyNames(globalObject, properties, dontEnum);
             } else {
-                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
+                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, dontEnum);
             }
 
             RETURN_IF_EXCEPTION(scope, void());
@@ -5713,8 +5772,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
 
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     {
-
-        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+        DontEnumPropertiesMode dontEnum = isBuiltinPrototypeForFormatting(globalObject, object)
+            ? DontEnumPropertiesMode::Exclude
+            : DontEnumPropertiesMode::Include;
+        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, dontEnum);
         if (scope.exception()) [[unlikely]] {
             (void)scope.tryClearException();
             return;

@@ -2302,6 +2302,13 @@ impl JSValue {
     pub fn get_prototype(self, global: &JSGlobalObject) -> JSValue {
         JSC__JSValue__getPrototype(self, global)
     }
+    /// True when `self` is one of the global's well-known built-in prototype
+    /// objects (`String.prototype`, `Number.prototype`, `Array.prototype`, ...).
+    /// Used by the console formatter to print those as `{}` instead of as a
+    /// boxed primitive or a dump of every method.
+    pub fn is_builtin_prototype_for_formatting(self, global: &JSGlobalObject) -> bool {
+        JSC__JSValue__isBuiltinPrototypeForFormatting(self, global)
+    }
 
     // ── Reflection / naming. ───────────────
     /// `JSValue.getName` — function/class display name.
@@ -2686,6 +2693,10 @@ unsafe extern "C" {
     safe fn JSC__JSValue__toObject(this: JSValue, global: &JSGlobalObject) -> *mut JSObject;
     safe fn JSC__JSValue__unwrapBoxedPrimitive(global: &JSGlobalObject, this: JSValue) -> JSValue;
     safe fn JSC__JSValue__getPrototype(this: JSValue, global: &JSGlobalObject) -> JSValue;
+    safe fn JSC__JSValue__isBuiltinPrototypeForFormatting(
+        this: JSValue,
+        global: &JSGlobalObject,
+    ) -> bool;
     safe fn JSC__JSValue__getName(
         this: JSValue,
         global: &JSGlobalObject,

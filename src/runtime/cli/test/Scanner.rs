@@ -10,7 +10,7 @@ use bun_output::{declare_scope, scoped_log};
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
-use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
+use bun_resolver::fs::{self as fs, EntriesOption, FileSystem};
 use bun_sys::{self, Fd};
 
 declare_scope!(jest, hidden);
@@ -30,7 +30,6 @@ pub struct Scanner<'a> {
     pub(crate) fs: *mut FileSystem,
     pub(crate) open_dir_buf: PathBuffer,
     pub(crate) options: &'a BundleOptions<'a>,
-    pub(crate) has_iterated: bool,
     pub(crate) search_count: usize,
 }
 
@@ -61,19 +60,6 @@ impl PartialEq<crate::Error> for ScanError {
     }
 }
 
-/// Newtype around `*mut Scanner` so it can satisfy [`DirEntryIterator`]
-/// (whose `next` takes `&self`) while still allowing mutable calls.
-#[repr(transparent)]
-struct ScannerDirIter<'a>(*mut Scanner<'a>);
-impl<'a> DirEntryIterator for ScannerDirIter<'a> {
-    fn next(&self, entry: &mut fs::Entry, fd: Fd) {
-        // SAFETY: `self.0` is `&mut Scanner` for the duration of
-        // `read_directory_with_iterator`; no other live `&mut` alias exists
-        // while the resolver walks entries.
-        unsafe { (*self.0).next(entry, fd) }
-    }
-}
-
 impl<'a> Scanner<'a> {
     pub(crate) fn init(
         transpiler: &'a Transpiler,
@@ -89,7 +75,6 @@ impl<'a> Scanner<'a> {
             fs: transpiler.fs,
             test_files: results,
             open_dir_buf: PathBuffer::uninit(),
-            has_iterated: false,
             search_count: 0,
         })
     }
@@ -160,35 +145,7 @@ impl<'a> Scanner<'a> {
             }
         }
 
-        // you typed "." and we already scanned it
-        if !self.has_iterated {
-            if let EntriesOption::Entries(entries) = root {
-                let fd = entries.fd;
-                debug_assert!(fd != Fd::INVALID);
-                // Collect first so `self.next(…)` doesn't overlap the
-                // `entries.data` borrow.
-                // this branch is taken when the resolver already has
-                // `path` cached (e.g. `run_env_loader`/`read_dir_info` read the
-                // cwd before the scanner runs), so `read_directory_with_iterator`
-                // returned the cached `EntryMap` without invoking `iterator.next`.
-                // Hash-map iteration order is not stable. Sort by (lowercased)
-                // base name so test-file discovery order is deterministic —
-                // regression/issue/26851 relies on `a_*.test` running before
-                // `b_*.test` under `--bail`.
-                let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
-                entry_ptrs.sort_by(|a, b| {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
-                    an.cmp(bn)
-                });
-                for entry_ptr in entry_ptrs {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    self.next(unsafe { &mut *entry_ptr }, fd);
-                }
-            }
-        }
+        self.process_entries_sorted(root);
 
         while let Some(entry) = self.dirs_to_scan.pop_front() {
             debug_assert!(entry.relative_dir.is_valid());
@@ -219,9 +176,10 @@ impl<'a> Scanner<'a> {
                     .append_slice(&self.open_dir_buf[..path2_len])
                     .map_err(|_| ScanError::OutOfMemory)?;
                 FileSystem::set_max_fd(child_dir.fd.native());
-                let _ = self
+                let sub = self
                     .read_dir_with_name(path2, Some(child_dir))
                     .map_err(|_| ScanError::OutOfMemory)?;
+                self.process_entries_sorted(sub);
             }
             #[cfg(windows)]
             {
@@ -239,9 +197,10 @@ impl<'a> Scanner<'a> {
                     .dirname_store
                     .append_slice(path2.as_bytes())
                     .map_err(|_| ScanError::OutOfMemory)?;
-                let _ = self
+                let sub = self
                     .read_dir_with_name(stored, Some(child_dir))
                     .map_err(|_| ScanError::OutOfMemory)?;
+                self.process_entries_sorted(sub);
             }
         }
 
@@ -254,12 +213,35 @@ impl<'a> Scanner<'a> {
         handle: Option<bun_sys::Dir>,
     ) -> crate::Result<&'static mut EntriesOption> {
         let fs_ptr = self.fs;
-        let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         let raw = handle.map(bun_sys::Dir::into_raw);
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, raw, 0, true, iter)
+            .read_directory(name, raw, 0, true)
             .map_err(Into::into)
+    }
+
+    /// Sort so test-file discovery order is stable across filesystems (#6655, #26851).
+    fn process_entries_sorted(&mut self, entries_option: &mut EntriesOption) {
+        let EntriesOption::Entries(entries) = entries_option else {
+            return;
+        };
+        let fd = entries.fd;
+        debug_assert!(fd != Fd::INVALID);
+        // Collect first so `self.next(…)` doesn't overlap the `entries.data` borrow.
+        let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
+        entry_ptrs.sort_by(|a, b| {
+            // SAFETY: `EntryMap` stores `*mut Entry` into the process-static
+            // `EntryStore`; valid for `'static`.
+            let (a, b) = unsafe { (&**a, &**b) };
+            a.base_lowercase()
+                .cmp(b.base_lowercase())
+                .then_with(|| a.base().cmp(b.base()))
+        });
+        for entry_ptr in entry_ptrs {
+            // SAFETY: `EntryMap` stores `*mut Entry` into the process-static
+            // `EntryStore`; valid for `'static`.
+            self.next(unsafe { &mut *entry_ptr }, fd);
+        }
     }
 
     pub(crate) fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
@@ -356,10 +338,10 @@ impl<'a> Scanner<'a> {
 
     pub(crate) fn next(&mut self, entry: &mut fs::Entry, fd: Fd) {
         let name = entry.base_lowercase();
-        self.has_iterated = true;
         // SAFETY: `self.fs` is the process singleton.
         let real_fs = unsafe { &raw mut (*self.fs).fs };
-        // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.
+        // SAFETY: `entry.kind` locks the per-entry mutex internally; scanning runs
+        // single-threaded on the main thread before any tests start.
         match unsafe { entry.kind(real_fs, true) } {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {

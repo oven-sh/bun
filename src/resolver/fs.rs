@@ -360,25 +360,6 @@ pub mod dir_entry {
     }
 }
 
-/// Per-entry hook invoked by `add_entry`/`readdir`.
-pub trait DirEntryIterator {
-    const IS_VOID: bool = false;
-    fn next(&self, entry: &mut Entry, fd: Fd);
-}
-
-impl DirEntryIterator for () {
-    const IS_VOID: bool = true;
-    fn next(&self, _entry: &mut Entry, _fd: Fd) {}
-}
-
-impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
-    const IS_VOID: bool = T::IS_VOID;
-    #[inline]
-    fn next(&self, entry: &mut Entry, fd: Fd) {
-        (**self).next(entry, fd)
-    }
-}
-
 pub struct DirEntry {
     // `dir` is interned in
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
@@ -406,12 +387,11 @@ impl DirEntry {
     // should hoist `FilenameStoreAppender::new()` once and call
     // `add_entry_with_store` directly.
 
-    pub(crate) fn add_entry_with_store<I: DirEntryIterator>(
+    pub(crate) fn add_entry_with_store(
         &mut self,
         prev_map: Option<&mut dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult,
         filename_store: &mut FilenameStoreAppender,
-        iterator: I,
     ) -> crate::CrateResult<()> {
         use bun_sys::FileKind as DK;
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
@@ -568,12 +548,7 @@ impl DirEntry {
         // `name_hash` is its hash too — insert without re-hashing.
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
-        if !I::IS_VOID {
-            iterator.next(stored_ref, self.fd);
-        }
-
         if FeatureFlags::VERBOSE_FS {
-            // re-borrow `base()` after the `iterator.next` mutable borrow ends.
             let stored_name = stored_ref.base();
             if found_kind == Some(EntryKind::Dir) {
                 bun_core::prettyln!("   + {}/", BStr::new(stored_name));

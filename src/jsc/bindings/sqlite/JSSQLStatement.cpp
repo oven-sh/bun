@@ -977,7 +977,6 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
     };
 
     auto& vm = JSC::getVM(globalObject);
-    auto& structure = *target->structure();
     bindings.ensureNamesLoaded(vm, stmt);
     const auto& bindingNames = bindings.bindingNames;
     size_t size = bindings.count;
@@ -1012,7 +1011,11 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
 
             const auto identifier = Identifier::fromString(vm, str);
             PropertySlot slot(target, PropertySlot::InternalMethodType::GetOwnProperty);
-            if (!target->getOwnNonIndexPropertySlot(vm, &structure, identifier, slot)) {
+            // Re-read the Structure on every lookup: a getter for an earlier
+            // parameter can add/delete properties, and the old Structure's
+            // offsets would then point at a different property's value (or an
+            // empty slot).
+            if (!target->getOwnNonIndexPropertySlot(vm, target->structure(), identifier, slot)) {
                 return {};
             }
 
@@ -1073,38 +1076,44 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             count++;
         }
     }
-    // Is it a simple object with no getters or setters?
+    // Named parameters, e.g.
     //
     // { foo: "bar", baz: "qux" }
     //
-    else if (target->canUseFastGetOwnProperty(structure)) {
+    else {
         for (size_t i = 0; i < size; i++) {
             const auto& property = bindingNames[i];
-            JSValue value = property.isEmpty() ? target->getDirectIndex(globalObject, i) : target->fastGetOwnProperty(vm, structure, bindingNames[i]);
-            if (!statementStillAlive())
-                return {};
-            if (!value && !scope.exception()) {
-                if (throwOnMissing) {
-                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, property.isEmpty() ? String::number(i) : property.string(), "\""_s)));
-                } else {
-                    continue;
+            JSValue value;
+            bool hasProperty = false;
+
+            // Re-read the Structure on every iteration, and re-decide whether
+            // the getter-free fast path applies: a getter for an earlier
+            // parameter (including an index getter reached through
+            // getDirectIndex) can add/delete properties, transitioning the
+            // Structure. A lookup through the old Structure reads whatever now
+            // lives at the stale offset: a different property's value, or an
+            // empty slot.
+            Structure* structure = target->structure();
+            if (property.isEmpty()) {
+                value = target->getDirectIndex(globalObject, i);
+                hasProperty = !!value;
+            } else if (target->canUseFastGetOwnProperty(*structure)) [[likely]] {
+                value = target->fastGetOwnProperty(vm, *structure, property);
+                hasProperty = !!value;
+            } else {
+                PropertySlot slot(target, PropertySlot::InternalMethodType::GetOwnProperty);
+                hasProperty = target->methodTable()->getOwnPropertySlot(target, globalObject, property, slot);
+                if (hasProperty && !scope.exception()) {
+                    if (!slot.isTaintedByOpaqueObject()) [[likely]]
+                        value = slot.getValue(globalObject, property);
+                    else
+                        value = target->get(globalObject, property);
                 }
             }
 
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (!rebindValue(globalObject, db, stmt, i + 1, value, scope, safeIntegers)) {
+            if (!statementStillAlive())
                 return {};
-            }
 
-            RETURN_IF_EXCEPTION(scope, {});
-            count++;
-        }
-    } else {
-        for (size_t i = 0; i < size; i++) {
-            PropertySlot slot(target, PropertySlot::InternalMethodType::GetOwnProperty);
-            const auto& property = bindingNames[i];
-            bool hasProperty = property.isEmpty() ? target->methodTable()->getOwnPropertySlotByIndex(target, globalObject, i, slot) : target->methodTable()->getOwnPropertySlot(target, globalObject, property, slot);
             if (!hasProperty && !scope.exception()) {
                 if (throwOnMissing) {
                     throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, property.isEmpty() ? String::number(i) : property.string(), "\""_s)));
@@ -1114,19 +1123,6 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             }
 
             RETURN_IF_EXCEPTION(scope, {});
-
-            JSValue value;
-            if (!slot.isTaintedByOpaqueObject()) [[likely]]
-                value = slot.getValue(globalObject, property);
-            else {
-                value = target->get(globalObject, property);
-                RETURN_IF_EXCEPTION(scope, {});
-            }
-
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (!statementStillAlive())
-                return {};
 
             if (!rebindValue(globalObject, db, stmt, i + 1, value, scope, safeIntegers)) {
                 return {};

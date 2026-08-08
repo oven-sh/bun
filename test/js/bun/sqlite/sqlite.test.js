@@ -189,6 +189,113 @@ describe("safeIntegers", () => {
   }
 }
 
+describe("bind parameters object mutated by a getter during bind", () => {
+  // A getter that runs while binding can add/delete properties, changing the
+  // object's layout mid-bind. Lookups for later parameters must see the
+  // current layout; reading through the old one binds whatever property now
+  // occupies the stale slot, or crashes on an empty slot.
+
+  it("strict mode: throws missing parameter instead of binding a foreign value", () => {
+    const db = new Database(":memory:", { strict: true });
+    const q = db.query("select ?1 as a, $b as b, $c as c");
+    const t = {};
+    t[0] = "i";
+    Object.defineProperty(t, "b", {
+      enumerable: true,
+      get() {
+        delete t.c;
+        t.secret = "SECRET-NOT-A-PARAM";
+        return "two";
+      },
+    });
+    t.c = "three";
+    expect(() => q.all(t)).toThrow('Missing parameter "$c"');
+  });
+
+  it("strict mode: binds the value the parameter holds at bind time", () => {
+    const db = new Database(":memory:", { strict: true });
+    const q = db.query("select ?1 as a, $b as b, $c as c");
+    const t = {};
+    t[0] = "i";
+    Object.defineProperty(t, "b", {
+      enumerable: true,
+      get() {
+        delete t.c;
+        t.filler = "FILLER";
+        t.c = "three-new";
+        return "two";
+      },
+    });
+    t.c = "three-old";
+    expect(q.all(t)).toEqual([{ a: "i", b: "two", c: "three-new" }]);
+  });
+
+  it("default mode: treats a parameter deleted by an index getter as missing", () => {
+    const db = new Database(":memory:");
+    const q = db.query("select ? as a, $c as c");
+    const u = { $c: "three" };
+    Object.defineProperty(u, 0, {
+      enumerable: true,
+      get() {
+        delete u.$c;
+        u.secret = "S";
+        return 0;
+      },
+    });
+    expect(q.all(u)).toEqual([{ a: 0, c: null }]);
+  });
+
+  it("default mode: calls a getter installed for a later parameter mid-bind", () => {
+    const db = new Database(":memory:");
+    const q = db.query("select ? as a, $c as c");
+    const u = {};
+    Object.defineProperty(u, 0, {
+      enumerable: true,
+      get() {
+        delete u.$c;
+        Object.defineProperty(u, "$c", { enumerable: true, get: () => "via-getter" });
+        return 0;
+      },
+    });
+    u.$c = "three";
+    expect(q.all(u)).toEqual([{ a: 0, c: "via-getter" }]);
+  });
+
+  it("does not crash when a getter deletes a later parameter", async () => {
+    // Crashed before the fix: the stale layout said $c was present, and the
+    // bind read an empty slot.
+    const code = `
+      import { Database } from "bun:sqlite";
+      const db = new Database(":memory:", { strict: true });
+      const q = db.query("select ?1 as a, $b as b, $c as c");
+      const t = {};
+      t[0] = "i";
+      Object.defineProperty(t, "b", {
+        enumerable: true,
+        get() {
+          delete t.c;
+          return "two";
+        },
+      });
+      t.c = "three";
+      try {
+        q.all(t);
+        console.log("no-error");
+      } catch (e) {
+        console.log("error: " + e.message);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe('error: Missing parameter "$c"');
+    expect(exitCode).toBe(0);
+  });
+});
+
 var encode = text => new TextEncoder().encode(text);
 
 // Use different numbers of columns to ensure we crash if using initializeIndex() on a large array can cause bugs.

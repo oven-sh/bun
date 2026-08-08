@@ -117,6 +117,8 @@ pub struct Debugger {
     // default `""`.
     pub from_environment_variable: &'static [u8],
     pub script_execution_context_id: u32,
+    pub has_waited_for_disconnect: bool,
+    pub debug_ended: bool,
     pub next_debugger_id: u64,
     pub poll_ref: KeepAlive,
     pub wait_for_connection: Wait,
@@ -140,6 +142,8 @@ impl Default for Debugger {
             path_or_port: None,
             from_environment_variable: b"",
             script_execution_context_id: 0,
+            has_waited_for_disconnect: false,
+            debug_ended: false,
             next_debugger_id: 1,
             poll_ref: KeepAlive::default(),
             wait_for_connection: Wait::Off,
@@ -160,6 +164,8 @@ impl Default for Debugger {
 // out-param. Remaining args are by-value scalars.
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
+    safe fn BunDebugger__notifyWaitingForDebugger(ctx_id: u32);
+    safe fn BunDebugger__waitForDebuggerToDisconnect(ctx_id: u32, is_worker: bool);
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
@@ -168,11 +174,19 @@ unsafe extern "C" {
         from_env: c_int,
         is_connect: bool,
         is_node_inspector: bool,
+        enable_node_cdp: bool,
     );
 }
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
 static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
+/// A single slot suffices because only one context can wait today (workers
+/// publish no CDP target); with two simultaneous waiters the second store
+/// would win.
+/// Relaxed suffices: a single word with no dependent data, and the observable
+/// `NodeRuntime.waitingForDebugger` event also travels via `postTaskConcurrently`
+/// (whose lock fences), so a stale read can only delay it by one task, not drop it.
+static WAITING_FOR_DEBUGGER_CONTEXT: AtomicU32 = AtomicU32::new(0);
 
 impl Debugger {
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
@@ -202,8 +216,16 @@ impl Debugger {
             return;
         }
         let (ctx_id, wait) = (dbg.script_execution_context_id, dbg.wait_for_connection);
-        // Reset `must_block_until_connected` on every exit path.
+        // Reset `must_block_until_connected` on every exit path. The wait is
+        // over once this returns, including the `Wait::Shortly` timeout, so
+        // clear the flag `NodeRuntime.enable` reads here too.
         let _reset = scopeguard::guard((), |()| {
+            let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
+                ctx_id,
+                0,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
             if let Some(d) = this.debugger_mut() {
                 d.must_block_until_connected = false;
             }
@@ -413,6 +435,7 @@ impl Debugger {
         if dbg.wait_for_connection != Wait::Off {
             dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
             dbg.must_block_until_connected = true;
+            WAITING_FOR_DEBUGGER_CONTEXT.store(dbg.script_execution_context_id, Ordering::Relaxed);
         }
         Ok(())
     }
@@ -521,13 +544,22 @@ impl Debugger {
         if !from_env.is_empty() {
             let mut url = BunString::clone_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false);
+            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false, false);
         }
 
         if let Some(path_or_port) = path_or_port {
             let mut url = BunString::clone_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
+            let enable_node_cdp = !is_node_inspector && !is_connect;
+            Bun__startJSDebuggerThread(
+                global,
+                ctx_id,
+                &mut url,
+                0,
+                is_connect,
+                is_node_inspector,
+                enable_node_cdp,
+            );
         }
 
         this.global().handle_rejected_promises();
@@ -655,6 +687,12 @@ pub fn wait_for_node_inspector_connection() {
         }
         dbg.must_block_until_connected = true;
     }
+    let ctx_id = match this.debugger.as_deref() {
+        Some(d) => d.script_execution_context_id,
+        None => 0,
+    };
+    WAITING_FOR_DEBUGGER_CONTEXT.store(ctx_id, Ordering::Relaxed);
+    BunDebugger__notifyWaitingForDebugger(ctx_id);
     Debugger::wait_for_debugger_if_necessary(VirtualMachine::get_mut_ptr());
 }
 
@@ -666,10 +704,57 @@ pub fn abandon_node_inspector_wait() {
     let Some(dbg) = VirtualMachine::get().debugger_mut() else {
         return;
     };
+    let ctx_id = dbg.script_execution_context_id;
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
         dbg.must_block_until_connected = false;
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+    }
+    let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
+        ctx_id,
+        0,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
+}
+
+// HOST_EXPORT(Debugger__isWaitingForDebugger, c)
+pub fn is_waiting_for_debugger(ctx_id: u32) -> bool {
+    ctx_id != 0 && WAITING_FOR_DEBUGGER_CONTEXT.load(Ordering::Relaxed) == ctx_id
+}
+
+pub fn wait_for_debugger_to_disconnect(vm: &VirtualMachine) {
+    // The borrow must end before the call below: it blocks, and pumping the
+    // inspector runs user JS on this thread (Runtime.evaluate), which can
+    // re-enter anything that takes `&mut Debugger` — `inspector.open()`, or
+    // `did_connect()` for a frontend finishing its handshake.
+    let ctx_id = {
+        let Some(dbg) = vm.debugger_mut() else {
+            return;
+        };
+        if dbg.has_waited_for_disconnect || dbg.debug_ended {
+            return;
+        }
+        dbg.has_waited_for_disconnect = true;
+        dbg.script_execution_context_id
+    };
+    if ctx_id == 0 {
+        return;
+    }
+    BunDebugger__waitForDebuggerToDisconnect(ctx_id, !vm.is_main_thread());
+}
+
+// HOST_EXPORT(Debugger__clearDebugEnd, c)
+pub fn clear_debug_end() {
+    if let Some(dbg) = VirtualMachine::get().debugger_mut() {
+        dbg.debug_ended = false;
+    }
+}
+
+// HOST_EXPORT(Debugger__debugEnd, c)
+pub fn debug_end() {
+    if let Some(dbg) = VirtualMachine::get().debugger_mut() {
+        dbg.debug_ended = true;
     }
 }
 
@@ -682,11 +767,18 @@ pub fn did_connect() {
     let Some(dbg) = this.debugger.as_deref_mut() else {
         return;
     };
+    let ctx_id = dbg.script_execution_context_id;
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
         this.event_loop_mut().wakeup();
     }
+    let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
+        ctx_id,
+        0,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,17 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isPosix,
+  isWindows,
+  libcPathForDlopen,
+  mergeWindowEnvs,
+  tempDir,
+} from "harness";
 import { rmSync } from "node:fs";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -560,3 +571,94 @@ test.if(isWindows)(
     }
   },
 );
+
+// A crash while the OS refuses to create new threads (RLIMIT_NPROC / cgroup
+// pids limit) is a resource limit problem, not a bug in Bun.
+// WTF::Thread::create release-asserts when pthread_create fails (e.g. JSC GC
+// helper threads in a pids-limited container), and bun's own required thread
+// spawns (HTTP client thread, IO watcher) panic; both used to print "This
+// indicates a bug in Bun, not your code." and link a crash report. See
+// https://github.com/oven-sh/bun/issues/36979.
+//
+// The fixture exhausts the limit for real: it lowers RLIMIT_NPROC to 1 (and
+// drops root first if needed, since the limit is not enforced for root), so
+// the crash handler's pthread_create probe gets a genuine EAGAIN.
+describe.if(isLinux)("crash while the thread limit is exhausted", () => {
+  const exhaustThreadLimit = `
+    import { dlopen } from "bun:ffi";
+    const libc = dlopen(process.env.TEST_LIBC_PATH, {
+      setrlimit: { args: ["i32", "ptr"], returns: "i32" },
+      setuid: { args: ["u32"], returns: "i32" },
+    });
+    // Pre-load the module and pre-spawn lazy threads (GC helpers, the
+    // concurrent collector) so nothing between lowering the limit and the
+    // deliberate crash needs a new thread.
+    const crashHandlerTestHooks = require("bun:internal-for-testing").crash_handler;
+    Bun.gc(false);
+    Bun.gc(true);
+    // The crash below is deliberate; don't leave a core dump behind for CI's
+    // core collector to flag (the internal-for-testing crash hooks do the
+    // same via suppress_core_dumps_if_necessary).
+    const RLIMIT_CORE = 4;
+    if (libc.symbols.setrlimit(RLIMIT_CORE, new BigUint64Array([0n, 0n])) !== 0) {
+      console.error("SETUP_FAILED: setrlimit core");
+      process.exit(42);
+    }
+    const RLIMIT_NPROC = 6;
+    const limit = new BigUint64Array([1n, 1n]);
+    if (libc.symbols.setrlimit(RLIMIT_NPROC, limit) !== 0) {
+      console.error("SETUP_FAILED: setrlimit nproc");
+      process.exit(42);
+    }
+    // RLIMIT_NPROC is only enforced for non-root users.
+    if (process.getuid() === 0 && libc.symbols.setuid(65534) !== 0) {
+      console.error("SETUP_FAILED: setuid");
+      process.exit(42);
+    }
+  `;
+
+  async function runThreadLimitFixture(body: string): Promise<{ stderr: string; exitCode: number | null }> {
+    using dir = tempDir("thread-limit-crash", { "fixture.ts": exhaustThreadLimit + body });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", "--debug-crash-handler-use-trace-string"],
+      env: { ...noReportEnv, TEST_LIBC_PATH: libcPathForDlopen() },
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("SETUP_FAILED");
+    return { stderr, exitCode };
+  }
+
+  function expectThreadLimitMessage(stderr: string, exitCode: number | null) {
+    expect(stderr).toContain("Bun was unable to create a new thread: the system's thread limit was reached");
+    expect(stderr).toContain("ulimit -u");
+    expect(stderr).not.toContain("This indicates a bug in Bun");
+    expect(exitCode).not.toBe(0);
+  }
+
+  test.concurrent("a panic explains the limit instead of claiming a bug in Bun", async () => {
+    const { stderr, exitCode } = await runThreadLimitFixture(`
+      crashHandlerTestHooks.panic();
+    `);
+    expectThreadLimitMessage(stderr, exitCode);
+  });
+
+  test.concurrent("a failed HTTP client thread spawn explains the limit", async () => {
+    const { stderr, exitCode } = await runThreadLimitFixture(`
+      // fetch lazily spawns the HTTP client thread; with the limit exhausted
+      // the spawn currently fails with EAGAIN and the spawn site panics.
+      await fetch("http://127.0.0.1:1/").catch(() => {});
+      console.error("FETCH_HANDLED_GRACEFULLY");
+      process.exit(0);
+    `);
+    // If fetch ever learns to surface the spawn failure as a catchable error
+    // instead of crashing (see #32245), that is also a correct outcome.
+    if (stderr.includes("FETCH_HANDLED_GRACEFULLY")) {
+      expect(exitCode).toBe(0);
+      return;
+    }
+    expect(stderr).toContain("Failed to start HTTP Client thread");
+    expectThreadLimitMessage(stderr, exitCode);
+  });
+});

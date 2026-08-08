@@ -322,7 +322,7 @@ impl String {
                 ExternalStringImplFreeFunction<Ctx>,
                 extern "C" fn(*mut c_void, *mut c_void, usize),
             >(callback) });
-        // SAFETY: bytes describes a valid slice; len < max_length checked.
+        // SAFETY: bytes describes a valid slice; len <= max_length checked.
         let s = unsafe {
             BunString__createExternal(
                 bytes.as_ptr(),

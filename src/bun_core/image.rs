@@ -123,3 +123,18 @@ pub fn set_cancel_timers_at_snapshot(on: bool) {
 pub fn cancel_timers_at_snapshot() -> bool {
     CANCEL_TIMERS.load(Ordering::Acquire) != 0
 }
+
+static KEEP_TIMERS: AtomicU32 = AtomicU32::new(0);
+/// The app keeps its armed timers across the snapshot; their deadlines are re-based onto the restoring process's monotonic clock.
+pub fn set_keep_timers_at_snapshot(on: bool) {
+    KEEP_TIMERS.store(on as u32, Ordering::Release);
+}
+pub fn keep_timers_at_snapshot() -> bool {
+    KEEP_TIMERS.load(Ordering::Acquire) != 0
+}
+
+/// Monotonic (sec, nsec) at the moment the image was frozen; lives in __DATA so the restored process can compute how far its own clock is from it.
+pub static SNAPSHOT_MONOTONIC: [core::sync::atomic::AtomicI64; 2] = [
+    core::sync::atomic::AtomicI64::new(0),
+    core::sync::atomic::AtomicI64::new(0),
+];

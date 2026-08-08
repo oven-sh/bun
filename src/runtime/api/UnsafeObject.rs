@@ -29,12 +29,15 @@ fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [path, opts] = frame.arguments_as_array::<2>();
     if !path.is_string() {
         return Err(global.throw_invalid_arguments(format_args!(
-            "snapshot(path, {{ cancelTimers }}) expects a file path"
+            "snapshot(path, {{ cancelTimers, keepTimers }}) expects a file path"
         )));
     }
     if opts.is_object() {
         if let Some(v) = opts.get(global, "cancelTimers")? {
             bun_core::image::set_cancel_timers_at_snapshot(v.to_boolean());
+        }
+        if let Some(v) = opts.get(global, "keepTimers")? {
+            bun_core::image::set_keep_timers_at_snapshot(v.to_boolean());
         }
     }
     let path = path.to_bun_string(global)?.to_owned_slice();

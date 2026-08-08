@@ -1721,6 +1721,13 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
     }
     // Quiet is not enough: no other thread of ours may be mid-anything (e.g. inside free() holding an allocator lock) when memory is frozen.
     bun_threading::work_pool::WorkPool::stop_all_threads_for_snapshot();
+    {
+        let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+        bun_core::image::SNAPSHOT_MONOTONIC[0]
+            .store(now.sec, ::std::sync::atomic::Ordering::Relaxed);
+        bun_core::image::SNAPSHOT_MONOTONIC[1]
+            .store(now.nsec, ::std::sync::atomic::Ordering::Relaxed);
+    }
     let cpath = std::ffi::CString::new(path).unwrap();
     // SAFETY: main thread, VM live, no JS on the stack.
     unsafe { Bun__imageDumpNow(vm.jsc_vm() as *const _ as *mut _, cpath.as_ptr()) };
@@ -1754,7 +1761,7 @@ fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<S
     if !state.is_null() {
         // SAFETY: main-thread RuntimeState.
         let armed = unsafe { (*state).timer.active_timer_count };
-        if armed > 0 {
+        if armed > 0 && !bun_core::image::keep_timers_at_snapshot() {
             out.push(format!("{armed} ref'd timers armed (setTimeout/setInterval/AbortSignal.timeout) — clear them before snapshotting"));
         }
     }
@@ -1803,6 +1810,20 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
         // SAFETY: main-thread VM. Its cached stack top/limits are the builder's; refresh before anything can allocate JS objects (GC sanitizes the stack).
         let vm = unsafe { &mut *vm_ptr };
         unsafe { Bun__VM__refreshStackBoundsAfterImageRestore(vm.jsc_vm) };
+        {
+            let state = crate::jsc_hooks::runtime_state();
+            if !state.is_null() {
+                let then = bun_core::Timespec {
+                    sec: bun_core::image::SNAPSHOT_MONOTONIC[0]
+                        .load(::std::sync::atomic::Ordering::Relaxed),
+                    nsec: bun_core::image::SNAPSHOT_MONOTONIC[1]
+                        .load(::std::sync::atomic::Ordering::Relaxed),
+                };
+                let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+                // SAFETY: main thread; RuntimeState live; no JS on the stack.
+                unsafe { (*state).timer.rebase_after_image_restore(then, now) };
+            }
+        }
     }
     {
         // The resolver/node:fs "top level dir" is the builder's cwd; re-read where this process runs.

@@ -63,33 +63,39 @@ async function expectExitsCleanly(proc: Bun.Subprocess<"ignore", "pipe", "pipe">
   expect(exitCode).toBe(0);
 }
 
-test.concurrent("expect().rejects settles when the rejection arrives from a Worker message during a nested wait", async () => {
-  using dir = tempDir("issue-37189-worker", {
-    "worker.js": `self.onmessage = e => {
+test.concurrent(
+  "expect().rejects settles when the rejection arrives from a Worker message during a nested wait",
+  async () => {
+    using dir = tempDir("issue-37189-worker", {
+      "worker.js": `self.onmessage = e => {
       self.postMessage({ type: "reply", id: e.data.id, error: "boom" });
     };`,
-    "main.js": workerMain,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 15_000,
-    killSignal: "SIGKILL",
-  });
-  await expectExitsCleanly(proc);
-});
+      "main.js": workerMain,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    await expectExitsCleanly(proc);
+  },
+);
 
-test.concurrent("expect().rejects settles when the rejection arrives from a MessageChannel message during a nested wait", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", channelMain],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 15_000,
-    killSignal: "SIGKILL",
-  });
-  await expectExitsCleanly(proc);
-});
+test.concurrent(
+  "expect().rejects settles when the rejection arrives from a MessageChannel message during a nested wait",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", channelMain],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    await expectExitsCleanly(proc);
+  },
+);

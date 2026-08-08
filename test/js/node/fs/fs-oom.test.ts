@@ -84,25 +84,17 @@ describe("readFileSync at the 2 GiB string limit", () => {
     return { result: JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode })), exitCode };
   };
 
-  test(
-    "2^31 bytes throws ENOMEM instead of aborting",
-    async () => {
-      const { result, exitCode } = await spawnRead(2 ** 31);
-      expect(result).toEqual({ name: "Error", code: "ENOMEM" });
-      expect(exitCode).toBe(0);
-    },
-    180_000,
-  );
+  test("2^31 bytes throws ENOMEM instead of aborting", async () => {
+    const { result, exitCode } = await spawnRead(2 ** 31);
+    expect(result).toEqual({ name: "Error", code: "ENOMEM" });
+    expect(exitCode).toBe(0);
+  }, 180_000);
 
-  test(
-    "2^31 - 1 bytes still decodes",
-    async () => {
-      const { result, exitCode } = await spawnRead(2 ** 31 - 1);
-      expect(result).toEqual({ length: 2 ** 31 - 1 });
-      expect(exitCode).toBe(0);
-    },
-    180_000,
-  );
+  test("2^31 - 1 bytes still decodes", async () => {
+    const { result, exitCode } = await spawnRead(2 ** 31 - 1);
+    expect(result).toEqual({ length: 2 ** 31 - 1 });
+    expect(exitCode).toBe(0);
+  }, 180_000);
 });
 
 // The UTF-8 -> UTF-16 converters behind `fs.readFile*(.., "utf8")`,

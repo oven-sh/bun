@@ -26,7 +26,9 @@ describe("Memory", () => {
 
     test(".text() should throw an OOM without crashing the process.", () => {
       const array = [buf, buf, buf, buf, buf, buf, buf, buf, buf];
-      expect(async () => await new Blob(array).text()).toThrow("Cannot create a string longer than 2147483647 characters");
+      expect(async () => await new Blob(array).text()).toThrow(
+        "Cannot create a string longer than 2147483647 characters",
+      );
     });
 
     test(".bytes() should throw an OOM without crashing the process.", () => {
@@ -152,14 +154,12 @@ describe("Bun.file", () => {
 // 2 GiB, so each case runs in a subprocess to keep the peak away from the
 // test runner.
 describe("byte sources at the 2 GiB string limit", () => {
-  test(
-    "Blob.text() and Blob.json() at 2^31 bytes throw ERR_STRING_TOO_LONG instead of aborting",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+  test("Blob.text() and Blob.json() at 2^31 bytes throw ERR_STRING_TOO_LONG instead of aborting", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
           const results = [];
           const report = e => ({ name: e.name, code: e.code, message: e.message });
           const blob = new Blob([new Uint8Array(2 ** 31)]);
@@ -167,62 +167,56 @@ describe("byte sources at the 2 GiB string limit", () => {
           await blob.json().then(() => results.push("JSON_UNEXPECTED_SUCCESS"), e => results.push(report(e)));
           console.log(JSON.stringify(results));
           `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
-        {
-          name: "Error",
-          code: "ERR_STRING_TOO_LONG",
-          message: "Cannot create a string longer than 2147483647 characters",
-        },
-        {
-          name: "Error",
-          code: "ERR_STRING_TOO_LONG",
-          message: "Cannot parse a JSON string longer than 2147483647 characters",
-        },
-      ]);
-      expect(exitCode).toBe(0);
-    },
-    180_000,
-  );
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
+      {
+        name: "Error",
+        code: "ERR_STRING_TOO_LONG",
+        message: "Cannot create a string longer than 2147483647 characters",
+      },
+      {
+        name: "Error",
+        code: "ERR_STRING_TOO_LONG",
+        message: "Cannot parse a JSON string longer than 2147483647 characters",
+      },
+    ]);
+    expect(exitCode).toBe(0);
+  }, 180_000);
 
-  test(
-    "Bun.file().text() at 2^31 bytes throws ERR_STRING_TOO_LONG instead of aborting",
-    async () => {
-      using dir = tempDir("blob-2gib", {});
-      const file = path.join(String(dir), "big.txt");
-      // Sparse where the filesystem supports it; reads back as 'x' + NUL bytes.
-      writeFileSync(file, "x");
-      truncateSync(file, 2 ** 31);
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+  test("Bun.file().text() at 2^31 bytes throws ERR_STRING_TOO_LONG instead of aborting", async () => {
+    using dir = tempDir("blob-2gib", {});
+    const file = path.join(String(dir), "big.txt");
+    // Sparse where the filesystem supports it; reads back as 'x' + NUL bytes.
+    writeFileSync(file, "x");
+    truncateSync(file, 2 ** 31);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
           const results = [];
           const report = e => ({ name: e.name, code: e.code, message: e.message });
           await Bun.file(${JSON.stringify(file)}).text().then(() => results.push("UNEXPECTED_SUCCESS"), e => results.push(report(e)));
           console.log(JSON.stringify(results));
           `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
-        {
-          name: "Error",
-          code: "ERR_STRING_TOO_LONG",
-          message: "Cannot create a string longer than 2147483647 characters",
-        },
-      ]);
-      expect(exitCode).toBe(0);
-    },
-    180_000,
-  );
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
+      {
+        name: "Error",
+        code: "ERR_STRING_TOO_LONG",
+        message: "Cannot create a string longer than 2147483647 characters",
+      },
+    ]);
+    expect(exitCode).toBe(0);
+  }, 180_000);
 });

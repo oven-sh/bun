@@ -410,8 +410,8 @@ class FileDebugSession extends DebugSession {
       });
     }
 
-    this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
-      this.sendRequest(command, args, 5000, () => {}),
+    this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }, reply) =>
+      this.sendRequest(command, args, 10_000, response => reply(response as DAP.Response)),
     );
 
     adapters.set(url, this);
@@ -435,6 +435,10 @@ class FileDebugSession extends DebugSession {
       }
 
       this.adapter.emit("Adapter.request", message);
+    } else if (type === "response") {
+      // Responses to reverse requests (e.g. runInTerminal) are routed by the base
+      // ProtocolServer back to the callback registered via sendRequest above.
+      super.handleMessage(message);
     } else {
       throw new Error(`Not supported: ${type}`);
     }

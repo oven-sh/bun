@@ -15,6 +15,10 @@ const table = {
     "hello.mts": "module",
     // files using ES import and no exports will be detected as module
     "import.cjs": "module",
+    // files using CommonJS markers like module.exports will be detected as
+    // commonjs, beating both package.json "type" and the file extension
+    "exports.js": "commonjs",
+    "exports.mjs": "commonjs",
   },
   esm: {
     "hello.cjs": "commonjs",
@@ -27,6 +31,10 @@ const table = {
     "hello.mts": "module",
     // files using ES import and no exports will be detected as module
     "import.cjs": "module",
+    // files using CommonJS markers like module.exports will be detected as
+    // commonjs, beating both package.json "type" and the file extension
+    "exports.js": "commonjs",
+    "exports.mjs": "commonjs",
   },
 } as const;
 

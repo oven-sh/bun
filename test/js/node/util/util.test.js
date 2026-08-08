@@ -23,7 +23,7 @@
 
 import assert from "assert";
 import { describe, expect, it } from "bun:test";
-import "harness";
+import { bunEnv, bunExe } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -153,16 +153,27 @@ describe("util", () => {
       strictEqual(util.isError(err8), true);
     });
 
-    it("propagates a throwing getPrototypeOf proxy trap instead of crashing", () => {
-      const proxy = new Proxy(
-        {},
-        {
-          getPrototypeOf() {
-            throw new Error("trap");
-          },
-        },
-      );
-      expect(() => util.isError(proxy)).toThrow("trap");
+    // Spawned: the unfixed binary segfaults on this input, which would take
+    // down the whole test runner if it ran in-process.
+    it("propagates a throwing getPrototypeOf proxy trap instead of crashing", async () => {
+      const code = `
+        const proxy = new Proxy({}, { getPrototypeOf() { throw new Error("trap"); } });
+        try {
+          require("util").isError(proxy);
+          console.log("no-throw");
+        } catch (e) {
+          console.log("caught:", e.message);
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("caught: trap\n");
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     });
   });
 

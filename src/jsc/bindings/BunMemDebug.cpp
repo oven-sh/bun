@@ -377,6 +377,17 @@ extern "C" void mi_os_hint_floor(void*) noexcept;
 extern "C" bool mi_prof_lock_is_free(void);
 extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
 static void imageDump(JSC::VM& vm, const char* path);
+// envGate (Bun.unsafe.snapshot option): NUL-separated names, stored in the image after the region data; hashed together with
+// their values so a launch whose environment differs in any of them declines the image before touching it.
+static std::string s_envGateNames;
+extern "C" void Bun__imageSetEnvGate(const uint8_t* names, size_t len) { s_envGateNames.assign((const char*)names, len); }
+static uint64_t envGateHash(const char* names, size_t len)
+{
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&](const char* p, size_t n) { for (size_t i = 0; i < n; i++) { h ^= (uint8_t)p[i]; h *= 1099511628211ull; } h ^= 0xff; h *= 1099511628211ull; };
+    for (size_t i = 0; i < len;) { const char* name = names + i; size_t nl = strnlen(name, len - i); mix(name, nl); if (const char* v = getenv(name)) mix(v, strlen(v)); else mix("\x01unset", 6); i += nl + 1; }
+    return h ? h : 1;
+}
 extern "C" void Bun__imageDumpNow(JSC::VM* vm, const char* path)
 {
     mi_scavenger_stop(); // joins mimalloc's background thread: nothing may hold allocator locks while we freeze
@@ -1801,6 +1812,11 @@ static void imageDump(JSC::VM& vm, const char* path)
         if (pwrite(fd, (void*)r.addr, used, r.fileOff) != (ssize_t)used) { fprintf(stderr, "[image] pwrite failed for %llx+%llx errno %d\n", r.addr, (unsigned long long)used, errno); }
         total += used;
     }
+    if (!s_envGateNames.empty()) {
+        struct stat cur; fstat(fd, &cur); size_t gateOff = ((size_t)cur.st_size + 4095) & ~4095ull;
+        pwrite(fd, s_envGateNames.data(), s_envGateNames.size(), gateOff);
+        hdr.spare[5] = (uint64_t)gateOff | ((uint64_t)s_envGateNames.size() << 40); hdr.spare[6] = envGateHash(s_envGateNames.data(), s_envGateNames.size());
+    }
     pwrite(fd, &hdr, sizeof hdr, 0);
     pwrite(fd, out.data(), out.size() * sizeof(ImageRegion), tableOff);
     close(fd);
@@ -1823,6 +1839,11 @@ static void imageRestoreAndRun(const char* path)
     ImageHeader hdr; ipread(fd, &hdr, sizeof hdr, 0);
     if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] source %s base=%lld magic=%.7s nregions=%llu text=%llx libs=%llx build=%llx\n", filePath, (long long)s_imageBaseOff, hdr.magic, (unsigned long long)hdr.nregions, (unsigned long long)hdr.textBase, (unsigned long long)hdr.libsBase, (unsigned long long)hdr.spare[0]);
     if (memcmp(hdr.magic, "BUNIMG2", 8) || hdr.spare[0] != platformBuildId()) { fprintf(stderr, "[image] %s was not produced by this build of the executable; booting normally\n", path); close(fd); return; }
+    if (hdr.spare[5]) {
+        size_t gateOff = hdr.spare[5] & ((1ull << 40) - 1), gateLen = hdr.spare[5] >> 40; char names[4096];
+        if (gateLen == 0 || gateLen > sizeof names || ipread(fd, names, gateLen, gateOff) != (ssize_t)gateLen) { fprintf(stderr, "[image] unreadable environment gate; booting normally\n"); close(fd); return; }
+        if (envGateHash(names, gateLen) != hdr.spare[6]) { if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] environment differs from the build in a gated variable; booting normally\n"); close(fd); return; }
+    }
     if (hdr.spare[3] && hdr.spare[3] != imageArgvKey() && !getenv("BUN_IMAGE_IN")) { if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] argv differs from the build invocation; booting normally\n"); close(fd); return; }
     { uint64_t need = hdr.spare[2], have = platformCpuFeatures(); if (need && (have & need) != need) { fprintf(stderr, "[image] %s was built on a CPU with features this one lacks (%llx vs %llx); booting normally\n", path, (unsigned long long)need, (unsigned long long)have); close(fd); return; } }
     if (hdr.textBase != platformTextBase()) { fprintf(stderr, "[image] ASLR slide differs (image text %llx vs ours %llx); booting normally\n", (unsigned long long)hdr.textBase, (unsigned long long)platformTextBase()); close(fd); return; }

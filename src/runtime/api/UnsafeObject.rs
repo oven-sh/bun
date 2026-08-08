@@ -29,7 +29,7 @@ fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [path, opts] = frame.arguments_as_array::<2>();
     if !path.is_string() {
         return Err(global.throw_invalid_arguments(format_args!(
-            "snapshot(path, {{ cancelTimers, keepTimers }}) expects a file path"
+            "snapshot(path, {{ cancelTimers, keepTimers, envGate }}) expects a file path"
         )));
     }
     if opts.is_object() {
@@ -38,6 +38,25 @@ fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
         if let Some(v) = opts.get(global, "keepTimers")? {
             bun_core::image::set_keep_timers_at_snapshot(v.to_boolean());
+        }
+        // envGate: names of environment variables the imaged boot depended on. The image records their values (or
+        // absence) at build time and is only restored by processes whose environment agrees; anything else boots normally.
+        if let Some(names) = opts.get(global, "envGate")? {
+            if !names.is_undefined_or_null() {
+                let mut it = names.array_iterator(global)?;
+                let mut joined: Vec<u8> = Vec::new();
+                while let Some(name) = it.next()? {
+                    let name = name.to_bun_string(global)?.to_owned_slice();
+                    if name.is_empty() || name.contains(&0) || name.contains(&b'=') {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "snapshot: envGate entries must be non-empty variable names"
+                        )));
+                    }
+                    joined.extend_from_slice(&name);
+                    joined.push(0);
+                }
+                Bun__imageSetEnvGate(joined.as_ptr(), joined.len());
+            }
         }
     }
     let path = path.to_bun_string(global)?.to_owned_slice();
@@ -51,6 +70,8 @@ fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
 unsafe extern "C" {
     safe fn JSC__VM__throwTerminationExceptionNow(global: &JSGlobalObject) -> JSValue;
+    /// NUL-separated variable names; copied by the callee.
+    safe fn Bun__imageSetEnvGate(names: *const u8, len: usize);
 }
 
 /// `Bun.unsafe.recleanImagePages()`: in a process restored from an image, hand pages whose contents drifted back to the

@@ -384,3 +384,21 @@ test.skipIf(process.platform !== "darwin")("fs.watch works in a restored process
   expect(JSON.parse(m![1]).some((e: string) => e.endsWith(":touched.txt"))).toBe(true);
   expect(code).toBe(0);
 }, 60000);
+
+test("envGate: the image is only restored when the gated environment variables agree with the build", async () => {
+  using dir = tempDir("bun-image-envgate", {});
+  const img = join(String(dir), "g.img");
+  const fixture = join(import.meta.dir, "envgate-fixture.js");
+  {
+    const b = Bun.spawnSync({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img }, stderr: "pipe", stdout: "pipe" });
+    expect(b.stderr.toString()).toContain("[image] wrote");
+  }
+  const run = (extra: Record<string, string>) =>
+    Bun.spawnSync({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img, ...extra }, stderr: "pipe", stdout: "pipe" });
+  expect(run({}).stdout.toString()).toContain("[js] restored APP_MODE=<unset>"); // same environment as the build: restored
+  const gated = run({ APP_MODE: "special" });
+  expect(gated.stdout.toString()).toContain("[js] plain boot APP_MODE=special"); // a gated variable differs: normal boot
+  expect(gated.stderr.toString()).not.toContain("[image] restored");
+  const other = run({ SOME_OTHER_VAR: "1" });
+  expect(other.stdout.toString()).toContain("[js] restored"); // ungated variables don't matter
+}, 60000);

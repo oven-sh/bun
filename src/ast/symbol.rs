@@ -109,6 +109,10 @@ pub struct Symbol {
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct SymbolFlags: u8 {
+        /// Decorator metadata wrapped this import item in a `typeof` guard,
+        /// so a missing export becomes `undefined` (not a link error).
+        const IS_DECORATOR_METADATA_GUARDED = 1 << 0;
+
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;
 
         /// Certain symbols must not be renamed or minified. For example, the
@@ -141,6 +145,7 @@ macro_rules! symbol_flag_accessors {
 }
 
 symbol_flag_accessors! {
+    is_decorator_metadata_guarded, set_is_decorator_metadata_guarded => IS_DECORATOR_METADATA_GUARDED;
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;

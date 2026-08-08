@@ -5713,6 +5713,26 @@ pub(crate) mod __gated_printer {
                         return Ok(());
                     }
 
+                    // `import * as ns, { X }` is a syntax error; split the
+                    // star binding into its own statement when both survive.
+                    let split_star_from_items = record
+                        .flags
+                        .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                        && !slice_of(s.items).is_empty();
+                    if split_star_from_items {
+                        self.print(b"import");
+                        self.print_space();
+                        self.print_whitespacer(ws!(b"* as"));
+                        self.print(b" ");
+                        self.print_symbol(s.namespace_ref);
+                        self.print(b" ");
+                        self.print_whitespacer(ws!(b"from "));
+                        self.print_import_record_path(record);
+                        self.print_semicolon_after_statement();
+                        self.print_semicolon_if_needed();
+                        self.print_indent();
+                    }
+
                     self.print(b"import");
 
                     // `import defer` grammatically requires `* as ns`; if a
@@ -5778,6 +5798,7 @@ pub(crate) mod __gated_printer {
                     if record
                         .flags
                         .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                        && !split_star_from_items
                     {
                         if item_count > 0 {
                             self.print(b",");
@@ -5791,9 +5812,10 @@ pub(crate) mod __gated_printer {
 
                     if item_count > 0 {
                         if !self.options.minify_whitespace
-                            || record
+                            || (record
                                 .flags
                                 .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                                && !split_star_from_items)
                             || slice_of(s.items).is_empty()
                         {
                             self.print(b" ");

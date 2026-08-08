@@ -3619,7 +3619,11 @@ impl<'a> LinkerContext<'a> {
                         .slice();
 
                     // Report mismatched imports and exports
-                    if symbol.import_item_status == ImportItemStatus::Generated {
+                    if symbol.is_decorator_metadata_guarded() {
+                        // Decorator metadata already wraps this in a `typeof`
+                        // guard that falls back to `Object` on `undefined`.
+                        symbol.import_item_status = ImportItemStatus::Missing;
+                    } else if symbol.import_item_status == ImportItemStatus::Generated {
                         // This is a debug message instead of an error because although it
                         // appears to be a named import, it's actually an automatically-
                         // generated named import that was originally a property access on an

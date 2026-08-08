@@ -1261,4 +1261,179 @@ describe("bundler", () => {
       stdout: "true\n",
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/9526
+  // A named import that only resolves to a TypeScript interface or type alias
+  // has no value export. Decorator metadata wraps the reference in a
+  // `typeof X === "undefined" ? Object : X` guard, so the bundler must let
+  // it degrade to `undefined` instead of emitting "No matching export".
+  itBundled("decorator_metadata/ImportedTypeOnly", {
+    files: {
+      "/entry.ts": /* ts */ `
+            ${reflectMetadata}
+
+            import { Coordinates, Aliased, NS, RealClass } from "./types";
+            import Def from "./types";
+
+            function d1(..._: any[]) {}
+
+            @d1
+            class Place {
+                @d1 a!: Coordinates;
+                @d1 b!: Aliased<string>;
+                @d1 c!: NS.Inner;
+                @d1 d!: RealClass;
+                @d1 e!: Def;
+                constructor(x: Coordinates, y: RealClass) {}
+            }
+
+            const t = (k: string) => Reflect.getMetadata("design:type", Place.prototype, k);
+            const p = Reflect.getMetadata("design:paramtypes", Place);
+            console.log(JSON.stringify([
+                t("a") === Object,
+                t("b") === Object,
+                t("c") === Object,
+                t("d") === RealClass,
+                t("e") === Object,
+                p[0] === Object,
+                p[1] === RealClass,
+            ]));
+        `,
+      "/types.ts": /* ts */ `
+            export interface Coordinates { lat: number; lng: number; }
+            export type Aliased<T> = { v: T };
+            export namespace NS { export interface Inner { x: number } }
+            export class RealClass { static readonly tag = "RealClass" }
+            interface DefaultIface { y: number }
+            export default DefaultIface;
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                }
+            }
+        `,
+    },
+    bundling: true,
+    run: {
+      stdout: "[true,true,true,true,true,true,true]\n",
+    },
+  });
+
+  itBundled("decorator_metadata/ImportedTypeAlongsideValue", {
+    files: {
+      "/entry.ts": /* ts */ `
+            ${reflectMetadata}
+
+            import { Coordinates, RealClass } from "./types";
+
+            function d1(..._: any[]) {}
+
+            class Place {
+                @d1 a!: Coordinates;
+                @d1 b!: RealClass;
+            }
+
+            // RealClass is also used as a value outside metadata; must stay a
+            // real class reference, not undefined.
+            const r = new RealClass();
+
+            const t = (k: string) => Reflect.getMetadata("design:type", Place.prototype, k);
+            console.log(JSON.stringify([
+                t("a") === Object,
+                t("b") === RealClass,
+                r instanceof RealClass,
+            ]));
+        `,
+      "/types.ts": /* ts */ `
+            export interface Coordinates { lat: number; lng: number; }
+            export class RealClass {}
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                }
+            }
+        `,
+    },
+    bundling: true,
+    run: {
+      stdout: "[true,true,true]\n",
+    },
+  });
+
+  // A missing export used both in metadata and as a value must keep the
+  // build error; only fully metadata-guarded imports degrade to undefined.
+  itBundled("decorator_metadata/MissingExportWithValueUseStillErrors", {
+    files: {
+      "/entry.ts": /* ts */ `
+            import { User } from "./user";
+
+            function d1(..._: any[]) {}
+
+            class Post {
+                @d1 author!: User;
+            }
+
+            console.log(new User());
+        `,
+      "/user.ts": /* ts */ `
+            export class UserEntity {}
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                }
+            }
+        `,
+    },
+    bundling: true,
+    bundleErrors: {
+      "/entry.ts": ['No matching export in "user.ts" for import "User"'],
+    },
+  });
+
+  itBundled("decorator_metadata/ImportedTypeTsconfigPaths", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+            ${reflectMetadata}
+
+            import { Coordinates } from "@models/types";
+            import { Prop } from "./decorators";
+
+            export class Place {
+                @Prop() coords!: Coordinates;
+            }
+
+            console.log(Reflect.getMetadata("design:type", Place.prototype, "coords") === Object);
+        `,
+      "/src/decorators.ts": /* ts */ `
+            export function Prop(): any { return function (_t: any, _k: string) {}; }
+        `,
+      "/src/models/types/index.ts": /* ts */ `
+            export interface Coordinates { lat: number; lng: number; }
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                    "baseUrl": ".",
+                    "paths": { "@models/types": ["./src/models/types"] }
+                }
+            }
+        `,
+    },
+    entryPoints: ["/src/entry.ts"],
+    bundling: true,
+    run: {
+      stdout: "true\n",
+    },
+  });
 });

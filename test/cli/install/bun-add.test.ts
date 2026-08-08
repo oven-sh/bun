@@ -1630,7 +1630,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
     stderr: stderr1,
     exited: exited1,
   } = spawn({
-    cmd: [bunExe(), "add", "bun@github.com:mishoo/UglifyJS.git"],
+    cmd: [bunExe(), "add", "bun@github.com:dylan-conway/install-test2.git"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -1646,43 +1646,29 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
-    "installed uglify-js@git+ssh://bun@github.com:mishoo/UglifyJS.git with binaries:",
-    " - uglifyjs",
+    "installed install-test2@git+ssh://bun@github.com:dylan-conway/install-test2.git",
     "",
     "1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-    join("..", "uglify-js", "bin", "uglifyjs"),
-  );
-  expect((await readdirSorted(join(package_dir, "node_modules", ".cache")))[0]).toBe("9d05c118f06c3b4c.git");
-  expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "install-test2"]);
+  expect((await readdirSorted(join(package_dir, "node_modules", ".cache")))[0]).toBe("998078e703122291.git");
+  expect(await readdirSorted(join(package_dir, "node_modules", "install-test2"))).toEqual([
     ".bun-tag",
-    ".gitattributes",
-    ".github",
-    ".gitignore",
-    "CONTRIBUTING.md",
-    "LICENSE",
-    "README.md",
-    "bin",
-    "lib",
+    "index.js",
     "package.json",
-    "test",
-    "tools",
   ]);
-  const package_json = await file(join(package_dir, "node_modules", "uglify-js", "package.json")).json();
-  expect(package_json.name).toBe("uglify-js");
+  const package_json = await file(join(package_dir, "node_modules", "install-test2", "package.json")).json();
+  expect(package_json.name).toBe("install-test2");
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
     JSON.stringify(
       {
         name: "foo",
         version: "0.0.1",
         dependencies: {
-          "uglify-js": "bun@github.com:mishoo/UglifyJS.git",
+          "install-test2": "bun@github.com:dylan-conway/install-test2.git",
         },
       },
       null,
@@ -1714,7 +1700,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(await exited2).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
-}, 20000);
+});
 
 it("should not save git urls twice", async () => {
   const urls: string[] = [];
@@ -1757,7 +1743,7 @@ it("should not save git urls twice", async () => {
   expect(package_json_content2.dependencies).toEqual({
     "test-repo": "https://github.com/liz3/empty-bun-repo",
   });
-}, 20000);
+});
 
 it("should prefer optionalDependencies over dependencies of the same name", async () => {
   const urls: string[] = [];

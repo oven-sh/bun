@@ -5291,6 +5291,10 @@ unsafe fn resolve<'a>(
         }
     };
 
+    if result.rejects_bare_root_query(normalized_specifier, query_string) {
+        return Err(crate::Error::ModuleNotFound);
+    }
+
     // SAFETY: plain bool/usize fields.
     unsafe {
         if !(*vm).macro_mode {

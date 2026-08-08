@@ -277,6 +277,23 @@ impl Result {
 
         None
     }
+
+    /// Node rejects `pkg?v=1`; letting it through the runtime resolver would
+    /// evaluate a fresh package instance per distinct query. tsconfig `paths`
+    /// aliases resolve with [`ResultFlags::IS_FROM_NODE_MODULES`] unset;
+    /// subpaths (`pkg/sub?q`) are left to the exports/imports map, where
+    /// Node's answer depends on wildcard shape.
+    pub fn rejects_bare_root_query(
+        &self,
+        normalized_specifier: &[u8],
+        query_string: &[u8],
+    ) -> bool {
+        !query_string.is_empty()
+            && bun_paths::is_package_path(normalized_specifier)
+            && crate::package_json::Package::parse_name(normalized_specifier)
+                .is_some_and(|n| n.len() == normalized_specifier.len())
+            && self.flags.is_from_node_modules()
+    }
 }
 
 pub struct DirEntryResolveQueueItem {

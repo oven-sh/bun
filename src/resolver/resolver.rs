@@ -2863,6 +2863,7 @@ impl<'a> Resolver<'a> {
                         .load_as_file_or_directory(abs_path, kind, out)
                         .is_success()
                     {
+                        out.is_node_module = true;
                         self.extension_order = prev_extension_order;
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
@@ -2904,6 +2905,7 @@ impl<'a> Resolver<'a> {
                     .load_as_file_or_directory(abs_path, kind, out)
                     .is_success()
                 {
+                    out.is_node_module = true;
                     if let Some(d) = self.debug_logs.as_mut() {
                         d.decrease_indent();
                     }

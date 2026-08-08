@@ -169,6 +169,10 @@ private:
 
         /* If we are on STOP, return where we may stand */
         if (isStop) {
+            /* STOP with unconsumed URL means the segment budget ran out, not end-of-URL: no match here */
+            if (currentUrl.length()) {
+                return false;
+            }
             /* We have reached accross the entire URL with no stoppage, execute */
             for (uint32_t handler : parent->handlers) {
                 if (handlers[handler & HANDLER_MASK](this)) {

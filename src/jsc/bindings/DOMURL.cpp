@@ -150,9 +150,7 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
         return {};
 
     auto mappedHost = Bun::applyUnicode16IDNADelta(hostView.toString());
-    // An all-ignored host maps to empty, which is domain-to-ASCII failure; splicing
-    // "" in would instead reparse http://\u180E/a as http:///a (host "a"). Skip the
-    // rewrite so the parser rejects the original code points.
+    // All-ignored host: splicing "" in would reparse http://\u180E/a as http:///a (host "a"); skip so the parser rejects it.
     if (mappedHost.isEmpty())
         return {};
     StringBuilder builder;

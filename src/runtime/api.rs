@@ -262,7 +262,7 @@ fn with_text_format_source_encoded<R>(
         SourceEncoding,
     ) -> bun_jsc::JsResult<R>,
 ) -> bun_jsc::JsResult<R> {
-    use crate::node::BlobOrStringOrBuffer;
+    use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
     // A private mi_heap costs microseconds to create, more than parsing a
     // small document: keep one per thread and recycle it between calls.
@@ -293,7 +293,9 @@ fn with_text_format_source_encoded<R>(
     // Hold whichever input storage applies; all expose the bytes.
     // Conditional-init + drop-flag — only the taken branch's holder is live.
     let _blob_hold: BlobOrStringOrBuffer;
-    let _str_hold;
+    // `SliceWithUnderlyingString` has no `Drop`; `StringOrBuffer`'s releases
+    // the string's ref.
+    let _str_hold: StringOrBuffer;
     let _latin1_hold: bun_core::OwnedString;
     let mut encoding = SourceEncoding::Utf8Text;
     let bytes: &[u8] = 'bytes: {
@@ -316,7 +318,7 @@ fn with_text_format_source_encoded<R>(
         }
         // `to_slice` moves the +1 ref into the returned slice's
         // `.underlying`, so the temporary `BunString` drop is a no-op.
-        _str_hold = s.to_slice();
+        _str_hold = StringOrBuffer::String(s.to_slice());
         _str_hold.slice()
     };
 

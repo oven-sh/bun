@@ -17,7 +17,7 @@ const { errorOrDestroy } = require("internal/streams/destroy");
 // MakeCallback), so a throw from a listener becomes an uncaughtException. Our
 // pull-based reader can emit from a pull-promise reaction; a throw there would
 // otherwise reject a promise nobody observes and surface as unhandledRejection.
-const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
+const { reportUncaughtException } = require("internal/shared");
 
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");

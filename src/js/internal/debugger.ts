@@ -96,6 +96,70 @@ type CreateBackendFn = (
   receive: (...messages: string[]) => void,
 ) => unknown;
 
+// Reverse-connect: re-dial on failure/close so --inspect-wait/-brk cannot be
+// left waiting for a frontend that can no longer reach it. fd: is one-shot.
+function dialWithReconnect(
+  connectionOptions,
+  makeBackend: (receive: (...messages: string[]) => void) => Backend,
+): void {
+  const canReconnect = connectionOptions.fd === undefined;
+  let reconnectDelay = 50;
+  const scheduleReconnect = () => {
+    if (!canReconnect) return;
+    setTimeout(dial, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 1000);
+  };
+  const dial = () => {
+    Bun.connect<{ framer: SocketFramer; backend: Backend }>({
+      ...connectionOptions,
+      socket: {
+        open: socket => {
+          reconnectDelay = 50;
+          let backend: Backend;
+          const framer = new SocketFramer((message: string | string[]) => {
+            backend.write(message);
+          });
+          backend = makeBackend((...messages: string[]) => {
+            for (const message of messages) {
+              framer.send(socket, message);
+            }
+          });
+          socket.data = { framer, backend };
+          socket.ref();
+        },
+        data: (socket, bytes) => {
+          if (!socket.data) {
+            socket.terminate();
+            return;
+          }
+          socket.data.framer.onData(socket, bytes);
+        },
+        // Ensure we always drain the socket.
+        // This is necessary due to socket.$write usage.
+        drain: _socket => {},
+        close: socket => {
+          const socketData = socket.data;
+          if (socketData) {
+            const { backend, framer } = socketData;
+            backend.close();
+            framer.reset();
+          }
+          scheduleReconnect();
+        },
+      },
+    }).catch(error => {
+      $debug("error:", error);
+      if (canReconnect) {
+        scheduleReconnect();
+        return;
+      }
+      // Force us to send a disconnect message
+      makeBackend(() => {}).close();
+    });
+  };
+  dial();
+}
+
 // CDP translation is only needed for node:inspector servers, so load it lazily.
 let lazyInspectorCDPAdapter: any;
 function cdpAdapterConstructor() {
@@ -393,54 +457,7 @@ class Debugger {
   }
 
   #connectOverSocket(networkOptions) {
-    let backend;
-    return Bun.connect<{ framer: SocketFramer; backend: Backend }>({
-      ...networkOptions,
-      socket: {
-        open: socket => {
-          let framer: SocketFramer;
-          const callback = (...messages: string[]) => {
-            for (const message of messages) {
-              framer.send(socket, message);
-            }
-          };
-
-          framer = new SocketFramer((message: string | string[]) => {
-            backend.write(message);
-          });
-          backend = this.#createBackend(false, callback);
-          socket.data = {
-            framer,
-            backend,
-          };
-          socket.ref();
-        },
-        data: (socket, bytes) => {
-          if (!socket.data) {
-            socket.terminate();
-            return;
-          }
-          socket.data.framer.onData(socket, bytes);
-        },
-        drain: _socket => {},
-        close: socket => {
-          const socketData = socket.data;
-          if (socketData) {
-            const { backend, framer } = socketData;
-            backend.close();
-            framer.reset();
-          }
-        },
-      },
-    }).catch(err => {
-      // Force us to send a disconnect message
-      if (!backend) {
-        backend = this.#createBackend(false, () => {});
-        backend.close();
-      }
-
-      $debug("error:", err);
-    });
+    dialWithReconnect(networkOptions, receive => this.#createBackend(false, receive));
   }
 
   get #websocket(): WebSocketHandler<Connection> {
@@ -611,13 +628,13 @@ class Debugger {
   }
 }
 
-async function connectToUnixServer(
+function connectToUnixServer(
   executionContextId: number,
   unix: string,
   createBackend: CreateBackendFn,
   send: (message: string) => void,
   close: () => void,
-) {
+): void {
   // Windows uses TCP.
   // POSIX uses Unix sockets.
   //
@@ -653,66 +670,16 @@ async function connectToUnixServer(
     return;
   }
 
-  const socket = await Bun.connect<{ framer: SocketFramer; backend: Backend }>({
-    ...connectionOptions,
-    socket: {
-      open: socket => {
-        const framer = new SocketFramer((message: string | string[]) => {
-          backend.write(message);
-        });
-
-        const backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {
-          for (const message of messages) {
-            framer.send(socket, message);
-          }
-        });
-
-        const backend = {
-          write: message => {
-            send.$call(backendRaw, message);
-            return true;
-          },
-          close: () => close.$call(backendRaw),
-        };
-
-        socket.data = {
-          framer,
-          backend,
-        };
-
-        socket.ref();
+  dialWithReconnect(connectionOptions, receive => {
+    const backendRaw = createBackend(executionContextId, true, receive);
+    return {
+      write: message => {
+        send.$call(backendRaw, message);
+        return true;
       },
-      data: (socket, bytes) => {
-        if (!socket.data) {
-          socket.terminate();
-          return;
-        }
-
-        socket.data.framer.onData(socket, bytes);
-      },
-
-      // Ensure we always drain the socket.
-      // This is necessary due to socket.$write usage.
-      drain: _socket => {},
-
-      close: socket => {
-        const socketData = socket.data;
-        if (socketData) {
-          const { backend, framer } = socketData;
-          backend.close();
-          framer.reset();
-        }
-      },
-    },
-  }).catch(error => {
-    // Force it to close
-    const backendRaw = createBackend(executionContextId, true, () => {});
-    close.$call(backendRaw);
-
-    $debug("error:", error);
+      close: () => close.$call(backendRaw),
+    };
   });
-
-  return socket;
 }
 
 function versionInfo(): unknown {

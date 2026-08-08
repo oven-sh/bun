@@ -1008,12 +1008,9 @@ macro_rules! enum_unwrap {
     };
 }
 
-/// Unwrap a `Result`, calling `outOfMemory()` on
-/// `Err`. The full multi-arm version (which narrows mixed error sets) lives in
-/// `bun_crash_handler::handle_oom`; that crate sits *above* `bun_core` in the
-/// dep graph, so this tier-0 alias is the OOM-only arm — sufficient for the
-/// `Result<T, AllocError>` / `Result<T, Error>` callers in `js_parser`,
-/// `bake/DevServer`, etc. that spell it `bun_core::handle_oom`.
+/// Unwrap a `Result`, calling `outOfMemory()` on **any** `Err`. The
+/// `AllocError`-only version lives in `bun_crash_handler::handle_oom` (that
+/// crate sits *above* `bun_core` in the dep graph).
 #[inline]
 #[track_caller]
 pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {

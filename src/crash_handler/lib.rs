@@ -1264,7 +1264,6 @@ mod draft {
             }
         }
 
-        let show_trace = Environment::SHOW_CRASH_TRACE;
         let name: &[u8] = err.name();
 
         if name == b"OutOfMemory" {
@@ -1273,9 +1272,7 @@ mod draft {
             name,
             b"InvalidArgument" | b"Invalid Bunfig" | b"InstallFailed"
         ) {
-            if !show_trace {
-                Global::exit(1);
-            }
+            // Already printed their own diagnostics; exit quietly below.
         } else if name == b"SyntaxError" {
             Output::err("SyntaxError", "An error occurred while parsing code", ());
         } else if name == b"CurrentWorkingDirectoryUnlinked" {

@@ -52,12 +52,12 @@ function existsInHead(p: string): boolean {
 test("dead Rust symbols (uws_sys, crash_handler, collections) do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     // uws_sys: extern declarations whose C side had no callers, and safe
-    // wrappers nothing invoked (the *_with_options / add_post_handler
-    // counterparts are the live paths).
+    // wrappers nothing invoked (the *_with_options counterparts are the live
+    // paths).
     ["src/uws_sys/WebSocket.rs", /uws_ws_send_fragment|uws_ws_send_first_fragment|uws_ws_get_remote_address_as_text/],
     ["src/uws_sys/Response.rs", /override_write_offset/],
     ["src/uws_sys/h3.rs", /override_write_offset/],
-    ["src/uws_sys/Loop.rs", /add_pre_handler|uws_loop_addPreHandler/],
+    ["src/uws_sys/Loop.rs", /add_pre_handler|add_post_handler|uws_loop_addPreHandler|uws_loop_addPostHandler/],
     ["src/uws_sys/socket.rs", /\bfrom_named_pipe\b/],
     ["src/uws_sys/lib.rs", /us_fault_clear\b|LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE/],
     // crash_handler: error-return tracing is a Zig feature Rust has no
@@ -96,7 +96,7 @@ test("dead uws_sys C wrappers do not reappear", () => {
     ],
     [
       "src/uws_sys/libuwsockets.cpp",
-      /uws_req_is_ancient|uws_req_get_yield|uws_req_for_each_header|uws_req_get_query|uws_loop_removePostHandler|uws_loop_removePreHandler/,
+      /uws_req_is_ancient|uws_req_get_yield|uws_req_for_each_header|uws_req_get_query|uws_loop_addPostHandler|uws_loop_removePostHandler|uws_loop_removePreHandler/,
     ],
     [
       "src/uws_sys/libuwsockets_h3.cpp",

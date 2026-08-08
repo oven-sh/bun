@@ -1532,13 +1532,6 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
       return (struct us_loop_t *)uWS::Loop::get(existing_native_loop);
   }
 
-  void uws_loop_addPostHandler(us_loop_t *loop, void *ctx_,
-                               void (*cb)(void *ctx, us_loop_t *loop))
-  {
-    uWS::Loop *uwsLoop = (uWS::Loop *)loop;
-    uwsLoop->addPostHandler(ctx_, [ctx_, cb](uWS::Loop *uwsLoop_)
-                            { cb(ctx_, (us_loop_t *)uwsLoop_); });
-  }
   void uws_loop_defer(us_loop_t *loop, void *ctx, void (*cb)(void *ctx))
   {
     uWS::Loop *uwsLoop = (uWS::Loop *)loop;

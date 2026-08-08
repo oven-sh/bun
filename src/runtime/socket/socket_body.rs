@@ -1471,9 +1471,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let handlers = this.get_handlers();
-        // The socket is live whether or not script may run: account for it now,
-        // so a stop that lands before the callbacks below still closes it
-        // through the listener / group sweep and on_close balances on_create.
+        let global = handlers.global_object;
+        // The socket is live whether or not script may run: give it its owner
+        // (the wrapper adopts the creation reference; its finalizer releases
+        // it) and account for it now, so one that opens under a stop already
+        // requested is closed by the sweep and freed like any other instead of
+        // keeping a reference nobody holds.
+        let this_value = this.get_this_value(&global);
         this.mark_active();
         // Multiple JS entries below; a worker terminate() raised in one trips
         // assertNoException() in the next.
@@ -1482,9 +1486,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let callback = handlers.on_open();
         let handshake_callback = handlers.on_handshake();
-
-        let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
 
         if let Err(e) = handlers.resolve_promise(this_value) {
             // Event-loop dispatch: returning with the exception still pending

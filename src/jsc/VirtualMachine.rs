@@ -1993,14 +1993,17 @@ extern crate alloc;
 /// casts back on the other side of each hook.
 pub type RuntimeState = *mut c_void;
 
-/// The subset of a Worker's `execArgv` that bun acts on. Flags whose value must
-/// outlive the parse (--cpu-prof-dir/-name) are absent; nothing needs them yet.
-#[derive(Default, Clone, Copy)]
+/// The subset of a Worker's `execArgv` that bun acts on (node's per-Environment options).
+#[derive(Default)]
 pub struct WorkerExecArgv {
     pub allow_addons: Option<bool>,
     pub use_system_ca: Option<bool>,
+    /// `--cpu-prof` (JSON) / `--cpu-prof-md`; either enables profiling of the worker thread.
     pub cpu_prof: bool,
+    pub cpu_prof_md: bool,
     pub cpu_prof_interval: Option<u32>,
+    pub cpu_prof_name: Option<Box<[u8]>>,
+    pub cpu_prof_dir: Option<Box<[u8]>>,
 }
 
 pub struct RuntimeHooks {

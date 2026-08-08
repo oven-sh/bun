@@ -1587,10 +1587,17 @@ unsafe fn apply_standalone_runtime_flags(
 unsafe fn parse_worker_exec_argv(
     exec_argv: &[bun_core::WTFStringImpl],
 ) -> bun_jsc::virtual_machine::WorkerExecArgv {
+    use crate::cli::arguments::replace_pid_placeholder;
+    enum Pending {
+        None,
+        Interval,
+        Name,
+        Dir,
+    }
     let mut out = bun_jsc::virtual_machine::WorkerExecArgv::default();
     let mut no_addons = false;
-    let mut want_interval = false;
-    let mut skip_next = false;
+    let mut pending = Pending::None;
+    let parse_interval = |v: &[u8]| std::str::from_utf8(v).ok().and_then(|s| s.parse().ok());
     for &arg in exec_argv {
         if arg.is_null() {
             continue;
@@ -1598,14 +1605,20 @@ unsafe fn parse_worker_exec_argv(
         // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
         let owned = unsafe { &*arg }.to_owned_slice_z();
         let bytes = owned.as_bytes();
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if want_interval {
-            want_interval = false;
-            out.cpu_prof_interval = std::str::from_utf8(bytes).ok().and_then(|s| s.parse().ok());
-            continue;
+        match core::mem::replace(&mut pending, Pending::None) {
+            Pending::None => {}
+            Pending::Interval => {
+                out.cpu_prof_interval = parse_interval(bytes);
+                continue;
+            }
+            Pending::Name => {
+                out.cpu_prof_name = Some(replace_pid_placeholder(bytes));
+                continue;
+            }
+            Pending::Dir => {
+                out.cpu_prof_dir = Some(bytes.into());
+                continue;
+            }
         }
         // `stop_after_positional_at = 1` — first non-flag token ends parsing.
         if bytes.first() != Some(&b'-') {
@@ -1622,14 +1635,20 @@ unsafe fn parse_worker_exec_argv(
             out.use_system_ca = Some(false);
         } else if bytes == b"--cpu-prof" {
             out.cpu_prof = true;
+        } else if bytes == b"--cpu-prof-md" {
+            out.cpu_prof_md = true;
         } else if bytes == b"--cpu-prof-interval" {
-            want_interval = true;
+            pending = Pending::Interval;
         } else if let Some(v) = bytes.strip_prefix(b"--cpu-prof-interval=") {
-            out.cpu_prof_interval = std::str::from_utf8(v).ok().and_then(|s| s.parse().ok());
-        } else if bytes == b"--cpu-prof-dir" || bytes == b"--cpu-prof-name" {
-            // Value is discarded here but must be consumed so it is not misread
-            // as the first positional (which would stop the scan early).
-            skip_next = true;
+            out.cpu_prof_interval = parse_interval(v);
+        } else if bytes == b"--cpu-prof-name" {
+            pending = Pending::Name;
+        } else if let Some(v) = bytes.strip_prefix(b"--cpu-prof-name=") {
+            out.cpu_prof_name = Some(replace_pid_placeholder(v));
+        } else if bytes == b"--cpu-prof-dir" {
+            pending = Pending::Dir;
+        } else if let Some(v) = bytes.strip_prefix(b"--cpu-prof-dir=") {
+            out.cpu_prof_dir = Some(v.into());
         }
     }
     // Override `allow_addons` unconditionally.

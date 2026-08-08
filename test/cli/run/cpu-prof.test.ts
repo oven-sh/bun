@@ -151,6 +151,44 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  // node's --cpu-prof options are per-Environment: a worker's own execArgv decides where and under
+  // which name its profile is written, independently of the (unprofiled) parent.
+  test("--cpu-prof-dir and --cpu-prof-name in a worker's execArgv are honoured", async () => {
+    using dir = tempDir("cpu-prof-worker-execargv", {
+      "test.js": `
+        const { Worker } = require("node:worker_threads");
+        const spin = \`const end = Date.now() + 100; while (Date.now() < end) {}\`;
+        const json = new Worker(spin, {
+          eval: true,
+          execArgv: ["--cpu-prof", "--cpu-prof-dir", "profiles", "--cpu-prof-name", "worker.cpuprofile"],
+        });
+        await new Promise(r => json.on("exit", r));
+        const md = new Worker(spin, { eval: true, execArgv: ["--cpu-prof-md", "--cpu-prof-dir=mdprofiles"] });
+        await new Promise(r => md.on("exit", r));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+
+    // Nothing in the cwd (the parent is not profiling); the JSON profile is where the worker asked.
+    expect(readdirSync(String(dir)).filter(f => f.endsWith(".cpuprofile") || f.endsWith(".md"))).toEqual([]);
+    expect(readdirSync(join(String(dir), "profiles"))).toEqual(["worker.cpuprofile"]);
+    const profile = JSON.parse(readFileSync(join(String(dir), "profiles", "worker.cpuprofile"), "utf-8"));
+    expect(Array.isArray(profile.nodes)).toBe(true);
+    // --cpu-prof-md alone enables the markdown format, with the default (thread-distinct) name.
+    const mdFiles = readdirSync(join(String(dir), "mdprofiles"));
+    expect(mdFiles).toHaveLength(1);
+    expect(mdFiles[0]).toMatch(/^CPU\..*\.md$/);
+    expect(exitCode).toBe(0);
+  });
+
   // On Windows the path buffer is ~98 KB and the CreateProcess command-line
   // limit is ~32 KB, so an overflowing CLI argument cannot be delivered. On
   // POSIX 5000 bytes exceeds the fixed path buffer (Linux 4096, macOS 1024);

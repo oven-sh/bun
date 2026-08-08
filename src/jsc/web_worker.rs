@@ -356,8 +356,8 @@ impl WebWorker {
             } else {
                 name_str.to_owned_slice_z()
             },
-            // SAFETY: `parent` is live (see above); `CPUProfilerConfig` is `Copy`.
-            parent_cpu_profiler_config: unsafe { (*parent).cpu_profiler_config },
+            // SAFETY: `parent` is live (see above); read on the parent's own thread.
+            parent_cpu_profiler_config: unsafe { (*parent).cpu_profiler_config.clone() },
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             requested_terminate: AtomicBool::new(false),
             vm: Cell::new(core::ptr::null_mut()),
@@ -654,7 +654,7 @@ impl WebWorker {
         // A worker's own `execArgv` is parsed with the RunCommand param table (in `bun_runtime::cli`,
         // hence the hook); a worker without one inherits the parent's per-Environment settings.
         let own_exec_argv = self.exec_argv();
-        let exec_argv: virtual_machine::WorkerExecArgv = match own_exec_argv {
+        let mut exec_argv: virtual_machine::WorkerExecArgv = match own_exec_argv {
             // SAFETY: borrows the proxy's `WorkerOptions`, alive as long as the proxy; read only.
             Some(a) => unsafe { (hooks.parse_worker_exec_argv)(a) },
             None => Default::default(),
@@ -744,32 +744,33 @@ impl WebWorker {
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
 
-            // `--cpu-prof` in this worker's execArgv, or inherited from a profiling parent when the
-            // worker has no execArgv of its own. The profile is written by the VM's exit path.
-            let profile = if exec_argv.cpu_prof {
-                let mut config = crate::bun_cpu_profiler::CPUProfilerConfig {
-                    json_format: true,
+            // `--cpu-prof` / `--cpu-prof-md` (with -name/-dir/-interval) in this worker's execArgv,
+            // or the parent's profiling options when the worker has no execArgv of its own, as node's
+            // per-Environment options work. The profile is written by the VM's exit path.
+            let profile = if exec_argv.cpu_prof || exec_argv.cpu_prof_md {
+                let defaults = crate::bun_cpu_profiler::CPUProfilerConfig::default();
+                Some(crate::bun_cpu_profiler::CPUProfilerConfig {
+                    name: exec_argv.cpu_prof_name.take().unwrap_or_default(),
+                    dir: exec_argv.cpu_prof_dir.take().unwrap_or_default(),
+                    md_format: exec_argv.cpu_prof_md,
+                    json_format: exec_argv.cpu_prof,
+                    interval: exec_argv.cpu_prof_interval.unwrap_or(defaults.interval),
                     thread_id: self.execution_context_id,
-                    ..Default::default()
-                };
-                if let Some(interval) = exec_argv.cpu_prof_interval {
-                    config.interval = interval;
-                }
-                Some(config)
+                })
             } else if own_exec_argv.is_none() {
-                self.parent_cpu_profiler_config.map(|c| {
+                self.parent_cpu_profiler_config.as_ref().map(|c| {
                     crate::bun_cpu_profiler::CPUProfilerConfig {
                         thread_id: self.execution_context_id,
-                        ..c
+                        ..c.clone()
                     }
                 })
             } else {
                 None
             };
             if let Some(config) = profile {
-                vm_ref.cpu_profiler_config = Some(config);
                 // The sampling interval is thread-local: set it from this thread.
                 crate::bun_cpu_profiler::set_sampling_interval(config.interval);
+                vm_ref.cpu_profiler_config = Some(config);
                 crate::bun_cpu_profiler::start_cpu_profiler(vm_ref.jsc_vm_mut());
             }
         }

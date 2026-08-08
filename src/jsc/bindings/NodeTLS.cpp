@@ -28,17 +28,20 @@ JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * glob
 {
     VM& vm = globalObject->vm();
 
-    struct us_cert_string_t* out;
-    auto size = us_raw_root_certs(&out);
-    if (size < 0) {
-        return JSValue::encode(jsUndefined());
-    }
+    // The PEM strings live for the whole process and are shared by every caller (and every worker), so they are built
+    // once as static StringImpls: no per-call decoding of the bundle, and no refcount traffic on them afterwards.
+    static const Vector<Ref<StringImpl>>* certificates = [] {
+        auto* strings = new Vector<Ref<StringImpl>>();
+        struct us_cert_string_t* out;
+        auto size = us_raw_root_certs(&out);
+        for (auto i = 0; i < size; i++)
+            strings->append(StringImpl::createStaticStringImpl(std::span { out[i].str, out[i].len }));
+        return strings;
+    }();
+    auto size = certificates->size();
     auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
-    for (auto i = 0; i < size; i++) {
-        auto raw = out[i];
-        auto str = WTF::String::fromUTF8(std::span { raw.str, raw.len });
-        rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
-    }
+    for (size_t i = 0; i < size; i++)
+        rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, String(certificates->at(i).get())));
 
     return JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates));
 }

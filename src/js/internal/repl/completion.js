@@ -30,7 +30,7 @@ const {
   StringPrototypeSlice,
   StringPrototypeSplit,
   StringPrototypeStartsWith,
-  StringPrototypeToLocaleLowerCase,
+  StringPrototypeToLowerCase,
   StringPrototypeTrimStart,
 } = primordials;
 
@@ -505,12 +505,13 @@ function complete(line, callback) {
     // Filter, sort (within each group), uniq and merge the completion groups.
     if (completionGroups.length && filter) {
       const newCompletionGroups = [];
-      const lowerCaseFilter = StringPrototypeToLocaleLowerCase(filter);
+      // Bun: toLowerCase; JSC's no-arg toLocaleLowerCase is locale-sensitive (tr/az fold "I" to U+0131).
+      const lowerCaseFilter = StringPrototypeToLowerCase(filter);
       ArrayPrototypeForEach(completionGroups, group => {
         const filteredGroup = ArrayPrototypeFilter(group, str => {
           // Filter is always case-insensitive following chromium autocomplete
           // behavior.
-          return StringPrototypeStartsWith(StringPrototypeToLocaleLowerCase(str), lowerCaseFilter);
+          return StringPrototypeStartsWith(StringPrototypeToLowerCase(str), lowerCaseFilter);
         });
         if (filteredGroup.length) {
           ArrayPrototypePush(newCompletionGroups, filteredGroup);

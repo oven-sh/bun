@@ -1471,9 +1471,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let handlers = this.get_handlers();
+        // The socket is live whether or not script may run: account for it now,
+        // so a stop that lands before the callbacks below still closes it
+        // through the listener / group sweep and on_close balances on_create.
+        this.mark_active();
         // Multiple JS entries below; a worker terminate() raised in one trips
-        // assertNoException() in the next, and is_shutting_down() is still
-        // false at that point.
+        // assertNoException() in the next.
         if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             return;
         }
@@ -1483,7 +1486,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
 
-        this.mark_active();
         if let Err(e) = handlers.resolve_promise(this_value) {
             // Event-loop dispatch: returning with the exception still pending
             // would leak it into the next native JSC call in this tick.

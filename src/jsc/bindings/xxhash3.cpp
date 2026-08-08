@@ -627,8 +627,7 @@ namespace xxh3 {
 
 HWY_EXPORT(HashLong);
 
-// XXH3_64bits_withSeed. `seed` is the full 64-bit seed; callers that need the
-// JS `@truncate(seed)` semantics truncate before calling (HashObject does).
+// XXH3_64bits_withSeed. `seed` is the full 64-bit seed.
 static u64 Hash64(const u8* input, size_t len, u64 seed)
 {
     if (len <= 16) {

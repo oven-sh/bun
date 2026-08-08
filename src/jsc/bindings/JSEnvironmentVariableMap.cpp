@@ -27,6 +27,7 @@
 #include <JavaScriptCore/StructureInlines.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/PropertyDescriptor.h>
+#include <JavaScriptCore/Symbol.h>
 #include "BunProcess.h"
 #include "ScriptExecutionContext.h"
 #include "SharedEnvStore.h"
@@ -1142,6 +1143,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     args.append(editWindowsEnvVar);
     args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
+    args.append(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s).get()));
     auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
     NakedPtr<JSC::Exception> returnedException = nullptr;

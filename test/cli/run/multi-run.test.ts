@@ -7,7 +7,7 @@ import path from "path";
 async function runMulti(
   args: string[],
   dir: string,
-  extraEnv?: Record<string, string>,
+  extraEnv?: Record<string, string | undefined>,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
@@ -959,6 +959,79 @@ describe.concurrent("timing edge cases", () => {
     expect(ia).toBeLessThan(ib);
     expect(ib).toBeLessThan(ic);
     expect(r.exitCode).toBe(0);
+  });
+
+  // A script is finished when its process has exited AND its output has reached
+  // EOF; treating the exit alone as "finished" drops output that hasn't been
+  // read yet (here: written by a child the script left behind).
+  test("output written after the script's shell exits is not dropped", async () => {
+    using dir = tempDir("mr-late-output", {
+      "late.js": `
+        Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(300); console.log('late-line')"],
+          stdio: ["ignore", "inherit", "inherit"],
+          // Windows: keep the child out of this process's kill-on-close job.
+          detached: true,
+        }).unref();
+        console.log("early-line");
+      `,
+      "package.json": JSON.stringify({
+        scripts: {
+          late: `${bunExe()} late.js`,
+          other: `echo other-ran`,
+        },
+      }),
+    });
+    // CI ASAN lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which makes the script's
+    // bun SIGKILL the detached child on exit, defeating the late write.
+    const r = await runMulti(["run", "--sequential", "late", "other"], String(dir), {
+      BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    });
+    expectPrefixed(r.stdout, "late", "early-line");
+    expectPrefixed(r.stdout, "late", "late-line");
+    expectPrefixed(r.stdout, "other", "other-ran");
+    expect(r.stdout.indexOf("late-line")).toBeLessThan(r.stdout.indexOf("other-ran"));
+    expectDone(r.stderr, "late");
+    expectDone(r.stderr, "other");
+    expect(r.exitCode).toBe(0);
+  });
+
+  // On abort (here: a failing script with exit-on-error), exit alone finishes
+  // a script; waiting for pipe EOF would hang on the detached child that still
+  // holds bg's stdout.
+  test("failure abort does not wait for a child holding another script's pipes", async () => {
+    using dir = tempDir("mr-abort-late", {
+      "bg.js": `
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(10_000)"],
+          stdio: ["ignore", "inherit", "inherit"],
+          detached: true,
+        });
+        child.unref();
+        await Bun.write("ready.txt", String(child.pid));
+      `,
+      "fail.js": `
+        while (!(await Bun.file("ready.txt").exists())) await Bun.sleep(10);
+        process.exit(1);
+      `,
+      "package.json": JSON.stringify({
+        scripts: {
+          fail: `${bunExe()} fail.js`,
+          bg: `${bunExe()} bg.js`,
+        },
+      }),
+    });
+    const r = await runMulti(["run", "--parallel", "fail", "bg"], String(dir), {
+      BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    });
+    // Reap the pipe-holding child so nothing outlives the test. Guard the pid:
+    // kill(0) would signal this whole process group.
+    try {
+      const pid = Number(await Bun.file(path.join(String(dir), "ready.txt")).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
+    expectExited(r.stderr, "fail", 1);
+    expect(r.exitCode).toBe(1);
   });
 });
 

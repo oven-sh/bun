@@ -238,12 +238,37 @@ impl FilterSet {
                 PatternKind::Name => name,
                 PatternKind::Path => path,
             };
-            if glob::r#match(&filter.pattern, target).matches() {
+            let primary = glob::r#match(&filter.pattern, target);
+            if primary.matches() {
                 return true;
+            }
+            // #10639: `--filter db` also matches `@org/db` and the `packages/db` directory.
+            // Negated patterns stay exact-name: OR-ing alternatives under `!` would re-include.
+            if filter.kind == PatternKind::Name
+                && !primary.is_negated()
+                && filter.pattern.first() != Some(&b'@')
+            {
+                if let Some(unscoped) = without_scope(name) {
+                    if glob::r#match(&filter.pattern, unscoped).matches() {
+                        return true;
+                    }
+                }
+                let dir = bun_paths::basename(path);
+                if !dir.is_empty() && dir != name && glob::r#match(&filter.pattern, dir).matches() {
+                    return true;
+                }
             }
         }
         false
     }
+}
+
+/// Returns the part of `name` after `@scope/`, or `None` if `name` is not a scoped package name.
+fn without_scope(name: &[u8]) -> Option<&[u8]> {
+    if name.first() != Some(&b'@') {
+        return None;
+    }
+    strings::index_of_char(&name[1..], b'/').map(|i| &name[i as usize + 2..])
 }
 
 pub(crate) struct PackageFilterIterator {

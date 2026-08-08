@@ -95,6 +95,8 @@ Filters respect your [workspace configuration](/pm/workspaces): if your `package
 bun run --filter foo myscript
 ```
 
+For scoped packages, a name pattern that is not itself scoped also matches the name without the scope and the package's directory name, so `bun run --filter db <script>` selects a package named `@org/db` or a package in `packages/db`.
+
 ### Parallel and sequential mode
 
 Combine `--filter` or `--workspaces` with `--parallel` or `--sequential` to run scripts across workspace packages with Foreman-style prefixed output:

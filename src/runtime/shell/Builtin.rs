@@ -452,6 +452,26 @@ impl Builtin {
         &self.args
     }
 
+    /// The owning VM is inside `Heap::lastChanceToFinalize`, where
+    /// `Heap::m_arrayBuffers` has already deleted the `JSC::ArrayBuffer`
+    /// impls: the unpin that `PinnedArrayBuf::drop` issues for a
+    /// `> ${arraybuffer}` redirect would write to a freed impl. Clear the
+    /// `pinned` flags so the drops skip it; the `Strong` handles still
+    /// release normally. Must only be called from the VM-shutdown finalizer
+    /// — on a live heap skipping the unpin would leak the pin.
+    #[cfg(not(windows))]
+    pub(crate) fn defuse_array_buf_pins(&mut self) {
+        if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {
+            buf.pinned = false;
+        }
+        if let BuiltinIO::ArrayBuf { buf, .. } = &mut self.stdout {
+            buf.pinned = false;
+        }
+        if let BuiltinIO::ArrayBuf { buf, .. } = &mut self.stderr {
+            buf.pinned = false;
+        }
+    }
+
     /// Borrow `argv[1..][idx]` as `&[u8]` (NUL excluded).
     ///
     /// Every entry in `self.args` borrows into the owning `Cmd`'s

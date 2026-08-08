@@ -569,6 +569,39 @@ impl ShellSubprocess {
         }
     }
 
+    /// The owning VM is inside `Heap::lastChanceToFinalize`, where
+    /// `Heap::m_arrayBuffers` has already deleted the `JSC::ArrayBuffer`
+    /// impls: the unpin that `BufferedOutput::drop` issues for a
+    /// `> ${arraybuffer}` redirect would write to a freed impl. Clear the
+    /// pinned value so the drop skips it; the `Strong` handle in the same
+    /// struct still releases normally (handle sets outlive the sweep).
+    ///
+    /// # Safety
+    /// Same contract as [`Self::deinit_in_flight_io`], and must only be
+    /// called from the VM-shutdown finalizer — on a live heap skipping the
+    /// unpin would leak the pin.
+    #[cfg(not(windows))]
+    pub(crate) unsafe fn defuse_array_buffer_unpins(this: *mut Self) {
+        // SAFETY: disjoint field projections of the live subprocess.
+        let slots = unsafe { [&raw mut (*this).stdout, &raw mut (*this).stderr] };
+        for slot in slots {
+            // SAFETY: `slot` projects from `this`; borrow scoped to the match.
+            let pipe: *mut PipeReader = match unsafe { &*slot } {
+                Readable::Pipe(pipe) => arc_as_mut_ptr(pipe),
+                _ => continue,
+            };
+            // SAFETY: see `arc_as_mut_ptr` — single-threaded shell, no other
+            // borrow of the `PipeReader` is live.
+            unsafe {
+                if let BufferedOutput::ArrayBuffer { buf, .. } = &mut (*pipe).buffered_output {
+                    // `Default` has `value: JSValue::ZERO`, which
+                    // `BufferedOutput::drop` reads as "nothing to unpin".
+                    let _ = core::mem::take(&mut buf.array_buffer);
+                }
+            }
+        }
+    }
+
     // `sh::Result`'s `ShellErr` is a shared shell-wide error type defined in
     // `shell_body.rs`; boxing it here would change `pub fn` signatures across
     // every `?`-propagating shell caller.

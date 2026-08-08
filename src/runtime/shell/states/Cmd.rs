@@ -857,6 +857,28 @@ impl Cmd {
         Self::on_exec_done(interp, this, exit_code).run(interp);
     }
 
+    /// [`Self::deinit`] for the VM-shutdown finalizer. The heap is inside
+    /// `lastChanceToFinalize`, where the `JSC::ArrayBuffer` impls are
+    /// already deleted, so the unpins that the `PinnedArrayBuf` /
+    /// `BufferedOutput` drops would issue for `> ${arraybuffer}` redirects
+    /// must be defused first (they would write to freed impls).
+    #[cfg(not(windows))]
+    pub(crate) fn deinit_from_finalizer(interp: &Interpreter, this: NodeId) {
+        {
+            let me = interp.as_cmd_mut(this);
+            match &mut me.exec {
+                Exec::Builtin(b) => b.defuse_array_buf_pins(),
+                Exec::Subproc(sub) if !sub.child.is_null() => {
+                    // SAFETY: `child` is the live heap::alloc'd subprocess;
+                    // the call only writes its own fields.
+                    unsafe { ShellSubprocess::defuse_array_buffer_unpins(sub.child) };
+                }
+                _ => {}
+            }
+        }
+        Self::deinit(interp, this);
+    }
+
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Cmd {} deinit", this);
         let exec = {

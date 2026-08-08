@@ -1361,7 +1361,7 @@ impl Interpreter {
                     for i in 0..node_count {
                         let id = NodeId(i as u32);
                         if matches!(this.nodes.get()[id.idx()].kind(), StateKind::Cmd) {
-                            Cmd::deinit(&this, id);
+                            Cmd::deinit_from_finalizer(&this, id);
                         }
                     }
                 }

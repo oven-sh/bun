@@ -831,12 +831,13 @@ describe("output timing", () => {
         },
       }),
       "packages/bg/go.js": `
-        Bun.spawn({
+        const child = Bun.spawn({
           cmd: [process.execPath, "-e", "await Bun.sleep(10_000)"],
           stdio: ["ignore", "inherit", "inherit"],
           detached: true,
-        }).unref();
-        await Bun.write("ready.txt", "1");
+        });
+        child.unref();
+        await Bun.write("ready.txt", String(child.pid));
         await Bun.sleep(15_000);
       `,
     });
@@ -850,11 +851,29 @@ describe("output timing", () => {
       detached: true,
     });
     const ready = join(String(dir), "packages", "bg", "ready.txt");
-    while (!existsSync(ready)) await Bun.sleep(10);
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(ready)) {
+      if (Date.now() > deadline || proc.exitCode !== null) {
+        proc.kill();
+        const [o, e] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+        throw new Error(`go never wrote ready.txt; stdout: ${o}stderr: ${e}`);
+      }
+      await Bun.sleep(10);
+    }
     // Ctrl-C semantics: the terminal signals the foreground process group
     // (bun run and the script), but not the detached grandchild.
     process.kill(-proc.pid, "SIGINT");
-    // 128 + SIGINT: go is killed by the signal and is the only script.
-    expect(await proc.exited).toBe(130);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Reap the pipe-holding grandchild so nothing outlives the test.
+    try {
+      process.kill(Number(await Bun.file(ready).text()), "SIGKILL");
+    } catch {}
+    // 128 + SIGINT: go is killed by the signal and is the only script. stderr
+    // rides along so a regression surfaces it in the failure output.
+    expect({ exitCode, stdout, stderr }).toEqual({
+      exitCode: 130,
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+    });
   });
 });

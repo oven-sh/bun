@@ -1002,12 +1002,13 @@ describe.concurrent("timing edge cases", () => {
   test("failure abort does not wait for a child holding another script's pipes", async () => {
     using dir = tempDir("mr-abort-late", {
       "bg.js": `
-        Bun.spawn({
+        const child = Bun.spawn({
           cmd: [process.execPath, "-e", "await Bun.sleep(10_000)"],
           stdio: ["ignore", "inherit", "inherit"],
           detached: true,
-        }).unref();
-        await Bun.write("ready.txt", "1");
+        });
+        child.unref();
+        await Bun.write("ready.txt", String(child.pid));
       `,
       "fail.js": `
         while (!(await Bun.file("ready.txt").exists())) await Bun.sleep(10);
@@ -1023,6 +1024,10 @@ describe.concurrent("timing edge cases", () => {
     const r = await runMulti(["run", "--parallel", "fail", "bg"], String(dir), {
       BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
     });
+    // Reap the pipe-holding child so nothing outlives the test.
+    try {
+      process.kill(Number(await Bun.file(path.join(String(dir), "ready.txt")).text()), "SIGKILL");
+    } catch {}
     expectExited(r.stderr, "fail", 1);
     expect(r.exitCode).toBe(1);
   });

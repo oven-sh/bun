@@ -2072,6 +2072,12 @@ impl WindowsBufferedReader {
                     // is the sole reclaimer (heap::take in on_close_complete /
                     // on_file_read's detached path) when one is left pending.
                     unsafe {
+                        // A read in flight writes into `self._buffer` (via
+                        // `iov`) whenever it completes; this reader may be
+                        // dropped before then, so the buffer goes with the File.
+                        if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
+                            (*raw).orphaned_read_buf = core::mem::take(&mut self._buffer);
+                        }
                         if self.flags.contains(WindowsFlags::CLOSE_HANDLE) {
                             (*raw).detach();
                         } else if !(*raw).detach_borrowed_fd() {

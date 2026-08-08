@@ -2068,7 +2068,13 @@ extern "C" napi_status napi_get_all_property_names(
             if (key_mode == napi_key_include_prototypes) {
                 // Climb up the prototype chain to find inherited properties
                 while (!owner->getOwnPropertyDescriptor(globalObject, propKey, desc)) {
-                    JSObject* proto = owner->getPrototype(globalObject).getObject();
+                    // A throwing "getOwnPropertyDescriptor" proxy trap must stop the walk
+                    // before getPrototype runs more JS with the exception pending.
+                    NAPI_RETURN_IF_EXCEPTION(env);
+                    JSValue protoValue = owner->getPrototype(globalObject);
+                    // A throwing proxy trap leaves protoValue empty; getObject() on it is a null deref.
+                    NAPI_RETURN_IF_EXCEPTION(env);
+                    JSObject* proto = protoValue.getObject();
                     if (!proto) {
                         break;
                     }
@@ -2076,6 +2082,7 @@ extern "C" napi_status napi_get_all_property_names(
                 }
             } else {
                 owner->getOwnPropertyDescriptor(globalObject, propKey, desc);
+                NAPI_RETURN_IF_EXCEPTION(env);
             }
 
             // V8 never applies ONLY_WRITABLE/ONLY_CONFIGURABLE to Proxy keys

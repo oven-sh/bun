@@ -804,6 +804,71 @@ it("CustomEvent", () => {
   `);
 });
 
+// Lazy properties on the Bun object run JS to initialize. If one of them
+// throws during enumeration (here: a clobbered global Symbol breaks Bun.$),
+// the exception must not leak into materializing the next property.
+it.concurrent("console.log(Bun) survives a lazy property initializer throwing", async () => {
+  const code = `
+    globalThis.Symbol = -6;
+    console.log(Bun);
+    console.log("after-inspect");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Enumeration must make it past the throwing initializers to the end of the table.
+  expect(stdout).toContain("zstdDecompress");
+  expect(stdout).toContain("after-inspect");
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+});
+
+// If node:util fails to evaluate (clobbered globals), custom inspect must fall
+// back to default formatting instead of corrupting the lazy util.inspect slot.
+it.concurrent("console.log falls back when node:util cannot load for custom inspect", async () => {
+  const code = `
+    const o = { [Symbol.for("nodejs.util.inspect.custom")]() { return "custom!"; } };
+    globalThis.Symbol = -6;
+    console.log(o);
+    console.log("after-inspect");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The custom hook must not run; the object falls back to default rendering.
+  expect(stdout).toContain("Symbol(nodejs.util.inspect.custom)");
+  expect(stdout).not.toContain("custom!");
+  expect(stdout).toContain("after-inspect");
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+});
+
+it.concurrent("console.log survives a throwing getPrototypeOf trap in the prototype chain", async () => {
+  const code = `
+    const proxy = new Proxy({ a: 1 }, { getPrototypeOf() { throw new Error("trap"); } });
+    const obj = Object.create(proxy);
+    obj.y = 2;
+    console.log(obj);
+    console.log("after-inspect");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("y: 2");
+  expect(stdout).toContain("after-inspect");
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+});
+
 describe.skipIf(!isASAN)("object mutated while being formatted", () => {
   it("does not read freed property tables", async () => {
     const fixture = `

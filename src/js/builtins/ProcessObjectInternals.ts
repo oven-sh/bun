@@ -449,8 +449,13 @@ export function windowsEnv(
   editWindowsEnvVar: EditWindowsEnvVarCb,
   coerceForWrite,
   resetTZ,
+  inspectCustomSymbol: symbol,
 ) {
-  (internalEnv as any)[Bun.inspect.custom] = () => {
+  // The symbol is passed from C++ rather than read off Bun.inspect.custom:
+  // reading Bun.inspect here reifies a lazy property on the Bun object, and env
+  // setup can run inside another Bun lazy property's initializer, where that
+  // structure transition poisons the outer property lookup if it then throws.
+  (internalEnv as any)[inspectCustomSymbol] = () => {
     let o = {};
     for (let k of envMapList) {
       o[k] = internalEnv[k.toUpperCase()];

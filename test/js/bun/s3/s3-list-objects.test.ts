@@ -1025,7 +1025,11 @@ describe.concurrent("S3 - List Objects", () => {
   });
 
   it("Should fall back to NoSuchKey for a 404 whose <Error> has no usable <Code>", async () => {
-    for (const body of [`<Error><Code></Code><Message/></Error>`, `<Error><Message>gone</Message></Error>`, `not xml`]) {
+    for (const body of [
+      `<Error><Code></Code><Message/></Error>`,
+      `<Error><Message>gone</Message></Error>`,
+      `not xml`,
+    ]) {
       using server = createBunServer(async () => new Response(body, { status: 404 }));
       const client = new S3Client({ ...options, endpoint: server.url.href });
       const error = await client.list().then(

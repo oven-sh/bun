@@ -125,7 +125,9 @@ pub(crate) fn with_error<R>(
     with_document(body, |root| match root {
         Some(error) if error.name == b"Error" => f(Some((
             error.child_text(b"Code").filter(|code| !code.is_empty()),
-            error.child_text(b"Message").filter(|message| !message.is_empty()),
+            error
+                .child_text(b"Message")
+                .filter(|message| !message.is_empty()),
         ))),
         _ => f(None),
     })

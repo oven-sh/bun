@@ -48,6 +48,30 @@ describe("bun:test", () => {
       expect(fail).toThrow(Error);
       expect(fail).toThrow(new Error("Bad"));
     });
+
+    // Jest 30 removed these aliases. Bun keeps them and declares them @deprecated.
+    test("legacy Jest matcher aliases (removed in Jest 30)", () => {
+      function fail() {
+        throw new Error("Bad");
+      }
+      expect(fail).toThrowError();
+      expect(fail).toThrowError("Bad");
+      expect(fail).toThrowError(/bad/i);
+      expect(fail).toThrowError(Error);
+      expect(fail).toThrowError(new Error("Bad"));
+
+      const fn = jest.fn((a: number) => a + 1);
+      fn(1);
+      fn(2);
+      expect(fn).toBeCalled();
+      expect(fn).toBeCalledTimes(2);
+      expect(fn).toBeCalledWith(1);
+      expect(fn).lastCalledWith(2);
+      expect(fn).nthCalledWith(1, 1);
+      expect(fn).toReturn();
+      expect(fn).lastReturnedWith(3);
+      expect(fn).nthReturnedWith(1, 2);
+    });
   });
   test("expect()", () => {
     expect(1).toBe(1);

@@ -290,7 +290,8 @@ describe("bind parameters object mutated by a getter during bind", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout.trim()).toBe('error: Missing parameter "$c"');
     expect(exitCode).toBe(0);
   });

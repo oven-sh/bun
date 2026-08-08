@@ -294,19 +294,27 @@ const char *us_nq_hset_pairs(void *hset, size_t *len) {
 }
 void us_nq_hset_free(void *hset) { nq_hsi_discard_header_set(hset); }
 
-#define US_NQ_MAX_HEADERS 128
+/* Stack allocation covers node's default maxHeaderPairs; above that we
+ * spill to the heap. maxHeaderPairs is an inbound decoder limit only
+ * (node/src/quic/application.cc), so the encoder path imposes no policy cap. */
+#define US_NQ_STACK_HEADERS 128
 int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
                               int expected, int eos) {
-    struct lsxpack_header hdrs[US_NQ_MAX_HEADERS];
-    int count = 0;
+    struct lsxpack_header stack_hdrs[US_NQ_STACK_HEADERS];
+    struct lsxpack_header *hdrs = stack_hdrs;
+    int count = 0, rv = -1;
     size_t i = 0;
-    if (expected < 0 || expected > US_NQ_MAX_HEADERS) return -1;
+    if (expected < 0) return -1;
+    if (expected > US_NQ_STACK_HEADERS) {
+        hdrs = malloc((size_t) expected * sizeof(*hdrs));
+        if (!hdrs) return -1;
+    }
     while (i < len) {
         /* The caller's pair count is authoritative: latin1 encoding of the
          * NUL-joined buffer maps U+0100-style code points onto the delimiter,
          * which would otherwise splice extra headers out of one user value
          * (node/src/node_http_common-inl.h bails the same way on n >= count_). */
-        if (count >= expected) return -1;
+        if (count >= expected) goto done;
         size_t name_off = i;
         while (i < len && buf[i]) i++;
         size_t name_len = i - name_off;
@@ -318,19 +326,25 @@ int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
         if (i >= len) break;
         i++;
         unsigned char flags = (i < len) ? (unsigned char) buf[i++] : 0;
-        if (name_len > LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN)
-            return -1;
-        lsxpack_header_set_offset2(&hdrs[count], buf, name_off, name_len,
-                                   val_off, val_len);
+        if (name_len >= LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN)
+            goto done;
+        /* Per-entry base keeps val_offset (= name_len+1) under the setter's
+         * LSXPACK_MAX_STRLEN assert no matter how large the joined buffer is. */
+        lsxpack_header_set_offset2(&hdrs[count], buf + name_off, 0, name_len,
+                                   val_off - name_off, val_len);
         if (flags & 1) {
             hdrs[count].flags = LSXPACK_NEVER_INDEX;
             hdrs[count].indexed_type = 2;
         }
         count++;
     }
-    if (count != expected) return -1;
-    lsquic_http_headers_t list = { count, hdrs };
-    return lsquic_stream_send_headers(s, &list, eos);
+    if (count == expected) {
+        lsquic_http_headers_t list = { count, hdrs };
+        rv = lsquic_stream_send_headers(s, &list, eos);
+    }
+done:
+    if (hdrs != stack_hdrs) free(hdrs);
+    return rv;
 }
 
 static const struct lsquic_stream_if nq_stream_if = {

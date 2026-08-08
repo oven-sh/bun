@@ -392,22 +392,9 @@ body { color: blue; }`,
     expect(result.success).toBe(true);
   });
 
-  test("CLI --compile --target=browser with non-HTML falls back to normal compile", async () => {
-    using dir = tempDir("compile-browser-cli-no-html", {
-      "app.js": `console.log("test");`,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--target=browser", `${dir}/app.js`],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-
-    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Non-HTML entrypoints with --compile --target=browser should fall back to normal bun compile
-    expect(exitCode).toBe(0);
-  });
+  // CLI: --compile --target=browser with non-HTML entrypoints falls back to a
+  // normal bun executable compile and warns; covered in bundler_compile.test.ts
+  // ("--compile warns when --target is overridden > --target=browser").
 
   test("fails with splitting", async () => {
     using dir = tempDir("compile-browser-splitting", {

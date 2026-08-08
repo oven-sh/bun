@@ -579,7 +579,7 @@ function expectBundled(
   }
 
   format ??= "esm";
-  target ??= "browser";
+  target ??= compile ? "bun" : "browser";
 
   entryPoints ??= entryPointsRaw ? [] : [Object.keys(files)[0]];
   if (run === true) run = {};

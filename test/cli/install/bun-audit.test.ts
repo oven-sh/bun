@@ -29,6 +29,14 @@ beforeAll(() => {
         return new Response("No fixture found", { status: 404 });
       }
 
+      // The real registry's bulk advisory endpoint serves gzip bodies without
+      // a Content-Encoding header; replicate that under this path prefix.
+      if (new URL(req.url).pathname.startsWith("/gzip-no-content-encoding/")) {
+        return new Response(Bun.gzipSync(JSON.stringify(fixture)), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+
       return Response.json(fixture);
     },
   });
@@ -44,6 +52,7 @@ function doAuditTest(
     args?: string[];
     exitCode: number;
     files: DirectoryTree | string;
+    registryPathPrefix?: string;
     fn: (std: { stdout: PromiseLike<string>; stderr: PromiseLike<string>; dir: string }) => Promise<void>;
   },
 ) {
@@ -52,7 +61,7 @@ function doAuditTest(
 
     const cmd = [bunExe(), "audit", ...(options.args ?? [])];
 
-    const url = server.url.toString().slice(0, -1);
+    const url = server.url.toString().slice(0, -1) + (options.registryPathPrefix ?? "");
 
     const proc = spawn({
       cmd,
@@ -330,6 +339,30 @@ describe("`bun audit`", () => {
     fn: async ({ stdout, stderr }) => {
       expect(await stderr).not.toContain("error");
       expect(await stdout).toContain("vulnerabilities");
+    },
+  });
+
+  // https://github.com/oven-sh/bun/issues/35887
+  doAuditTest("decompresses a gzip response that has no Content-Encoding header", {
+    exitCode: 1,
+    files: fixture("express@3"),
+    registryPathPrefix: "/gzip-no-content-encoding",
+    fn: async ({ stdout }) => {
+      const out = await stdout;
+      expect(out).toContain("express");
+      expect(out).toContain("vulnerabilities");
+      expect(out).not.toContain("\u{FFFD}");
+    },
+  });
+
+  doAuditTest("--json prints valid JSON for a gzip response that has no Content-Encoding header", {
+    exitCode: 1,
+    files: fixture("express@3"),
+    registryPathPrefix: "/gzip-no-content-encoding",
+    args: ["--json"],
+    fn: async ({ stdout }) => {
+      const json = JSON.parse(await stdout);
+      expect(Object.keys(json)).not.toBeEmpty();
     },
   });
 

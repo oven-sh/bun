@@ -493,6 +493,82 @@ impl ShellSubprocess {
         }
     }
 
+    /// Stop stdio that is still active because the owning `Cmd` is being
+    /// deinited mid-flight (VM shutdown finalizing the interpreter while the
+    /// subprocess runs). Pipe readers are stopped without firing
+    /// `on_reader_done` (no Cmd state transitions), capture chunks still
+    /// queued on the shell's `IOWriter` are cancelled (its queue holds a raw
+    /// pointer into the `PipeReader` this teardown frees), and a still-pending
+    /// buffer-stdin writer is closed with `start()`'s +1 released. A no-op
+    /// when the command already closed its stdio the normal way.
+    ///
+    /// POSIX-only for the same reason as [`Self::abort_after_failed_start`]:
+    /// tearing down live libuv sources here is unsafe, so Windows callers
+    /// leak instead.
+    ///
+    /// # Safety
+    /// `this` must be the live `heap::alloc`'d subprocess with no outstanding
+    /// borrows; single-threaded shell. Raw (not `&mut self`) because the
+    /// stdin close below re-enters `on_close_io(&mut Self)` through the
+    /// writer's process backref.
+    #[cfg(not(windows))]
+    pub(crate) unsafe fn deinit_in_flight_io(this: *mut Self) {
+        // stdin: claim `start()`'s +1 (so no other release site can fire for
+        // it), close the writer — which drives `on_close` → `on_close_io`,
+        // swapping the slot to `Ignore` and releasing `create()`'s ref — then
+        // release the claimed ref. Same shape as the JS `Subprocess::close_io`
+        // stdin arm.
+        // SAFETY: caller contract; the `stdin` borrow ends before `close()`.
+        let pending_start: *mut StaticPipeWriter = match unsafe { &(*this).stdin } {
+            Writable::Buffer(buffer) => {
+                // SAFETY: single-threaded; temporary `&mut` for the flag swap.
+                let writer = unsafe { buffer_mut(buffer) };
+                if core::mem::replace(&mut writer.started, false) {
+                    buffer.as_ptr()
+                } else {
+                    core::ptr::null_mut()
+                }
+            }
+            _ => core::ptr::null_mut(),
+        };
+        if !pending_start.is_null() {
+            // SAFETY: live writer holding `create()`'s ref plus the claimed
+            // start ref.
+            unsafe { (*pending_start).close() };
+            // SAFETY: releases the claimed start ref; last use of the pointer.
+            unsafe { bun_ptr::RefCount::deref(pending_start) };
+        }
+
+        // SAFETY: disjoint field projections of the live subprocess.
+        let slots = unsafe { [&raw mut (*this).stdout, &raw mut (*this).stderr] };
+        for slot in slots {
+            // SAFETY: `slot` projects from `this`; borrow scoped to the match.
+            let pipe: *mut PipeReader = match unsafe { &*slot } {
+                Readable::Pipe(pipe) => arc_as_mut_ptr(pipe),
+                _ => continue,
+            };
+            // SAFETY: see `arc_as_mut_ptr` — single-threaded shell, no other
+            // borrow of the `PipeReader` is live; neither `reader.deinit()`
+            // nor `cancel_chunks` fires a callback.
+            unsafe {
+                if matches!((*pipe).state, PipeReaderState::Pending) {
+                    // Stop the `BufferedReader` without `on_reader_done`
+                    // (deregisters the poll, closes the fd) and record the
+                    // forced stop so `PipeReader::drop`'s done-assert holds.
+                    (*pipe).reader.deinit();
+                    (*pipe).state = PipeReaderState::Err(None);
+                }
+                let captured: *mut CapturedWriter = &raw mut (*pipe).captured_writer;
+                if let Some(writer) = (*captured).writer.take() {
+                    writer.cancel_chunks(io_writer::ChildPtr::subproc_capture(
+                        captured.cast::<c_void>(),
+                    ));
+                    (*captured).dead = true;
+                }
+            }
+        }
+    }
+
     // `sh::Result`'s `ShellErr` is a shared shell-wide error type defined in
     // `shell_body.rs`; boxing it here would change `pub fn` signatures across
     // every `?`-propagating shell caller.

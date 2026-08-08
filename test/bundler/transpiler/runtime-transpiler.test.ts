@@ -48,6 +48,57 @@ describe("// @bun", () => {
     expect(stdout.toString()).toBe("Hello world!\n");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/37161
+  const nonAscii = "\u2014\u00b7\u2713 K\u00e4ufer";
+  test("raw utf-8 decodes as utf-8, not latin-1 (import)", async () => {
+    using dir = tempDir("bun-pragma-utf8-import", {
+      "pragma.js": `// @bun\nexport const text = "${nonAscii}";\n`,
+    });
+    const { text } = await import(`${dir}/pragma.js`);
+    expect(text).toBe(nonAscii);
+  });
+
+  test("raw utf-8 decodes as utf-8, not latin-1 (require)", async () => {
+    using dir = tempDir("bun-pragma-utf8-require", {
+      "pragma.js": `// @bun\nexport const text = "${nonAscii}";\n`,
+    });
+    const { text } = require(`${dir}/pragma.js`);
+    expect(text).toBe(nonAscii);
+  });
+
+  test("entry point with pragma keeps unknown-extension imports on the file loader", async () => {
+    using dir = tempDir("bun-pragma-file-loader", {
+      "asset.hbs": "<!DOCTYPE html>\n<html></html>\n",
+      "entry.js": `// @bun\nimport asset from "./asset.hbs";\nconsole.log(typeof asset);\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("string\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("raw utf-8 decodes as utf-8, not latin-1 (entry point)", async () => {
+    using dir = tempDir("bun-pragma-utf8-entry", {
+      "pragma.js": `// @bun\nconst DASH = "\u2014";\nconsole.log([...DASH].map(c => c.codePointAt(0).toString(16)).join(" "));\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pragma.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("2014\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("json imports", () => {

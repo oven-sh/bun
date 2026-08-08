@@ -2962,8 +2962,15 @@ fn transpile_source_code_inner(
                         }
                         _ => (core::ptr::null_mut(), 0),
                     };
+                    if is_main {
+                        // Same as the transpiler-cache-hit return below: leaving
+                        // `has_loaded` false sends unknown-extension imports to
+                        // the `Loader::Tsx` fallback instead of `Loader::File`.
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                        unsafe { (*jsc_vm).has_loaded = true };
+                    }
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
-                        source_code: bun_core::String::clone_latin1(&source.contents),
+                        source_code: bun_core::String::clone_utf8(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         already_bundled: true,
@@ -3106,6 +3113,14 @@ fn transpile_source_code_inner(
                     };
                     let (bytecode_cache, bytecode_cache_size) =
                         node_compile_cache_blob.unwrap_or((core::ptr::null_mut(), 0));
+                    if is_main {
+                        // Without this, a cache hit for the entry point leaves
+                        // `has_loaded` false and later imports with unknown
+                        // extensions fall back to `Loader::Tsx` instead of
+                        // `Loader::File`.
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                        unsafe { (*jsc_vm).has_loaded = true };
+                    }
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),

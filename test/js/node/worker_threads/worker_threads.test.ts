@@ -2427,7 +2427,20 @@ test("terminate() while dns lookups keep completing in the worker", async () => 
 // In both the parent's loop returns to idle afterwards (nothing the worker held
 // keeps it alive) — the test process exiting at all is that check.
 describe("worker stop ordering as seen by the worker's own handlers", () => {
-  const TAG = { exitHandler: 1, serverClose: 2, socketClose: 3, socketError: 4, udpClose: 5, watcherClose: 6, intervalTick: 7, streamCancel: 8, portClose: 9, beforeExit: 10, afterExitCall: 11, ready: 12 } as const;
+  const TAG = {
+    exitHandler: 1,
+    serverClose: 2,
+    socketClose: 3,
+    socketError: 4,
+    udpClose: 5,
+    watcherClose: 6,
+    intervalTick: 7,
+    streamCancel: 8,
+    portClose: 9,
+    beforeExit: 10,
+    afterExitCall: 11,
+    ready: 12,
+  } as const;
   const workerSource = (door: "terminate" | "exit") => `
     const { workerData, parentPort } = require("node:worker_threads");
     const log = workerData.log;

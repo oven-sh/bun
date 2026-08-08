@@ -25,23 +25,27 @@ const FAMILIES: Record<string, number> = {
 
 describe.concurrent("terminate() at every native→JS entry point", () => {
   for (const [family, cases] of Object.entries(FAMILIES)) {
-    test(family, async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), fixture, family],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // stderr carries the runtime's own diagnostics on a failure; show it first.
-      // On a failure stdout is "FAIL" plus one line per case ("<entry> [<phase>]: <why>").
-      expect({ stdout: stdout.trim(), exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
-        stdout: `ok ${cases}`,
-        exitCode: 0,
-        stderr: "",
-      });
-      // ~150 worker lifecycles across ten host processes: a second or two in
-      // release; the debug/ASAN builds get headroom for running them all at once.
-    }, isDebug || isASAN ? 30_000 : 10_000);
+    test(
+      family,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), fixture, family],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // stderr carries the runtime's own diagnostics on a failure; show it first.
+        // On a failure stdout is "FAIL" plus one line per case ("<entry> [<phase>]: <why>").
+        expect({ stdout: stdout.trim(), exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+          stdout: `ok ${cases}`,
+          exitCode: 0,
+          stderr: "",
+        });
+        // ~150 worker lifecycles across ten host processes: a second or two in
+        // release; the debug/ASAN builds get headroom for running them all at once.
+      },
+      isDebug || isASAN ? 30_000 : 10_000,
+    );
   }
 });

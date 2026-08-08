@@ -1395,7 +1395,9 @@ class InspectorCDPAdapter {
         };
       }),
     };
-    if (description !== undefined) translated.description = description;
+    // CDP's description names the scheduler; a boundary outside the pretty-name
+    // table still had its identity in the dropped frame, so fall back to it.
+    if (boundary) translated.description = description ?? boundary.functionName ?? "";
     const { parentStackTrace } = stackTrace;
     if (parentStackTrace) {
       translated.parent = this.#translateStackTrace(parentStackTrace);

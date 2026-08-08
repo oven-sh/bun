@@ -490,3 +490,150 @@ it("should not crash with --no-install and bun-create.postinstall starting with 
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
 });
+
+// The `[Xs] git` timing line used to be printed directly from the git worker
+// thread, racing with postinstall output on the main thread (issue #36953).
+// The stub git blocks its `commit` until postinstall starts, then postinstall
+// waits for the stub to finish before printing its last line, so without the
+// fix the timing line reliably lands between PI_START and PI_END.
+// POSIX-only: the stub `git` is a shell script.
+it.skipIf(!isPosix)(
+  "should not interleave the git timing line with postinstall output",
+  async () => {
+    using dir = tempDir("create-git-timing", {
+      "bin/git": `#!/bin/sh
+case "$*" in
+  *commit*)
+    i=0
+    while [ ! -f postinstall_started ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done
+    touch git_finished
+    ;;
+esac
+exit 0
+`,
+      "bun-create/tmpl/index.js": "// hi\n",
+      "bun-create/tmpl/package.json": JSON.stringify({
+        name: "tmpl",
+        version: "1.0.0",
+        "bun-create": { postinstall: "postinstall-step" },
+        scripts: { "postinstall-step": "sh scripts/postinstall.sh" },
+        dependencies: { localdep: "file:./localdep" },
+      }),
+      "bun-create/tmpl/localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }),
+      "bun-create/tmpl/scripts/postinstall.sh": `#!/bin/sh
+echo PI_START >&2
+touch postinstall_started
+i=0
+while [ ! -f git_finished ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done
+# the worker's stderr write happens after the stub exits and is not observable
+# from here; give the unfixed binary time to print before the last line
+sleep 0.5
+echo PI_END >&2
+`,
+    });
+    chmodSync(join(String(dir), "bin", "git"), 0o755);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "tmpl", join(String(dir), "dest")],
+      cwd: String(dir),
+      env: {
+        ...env,
+        PATH: join(String(dir), "bin") + ":" + process.env.PATH,
+        BUN_CREATE_DIR: join(String(dir), "bun-create"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [err, _out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(err).toContain("PI_START");
+    const endIdx = err.indexOf("PI_END");
+    expect(endIdx).toBeGreaterThan(-1);
+    const gitIdx = err.indexOf("] git");
+    expect(gitIdx).toBeGreaterThan(endIdx);
+    expect(exitCode).toBe(0);
+  },
+  45_000,
+);
+
+// On POSIX, a `bun `-prefixed bun-create postinstall task used to silently not
+// run: the `<exe> run` prefix was stripped, leaving the bare string `bun` as
+// argv[0], and posix spawn does no PATH lookup (issue #36953).
+it("should run a bun-create postinstall task that starts with 'bun '", async () => {
+  using dir = tempDir("create-bun-postinstall", {
+    "bun-create/tmpl/index.js": "// hi\n",
+    "bun-create/tmpl/package.json": JSON.stringify({
+      name: "tmpl",
+      version: "1.0.0",
+      "bun-create": { postinstall: "bun scripts/marker.ts" },
+      dependencies: { localdep: "file:./localdep" },
+    }),
+    "bun-create/tmpl/localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }),
+    "bun-create/tmpl/scripts/marker.ts": `await Bun.write("marker.txt", "ran");`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "tmpl", join(String(dir), "dest"), "--no-git"],
+    cwd: String(dir),
+    env: { ...env, BUN_CREATE_DIR: join(String(dir), "bun-create") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out).toContain("$ bun scripts/marker.ts");
+  expect(err).not.toContain("error:");
+  expect(await Bun.file(join(String(dir), "dest", "marker.txt")).text()).toBe("ran");
+  expect(exitCode).toBe(0);
+});
+
+// Same as above, but the template has no dependencies: postinstall then runs
+// without the npm client, and the bare `bun` argv[0] hit the same ENOENT.
+it("should run a bun-prefixed postinstall task for a template without dependencies", async () => {
+  using dir = tempDir("create-bun-postinstall-nodeps", {
+    "bun-create/tmpl/index.js": "// hi\n",
+    "bun-create/tmpl/package.json": JSON.stringify({
+      name: "tmpl",
+      version: "1.0.0",
+      "bun-create": { postinstall: "bun scripts/marker.ts" },
+    }),
+    "bun-create/tmpl/scripts/marker.ts": `await Bun.write("marker.txt", "ran");`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "tmpl", join(String(dir), "dest"), "--no-git"],
+    cwd: String(dir),
+    env: { ...env, BUN_CREATE_DIR: join(String(dir), "bun-create") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out).toContain("$ bun scripts/marker.ts");
+  expect(err).not.toContain("error:");
+  expect(await Bun.file(join(String(dir), "dest", "marker.txt")).text()).toBe("ran");
+  expect(exitCode).toBe(0);
+});
+
+// The synchronous git path (no dependencies) set skip_git to the git
+// *success* instead of its negation, so the final message was suppressed on
+// success and printed when git was missing.
+it("should print the git message for a template without dependencies", async () => {
+  using dir = tempDir("create-no-deps-git", {
+    "bun-create/tmpl/index.js": "// hi\n",
+    "bun-create/tmpl/package.json": JSON.stringify({ name: "tmpl", version: "1.0.0" }),
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "tmpl", join(String(dir), "dest")],
+    cwd: String(dir),
+    env: { ...env, BUN_CREATE_DIR: join(String(dir), "bun-create") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(out).toContain("A local git repository was created for you.");
+  expect(exitCode).toBe(0);
+});

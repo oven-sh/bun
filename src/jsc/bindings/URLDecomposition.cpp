@@ -113,6 +113,18 @@ static unsigned countASCIIDigits(StringView string)
     return length;
 }
 
+// The WHATWG host/hostname states stop consuming at the first of these; the
+// IDNA delta must not touch anything at or past it (see DOMURL.cpp).
+static size_t findHostTerminator(StringView value)
+{
+    for (size_t i = 0; i < value.length(); i++) {
+        char16_t c = value[i];
+        if (c == '/' || c == '\\' || c == '?' || c == '#')
+            return i;
+    }
+    return value.length();
+}
+
 void URLDecomposition::setHost(StringView value)
 {
     auto fullURL = this->fullURL();
@@ -121,14 +133,16 @@ void URLDecomposition::setHost(StringView value)
     // Non-special schemes and '['-prefixed (IPv6) hosts never run IDNA.
     String mappedValue;
     if (fullURL.hasSpecialScheme() && !value.startsWith('[')) {
-        size_t hostEnd = value.reverseFind(':');
-        auto hostSpan = hostEnd == notFound ? value : value.left(hostEnd);
+        size_t terminator = findHostTerminator(value);
+        size_t hostEnd = value.left(terminator).reverseFind(':');
+        size_t hostSpanEnd = hostEnd == notFound ? terminator : hostEnd;
+        auto hostSpan = value.left(hostSpanEnd);
         if (Bun::containsUnicode16IDNADeltaSource(hostSpan)) {
             auto mappedHost = Bun::applyUnicode16IDNADelta(hostSpan.toString());
             // A host mapping to empty is a failed host parse, not an assignable literal "".
             if (mappedHost.isEmpty())
                 return;
-            mappedValue = hostEnd == notFound ? mappedHost : makeString(mappedHost, value.substring(hostEnd));
+            mappedValue = makeString(mappedHost, value.substring(hostSpanEnd));
             value = mappedValue;
         }
     }
@@ -176,12 +190,17 @@ void URLDecomposition::setHostname(StringView host)
     // See setHost: the input is a hostname by definition, and only special
     // schemes run IDNA on it.
     String mappedHost;
-    if (fullURL.hasSpecialScheme() && !host.startsWith('[') && Bun::containsUnicode16IDNADeltaSource(host)) {
-        mappedHost = Bun::applyUnicode16IDNADelta(host.toString());
-        // See setHost: mapping a non-empty hostname to empty is failure, not "".
-        if (mappedHost.isEmpty())
-            return;
-        host = mappedHost;
+    if (fullURL.hasSpecialScheme() && !host.startsWith('[')) {
+        size_t terminator = findHostTerminator(host);
+        auto hostSpan = host.left(terminator);
+        if (Bun::containsUnicode16IDNADeltaSource(hostSpan)) {
+            auto mappedSpan = Bun::applyUnicode16IDNADelta(hostSpan.toString());
+            // See setHost: mapping a non-empty hostname to empty is failure, not "".
+            if (mappedSpan.isEmpty())
+                return;
+            mappedHost = makeString(mappedSpan, host.substring(terminator));
+            host = mappedHost;
+        }
     }
     if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;

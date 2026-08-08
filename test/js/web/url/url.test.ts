@@ -199,6 +199,18 @@ describe("url", () => {
     const f3 = new URL("file://server/share");
     f3.host = "";
     expect(f3.href).toBe("file:///share");
+    // A terminator after the ignored code points must not smuggle the tail
+    // past the empty-host guard: the host span ends at the first / \ ? #.
+    for (const tail of ["/x", "\\x", "?x", "#x"]) {
+      for (const base of ["file://server/share", "http://ok.example/p"]) {
+        const withHost = new URL(base);
+        withHost.host = "\u180E" + tail;
+        expect(withHost.href).toBe(base);
+        const withHostname = new URL(base);
+        withHostname.hostname = "\u180E" + tail;
+        expect(withHostname.href).toBe(base);
+      }
+    }
   });
 
   it("prints", () => {

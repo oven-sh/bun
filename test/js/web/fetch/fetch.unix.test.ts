@@ -1,7 +1,7 @@
 import { serve, ServeOptions, Server } from "bun";
-import { afterAll, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
-import { isWindows, tmpdirSync } from "harness";
+import { isWindows, tempDir, tmpdirSync, tls as validTls } from "harness";
 import { request } from "http";
 import { join } from "path";
 const tmp_dir = tmpdirSync();
@@ -243,4 +243,46 @@ it("handle redirect to non-unix", async () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("world");
   }
+});
+
+describe("tls over unix socket", () => {
+  it("honors tls.ca for server verification", async () => {
+    using dir = tempDir("fetch-unix-tls", {});
+    const unix = join(String(dir), "s.sock");
+    using server = Bun.serve({
+      unix,
+      tls: { cert: validTls.cert, key: validTls.key },
+      fetch: () => new Response("ok"),
+    });
+    // Passing the server's self-signed cert as `ca` must make verification
+    // succeed, exactly as it does for the same server over TCP. Second fetch
+    // with the same config goes through the per-config SSL_CTX cache.
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch("https://localhost/", { unix, tls: { ca: validTls.cert } });
+      expect(await res.text()).toBe("ok");
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it("presents tls.cert + tls.key to a requestCert server (mTLS)", async () => {
+    using dir = tempDir("fetch-unix-mtls", {});
+    const unix = join(String(dir), "s.sock");
+    using server = Bun.serve({
+      unix,
+      tls: {
+        cert: validTls.cert,
+        key: validTls.key,
+        ca: validTls.cert,
+        requestCert: true,
+        rejectUnauthorized: true,
+      },
+      fetch: () => new Response("ok-mtls"),
+    });
+    const res = await fetch("https://localhost/", {
+      unix,
+      tls: { ca: validTls.cert, cert: validTls.cert, key: validTls.key },
+    });
+    expect(await res.text()).toBe("ok-mtls");
+    expect(res.status).toBe(200);
+  });
 });

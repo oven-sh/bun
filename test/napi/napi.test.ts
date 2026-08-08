@@ -1739,7 +1739,17 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       // An async cleanup hook releases a threadsafe function whose finalizer
       // then calls napi_remove_async_cleanup_hook; the handle must not be
       // freed when the hook returns.
-      await checkSameOutput("test_async_cleanup_hook_tsfn_release", []);
+      const output = await checkSameOutput("test_async_cleanup_hook_tsfn_release", []);
+      // Pin the successful lifecycle, so matching Node on a shared failure
+      // (non-zero status in both) cannot pass.
+      expect(output).toEndWith(
+        [
+          "async cleanup hook fired",
+          "released tsfn: status=0",
+          "tsfn finalize: removing async cleanup hook",
+          "async cleanup hook removed: status=0",
+        ].join("\n"),
+      );
     });
   });
 

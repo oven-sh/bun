@@ -370,12 +370,9 @@ public:
         return handle.release();
     }
 
-    bool removeAsyncCleanupHook(napi_async_cleanup_hook_handle handle)
+    // The caller has already rejected null handles (napi_invalid_arg).
+    void removeAsyncCleanupHook(napi_async_cleanup_hook_handle handle)
     {
-        if (handle == nullptr) {
-            return false; // Invalid handle
-        }
-
         for (auto iter = m_cleanupHooks.begin(), end = m_cleanupHooks.end(); iter != end; ++iter) {
             if (auto* async = std::get_if<Napi::AsyncCleanupHook>(&*iter)) {
                 if (async->handle == handle) {
@@ -385,12 +382,9 @@ public:
             }
         }
 
-        // The handle is freed here unconditionally, matching Node.js
-        // (node/src/node_api.cc napi_remove_async_cleanup_hook): when drain()
-        // has already run the hook (and erased it from the set), the addon
-        // still owns the handle and this call is its completion signal.
+        // Freed unconditionally, matching Node: for an already-drained hook
+        // this call is the addon's completion signal.
         delete handle;
-        return true;
     }
 
     bool inGC() const
@@ -638,11 +632,8 @@ private:
             } else {
                 auto& async = std::get<Napi::AsyncCleanupHook>(hook);
                 ASSERT(async.function != nullptr);
-                // The addon keeps ownership of the handle: it frees it via
-                // napi_remove_async_cleanup_hook, possibly after this hook
-                // returns (e.g. from a threadsafe function finalizer that runs
-                // later during cleanup()). Deleting it here is a use-after-free
-                // in that case (#37201).
+                // The addon owns the handle and frees it via
+                // napi_remove_async_cleanup_hook, possibly after this returns (#37201).
                 async.function(async.handle, async.data);
             }
             // Same invariant as the finalizer loop in cleanup(): a hook

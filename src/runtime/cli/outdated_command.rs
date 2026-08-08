@@ -10,7 +10,7 @@ use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
-    LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
 use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
 use bun_paths::{self as path, PathBuffer};
@@ -525,7 +525,6 @@ impl OutdatedCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;
@@ -724,7 +723,6 @@ impl OutdatedCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;

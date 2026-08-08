@@ -4,7 +4,6 @@ use bun_core::Output;
 
 use crate::Dependency;
 use crate::DependencyID;
-use crate::ManifestLoad;
 use crate::NetworkTask;
 use crate::PackageID;
 use crate::Resolution;
@@ -190,7 +189,6 @@ pub fn populate_manifest_cache(
                     cache_ctx,
                     scope.get(),
                     pkg_name_slice,
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended_manifest,
                 );
                 if cached.is_none() {
@@ -245,7 +243,6 @@ pub fn populate_manifest_cache(
                         cache_ctx,
                         scope.get(),
                         package_name,
-                        ManifestLoad::LoadFromMemoryFallbackToDisk,
                         needs_extended_manifest,
                     );
                     if cached.is_none() {

@@ -27,10 +27,9 @@ use core::ptr::NonNull;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::{
-    ArrayBuffer, CallFrame, CoerceTo, ErrorBuilder, ErrorCode, ExternColumnIdentifier,
-    ExternColumnIdentifierValue, GlobalRef, JSArrayIterator, JSCell, JSGlobalObject, JSObject,
-    JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    StrongOptional, ThrowFmtArgs, ZigStringJsc, bun_string_jsc, host_fn,
+    ArrayBuffer, CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef,
+    JSArrayIterator, JSCell, JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef,
+    JsResult, MarkedArgumentBuffer, StringJsc, StrongOptional, bun_string_jsc, host_fn,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
@@ -523,7 +522,6 @@ pub mod api {
                 }
             }
         }
-        pub use SSLConfig as SslConfig;
     }
     /// PascalCase namespace alias.
     #[allow(non_snake_case)]

@@ -1,8 +1,6 @@
 //! Runtime plugin host (JS-side `Bun.plugin()` resolve hooks). Lives here so
 //! `bundler/` is free of `JSValue`/`JSGlobalObject`.
 
-pub use bun_resolver::fs::Path as FsPath;
-
 /// Re-export of the concrete struct.
 /// `extract_namespace` / `could_be_plugin` (pure byte parsing) live in
 /// `bun_bundler`; the stateful struct + `on_resolve` body live in

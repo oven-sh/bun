@@ -1027,9 +1027,12 @@ describe.concurrent("S3 - List Objects", () => {
   it("Should read an <Error> that follows keep-alive whitespace (CompleteMultipartUpload style)", async () => {
     using server = createBunServer(
       async () =>
-        new Response(`   \n\n<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>InternalError</Code><Message>try again</Message></Error>`, {
-          status: 500,
-        }),
+        new Response(
+          `   \n\n<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>InternalError</Code><Message>try again</Message></Error>`,
+          {
+            status: 500,
+          },
+        ),
     );
     const client = new S3Client({ ...options, endpoint: server.url.href });
     const error = await client.list().then(

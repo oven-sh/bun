@@ -112,6 +112,9 @@ public:
 
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);
+    // Node's [kNewListener] re-ref on the 0→1 'message' listener transition,
+    // including the onmessage-replace path which never reaches onDidChangeListener.
+    void refFromMessageListener();
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 
@@ -158,7 +161,7 @@ private:
     bool m_hasRef { false };
 
     // Whether .ref()/.unref() want this port to keep the loop alive (default refd);
-    // independent of m_hasRef (the .onmessage=/.ref() keepalive).
+    // independent of m_hasRef (the explicit .ref() keepalive).
     bool m_isRefd { true };
     // Whether the message-listener mechanism currently holds an event-loop ref
     // (held iff m_isRefd && m_messageEventCount > 0).

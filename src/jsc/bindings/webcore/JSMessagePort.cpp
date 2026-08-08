@@ -198,10 +198,12 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     UNUSED_PARAM(vm);
     setEventHandlerAttribute<JSEventListener>(thisObject.wrapped(), eventNames().messageEvent, value, thisObject);
+    // setEventHandlerAttribute's in-place replace path never fires onDidChangeListener,
+    // so re-ref here too (node's defineEventHandler fires [kNewListener] on replace).
+    if (value.isObject())
+        thisObject.wrapped().refFromMessageListener();
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
-
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
 
     return true;
 }
@@ -226,11 +228,10 @@ static inline bool setJSMessagePort_onmessageerrorSetter(JSGlobalObject& lexical
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     UNUSED_PARAM(vm);
+    // No jsRef(): node never refs the loop for a messageerror handler.
     setEventHandlerAttribute<JSEventListener>(thisObject.wrapped(), eventNames().messageerrorEvent, value, thisObject);
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
-
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
 
     return true;
 }

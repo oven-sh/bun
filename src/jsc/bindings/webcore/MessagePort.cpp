@@ -67,8 +67,27 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 
 MessagePort::~MessagePort()
 {
-    if (!m_isDetached)
-        m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
+    if (m_isDetached)
+        return;
+    // The wrapper was swept before any pending peerClosed() could jsUnref(): balance
+    // the refEventLoop() taken by the listener so it isn't leaked.
+    if (m_listenerLoopRefActive) {
+        m_listenerLoopRefActive = false;
+        if (auto* context = scriptExecutionContext())
+            context->unrefEventLoop();
+    }
+    // A waiting peer (HoldsLoopRef) must not be closed at GC timing — node never
+    // destroys an entangled port — except during VM teardown, where nothing else
+    // will ever notify it (markTerminating() precedes the sweep that reaches here,
+    // and hasPendingActivity() pins the wrapper otherwise).
+    if (m_pipe->otherSideHoldsLoopRef(m_side)) {
+        auto* context = scriptExecutionContext();
+        if (!context || !context->isTerminating())
+            return;
+        m_pipe->close(m_side, MessagePortPipe::CloseKind::Explicit);
+        return;
+    }
+    m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
 }
 
 ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
@@ -211,13 +230,12 @@ void MessagePort::close()
     // it in hasPendingActivity()); marking our side Closed is sufficient.
     m_pipe->close(m_side, MessagePortPipe::CloseKind::Explicit);
 
-    // Release the self-reference taken by jsRef() (set when .onmessage is
-    // assigned or .ref() is called from JS). The JS .close() binding calls
-    // jsUnref() first, so m_hasRef is already false on that path; we only
-    // reach this branch when close() runs without a preceding jsUnref() —
-    // most importantly from contextDestroyed() during Worker teardown.
-    // Without this, the self-ref pins the MessagePort past the JS wrapper
-    // sweep and it leaks forever.
+    // Release the self-reference taken by jsRef() (set when .ref() is called
+    // from JS). The JS .close() binding calls jsUnref() first, so m_hasRef is
+    // already false on that path; we only reach this branch when close() runs
+    // without a preceding jsUnref() — most importantly from contextDestroyed()
+    // during Worker teardown. Without this, the self-ref pins the MessagePort
+    // past the JS wrapper sweep and it leaks forever.
     if (m_hasRef) {
         m_hasRef = false;
         if (auto* context = scriptExecutionContext())
@@ -284,8 +302,8 @@ void MessagePort::peerClosed()
     // Fire 'close' (guarded against a double dispatch) and release this side's loop refs
     // so the loop can idle, matching node.
     dispatchCloseEvent();
-    // jsUnref() clears both the listener loop-ref (m_isRefd) and the onmessage/ref()
-    // keepalive (m_hasRef), so a listening transferred port stops pinning the loop.
+    // jsUnref() clears both the listener loop-ref (m_isRefd) and the explicit
+    // .ref() keepalive (m_hasRef), so a listening transferred port stops pinning the loop.
     auto* globalObject = defaultGlobalObject(context->globalObject());
     jsUnref(globalObject);
 }
@@ -422,6 +440,10 @@ bool MessagePort::hasPendingActivity() const
     // the context dies; node retains more — it never collects an entangled port at all.
     if (m_hasCloseEventListener.load(std::memory_order_acquire) && !m_closeEventDispatched)
         return true;
+    // The peer is waiting on this side (see MessagePortPipe::HoldsLoopRef); collecting
+    // here would peerClosed() it and release that loop ref at GC timing.
+    if (m_pipe->otherSideHoldsLoopRef(m_side))
+        return true;
     if (!m_hasMessageEventListener)
         return false;
 
@@ -479,16 +501,29 @@ Vector<RefPtr<MessagePort>> MessagePort::entanglePorts(ScriptExecutionContext& c
 void MessagePort::updateListenerEventLoopRef()
 {
     bool shouldHold = m_isRefd && m_messageEventCount > 0;
-    if (shouldHold == m_listenerLoopRefActive)
+    if (shouldHold != m_listenerLoopRefActive) {
+        if (auto* context = scriptExecutionContext()) {
+            if (shouldHold)
+                context->refEventLoop();
+            else
+                context->unrefEventLoop();
+            m_listenerLoopRefActive = shouldHold;
+        }
+    }
+    // Publish jsHasRef() to the pipe so the peer's hasPendingActivity() can pin itself.
+    if (!m_isDetached)
+        m_pipe->setHoldsLoopRef(m_side, m_listenerLoopRefActive || m_hasRef);
+}
+
+// Node's [kNewListener] hook calls newListener(size-1), which refs only on the
+// 0→1 transition (size==1 here). Gated like jsRef(): on an already-closed handle
+// node's ref() is a no-op.
+void MessagePort::refFromMessageListener()
+{
+    if (m_messageEventCount != 1 || m_isDetached || m_pipe->isOtherSideClosedByRequest(m_side))
         return;
-    auto* context = scriptExecutionContext();
-    if (!context)
-        return;
-    if (shouldHold)
-        context->refEventLoop();
-    else
-        context->unrefEventLoop();
-    m_listenerLoopRefActive = shouldHold;
+    m_isRefd = true;
+    updateListenerEventLoopRef();
 }
 
 void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
@@ -500,6 +535,7 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
     switch (kind) {
     case Add:
         port.m_messageEventCount++;
+        port.refFromMessageListener();
         break;
     case Remove:
         if (port.m_messageEventCount > 0)
@@ -557,38 +593,35 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     // close()/disentangle() have already run and nothing will ever release a
     // ref taken afterwards. Same once the peer has closed: peerClosed() already
     // ran jsUnref(), and nothing releases a ref re-taken after it, so `.ref()`
-    // or a late `onmessage =` would pin the loop forever. Node no-ops both.
-    // Only an explicit peer close counts: node never closes a channel because a
-    // port was collected, so keying on Closed alone made this GC-dependent.
+    // would pin the loop forever. Node no-ops it. Only an explicit peer close
+    // counts: node never closes a channel because a port was collected, so
+    // keying on Closed alone made this GC-dependent.
     if (!isEntangled() || m_pipe->isOtherSideClosedByRequest(m_side))
         return;
 
-    // Re-acquire the message-listener loop-ref (if a listener is present) that .unref() released.
-    if (!m_isRefd) {
-        m_isRefd = true;
-        updateListenerEventLoopRef();
-    }
-
+    m_isRefd = true;
     if (!m_hasRef) {
         m_hasRef = true;
         ref();
         Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
     }
+    // After both flags settle so the listener ref and the pipe's HoldsLoopRef agree.
+    updateListenerEventLoopRef();
 }
 
 void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
 {
+    // deref() below releases the self-ref taken by jsRef(); keep `this` alive past it.
+    Ref protectedThis { *this };
     // Also release the listener loop-ref; otherwise an always-listening transferred
     // port (a postMessageToThread control port) would pin the event loop forever.
-    if (m_isRefd) {
-        m_isRefd = false;
-        updateListenerEventLoopRef();
-    }
+    m_isRefd = false;
     if (m_hasRef) {
         m_hasRef = false;
         deref();
         Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
     }
+    updateListenerEventLoopRef();
 }
 
 } // namespace WebCore

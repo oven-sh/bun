@@ -438,7 +438,10 @@ public:
         Bun__HTMLRewriter__onResolveInputStream,
         Bun__HTMLRewriter__onRejectInputStream,
     };
-    static constexpr size_t promiseFunctionsSize = 48;
+    // Must equal the number of PromiseFunctions entries above; ThenablesArray is sized from it.
+    static constexpr size_t promiseFunctionsSize = 50;
+    static_assert(promiseFunctionsSize + 1 > static_cast<size_t>(PromiseFunctions::Bun__HTMLRewriter__onRejectInputStream),
+        "promiseFunctionsSize must cover every PromiseFunctions entry; bump it when adding enum entries");
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 

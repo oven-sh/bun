@@ -1,5 +1,6 @@
-// Implementation for `require('node:module')._initPaths`. Exists only as a
-// compatibility stub. Calling this does not affect the actual CommonJS loader.
+// Implementation for `require('node:module')._initPaths`. The resolver reads
+// NODE_PATH / HOME / execPath itself on each resolve, so calling this only
+// refreshes the `Module.globalPaths` introspection array.
 export function _initPaths() {
   const homeDir = process.platform === "win32" ? process.env.USERPROFILE : Bun.env.HOME;
   const nodePath = process.platform === "win32" ? process.env.NODE_PATH : Bun.env.NODE_PATH;

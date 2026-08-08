@@ -422,11 +422,12 @@ console.log("survived", require("./late.js"));`,
   });
 
   test("Module._resolveLookupPaths", () => {
-    expect(Module._resolveLookupPaths("foo")).toEqual([]);
+    const globalPaths = Module.globalPaths;
+    expect(Module._resolveLookupPaths("foo")).toEqual([...globalPaths]);
     expect(Module._resolveLookupPaths("./bar", { id: "1", filename: "/baz/abc" })).toEqual(["/baz"]);
     expect(Module._resolveLookupPaths("./bar", {})).toEqual(["."]);
     expect(Module._resolveLookupPaths("./bar", { paths: ["a"] })).toEqual(["."]);
-    expect(Module._resolveLookupPaths("bar", { paths: ["a"] })).toEqual(["a"]);
+    expect(Module._resolveLookupPaths("bar", { paths: ["a"] })).toEqual(["a", ...globalPaths]);
   });
 
   test("Module.findSourceMap doesn't throw", () => {

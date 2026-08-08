@@ -1830,7 +1830,10 @@ pub struct RuntimeHooks {
     ),
     /// Parse a worker's `execArgv` (`bun_runtime::cli::worker_exec_argv`,
     /// forward-dep); `None` derives an inheriting worker's defaults from the
-    /// process argv (preloads/cpu-prof excluded — the parent VM carries both).
+    /// process argv. cpu-prof is excluded (the parent VM carries it via
+    /// `parent_cpu_profiler_config`); preloads are excluded too, so an
+    /// inheriting worker does not re-run CLI `-r` (only an explicit execArgv
+    /// does; node re-runs in both — widening is a behavior decision).
     pub parse_worker_exec_argv:
         unsafe fn(exec_argv: Option<&[bun_core::WTFStringImpl]>) -> WorkerExecArgv,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in

@@ -127,7 +127,7 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
 
     auto* uid = propertyName.uid();
     if (uid && uid->isSymbol()) {
-        throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
+        throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
         return false;
     }
 

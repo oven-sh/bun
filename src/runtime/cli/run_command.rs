@@ -16,7 +16,7 @@ use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, JsResultExt};
 use bun_md::root as md;
 use bun_options_types::schema::api;
 #[cfg(windows)]
@@ -1607,18 +1607,22 @@ impl Run {
                     }
                     result
                 };
-                // SAFETY: `vals[..1]` is the single stack `to_print`; null
-                // `ctype` routes to the VM's stdout/stderr default.
-                unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
-                        ::core::ptr::null_mut(),
+                // SAFETY: `vals[..1]` is the single stack `to_print`.
+                let printed = unsafe {
+                    bun_jsc::ConsoleObject::try_message_with_type_and_level(
                         bun_jsc::ConsoleObject::MessageType::Log,
                         bun_jsc::ConsoleObject::MessageLevel::Log,
                         vm.global(),
                         &raw const to_print,
                         1,
-                    );
-                }
+                    )
+                };
+                // A throw raised while formatting the result (a custom
+                // inspect, getter, or Proxy trap) is an uncaughtException in
+                // node's `-p`: report it so it prints and sets a non-zero
+                // exit code instead of being swallowed. The fall-through
+                // shutdown below picks up the exit code.
+                printed.report_unhandled(vm.global());
             }
 
             vm.on_before_exit();

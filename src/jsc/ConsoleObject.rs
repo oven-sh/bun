@@ -259,7 +259,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
 /// box. Consolidates the open-coded `&mut *vm_console(global)` deref at the
 /// `Bun__ConsoleObject__*` FFI entry points (each is a top-level JS-thread
 /// host call, so the `&mut` is exclusive for the duration). Callers that need
-/// to interleave borrows across a deferred guard (`message_with_type_and_level_`)
+/// to interleave borrows across a deferred guard (`try_message_with_type_and_level`)
 /// keep using the raw [`vm_console`] pointer instead.
 #[inline]
 unsafe fn vm_console_mut<'a>(global: &JSGlobalObject) -> &'a mut ConsoleObject {
@@ -351,14 +351,16 @@ impl Drop for FlushOnDrop<'_> {
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
-    ctype: *mut ConsoleObject,
+    _ctype: *mut ConsoleObject,
     message_type: MessageType,
     level: MessageLevel,
     global: &JSGlobalObject,
     vals: *const JSValue,
     len: usize,
 ) {
-    if let Err(err) = message_with_type_and_level_(ctype, message_type, level, global, vals, len) {
+    // SAFETY: forwards our own caller's `vals`/`len` contract.
+    let result = unsafe { try_message_with_type_and_level(message_type, level, global, vals, len) };
+    if let Err(err) = result {
         // The exception is already set on the VM (`JsError::Thrown`); for OOM
         // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
         if matches!(err, jsc::JsError::OutOfMemory) {
@@ -368,8 +370,14 @@ pub extern "C" fn message_with_type_and_level(
     }
 }
 
-fn message_with_type_and_level_(
-    _ctype: *mut ConsoleObject,
+/// Fallible form of [`message_with_type_and_level`] for callers that must
+/// observe a throw raised while formatting (a custom `inspect`, getter, or
+/// Proxy trap). On `Err(Thrown)` the exception is pending on the VM;
+/// `Err(OutOfMemory)` has nothing pending yet (`take_exception` throws it).
+///
+/// # Safety
+/// `vals` must point to `len` readable `JSValue`s that outlive the call.
+pub unsafe fn try_message_with_type_and_level(
     message_type: MessageType,
     level: MessageLevel,
     global: &JSGlobalObject,

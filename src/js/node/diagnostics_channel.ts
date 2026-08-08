@@ -303,7 +303,21 @@ class TracingChannel {
     return done;
   }
 
+  get hasSubscribers() {
+    return (
+      this.start?.hasSubscribers ||
+      this.end?.hasSubscribers ||
+      this.asyncStart?.hasSubscribers ||
+      this.asyncEnd?.hasSubscribers ||
+      this.error?.hasSubscribers
+    );
+  }
+
   traceSync(fn, context = {}, thisArg, ...args) {
+    if (!this.hasSubscribers) {
+      return fn.$apply(thisArg, args);
+    }
+
     const { start, end, error } = this;
 
     return start.runStores(context, () => {
@@ -322,6 +336,10 @@ class TracingChannel {
   }
 
   tracePromise(fn, context = {}, thisArg, ...args) {
+    if (!this.hasSubscribers) {
+      return fn.$apply(thisArg, args);
+    }
+
     const { start, end, asyncStart, asyncEnd, error } = this;
 
     function reject(err) {
@@ -360,6 +378,10 @@ class TracingChannel {
   }
 
   traceCallback(fn, position = -1, context = {}, thisArg, ...args) {
+    if (!this.hasSubscribers) {
+      return fn.$apply(thisArg, args);
+    }
+
     const { start, end, asyncStart, asyncEnd, error } = this;
 
     function wrappedCallback(err, res) {
@@ -371,7 +393,7 @@ class TracingChannel {
       }
 
       // Using runStores here enables manual context failure recovery
-      asyncStart.runStores(context, () => {
+      return asyncStart.runStores(context, () => {
         try {
           if (callback) {
             return callback.$apply(this, arguments);

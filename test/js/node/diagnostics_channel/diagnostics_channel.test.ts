@@ -1,7 +1,7 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
+import { channel, Channel, hasSubscribers, subscribe, tracingChannel, unsubscribe } from "node:diagnostics_channel";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -343,6 +343,72 @@ describe("TracingChannel", () => {
   // Port tests from:
   // https://github.com/search?q=repo%3Anodejs%2Fnode+test-diagnostics-channel+AND+%2Ftracing%2F&type=code
   test.todo("TODO");
+
+  test("hasSubscribers reflects a subscriber on any sub-channel", () => {
+    const tc = tracingChannel("tc-hasSubscribers");
+    expect(tc.hasSubscribers).toBeFalse();
+    for (const name of ["start", "end", "asyncStart", "asyncEnd", "error"] as const) {
+      const handler = () => {};
+      tc[name].subscribe(handler);
+      expect(tc.hasSubscribers).toBeTrue();
+      tc[name].unsubscribe(handler);
+      expect(tc.hasSubscribers).toBeFalse();
+    }
+  });
+
+  test("traceCallback preserves the wrapped callback's return value", () => {
+    const tc = tracingChannel("tc-cb-return");
+    const events: string[] = [];
+    const handlers = {
+      start: () => events.push("start"),
+      end: () => events.push("end"),
+      asyncStart: () => events.push("asyncStart"),
+      asyncEnd: () => events.push("asyncEnd"),
+      error: () => events.push("error"),
+    };
+    tc.subscribe(handlers);
+
+    const api = (a: number, cb: (err: null, v: number) => number) => cb(null, a * 2);
+    const cb = (_err: null, v: number) => v * 2;
+
+    const untraced = api(10.5, cb);
+    const traced = tc.traceCallback(api, -1, {}, null, 10.5, cb);
+
+    expect({ untraced, traced, events }).toEqual({
+      untraced: 42,
+      traced: 42,
+      events: ["start", "asyncStart", "asyncEnd", "end"],
+    });
+
+    tc.unsubscribe(handlers);
+  });
+
+  test("traceSync/tracePromise/traceCallback are pure passthrough with no subscribers", async () => {
+    const tc = tracingChannel("tc-nosub-passthrough");
+    expect(tc.hasSubscribers).toBeFalse();
+
+    const calls: unknown[][] = [];
+    const fn = function (this: unknown, ...args: unknown[]) {
+      calls.push([this, ...args]);
+      return args[0];
+    };
+    const thisArg = { tag: "t" };
+    const ctx = {};
+
+    expect(tc.traceSync(fn, ctx, thisArg, "sync")).toBe("sync");
+    // traceCallback must not validate the callback arg when nothing is subscribed
+    expect(tc.traceCallback(fn, -1, ctx, thisArg, "cb", "not-a-function")).toBe("cb");
+    const p = tc.tracePromise(fn, ctx, thisArg, Promise.resolve("p"));
+    expect(await p).toBe("p");
+
+    expect(calls).toEqual([
+      [thisArg, "sync"],
+      [thisArg, "cb", "not-a-function"],
+      [thisArg, p],
+    ]);
+    // context must not be populated when nothing is subscribed
+    expect(ctx).toEqual({});
+  });
 });
 
 const mocks = new Map();

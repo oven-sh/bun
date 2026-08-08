@@ -450,7 +450,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return;
                             }
                         }
-                        let mut end: u32 = 0;
+                        let mut used: smallvec::SmallVec<[bool; 8]> =
+                            smallvec::smallvec![false; object.properties.len()];
                         for property in bound_object.properties() {
                             if let Some(name) = property.key.as_string_literal(self.arena) {
                                 if let Some(query) = object.as_property(name) {
@@ -472,22 +473,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             }
                                         }
                                     }
-                                    // output_properties[end] = output_properties[query.i]
-                                    // SAFETY: both indices < object.properties.len; G::Property
-                                    // has no Drop; src/dst may alias when end == query.i.
-                                    unsafe {
-                                        let props_ptr = object.properties.slice_mut().as_mut_ptr();
-                                        core::ptr::copy(
-                                            props_ptr.add(query.i as usize),
-                                            props_ptr.add(end as usize),
-                                            1,
-                                        );
-                                    }
-                                    end += 1;
+                                    used[query.i as usize] = true;
                                 }
                             }
                         }
-                        object.properties.truncate(end as usize);
+                        let mut end: usize = 0;
+                        for (i, &keep) in used.iter().enumerate() {
+                            if keep {
+                                object.properties.slice_mut().swap(end, i);
+                                end += 1;
+                            }
+                        }
+                        object.properties.truncate(end);
                     }
                 }
             }

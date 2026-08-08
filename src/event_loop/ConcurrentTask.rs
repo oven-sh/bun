@@ -88,6 +88,8 @@ pub mod task_tag {
         FChown,
         Fdatasync,
         FetchTasklet,
+        FetchTaskletDeinit,       // last-ref handoff from the HTTP thread (deref_from_thread)
+        FetchTaskletResumeRequestStream, // request-body drain hop; the queued entry owns a +1
         FetchTaskletPromiseSettle,
         FileResponseStreamEof,
         Fstat,

@@ -36,9 +36,6 @@ use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable}
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
 
 use bun_jsc::JsTerminatedResult;
-// `bun_event_loop::JsResult` (cycle-broken erased error) — used by
-// ConcurrentTask callbacks at the tier-3 layer.
-type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
 use boringssl::c::{X509_free, d2i_X509};
 
@@ -392,6 +389,14 @@ impl FetchTasklet {
     // stay `*mut` because the call may drop the last ref and free the allocation.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn deref_from_thread(this: *mut FetchTasklet) {
+        // Debug-only fault injection (exiting.test.ts): lets the JS thread win
+        // the final-deref race so the handoff below lands in the exit window.
+        #[cfg(debug_assertions)]
+        if bun_core::env_var::feature_flag::BUN_INTERNAL_FETCH_DELAY_DEREF_FROM_THREAD.get()
+            == Some(true)
+        {
+            std::thread::sleep(core::time::Duration::from_millis(200));
+        }
         // SAFETY: caller contract.
         if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
             return;
@@ -406,22 +411,27 @@ impl FetchTasklet {
             unsafe { FetchTasklet::dealloc_for_shutdown(this) };
             return;
         }
-        // this is really unlikely to happen, but can happen
-        // lets make sure that we always call deinit from main thread
-        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`; the queue
-        // takes ownership of it.
+        // Dedicated tag, not `from_callback`: a queued `ManagedTask` the loop
+        // never dispatches is freed unrun at shutdown, leaking the tasklet ⇄
+        // `Box<AsyncHTTP>` cycle. The `FetchTaskletDeinit` shutdown arm reclaims it.
         Self::enqueue_concurrent(
             self_.javascript_vm,
-            ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
+            ConcurrentTask::create(Task::new(
+                bun_event_loop::task_tag::FetchTaskletDeinit,
+                this.cast(),
+            )),
         );
     }
 
-    // ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
-    // (cycle-broken erased error).
-    fn deinit_callback(this: *mut FetchTasklet) -> ElJsResult<()> {
-        // SAFETY: enqueued with last ref; exclusive access on main thread
+    /// Reclaim a tasklet queued by [`Self::deref_from_thread`]'s last-ref
+    /// handoff. JS thread only; both callers (dispatch, shutdown release)
+    /// precede `destructOnExit`, so `deinit` may still drop JSC handles.
+    // Signature stays `*mut`: this frees the allocation.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn deinit_queued(this: *mut FetchTasklet) {
+        // SAFETY: enqueued by `deref_from_thread` on the 1→0 transition — the
+        // queued task is the sole owner of a live heap allocation from `get()`.
         unsafe { FetchTasklet::deinit(this) };
-        Ok(())
     }
 
     fn clear_sink(&mut self) {
@@ -560,6 +570,10 @@ impl FetchTasklet {
     /// `has_schedule_callback` is written exclusively by the HTTP-thread
     /// `callback` and the JS-thread `on_progress_update`; the JS thread is
     /// parked in `wait_timeout_while` here, so the load is race-free.
+    ///
+    /// Drain-hop refs (`on_write_request_data_drain`'s `+1`) are outside this
+    /// ledger: each is owned by its queued `FetchTaskletResumeRequestStream`
+    /// entry and released by `release_queued_tasks_for_shutdown`.
     ///
     /// SAFETY: `this` is the live `*mut FetchTasklet` registered as
     /// `result_callback.ctx` in `get()`; HTTP-thread-only at this point.
@@ -2173,34 +2187,31 @@ impl FetchTasklet {
         }
         // ref until the main thread callback is called
         this_ref.ref_();
-        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`; the queue
-        // takes ownership of it.
+        // Tagged task for the same reason as `deref_from_thread`: the shutdown
+        // release pass must be able to drop the queued ref if the loop never
+        // dispatches this.
         Self::enqueue_concurrent(
             this_ref.javascript_vm,
-            ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream),
+            ConcurrentTask::create(Task::new(
+                bun_event_loop::task_tag::FetchTaskletResumeRequestStream,
+                this.cast(),
+            )),
         );
     }
 
     /// This is ALWAYS called from the main thread
-    // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
-    fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
+    pub(crate) fn resume_request_data_stream(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_mut(this);
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
-        let result = (|| {
-            if this_ref.signal_aborted() {
-                // already aborted; nothing to drain
-                return;
-            }
+        if !this_ref.signal_aborted() {
             let global_this = this_ref.global_this;
             if let Some(sink) = this_ref.sink_mut() {
                 sink.on_drain(&global_this);
             }
-        })();
+        }
         // deref when done because we ref inside onWriteRequestDataDrain
         // SAFETY: `this` is the live heap tasklet; we hold a ref.
         FetchTasklet::deref(this);
-        let () = result;
-        Ok(())
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.

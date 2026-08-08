@@ -995,6 +995,37 @@ describe.concurrent("timing edge cases", () => {
     expectDone(r.stderr, "other");
     expect(r.exitCode).toBe(0);
   });
+
+  // On abort (here: a failing script with exit-on-error), exit alone finishes
+  // a script; waiting for pipe EOF would hang on the detached child that still
+  // holds bg's stdout.
+  test("failure abort does not wait for a child holding another script's pipes", async () => {
+    using dir = tempDir("mr-abort-late", {
+      "bg.js": `
+        Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(10_000)"],
+          stdio: ["ignore", "inherit", "inherit"],
+          detached: true,
+        }).unref();
+        await Bun.write("ready.txt", "1");
+      `,
+      "fail.js": `
+        while (!(await Bun.file("ready.txt").exists())) await Bun.sleep(10);
+        process.exit(1);
+      `,
+      "package.json": JSON.stringify({
+        scripts: {
+          fail: `${bunExe()} fail.js`,
+          bg: `${bunExe()} bg.js`,
+        },
+      }),
+    });
+    const r = await runMulti(["run", "--parallel", "fail", "bg"], String(dir), {
+      BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    });
+    expectExited(r.stderr, "fail", 1);
+    expect(r.exitCode).toBe(1);
+  });
 });
 
 // ─── EXIT CODE PROPAGATION ───────────────────────────────────────────────────

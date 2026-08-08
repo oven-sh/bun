@@ -123,6 +123,11 @@ pub(crate) struct ProcessHandle<'a> {
     start_time: Option<Instant>,
     end_time: Option<Instant>,
 
+    /// Set by the `maybe_finish` that counts this script out of
+    /// `remaining_scripts`, so a later pipe/exit event or the abort sweep
+    /// cannot finish it twice.
+    finished: bool,
+
     remaining_dependencies: usize,
     /// Dependents within the same script group (pre->main->post chain).
     /// These are NOT started if this handle fails, even with --no-exit-on-error.
@@ -400,12 +405,15 @@ impl<'a> State<'a> {
     /// A script is finished once its process has exited *and* both pipes have
     /// reached EOF: the exit notification can arrive before the last output
     /// has been read, and finishing then would drop that output (or, for the
-    /// last script, exit before printing it).
+    /// last script, exit before printing it). On abort, exit alone suffices:
+    /// a leftover child holding the pipes must not keep the aborted run alive.
     fn maybe_finish(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
         let exited = matches!(&handle.process, Some(p) if !matches!(p.status, Status::Running));
-        if !exited || !handle.stdout_reader.ended || !handle.stderr_reader.ended {
+        let pipes_open = !handle.stdout_reader.ended || !handle.stderr_reader.ended;
+        if handle.finished || !exited || (pipes_open && !self.aborted) {
             return Ok(());
         }
+        handle.finished = true;
         self.remaining_scripts -= 1;
 
         // Flush remaining buffers (stdout first, then stderr)
@@ -522,8 +530,17 @@ impl<'a> State<'a> {
     }
 
     fn abort(&mut self) {
+        if self.aborted {
+            return;
+        }
         self.aborted = true;
-        for handle in self.handles.iter_mut() {
+        // Raw ptrs so `self.maybe_finish` can be called while walking (the
+        // file-wide State/handle backref pattern).
+        let handles: Vec<*mut ProcessHandle<'a>> =
+            self.handles.iter_mut().map(std::ptr::from_mut).collect();
+        for handle in handles {
+            // SAFETY: points into `self.handles`, live for the whole run loop.
+            let handle = unsafe { &mut *handle };
             if let Some(proc) = &mut handle.process {
                 if matches!(proc.status, Status::Running) {
                     // SAFETY: proc.ptr is a live intrusively-ref-counted Process
@@ -531,6 +548,10 @@ impl<'a> State<'a> {
                     let _ = unsafe { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
                 }
             }
+            // An already-exited handle may be waiting on pipes a grandchild
+            // still holds; with `aborted` set this finishes it now. Killed
+            // handles finish when their exit arrives.
+            let _ = self.maybe_finish(handle);
         }
     }
 
@@ -1166,6 +1187,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             process: None,
             start_time: None,
             end_time: None,
+            finished: false,
             remaining_dependencies: 0,
             group_dependents: Vec::new(),
             next_dependents: Vec::new(),
@@ -1252,6 +1274,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         if SHOULD_ABORT.load(Ordering::SeqCst) && !state.aborted {
             AbortHandler::uninstall();
             state.abort();
+            // The abort sweep may have finished the last script; re-check
+            // before blocking in a tick no event may ever wake.
+            continue;
         }
         // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
         unsafe { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };

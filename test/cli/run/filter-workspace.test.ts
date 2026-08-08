@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { symlinkSync } from "node:fs";
+import { existsSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
@@ -814,5 +814,47 @@ describe("output timing", () => {
     // The exit status line is printed at finish, after the output has ended.
     expect(stdout.indexOf("late-line")).toBeLessThan(stdout.indexOf("Exited with code 0"));
     expect(exitCode).toBe(0);
+  });
+
+  // On abort (here: SIGINT), exit alone finishes a script; waiting for pipe
+  // EOF would hang on the detached child that still holds go's stdout.
+  test.skipIf(isWindows)("SIGINT does not wait for a child holding the script's pipes", async () => {
+    using dir = tempDir("filter-abort-late", {
+      "package.json": JSON.stringify({
+        name: "ws-abort",
+        workspaces: ["packages/*"],
+      }),
+      "packages/bg/package.json": JSON.stringify({
+        name: "pkg-bg",
+        scripts: {
+          go: `${bunExe()} go.js`,
+        },
+      }),
+      "packages/bg/go.js": `
+        Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(10_000)"],
+          stdio: ["ignore", "inherit", "inherit"],
+          detached: true,
+        }).unref();
+        await Bun.write("ready.txt", "1");
+        await Bun.sleep(15_000);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "pkg-bg", "go"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // New session, so the group signal below cannot reach the test runner.
+      detached: true,
+    });
+    const ready = join(String(dir), "packages", "bg", "ready.txt");
+    while (!existsSync(ready)) await Bun.sleep(10);
+    // Ctrl-C semantics: the terminal signals the foreground process group
+    // (bun run and the script), but not the detached grandchild.
+    process.kill(-proc.pid, "SIGINT");
+    // 128 + SIGINT: go is killed by the signal and is the only script.
+    expect(await proc.exited).toBe(130);
   });
 });

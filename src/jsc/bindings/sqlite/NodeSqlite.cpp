@@ -176,8 +176,9 @@ static JSC::JSUint8Array* adoptSqliteBuffer(JSGlobalObject* globalObject, void* 
 // Error helpers (match Node.js node_sqlite.cc shapes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Every ERR_SQLITE_ERROR carries `errcode` (the extended result code) and
-// `errstr` (its canonical English text), matching node_sqlite.cc.
+// Node's CreateSQLiteError(isolate, sqlite3*) / (isolate, int) shape: sets
+// both `errcode` and `errstr`. (throwSqliteResultCode below mirrors the
+// THROW_ERR_SQLITE_ERROR(isolate, int) overload, which omits errstr.)
 static JSObject* createNodeSqliteError(JSGlobalObject* globalObject, int errcode, const WTF::String& message)
 {
     auto& vm = getVM(globalObject);
@@ -197,6 +198,18 @@ static void throwSqliteError(JSGlobalObject* globalObject, ThrowScope& scope, sq
 static void throwSqliteMessage(JSGlobalObject* globalObject, ThrowScope& scope, int errcode, const WTF::String& message)
 {
     scope.throwException(globalObject, createNodeSqliteError(globalObject, errcode, message));
+}
+
+// Node's THROW_ERR_SQLITE_ERROR(isolate, int) overload: message is the
+// canonical text and `errcode` is attached, but unlike the db-handle
+// overload no `errstr` property is set. applyChangeset is its only caller.
+static void throwSqliteResultCode(JSGlobalObject* globalObject, ThrowScope& scope, int errcode)
+{
+    auto& vm = getVM(globalObject);
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    JSObject* error = createError(zigGlobal, ErrorCode::ERR_SQLITE_ERROR, WTF::String::fromUTF8(sqlite3_errstr(errcode)));
+    error->putDirect(vm, Identifier::fromString(vm, "errcode"_s), jsNumber(errcode), 0);
+    scope.throwException(globalObject, error);
 }
 
 // The session extension, sqlite3_deserialize, sqlite3_db_config, and friends
@@ -1837,7 +1850,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncApplyChangeset, (JSGlobalObject * globalO
     if (r != SQLITE_OK) {
         // An invalid conflict-handler return is SQLITE_MISUSE and a malformed
         // changeset is SQLITE_CORRUPT; the vendored tests assert both exactly.
-        throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
+        throwSqliteResultCode(globalObject, scope, r);
         return {};
     }
     return JSValue::encode(jsBoolean(true));

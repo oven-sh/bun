@@ -16,10 +16,16 @@ test("JSX lexer should not crash with slice bounds issues", async () => {
 
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr.toString().replace(/(Bun v.*)$/gm, ""))).toMatchInlineSnapshot(`
-    "1 | export function x(){return<div a=\`\`/>}
+    "AggregateError: 2 errors building "<cwd>/[eval]"
+
+    [errors]:
+
+    1 | export function x(){return<div a=\`\`/>}
                                          ^
     error: Expected "{" but found "\`"
         at <cwd>/[eval]:1:34
+
+    [errors]:
 
     1 | export function x(){return<div a=\`\`/>}
                                           ^
@@ -57,10 +63,16 @@ test.concurrent("#30959 JSX attribute with invalid '(' value parses cleanly in d
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(normalizeBunSnapshot(stderr.replace(/(Bun v.*)$/gm, ""))).toMatchInlineSnapshot(`
-    "1 | export function x(){return<r L=((}
+    "AggregateError: 2 errors building "<cwd>/[eval]"
+
+    [errors]:
+
+    1 | export function x(){return<r L=((}
                                        ^
     error: Expected "{" but found "("
         at <cwd>/[eval]:1:32
+
+    [errors]:
 
     1 | export function x(){return<r L=((}
                                          ^

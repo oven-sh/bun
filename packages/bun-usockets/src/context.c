@@ -39,8 +39,8 @@
 /* Opaque SSL_CTX ref helpers — defined in crypto/openssl.c so this file
  * stays free of OpenSSL headers. */
 
-int us_internal_raw_root_certs(struct us_cert_string_t** out);
-int us_raw_root_certs(struct us_cert_string_t**out){
+int us_internal_raw_root_certs(const struct us_cert_der_t** out);
+int us_raw_root_certs(const struct us_cert_der_t**out){
     return us_internal_raw_root_certs(out);
 }
 

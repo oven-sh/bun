@@ -1,6 +1,7 @@
 #include "./root_certs.h"
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
+#include <openssl/pool.h>
 #include <mutex>
 #include <string.h>
 #include "./default_ciphers.h"
@@ -53,25 +54,19 @@ int us_no_password_callback(char *buf, int size, int rwflag, void *u) {
   return 0;
 }
 
-static X509 *
-us_ssl_ctx_get_X509_without_callback_from(struct us_cert_string_t content) {
-  X509 *x = NULL;
-  BIO *in;
-
-  ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
-
-  in = BIO_new_mem_buf(content.str, content.len);
-  if (in == NULL) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
-  } else {
-    x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL);
-    if (x == NULL) {
-      OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
-    }
-
-    // NOTE: PEM_read_bio_X509 allocates, so input BIO must be freed.
-    BIO_free(in);
+// Parse an embedded DER certificate without copying the bytes. The static-data
+// CRYPTO_BUFFER points into .rodata, and X509_parse_from_buffer retains a ref
+// to it instead of heap-copying like d2i_X509/PEM_read_bio_X509 do.
+static X509 *us_ssl_ctx_get_X509_from_der(struct us_cert_der_t content) {
+  ERR_clear_error();
+  CRYPTO_BUFFER *buf =
+      CRYPTO_BUFFER_new_from_static_data_unsafe(content.der, content.len, nullptr);
+  if (buf == nullptr) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
+    return nullptr;
   }
+  X509 *x = X509_parse_from_buffer(buf);
+  CRYPTO_BUFFER_free(buf);
   return x;
 }
 
@@ -152,8 +147,7 @@ static void us_internal_init_root_certs(
   static std::once_flag root_cert_instances_once;
   std::call_once(root_cert_instances_once, [&]() {
     for (size_t i = 0; i < root_certs_size; i++) {
-      root_cert_instances[i] =
-          us_ssl_ctx_get_X509_without_callback_from(root_certs[i]);
+      root_cert_instances[i] = us_ssl_ctx_get_X509_from_der(root_certs[i]);
     }
 
     // get extra cert option from environment variable
@@ -164,7 +158,7 @@ static void us_internal_init_root_certs(
   });
 }
 
-extern "C" int us_internal_raw_root_certs(struct us_cert_string_t **out) {
+extern "C" int us_internal_raw_root_certs(const struct us_cert_der_t **out) {
   *out = root_certs;
   return root_certs_size;
 }

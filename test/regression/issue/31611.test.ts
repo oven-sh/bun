@@ -131,5 +131,5 @@ test.skipIf(!perl)("generate-root-certs.pl keeps roots with an inline trust-obje
   // Control root + inline-comment root must both survive.
   expect(generated).toContain("DirectTrustRoot");
   expect(generated).toContain("DistrustAfterRoot");
-  expect(generated.match(/-----BEGIN CERTIFICATE-----/g) ?? []).toHaveLength(2);
+  expect(generated.match(/^static const unsigned char root_cert_der_\d+\[\]/gm) ?? []).toHaveLength(2);
 });

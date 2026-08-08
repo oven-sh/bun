@@ -140,6 +140,16 @@ CC pre-dispatch image after this + rebase (all tiers): 46 MB at resume → 203 M
 | late cut + hydrate v0 (`snapshotHydrate.ts`: config/settings/trust/cwd re-read, settings change fanned into the mounted AppState; 12 ms) | 60 | **55.9** | 0.26 s |
 | late cut + hydrate v1 (+ cwd/keychain/credential memos; MCP + git context come up for the real cwd) — **runs a real turn** (`⏺ pong`, subscriber auth) | 75 | **76** | 0.45 s |
 
+
+`misctools/cc-image-demo.sh <cli> [cwd]` runs the comparison end-to-end (same binary, plain vs image, real turn each). Current output on this machine:
+
+```
+plain    | to prompt: 1.0s footprint=275.9M | idle footprint=275.7M cpu=0:02.18 | first turn done at: 21.6s
+image    | to prompt: 1.0s footprint=78.4M  | idle footprint=169.6M cpu=0:01.25 | first turn done at: 18.6s
+image #2 | to prompt: 1.0s footprint=77.6M  | idle footprint=162.2M cpu=0:01.08 | first turn done at: 18.8s
+```
+The 76 MB idle above holds while the REPL is untouched; once post-mount managers run for the real machine (MCP connect, plugins, GrowthBook, file index) the restored process settles ~165 MB — the same +90 MB those managers cost in a plain boot. They are machine-specific (not imageable) and are the next diet target. Non-default argv (`--version`, `--help`, `-p`, subcommands) is gated by the runtime's argv key and plain-boots at normal speed (0.11 s / 0.19 s). Binary is 570 MB (360 exe + 210 raw image): store the image compressed and inflate to a cache file on first run.
+
 Runtime bugs the late cut surfaced (fixed, tested in `image.test.ts`): `keepTimers` (armed timers survive, re-based on the new monotonic clock — a mounted app owns timers); the isolated `spawnSync` event loop wrapped the builder's kqueue fd (every `spawnSync` after restore returned status 1 with empty output — this is what made CC "Not logged in": the keychain is read via `security` exec); JSLock now held through the `restore` emit. Ecosystem gotcha handled app-side: graceful-fs replaces `process.cwd` with a caching closure → `process.chdir('.')` first thing after restore.
 
 Phase-by-phase (`hydrateMark` at every `profileCheckpoint`, plain vs restored) the boot phases cost the same whether modules are warm or not (prepareSession head ~+42 incl. ~24 MB of fire-and-forget I/O completions, plugins +14–19, telemetry +13–15, hooks +10, first render +16–18, post-mount +40–50 before GC): the bytes are the subsystems' object graphs, not code loading. Checkpoint attribution bills async work to the next `await` (the "UDS listen +30 MB" was queued work landing on the first loop turn; `hydrateDrain` shows it).

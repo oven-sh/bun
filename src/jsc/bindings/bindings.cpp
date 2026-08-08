@@ -3504,10 +3504,23 @@ bool JSC__JSValue__asArrayBuffer(
 // Bun.Image, SQL blob binds, ...) happens to be in flight over that buffer.
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
-    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
-        return jb->impl();
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+    // JSType + static_cast, not dynamicDowncast: finalizers unpin during GC
+    // sweep, where JSCell::classInfo() is forbidden (as in JSC::Weak<T>::get()).
+    if (!value.isCell())
+        return nullptr;
+    JSC::JSCell* cell = value.asCell();
+    JSC::JSType type = cell->type();
+    if (type == JSC::ArrayBufferType)
+        return static_cast<JSC::JSArrayBuffer*>(cell)->impl();
+    if (type == JSC::DataViewType)
+        return static_cast<JSC::JSDataView*>(cell)->possiblySharedBuffer();
+    if (JSC::isTypedArrayType(type)) {
+        auto* view = static_cast<JSC::JSArrayBufferView*>(cell);
+        if (JSC::isWastefulTypedArray(view->mode()))
+            return view->butterfly()->indexingHeader()->arrayBuffer();
+        // Allocates; unreachable during sweep since pinning materialized it.
         return view->possiblySharedBuffer();
+    }
     return nullptr;
 }
 CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)

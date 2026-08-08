@@ -643,8 +643,18 @@ pub(crate) fn compute_chunks(
             } else {
                 b"."
             };
+            let root_dir = &this.resolver().opts.root_dir;
             let mut real_path_buf = PathBuffer::uninit();
             let dir: &[u8] = 'dir: {
+                // #8467: skip get_fd_path when dir_path is already under root_dir (canonicalizing drops the symlink spelling); fall through so a short-name/symlinked cwd still finds a prefix.
+                if bun_paths::is_absolute(dir_path)
+                    && !resolve_path::relative_platform::<bun_paths::platform::Auto, false>(
+                        root_dir, dir_path,
+                    )
+                    .starts_with(b"..")
+                {
+                    break 'dir dir_path;
+                }
                 let Ok(dir_file) = bun_sys::File::openat(
                     bun_sys::Fd::cwd(),
                     dir_path,
@@ -675,7 +685,6 @@ pub(crate) fn compute_chunks(
                 }
             };
 
-            let root_dir = &this.resolver().opts.root_dir;
             chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
         }
     }

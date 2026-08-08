@@ -224,6 +224,115 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     )
 }
 
+/// https://fetch.spec.whatwg.org/#scheme-fetch, `blob` scheme.
+fn blob_scheme_fetch(
+    global_this: &JSGlobalObject,
+    url: &ZigURL<'_>,
+    method: Method,
+    range_header: Option<&[u8]>,
+) -> JsResult<JSValue> {
+    let reject = |msg: core::fmt::Arguments<'_>| -> JsResult<JSValue> {
+        let err = global_this.to_type_error(jsc::ErrorCode::INVALID_ARG_VALUE, msg);
+        Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        )
+    };
+
+    let path = &url.href_without_fragment()[b"blob:".len()..];
+
+    if method != Method::GET {
+        return reject(format_args!(
+            "Request method must be GET when fetching a blob: URL"
+        ));
+    }
+
+    let Some(mut blob) = ObjectURLRegistry::singleton().resolve_and_dupe(path) else {
+        return reject(format_args!(
+            "Failed to resolve blob:{}",
+            bstr::BStr::new(path)
+        ));
+    };
+
+    if blob.needs_to_read_file() {
+        blob.resolve_size();
+    }
+    let full_length = blob.size.get();
+    let size_known = full_length != blob::MAX_SIZE && !blob.is_s3();
+    let mut status_code: u16 = 200;
+    let mut status_text: &[u8] = b"OK";
+    let mut content_range_buf = [0u8; crate::server::range_request::CONTENT_RANGE_BUF];
+    let mut content_range: &[u8] = b"";
+
+    if let Some(header) = range_header.filter(|_| size_known) {
+        match crate::server::range_request::parse(header, full_length) {
+            crate::server::range_request::Result::Satisfiable { start, end } => {
+                let len = end - start + 1;
+                blob.offset.set(blob.offset.get().saturating_add(start));
+                blob.size.set(len);
+                status_code = 206;
+                status_text = b"Partial Content";
+                content_range = crate::server::range_request::format_content_range(
+                    &mut content_range_buf,
+                    crate::server::range_request::Result::Satisfiable { start, end },
+                    Some(full_length),
+                );
+            }
+            _ => {
+                blob.deinit();
+                return reject(format_args!(
+                    "Failed to fetch blob:{}: invalid Range",
+                    bstr::BStr::new(path)
+                ));
+            }
+        }
+    }
+
+    let mut response_headers = response::HeadersRef::create_empty();
+    if size_known {
+        let mut len_buf = [0u8; 20];
+        let len_str =
+            bun_core::fmt::buf_print_infallible(&mut len_buf, format_args!("{}", blob.size.get()));
+        response_headers.put(
+            HTTPHeaderName::ContentLength,
+            &BunString::borrow_utf8(len_str),
+            global_this,
+        )?;
+    }
+    let content_type = blob.content_type.get();
+    response_headers.put(
+        HTTPHeaderName::ContentType,
+        &BunString::borrow_utf8(content_type.as_slice()),
+        global_this,
+    )?;
+    if !content_range.is_empty() {
+        response_headers.put(
+            HTTPHeaderName::ContentRange,
+            &BunString::borrow_utf8(content_range),
+            global_this,
+        )?;
+    }
+
+    let response = bun_core::heap::into_raw(Box::new(Response::init(
+        response::Init {
+            status_code,
+            status_text: BunString::create_atom(status_text).into(),
+            headers: Some(response_headers),
+            ..Default::default()
+        },
+        Body::new(BodyValue::Blob(blob)),
+        BunString::create_format(format_args!("blob:{}", bstr::BStr::new(path))),
+        false,
+    )));
+
+    Ok(JSPromise::resolved_promise_value(
+        global_this,
+        Response::make_maybe_pooled(global_this, response),
+    ))
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Bun__fetchPreconnect
 // ──────────────────────────────────────────────────────────────────────────
@@ -1381,7 +1490,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {
                 hostname = Some(hostname_.to_owned_slice().into_boxed_slice());
             }
-            if url.is_s3() {
+            if url.is_s3() || url_type == URLType::Blob {
                 if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
                     range = Some(range_.to_owned_slice_z());
                 }
@@ -1426,6 +1535,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
+    if url_type == URLType::Blob {
+        return blob_scheme_fetch(
+            global_this,
+            &url,
+            method,
+            range.as_ref().map(|z| z.as_bytes()),
+        );
+    }
+
     // This is not 100% correct.
     // We don't pass along headers, we ignore method, we ignore status code...
     // But it's better than status quo.
@@ -1437,8 +1555,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             &mut path_buf2[..],
             match url_type {
                 URLType::File => url.path,
-                URLType::Blob => &url.href[b"blob:".len()..],
-                URLType::Remote => unreachable!(),
+                URLType::Blob | URLType::Remote => unreachable!(),
             },
         ) {
             Ok(n) => n,
@@ -1450,42 +1567,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
 
-        // Carries a +1 WTFStringImpl ref on both assignment arms (`create_format`
-        // for blob:, `file_url_from_string` → `Bun::toStringRef` for file:).
-        // `Response::init` wraps it in `OwnedString` and adopts that +1, so it
-        // is passed by value below without an extra `.clone()`.
+        // Carries a +1 WTFStringImpl ref (`file_url_from_string` →
+        // `Bun::toStringRef`). `Response::init` wraps it in `OwnedString` and
+        // adopts that +1, so it is passed by value below without an extra
+        // `.clone()`.
         let url_string: BunString;
 
-        // This can be a blob: url or a file: url.
         let blob_to_use: Blob = 'blob: {
-            // Support blob: urls
-            if url_type == URLType::Blob {
-                if let Some(blob) =
-                    ObjectURLRegistry::singleton().resolve_and_dupe(url_path_decoded)
-                {
-                    url_string = BunString::create_format(format_args!(
-                        "blob:{}",
-                        bstr::BStr::new(url_path_decoded)
-                    ));
-                    break 'blob blob;
-                } else {
-                    // Consistent with what Node.js does - it rejects, not a 404.
-                    let err = global_this.to_type_error(
-                        jsc::ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "Failed to resolve blob:{}",
-                            bstr::BStr::new(url_path_decoded)
-                        ),
-                    );
-                    return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            err,
-                        ),
-                    );
-                }
-            }
-
             let temp_file_path: &[u8] = 'brk: {
                 if bun_paths::is_absolute(url_path_decoded) {
                     #[cfg(windows)]
@@ -1587,19 +1675,19 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ));
     }
 
-    if !url.protocol.is_empty() {
-        if !(url.is_http() || url.is_https() || url.is_s3()) {
-            let err = global_this.to_type_error(
-                jsc::ErrorCode::INVALID_ARG_VALUE,
-                format_args!("protocol must be http:, https: or s3:"),
-            );
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    err,
-                ),
-            );
-        }
+    if (!url.protocol.is_empty() && !(url.is_http() || url.is_https() || url.is_s3()))
+        || url.is_blob()
+    {
+        let err = global_this.to_type_error(
+            jsc::ErrorCode::INVALID_ARG_VALUE,
+            format_args!("protocol must be http:, https: or s3:"),
+        );
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
     }
 
     // WHATWG Fetch step 36 forbids a body for GET/HEAD; Bun additionally

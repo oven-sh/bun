@@ -460,8 +460,8 @@ describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the pr
         async function hit(i) {
           const proxyUrl = "http://127.0.0.1:1/" + i + "/" + pad;
           const opts = ${form === "string" ? `{ proxy: proxyUrl }` : `{ proxy: { url: proxyUrl } }`};
-          // 41-byte blob: URL (5 + 36-char UUID) so ZigURL::is_blob() matches
-          // and fetch rejects from the blob registry with no FetchTasklet.
+          // Unregistered blob: URL: fetch parses the proxy option then rejects
+          // from the blob registry with no FetchTasklet.
           try { await fetch("blob:00000000-0000-0000-0000-000000000000", opts); } catch {}
         }
 

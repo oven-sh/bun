@@ -308,11 +308,15 @@ impl<'a> URL<'a> {
         b""
     }
 
-    /// `"blob:".len + UUID.stringLength` — see `runtime/webcore/ObjectURLRegistry.specifier_len`.
-    const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + 36;
+    pub fn href_without_fragment(&self) -> &'a [u8] {
+        match strings::index_of_char(self.href, b'#') {
+            Some(i) => &self.href[..i as usize],
+            None => self.href,
+        }
+    }
 
     pub fn is_blob(&self) -> bool {
-        self.href.len() == Self::BLOB_SPECIFIER_LEN && self.href.starts_with(b"blob:")
+        self.href.starts_with(b"blob:")
     }
 
     // Ownership: returns an `OwnedURL` that owns the buffer; callers borrow

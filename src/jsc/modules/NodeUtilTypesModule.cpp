@@ -901,6 +901,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool has = object->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot);
         scope.assertNoException();
+        slot.disallowVMEntry.reset();
         if (has) {
             if (slot.isValue()) {
                 JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
@@ -913,7 +914,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
             }
         }
 
+        // May call a Proxy's getPrototypeOf trap.
         JSValue proto = object->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (proto.isCell() && (proto.inherits<JSC::ErrorInstance>() || proto.asCell()->type() == ErrorInstanceType || proto.inherits<JSC::ErrorPrototype>()))
             return JSValue::encode(jsBoolean(true));
     }

@@ -331,6 +331,7 @@ impl Stdio {
         global: &JSGlobalObject,
         i: i32,
         body: &mut webcore::body::Value,
+        body_stream: Option<webcore::ReadableStream>,
         is_sync: bool,
     ) -> JsResult<()> {
         body.to_blob_if_possible();
@@ -386,12 +387,26 @@ impl Stdio {
                     }
                 }
 
-                let stream_value = body.to_readable_stream(global)?;
-
-                let Some(stream) = webcore::ReadableStream::from_js(stream_value, global)? else {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("Failed to create ReadableStream")));
+                // `locked.readable` was moved to the owner's GC `stream` slot by
+                // `check_body_stream_ref`; `body_stream` is that slot's value.
+                let mut stream = match body_stream {
+                    Some(s) => s,
+                    None => {
+                        let stream_value = body.to_readable_stream(global)?;
+                        match webcore::ReadableStream::from_js(stream_value, global)? {
+                            Some(s) => s,
+                            None => {
+                                return Err(global.throw_invalid_arguments(format_args!(
+                                    "Failed to create ReadableStream"
+                                )));
+                            }
+                        }
+                    }
                 };
+
+                if let Some(blob) = stream.to_any_blob(global) {
+                    return out_stdio.extract_blob(global, blob, i);
+                }
 
                 if stream.is_disturbed(global) {
                     return Err(global
@@ -512,9 +527,25 @@ impl Stdio {
             // `value` is on the stack. `dupe()` only bumps the store refcount.
             return out_stdio.extract_blob(global, webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
-            return Self::extract_body_value(out_stdio, global, i, req.get_body_value(), is_sync);
+            let body_stream = req.get_body_readable_stream(global);
+            return Self::extract_body_value(
+                out_stdio,
+                global,
+                i,
+                req.get_body_value(),
+                body_stream,
+                is_sync,
+            );
         } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
-            return Self::extract_body_value(out_stdio, global, i, res.get_body_value(), is_sync);
+            let body_stream = res.get_body_readable_stream(global);
+            return Self::extract_body_value(
+                out_stdio,
+                global,
+                i,
+                res.get_body_value(),
+                body_stream,
+                is_sync,
+            );
         }
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {

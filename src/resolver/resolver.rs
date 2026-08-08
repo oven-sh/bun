@@ -2544,6 +2544,47 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
+    pub fn bust_dir_cache_from_tsconfig_paths(
+        &mut self,
+        source_dir: &[u8],
+        specifier: &[u8],
+    ) -> bool {
+        if specifier.is_empty() || source_dir.is_empty() || !::bun_paths::is_absolute(source_dir) {
+            return false;
+        }
+        let Some(dir_info) = self.read_dir_info_ignore_error(source_dir) else {
+            return false;
+        };
+        let Some(tsconfig) = dir_info.enclosing_tsconfig_json else {
+            return false;
+        };
+
+        fn bust_abs(this: &mut Resolver, abs: &[u8]) -> bool {
+            let abs = strings::without_trailing_slash_windows_path(abs);
+            let dir = bun_paths::dirname_platform(abs, bun_paths::Platform::AUTO);
+            let a = this.bust_dir_cache(dir);
+            let b = this.bust_dir_cache(abs);
+            a | b
+        }
+
+        let mut busted = false;
+        self.for_each_tsconfig_paths_target(tsconfig, specifier, |this, abs| {
+            busted |= bust_abs(this, abs);
+            false
+        });
+
+        if tsconfig.has_base_url() {
+            if let Some(abs) = self.fs_ref().abs_buf_checked(
+                &[&tsconfig.base_url, specifier],
+                bufs!(load_as_file_or_directory_via_tsconfig_base_path),
+            ) {
+                busted |= bust_abs(self, abs);
+            }
+        }
+
+        busted
+    }
+
     pub(crate) fn load_node_modules(
         &mut self,
         import_path: &[u8],
@@ -4667,21 +4708,12 @@ impl<'a> Resolver<'a> {
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
     // official TypeScript compiler
-    pub(crate) fn match_tsconfig_paths(
+    fn for_each_tsconfig_paths_target(
         &mut self,
         tsconfig: &TSConfigJSON,
         path: &[u8],
-        kind: ast::ImportKind,
-        out: &mut MatchResult,
-    ) -> MatchStatus {
-        if let Some(debug) = self.debug_logs.as_mut() {
-            debug.add_note_fmt(format_args!(
-                "Matching \"{}\" against \"paths\" in \"{}\"",
-                bstr::BStr::new(path),
-                bstr::BStr::new(&tsconfig.abs_path)
-            ));
-        }
-
+        mut f: impl FnMut(&mut Self, &[u8]) -> bool,
+    ) -> bool {
         let mut abs_base_url: &[u8] = &tsconfig.base_url_for_paths;
 
         // The explicit base URL should take precedence over the implicit base URL
@@ -4718,11 +4750,8 @@ impl<'a> Resolver<'a> {
                                 self.fs_ref().abs_buf(&parts, bufs!(tsconfig_path_abs));
                         }
 
-                        if self
-                            .load_as_file_or_directory(absolute_original_path, kind, out)
-                            .is_success()
-                        {
-                            return MatchStatus::Success;
+                        if f(self, absolute_original_path) {
+                            return true;
                         }
                     }
                 }
@@ -4843,13 +4872,34 @@ impl<'a> Resolver<'a> {
                     continue;
                 };
 
-                if self
-                    .load_as_file_or_directory(absolute_original_path, kind, out)
-                    .is_success()
-                {
-                    return MatchStatus::Success;
+                if f(self, absolute_original_path) {
+                    return true;
                 }
             }
+        }
+
+        false
+    }
+
+    pub(crate) fn match_tsconfig_paths(
+        &mut self,
+        tsconfig: &TSConfigJSON,
+        path: &[u8],
+        kind: ast::ImportKind,
+        out: &mut MatchResult,
+    ) -> MatchStatus {
+        if let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note_fmt(format_args!(
+                "Matching \"{}\" against \"paths\" in \"{}\"",
+                bstr::BStr::new(path),
+                bstr::BStr::new(&tsconfig.abs_path)
+            ));
+        }
+
+        if self.for_each_tsconfig_paths_target(tsconfig, path, |this, abs| {
+            this.load_as_file_or_directory(abs, kind, out).is_success()
+        }) {
+            return MatchStatus::Success;
         }
 
         MatchStatus::NotFound

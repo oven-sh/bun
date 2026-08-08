@@ -107,6 +107,104 @@ describe("Intl.DateTimeFormat", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Non-Gregorian calendars — rbnf/<loc>.res, reached through the algorithmic
+// numbering systems in numberingSystems.res. ja + japanese and zh + chinese
+// carry number overrides ("y=jpanyear", "d=hanidays") on their CLDR date
+// patterns, and smpdtfmt.cpp re-applies "y=jpanyear" to any ja japanese pattern
+// containing the han year character. With rbnf/ dropped from the data package,
+// udat_open() returns U_MISSING_RESOURCE_ERROR and DateTimeFormat either throws
+// or silently falls back to ICU's gDefaultPattern ("yMMdd hh:mm a" — a date-only
+// request comes back as "450101 12:00 午前").
+//
+// Unlike the snapshots above these run everywhere, so the one thing that does
+// move between CLDR releases (how the weekday is glued onto a full date) is
+// normalized away; everything else is asserted exactly.
+// ---------------------------------------------------------------------------
+
+describe("Intl.DateTimeFormat non-Gregorian calendars", () => {
+  const showa45 = new Date(0); // 1970-01-01 — Shōwa 45
+
+  // macOS links Apple's libicucore, a newer CLDR than the bundled ICU, which
+  // glues the weekday onto a full date with a space ("…1月1日 木曜日"). Drop the
+  // spaces: the era, the numerals and the weekday are the point, not the glue.
+  const tight = (s: string) => s.replace(/\s+/gu, "");
+
+  test.each([
+    [
+      "calendar option",
+      () => new Intl.DateTimeFormat("ja", { calendar: "japanese", year: "numeric", timeZone: "UTC" }),
+      "昭和45年",
+    ],
+    [
+      "-u-ca- extension",
+      () => new Intl.DateTimeFormat("ja-u-ca-japanese", { year: "numeric", timeZone: "UTC" }),
+      "昭和45年",
+    ],
+    [
+      "era + year + month + day",
+      () =>
+        new Intl.DateTimeFormat("ja", {
+          era: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+          calendar: "japanese",
+          timeZone: "UTC",
+        }),
+      "昭和45年1月1日",
+    ],
+    [
+      "dateStyle:'full'",
+      () => new Intl.DateTimeFormat("ja", { dateStyle: "full", calendar: "japanese", timeZone: "UTC" }),
+      "昭和45年1月1日木曜日",
+    ],
+  ] as const)("ja japanese calendar, %s", (_label, makeFormat, expected) => {
+    expect(tight(makeFormat().format(showa45))).toBe(expected);
+  });
+
+  test("ja japanese calendar, toLocaleDateString", () => {
+    expect(
+      showa45.toLocaleDateString("ja-JP-u-ca-japanese", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        timeZone: "UTC",
+      }),
+    ).toBe("昭和45年1月1日");
+  });
+
+  test("gannen year renders as 元年, not 1年", () => {
+    // The first year of an era is written 元年. That 元 is produced by the
+    // jpanyear algorithmic numbering system, whose ruleset lives in
+    // rbnf/ja.res, so this only passes when the rbnf tree is in the data.
+    const heisei1 = new Date("1989-01-08T12:00:00Z");
+    expect(new Intl.DateTimeFormat("ja-u-ca-japanese", { year: "numeric", timeZone: "UTC" }).format(heisei1)).toBe(
+      "平成元年",
+    );
+  });
+
+  test("zh chinese calendar dateStyle keeps the cyclic year", () => {
+    // toBe would pin the day numeral, which the hanidays override spells out in
+    // newer CLDR; the cyclic year name is the part that disappears when
+    // SimpleDateFormat gives up and falls back to gDefaultPattern.
+    const out = new Intl.DateTimeFormat("zh", { dateStyle: "full", calendar: "chinese", timeZone: "UTC" }).format(
+      showa45,
+    );
+    expect(out).toContain("己酉年");
+  });
+
+  test("calendars with no rbnf-backed override still format", () => {
+    const fmt = (calendar: string) =>
+      tight(new Intl.DateTimeFormat("ja", { dateStyle: "full", calendar, timeZone: "UTC" }).format(showa45));
+    expect({ buddhist: fmt("buddhist"), roc: fmt("roc"), gregory: fmt("gregory") }).toEqual({
+      buddhist: "仏暦2513年1月1日木曜日",
+      roc: "民国59年1月1日木曜日",
+      gregory: "1970年1月1日木曜日",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Collator — coll/* raw (incl. CJK tailorings)
 // ---------------------------------------------------------------------------
 

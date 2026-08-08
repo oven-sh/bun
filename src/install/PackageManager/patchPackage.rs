@@ -252,6 +252,7 @@ pub fn do_patch_commit(
                     manager,
                     &name,
                     &resolution_clone,
+                    Some(lockfile.buffers.string_bytes.as_slice()),
                     &mut folder_path_buf,
                     None,
                 );
@@ -289,6 +290,7 @@ pub fn do_patch_commit(
                     manager,
                     &pkg_name_slice,
                     &resolution_clone,
+                    Some(lockfile.buffers.string_bytes.as_slice()),
                     &mut folder_path_buf,
                     None,
                 );
@@ -665,6 +667,15 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
         Newline,
         CarriageReturn,
         Tab,
+        // Reserved in Windows filenames; escaped on every OS so a committed
+        // patches/ dir stays checkoutable on Windows.
+        Colon,
+        Question,
+        Asterisk,
+        Quote,
+        LessThan,
+        GreaterThan,
+        Pipe,
         // Dot,
         Other,
     }
@@ -678,6 +689,13 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
                 EscapeVal::Newline => Some(b"%0A"),
                 EscapeVal::CarriageReturn => Some(b"%0D"),
                 EscapeVal::Tab => Some(b"%09"),
+                EscapeVal::Colon => Some(b"%3A"),
+                EscapeVal::Question => Some(b"%3F"),
+                EscapeVal::Asterisk => Some(b"%2A"),
+                EscapeVal::Quote => Some(b"%22"),
+                EscapeVal::LessThan => Some(b"%3C"),
+                EscapeVal::GreaterThan => Some(b"%3E"),
+                EscapeVal::Pipe => Some(b"%7C"),
                 // EscapeVal::Dot => Some(b"%2E"),
                 EscapeVal::Other => None,
             }
@@ -693,6 +711,13 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
         table[b'\n' as usize] = EscapeVal::Newline;
         table[b'\r' as usize] = EscapeVal::CarriageReturn;
         table[b'\t' as usize] = EscapeVal::Tab;
+        table[b':' as usize] = EscapeVal::Colon;
+        table[b'?' as usize] = EscapeVal::Question;
+        table[b'*' as usize] = EscapeVal::Asterisk;
+        table[b'"' as usize] = EscapeVal::Quote;
+        table[b'<' as usize] = EscapeVal::LessThan;
+        table[b'>' as usize] = EscapeVal::GreaterThan;
+        table[b'|' as usize] = EscapeVal::Pipe;
         table
     };
     let mut count: usize = 0;
@@ -889,6 +914,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     manager,
                     &name,
                     &actual_package.resolution,
+                    None,
                     &mut folder_path_buf,
                     existing_patchfile_hash,
                 );
@@ -949,6 +975,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     manager,
                     &pkg_name,
                     &pkg_resolution,
+                    None,
                     &mut folder_path_buf,
                     existing_patchfile_hash,
                 );

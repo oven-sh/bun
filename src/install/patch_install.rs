@@ -793,6 +793,7 @@ impl PatchTask {
             pkg_manager,
             &pkg_name_slice,
             &resolution_clone,
+            None,
             &mut folder_path_buf,
             Some(patch_hash),
         );

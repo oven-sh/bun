@@ -1380,6 +1380,14 @@ impl JSGlobalObject {
         Zig__GlobalObject__createForTestIsolation(old_global, console)
     }
 
+    pub(crate) fn capture_test_isolation_baseline(global: &JSGlobalObject) {
+        Zig__GlobalObject__captureTestIsolationBaseline(global)
+    }
+
+    pub(crate) fn try_reset_for_test_isolation(global: &JSGlobalObject) -> bool {
+        Zig__GlobalObject__tryResetForTestIsolation(global)
+    }
+
     pub fn report_uncaught_exception_from_error(&self, proof: JsError) {
         crate::mark_binding();
         let exc = self
@@ -1643,6 +1651,8 @@ unsafe extern "C" {
         old_global: &JSGlobalObject,
         console: *mut c_void,
     ) -> *mut JSGlobalObject;
+    safe fn Zig__GlobalObject__captureTestIsolationBaseline(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__tryResetForTestIsolation(global: &JSGlobalObject) -> bool;
 }
 
 impl ScriptExecutionContextIdentifier {

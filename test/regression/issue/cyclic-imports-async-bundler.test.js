@@ -108,13 +108,13 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
     var __promiseAll = (args) => Promise.all(args);
 
-    // src/RecursiveDependencies/StoreDependencyAsync.ts
+    // RecursiveDependencies/StoreDependencyAsync.ts
     var somePromise;
     var init_StoreDependencyAsync = __esm(async () => {
       somePromise = await Promise.resolve("Hello World");
     });
 
-    // src/RecursiveDependencies/StoreDependency.ts
+    // RecursiveDependencies/StoreDependency.ts
     function StoreDependency() {
       return "A string from StoreFunc" + somePromise;
     }
@@ -122,7 +122,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
       await init_StoreDependencyAsync();
     });
 
-    // src/RecursiveDependencies/SecondElementImport.ts
+    // RecursiveDependencies/SecondElementImport.ts
     function SecondElementImport() {
       console.log("SecondElementImport called", formValue.key);
       return formValue.key;
@@ -131,7 +131,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
       await init_BaseElement();
     });
 
-    // src/RecursiveDependencies/BaseElementImport.ts
+    // RecursiveDependencies/BaseElementImport.ts
     function BaseElementImport() {
       console.log("BaseElementImport called", SecondElementImport());
       return SecondElementImport();
@@ -140,7 +140,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
       await init_SecondElementImport();
     });
 
-    // src/RecursiveDependencies/BaseElement.ts
+    // RecursiveDependencies/BaseElement.ts
     var exports_BaseElement = {};
     __export(exports_BaseElement, {
       BaseElement: () => BaseElement,
@@ -166,7 +166,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
       };
     });
 
-    // src/RecursiveDependencies/AsyncEntryPoint.ts
+    // RecursiveDependencies/AsyncEntryPoint.ts
     var exports_AsyncEntryPoint = {};
     __export(exports_AsyncEntryPoint, {
       AsyncEntryPoint: () => AsyncEntryPoint
@@ -176,11 +176,11 @@ test("cyclic imports with async dependencies should generate async wrappers", as
       console.log("Launching AsyncEntryPoint", BaseElement2());
     }
 
-    // src/entryBuild.ts
+    // entryBuild.ts
     var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
     AsyncEntryPoint2();
 
-    //# debugId=66236CFF39257E1264756E2164756E21
+    //# debugId=B9705DFEE98A3FD164756E2164756E21
     //# sourceMappingURL=entryBuild.js.map
     "
   `);

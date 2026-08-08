@@ -1,6 +1,9 @@
 // Guards against reintroduction of symbols removed as dead code from the
-// bindgen codegen scripts, orphaned developer scripts, bun_core, bun_url,
-// the dns/napi JSC glue, and the internal sql builtin.
+// bindgen codegen scripts, bun_core, bun_url, the dns/napi JSC glue, and the
+// internal sql builtin. The same change also deletes five orphaned developer
+// scripts and the src/jsc/bindings/v8/v8config.h include shim outright; whole
+// files are not pinned here because restoring one is a deliberate act, not
+// accidental rot.
 // Each entry was verified to have zero references across src/, scripts/,
 // test/, packages/, and freshly regenerated build/debug/codegen/ output
 // before deletion. src/codegen/bindgen.ts produces byte-identical output
@@ -9,14 +12,8 @@
 //
 // This is a source-tree lint: it reads files from src/ and does not touch the
 // built binary, so it belongs in test/internal/source-lints/ per the README.
-//
-// Checks on files the removal MODIFIES read the working tree, so the lint
-// fails while the dead symbols are present and passes once they are gone.
-// Checks on files the removal DELETES outright read the committed tree (HEAD)
-// instead: `git stash` round-trips can temporarily restore deleted files as
-// strays (see the same note in dead-code-escapes.test.ts), and those must not
-// fail the lint. CI runs against the committed tree, so HEAD is what matters
-// there.
+// All checks read the working tree, so the lint fails while the dead symbols
+// are present and passes once they are gone, regardless of where HEAD points.
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -27,31 +24,6 @@ const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 function src(p: string): string {
   return readFileSync(path.join(repoRoot, p), "utf8");
 }
-
-function existsInHead(p: string): boolean {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", repoRoot, "cat-file", "-e", `HEAD:${p}`],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  return r.exitCode === 0;
-}
-
-test("orphaned developer scripts do not reappear", () => {
-  // Manual tools with zero references from package.json, .buildkite/,
-  // .github/, docs/, or other scripts, all untouched for ~a year.
-  const deleted = [
-    "scripts/gamble.ts",
-    "scripts/github-metrics.ts",
-    "scripts/debug-coredump.ts",
-    "scripts/lldb-inline.sh",
-    "scripts/lldb-inline-tool.cpp",
-    // Include shim whose stated purpose (avoiding include/node on the
-    // include path) no longer holds; nothing includes it.
-    "src/jsc/bindings/v8/v8config.h",
-  ];
-  expect(deleted.filter(existsInHead)).toEqual([]);
-});
 
 test("dead zig-emission machinery in bindgen does not reappear", () => {
   // Commit d4514457e8 stopped writing GeneratedBindings.zig but left the

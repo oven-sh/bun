@@ -314,13 +314,32 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
     return pluginFunction;
 }
 
+#if BUN_DEBUG
+extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
+
+// Print why the internal BunSql module failed to load. The exception must be
+// cleared while printing (formatting the error reads its properties, which
+// must not happen with a pending exception), then rethrown. Print-only: the
+// uncaught-exception machinery would also flag the process as failed.
+static void reportBunSqlModuleLoadError(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope)
+{
+    auto* exception = scope.exception();
+    if (!exception || scope.vm().isTerminationException(exception))
+        return;
+    (void)scope.tryClearException();
+    Bun__logUnhandledException(JSC::JSValue::encode(exception->value()));
+    if (!scope.exception())
+        JSC::throwException(globalObject, scope, exception);
+}
+#endif
+
 static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
 #if BUN_DEBUG
-    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+    reportBunSqlModuleLoadError(globalObject, scope);
 #endif
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
@@ -332,7 +351,7 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
 #if BUN_DEBUG
-    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+    reportBunSqlModuleLoadError(globalObject, scope);
 #endif
     RETURN_IF_EXCEPTION(scope, {});
     auto clientData = WebCore::clientData(vm);

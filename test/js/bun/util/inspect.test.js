@@ -928,3 +928,28 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Reifying a lazy Bun.* property can throw: the shell and sql builtins call
+// the global `Symbol`, which user code can replace. The property walk used to
+// leave that exception pending and keep iterating, which failed
+// exception-scope assertions in debug builds when the next lazy property
+// initialized.
+it("inspecting Bun after replacing the Symbol global does not crash", async () => {
+  const code = `
+    globalThis.Symbol = new URL("https://example.com/");
+    const s = Bun.inspect(Bun);
+    console.log(typeof s, s.length > 0);
+    console.log(Bun);
+    console.log("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("string true");
+  expect(stdout.trimEnd()).toEndWith("ok");
+  expect(exitCode).toBe(0);
+});

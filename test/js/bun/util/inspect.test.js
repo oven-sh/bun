@@ -826,6 +826,26 @@ it.concurrent("console.log(Bun) survives a lazy property initializer throwing", 
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
+// If node:util fails to evaluate (clobbered globals), custom inspect must fall
+// back to default formatting instead of corrupting the lazy util.inspect slot.
+it.concurrent("console.log falls back when node:util cannot load for custom inspect", async () => {
+  const code = `
+    const o = { [Symbol.for("nodejs.util.inspect.custom")]() { return "custom!"; } };
+    globalThis.Symbol = -6;
+    console.log(o);
+    console.log("after-inspect");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("after-inspect");
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+});
+
 it.concurrent("console.log survives a throwing getPrototypeOf trap in the prototype chain", async () => {
   const code = `
     const proxy = new Proxy({ a: 1 }, { getPrototypeOf() { throw new Error("trap"); } });

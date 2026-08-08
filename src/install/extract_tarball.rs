@@ -522,12 +522,14 @@ impl ExtractTarball {
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
             {
-                // Windows EBUSY/SHARING_VIOLATION on `NtSetInformationFile` is
-                // transient when a concurrent process (another `bun install`
-                // sharing the cache, AV, the Search Indexer) is closing its
-                // handle to the destination. Back off briefly between retries.
-                const MAX_RETRIES: u32 = 4;
-                let mut retries: u32 = 0;
+                // AV scanners holding a handle without FILE_SHARE_DELETE on an extracted file cause a transient STATUS_ACCESS_DENIED; retry with the graceful-fs backoff (10ms increments capped at 100ms) until `BUN_INSTALL_WIN32_AV_RETRY_MS` elapses.
+                let budget = std::time::Duration::from_millis(
+                    bun_core::env_var::BUN_INSTALL_WIN32_AV_RETRY_MS
+                        .get()
+                        .unwrap(),
+                );
+                let start = std::time::Instant::now();
+                let mut backoff_ms: u64 = 0;
                 let mut path2_buf = WPathBuffer::uninit();
                 let path2 = strings::to_wpath_normalized(&mut path2_buf, folder_name);
                 if create_subdir {
@@ -573,7 +575,7 @@ impl ExtractTarball {
                         true,
                     ) {
                         bun_sys::Result::Err(err) => {
-                            if retries < MAX_RETRIES {
+                            if start.elapsed() < budget {
                                 match err.get_errno() {
                                     sys::Errno::NOTEMPTY
                                     | sys::Errno::PERM
@@ -612,13 +614,9 @@ impl ExtractTarball {
                                                 let _ = tmpdir.delete_tree(tempdest.as_bytes());
                                             }
                                         }
-                                        retries += 1;
-                                        // 10ms, 20ms, 40ms, 80ms — long enough
-                                        // for a concurrent close to land,
-                                        // short enough to not slow a legit
-                                        // failure noticeably.
+                                        backoff_ms = (backoff_ms + 10).min(100);
                                         std::thread::sleep(std::time::Duration::from_millis(
-                                            10u64 << (retries - 1),
+                                            backoff_ms,
                                         ));
                                         continue;
                                     }

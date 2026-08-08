@@ -113,8 +113,7 @@ static unsigned countASCIIDigits(StringView string)
     return length;
 }
 
-// The WHATWG host/hostname states stop consuming at the first of these; the
-// IDNA delta must not touch anything at or past it (see DOMURL.cpp).
+// The WHATWG host/hostname states stop at the first of these; the IDNA delta must not touch anything past it.
 static size_t findHostTerminator(StringView value)
 {
     for (size_t i = 0; i < value.length(); i++) {

@@ -1734,6 +1734,22 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       // Test that removing non-existent async hooks doesn't crash
       await checkSameOutput("test_async_cleanup_hook_remove_nonexistent", []);
     });
+
+    it("hook handle stays valid until the addon removes it (#37201)", async () => {
+      // An async cleanup hook releases a threadsafe function whose finalizer
+      // then calls napi_remove_async_cleanup_hook; the handle must not be
+      // freed when the hook returns.
+      const output = await checkSameOutput("test_async_cleanup_hook_tsfn_release", []);
+      // Pin the successful lifecycle, so matching Node on a shared failure
+      // (non-zero status in both) cannot pass. printf() via the Windows CRT
+      // emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/).slice(-4)).toEqual([
+        "async cleanup hook fired",
+        "released tsfn: status=0",
+        "tsfn finalize: removing async cleanup hook",
+        "async cleanup hook removed: status=0",
+      ]);
+    });
   });
 
   describe("duplicate prevention", () => {

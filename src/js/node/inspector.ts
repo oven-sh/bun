@@ -1296,7 +1296,7 @@ class Session extends EventEmitter {
         if (!this.#preciseCoverageEnabled)
           return $ERR_INSPECTOR_COMMAND("-32000: Precise coverage has not been started.");
         const scripts = collectCoverageScripts();
-        if (scripts instanceof Error) return scripts;
+        if (scripts instanceof ErrorObject) return scripts;
         // takePreciseCoverage resets counters per https://chromedevtools.github.io/devtools-protocol/tot/Profiler/#method-takePreciseCoverage
         // JSC has no reset, so subtract the previous take's raw block counts.
         const baseline = this.#coverageBaseline;
@@ -1317,7 +1317,7 @@ class Session extends EventEmitter {
       case "Profiler.getBestEffortCoverage": {
         // JSC has no always-on invocation counters, so unlike V8 this returns [] unless startPreciseCoverage ran.
         const scripts = collectCoverageScripts();
-        if (scripts instanceof Error) return scripts;
+        if (scripts instanceof ErrorObject) return scripts;
         return { result: buildScriptCoverageList(scripts, false, false) };
       }
 

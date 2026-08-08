@@ -1392,6 +1392,13 @@ nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
   console.log(nativeTests.use_orphaned_threadsafe_functions());
 };
 
+// A finalizer that runs during a worker's env cleanup and registers another
+// finalizer (an external buffer's): the late one runs in that same cleanup.
+nativeTests.test_finalizer_registered_during_env_cleanup = async () => {
+  console.log("worker exited with", await runOrphanWorker({ lateFinalizer: true }));
+  console.log("late=" + nativeTests.late_finalizer_run_count());
+};
+
 // Bun-only: an orphaned threadsafe function is freed by whichever thread drops
 // its last reference, including a call that reports napi_closing. Every
 // iteration must end with as many live threadsafe functions as it started with.

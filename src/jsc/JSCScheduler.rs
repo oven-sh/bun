@@ -13,9 +13,6 @@ impl Taskable for JSCDeferredWorkTask {
     /// A cross-thread Atomics.notify / Wasm / FinalizationRegistry completion:
     /// delete the C++ job (its `Ref<Ticket>` drops before ~VM).
     unsafe fn release_unrun(this: *mut Self) {
-        unsafe extern "C" {
-            fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
-        }
         // SAFETY: fn contract; heap-allocated by JSCTaskScheduler::onScheduleWorkSoon.
         unsafe { Bun__deleteDeferredWorkTask(this) }
     }

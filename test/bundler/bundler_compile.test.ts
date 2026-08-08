@@ -541,6 +541,73 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // require.resolve() of a bundled module used to emit the build machine's
+  // absolute source path, which leaks into the binary and fails on deploy.
+  // It should agree with import.meta.resolve() and return a $bunfs path.
+  test("compile/RequireResolveBundledModule", async () => {
+    using dir = tempDir("compile-require-resolve", {
+      "src/entry.ts": `
+        require("./dep");
+        const rr = require.resolve("./dep");
+        const imr = import.meta.resolve("./dep");
+        // An explicit { paths: [...] } must still reach the resolver.
+        const rrPaths = require.resolve("./dep", { paths: [process.env.RUN_DIR] });
+        // An over-long runtime specifier used to panic in the resolver's
+        // standalone-graph path join; the process must keep running here.
+        for (const n of [1200, 5000, 100_000]) {
+          try { require.resolve("./" + Buffer.alloc(n, "x").toString()); } catch {}
+        }
+        console.log(JSON.stringify({ rr, imr, rrPaths }));
+      `,
+      "src/dep.ts": `module.exports = { value: 42 };`,
+      // Decoy: a same-named file in the runtime cwd must not shadow the
+      // bundled module via the resolver's top_level_dir fallback.
+      "run/dep.json": `{ "shadowed": true }`,
+    });
+    const buildDir = join(String(dir), "src");
+    const runDir = join(String(dir), "run");
+    const outfile = join(String(dir), isWindows ? "out.exe" : "out");
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "./entry.ts", "--outfile", outfile],
+        env: bunEnv,
+        cwd: buildDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    // Remove the build source tree so the test proves the result is not a
+    // filesystem hit on the build directory. Run the exe from an unrelated
+    // cwd for the same reason.
+    rmSync(buildDir, { recursive: true, force: true });
+
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: { ...bunEnv, RUN_DIR: runDir },
+      cwd: runDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+
+    const { rr, imr, rrPaths } = JSON.parse(stdout);
+    // Must not leak the build machine's source path into the binary.
+    expect(rr).not.toContain("compile-require-resolve");
+    // Must be a standalone-graph virtual path, same root as import.meta.resolve.
+    const normalize = (p: string) => p.replaceAll("\\", "/");
+    const expected = !isWindows ? "/$bunfs/root/dep" : "B:/~BUN/root/dep";
+    expect(normalize(rr)).toBe(expected);
+    expect(normalize(Bun.fileURLToPath(imr))).toBe(expected);
+    // { paths: [...] } must still reach the resolver and find the on-disk file.
+    expect(normalize(rrPaths)).toBe(normalize(join(runDir, "dep.json")));
+
+    expect(exitCode).toBe(0);
+  }, 30_000);
   itBundled("compile/VariousBunAPIs", {
     todo: isWindows, // TODO
     compile: true,

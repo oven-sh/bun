@@ -986,9 +986,21 @@ describe("mid-format sibling mutation agrees across formatter paths", () => {
   function make(mutate, { slow = false, proto = null } = {}) {
     const p = proto ? Object.create(proto) : {};
     for (let i = 0; i < 8; i++) p["k" + i] = i;
-    if (slow) Object.defineProperty(p, "g", { get() { return 0; }, enumerable: true, configurable: true });
+    if (slow)
+      Object.defineProperty(p, "g", {
+        get() {
+          return 0;
+        },
+        enumerable: true,
+        configurable: true,
+      });
     let fired = 0;
-    p.a = { [custom]() { if (!fired++) mutate(p); return "a"; } };
+    p.a = {
+      [custom]() {
+        if (!fired++) mutate(p);
+        return "a";
+      },
+    };
     p.z = 1;
     return p;
   }

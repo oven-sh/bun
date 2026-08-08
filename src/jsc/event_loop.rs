@@ -1069,10 +1069,11 @@ impl EventLoop {
     /// Clone of [`Self::concurrent_poster_gate`]. Panics after [`Self::deinit`] — tasks are
     /// only created while the VM is live.
     pub fn poster_gate(&self) -> std::sync::Arc<ConcurrentPosterGate> {
-        self.concurrent_poster_gate
-            .as_ref()
-            .expect("poster_gate() after EventLoop::deinit()")
-            .clone()
+        std::sync::Arc::clone(
+            self.concurrent_poster_gate
+                .as_ref()
+                .expect("poster_gate() after EventLoop::deinit()"),
+        )
     }
 
     /// Close [`Self::concurrent_poster_gate`]. Shutdown calls this before the final queue drain

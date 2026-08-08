@@ -1385,7 +1385,7 @@ mod _async_tasks {
             // Clone, not borrow: the JS thread may free `this` (and its `Arc`) right after the
             // enqueue, before `end_post`.
             // SAFETY: `this` is still exclusively owned here (see above).
-            let gate = unsafe { (*this).gate.clone() };
+            let gate = Arc::clone(unsafe { &(*this).gate });
             if gate.begin_post() {
                 // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
                 // documented accessor for off-thread (work-pool) callers; the
@@ -1419,7 +1419,8 @@ mod _async_tasks {
                 result.fs_discard();
             }
             let Self { promise, args, .. } = *task;
-            core::mem::forget(promise);
+            // Intentionally never dropped: the Strong handle died with the VM heap.
+            let _ = core::mem::ManuallyDrop::new(promise);
             args.dispose_skip_unprotect();
         }
 
@@ -1811,10 +1812,12 @@ mod _async_tasks {
             if let EventLoopHandle::Js { .. } = this_ref.evtloop {
                 // Clone, not borrow: the JS thread may free the task (and its `Arc`) right
                 // after the enqueue, before `end_post`.
-                let gate = this_ref
-                    .gate
-                    .clone()
-                    .expect("JS-loop cp task always carries the poster gate");
+                let gate = Arc::clone(
+                    this_ref
+                        .gate
+                        .as_ref()
+                        .expect("JS-loop cp task always carries the poster gate"),
+                );
                 if gate.begin_post() {
                     // SAFETY (`evtloop` deref): `begin_post()` pins the VM and its event loop
                     // live until `end_post()`; ownership of `this` transfers at the enqueue.
@@ -1929,17 +1932,23 @@ mod _async_tasks {
 
         /// The loop's gate refused the completion post: the VM is torn down (or mid-teardown).
         /// Free the task on the work-pool thread without touching the JS heap — the promise
-        /// `Strong` and the args' protect counts died with it. The shell parent (if any) died
-        /// with the VM too, so it is not continued.
+        /// `Strong` and the args' protect counts died with it.
         ///
         /// SAFETY: `this` must be the Box::leak'd task, exclusively owned by the caller (the
         /// subtask count hit zero and the post never happened); called at most once.
         unsafe fn dispose_without_post(this: *mut Self) {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation.
             let task = unsafe { bun_core::heap::take(this) };
-            let Self { promise, args, .. } = *task;
-            core::mem::forget(promise);
+            let Self { promise, args, shelltask, .. } = *task;
+            // Intentionally never dropped: the Strong handle died with the VM heap.
+            let _ = core::mem::ManuallyDrop::new(promise);
             args.dispose_skip_unprotect();
+            // `cp_on_finish` (JS thread) never runs for a refused post, so reclaim the shell
+            // parent here: its interpreter died with the VM, its fields are plain heap.
+            if let Some(parent) = shelltask {
+                // SAFETY: subtask count hit zero and the interpreter is gone — sole reference.
+                drop(unsafe { bun_core::heap::take(parent.as_mut_ptr()) });
+            }
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
@@ -2691,7 +2700,7 @@ mod _async_tasks {
 
             // Clone, not borrow: the JS thread may free `self` (and its `Arc`) right after the
             // enqueue, before `end_post`.
-            let gate = self.gate.clone();
+            let gate = Arc::clone(&self.gate);
             let this = std::ptr::from_mut::<Self>(self);
             if gate.begin_post() {
                 // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
@@ -2829,7 +2838,8 @@ mod _async_tasks {
             task.free_root_path();
             task.clear_result_list();
             let Self { promise, args, .. } = *task;
-            core::mem::forget(promise);
+            // Intentionally never dropped: the Strong handle died with the VM heap.
+            let _ = core::mem::ManuallyDrop::new(promise);
             args.dispose_skip_unprotect();
         }
     }

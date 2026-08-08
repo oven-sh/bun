@@ -60,7 +60,7 @@ impl<T: Unprotect> ThreadSafe<T> {
         // SAFETY: `this` is `ManuallyDrop`, so `ThreadSafe::drop` (the
         // unprotect) never runs and the inner value is read out exactly once;
         // its own `Drop` frees the owned payloads.
-        drop(unsafe { core::ptr::read(&this.0) });
+        drop(unsafe { core::ptr::read(&raw const this.0) });
     }
 }
 

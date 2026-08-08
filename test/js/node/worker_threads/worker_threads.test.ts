@@ -1808,8 +1808,9 @@ test.concurrent.skipIf(isWindows)("terminate() settles while the worker has an f
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("exit event\nterminate resolved\n");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -1827,7 +1828,8 @@ test.concurrent.skipIf(isWindows)(
       cwd: String(dir),
       stderr: "pipe",
     });
-    const exitCode = await proc.exited;
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   },
 );
@@ -1851,8 +1853,11 @@ test.concurrent.skipIf(isWindows)(
                 if (err) throw err;
                 fs.write(fd, "x", () => {
                   fs.close(fd, () => {
-                    // Slack for the detached pool thread to finish the refused
-                    // completion under ASAN; the assertions do not depend on it.
+                    // The refused completion runs on a detached pool thread in
+                    // the torn-down worker VM; no cross-process signal for it
+                    // exists, so this delay is best-effort scheduling slack
+                    // (an ASAN fault there still fails the run). The
+                    // assertions do not depend on it.
                     setTimeout(() => {
                       console.log("done");
                       process.exit(0);
@@ -1876,8 +1881,9 @@ test.concurrent.skipIf(isWindows)(
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("terminate resolved\ndone\n");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   },
 );

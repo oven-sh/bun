@@ -15,6 +15,7 @@ use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::Interned;
 
+use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::worker::{Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
@@ -31,6 +32,9 @@ pub struct Coordinator<'a> {
     pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
     pub(crate) reporter: &'a mut CommandLineReporter,
     pub(crate) files: Vec<Interned>,
+    /// `--changed-first`: head of `files` that every worker drains before
+    /// touching its own `range`. Empty when the flag was not passed.
+    pub(crate) priority: FileRange,
     /// `--timings`: recorded cost per `files` index; stealing then goes by remaining time and takes the victim's slowest file.
     pub(crate) costs: Option<Vec<u64>>,
     pub(crate) cwd: &'a [u8],
@@ -73,6 +77,9 @@ impl<'a> Coordinator<'a> {
     }
 
     fn has_undispatched_files(&self) -> bool {
+        if !self.priority.is_empty() {
+            return true;
+        }
         for w in self.workers.iter() {
             if !w.range.is_empty() {
                 return true;
@@ -177,9 +184,13 @@ impl<'a> Coordinator<'a> {
                     running_ms / 1000
                 );
             }
-            let not_started: u32 = self.workers.iter().map(|w| w.range.len()).sum();
+            let not_started: u32 =
+                self.priority.len() + self.workers.iter().map(|w| w.range.len()).sum::<u32>();
             if not_started > 0 {
                 bun_core::pretty_errorln!("{} file(s) had not started:", not_started);
+                for idx in self.priority.lo..self.priority.hi {
+                    bun_core::pretty_errorln!("  {}", bstr::BStr::new(self.rel_path(idx)));
+                }
                 for w in self.workers.iter() {
                     for idx in w.range.lo..w.range.hi {
                         bun_core::pretty_errorln!("  {}", bstr::BStr::new(self.rel_path(idx)));
@@ -274,6 +285,9 @@ impl<'a> Coordinator<'a> {
     fn assign_work(&mut self, w: &mut Worker) {
         if self.bailed {
             return w.shutdown();
+        }
+        if let Some(idx) = self.priority.pop_front() {
+            return w.dispatch(idx, self.files[idx as usize].as_bytes());
         }
         if let Some(idx) = w.range.pop_front() {
             return w.dispatch(idx, self.files[idx as usize].as_bytes());
@@ -739,6 +753,19 @@ impl<'a> Coordinator<'a> {
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit
     /// instead of spinning when no live worker remains to make progress.
     fn abort_queued_files(&mut self, reason: &[u8]) {
+        while let Some(idx) = self.priority.pop_front() {
+            bun_core::pretty_error!(
+                "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
+                bstr::BStr::new(bun_paths::resolve_path::relative(
+                    bun_paths::fs::FileSystem::instance().top_level_dir(),
+                    self.files[idx as usize].as_bytes(),
+                )),
+                bstr::BStr::new(reason),
+            );
+            self.reporter.summary().fail += 1;
+            self.reporter.summary().files += 1;
+            self.files_done += 1;
+        }
         // Reachable from reap_worker/abort_on_worker_panic with the
         // caller's `w: &mut Worker` still live and used afterward; iter_mut()
         // would create a second `&mut Worker` for `w`'s slot (UB). Iterate via

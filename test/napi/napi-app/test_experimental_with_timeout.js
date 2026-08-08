@@ -12,12 +12,18 @@ let arr = m.test_reference_unref_in_finalizer_experimental();
 console.log('Test function returned');
 arr = null;
 global.gc ? global.gc() : (process.isBun && Bun.gc ? Bun.gc(true) : null);
-console.log('GC triggered - should crash now');
-console.log('ERROR: Did not crash! Test failed!');
-process.exit(1);
+console.log('GC #1 (synchronous, same stack) returned without crashing');
+setImmediate(() => {
+  global.gc ? global.gc() : (process.isBun && Bun.gc ? Bun.gc(true) : null);
+  console.log('GC #2 (from a fresh event-loop turn) returned without crashing');
+  console.log('ERROR: Did not crash! Test failed!');
+  process.exit(1);
+});
 `], {
   env: { 
     ...process.env,
+    // Diagnostics: one line per GC cycle on stderr (C:<n> = conservative roots visited).
+    BUN_JSC_logGC: "1",
     BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
     ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0"
   }

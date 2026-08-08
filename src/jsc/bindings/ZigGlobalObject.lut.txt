@@ -62,6 +62,7 @@
   MessageChannel                  MessageChannelConstructorCallback                    PropertyCallback
   MessageEvent                    MessageEventConstructorCallback                      PropertyCallback
   MessagePort                     MessagePortConstructorCallback                       PropertyCallback
+  Navigator                       NavigatorConstructorCallback                         PropertyCallback
   Performance                     PerformanceConstructorCallback                       PropertyCallback
   PerformanceEntry                PerformanceEntryConstructorCallback                  PropertyCallback
   PerformanceMark                 PerformanceMarkConstructorCallback                   PropertyCallback

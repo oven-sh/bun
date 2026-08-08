@@ -2008,9 +2008,7 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
     return true;
 }
 
-// Stand-in for util.inspect (and its stylize helpers) when loading node:util
-// throws, which user code can cause by clobbering globals the module reads.
-// Identity keeps stylize's no-color semantics and lets inspection stay usable.
+// util.inspect/stylize stand-in for when loading node:util throws (tampered globals).
 JSC_DEFINE_HOST_FUNCTION(functionUtilInspectFallback, (JSGlobalObject*, JSC::CallFrame* callFrame))
 {
     return JSC::JSValue::encode(callFrame->argument(0));
@@ -2324,8 +2322,7 @@ void GlobalObject::finishCreation(VM& vm)
                     return;
                 }
             }
-            // The initializer must set something; a throwing one leaves the
-            // property lazy-tagged, which asserts in LazyProperty::callFunc.
+            // LazyProperty initializers must set even on exception (callFunc asserts).
             (void)scope.tryClearException();
             init.set(JSFunction::create(init.vm, init.owner, 2, "inspect"_s, functionUtilInspectFallback, ImplementationVisibility::Public));
         });
@@ -2360,8 +2357,7 @@ void GlobalObject::finishCreation(VM& vm)
                 init.set(stylize);
                 return;
             }
-            // The initializer must set something; a throwing one leaves the
-            // property lazy-tagged, which asserts in LazyProperty::callFunc.
+            // LazyProperty initializers must set even on exception (callFunc asserts).
             (void)scope.tryClearException();
             init.set(JSFunction::create(init.vm, init.owner, 2, "stylize"_s, functionUtilInspectFallback, ImplementationVisibility::Public));
         });

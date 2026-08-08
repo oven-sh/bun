@@ -1115,9 +1115,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     args.append(editWindowsEnvVar);
     args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 0, "resetTZ"_s, jsProcessEnvResetTZ, ImplementationVisibility::Private));
-    // Reading Bun.inspect.custom in the builtin would reify a Bun property while
-    // env init may be running inside another Bun property's lazy initializer,
-    // invalidating the structure cached by that lookup's getPropertySlot.
+    // Passed in: reading Bun.inspect.custom in the builtin reifies a Bun property mid-lookup.
     args.append(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
     auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);

@@ -263,6 +263,12 @@ describe("Bun.serve per-serverName client certificate policy", () => {
   // policy (no SNI, or an SNI that selected another entry). nginx answers 421
   // Misdirected Request here; so do we.
   test("a Host naming a gated serverName gets 421 on a connection that bypassed its policy", async () => {
+    // A maximal 253-char DNS name: the Host-normalization buffer must still
+    // accept it with a trailing root dot appended.
+    const label = Buffer.alloc(63, "a").toString();
+    const maxLengthName = `${label}.${label}.${label}.${Buffer.alloc(61, "a").toString()}`;
+    expect(maxLengthName.length).toBe(253);
+    const routedHosts: string[] = [];
     using server = Bun.serve({
       port: 0,
       tls: [
@@ -283,28 +289,63 @@ describe("Bun.serve per-serverName client certificate policy", () => {
           requestCert: true,
           rejectUnauthorized: false,
         },
+        {
+          serverName: maxLengthName,
+          key: serverKey,
+          cert: serverCert,
+          ca: clientCa,
+          requestCert: true,
+          rejectUnauthorized: true,
+        },
       ],
-      fetch: req => new Response(`served ${req.headers.get("host")}`),
+      fetch: req => {
+        routedHosts.push(req.headers.get("host")!);
+        return new Response(`served ${req.headers.get("host")}`);
+      },
     });
     const MISDIRECTED = "HTTP/1.1 421 Misdirected Request";
     const { status: noSni } = await request(server.port, undefined, { hostHeader: "admin.example.com" });
-    const { status: otherSni } = await request(server.port, "localhost", { hostHeader: "admin.example.com" });
+    const { status: unknownSni } = await request(server.port, "localhost", { hostHeader: "admin.example.com" });
+    const { status: otherNamedSni } = await request(server.port, "lenient.example.com", {
+      hostHeader: "admin.example.com",
+    });
     const { status: withPort } = await request(server.port, undefined, { hostHeader: "admin.example.com:8443" });
     const { status: upperCase } = await request(server.port, undefined, { hostHeader: "ADMIN.example.com" });
     const { status: trailingDot } = await request(server.port, undefined, { hostHeader: "admin.example.com." });
+    const { status: maxLength } = await request(server.port, undefined, { hostHeader: maxLengthName });
+    const { status: maxLengthTrailingDot } = await request(server.port, undefined, {
+      hostHeader: `${maxLengthName}.`,
+    });
     const { status: lenientNoSni } = await request(server.port, undefined, { hostHeader: "lenient.example.com" });
     const { status: defaultNoSni } = await request(server.port, undefined, { hostHeader: "localhost" });
     const { status: gatedWithCert } = await request(server.port, "admin.example.com", trustedClient);
-    expect({ noSni, otherSni, withPort, upperCase, trailingDot, lenientNoSni, defaultNoSni, gatedWithCert }).toEqual({
+    expect({
+      noSni,
+      unknownSni,
+      otherNamedSni,
+      withPort,
+      upperCase,
+      trailingDot,
+      maxLength,
+      maxLengthTrailingDot,
+      lenientNoSni,
+      defaultNoSni,
+      gatedWithCert,
+    }).toEqual({
       noSni: MISDIRECTED,
-      otherSni: MISDIRECTED,
+      unknownSni: MISDIRECTED,
+      otherNamedSni: MISDIRECTED,
       withPort: MISDIRECTED,
       upperCase: MISDIRECTED,
       trailingDot: MISDIRECTED,
+      maxLength: MISDIRECTED,
+      maxLengthTrailingDot: MISDIRECTED,
       lenientNoSni: MISDIRECTED,
       defaultNoSni: "HTTP/1.1 200 OK",
       gatedWithCert: "HTTP/1.1 200 OK",
     });
+    // Rejected requests must never reach the handler: the check runs before routing.
+    expect(routedHosts).toEqual(["localhost", "admin.example.com"]);
   });
 
   test("the gated-Host check applies per request on a keep-alive connection", async () => {
@@ -332,17 +373,25 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     socket.on("secureConnect", () => {
       socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
     });
+    // The first body has no trailing newline, so status lines are not always
+    // at a \r\n boundary in the concatenated stream.
+    const statuses = () => received.match(/HTTP\/1\.1 \d{3} [^\r]+/g) ?? [];
     socket.on("data", chunk => {
       received += chunk.toString();
       if (!sentSecond && received.includes("served localhost")) {
         sentSecond = true;
-        socket.write("GET / HTTP/1.1\r\nHost: admin.example.com\r\nConnection: close\r\n\r\n");
+        // No Connection: close from the client: the close awaited below must
+        // come from the server tearing down the rejected connection.
+        socket.write("GET / HTTP/1.1\r\nHost: admin.example.com\r\n\r\n");
+      } else if (sentSecond && statuses().length === 2 && received.endsWith("admin.example.com")) {
+        // A server without the check serves the second request and keeps the
+        // connection open; resolve on the complete response instead of hanging.
+        resolve(statuses());
+        socket.destroy();
       }
     });
     socket.on("error", () => {});
-    // The first body has no trailing newline, so status lines are not always
-    // at a \r\n boundary in the concatenated stream.
-    socket.on("close", () => resolve(received.match(/HTTP\/1\.1 \d{3} [^\r]+/g) ?? []));
+    socket.on("close", () => resolve(statuses()));
     expect(await promise).toEqual(["HTTP/1.1 200 OK", "HTTP/1.1 421 Misdirected Request"]);
   });
 });

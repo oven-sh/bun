@@ -2770,8 +2770,9 @@ int us_socket_host_header_bypasses_sni_policy(struct us_socket_t *s,
    * IPv6 literal, whose colons would confuse the port strip below. */
   if (!host || host_len == 0 || host[0] == '[') return 0;
   /* Host is case-insensitive and may carry :port and a trailing root dot;
-   * the SNI tree matches bytes. Longer than a maximal DNS name cannot match. */
-  char name[254];
+   * the SNI tree matches bytes. Sized for a maximal 253-char DNS name plus
+   * the root dot (stripped below) and NUL; anything longer cannot match. */
+  char name[255];
   size_t n = 0;
   for (; n < host_len && host[n] != ':'; n++) {
     if (n >= sizeof(name) - 1) return 0;

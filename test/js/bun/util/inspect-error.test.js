@@ -73,11 +73,11 @@ note: "duplicateConstDecl" was originally declared here
 
 const normalizeError = str => {
   // remove debug-only stack trace frames
-  // like "at require (:1:21)"
-  if (str.includes(" (:")) {
+  // like "at require (:1:21)" or "at require (51:24)"
+  if (/ \(:?\d+:\d+\)$/m.test(str)) {
     const splits = str.split("\n");
     for (let i = 0; i < splits.length; i++) {
-      if (splits[i].includes(" (:")) {
+      if (/ \(:?\d+:\d+\)$/.test(splits[i])) {
         splits.splice(i, 1);
         i--;
       }
@@ -187,4 +187,166 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   expect(() => {
     throw err;
   }).toThrow();
+});
+
+// A function-based Error subclass (prototype = Object.create(Error.prototype))
+// is `instanceof Error` but its instances are plain objects, not JSC
+// ErrorInstance cells. Node renders any `instanceof Error` value as an error,
+// not as a generic object dump; Bun used to fall through to the generic object
+// formatter for these.
+// (Import placed here so the inline snapshots above keep their line numbers.)
+import { bunEnv, bunExe } from "harness";
+describe("Error-like object (instanceof Error, not a native ErrorInstance)", () => {
+  function makeErrorLike(extra) {
+    function JsonWebTokenError(msg) {
+      this.name = "JsonWebTokenError";
+      this.message = msg;
+      Error.captureStackTrace(this, JsonWebTokenError);
+      if (extra) this.extra = extra;
+    }
+    JsonWebTokenError.prototype = Object.create(Error.prototype);
+    JsonWebTokenError.prototype.constructor = JsonWebTokenError;
+    return new JsonWebTokenError("boom");
+  }
+
+  // The generic object formatter would list `name:`/`message:`/`stack:` as own
+  // properties, plus `toString` picked up from Error.prototype by the
+  // prototype-walking enumerator.
+  const objectDump = /toString: \[Function|^\s*name: "JsonWebTokenError"|^\s*stack: /m;
+
+  test("Bun.inspect renders it as an error with its .stack, not an object dump", () => {
+    const err = makeErrorLike();
+    expect(err instanceof Error).toBe(true);
+    const out = Bun.inspect(err, { colors: false });
+    expect(out).toContain("JsonWebTokenError: boom");
+    expect(out).toMatch(/^\s+at .*makeErrorLike/m);
+    expect(out).not.toMatch(objectDump);
+    expect(out).not.toContain("{");
+  });
+
+  test("Bun.inspect still lists extra own properties after the header", () => {
+    const err = makeErrorLike("payload");
+    const out = Bun.inspect(err, { colors: false });
+    expect(out).toContain("JsonWebTokenError: boom");
+    expect(out).toContain('extra: "payload"');
+    expect(out).not.toMatch(objectDump);
+    expect(out).not.toMatch(/^\s*message: /m);
+  });
+
+  test("Error-like cause is rendered as an error, not an object dump", () => {
+    const err = new Error("outer", { cause: makeErrorLike() });
+    // Slice off the outer error's source preview so assertions below don't
+    // match this file's own source code.
+    const out = Bun.inspect(err, { colors: false });
+    const inner = out.slice(out.indexOf("error: outer"));
+    expect(inner).toContain("JsonWebTokenError: boom");
+    expect(inner).toMatch(/^\s+at .*makeErrorLike/m);
+    expect(inner).not.toMatch(objectDump);
+  });
+
+  test("a plain object with name/message/stack but no Error prototype is still an object dump", () => {
+    const obj = { name: "E", message: "boom", stack: "E: boom\n    at fake" };
+    expect(obj instanceof Error).toBe(false);
+    const out = Bun.inspect(obj, { colors: false });
+    expect(out).toContain("{");
+    expect(out).toContain('name: "E"');
+  });
+
+  test("the prototype-chain check does not consult Symbol.hasInstance", () => {
+    let called = false;
+    Object.defineProperty(Error, Symbol.hasInstance, {
+      configurable: true,
+      value() {
+        called = true;
+        return false;
+      },
+    });
+    try {
+      const out = Bun.inspect(makeErrorLike(), { colors: false });
+      expect(out).toContain("JsonWebTokenError: boom");
+      expect(out).not.toMatch(objectDump);
+    } finally {
+      delete Error[Symbol.hasInstance];
+    }
+    expect(called).toBe(false);
+  });
+
+  test("a header-less .stack (frames-only prepareStackTrace) keeps its first frame", () => {
+    const err = Object.create(Error.prototype);
+    err.name = "JsonWebTokenError";
+    err.message = "boom";
+    err.stack = "    at inner (x.js:1:1)\n    at outer (x.js:2:2)";
+    const out = Bun.inspect(err, { colors: false });
+    expect(out).toContain("JsonWebTokenError: boom");
+    expect(out).toContain("at inner (x.js:1:1)");
+    expect(out).toContain("at outer (x.js:2:2)");
+  });
+
+  test("a multi-line message in the .stack header is stripped without duplication", () => {
+    const err = Object.create(Error.prototype);
+    err.name = "JsonWebTokenError";
+    err.message = "line1\nline2";
+    err.stack = new Error(err.message).stack;
+    const out = Bun.inspect(err, { colors: false });
+    expect(out.split("line2").length - 1).toBe(1);
+    expect(out).toMatch(/^\s+at /m);
+  });
+
+  test("a throwing own .stack getter is absorbed", () => {
+    const err = Object.create(Error.prototype);
+    err.name = "JsonWebTokenError";
+    err.message = "boom";
+    Object.defineProperty(err, "stack", {
+      get() {
+        throw new Error("nope");
+      },
+    });
+    expect(() => Bun.inspect(err, { colors: false })).not.toThrow();
+  });
+
+  test("the test-runner formatter renders it as [Name: message], not an object dump", () => {
+    expect(makeErrorLike()).toMatchInlineSnapshot(`[JsonWebTokenError: boom]`);
+  });
+
+  const fixture = `
+    function JsonWebTokenError(msg) {
+      this.name = "JsonWebTokenError";
+      this.message = msg;
+      Error.captureStackTrace(this, JsonWebTokenError);
+    }
+    JsonWebTokenError.prototype = Object.create(Error.prototype);
+    JsonWebTokenError.prototype.constructor = JsonWebTokenError;
+  `;
+
+  test.concurrent("console.error renders it as an error with its .stack", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture + `console.error(new JsonWebTokenError("boom"));`],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("JsonWebTokenError: boom");
+    expect(stderr).toMatch(/^\s+at .*\[eval\]/m);
+    expect(stderr).not.toMatch(objectDump);
+    expect(stderr).not.toContain("{");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("the uncaught-error printer renders it as an error with a stack", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture + `throw new JsonWebTokenError("boom");`],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("JsonWebTokenError: boom");
+    expect(stderr.split("JsonWebTokenError: boom").length - 1).toBe(1);
+    expect(stderr).toMatch(/^\s+at .*\[eval\]/m);
+    expect(stderr).not.toMatch(objectDump);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 });

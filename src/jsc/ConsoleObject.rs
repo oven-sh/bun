@@ -2284,6 +2284,15 @@ pub mod formatter {
                 }
             }
 
+            if matches!(js_type, jsc::JSType::Object | jsc::JSType::FinalObject)
+                && value.is_error_like()
+            {
+                return Ok(TagResult {
+                    tag: TagPayload::Error,
+                    cell: js_type,
+                });
+            }
+
             use jsc::JSType as T;
             let tag = match js_type {
                 T::ErrorInstance => TagPayload::Error,

@@ -163,3 +163,71 @@ it("path_* syscalls cannot escape the preopened directory", () => {
   );
   expect(wasi.FD_MAP.has(4)).toBe(true);
 });
+
+it("fd_pread reports nread equal to bytes read", () => {
+  using dir = tempDir("wasi-fd-pread", {
+    "f.txt": "abcdefgh",
+  });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const WASI_RIGHT_FD_SEEK = BigInt(4);
+  const preopenFd = 3;
+  const pathPtr = 1024;
+  const fdPtr = 2048;
+  const iovsPtr = 0;
+  const nreadPtr = 128;
+  const dataPtr = 4096;
+
+  const len = memory.write("f.txt", pathPtr);
+  expect(
+    wasi.wasiImport.path_open(
+      preopenFd,
+      0,
+      pathPtr,
+      len,
+      0,
+      WASI_RIGHT_FD_READ | WASI_RIGHT_FD_SEEK,
+      BigInt(0),
+      0,
+      fdPtr,
+    ),
+  ).toBe(WASI_ESUCCESS);
+  const fd = view.getUint32(fdPtr, true);
+
+  // single iovec: 6 bytes at offset 0 from an 8-byte file
+  view.setUint32(iovsPtr, dataPtr, true);
+  view.setUint32(iovsPtr + 4, 6, true);
+  expect(wasi.wasiImport.fd_pread(fd, iovsPtr, 1, BigInt(0), nreadPtr)).toBe(WASI_ESUCCESS);
+  expect({ nread: view.getUint32(nreadPtr, true), data: memory.toString("utf8", dataPtr, dataPtr + 6) }).toEqual({
+    nread: 6,
+    data: "abcdef",
+  });
+
+  // two iovecs totalling 6 bytes at offset 0
+  memory.fill(0, dataPtr, dataPtr + 16);
+  view.setUint32(iovsPtr, dataPtr, true);
+  view.setUint32(iovsPtr + 4, 3, true);
+  view.setUint32(iovsPtr + 8, dataPtr + 3, true);
+  view.setUint32(iovsPtr + 12, 3, true);
+  expect(wasi.wasiImport.fd_pread(fd, iovsPtr, 2, BigInt(0), nreadPtr)).toBe(WASI_ESUCCESS);
+  expect({ nread: view.getUint32(nreadPtr, true), data: memory.toString("utf8", dataPtr, dataPtr + 6) }).toEqual({
+    nread: 6,
+    data: "abcdef",
+  });
+
+  // single iovec larger than the file
+  memory.fill(0, dataPtr, dataPtr + 16);
+  view.setUint32(iovsPtr, dataPtr, true);
+  view.setUint32(iovsPtr + 4, 16, true);
+  expect(wasi.wasiImport.fd_pread(fd, iovsPtr, 1, BigInt(0), nreadPtr)).toBe(WASI_ESUCCESS);
+  const nread = view.getUint32(nreadPtr, true);
+  expect({ nread, data: memory.toString("utf8", dataPtr, dataPtr + nread) }).toEqual({
+    nread: 8,
+    data: "abcdefgh",
+  });
+});

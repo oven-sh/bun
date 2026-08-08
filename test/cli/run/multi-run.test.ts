@@ -960,6 +960,35 @@ describe.concurrent("timing edge cases", () => {
     expect(ib).toBeLessThan(ic);
     expect(r.exitCode).toBe(0);
   });
+
+  // A script is finished when its process has exited AND its output has reached
+  // EOF; treating the exit alone as "finished" drops output that hasn't been
+  // read yet (here: written by a child the script left behind).
+  test("output written after the script's shell exits is not dropped", async () => {
+    using dir = tempDir("mr-late-output", {
+      "late.js": `
+        Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(300); console.log('late-line')"],
+          stdio: ["ignore", "inherit", "inherit"],
+          // Windows: keep the child out of this process's kill-on-close job.
+          detached: true,
+        }).unref();
+        console.log("early-line");
+      `,
+      "package.json": JSON.stringify({
+        scripts: {
+          late: `${bunExe()} late.js`,
+          other: `echo other-ran`,
+        },
+      }),
+    });
+    const r = await runMulti(["run", "--sequential", "late", "other"], String(dir));
+    expectPrefixed(r.stdout, "late", "early-line");
+    expectPrefixed(r.stdout, "late", "late-line");
+    expectPrefixed(r.stdout, "other", "other-ran");
+    expect(r.stdout.indexOf("late-line")).toBeLessThan(r.stdout.indexOf("other-ran"));
+    expect(r.exitCode).toBe(0);
+  });
 });
 
 // ─── EXIT CODE PROPAGATION ───────────────────────────────────────────────────

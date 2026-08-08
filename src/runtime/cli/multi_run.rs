@@ -49,8 +49,10 @@ struct ScriptConfig {
 /// so output can be routed to the correct parent stream.
 pub struct PipeReader<'a> {
     reader: BufferedReader,
-    handle: *const ProcessHandle<'a>, // set in ProcessHandle::start()
+    handle: *mut ProcessHandle<'a>, // set in ProcessHandle::start()
     is_stderr: bool,
+    /// Reached EOF or errored; no more chunks will arrive.
+    ended: bool,
     line_buffer: Vec<u8>,
 }
 
@@ -59,8 +61,9 @@ impl<'a> PipeReader<'a> {
         Self {
             // BufferedReader::init(This) — the parent type fills the vtable.
             reader: BufferedReader::init::<Self>(),
-            handle: ptr::null(),
+            handle: ptr::null_mut(),
             is_stderr,
+            ended: false,
             line_buffer: Vec::new(),
         }
     }
@@ -72,9 +75,9 @@ impl<'a> PipeReader<'a> {
     }
 }
 
-// Callbacks here touch only `line_buffer` / `handle` / the State backref,
-// never `reader`. Backrefs set in `ProcessHandle::start()`; `State` outlives
-// all handles (lives on `run`'s stack frame for the whole event loop).
+// Callbacks here touch only `line_buffer` / `ended` / `handle` / the State
+// backref, never `reader`. Backrefs set in `ProcessHandle::start()`; `State`
+// outlives all handles (lives on `run`'s stack frame for the whole event loop).
 bun_io::impl_buffered_reader_parent! {
     MultiRunPipeReader for PipeReader<'a>;
     has_on_read_chunk = true;
@@ -83,8 +86,18 @@ bun_io::impl_buffered_reader_parent! {
         let _ = state.read_chunk(&mut *this, chunk);
         true
     };
-    on_reader_done  = |_this| {};
-    on_reader_error = |_this, _err| {};
+    on_reader_done  = |this| {
+        (*this).ended = true;
+        let handle = (*this).handle;
+        let state = &mut *(*handle).state.cast_mut();
+        let _ = state.maybe_finish(&mut *handle);
+    };
+    on_reader_error = |this, _err| {
+        (*this).ended = true;
+        let handle = (*this).handle;
+        let state = &mut *(*handle).state.cast_mut();
+        let _ = state.maybe_finish(&mut *handle);
+    };
     loop_           = |this| bun_io::uws_to_native((*(*this).event_loop_ptr()).loop_);
     event_loop      = |this| (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx();
 }
@@ -176,8 +189,8 @@ impl<'a> ProcessHandle<'a> {
         let stderr_fd = spawned.stderr;
         let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop));
 
-        self.stdout_reader.handle = std::ptr::from_ref(self);
-        self.stderr_reader.handle = std::ptr::from_ref(self);
+        self.stdout_reader.handle = std::ptr::from_mut(self);
+        self.stderr_reader.handle = std::ptr::from_mut(self);
         // Compute parent ptrs before calling `set_parent` to avoid
         // borrowck seeing two simultaneous &mut borrows of the same field.
         let stdout_parent = (&raw mut self.stdout_reader).cast::<c_void>();
@@ -273,7 +286,7 @@ bun_spawn::link_impl_ProcessExit! {
             (*this).process.as_mut().unwrap().status = status;
             (*this).end_time = Instant::now().into();
             let state = &mut *(*this).state.cast_mut();
-            let _ = state.process_exit(&mut *this);
+            let _ = state.maybe_finish(&mut *this);
         },
     }
 }
@@ -384,7 +397,15 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
+    /// A script is finished once its process has exited *and* both pipes have
+    /// reached EOF: the exit notification can arrive before the last output
+    /// has been read, and finishing then would drop that output (or, for the
+    /// last script, exit before printing it).
+    fn maybe_finish(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
+        let exited = matches!(&handle.process, Some(p) if !matches!(p.status, Status::Running));
+        if !exited || !handle.stdout_reader.ended || !handle.stderr_reader.ended {
+            return Ok(());
+        }
         self.remaining_scripts -= 1;
 
         // Flush remaining buffers (stdout first, then stderr)
@@ -1208,13 +1229,20 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         }
     }
 
-    // Start handles with no dependencies
-    for handle in state.handles.iter_mut() {
-        if handle.remaining_dependencies == 0 {
-            if handle.start().is_err() {
-                bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
-                Global::exit(1);
-            }
+    // Collect the roots before starting any: a script that has already exited
+    // when `start()` watches it can finish (and cascade) inside `start()`, which
+    // zeroes `remaining_dependencies` of later handles it started or skipped.
+    let roots: Vec<*mut ProcessHandle> = state
+        .handles
+        .iter_mut()
+        .filter(|handle| handle.remaining_dependencies == 0)
+        .map(|handle| std::ptr::from_mut(handle))
+        .collect();
+    for handle in roots {
+        // SAFETY: points into `state.handles`, which lives for the whole loop.
+        if unsafe { (*handle).start() }.is_err() {
+            bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
+            Global::exit(1);
         }
     }
 

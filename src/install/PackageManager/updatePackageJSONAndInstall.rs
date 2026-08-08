@@ -611,14 +611,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
             if editing_catalogs && manager.workspace_name_hash.is_none() {
                 // running from root: catalogs live in this file.
-                let _ = PackageJSONEditor::edit_catalogs_after_update(
-                    manager,
-                    &new_package_json,
-                    EditOptions {
-                        exact_versions: manager.options.enable.exact_versions(),
-                        ..Default::default()
-                    },
-                )?;
+                let _ = PackageJSONEditor::edit_catalogs_after_update(manager, &new_package_json)?;
             }
         } else {
             let mut updates_slice: &mut [UpdateRequest] = &mut updates[..];
@@ -706,14 +699,8 @@ fn update_package_json_and_install_with_manager_with_updates(
         let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
         let root_package_json_root: bun_ast::Expr = root_package_json.root;
 
-        let root_catalogs_changed = PackageJSONEditor::edit_catalogs_after_update(
-            manager,
-            &root_package_json_root,
-            EditOptions {
-                exact_versions: manager.options.enable.exact_versions(),
-                ..Default::default()
-            },
-        )?;
+        let root_catalogs_changed =
+            PackageJSONEditor::edit_catalogs_after_update(manager, &root_package_json_root)?;
 
         if root_catalogs_changed {
             print_package_json_into_cache_entry(root_package_json, root_package_json_root);

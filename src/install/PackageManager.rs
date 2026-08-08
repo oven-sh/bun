@@ -563,6 +563,8 @@ pub struct CatalogUpdateInfo {
     pub dep_name: Box<[u8]>,
     pub original_version_literal: Box<[u8]>,
     pub is_alias: bool,
+    /// Set by `Lockfile::preprocess_updating_catalogs`; `None` keeps the original.
+    pub resolved_version_literal: Option<Box<[u8]>>,
 }
 
 #[derive(Default)]

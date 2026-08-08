@@ -29,7 +29,8 @@ use crate::config_version::ConfigVersion;
 use crate::migration;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
-    Options as PackageManagerOptions, options::LogLevel, populate_manifest_cache,
+    CatalogUpdateInfo, Options as PackageManagerOptions, options::Do, options::LogLevel,
+    populate_manifest_cache,
 };
 use crate::resolution_real::{self as resolution, Resolution};
 use crate::string_builder;
@@ -834,6 +835,130 @@ impl Lockfile {
         Ok(())
     }
 
+    fn preprocess_updating_catalogs(
+        old: &mut Lockfile,
+        manager: &mut PackageManager,
+        exact_versions: bool,
+    ) -> Result<(), BunError> {
+        let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
+        let mut infos = core::mem::take(&mut manager.updating_catalogs);
+
+        {
+            let string_buf = old.buffers.string_bytes.as_slice();
+            let package_resolutions = old.packages.items_resolution();
+            let packages_len = old.packages.len();
+            debug_assert_eq!(
+                old.buffers.dependencies.len(),
+                old.buffers.resolutions.len()
+            );
+            for (dep, &package_id) in old
+                .buffers
+                .dependencies
+                .iter()
+                .zip(old.buffers.resolutions.iter())
+            {
+                if dep.version.tag != dependency::Tag::Catalog {
+                    continue;
+                }
+                if package_id as usize >= packages_len {
+                    continue;
+                }
+                let resolution = &package_resolutions[package_id as usize];
+                if resolution.tag != ResolutionTag::Npm {
+                    continue;
+                }
+
+                let dep_name = dep.name.slice(string_buf);
+                let catalog_name = dep.version.catalog().slice(string_buf);
+                let Some(info) = infos.iter_mut().find(|info| {
+                    strings::eql_long(&info.dep_name, dep_name, true)
+                        && strings::eql_long(&info.catalog_name, catalog_name, true)
+                }) else {
+                    continue;
+                };
+                if info.resolved_version_literal.is_some() {
+                    continue;
+                }
+
+                if !update_to_latest {
+                    let Some(catalog_dep) = old.catalogs.get(old, *dep.version.catalog(), dep.name)
+                    else {
+                        continue;
+                    };
+                    if let Some(npm_version) = catalog_dep.version.try_npm() {
+                        if npm_version.version.is_exact() {
+                            continue;
+                        }
+                    }
+                }
+
+                let new_literal =
+                    format_catalog_update_literal(resolution, string_buf, info, exact_versions);
+                info.resolved_version_literal = Some(new_literal.into_boxed_slice());
+            }
+        }
+
+        let mut string_builder = string_builder!(old);
+        for info in infos.iter() {
+            // Unresolved: restore the original (`--latest` left `latest`).
+            let new_literal = info
+                .resolved_version_literal
+                .as_deref()
+                .unwrap_or(&info.original_version_literal);
+            if new_literal.len() >= SemverString::MAX_INLINE_LEN {
+                string_builder.cap += new_literal.len();
+            }
+            if info.catalog_name.len() >= SemverString::MAX_INLINE_LEN {
+                string_builder.cap += info.catalog_name.len();
+            }
+            if info.dep_name.len() >= SemverString::MAX_INLINE_LEN {
+                string_builder.cap += info.dep_name.len();
+            }
+        }
+        string_builder.allocate()?;
+
+        for info in infos.iter() {
+            let new_literal = info
+                .resolved_version_literal
+                .as_deref()
+                .unwrap_or(&info.original_version_literal);
+            let catalog_name = string_builder.append::<SemverString>(&info.catalog_name);
+            let dep_name = string_builder.append::<SemverString>(&info.dep_name);
+            let external_version = string_builder.append::<ExternalString>(new_literal);
+            let sliced = external_version
+                .value
+                .sliced(string_builder.string_bytes.as_slice());
+            let Some(version) = dependency::parse(
+                dep_name,
+                SemverStringBuilder::string_hash(&info.dep_name),
+                sliced.slice,
+                &sliced,
+                None,
+                &mut *manager,
+            ) else {
+                continue;
+            };
+            let buf = string_builder.string_bytes.as_slice();
+            let ctx = bun_semver::string::ArrayHashContext {
+                arg_buf: buf,
+                existing_buf: buf,
+            };
+            let group = if info.catalog_name.is_empty() {
+                &mut old.catalogs.default
+            } else if let Some(i) = old.catalogs.groups.get_index_adapted(&catalog_name, &ctx) {
+                &mut old.catalogs.groups.values_mut()[i]
+            } else {
+                continue;
+            };
+            if let Some(i) = group.get_index_adapted(&dep_name, &ctx) {
+                group.values_mut()[i].version = version;
+            }
+        }
+        string_builder.clamp();
+        manager.updating_catalogs = infos;
+        Ok(())
+    }
+
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
         if dep.version.tag != dependency::Tag::Catalog {
             return Some(dep.version.clone());
@@ -974,6 +1099,10 @@ impl Lockfile {
 
         if !updates.is_empty() {
             clean_preprocess_update_requests_cold(old, manager, updates, exact_versions)?;
+        }
+
+        if !manager.updating_catalogs.is_empty() {
+            clean_preprocess_updating_catalogs_cold(old, manager, exact_versions)?;
         }
 
         // Caller owns the new lockfile; return `Box<Lockfile>` so Drop reclaims
@@ -1207,6 +1336,73 @@ fn clean_preprocess_update_requests_cold(
     exact_versions: bool,
 ) -> Result<(), BunError> {
     Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)
+}
+
+#[cold]
+#[inline(never)]
+fn clean_preprocess_updating_catalogs_cold(
+    old: &mut Lockfile,
+    manager: &mut PackageManager,
+    exact_versions: bool,
+) -> Result<(), BunError> {
+    Lockfile::preprocess_updating_catalogs(old, manager, exact_versions)
+}
+
+fn format_catalog_update_literal(
+    resolution: &Resolution,
+    string_buf: &[u8],
+    info: &CatalogUpdateInfo,
+    exact_versions: bool,
+) -> Vec<u8> {
+    let version_fmt = resolution.npm().version.fmt(string_buf);
+    let new_version: Vec<u8> = 'new_version: {
+        if exact_versions {
+            let mut v = Vec::new();
+            write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");
+            break 'new_version v;
+        }
+
+        let version_literal: &[u8] = 'version_literal: {
+            if !info.is_alias {
+                break 'version_literal &info.original_version_literal;
+            }
+            if let Some(at_index) =
+                strings::last_index_of_char(&info.original_version_literal, b'@')
+            {
+                break 'version_literal &info.original_version_literal[at_index + 1..];
+            }
+            &info.original_version_literal
+        };
+
+        let mut v = Vec::new();
+        match Semver::Version::which_version_is_pinned(version_literal) {
+            Semver::PinnedVersion::Patch => {
+                write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write")
+            }
+            Semver::PinnedVersion::Minor => {
+                write!(&mut v, "~{}", version_fmt).expect("infallible: in-memory write")
+            }
+            Semver::PinnedVersion::Major => {
+                write!(&mut v, "^{}", version_fmt).expect("infallible: in-memory write")
+            }
+        }
+        v
+    };
+
+    if info.is_alias {
+        if let Some(at_index) = strings::last_index_of_char(&info.original_version_literal, b'@') {
+            let mut v = Vec::new();
+            write!(
+                &mut v,
+                "{}@{}",
+                bstr::BStr::new(&info.original_version_literal[0..at_index]),
+                bstr::BStr::new(&new_version)
+            )
+            .expect("infallible: in-memory write");
+            return v;
+        }
+    }
+    new_version
 }
 
 #[cold]

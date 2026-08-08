@@ -272,6 +272,14 @@ describe("update", () => {
     expect(update.exitCode).toBe(0);
     expect((await file(join(packageDir, "package.json")).json()).workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
 
+    // bun.lock's catalog maps must match package.json: the temporary `latest`
+    // used to drive resolution must not be persisted.
+    const lock = await file(join(packageDir, "bun.lock")).text();
+    const catalogSection = lock.slice(lock.indexOf('"catalog":'), lock.indexOf('"packages":'));
+    expect(catalogSection).toContain('"no-deps": "^2.0.0"');
+    expect(catalogSection).toContain('"a-dep": "~1.0.10"');
+    expect(catalogSection).not.toContain('"latest"');
+
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--frozen-lockfile"],
       cwd: packageDir,
@@ -283,6 +291,72 @@ describe("update", () => {
     expect(err).not.toContain("lockfile had changes");
     expect(err).not.toContain("error:");
     expect(exitCode).toBe(0);
+  });
+
+  for (const fromWorkspace of [false, true]) {
+    test(`--frozen-lockfile works offline after --latest updates catalogs (from ${fromWorkspace ? "workspace" : "root"})`, async () => {
+      const { packageDir } = await registry.createTestDir();
+      await createUpdateMonorepo(packageDir, `catalog-update-offline-${fromWorkspace ? "ws" : "root"}`);
+      await runBunInstall(bunEnv, packageDir);
+
+      const cwd = fromWorkspace ? join(packageDir, "packages", "pkg1") : packageDir;
+      const update = await runUpdate(cwd, "--latest");
+      expect(update.err).not.toContain("error:");
+      expect(update.exitCode).toBe(0);
+
+      // Point the registry at a closed port so any attempt to re-resolve the
+      // catalog entries over the network fails. With package.json and bun.lock
+      // in sync and node_modules warm, frozen-lockfile must not touch the network.
+      await write(
+        join(packageDir, "bunfig.toml"),
+        `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"\nregistry = "http://127.0.0.1:1"\n`,
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--frozen-lockfile"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      const [, errText, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      const err = stderrForInstall(errText);
+      expect(err).not.toContain("failed to resolve");
+      expect(err).not.toContain("lockfile had changes");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("bun.lock catalog matches package.json after update without --latest", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-update-lock-sync",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: { "no-deps": "^1.0.0" },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1", dependencies: { "no-deps": "catalog:" } }),
+      ),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+
+    const { err, exitCode } = await runUpdate(packageDir);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "^1.1.0" });
+    const lock = await file(join(packageDir, "bun.lock")).text();
+    const catalogSection = lock.slice(lock.indexOf('"catalog":'), lock.indexOf('"packages":'));
+    expect(catalogSection).toContain('"no-deps": "^1.1.0"');
   });
 
   test("--latest run from inside a workspace package updates the root catalog", async () => {

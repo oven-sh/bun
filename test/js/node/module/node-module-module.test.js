@@ -111,6 +111,39 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("compile cache does not change ESM evaluation order", async () => {
+    // A `.cjs` sibling with no CommonJS features is loaded as ESM and must
+    // evaluate after the `.mjs` module imported before it, with or without
+    // the compile cache (cold and warm), and via the API enable path.
+    using dir = tempDir("compile-cache-eval-order", {
+      "main.mjs": `import "./e.mjs";\nimport "./c.cjs";\nconsole.log(globalThis.o.join(","));`,
+      "e.mjs": `(globalThis.o ??= []).push("esm");\nexport {};`,
+      "c.cjs": `(globalThis.o ??= []).push("cjs");`,
+      "preload.cjs": `require("node:module").enableCompileCache(__dirname + "/cc-api");`,
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    const run = async (args, env) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout.trim();
+    };
+    expect(await run(["main.mjs"], {})).toBe("esm,cjs");
+    expect(await run(["main.mjs"], { NODE_COMPILE_CACHE: cacheDir })).toBe("esm,cjs"); // cold
+    expect(await run(["main.mjs"], { NODE_COMPILE_CACHE: cacheDir })).toBe("esm,cjs"); // warm
+    expect(await run(["--preload", "./preload.cjs", "main.mjs"], {})).toBe("esm,cjs");
+    // The cached runs only prove anything if the cache was actually active.
+    const tagged = fs.readdirSync(cacheDir);
+    expect(tagged).toHaveLength(1);
+    expect(fs.readdirSync(path.join(cacheDir, tagged[0])).length).toBeGreaterThanOrEqual(3);
+  });
+
   test.skipIf(process.platform === "win32")(
     "compile cache persists modules loaded after a non-fatal self-kill",
     async () => {

@@ -4401,9 +4401,6 @@ unsafe fn transpile_file(
             // TODO: allow running concurrently when no onLoad handlers match a plugin.
             && plugin_runner_is_none
             && store_enabled
-            // With the Node compile cache enabled, transpile on-thread so the
-            // fetch hook sees every module.
-            && !bun_jsc::node_compile_cache::is_enabled()
         {
             // Disgusting workaround: polyfills like
             // `reflect-metadata` are CJS-with-side-effects that other ESM

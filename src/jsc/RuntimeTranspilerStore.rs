@@ -892,6 +892,17 @@ impl TranspilerJob {
                 }
             }
 
+            // Node compile cache: record the failed module so exit-time
+            // persist logs the "was not initialized" skip (Node parity).
+            if crate::node_compile_cache::is_enabled()
+                && loader.is_java_script_like()
+                && path.is_file()
+            {
+                crate::node_compile_cache::note_parse_failure(
+                    path.text,
+                    !matches!(module_type, ModuleType::Esm),
+                );
+            }
             self.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
@@ -961,6 +972,25 @@ impl TranspilerJob {
                 ptr::null_mut()
             };
 
+            let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
+            // Node compile cache hook (transpiler-cache-hit path). UTF-16
+            // output would hash differently than the print path, so skip it.
+            let node_compile_cache_blob = if crate::node_compile_cache::is_enabled()
+                && path.is_file()
+                && loader.is_java_script_like()
+                && !matches!(&entry.output_code, OutputCode::String(s) if s.is_utf16())
+            {
+                crate::node_compile_cache::fetch(
+                    path.text,
+                    is_commonjs_module,
+                    entry.output_code.byte_slice(),
+                )
+            } else {
+                None
+            };
+            let (bytecode_cache, bytecode_cache_size) =
+                node_compile_cache_blob.unwrap_or((ptr::null_mut(), 0));
+
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: match &mut entry.output_code {
                     OutputCode::String(s) => *s,
@@ -970,9 +1000,11 @@ impl TranspilerJob {
                         result
                     }
                 },
-                is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
+                is_commonjs_module,
                 module_info,
                 tag: this_tag,
+                bytecode_cache,
+                bytecode_cache_size,
                 ..Default::default()
             });
 
@@ -1132,6 +1164,23 @@ impl TranspilerJob {
             dump_source(vm, specifier, source_code_printer);
         }
 
+        // Node compile cache hook (concurrent transpile path). `fetch` copies
+        // the printed bytes, so replacing the print buffer below is safe.
+        let node_compile_cache_blob = if crate::node_compile_cache::is_enabled()
+            && path.is_file()
+            && loader.is_java_script_like()
+        {
+            crate::node_compile_cache::fetch(
+                path.text,
+                is_commonjs_module,
+                source_code_printer.ctx.get_written(),
+            )
+        } else {
+            None
+        };
+        let (bytecode_cache, bytecode_cache_size) =
+            node_compile_cache_blob.unwrap_or((ptr::null_mut(), 0));
+
         let source_code = 'brk: {
             let written = source_code_printer.ctx.get_written();
 
@@ -1172,6 +1221,8 @@ impl TranspilerJob {
                 })
                 .unwrap_or(ptr::null_mut()),
             tag: this_tag,
+            bytecode_cache,
+            bytecode_cache_size,
             ..Default::default()
         });
 

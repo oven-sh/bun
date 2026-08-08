@@ -2594,6 +2594,7 @@ class Http2Stream extends Duplex {
     // symbol keys, and deleting it here would flip the object into dictionary mode,
     // pessimizing every later property access on it.
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
+    assertNoConnectionHeaders(headers);
     // node keeps the never-index list visible on sentTrailers (symbol keys are not iterated by
     // the wire-encoding path, so re-attaching is safe).
     if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -3162,7 +3163,9 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
     if (onError) onError(err);
     else {
-      this.respond(headers, options);
+      try {
+        this.respond(headers, options);
+      } catch {}
       this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     }
     return;
@@ -3181,7 +3184,9 @@ function doSendFileFD(options, fd, headers, err, stat) {
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
       else {
-        this.respond(headers, options);
+        try {
+          this.respond(headers, options);
+        } catch {}
         this.destroy(err);
       }
       return;
@@ -3660,6 +3665,7 @@ class ServerHttp2Stream extends Http2Stream {
     // Pre-validate single-value headers in JS so a throwing additionalHeaders() leaves no partial
     // state in the shared HPACK table (same rule request() applies).
     if (this[bunHTTP2Session]?.[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
+    assertNoConnectionHeaders(headers);
     let hasStatus = true;
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
@@ -3771,6 +3777,7 @@ class ServerHttp2Stream extends Http2Stream {
     // Pre-validate single-value headers in JS so a throwing respond() leaves no partial state in
     // the shared HPACK table (same rule request() applies).
     if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
+    assertNoConnectionHeaders(headers);
     // node keeps the never-index list visible on sentHeaders (symbol keys are not iterated by the
     // wire-encoding path, so re-attaching is safe).
     if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -3941,9 +3948,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     if (destroy_self) self.destroy();
   }
 }
-// Outbound guard: header values carrying code points above 0xFF (or raw CR/LF/NUL) cannot be
-// legally serialized as an HTTP field value; node's stack drops such headers at submit time
-// (response-splitting probes rely on them). Returns true when the value must be dropped.
+// RFC 9113 §8.2.2: connection-specific fields are forbidden on every HTTP/2 header block.
 const kForbiddenConnectionHeaders = new SafeSet([
   "connection",
   "upgrade",
@@ -3953,9 +3958,15 @@ const kForbiddenConnectionHeaders = new SafeSet([
   "transfer-encoding",
 ]);
 function assertNoConnectionHeaders(headers): void {
-  for (const name in headers) {
+  const keys = ObjectKeys(headers);
+  for (let i = 0; i < keys.length; i++) {
+    const name = keys[i];
+    if (name === "") continue;
+    const value = headers[name];
+    // An undefined value or an empty array encodes no header at all, so neither is forbidden.
+    if (value === undefined || ($isArray(value) && value.length === 0)) continue;
     const lower = name.toLowerCase();
-    if (kForbiddenConnectionHeaders.has(lower) || (lower === "te" && headers[name] !== "trailers")) {
+    if (kForbiddenConnectionHeaders.has(lower) || (lower === "te" && String(value) !== "trailers")) {
       const err = new TypeError(`HTTP/1 Connection specific headers are forbidden: "${lower}"`);
       err.code = "ERR_HTTP2_INVALID_CONNECTION_HEADERS";
       throw err;
@@ -3963,6 +3974,7 @@ function assertNoConnectionHeaders(headers): void {
   }
 }
 
+// Header values with code points above 0xFF or CR/LF/NUL cannot be serialized; drop them.
 function headerValueIsUnsendable(value): boolean {
   if ($isArray(value)) {
     // Array-valued headers (e.g. set-cookie): unsendable if any element is.
@@ -6231,6 +6243,7 @@ class ClientHttp2Session extends Http2Session {
       // Validate single-value constraints before anything is encoded (a mid-encode throw would
       // desync the shared HPACK table from the peer).
       if (this[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
+      assertNoConnectionHeaders(headers);
       // node keeps the never-index list visible on the request's sentHeaders (symbol keys are
       // not iterated by the wire-encoding path, so re-attaching is safe).
       if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;

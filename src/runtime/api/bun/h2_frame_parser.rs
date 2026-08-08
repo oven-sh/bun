@@ -1317,8 +1317,12 @@ pub struct H2FrameParser {
     /// Drained into Connection::close_stream on the next rewrite_read batch.
     pending_engine_stream_closes: JsCell<Vec<u32>>,
     dispatch_depth: Cell<u32>,
+    /// Stream whose RST_STREAM is the next buffered frame; its response is dropped.
+    rst_after_headers: Cell<u32>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
+    stream_reset_burst: Cell<u32>,
+    stream_reset_rate: Cell<u32>,
     max_outstanding_settings: Cell<u32>,
     outstanding_settings: Cell<u32>,
     rejected_streams: Cell<u32>,
@@ -5744,6 +5748,8 @@ impl H2FrameParser {
             engine.max_header_list_pairs = self.max_header_list_pairs.get();
             engine.max_settings = self.max_settings.get();
             engine.max_invalid_frames = self.max_session_invalid_frames.get();
+            engine.stream_reset_burst = self.stream_reset_burst.get();
+            engine.stream_reset_rate = self.stream_reset_rate.get();
             // Outbound-ACK-flood counter: only reset when the transport actually
             // drained (nghttp2 decrements per-send). Resetting per receive() lets
             // a peer that never reads keep it under the limit forever.
@@ -6181,6 +6187,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         let _ = self.handle_received_stream_id(stream_id);
     }
 
+    fn on_rst_after_headers(&self, stream_id: u32) {
+        self.rst_after_headers.set(stream_id);
+    }
+
     fn on_header(&self, _stream_id: u32, name: &[u8], value: &[u8], never_index: bool) {
         // Accumulate raw bytes; the whole block is materialized into JS values in one
         // native call at on_headers_complete (see H2HeadersMaterializer.cpp).
@@ -6336,6 +6346,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.hdr_meta.with_mut(|m| m.clear());
         if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
             self.rewrite_pending_push.set(0);
+        }
+        if self.rst_after_headers.get() == stream_id {
+            self.rst_after_headers.set(0);
         }
         // Bridge: mark the legacy stream closed with the rst code (capturing the prior state for
         // the aborted dispatch below).
@@ -8198,7 +8211,7 @@ impl H2FrameParser {
         // Coercing `data_arg` (a String subclass's toString) can run user JS while `stream`
         // is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
-        if !stream.can_send_data() {
+        if !stream.can_send_data() || this.rst_after_headers.get() == stream_id {
             this.dispatch_write_callback(callback_arg);
             return Ok(JSValue::FALSE);
         }
@@ -8750,12 +8763,6 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
         }
-        let mut encoded_headers: Vec<u8> = Vec::new();
-        if encoded_headers.try_reserve(16384).is_err() {
-            return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
-        }
-        // max header name length for lshpack
-        let mut name_buffer = [0u8; 4096];
         let stream_id: u32 =
             if !stream_id_arg.is_empty_or_undefined_or_null() && stream_id_arg.is_number() {
                 stream_id_arg.to_u32()
@@ -8765,6 +8772,27 @@ impl H2FrameParser {
         if stream_id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
         }
+
+        // The peer already reset this stream: drop the response instead of encoding it.
+        if this.is_server.get()
+            && (this.rst_after_headers.get() == stream_id
+                || this
+                    .streams
+                    .get()
+                    .get(&stream_id)
+                    .copied()
+                    // SAFETY: *mut Stream from self.streams; valid while the map entry exists.
+                    .is_some_and(|s| !unsafe { &*s }.can_send_data()))
+        {
+            return Ok(JSValue::js_number(stream_id as f64));
+        }
+
+        let mut encoded_headers: Vec<u8> = Vec::new();
+        if encoded_headers.try_reserve(16384).is_err() {
+            return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
+        }
+        // max header name length for lshpack
+        let mut name_buffer = [0u8; 4096];
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
@@ -9759,8 +9787,11 @@ impl H2FrameParser {
             pending_engine_stream_closes: JsCell::new(Vec::new()),
             dispatch_depth: Cell::new(0),
             pending_settings_window_submissions: JsCell::new(Vec::new()),
+            rst_after_headers: Cell::new(0),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),
+            stream_reset_burst: Cell::new(crate::api::h2::connection::DEFAULT_STREAM_RESET_BURST),
+            stream_reset_rate: Cell::new(crate::api::h2::connection::DEFAULT_STREAM_RESET_RATE),
             max_outstanding_settings: Cell::new(10),
             outstanding_settings: Cell::new(0),
             rejected_streams: Cell::new(0),
@@ -9904,6 +9935,19 @@ impl H2FrameParser {
                             .max_session_invalid_frames
                             .set(max_session_invalid_frames.to_uint64_no_truncate() as u32);
                     }
+                }
+                // node's updateOptionsBuffer: applied only when both are numbers, floored to 1.
+                if let Some(reset_burst) = settings_js.get(global_object, "streamResetBurst")?
+                    && let Some(reset_rate) = settings_js.get(global_object, "streamResetRate")?
+                    && reset_burst.is_number()
+                    && reset_rate.is_number()
+                {
+                    this_ref
+                        .stream_reset_burst
+                        .set((reset_burst.to_uint64_no_truncate() as u32).max(1));
+                    this_ref
+                        .stream_reset_rate
+                        .set((reset_rate.to_uint64_no_truncate() as u32).max(1));
                 }
                 if let Some(max_outstanding_settings) =
                     settings_js.get(global_object, "maxOutstandingSettings")?

@@ -6634,6 +6634,14 @@ function initializeOptions(options) {
     validateUint32(options.maxSessionRejectedStreams, "options.maxSessionRejectedStreams");
   }
 
+  if (options.streamResetBurst !== undefined) {
+    validateUint32(options.streamResetBurst, "options.streamResetBurst");
+  }
+
+  if (options.streamResetRate !== undefined) {
+    validateUint32(options.streamResetRate, "options.streamResetRate");
+  }
+
   if (options.unknownProtocolTimeout !== undefined)
     validateUint32(options.unknownProtocolTimeout, "options.unknownProtocolTimeout");
   else options.unknownProtocolTimeout = 10000;

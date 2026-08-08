@@ -110,6 +110,10 @@ pub struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
+/// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST / _RATE (node's streamResetBurst / streamResetRate).
+pub const DEFAULT_STREAM_RESET_BURST: u32 = 1000;
+pub const DEFAULT_STREAM_RESET_RATE: u32 = 33;
+
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
@@ -145,6 +149,8 @@ pub trait Sink {
     fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: bool) {}
     /// The header block for `stream_id` is complete. `end_stream` = the HEADERS carried END_STREAM.
     fn on_headers_complete(&self, _stream_id: u32, _end_stream: bool, _flags: u8) {}
+    /// The peer's RST_STREAM for this stream is the next buffered frame (rapid reset).
+    fn on_rst_after_headers(&self, _stream_id: u32) {}
     /// A DATA payload (padding already stripped).
     fn on_data(&self, _stream_id: u32, _data: &[u8]) {}
     /// The stream half/fully closed; `state` is the `stream::State` integer.
@@ -243,6 +249,8 @@ pub struct Connection {
     /// Header-block reassembly across CONTINUATION (RFC 9113 §4.3). 0 = not assembling; otherwise
     /// the stream id whose header block is mid-flight and which the next frame MUST continue.
     continuation_stream: u32,
+    /// Stream id whose RST_STREAM is the next buffered frame (see on_rst_after_headers).
+    rst_after_headers: u32,
     header_block: Vec<u8>,
     /// In-progress partial DATA frame streamed incrementally. nghttp2 delivers DATA in
     /// chunks as bytes arrive (node emits 'data' for a partial frame); buffering until the
@@ -273,6 +281,13 @@ pub struct Connection {
     /// obq_flood_counter_). Reset only via note_outbound_drained() when the
     /// embedder confirms its outbound buffer emptied — never per receive().
     obq_ack_pending: u32,
+    /// Stream-reset token bucket (nghttp2's stream_reset_ratelim).
+    pub stream_reset_burst: u32,
+    pub stream_reset_rate: u32,
+    reset_tokens: u32,
+    reset_last_refill: std::time::Instant,
+    /// The bucket ran dry mid-frame; receive() tears the session down between frames.
+    reset_flood: bool,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -307,6 +322,7 @@ impl Connection {
             hpack: hpack::Coder::new(local.header_table_size),
             streams: HashMap::new(),
             continuation_stream: 0,
+            rst_after_headers: 0,
             header_block: Vec::new(),
             data_in_flight: None,
             header_end_stream: false,
@@ -318,6 +334,11 @@ impl Connection {
             header_stream_refused: false,
             terminated: false,
             obq_ack_pending: 0,
+            stream_reset_burst: DEFAULT_STREAM_RESET_BURST,
+            stream_reset_rate: DEFAULT_STREAM_RESET_RATE,
+            reset_tokens: u32::MAX, // clamped to the synced burst on first use
+            reset_last_refill: std::time::Instant::now(),
+            reset_flood: false,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -407,6 +428,8 @@ impl Connection {
             stream_id,
             &code.as_u32().to_be_bytes(),
         );
+        // Every engine-sent RST_STREAM is a reaction to an inbound frame.
+        self.note_stream_reset();
     }
 
     // ---- Inbound --------------------------------------------------------
@@ -467,6 +490,12 @@ impl Connection {
             offset += avail;
             if inflight.payload_remaining == 0 {
                 self.finish_streamed_data(sink, &inflight);
+                if self.check_reset_flood(sink) {
+                    return Feed {
+                        consumed: offset,
+                        fatal: true,
+                    };
+                }
             } else {
                 self.data_in_flight = Some(inflight);
                 self.replenish_windows(sink);
@@ -519,6 +548,12 @@ impl Connection {
                             }
                             StreamedDataStart::Consumed(n) => {
                                 offset += n;
+                                if self.check_reset_flood(sink) {
+                                    return Feed {
+                                        consumed: offset,
+                                        fatal: true,
+                                    };
+                                }
                             }
                         }
                     }
@@ -526,6 +561,23 @@ impl Connection {
                 break;
             }
             let payload = &remaining[wire::FRAME_HEADER_SIZE..total];
+            self.rst_after_headers = 0;
+            if self.is_server
+                && matches!(
+                    hdr.typ(),
+                    Some(FrameType::Headers | FrameType::Continuation)
+                )
+                && wire::flags::has(hdr.flags, wire::flags::END_HEADERS)
+                && remaining.len() >= total + wire::FRAME_HEADER_SIZE + 4
+            {
+                let next = FrameHeader::parse(&remaining[total..]);
+                if matches!(next.typ(), Some(FrameType::RstStream))
+                    && next.stream_id == hdr.stream_id
+                    && next.length == 4
+                {
+                    self.rst_after_headers = hdr.stream_id;
+                }
+            }
             if self.dispatch(sink, &hdr, payload) {
                 return Feed {
                     consumed: offset + total,
@@ -533,6 +585,12 @@ impl Connection {
                 };
             }
             offset += total;
+            if self.check_reset_flood(sink) {
+                return Feed {
+                    consumed: offset,
+                    fatal: true,
+                };
+            }
         }
         // Re-open consumed receive windows once per batch (RFC 9113 §6.9; mirrors how the
         // application-consumption-driven update works in node) — doing it per frame would both spam
@@ -763,6 +821,44 @@ impl Connection {
     /// from receive() itself so a peer that never reads cannot reset it.
     pub fn note_outbound_drained(&mut self) {
         self.obq_ack_pending = 0;
+    }
+
+    /// nghttp2's session_update_stream_reset_ratelim (server-only).
+    fn note_stream_reset(&mut self) {
+        if !self.is_server || self.reset_flood {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let elapsed = now
+            .saturating_duration_since(self.reset_last_refill)
+            .as_secs();
+        if elapsed > 0 {
+            let gain = u32::try_from(elapsed)
+                .unwrap_or(u32::MAX)
+                .saturating_mul(self.stream_reset_rate);
+            self.reset_tokens = self.reset_tokens.saturating_add(gain);
+            self.reset_last_refill += std::time::Duration::from_secs(elapsed);
+        }
+        self.reset_tokens = self.reset_tokens.min(self.stream_reset_burst);
+        if self.reset_tokens > 0 {
+            self.reset_tokens -= 1;
+            return;
+        }
+        self.reset_flood = true;
+    }
+
+    /// GOAWAY(ENHANCE_YOUR_CALM) once the stream-reset bucket is empty.
+    fn check_reset_flood(&mut self, sink: &impl Sink) -> bool {
+        if !self.reset_flood || self.terminated {
+            return false;
+        }
+        self.local_connection_error(
+            sink,
+            ErrorCode::EnhanceYourCalm,
+            wire::lib_error::FLOODED,
+            b"too many stream resets",
+        );
+        true
     }
 
     /// Bound queued PING/SETTINGS ACKs behind a non-reading peer — nghttp2's
@@ -1285,6 +1381,9 @@ impl Connection {
         {
             s.recv_final_headers = true;
         }
+        if is_request && self.rst_after_headers == target {
+            sink.on_rst_after_headers(target);
+        }
         sink.on_headers_complete(target, end_stream, self.header_flags);
         if end_stream {
             let state = self.streams.get(&target).map(|s| s.state as u8);
@@ -1605,6 +1704,8 @@ impl Connection {
             && (hdr.stream_id <= self.last_stream_id
                 || hdr.stream_id <= sink.highest_started_stream_id())
         {
+            // nghttp2 charges the ratelim regardless of stream lookup.
+            self.note_stream_reset();
             return false;
         }
         if on_idle {
@@ -1612,6 +1713,7 @@ impl Connection {
             return true;
         }
         sink.on_stream_reset(hdr.stream_id, code_raw);
+        self.note_stream_reset();
         false
     }
 

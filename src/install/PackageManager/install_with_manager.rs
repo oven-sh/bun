@@ -484,12 +484,23 @@ pub fn install_with_manager(
                     // ever reads through a pointer into the old backing storage.
                     if manager.summary.overrides_changed && !all_name_hashes.is_empty() {
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
+                        // Invalidate every affected resolution before enqueueing
+                        // any of them: re-resolution consults existing bindings
+                        // (`find_locked_git_package`), and a not-yet-cleared
+                        // sibling would rebind the dependency to the package the
+                        // old override resolved to.
+                        for dependency_i in 0..dependencies_len {
+                            if all_name_hashes.contains(
+                                &manager.lockfile.buffers.dependencies[dependency_i].name_hash,
+                            ) {
+                                manager.lockfile.buffers.resolutions[dependency_i] =
+                                    invalid_package_id;
+                            }
+                        }
                         for dependency_i in 0..dependencies_len {
                             let dependency =
                                 manager.lockfile.buffers.dependencies[dependency_i].clone();
                             if all_name_hashes.contains(&dependency.name_hash) {
-                                manager.lockfile.buffers.resolutions[dependency_i] =
-                                    invalid_package_id;
                                 if let Err(err) = enqueue_dependency_with_main(
                                     manager,
                                     dependency_i as u32,
@@ -505,6 +516,14 @@ pub fn install_with_manager(
 
                     if manager.summary.catalogs_changed {
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
+                        // Same two-pass shape as the overrides loop above.
+                        for dep_i in 0..dependencies_len {
+                            if manager.lockfile.buffers.dependencies[dep_i].version.tag
+                                == DependencyVersionTag::Catalog
+                            {
+                                manager.lockfile.buffers.resolutions[dep_i] = invalid_package_id;
+                            }
+                        }
                         for _dep_id in 0..dependencies_len {
                             let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
                             let dep =
@@ -513,8 +532,6 @@ pub fn install_with_manager(
                                 continue;
                             }
 
-                            manager.lockfile.buffers.resolutions[dep_id as usize] =
-                                invalid_package_id;
                             if let Err(err) = enqueue_dependency_with_main(
                                 manager,
                                 dep_id,

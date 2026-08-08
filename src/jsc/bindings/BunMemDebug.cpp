@@ -94,7 +94,7 @@
 #include <hwy/targets.h>
 #include "wtf/SIMDUTF.h"
 #ifndef BUN_HEAPIMAGE_TOOLING
-#define BUN_HEAPIMAGE_TOOLING 1 // attribution/diagnostic commands (dirtymap, censuses, traps); the image product path must build with this off
+#define BUN_HEAPIMAGE_TOOLING 0 // attribution/diagnostic commands (dirtymap, censuses, traps): development aid, off in the product; -DBUN_HEAPIMAGE_TOOLING=1 to enable
 #endif
 #pragma clang diagnostic ignored "-Wformat" // uint64_t is unsigned long on Linux, unsigned long long on Darwin; this file prints a lot of addresses
 #include <signal.h>

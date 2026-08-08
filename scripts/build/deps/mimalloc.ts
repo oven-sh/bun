@@ -70,6 +70,10 @@ export const mimalloc: Dependency = {
     if (override) defines.MI_MALLOC_OVERRIDE = true;
     if (osxZone) defines.MI_OSX_ZONE = 1;
 
+    // Heap images (src/jsc/bindings/BunMemDebug.cpp): executables carrying an image get deterministic address hints from
+    // their first allocation; a process building one (BUN_IMAGE_OUT) keeps its heap at the base that becomes the image.
+    defines.MI_HEAP_IMAGE_BUILD_ENV = "BUN_IMAGE_OUT"; // quoted into a C string literal by the builder
+
     if (cfg.debug) {
       // Heavy debug checks: guard bytes, freed-memory poisoning, double-free
       // detection. Slow but catches memory bugs early. The cmake build sets
@@ -95,6 +99,9 @@ export const mimalloc: Dependency = {
       // Bare token (mi_stringify() pastes it into the banner string), so
       // it can't go through DirectBuild.defines which would quote it.
       `-DMI_CMAKE_BUILD_TYPE=${cfg.buildType.toLowerCase()}`,
+      // Bare token as well: the name of the function (defined in c-bindings.cpp) mimalloc calls to learn whether this
+      // executable carries a heap image; see the MI_HEAP_IMAGE_* note above.
+      "-DMI_HEAP_IMAGE_HOST_FN=bun_is_compiled_executable",
     ];
 
     // TLS model: initial-exec for the static link into bun's executable

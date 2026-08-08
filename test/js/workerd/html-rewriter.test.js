@@ -689,7 +689,6 @@ describe("HTMLRewriter", () => {
           "-e",
           `process.on("unhandledRejection", err => {
              console.error("UNHANDLED:" + err.message);
-             process.exit(1);
            });
            const r = new HTMLRewriter()
              .on("p", { async element(e) {
@@ -705,10 +704,12 @@ describe("HTMLRewriter", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The handled rejection leaves the transform to complete: both the
+      // rewrite's success and the rejection's routing are pinned.
       expect({ stdout: stdout.trim(), reported: stderr.includes("UNHANDLED:detached"), exitCode }).toEqual({
-        stdout: "",
+        stdout: "BODY:<p>ok</p>",
         reported: true,
-        exitCode: 1,
+        exitCode: 0,
       });
     });
 

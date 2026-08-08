@@ -1248,7 +1248,14 @@ impl ServerConfig {
                     )));
                 }
 
-                args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
+                let slice = unix_str.slice();
+                if crate::socket::unix_path_has_interior_nul(slice) {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "\"unix\" must not contain null bytes"
+                    )));
+                }
+
+                args.address = Address::Unix(bun_core::ZBox::from_bytes(slice));
             }
         }
         if global.has_exception() {

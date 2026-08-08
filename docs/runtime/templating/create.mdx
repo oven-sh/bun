@@ -150,10 +150,7 @@ Bun then:
 
 ## From a local template
 
-<Warning>
-  Unlike remote templates, running `bun create` with a local template deletes the entire destination folder if it
-  already exists.
-</Warning>
+Like remote templates, `bun create` with a local template refuses to overwrite existing files in the destination folder unless the `--force` flag is passed. `README.md` and `.gitignore` are the exception: they never count as conflicts and are replaced by the template's versions.
 
 You can define custom templates on your local file system. Put them in one of the following directories:
 
@@ -248,14 +245,15 @@ IF GitHub repo
 ELSE IF local template
 
 1. Open local template folder
-2. Delete destination directory recursively
-3. Copy files recursively using the fastest system calls available (on macOS, `fcopyfile`; on Linux, `copy_file_range`). Do not copy or traverse into the `node_modules` folder if it exists (this alone makes it faster than `cp`)
+2. Copy files recursively using the fastest system calls available (on macOS, `fcopyfile`; on Linux, `copy_file_range`). Do not copy or traverse into the `node_modules` folder if it exists (this alone makes it faster than `cp`)
+   - If files would be overwritten, warn and exit unless `--force` is passed
 
-4. Parse the `package.json` (again!), update `name` to be `${basename(destination)}`, remove the `bun-create` section from the `package.json` and save the updated `package.json` to disk.
-5. Run any tasks defined in `"bun-create": { "preinstall" }`
-6. Run `bun install` unless `--no-install` is passed OR no dependencies are in package.json
-7. Run any tasks defined in `"bun-create": { "postinstall" }`
-8. Run `git init; git add -A .; git commit -am "Initial Commit";`
+3. Parse the `package.json` (again!), update `name` to be `${basename(destination)}`, remove the `bun-create` section from the `package.json` and save the updated `package.json` to disk.
+4. Run any tasks defined in `"bun-create": { "preinstall" }`
+5. Run `bun install` unless `--no-install` is passed OR no dependencies are in package.json
+6. Run any tasks defined in `"bun-create": { "postinstall" }`
+7. Run `git init; git add -A .; git commit -am "Initial Commit";`
+   - Skipped if `${destination}/.git` already exists, leaving the existing repository untouched
    - Rename `gitignore` to `.gitignore`. npm strips `.gitignore` files from published packages.
    - If there are dependencies, this runs in a separate thread concurrently while node_modules are being installed
    - Using libgit2 if available was tested and performed 3x slower in microbenchmarks

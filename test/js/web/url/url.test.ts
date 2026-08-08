@@ -184,7 +184,10 @@ describe("url", () => {
     // Scheme-relative input and an all-ignored base reach the same host span.
     expect(() => new URL("//\u180E/evil.example/", "http://good.example/")).toThrow(errInvalidURL);
     expect(URL.canParse("//\u180E/evil.example/", "http://good.example/")).toBe(false);
+    expect(URL.parse("//\u180E/evil.example/", "http://good.example/")).toBeNull();
     expect(() => new URL("/x", "http://\u206A/base.example/")).toThrow(errInvalidURL);
+    expect(URL.canParse("/x", "http://\u206A/base.example/")).toBe(false);
+    expect(URL.parse("/x", "http://\u206A/base.example/")).toBeNull();
     // Mixed hosts still strip the ignored code point rather than failing.
     expect(new URL("http://a\u180Eb/").href).toBe("http://ab/");
     expect(new URL("file://a\u180Eb/x").host).toBe("ab");
@@ -199,6 +202,9 @@ describe("url", () => {
     const f3 = new URL("file://server/share");
     f3.host = "";
     expect(f3.href).toBe("file:///share");
+    const f4 = new URL("file://server/share");
+    f4.hostname = "";
+    expect(f4.href).toBe("file:///share");
     // A terminator after the ignored code points must not smuggle the tail
     // past the empty-host guard: the host span ends at the first / \ ? #.
     for (const tail of ["/x", "\\x", "?x", "#x"]) {

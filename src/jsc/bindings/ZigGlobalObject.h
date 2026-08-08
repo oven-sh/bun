@@ -263,6 +263,10 @@ public:
     JSC::JSObject* HTMLRewriterSink() { return m_JSHTMLRewriterSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue HTMLRewriterSinkPrototype() const { return m_JSHTMLRewriterSinkClassStructure.prototypeInitializedOnMainThread(this); }
 
+    JSC::Structure* JSBufferListStructure() const { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSBufferList() { return m_JSBufferListClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSBufferListPrototype() const { return m_JSBufferListClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::Structure* JSStringDecoderStructure() const { return m_JSStringDecoderClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSStringDecoder() const { return m_JSStringDecoderClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSStringDecoderPrototype() const { return m_JSStringDecoderClassStructure.prototypeInitializedOnMainThread(this); }
@@ -572,6 +576,7 @@ public:
     /* JSC's hashtable code-generator tries to access these properties, so we make them public. */           \
     /* However, we'd like it better if they could be protected. */                                           \
     V(private, LazyClassStructure, m_JSArrayBufferSinkClassStructure)                                        \
+    V(private, LazyClassStructure, m_JSBufferListClassStructure)                                             \
     V(private, LazyClassStructure, m_JSFFIFunctionStructure)                                                 \
     V(private, LazyClassStructure, m_JSFileSinkClassStructure)                                               \
     V(private, LazyClassStructure, m_JSHTTPResponseSinkClassStructure)                                       \

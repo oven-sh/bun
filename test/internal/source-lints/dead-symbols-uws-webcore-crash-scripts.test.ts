@@ -1,7 +1,7 @@
 // Guards against reintroduction of symbols removed as dead code from
 // bun_uws_sys (unused C API wrappers and their Rust declarations), the
-// C++ JSC bindings (JSBufferList, DOMConstructors entries, stray macros and
-// forward declarations), bun_crash_handler (the error-return-trace apparatus,
+// C++ JSC bindings (DOMConstructors entries, stray macros and forward
+// declarations), bun_crash_handler (the error-return-trace apparatus,
 // which Rust cannot produce), bun_collections, the bun:sql builtin, and the
 // retired scripts/clippy-loop tooling.
 // Each entry was verified to have zero references across src/, scripts/,
@@ -117,10 +117,6 @@ test("dead C++ bindings do not reappear", () => {
     // these are sentinels for the ~800 WebKit-inherited entries.
     ["src/jsc/bindings/webcore/DOMConstructors.h", /^\s*(Touch|ApplePaySession|GPUDevice|WebKitMediaKeys),$/m],
     ["src/jsc/bindings/webcore/DOMConstructors.h", /numberOfDOMConstructorsBase|bunExtraConstructors/],
-    // JSBufferList: native BufferList superseded by the JS streams
-    // implementation long ago; nothing reached its lazy structure.
-    ["src/jsc/bindings/ZigGlobalObject.h", /JSBufferList/],
-    ["src/jsc/bindings/ZigGlobalObject.cpp", /JSBufferList/],
     ["src/jsc/bindings/napi.h", /NAPI_PERISH/],
     ["src/jsc/bindings/dh-primes.h", /OPENSSL_ARRAY_SIZE/],
     ["src/jsc/bindings/JSDOMWrapper.h", /hasCustomPtrTraits/],
@@ -138,8 +134,6 @@ test("dead C++ bindings do not reappear", () => {
 
 test("deleted files stay deleted", () => {
   const gone = [
-    "src/jsc/bindings/JSBufferList.cpp",
-    "src/jsc/bindings/JSBufferList.h",
     // Orphan LLVM bitcode blob with no build-system reference.
     "src/base64/neonbase64",
     // One-shot tooling for the completed 2026-05 clippy campaign.

@@ -90,7 +90,8 @@ impl<'a> Node<'a> {
 /// a well-formed XML document). Everything a `Node` lends lives until `f`
 /// returns.
 pub(crate) fn with_document<R>(body: &[u8], f: impl FnOnce(Option<Node<'_>>) -> R) -> R {
-    if body.is_empty() {
+    // The parser's positions are 32-bit.
+    if body.is_empty() || body.len() > i32::MAX as usize {
         return f(None);
     }
     let recycle = RecycledArena::take();
@@ -114,8 +115,8 @@ pub(crate) fn with_document<R>(body: &[u8], f: impl FnOnce(Option<Node<'_>>) -> 
     f(Node::of(&root, arena))
 }
 
-/// The `<Code>` and `<Message>` of an S3 `<Error>` document; `None` if the
-/// body is not one.
+/// The (non-empty) `<Code>` and `<Message>` of an S3 `<Error>` document;
+/// `None` if the body is not one.
 #[allow(clippy::type_complexity)]
 pub(crate) fn with_error<R>(
     body: &[u8],
@@ -123,8 +124,8 @@ pub(crate) fn with_error<R>(
 ) -> R {
     with_document(body, |root| match root {
         Some(error) if error.name == b"Error" => f(Some((
-            error.child_text(b"Code"),
-            error.child_text(b"Message"),
+            error.child_text(b"Code").filter(|code| !code.is_empty()),
+            error.child_text(b"Message").filter(|message| !message.is_empty()),
         ))),
         _ => f(None),
     })

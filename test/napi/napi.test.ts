@@ -1741,15 +1741,14 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       // freed when the hook returns.
       const output = await checkSameOutput("test_async_cleanup_hook_tsfn_release", []);
       // Pin the successful lifecycle, so matching Node on a shared failure
-      // (non-zero status in both) cannot pass.
-      expect(output).toEndWith(
-        [
-          "async cleanup hook fired",
-          "released tsfn: status=0",
-          "tsfn finalize: removing async cleanup hook",
-          "async cleanup hook removed: status=0",
-        ].join("\n"),
-      );
+      // (non-zero status in both) cannot pass. printf() via the Windows CRT
+      // emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/).slice(-4)).toEqual([
+        "async cleanup hook fired",
+        "released tsfn: status=0",
+        "tsfn finalize: removing async cleanup hook",
+        "async cleanup hook removed: status=0",
+      ]);
     });
   });
 

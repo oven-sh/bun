@@ -1168,6 +1168,7 @@ pub mod fs {
         // https://twitter.com/jarredsumner/status/1655464485245845506
         /// Caller borrows the returned `EntriesOption`. When `FeatureFlags::ENABLE_ENTRY_CACHE`
         /// is `false`, it is not safe to store this pointer past the current function call.
+        /// `maybe_handle` is owned by this call.
         pub fn read_directory_with_iterator<I: DirEntryIterator>(
             &mut self,
             dir_maybe_trail_slash: &[u8],
@@ -1179,6 +1180,18 @@ pub mod fs {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
+
+            let had_handle = maybe_handle.is_some();
+            let close_even_if_published = !store_fd || self.need_to_close_files();
+            let owned_handle = core::cell::Cell::new(maybe_handle);
+            let handle_published = core::cell::Cell::new(false);
+            let _close_guard = scopeguard::guard((), |()| {
+                let Some(h) = owned_handle.get() else { return };
+                if !handle_published.get() || (!had_handle && close_even_if_published) {
+                    let _ = bun_sys::close(h);
+                }
+            });
+
             let mut cache_result: Option<bun_alloc::Result> = None;
             let _unlock_guard = if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
                 Some(self.entries_mutex.lock_guard())
@@ -1218,23 +1231,16 @@ pub mod fs {
                 }
             }
 
-            let had_handle = maybe_handle.is_some();
-            let handle: Fd = match maybe_handle {
+            let handle: Fd = match owned_handle.get() {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
-                    Ok(h) => h,
+                    Ok(h) => {
+                        owned_handle.set(Some(h));
+                        h
+                    }
                     Err(err) => return self.read_directory_error(dir, err),
                 },
             };
-
-            // Close the handle on every exit path. Use
-            // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
-            let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
-            let _close_guard = scopeguard::guard(handle, move |h| {
-                if should_close_handle {
-                    let _ = bun_sys::close(h);
-                }
-            });
 
             // if we get this far, it's a real directory, so we can just store the dir name.
             // An in-place refresh always keeps the slot's existing interned name: callers
@@ -1259,8 +1265,13 @@ pub mod fs {
             });
             let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
             {
-                Ok(e) => e,
+                Ok(e) => {
+                    handle_published.set(e.fd == handle);
+                    e
+                }
                 Err(err) => {
+                    // Non-void iterators already hold the fd; closing would use-after-free it.
+                    handle_published.set(store_fd && !I::IS_VOID);
                     if let Some(existing) = in_place {
                         // SAFETY: see above.
                         unsafe { (*existing).data.clear() };
@@ -1283,6 +1294,7 @@ pub mod fs {
                 }
                 if store_fd && !entries.fd.is_valid() {
                     entries.fd = handle;
+                    handle_published.set(true);
                 }
 
                 // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh

@@ -764,7 +764,7 @@ test("should not leak using readable stream", async () => {
       // The fixture asserts RSS stabilizes after iteration 250, but with the
       // default 256 MB quarantine the freed 128 KB bodies are never reused and
       // RSS keeps climbing through all 500 iterations (~97 MB past the sample
-      // point, over the 64 MB allowance). Cap the quarantine so freed churn
+      // point, far over the allowance). Cap the quarantine so freed churn
       // recycles and the stabilization the test asserts can actually happen.
       ...(isASAN && { ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS ?? ""}:quarantine_size_mb=32`.replace(/^:/, "") }),
     },

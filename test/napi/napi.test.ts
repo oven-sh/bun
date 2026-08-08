@@ -616,6 +616,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // leaves one behind leaks. An addon that uses the handle after napi_closing
     // (a release, say) therefore touches freed memory, in node as well: the docs
     // say to make no further use of it. Bun-only: reads bun's live tsfn count.
+    // The spawned run takes >10s under a debug+ASAN bun, so the 5s default
+    // times out on slow machines.
     it("frees an orphaned threadsafe function whose last reference a call consumed", async () => {
       await using proc = spawn({
         cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_threadsafe_function_orphan_leak", "[]"],
@@ -645,7 +647,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         exitCode: 0,
         signalCode: null,
       });
-    });
+    }, 30_000);
 
     // napi_create_threadsafe_function once the env has torn its threadsafe
     // functions down (here: from a cleanup hook that a threadsafe function's
@@ -897,6 +899,36 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       );
     });
 
+    // Small typed arrays use JSC's "fast" mode, whose GC-heap storage is
+    // abandoned when the backing ArrayBuffer is materialized. The data pointer
+    // NAPI hands out must point at the storage that survives, or native writes
+    // are silently dropped (see issue #37151).
+    it("returns a data pointer whose writes are visible through small typed arrays", async () => {
+      for (const size of [16, 999, 2048]) {
+        const output = await checkSameOutput("test_typedarray_info_write_visibility", `[new Uint8Array(${size})]`);
+        expect(output).toBe(`length=${size} first=42 last=42`);
+      }
+    });
+
+    it("returns a data pointer at the reported byte offset for small typed arrays", async () => {
+      for (const expr of ["new Uint8Array(0)", "new Uint8Array(64)", "new Int32Array(8)"]) {
+        const output = await checkSameOutput("test_typedarray_info_byte_offset", `[${expr}]`);
+        expect(output).toEndWith("data_is_arraybuffer_data_plus_byte_offset=true");
+      }
+    });
+
+    it("napi_get_buffer_info pointer stays valid after the backing ArrayBuffer is materialized", async () => {
+      for (const expr of ["Buffer.alloc(32)", "new Uint8Array(32)"]) {
+        const output = await checkSameOutput("test_buffer_info_pointer_stability", `[${expr}]`);
+        expect(output).toBe("length=32 first=43 last=43");
+      }
+    });
+
+    it("napi_create_buffer and napi_create_buffer_copy pointers stay valid after the backing ArrayBuffer is materialized", async () => {
+      const output = await checkSameOutput("test_create_buffer_pointer_stability", []);
+      expect(output.split(/\r?\n/)).toEqual(["create_buffer last=44", "create_buffer_copy last=45"]);
+    });
+
     it("reports the view's byte offset into its backing buffer", async () => {
       const output = await checkSameOutput(
         "test_typedarray_info_byte_offset",
@@ -967,6 +999,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       await checkSameOutput("test_napi_remove_wrap", []);
     });
 
+    // 7 sequential node+bun pairs; a debug+ASAN bun takes ~2s each, so the
+    // 5s default times out on slow machines.
     it("has the right lifetime", async () => {
       await checkSameOutput("test_wrap_lifetime_without_ref", []);
       await checkSameOutput("test_wrap_lifetime_with_weak_ref", []);
@@ -977,16 +1011,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       await checkSameOutput("test_ref_deleted_in_cleanup", []);
       // check that calling napi_delete_ref in the ref's finalizer is not use-after-free
       await checkSameOutput("test_ref_deleted_in_async_finalize", []);
-    });
+    }, 30_000);
   });
 
   describe("napi_define_class", () => {
+    // Spawns 4 sequential node+bun pairs; a debug+ASAN bun takes ~2s each,
+    // so the 5s default times out on slow machines.
     it("handles edge cases in the constructor", async () => {
       await checkSameOutput("test_napi_class", []);
       await checkSameOutput("test_subclass_napi_class", []);
       await checkSameOutput("test_napi_class_non_constructor_call", []);
       await checkSameOutput("test_reflect_construct_napi_class", []);
-    });
+    }, 30_000);
 
     it("does not crash with Reflect.construct when newTarget has no prototype", async () => {
       await checkSameOutput("test_reflect_construct_no_prototype_crash", []);

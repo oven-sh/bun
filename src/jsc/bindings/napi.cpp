@@ -2278,6 +2278,10 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
     NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
 
     if (data != nullptr) {
+        // Node guarantees the pointer stays valid for the buffer's lifetime.
+        // Small views start in fast mode, whose storage is abandoned when the
+        // backing ArrayBuffer is materialized, so materialize it first.
+        uint8Array->possiblySharedBuffer();
         // Node.js' code looks like this:
         //    *data = node::Buffer::Data(buffer);
         // That means they unconditionally update the data pointer.

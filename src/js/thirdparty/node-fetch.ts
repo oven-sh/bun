@@ -40,9 +40,17 @@ class Response extends WebResponse {
   [kHeaders];
 
   constructor(body, init) {
-    const { Readable, Stream } = require("node:stream");
+    const { Readable, Stream, PassThrough } = require("node:stream");
     if (body && typeof body === "object" && (body instanceof Stream || body instanceof Readable)) {
-      body = Readable.toWeb(body);
+      // Readable.toWeb requires _readableState; minipass etc. extend Stream without it.
+      let readable = body;
+      if (typeof readable._readableState !== "object") {
+        const passthrough = new PassThrough();
+        readable.on("error", err => passthrough.destroy(err));
+        readable.pipe(passthrough);
+        readable = passthrough;
+      }
+      body = Readable.toWeb(readable);
     }
 
     super(body, init);
@@ -164,6 +172,7 @@ async function fetch(
       let readable = initBody;
       if (!(readable instanceof Readable)) {
         const passthrough = new PassThrough();
+        readable.on("error", err => passthrough.destroy(err));
         readable.pipe(passthrough);
         readable = passthrough;
       }

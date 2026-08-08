@@ -78,7 +78,7 @@ impl ConcurrentCppTask {
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        handle.unref_keep_alive(&crate::LoopKind::Regular);
+        handle.unref_keep_alive(crate::LoopKind::Regular);
     }
 }
 
@@ -89,7 +89,7 @@ extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoCont
     // the centralised non-null deref proof. C++ just handed it over.
     EventLoopTaskNoContext::opaque_ref(cpp_task)
         .vm_handle()
-        .ref_keep_alive(&crate::LoopKind::Regular);
+        .ref_keep_alive(crate::LoopKind::Regular);
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,
         workpool_task: WorkPoolTask::default(),

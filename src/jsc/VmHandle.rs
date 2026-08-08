@@ -42,25 +42,14 @@ enum State {
     Closed = 2,
 }
 
-/// Which event loop a task belongs to, fixed when the task is created on the JS
-/// thread: one of the VM's two embedded loops (a task started while a macro
-/// runs completes into the macro loop), or the isolated loop a `Bun.spawnSync`
-/// is ticking (which has its own poster; the VM's queues would never be seen).
-#[derive(Clone)]
+/// Which of the VM's two embedded loops a task belongs to, fixed when the task
+/// is created on the JS thread (a task started while a macro runs completes
+/// into the macro loop). `Bun.spawnSync`'s isolated loop is not one of these:
+/// its producers post through that loop's own [`JsPoster`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopKind {
     Regular,
     Macro,
-    Isolated(Arc<IsolatedPosterInner>),
-}
-
-impl core::fmt::Debug for LoopKind {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(match self {
-            LoopKind::Regular => "Regular",
-            LoopKind::Macro => "Macro",
-            LoopKind::Isolated(_) => "Isolated",
-        })
-    }
 }
 
 /// The part of [`Shared`] every native→JS entry on the JS thread reads
@@ -188,15 +177,12 @@ impl VmHandle {
     }
 
     #[inline]
-    fn loop_of<'a>(vm: *mut VirtualMachine, kind: &LoopKind) -> &'a EventLoop {
+    fn loop_of<'a>(vm: *mut VirtualMachine, kind: LoopKind) -> &'a EventLoop {
         // SAFETY: caller is inside the gate; the VM and both embedded loops are alive.
         unsafe {
             match kind {
                 LoopKind::Regular => &(*vm).regular_event_loop,
                 LoopKind::Macro => &(*vm).macro_event_loop,
-                LoopKind::Isolated(_) => {
-                    unreachable!("isolated loops are posted to through their own poster")
-                }
             }
         }
     }
@@ -204,10 +190,7 @@ impl VmHandle {
     // ── off-thread API ────────────────────────────────────────────────────
 
     /// Queue `task` on the VM's `kind` loop and wake it, or hand it back.
-    pub fn post(&self, kind: &LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
-        if let LoopKind::Isolated(p) = kind {
-            return p.post(task);
-        }
+    pub fn post(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
         refusal_gate::before_post(self);
         let Some(_a) = self.enter() else {
             // SAFETY: handed to us by the caller and not yet queued anywhere.
@@ -235,7 +218,7 @@ impl VmHandle {
             fn Bun__deleteEventLoopTask(task: *mut crate::cpp_task::CppTask);
         }
         let ct = ConcurrentTaskItem::create(bun_event_loop::Task::init(task));
-        if let Posted::Refused(ct) = self.post(&LoopKind::Regular, ct) {
+        if let Posted::Refused(ct) = self.post(LoopKind::Regular, ct) {
             // SAFETY: refused ⇒ we own both boxes.
             unsafe {
                 drop(bun_core::heap::take(ct.as_ptr()));
@@ -245,12 +228,8 @@ impl VmHandle {
     }
 
     /// Keep the VM's loop alive from another thread (no-op once closed; the
-    /// teardown ignores keep-alives anyway). Isolated loops need no keep-alive:
-    /// spawnSync ticks them until its child is done.
-    pub fn ref_keep_alive(&self, kind: &LoopKind) {
-        if matches!(kind, LoopKind::Isolated(_)) {
-            return;
-        }
+    /// teardown ignores keep-alives anyway).
+    pub fn ref_keep_alive(&self, kind: LoopKind) {
         if let Some(_a) = self.enter() {
             // SAFETY: inside the gate.
             let el = Self::loop_of(unsafe { self.vm() }, kind);
@@ -259,10 +238,7 @@ impl VmHandle {
         }
     }
 
-    pub fn unref_keep_alive(&self, kind: &LoopKind) {
-        if matches!(kind, LoopKind::Isolated(_)) {
-            return;
-        }
+    pub fn unref_keep_alive(&self, kind: LoopKind) {
         if let Some(_a) = self.enter() {
             // SAFETY: inside the gate.
             let el = Self::loop_of(unsafe { self.vm() }, kind);
@@ -576,9 +552,9 @@ pub unsafe extern "C" fn Bun__VmHandle__refKeepAlive(r: *const Shared, delta: co
     // SAFETY: fn contract.
     let handle = unsafe { VmHandle::borrow_ref(r) };
     if delta > 0 {
-        handle.ref_keep_alive(&LoopKind::Regular);
+        handle.ref_keep_alive(LoopKind::Regular);
     } else {
-        handle.unref_keep_alive(&LoopKind::Regular);
+        handle.unref_keep_alive(LoopKind::Regular);
     }
 }
 
@@ -695,7 +671,7 @@ struct PosterData {
 unsafe fn poster_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> Posted {
     // SAFETY: `data` is a leaked `Arc<PosterData>` pointer (see `to_js_poster`).
     let d = unsafe { &*data.cast::<PosterData>() };
-    d.handle.post(&d.kind, task)
+    d.handle.post(d.kind, task)
 }
 unsafe fn poster_clone(data: *const ()) -> *const () {
     // SAFETY: as above; bump the Arc count and hand out the same pointer.
@@ -817,7 +793,7 @@ impl LoopHandle {
     /// Post an already-built task. Prefer [`post_job`], which leaves the caller
     /// nothing to check; this hands a refusal back.
     pub fn post_task(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
-        self.vm.post(&self.kind, task)
+        self.vm.post(self.kind, task)
     }
     pub fn borrow(&self) -> Option<Borrow> {
         self.vm.borrow()
@@ -835,10 +811,10 @@ impl LoopHandle {
         self.vm.embedded_work_finished()
     }
     pub fn ref_keep_alive(&self) {
-        self.vm.ref_keep_alive(&self.kind)
+        self.vm.ref_keep_alive(self.kind)
     }
     pub fn unref_keep_alive(&self) {
-        self.vm.unref_keep_alive(&self.kind)
+        self.vm.unref_keep_alive(self.kind)
     }
     /// An erased poster for this loop, for code that cannot name `bun_jsc`.
     pub fn to_js_poster(&self) -> bun_event_loop::JsPoster {

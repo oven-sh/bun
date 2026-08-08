@@ -511,8 +511,9 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, 
     ASSERT(m_scriptExecutionContext && m_scriptExecutionContext->isContextThread());
     Ref protectedThis { *this };
 
-    // node:worker_threads: a worker stopped by its parent once it was running exits with 1 unless
-    // it chose a code itself. The Web Worker's 'close' event keeps 0 for that case (documented).
+    // node:worker_threads: a worker stopped by its parent once it was running reports 1 unless it
+    // called process.exit() itself (a process.exitCode it merely set is not used, as in Node). The
+    // Web Worker's 'close' event keeps 0 for that case (documented).
     if (m_options.kind == WorkerOptions::Kind::Node && stoppedByParent)
         exitCode = 1;
 

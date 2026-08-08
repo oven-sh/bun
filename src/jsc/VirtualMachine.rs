@@ -879,9 +879,9 @@ impl VirtualMachine {
         self.handle.stop();
     }
 
-    /// Which loop is current (`event_loop` points at the regular loop except
-    /// while a macro runs). Off-thread completions carry this so they land on
-    /// the loop that was current when their work started.
+    /// Which embedded loop is current (`event_loop` points at the regular loop
+    /// except while a macro runs). Off-thread completions carry this so they
+    /// land on the loop that was current when their work started.
     #[inline]
     pub fn current_loop_kind(&self) -> crate::LoopKind {
         if core::ptr::eq(
@@ -889,20 +889,12 @@ impl VirtualMachine {
             &raw const self.regular_event_loop,
         ) {
             crate::LoopKind::Regular
-        } else if core::ptr::eq(
-            self.event_loop.cast_const(),
-            &raw const self.macro_event_loop,
-        ) {
-            crate::LoopKind::Macro
         } else {
-            // Bun.spawnSync installed its isolated loop for the duration.
-            // SAFETY: `event_loop` is the live loop this VM is currently ticking.
-            let el = unsafe { &*self.event_loop };
-            crate::LoopKind::Isolated(
-                el.isolated_poster
-                    .clone()
-                    .expect("a non-embedded current loop is a spawnSync isolated loop"),
-            )
+            debug_assert!(core::ptr::eq(
+                self.event_loop.cast_const(),
+                &raw const self.macro_event_loop
+            ));
+            crate::LoopKind::Macro
         }
     }
 

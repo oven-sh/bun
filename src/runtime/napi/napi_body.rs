@@ -5151,7 +5151,7 @@ impl NapiFinalizerTask {
             let this = bun_core::heap::into_raw(self);
             let ct = ConcurrentTask::create(Task::init(this));
             if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                handle.post(&bun_jsc::LoopKind::Regular, ct)
+                handle.post(bun_jsc::LoopKind::Regular, ct)
             {
                 // SAFETY: refused ⇒ we own both boxes.
                 unsafe {

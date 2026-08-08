@@ -630,7 +630,7 @@ where
                 .as_ref()
                 .expect("reload_handle set for a reloader that enqueues");
             if let crate::vm_handle::Posted::Refused(_) = handle.post(
-                &crate::LoopKind::Regular,
+                crate::LoopKind::Regular,
                 core::ptr::NonNull::from(concurrent),
             ) {
                 // VM torn down while a change was pending: drop the reload task.

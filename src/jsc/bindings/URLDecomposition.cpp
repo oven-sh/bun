@@ -121,11 +121,16 @@ void URLDecomposition::setHost(StringView value)
     // Non-special schemes and '['-prefixed (IPv6) hosts never run IDNA.
     String mappedValue;
     if (fullURL.hasSpecialScheme() && !value.startsWith('[')) {
-        size_t hostEnd = value.reverseFind(':');
-        auto hostSpan = hostEnd == notFound ? value : value.left(hostEnd);
+        size_t terminator = Bun::findURLHostTerminator(value);
+        size_t hostEnd = value.left(terminator).reverseFind(':');
+        size_t hostSpanEnd = hostEnd == notFound ? terminator : hostEnd;
+        auto hostSpan = value.left(hostSpanEnd);
         if (Bun::containsUnicode16IDNADeltaSource(hostSpan)) {
             auto mappedHost = Bun::applyUnicode16IDNADelta(hostSpan.toString());
-            mappedValue = hostEnd == notFound ? mappedHost : makeString(mappedHost, value.substring(hostEnd));
+            // A host mapping to empty is a failed host parse, not an assignable literal "".
+            if (mappedHost.isEmpty())
+                return;
+            mappedValue = makeString(mappedHost, value.substring(hostSpanEnd));
             value = mappedValue;
         }
     }
@@ -173,9 +178,17 @@ void URLDecomposition::setHostname(StringView host)
     // See setHost: the input is a hostname by definition, and only special
     // schemes run IDNA on it.
     String mappedHost;
-    if (fullURL.hasSpecialScheme() && !host.startsWith('[') && Bun::containsUnicode16IDNADeltaSource(host)) {
-        mappedHost = Bun::applyUnicode16IDNADelta(host.toString());
-        host = mappedHost;
+    if (fullURL.hasSpecialScheme() && !host.startsWith('[')) {
+        size_t terminator = Bun::findURLHostTerminator(host);
+        auto hostSpan = host.left(terminator);
+        if (Bun::containsUnicode16IDNADeltaSource(hostSpan)) {
+            auto mappedSpan = Bun::applyUnicode16IDNADelta(hostSpan.toString());
+            // See setHost: mapping a non-empty hostname to empty is failure, not "".
+            if (mappedSpan.isEmpty())
+                return;
+            mappedHost = makeString(mappedSpan, host.substring(terminator));
+            host = mappedHost;
+        }
     }
     if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;

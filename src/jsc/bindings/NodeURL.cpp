@@ -124,6 +124,16 @@ String applyUnicode16IDNADelta(const String& input)
     return builder.toString();
 }
 
+size_t findURLHostTerminator(StringView view, size_t start)
+{
+    for (size_t i = start; i < view.length(); i++) {
+        char16_t c = view[i];
+        if (c == '/' || c == '\\' || c == '?' || c == '#')
+            return i;
+    }
+    return view.length();
+}
+
 // Port of Node's icu-based ToASCII (removed in nodejs/node#55156):
 // https://github.com/nodejs/node/blob/9f5000e0f2a2^/src/node_i18n.cc — filter
 // the CheckHyphens/VerifyDnsLength error classes, fail otherwise unless lenient.
@@ -187,14 +197,7 @@ static String parseDomainAsHost(const String& rawDomain)
     // The hostname setter's basic-URL parse stops at the first path, query,
     // fragment, or backslash (special scheme) terminator.
     StringView view { domain };
-    size_t end = view.length();
-    for (size_t i = 0; i < view.length(); i++) {
-        char16_t c = view[i];
-        if (c == '/' || c == '?' || c == '#' || c == '\\') {
-            end = i;
-            break;
-        }
-    }
+    size_t end = findURLHostTerminator(view);
     String host = domain.left(end);
     if (host.isEmpty())
         return {};

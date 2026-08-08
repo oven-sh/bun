@@ -154,15 +154,22 @@ describe("util", () => {
     });
 
     it("propagates a throwing getPrototypeOf trap", () => {
+      const expected = new Error("nope");
       const proxy = new Proxy(
         {},
         {
           getPrototypeOf() {
-            throw new Error("nope");
+            throw expected;
           },
         },
       );
-      expect(() => util.isError(proxy)).toThrow("nope");
+      let actual;
+      try {
+        util.isError(proxy);
+      } catch (error) {
+        actual = error;
+      }
+      expect(actual).toBe(expected);
     });
   });
 

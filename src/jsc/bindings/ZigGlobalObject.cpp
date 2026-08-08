@@ -2316,9 +2316,10 @@ void GlobalObject::finishCreation(VM& vm)
             if (!scope.exception()) [[likely]] {
                 RELEASE_ASSERT(nodeUtilValue.isObject());
                 JSValue prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
-                if (!scope.exception()) [[likely]] {
-                    ASSERT(prop);
-                    init.set(uncheckedDowncast<JSFunction>(prop));
+                // User code can replace the mutable util.inspect export with a non-function.
+                JSFunction* inspect = !scope.exception() && prop ? dynamicDowncast<JSC::JSFunction>(prop) : nullptr;
+                if (inspect) [[likely]] {
+                    init.set(inspect);
                     return;
                 }
             }

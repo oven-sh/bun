@@ -212,6 +212,30 @@ it.concurrent("console.log stops the prototype walk when a getPrototypeOf trap t
   });
 });
 
+it.concurrent("custom inspect survives util.inspect being replaced with a non-function", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `require("util").inspect = 42;
+       const custom = Symbol.for("nodejs.util.inspect.custom");
+       console.log({ [custom]: () => "custom-ok" });
+       console.log("alive");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: expect.stringContaining("custom-ok"),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it.concurrent("custom inspect stylize with colors survives node:util failing to load", async () => {
   const env = { ...bunEnv, FORCE_COLOR: "1" };
   delete env.NO_COLOR;

@@ -67,7 +67,7 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     });
     afterEach(() => {});
 
-    // TODO: re-enable when https://github.com/oven-sh/bun/issues/17080 is resolved
+    // Skipped until https://github.com/oven-sh/bun/issues/17080 is resolved.
     it.skip("main global object is not equal to vm global objects", () => {
       const [ctx] = contexts;
       expect(deepEquals(global, ctx)).toBe(false);

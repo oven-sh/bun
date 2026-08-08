@@ -329,8 +329,6 @@ impl PosixLoop {
     }
 }
 
-
-
 // ───────────────────────────── WindowsLoop ─────────────────────────────
 
 #[cfg(windows)]
@@ -512,7 +510,6 @@ impl WindowsLoop {
         // SAFETY: `this` was returned by us_create_loop/uws_get_loop_with_native and not yet freed
         unsafe { c::us_loop_free(this) };
     }
-
 }
 
 // ───────────────────────────── Loop alias ─────────────────────────────

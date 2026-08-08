@@ -20,7 +20,6 @@
 //!   4. `__bun_get_vm_ctx` / `__bun_stdio_blob_store_new` /
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
-use bun_core::WTFStringImplExt as _;
 use bun_options_types::LoaderExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -1507,60 +1506,18 @@ unsafe fn apply_standalone_runtime_flags(
     crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
 }
 
-/// Parse a Worker's `execArgv`; scans argv directly since `ArgIter<'static>` would leak the UTF-8 copies.
+/// Worker `execArgv` → honoured subset (`None` = inherit from process argv).
 /// # Safety
-/// Each `WTFStringImpl` in `exec_argv` is a live WTF string kept alive for the worker's lifetime.
+/// Each `WTFStringImpl` in `exec_argv` is a live WTF string owned by C++ `Worker::create`.
 unsafe fn parse_worker_exec_argv(
-    exec_argv: &[bun_core::WTFStringImpl],
+    exec_argv: Option<&[bun_core::WTFStringImpl]>,
 ) -> bun_jsc::virtual_machine::WorkerExecArgv {
-    let mut out = bun_jsc::virtual_machine::WorkerExecArgv::default();
-    let mut no_addons = false;
-    let mut want_interval = false;
-    let mut skip_next = false;
-    for &arg in exec_argv {
-        if arg.is_null() {
-            continue;
-        }
-        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        let owned = unsafe { &*arg }.to_owned_slice_z();
-        let bytes = owned.as_bytes();
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if want_interval {
-            want_interval = false;
-            out.cpu_prof_interval = std::str::from_utf8(bytes).ok().and_then(|s| s.parse().ok());
-            continue;
-        }
-        // `stop_after_positional_at = 1` — first non-flag token ends parsing.
-        if bytes.first() != Some(&b'-') {
-            break;
-        }
-        if bytes == b"--" {
-            break;
-        }
-        if bytes == b"--no-addons" {
-            no_addons = true;
-        } else if bytes == b"--use-system-ca" {
-            out.use_system_ca = Some(true);
-        } else if bytes == b"--no-use-system-ca" {
-            out.use_system_ca = Some(false);
-        } else if bytes == b"--cpu-prof" {
-            out.cpu_prof = true;
-        } else if bytes == b"--cpu-prof-interval" {
-            want_interval = true;
-        } else if let Some(v) = bytes.strip_prefix(b"--cpu-prof-interval=") {
-            out.cpu_prof_interval = std::str::from_utf8(v).ok().and_then(|s| s.parse().ok());
-        } else if bytes == b"--cpu-prof-dir" || bytes == b"--cpu-prof-name" {
-            // Value is discarded here but must be consumed so it is not misread
-            // as the first positional (which would stop the scan early).
-            skip_next = true;
-        }
-    }
-    // Override `allow_addons` unconditionally.
-    out.allow_addons = Some(!no_addons);
-    out
+    let Some(exec_argv) = exec_argv else {
+        return crate::cli::worker_exec_argv::scan_process_exec_argv();
+    };
+    // SAFETY: per fn contract.
+    let tokens = unsafe { crate::cli::worker_exec_argv::owned_tokens(exec_argv) };
+    crate::cli::worker_exec_argv::scan_exec_argv(&tokens).honored
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —

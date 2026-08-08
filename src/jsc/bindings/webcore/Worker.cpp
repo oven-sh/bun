@@ -569,7 +569,9 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     // property read must not propagate exceptions out of this function.
     auto& vm = JSC::getVM(workerGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // A TerminationException survives CLEAR_IF_EXCEPTION; do not enter JS with one pending.
+    // A TerminationException can be pending here (CLEAR_IF_EXCEPTION at the
+    // call site cannot clear it); SerializedScriptValue::create enters JS and
+    // asserts on entry with one on the VM.
     if (scope.exception())
         return false;
 
@@ -776,12 +778,12 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     JSValue error = JSC::JSValue::decode(errorValue);
     WTF::String messageStr = message->transferToWTFString();
     auto& vm = JSC::getVM(globalObject);
-    // terminate() mid-entry-evaluation routes the rejected entry promise here;
-    // do not run JS (dispatchEvent, structured clone) with it still pending.
-    if (vm.hasPendingTerminationException()) {
-        worker->dispatchErrorWithMessage(WTF::move(messageStr), {});
-        return;
-    }
+    // terminate() may land mid-entry now that 'online' fires first; the pending
+    // TerminationException is non-clearable and the dispatch/serialize below enter
+    // JS (executeCallImpl asserts !exception()), so post parent-side only.
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return worker->dispatchErrorWithMessage(WTF::move(messageStr), {});
+
     ErrorEvent::Init init;
     init.message = messageStr.isolatedCopy();
     init.error = error;

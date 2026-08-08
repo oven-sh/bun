@@ -106,6 +106,8 @@ pub struct WebWorker {
     /// Heap-owned by this struct; freed in `destroy()`.
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
+    expose_gc: bool,
+    own_exec_argv_options: virtual_machine::WorkerExecArgv,
     /// Owned NUL-terminated bytes.
     name: bun_core::ZBox,
 
@@ -580,6 +582,30 @@ impl WebWorker {
             }
         }
 
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        let mut own_exec_argv_options = virtual_machine::WorkerExecArgv::default();
+        let expose_gc = if inherit_exec_argv {
+            // SAFETY: `parent` is the live calling-thread VM; borrow ends at `;`.
+            match unsafe { (*parent).worker_ref() } {
+                Some(parent_worker) => parent_worker.expose_gc,
+                // SAFETY: `None` reads only process-constant state.
+                None => unsafe { (hooks.parse_worker_exec_argv)(None) }.expose_gc,
+            }
+        } else {
+            // SAFETY: `exec_argv_ptr`/`exec_argv_len` describe the C++
+            // `WorkerOptions` array, alive for this call; the hook only reads it.
+            let mut parsed = unsafe {
+                (hooks.parse_worker_exec_argv)(Some(bun_core::ffi::slice(
+                    exec_argv_ptr,
+                    exec_argv_len,
+                )))
+            };
+            preloads.extend(core::mem::take(&mut parsed.preloads));
+            let expose_gc = parsed.expose_gc;
+            own_exec_argv_options = parsed;
+            expose_gc
+        };
+
         // SAFETY: `parent` is live (see above); borrow ends at `;`.
         let store_fd = unsafe { (*parent).transpiler.resolver.store_fd };
 
@@ -598,6 +624,8 @@ impl WebWorker {
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             preloads,
+            expose_gc,
+            own_exec_argv_options,
             name: if name_str.is_empty() {
                 bun_core::ZBox::default()
             } else {
@@ -901,14 +929,8 @@ impl WebWorker {
         // and passes the owned struct as `args` to the new VM.
         let mut transform_options = (*parent.transpiler.options.transform_options).clone();
 
-        // SAFETY: `exec_argv` borrows C++ `WorkerOptions` kept alive by the owning `WebCore::Worker`.
         let own_exec_argv = self.exec_argv();
-        let exec_argv = match own_exec_argv {
-            // SAFETY: `a` is this worker's execArgv, owned by the WebWorker and
-            // alive for the call; the hook only reads it.
-            Some(a) => unsafe { (hooks.parse_worker_exec_argv)(a) },
-            None => Default::default(),
-        };
+        let exec_argv = &self.own_exec_argv_options;
         if let Some(allow_addons) = exec_argv.allow_addons {
             let parent_allows = transform_options.allow_addons.unwrap_or(true);
             transform_options.allow_addons = Some(parent_allows && allow_addons);
@@ -1024,6 +1046,10 @@ impl WebWorker {
                 crate::bun_cpu_profiler::set_sampling_interval(config.interval);
                 // SAFETY: `jsc_vm` is set by `init_worker` above.
                 crate::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm_ref.jsc_vm });
+            }
+
+            if self.expose_gc {
+                crate::cpp::JSC__JSGlobalObject__addGc(vm_ref.global());
             }
         }
 

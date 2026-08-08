@@ -143,6 +143,36 @@ NamedError: console.error a named error
 `);
 });
 
+it("console.groupCollapsed", async () => {
+  const code = [
+    `console.groupCollapsed("c1");`,
+    `console.log("A");`,
+    `console.group("g1");`,
+    `console.log("B");`,
+    `console.groupEnd();`,
+    `console.groupEnd();`,
+    `console.groupCollapsed();`,
+    `console.log("C");`,
+    `console.groupEnd();`,
+    `console.groupCollapsed(undefined);`,
+    `console.log("E");`,
+    `console.groupEnd();`,
+    `console.log("D");`,
+  ].join("\n");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode }).toEqual({
+    stdout: "c1\n  A\n  g1\n    B\n  C\nundefined\n  E\nD\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("console.log with SharedArrayBuffer", () => {
   // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
   expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");

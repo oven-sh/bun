@@ -45,6 +45,7 @@ const upBase = `http://127.0.0.1:${upstream.port}`;
 const postBase = `https://localhost:${postServer.port}`;
 const iterations = Number(process.env.ITER || "100");
 
+let rejected = 0;
 for (let i = 0; i < iterations; i++) {
   try {
     const upRes = await fetch(upBase);
@@ -54,12 +55,15 @@ for (let i = 0; i < iterations; i++) {
       tls: { ca: tls.cert },
     });
     await res.text();
-  } catch {
-    // Upstream truncation makes some downstream fetches reject; that's the
-    // expected error path. Only a crash is a failure.
+  } catch (e) {
+    // The truncated upstream errors the piped body, so the downstream fetch
+    // must reject with the upstream error whichever side of the wire race it
+    // lands on. Anything else is a bug.
+    if (!(e instanceof TypeError) || (e as any).code !== "ECONNRESET") throw e;
+    rejected++;
   }
   if (i % 25 === 0) Bun.gc(false);
 }
 
 upstream.stop(true);
-console.log(`done ${iterations}`);
+console.log(`done ${iterations} rejected=${rejected}`);

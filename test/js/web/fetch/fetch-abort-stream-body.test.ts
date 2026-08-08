@@ -75,9 +75,53 @@ test
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("AddressSanitizer");
-    expect(stdout).toBe("done 100\n");
+    expect(stdout).toBe("done 100 rejected=100\n");
     expect(exitCode).toBe(0);
   });
+
+// Companion semantics test for the fixture above, not ASAN-gated: a piped
+// upstream body whose connection was truncated rejects the downstream fetch
+// with the upstream error. The rejection is identical whether the error
+// reaches the ByteStream before the native sink wires (EndedInline) or after
+// (end_from_stream), so the assertion holds on either side of that race.
+test.concurrent("piping a truncated upstream body into fetch rejects with the upstream error", async () => {
+  const closed = Promise.withResolvers<void>();
+  using upstream = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open() {},
+      data(sock) {
+        // content-length bigger than the bytes sent, then immediate close:
+        // the client marks the response body errored (truncation).
+        sock.write("HTTP/1.1 200 OK\r\ncontent-length: 1000\r\nconnection: close\r\n\r\npartial-body");
+        sock.end();
+        closed.resolve();
+      },
+    },
+  });
+  await using postServer = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      await req.arrayBuffer().catch(() => {});
+      return new Response("ok");
+    },
+  });
+
+  const upRes = await fetch(`http://127.0.0.1:${upstream.port}/`);
+  await closed.promise;
+  // An OS-scheduler yield (not a same-thread setImmediate) so the HTTP thread
+  // can observe the close before the sink wires, making the EndedInline path
+  // the common case; if the close lands after, the rejection is the same.
+  await Bun.sleep(1);
+
+  const err = await fetch(postServer.url, { method: "POST", body: upRes.body }).then(
+    () => null,
+    e => e,
+  );
+  expect(err).toBeInstanceOf(TypeError);
+  expect(err).toMatchObject({ code: "ECONNRESET" });
+});
 
 test("aborting fetch with a ReadableStream request body does not double-cancel the sink", async () => {
   await using proc = Bun.spawn({

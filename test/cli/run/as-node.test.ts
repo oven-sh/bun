@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { copyFileSync, symlinkSync } from "node:fs";
 import { join } from "path";
-import { bunEnv, bunExe, fakeNodeRun, tempDir } from "../../harness";
+import { bunEnv, bunExe, fakeNodeRun, isWindows, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -105,6 +106,30 @@ describe("fake node cli", () => {
     using temp = tempDir("fake-node", {});
     const result = Bun.spawnSync([bunExe(), "--bun", "node"], {
       cwd: temp,
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdin: Buffer.alloc(0),
+    });
+    expect(result.stderr.toString()).toContain("Missing script");
+    expect(result.success).toBe(false);
+  });
+
+  // https://github.com/oven-sh/bun/issues/36826
+  // Windows resolves executables case-insensitively (PATHEXT commonly lists
+  // `.EXE`), so argv[0] can be `node.EXE`; the invocation-name match must
+  // ignore ASCII case. Misclassified as plain `bun`, the bare invocation
+  // below would run the empty piped stdin and exit 0 instead of printing
+  // "Missing script".
+  test.each(isWindows ? ["node.EXE", "NODE.EXE"] : ["NODE", "nodE"])("detects node mode when invoked as %s", name => {
+    using temp = tempDir("fake-node-case", {});
+    const dir = String(temp);
+    if (isWindows) {
+      // On disk the file is lowercase; only the invocation casing differs.
+      copyFileSync(bunExe(), join(dir, "node.exe"));
+    } else {
+      symlinkSync(bunExe(), join(dir, name));
+    }
+    const result = Bun.spawnSync([join(dir, name)], {
+      cwd: dir,
       env: { ...bunEnv, NODE_ENV: undefined },
       stdin: Buffer.alloc(0),
     });

@@ -829,25 +829,28 @@ pub mod command {
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
+    // Case-insensitive: `PATHEXT` resolution can yield `bunx.EXE` (#36826).
     fn is_bun_x(argv0: &[u8]) -> bool {
         #[cfg(windows)]
         {
-            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
+            return strings::ends_with_case_insensitive_ascii(argv0, b"bunx.exe")
+                || strings::ends_with_case_insensitive_ascii(argv0, b"bunx");
         }
         #[cfg(not(windows))]
         {
-            strings::ends_with(argv0, b"bunx")
+            strings::ends_with_case_insensitive_ascii(argv0, b"bunx")
         }
     }
 
     fn is_node(argv0: &[u8]) -> bool {
         #[cfg(windows)]
         {
-            return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node");
+            return strings::ends_with_case_insensitive_ascii(argv0, b"node.exe")
+                || strings::ends_with_case_insensitive_ascii(argv0, b"node");
         }
         #[cfg(not(windows))]
         {
-            strings::ends_with(argv0, b"node")
+            strings::ends_with_case_insensitive_ascii(argv0, b"node")
         }
     }
 

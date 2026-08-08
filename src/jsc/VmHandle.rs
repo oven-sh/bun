@@ -457,7 +457,7 @@ pub extern "C" fn Bun__VmHandle__scriptAllowed(handle: &VmHandle) -> bool {
 /// of calling out per callback. Valid as long as C++ holds a box on the handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__VmHandle__stateAddress(handle: &VmHandle) -> *const AtomicU8 {
-    &handle.0.hot.state
+    &raw const handle.0.hot.state
 }
 
 // C++ (BunClientData.h) hard-codes this value.

@@ -1757,29 +1757,28 @@ impl VirtualMachine {
         // a sweep just closed.
         vm.forbid_script();
         Zig__GlobalObject__prepareForDestruction(vm.global());
-        loop {
-            // SAFETY: fn contract.
-            unsafe {
-                let _ = Self::stop_phase_sweep(this, kind);
-                let second = Self::stop_phase_sweep(this, kind);
-                debug_assert!(
-                    second == SweepResult::Idle,
-                    "a native close path registered a stoppable resource during teardown"
-                );
+        // SAFETY: fn contract.
+        let sweep = || unsafe {
+            let _ = Self::stop_phase_sweep(this, kind);
+            let second = Self::stop_phase_sweep(this, kind);
+            debug_assert!(
+                second == SweepResult::Idle,
+                "a native close path registered a stoppable resource during teardown"
+            );
+        };
+        sweep();
+        // A worker closes its uv loop below (D), so requests still in flight
+        // complete here, against this live VM: their handles were just closed,
+        // so what remains finishes on its own (threadpool work), and a
+        // completion may start more — open a handle, schedule pool work (still
+        // accepted, and awaited in B) — hence sweep again after each drain.
+        // The exiting main thread neither closes its loop nor may nest uv_run
+        // here: process.exit() can be running inside a libuv completion callback.
+        #[cfg(windows)]
+        if matches!(kind, Teardown::Worker) {
+            while bun_sys::windows::libuv::Loop::drain_requests() {
+                sweep();
             }
-            // A worker closes its uv loop below (D), so requests still in flight
-            // complete here, against this live VM: their handles were just
-            // closed, so what remains finishes on its own (threadpool work), and
-            // a completion may start more — open a handle, schedule pool work
-            // (still accepted, and awaited in B) — hence sweep again after.
-            // The exiting main thread neither closes its loop nor may nest
-            // uv_run here: process.exit() can be running inside a libuv
-            // completion callback.
-            #[cfg(windows)]
-            if matches!(kind, Teardown::Worker) && bun_sys::windows::libuv::Loop::drain_requests() {
-                continue;
-            }
-            break;
         }
         teardown_log!("teardown: stopped");
 

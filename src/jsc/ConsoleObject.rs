@@ -176,13 +176,13 @@ unsafe extern "C" {
     fn Bun__Process__consoleStream(global: &JSGlobalObject, fd: i32, threw: &mut bool) -> JSValue;
     /// `BunProcess.cpp` — `consoleObjectWriteToObservedStream(stream, chunk)`.
     fn Bun__Console__writeToStream(global: &JSGlobalObject, stream: JSValue, chunk: JSValue);
+    /// `BunProcess.cpp` — the console's stream for `fd` is a foreign object
+    /// (not Bun's own stdio stream). Never runs user code.
+    safe fn Bun__Process__consoleStreamIsCustom(global: &JSGlobalObject, fd: i32) -> bool;
     /// `BunProcess.cpp` — the console's stream *object* for `fd` if any exists
     /// (custom binding or Bun's materialised stream), else empty. For
     /// `console.clear()`'s `isTTY` check. Same throw contract as
     /// `Bun__Process__consoleStream`.
-    /// `BunProcess.cpp` — the console's stream for `fd` is a foreign object
-    /// (not Bun's own stdio stream). Never runs user code.
-    safe fn Bun__Process__consoleStreamIsCustom(global: &JSGlobalObject, fd: i32) -> bool;
     fn Bun__Process__consoleStreamObject(
         global: &JSGlobalObject,
         fd: i32,

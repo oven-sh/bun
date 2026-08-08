@@ -2459,14 +2459,6 @@ pub fn before_output_write(fd: Fd) {
     }
 }
 
-/// `bun_jsc::virtual_machine::__bun_stdio_sink_drain` body: synchronously drain
-/// whatever `process.stdout`/`stderr` writes are still queued on this VM, so
-/// what the caller prints next (a fatal error, the exit) cannot overtake or
-/// discard them. No-op — not even an allocation — when the sinks were never
-/// created.
-///
-/// # Safety
-/// `vm` is the live per-thread VM.
 /// See [`__bun_stdio_sink_drain`]; one fd.
 ///
 /// # Safety
@@ -2481,6 +2473,14 @@ unsafe fn __bun_stdio_sink_drain_fd(vm: *mut bun_jsc::VirtualMachineRef, fd: Fd)
     }
 }
 
+/// `bun_jsc::virtual_machine::__bun_stdio_sink_drain` body: synchronously drain
+/// whatever `process.stdout`/`stderr` writes are still queued on this VM, so
+/// what the caller prints next (a fatal error, the exit) cannot overtake or
+/// discard them. No-op — not even an allocation — when the sinks were never
+/// created.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
 unsafe fn __bun_stdio_sink_drain(vm: *mut bun_jsc::VirtualMachineRef) {
     // SAFETY: caller contract.

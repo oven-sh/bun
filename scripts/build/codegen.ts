@@ -618,13 +618,12 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // the two crates so unrelated edits (e.g. src/bundler) don't re-run the
   // scrape. restat=1 + writeIfNotChanged means a no-marker-change edit
   // produces identical output and the cargo step is pruned.
-  const rsInputs = sources.rust.filter(
-    p =>
-      p.endsWith(".rs") &&
-      (p.includes(`${cfg.cwd}/src/runtime/`.replace(/\//g, "/")) ||
-        p.includes(`${cfg.cwd}/src/jsc/`.replace(/\//g, "/"))) &&
-      !p.endsWith("generated_host_exports.rs"),
-  );
+  const slashed = (p: string) => p.replace(/\\/g, "/");
+  const scrapeDirs = [slashed(`${cfg.cwd}/src/runtime/`), slashed(`${cfg.cwd}/src/jsc/`)];
+  const rsInputs = sources.rust.filter(p => {
+    const q = slashed(p);
+    return q.endsWith(".rs") && scrapeDirs.some(d => q.includes(d)) && !q.endsWith("generated_host_exports.rs");
+  });
 
   n.build({
     outputs: [output],

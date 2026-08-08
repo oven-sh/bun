@@ -1972,7 +1972,7 @@ impl WindowsBufferedReader {
         debug_assert!(!source.is_closed());
 
         match source {
-            Source::File(file) => {
+            Source::File(file) | Source::SyncFile(file) => {
                 let file_raw: *mut crate::source::File = file.as_mut();
                 // SAFETY (each access below): `file_raw` points into the boxed
                 // File owned by `self.source` — a heap allocation disjoint
@@ -2023,7 +2023,7 @@ impl WindowsBufferedReader {
                     return sys::Result::Err(err);
                 }
             }
-            _ => {
+            Source::Pipe(_) | Source::Tty(_) => {
                 // SAFETY: source is a live Pipe/Tty stream handle.
                 if let Some(err) = unsafe {
                     uv::uv_read_start(
@@ -2059,11 +2059,11 @@ impl WindowsBufferedReader {
             return sys::Result::Ok(());
         };
         match source {
-            Source::File(file) => {
+            Source::File(file) | Source::SyncFile(file) => {
                 file.stop();
             }
-            _ => {
-                // SAFETY: stream handle is live (just matched non-File).
+            Source::Pipe(_) | Source::Tty(_) => {
+                // SAFETY: stream handle is live (just matched a stream source).
                 unsafe { uv::uv_read_stop(source.to_stream()) };
             }
         }

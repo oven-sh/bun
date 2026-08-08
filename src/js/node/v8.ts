@@ -2,7 +2,7 @@
 
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
-const { validateString, validateOneOf } = require("internal/validators");
+const { validateFunction, validateObject, validateString, validateOneOf } = require("internal/validators");
 const { uncurryThis } = require("internal/primordials");
 const { isDataView, isAnyArrayBuffer } = require("node:util/types");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
@@ -28,6 +28,8 @@ const DataViewPrototypeGetByteLength = uncurryThis(
   ObjectGetOwnPropertyDescriptor(DataView.prototype, "byteLength").get,
 );
 const Uint8ArrayPrototypeSubarray = uncurryThis(Uint8ArrayCtor.prototype.subarray);
+
+const queryObjectsNative = $newCppFunction("NodeV8Module.cpp", "jsFunctionQueryObjects", 1);
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -368,6 +370,39 @@ function writeHeapSnapshot(path, _options) {
 function setHeapSnapshotNearHeapLimit() {
   notimpl("setHeapSnapshotNearHeapLimit");
 }
+
+let emittedQueryObjectsWarning = false;
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/heap_utils.js
+function queryObjects(ctor, options) {
+  validateFunction(ctor, "constructor");
+  if (options !== undefined) {
+    validateObject(options, "options");
+  }
+  const format = options?.format || "count";
+  if (format !== "count" && format !== "summary") {
+    throw $ERR_INVALID_ARG_VALUE("options.format", format);
+  }
+  if (!emittedQueryObjectsWarning) {
+    emittedQueryObjectsWarning = true;
+    process.emitWarning(
+      "v8.queryObjects() is an experimental feature and might change at any time",
+      "ExperimentalWarning",
+    );
+  }
+  // Matching the console API behavior - just access the .prototype.
+  const objects = queryObjectsNative(ctor.prototype);
+  if (format === "count") {
+    return objects.length;
+  }
+  // options.format is 'summary'.
+  const { inspect } = require("node:util");
+  const summaries = new Array(objects.length);
+  for (let i = 0; i < objects.length; i++) {
+    summaries[i] = inspect(objects[i], { depth: 0 });
+  }
+  return summaries;
+}
+
 function throwNotBuildingSnapshot() {
   throw $ERR_NOT_BUILDING_SNAPSHOT("Operation cannot be invoked when not building startup snapshot");
 }
@@ -415,6 +450,7 @@ export default {
   writeHeapSnapshot,
   setHeapSnapshotNearHeapLimit,
   promiseHooks,
+  queryObjects,
   startupSnapshot,
   Deserializer,
   Serializer,
@@ -438,6 +474,7 @@ hideFromStack(
   serialize,
   writeHeapSnapshot,
   setHeapSnapshotNearHeapLimit,
+  queryObjects,
   Deserializer,
   Serializer,
   DefaultDeserializer,

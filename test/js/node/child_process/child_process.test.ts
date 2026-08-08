@@ -1145,3 +1145,49 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     expect(errors.map(e => e.code)).toEqual(["ENOENT"]);
   });
 });
+
+// A throw inside a child stdio 'data' listener must surface as an
+// uncaughtException, as in node, where these events dispatch from the native
+// read callback. When the internal reader takes its async pull path the emit
+// runs from a promise reaction, which used to turn the throw into an
+// unhandledRejection and stall the stream before EOF (so 'close' never fired).
+it("throw from a child stdio 'data' listener is an uncaughtException and the stream still ends", async () => {
+  const script = `
+    const { spawn } = require("node:child_process");
+    let ue = 0, ur = 0, data = 0, closes = 0, n = 0;
+    const N = 3;
+    process.on("uncaughtException", (e, origin) => {
+      if (origin !== "uncaughtException" || !String(e.message).startsWith("data-throw-")) {
+        console.log("unexpected: origin=" + origin + " message=" + (e && e.message));
+        process.exit(1);
+      }
+      ue++;
+      next();
+    });
+    process.on("unhandledRejection", () => { ur++; next(); });
+    process.on("exit", () => {
+      console.log("spawned=" + n + " data=" + data + " closes=" + closes + " ue=" + ue + " ur=" + ur);
+    });
+    function next() {
+      if (n >= N) return;
+      n++;
+      // The delayed write guarantees the parent's pull is pending when data
+      // arrives, so the 'data' emit runs from the async (promise) path.
+      const c = spawn(process.execPath, ["-e", "setTimeout(() => console.log('hi'), 50)"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      c.on("close", () => closes++);
+      c.stdout.on("data", () => { data++; throw new Error("data-throw-" + n); });
+    }
+    next();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("spawned=3 data=3 closes=3 ue=3 ur=0");
+  expect(exitCode).toBe(0);
+});

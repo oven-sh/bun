@@ -13,6 +13,12 @@ const transferToNativeReadable = $newCppFunction(
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
 
+// Node emits 'data' for process stdio from the native read callback (via
+// MakeCallback), so a throw from a listener becomes an uncaughtException. Our
+// pull-based reader can emit from a pull-promise reaction; a throw there would
+// otherwise reject a promise nobody observes and surface as unhandledRejection.
+const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
+
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
 const kConstructed = Symbol("constructed");
@@ -207,10 +213,28 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer, isClos
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
 function pushAndCheck(stream: NativeReadable, chunk: any) {
-  if (!stream.push(chunk)) {
+  let wantMore: boolean;
+  try {
+    wantMore = stream.push(chunk);
+  } catch (e) {
+    reportUncaughtException(e);
+    // The throw unwound addChunk before its maybeReadMore call, so nothing is
+    // scheduled to read again; without this the flowing stream stalls and
+    // never reaches EOF. The chunk was emitted, not buffered, so keep reading.
+    wantMore = true;
+    process.nextTick(readAfterListenerThrow, stream);
+  }
+  if (!wantMore) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
   }
+}
+
+function readAfterListenerThrow(stream: NativeReadable) {
+  // When the native side already signaled close, handleResult scheduled the
+  // EOF push(null); pulling again is unnecessary.
+  if (stream.destroyed || stream[kCloseState][0]) return;
+  stream.read(0);
 }
 
 function handleNumberResult(stream: NativeReadable, result: number, chunk: any, isClosed: boolean) {

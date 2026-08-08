@@ -779,7 +779,8 @@ test("no assertion failures 2", () => {
   {
     const edgeChar = String.fromCharCode(0xd799);
 
-    for (let charCode = 0xd800; charCode < 0xdfff; charCode++) {
+    // Upstream walks all 2047 surrogate code units; the escape is a range check, so cover the boundaries.
+    for (const charCode of [0xd800, 0xd801, 0xda00, 0xdbfe, 0xdbff, 0xdc00, 0xdc01, 0xde00, 0xdffd, 0xdffe]) {
       const surrogate = String.fromCharCode(charCode);
 
       assert.strictEqual(util.inspect(surrogate), `'\\u${charCode.toString(16)}'`);

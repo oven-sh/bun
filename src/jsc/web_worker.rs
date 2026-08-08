@@ -514,8 +514,6 @@ impl WebWorker {
         this.vm_lock.unlock();
     }
 
-    /// The parent is releasing this thread: drop the keep-alive on the parent's
-    /// loop and forget it as a child. Parent thread.
     /// The parent reading this worker's loop counters for `eventLoopUtilization()`: false once the
     /// VM is unpublished (node reports all-zero then). Idle is read before elapsed, in node's
     /// order, so `active = elapsed - idle` cannot come out negative.
@@ -541,6 +539,8 @@ impl WebWorker {
         live
     }
 
+    /// The parent is releasing this thread: drop the keep-alive on the parent's
+    /// loop and forget it as a child. Parent thread.
     #[unsafe(export_name = "WebWorker__releaseParentPollRef")]
     pub(crate) extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
         let this_ref = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));

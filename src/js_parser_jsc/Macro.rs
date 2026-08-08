@@ -599,6 +599,18 @@ impl<'a> Run<'a> {
             T::Double => self.coerce(T::Double, value),
             T::String => self.coerce(T::String, value),
             T::Promise => self.coerce(T::Promise, value),
+            // No AST representation (same as Date); ClassInfo name is just "Object", so use the label.
+            T::Temporal => {
+                let (label, _text) = value.temporal_display_string(self.global)?;
+                self.log.add_error_fmt(
+                    Some(self.source),
+                    self.caller.loc,
+                    format_args!(
+                        "cannot coerce {label} to Bun's AST. Please return a simpler type"
+                    ),
+                );
+                Err(MacroError::MacroFailed)
+            }
             _ => {
                 let name = value.get_class_info_name().unwrap_or(b"unknown");
 

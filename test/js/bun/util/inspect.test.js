@@ -804,6 +804,106 @@ it("CustomEvent", () => {
   `);
 });
 
+describe("Temporal values", () => {
+  const cases = [
+    [Temporal.Instant.from("1973-07-22T23:57:25.566778899Z"), "Temporal.Instant 1973-07-22T23:57:25.566778899Z"],
+    [
+      Temporal.PlainDateTime.from("1901-02-03T04:05:06.007008009"),
+      "Temporal.PlainDateTime 1901-02-03T04:05:06.007008009",
+    ],
+    [Temporal.PlainDate.from("2020-01-02"), "Temporal.PlainDate 2020-01-02"],
+    [Temporal.PlainTime.from("10:20:23"), "Temporal.PlainTime 10:20:23"],
+    [
+      Temporal.ZonedDateTime.from("2020-01-01T00:00:00-10:00[Pacific/Honolulu]"),
+      "Temporal.ZonedDateTime 2020-01-01T00:00:00-10:00[Pacific/Honolulu]",
+    ],
+    [Temporal.PlainYearMonth.from("2020-01"), "Temporal.PlainYearMonth 2020-01"],
+    [Temporal.PlainMonthDay.from("01-15"), "Temporal.PlainMonthDay 01-15"],
+    [Temporal.Duration.from({ hours: 1, minutes: 30 }), "Temporal.Duration PT1H30M"],
+  ];
+
+  it("formats every Temporal type as its default toString", () => {
+    for (const [value, expected] of cases) {
+      expect(Bun.inspect(value)).toBe(expected);
+    }
+  });
+
+  it("keeps calendar and time zone annotations", () => {
+    expect(Bun.inspect(Temporal.PlainDate.from("2020-01-02[u-ca=hebrew]"))).toBe(
+      "Temporal.PlainDate 2020-01-02[u-ca=hebrew]",
+    );
+    expect(Bun.inspect(Temporal.ZonedDateTime.from("2020-01-01T00:00:00+09:00[Asia/Tokyo][u-ca=japanese]"))).toBe(
+      "Temporal.ZonedDateTime 2020-01-01T00:00:00+09:00[Asia/Tokyo][u-ca=japanese]",
+    );
+    // Non-ISO PlainYearMonth/PlainMonthDay print the full reference date, not
+    // the bare YYYY-MM / MM-DD form.
+    expect(Bun.inspect(new Temporal.PlainYearMonth(2024, 1, "hebrew", 15))).toBe(
+      "Temporal.PlainYearMonth 2024-01-15[u-ca=hebrew]",
+    );
+    expect(Bun.inspect(new Temporal.PlainMonthDay(1, 15, "hebrew", 1972))).toBe(
+      "Temporal.PlainMonthDay 1972-01-15[u-ca=hebrew]",
+    );
+  });
+
+  it("rounds sub-minute historic offsets to the minute, like toString", () => {
+    // Liberia used -00:44:30 until 1972; the half-minute tie rounds away from zero.
+    const monrovia = Temporal.ZonedDateTime.from("1950-01-01T00:00[Africa/Monrovia]");
+    expect(monrovia.offset).toBe("-00:44:30");
+    expect(monrovia.toString()).toContain("-00:45[");
+    expect(Bun.inspect(monrovia)).toBe(`Temporal.ZonedDateTime ${monrovia.toString()}`);
+    // Kolkata's LMT era is +05:53:28; below the tie it truncates.
+    const kolkata = Temporal.ZonedDateTime.from("1850-01-01T00:00[Asia/Kolkata]");
+    expect(kolkata.toString()).toContain("+05:53[");
+    expect(Bun.inspect(kolkata)).toBe(`Temporal.ZonedDateTime ${kolkata.toString()}`);
+  });
+
+  it("prints a single token when nested", () => {
+    const time = Temporal.PlainTime.from("10:20:23");
+    expect(Bun.inspect({ hi: time })).toBe("{\n  hi: Temporal.PlainTime 10:20:23,\n}");
+    expect(Bun.inspect([time])).toBe("[\n  Temporal.PlainTime 10:20:23\n]");
+    expect(Bun.inspect(new Map([["k", time]]))).toBe('Map(1) {\n  "k": Temporal.PlainTime 10:20:23,\n}');
+  });
+
+  it("stays atomic at any depth", () => {
+    expect(Bun.inspect(Temporal.PlainDate.from("2020-01-02"), { depth: 0 })).toBe("Temporal.PlainDate 2020-01-02");
+  });
+
+  it("ignores own properties and subclass names, like Date", () => {
+    expect(Bun.inspect(Object.assign(Temporal.PlainDate.from("2020-01-02"), { foo: 1 }))).toBe(
+      "Temporal.PlainDate 2020-01-02",
+    );
+    class Later extends Temporal.PlainDate {}
+    expect(Bun.inspect(new Later(2020, 1, 2))).toBe("Temporal.PlainDate 2020-01-02");
+  });
+
+  it("colors the value in Date's magenta, label plain", () => {
+    expect(Bun.inspect(Temporal.PlainDate.from("2020-01-02"), { colors: true })).toBe(
+      "Temporal.PlainDate \x1b[0m\x1b[35m2020-01-02\x1b[0m",
+    );
+  });
+
+  it("does not affect the Temporal namespace objects or prototypes", () => {
+    expect(Bun.inspect(Temporal.Now)).toContain("[Function:");
+    expect(Bun.inspect(Temporal.PlainDate.prototype)).not.toMatch(/^Temporal\.PlainDate [-+\d]/);
+  });
+
+  it("prints the same text from console.log", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(Temporal.PlainDate.from("2020-01-02")); console.log({ at: Temporal.Instant.from("1970-01-01T00:00:00Z") });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("Temporal.PlainDate 2020-01-02\n{\n  at: Temporal.Instant 1970-01-01T00:00:00Z,\n}\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.skipIf(!isASAN)("object mutated while being formatted", () => {
   it("does not read freed property tables", async () => {
     const fixture = `

@@ -720,7 +720,7 @@ impl ErrorDeferred {
         }
 
         let vm = global_this.bun_vm();
-        // Worker terminate's `close_dns_for_terminate` fires EDESTRUCTION with
+        // Worker terminate's `stop_dns_for_vm_teardown` fires EDESTRUCTION with
         // `is_shutting_down` already set; the task queue is about to be
         // drained-without-run and ManagedTask has no cleanup here, so enqueuing
         // would leak the `Context` and its `JSPromiseStrong` box. Drop now while

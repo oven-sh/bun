@@ -789,17 +789,10 @@ impl FileSink {
         self.run_pending_later.has.set(true);
         if let EventLoopHandle::Js { owner } = self.event_loop() {
             self.ref_();
-            // The type→tag
-            // map lives in `crate::dispatch`; the resolved tag for
-            // `*FlushPendingTask` is `task_tag::FlushPendingFileSinkTask`.
             // Ptr identity only — `run_from_js_thread` recovers `*mut FileSink`
             // via `from_field_ptr!` and never forms `&mut FileSink`.
-            let task = bun_event_loop::Task::new(
-                bun_event_loop::task_tag::FlushPendingFileSinkTask,
-                core::ptr::from_ref(&self.run_pending_later)
-                    .cast_mut()
-                    .cast::<()>(),
-            );
+            let task =
+                bun_event_loop::Task::init(core::ptr::from_ref(&self.run_pending_later).cast_mut());
             owner.enqueue_task(task);
         }
     }
@@ -1460,6 +1453,20 @@ impl FileSink {
 #[derive(Default)]
 pub struct FlushPendingTask {
     pub(crate) has: Cell<bool>,
+}
+
+impl bun_event_loop::Taskable for FlushPendingTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FlushPendingFileSinkTask;
+    /// The embedded "flush later" flag of a `FileSink` that took a ref for the
+    /// hop: clear it and drop that ref without flushing.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; `this` is `FileSink.run_pending_later`.
+        unsafe {
+            (*this).has.set(false);
+            let sink: *mut FileSink = bun_core::from_field_ptr!(FileSink, run_pending_later, this);
+            drop(FileSinkRef::adopt(sink));
+        }
+    }
 }
 
 impl FlushPendingTask {

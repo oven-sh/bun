@@ -116,7 +116,7 @@ AbortSignal::~AbortSignal()
     // on the freed vector. Clearing only the impl's object pointer leaves
     // the impl itself (and the EventTargetData it hosts) intact so
     // ~EventTarget()'s eventTargetData() lookup still works.
-    if (auto* impl = weakPtrFactory().impl())
+    if (auto* impl = EventTargetWithInlineData::weakPtrFactory().impl())
         impl->clear();
 
     cancelTimer();

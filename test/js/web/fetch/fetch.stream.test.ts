@@ -1,7 +1,7 @@
 import { Socket } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { createReadStream, readFileSync } from "fs";
-import { gcTick, isWindows, tempDirWithFilesAnon } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDirWithFilesAnon } from "harness";
 import http from "http";
 import type { AddressInfo } from "net";
 import path, { join } from "path";
@@ -1422,3 +1422,47 @@ describe.concurrent("fetch() with streaming", () => {
     server.kill("SIGTERM");
   });
 });
+
+// ByteStream::on_data used to call signal_drained() before taking the pending
+// buffer action out of its cell; the drain signal can re-enter and consume the
+// action, so the unwrap() that followed panicked and killed the process
+// (seen as a crash when aborting fetches with parked reads on streaming
+// bodies). The race is timing-dependent, so this stress fixture exercises the
+// abort paths and asserts every parked consumer settles with exit code 0.
+test.concurrent("aborting streaming fetches with parked body consumers settles them without crashing", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fetch-abort-parked-reads-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("done 12\n");
+  expect(exitCode).toBe(0);
+});
+
+// Deterministic version of the regression above: the re-entrant consumption is
+// not reachable from plain JS (the in-tree producers defer their drain
+// signals), so the fixture installs a bun:internal-for-testing producer whose
+// drain signal re-enters on_cancel, consuming the parked body.text() buffer
+// action from inside on_data(Err) exactly where the wild crash did.
+test.concurrent(
+  "buffer action consumed re-entrantly during on_data(Err) settles text() instead of crashing",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "bytestream-cancel-on-drain-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("rejected:TypeError\n");
+    expect(exitCode).toBe(0);
+  },
+);

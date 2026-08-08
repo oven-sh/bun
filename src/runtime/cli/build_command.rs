@@ -951,12 +951,21 @@ impl BuildCommand {
                     }
                     // Pass 1 produced the executable; run it so the app snapshots itself, then re-emit with the image embedded.
                     let img_path = write_heap_image_by_running(root_dir.fd, outfile);
-                    let img = match std::fs::read(&img_path) {
+                    // What ships is the zstd frame the snapshot also wrote (~6x smaller); the executable inflates it into the
+                    // user's image cache on first launch. BUN_IMAGE_EMBED_RAW embeds the raw image instead, which restores by
+                    // mapping the executable itself and so needs no writable cache directory.
+                    let embed_raw = std::env::var_os("BUN_IMAGE_EMBED_RAW").is_some();
+                    let embed_path = if embed_raw {
+                        img_path.clone()
+                    } else {
+                        format!("{img_path}.zst")
+                    };
+                    let img = match std::fs::read(&embed_path) {
                         Ok(img) => img,
                         Err(e) => {
                             Output::print_errorln(format_args!(
                                 "--compile-image: could not read {}: {}",
-                                img_path, e
+                                embed_path, e
                             ));
                             Global::exit(1);
                         }
@@ -983,8 +992,9 @@ impl BuildCommand {
                         }
                         Ok(_) => {
                             Output::prettyln(format_args!(
-                                "<green>[image]</r> embedded {:.1} MB heap image into the executable",
-                                img.len() as f64 / 1048576.0
+                                "<green>[image]</r> embedded {:.1} MB {} heap image into the executable",
+                                img.len() as f64 / 1048576.0,
+                                if embed_raw { "raw" } else { "compressed" }
                             ));
                             if std::env::var_os("BUN_IMAGE_KEEP_SIDECAR").is_none() {
                                 let _ = std::fs::remove_file(&img_path);

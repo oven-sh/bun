@@ -273,6 +273,16 @@ static bool imageInflateZstd(const char* zpath, const char* outPath);
 static uint64_t platformLibsBase();
 static uint64_t platformSystemLibsId();
 static uint64_t platformBuildId();
+static bool imageInflateZstdBuffer(const void* src, size_t srcLen, const char* outPath);
+static bool imageCacheDir(char* dir, size_t cap) // ~/.cache/bun/images (or $XDG_CACHE_HOME/bun/images), created on demand
+{
+    const char* cacheHome = getenv("XDG_CACHE_HOME"); const char* home = getenv("HOME");
+    if (cacheHome && *cacheHome) snprintf(dir, cap, "%s/bun/images", cacheHome);
+    else if (home) snprintf(dir, cap, "%s/.cache/bun/images", home);
+    else return false;
+    char partial[4200]; snprintf(partial, sizeof partial, "%s", dir); for (char* q = partial + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(partial, 0755); *q = '/'; } mkdir(partial, 0755);
+    return true;
+}
 static bool findSiblingImage(char* out, size_t cap)
 {
     const char* off = getenv("BUN_IMAGE");
@@ -291,11 +301,7 @@ static bool findSiblingImage(char* out, size_t cap)
     char zpath[4300]; snprintf(zpath, sizeof zpath, "%s.img.zst", exe);
     struct stat zst, est; if (stat(zpath, &zst) || stat(exe, &est)) return false;
     // Inflate once into the user cache, keyed by the executable + compressed image identity.
-    const char* cacheHome = getenv("XDG_CACHE_HOME"); const char* home = getenv("HOME"); char dir[4200];
-    if (cacheHome && *cacheHome) snprintf(dir, sizeof dir, "%s/bun/images", cacheHome);
-    else if (home) snprintf(dir, sizeof dir, "%s/.cache/bun/images", home);
-    else return false;
-    { char partial[4200]; snprintf(partial, sizeof partial, "%s", dir); for (char* q = partial + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(partial, 0755); *q = '/'; } mkdir(partial, 0755); }
+    char dir[4200]; if (!imageCacheDir(dir, sizeof dir)) return false;
     uint64_t keyExtra = platformSystemLibsId() ^ platformBuildId(); // libraries may slide (extern-library fixups); their contents are part of the identity
     snprintf(out, cap, "%s/%llx-%llx-%llx-%llx-%llx.img", dir, (unsigned long long)est.st_size, (unsigned long long)est.st_mtime, (unsigned long long)zst.st_size, (unsigned long long)zst.st_mtime, (unsigned long long)keyExtra);
     if (access(out, R_OK) == 0)
@@ -347,6 +353,15 @@ static bool findEmbeddedImage(char* out, size_t cap)
 #else
     return false;
 #endif
+    if (n >= 4 && p[0] == 0x28 && p[1] == 0xB5 && p[2] == 0x2F && p[3] == 0xFD) { // zstd frame: what ships (a CC image is ~33 MB compressed vs ~210 MB raw)
+        struct stat est; if (stat(exe, &est)) return false;
+        char dir[4200]; if (!imageCacheDir(dir, sizeof dir)) return false;
+        uint64_t keyExtra = platformSystemLibsId() ^ platformBuildId();
+        snprintf(out, cap, "%s/%llx-%llx-%llx-%llx.img", dir, (unsigned long long)est.st_size, (unsigned long long)est.st_mtime, (unsigned long long)n, (unsigned long long)keyExtra);
+        if (access(out, R_OK) == 0) return true;
+        if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] inflating the embedded image (%llu KB) -> %s\n", (unsigned long long)(n / 1024), out); // no %f before the restore: libc dtoa keeps malloc'd scratch that the overlay would invalidate
+        return imageInflateZstdBuffer(p, n, out);
+    }
     if (fileOff < 0 || (fileOff & (getpagesize() - 1))) { fprintf(stderr, "[image] embedded image is not page-aligned in the file (offset %lld); ignoring\n", (long long)fileOff); return false; }
     snprintf(out, cap, "%s@%lld", exe, (long long)fileOff);
     return true;
@@ -1601,24 +1616,28 @@ static void imageWriteZstd(const char* path)
     }
     munmap(dst, cap);
 }
+static bool imageInflateZstdBuffer(const void* src, size_t srcLen, const char* outPath) // atomically (tmp + rename) so concurrent launches never observe a partial image
+{
+    unsigned long long full = ZSTD_getFrameContentSize(src, srcLen);
+    if (full == ZSTD_CONTENTSIZE_ERROR || full == ZSTD_CONTENTSIZE_UNKNOWN) return false;
+    char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.tmp.%d", outPath, getpid());
+    int out = open(tmp, O_RDWR | O_CREAT | O_TRUNC, 0600); if (out < 0) return false;
+    bool ok = false;
+    if (!ftruncate(out, full)) {
+        void* dst = mmap(nullptr, full, PROT_READ | PROT_WRITE, MAP_SHARED, out, 0);
+        if (dst != MAP_FAILED) { size_t n = ZSTD_decompress(dst, full, src, srcLen); ok = !ZSTD_isError(n) && n == full; munmap(dst, full); }
+    }
+    close(out);
+    if (ok) ok = !rename(tmp, outPath); else unlink(tmp);
+    return ok;
+}
 static bool imageInflateZstd(const char* zpath, const char* outPath)
 {
     int in = open(zpath, O_RDONLY); if (in < 0) return false;
     struct stat st; if (fstat(in, &st)) { close(in); return false; }
     void* src = mmap(nullptr, st.st_size, PROT_READ, MAP_PRIVATE, in, 0); close(in);
     if (src == MAP_FAILED) return false;
-    unsigned long long full = ZSTD_getFrameContentSize(src, st.st_size);
-    bool ok = false;
-    if (full != ZSTD_CONTENTSIZE_ERROR && full != ZSTD_CONTENTSIZE_UNKNOWN) {
-        char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.tmp.%d", outPath, getpid());
-        int out = open(tmp, O_RDWR | O_CREAT | O_TRUNC, 0600);
-        if (out >= 0 && !ftruncate(out, full)) {
-            void* dst = mmap(nullptr, full, PROT_READ | PROT_WRITE, MAP_SHARED, out, 0);
-            if (dst != MAP_FAILED) { size_t n = ZSTD_decompress(dst, full, src, st.st_size); ok = !ZSTD_isError(n) && n == full; munmap(dst, full); }
-        }
-        if (out >= 0) close(out);
-        if (ok) ok = !rename(tmp, outPath); else unlink(tmp);
-    }
+    bool ok = imageInflateZstdBuffer(src, st.st_size, outPath);
     munmap(src, st.st_size);
     return ok;
 }
@@ -1799,6 +1818,7 @@ static void imageRestoreAndRun(const char* path)
 {
 #if OS(DARWIN) || OS(LINUX)
     char filePath[4200]; snprintf(filePath, sizeof filePath, "%s", path);
+    if (getenv("BUN_IMAGE_VERBOSE")) { void* probe = malloc(64); fprintf(stderr, "[image] pre-restore heap probe=%p (expected >= 0x21000000000, above where image regions go)\n", probe); free(probe); }
     s_imageBaseOff = 0;
     if (char* at = strrchr(filePath, '@')) { char* end = nullptr; long long o = strtoll(at + 1, &end, 10); if (end && !*end && o > 0) { *at = 0; s_imageBaseOff = (off_t)o; } } // "<file>@<offset>": image embedded in a bigger file (our own executable)
     int fd = open(filePath, O_RDONLY);

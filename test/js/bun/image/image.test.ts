@@ -12,9 +12,19 @@ for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
   test.skipIf(!hasImages)(`image round-trip: ${fixture}`, async () => {
     using dir = tempDir("bun-image", {});
     const img = join(String(dir), "app.img");
-    const build = Bun.spawnSync({ cmd: [bunExe(), join(import.meta.dir, fixture)], env: { ...buildEnv, BUN_IMAGE_OUT: img }, stderr: "pipe", stdout: "pipe" });
+    const build = Bun.spawnSync({
+      cmd: [bunExe(), join(import.meta.dir, fixture)],
+      env: { ...buildEnv, BUN_IMAGE_OUT: img },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
     expect(build.stderr.toString()).toContain("[image] wrote");
-    await using proc = Bun.spawn({ cmd: [bunExe(), join(import.meta.dir, fixture)], env: { ...restoreEnv, BUN_IMAGE_IN: img }, stderr: "pipe", stdout: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, fixture)],
+      env: { ...restoreEnv, BUN_IMAGE_IN: img },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("[image] restored");
     expect(stdout).toContain("epoch 1");
@@ -26,48 +36,130 @@ for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
   });
 }
 
-test.skipIf(!hasImages)("bun build --compile --compile-image embeds the image; the single file restores from itself with no env", async () => {
-  using dir = tempDir("bun-image-compile", {});
-  const exe = join(String(dir), "heavy");
-  const build = Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "--compile-image", join(import.meta.dir, "heavy-fixture.js"), "--outfile", exe], env: bunEnv, stderr: "pipe", stdout: "pipe" });
-  const buildOut = build.stderr.toString() + build.stdout.toString();
-  expect(buildOut).toContain("[image] wrote");
-  expect(buildOut).toContain("embedded");
-  // Nothing beside the executable: the image lives in its __BUN/.bun section.
-  expect(require("fs").readdirSync(String(dir)).sort()).toEqual(["heavy"]);
-  for (const run of [1, 2]) {
-    await using proc = Bun.spawn({ cmd: [exe], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH! }, stderr: "pipe", stdout: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("[image] restored");
-    expect(stdout).toContain("epoch 1");
-    expect(stdout).toContain("fetch -> hello from restored server");
-    expect(exitCode).toBe(0);
-  }
-  // Opt out boots normally.
-  const plain = Bun.spawnSync({ cmd: [exe], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_IMAGE: "0" }, stderr: "pipe", stdout: "pipe" });
-  expect(plain.stdout.toString()).toContain("epoch 0");
-  expect(plain.exitCode).toBe(0);
-  // Debugging: an explicit image file still wins (BUN_IMAGE_KEEP_SIDECAR keeps <exe>.img next to it at build time).
-  const dbg = join(String(dir), "dbg");
-  const b2 = Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "--compile-image", join(import.meta.dir, "heavy-fixture.js"), "--outfile", dbg], env: { ...bunEnv, BUN_IMAGE_KEEP_SIDECAR: "1" }, stderr: "pipe", stdout: "pipe" });
-  expect(b2.exitCode).toBe(0);
-  expect(Bun.file(dbg + ".img").size).toBeGreaterThan(1024 * 1024);
-  const viaFile = Bun.spawnSync({ cmd: [dbg], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_IMAGE_IN: dbg + ".img" }, stderr: "pipe", stdout: "pipe" });
-  expect(viaFile.stdout.toString()).toContain("epoch 1");
-  expect(viaFile.exitCode).toBe(0);
-}, 60_000);
+test.skipIf(!hasImages)(
+  "bun build --compile --compile-image embeds the image; the single file restores from itself with no env",
+  async () => {
+    using dir = tempDir("bun-image-compile", {});
+    const exe = join(String(dir), "heavy");
+    const build = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        "--format=esm",
+        "--compile-image",
+        join(import.meta.dir, "heavy-fixture.js"),
+        "--outfile",
+        exe,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const buildOut = build.stderr.toString() + build.stdout.toString();
+    expect(buildOut).toContain("[image] wrote");
+    expect(buildOut).toContain("compressed heap image");
+    // Nothing beside the executable: the (compressed) image lives in its __BUN/.bun section.
+    expect(require("fs").readdirSync(String(dir)).sort()).toEqual(["heavy"]);
+    const rawSize = Number(/\[image\] wrote .*?: \d+ regions, ([\d.]+)MB/.exec(buildOut)?.[1]);
+    expect(Bun.file(exe).size).toBeLessThan(Bun.file(bunExe()).size + rawSize * 1048576 * 0.5); // the payload is a fraction of the raw image
+    const cache = join(String(dir), "cache");
+    for (const run of [1, 2]) {
+      await using proc = Bun.spawn({
+        cmd: [exe],
+        env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, XDG_CACHE_HOME: cache, BUN_IMAGE_VERBOSE: "1" },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (run === 1)
+        expect(stderr).toContain("inflating the embedded image"); // first launch fills the cache ...
+      else expect(stderr).not.toContain("inflating"); // ... later launches map the cached file directly
+      // A compiled executable that is not building keeps its own early heap above image space, so whatever the inflater
+      // (or libc) allocated before the restore is not overlaid by it.
+      const probeHex = /pre-restore heap probe=0x([0-9a-f]+)/.exec(stderr)?.[1];
+      expect(probeHex).toBeDefined();
+      expect(BigInt("0x" + probeHex!)).toBeGreaterThanOrEqual(0x21000000000n);
+      expect(stderr).toContain("[image] restored");
+      expect(stdout).toContain("epoch 1");
+      expect(stdout).toContain("fetch -> hello from restored server");
+      expect(exitCode).toBe(0);
+    }
+    expect(
+      require("fs")
+        .readdirSync(join(cache, "bun", "images"))
+        .filter((f: string) => f.endsWith(".img")),
+    ).toHaveLength(1); // one inflated image, no leftover .tmp
+    // Opt out boots normally.
+    const plain = Bun.spawnSync({
+      cmd: [exe],
+      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_IMAGE: "0" },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(plain.stdout.toString()).toContain("epoch 0");
+    expect(plain.exitCode).toBe(0);
+    // Debugging: an explicit image file still wins (BUN_IMAGE_KEEP_SIDECAR keeps <exe>.img next to it at build time).
+    const dbg = join(String(dir), "dbg");
+    const b2 = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        "--format=esm",
+        "--compile-image",
+        join(import.meta.dir, "heavy-fixture.js"),
+        "--outfile",
+        dbg,
+      ],
+      env: { ...bunEnv, BUN_IMAGE_KEEP_SIDECAR: "1" },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(b2.exitCode).toBe(0);
+    expect(Bun.file(dbg + ".img").size).toBeGreaterThan(1024 * 1024);
+    const viaFile = Bun.spawnSync({
+      cmd: [dbg],
+      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_IMAGE_IN: dbg + ".img" },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(viaFile.stdout.toString()).toContain("epoch 1");
+    expect(viaFile.exitCode).toBe(0);
+  },
+  60_000,
+);
 
 test("launch context (argv, env, cwd, HOME) comes from the restoring process, not the builder", async () => {
-  using dir = tempDir("bun-image-launchctx", { a: { ".keep": "" }, b: { ".keep": "" }, homeA: { ".keep": "" }, homeB: { ".keep": "" } });
+  using dir = tempDir("bun-image-launchctx", {
+    a: { ".keep": "" },
+    b: { ".keep": "" },
+    homeA: { ".keep": "" },
+    homeB: { ".keep": "" },
+  });
   const img = join(String(dir), "ctx.img");
   const fixture = join(import.meta.dir, "launchctx-fixture.js");
   {
-    await using p = Bun.spawn({ cmd: [bunExe(), fixture, "built-arg"], env: { ...buildEnv, BUN_IMAGE_OUT: img, LAUNCH_MARKER: "builder", HOME: join(String(dir), "homeA") }, cwd: join(String(dir), "a"), stdout: "pipe", stderr: "pipe" });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture, "built-arg"],
+      env: { ...buildEnv, BUN_IMAGE_OUT: img, LAUNCH_MARKER: "builder", HOME: join(String(dir), "homeA") },
+      cwd: join(String(dir), "a"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
     expect(out).toContain('"marker":"builder"');
     expect(code).toBe(0);
   }
-  await using p = Bun.spawn({ cmd: [bunExe(), fixture, "restored-arg", "--flag"], env: { ...restoreEnv, BUN_IMAGE_IN: img, LAUNCH_MARKER: "restorer", HOME: join(String(dir), "homeB") }, cwd: join(String(dir), "b"), stdout: "pipe", stderr: "pipe" });
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture, "restored-arg", "--flag"],
+    env: { ...restoreEnv, BUN_IMAGE_IN: img, LAUNCH_MARKER: "restorer", HOME: join(String(dir), "homeB") },
+    cwd: join(String(dir), "b"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   const line = out.split("\n").find(l => l.startsWith("[js] restored "));
   expect(line, err.slice(-2000)).toBeDefined();
@@ -85,10 +177,20 @@ test("full GC right after restore is not stalled by the builder's parked threads
   const img = join(String(dir), "gct.img");
   const fixture = join(import.meta.dir, "gctime-fixture.js");
   {
-    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...buildEnv, BUN_IMAGE_OUT: img },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     await p.exited;
   }
-  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img }, stdout: "pipe", stderr: "pipe" });
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_IMAGE_IN: img },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   const m = out.match(/full gc #2 (\d+) ms; #3 (\d+) ms/);
   expect(m, err.slice(-1000)).not.toBeNull();
@@ -103,13 +205,28 @@ test("keepTimers: timers armed before the snapshot keep running after restore, r
   const img = join(String(dir), "kt.img");
   const fixture = join(import.meta.dir, "keeptimers-fixture.js");
   {
-    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img, KEEP: "1" }, terminal: { cols: 80, rows: 24, data() {} } });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...buildEnv, BUN_IMAGE_OUT: img, KEEP: "1" },
+      terminal: { cols: 80, rows: 24, data() {} },
+    });
     await p.exited;
   }
   let out = "";
-  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img }, terminal: { cols: 80, rows: 24, data(_t, d) { out += new TextDecoder().decode(d); } } });
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_IMAGE_IN: img },
+    terminal: {
+      cols: 80,
+      rows: 24,
+      data(_t, d) {
+        out += new TextDecoder().decode(d);
+      },
+    },
+  });
   const deadline = Date.now() + 20000;
-  while (!/post-restore timer fired; interval ticks since restore=(\d+)/.test(out) && Date.now() < deadline) await Bun.sleep(50);
+  while (!/post-restore timer fired; interval ticks since restore=(\d+)/.test(out) && Date.now() < deadline)
+    await Bun.sleep(50);
   const ticks = Number(/interval ticks since restore=(\d+)/.exec(out)?.[1] ?? -1);
   expect(ticks).toBeGreaterThanOrEqual(2); // 100 ms interval over ~500 ms; 0 would mean the pre-snapshot interval died
   expect(ticks).toBeLessThan(50); // not a burst of catch-up fires from un-rebased deadlines
@@ -123,12 +240,22 @@ test("spawnSync used before the snapshot still works after restore (isolated spa
   const img = join(String(dir), "ss.img");
   const fixture = join(import.meta.dir, "spawnsync-fixture.js");
   {
-    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img, BUN_IMAGE_IO_WARN: "1" }, stdout: "pipe", stderr: "pipe" });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...buildEnv, BUN_IMAGE_OUT: img, BUN_IMAGE_IO_WARN: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const out = await p.stdout.text();
     await p.exited;
     expect(out).toContain('[js] build default: status=0 stdout="out\\n"');
   }
-  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img }, stdout: "pipe", stderr: "pipe" });
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_IMAGE_IN: img },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   for (const variant of ["default", "stdio-ignore-pipe-pipe", "shell+ignore", "shell+pipe-in"]) {
     expect(out, err.slice(-600)).toContain(`[js] restored ${variant}: status=0 stdout="out\\n" stderr="err\\n"`);
@@ -141,12 +268,22 @@ test("random sources and time bases are fresh in every process restored from the
   const img = join(String(dir), "rng.img");
   const fixture = join(import.meta.dir, "rng-fixture.js");
   {
-    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...buildEnv, BUN_IMAGE_OUT: img },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     await p.exited;
   }
   const runs: any[] = [];
   for (let i = 0; i < 2; i++) {
-    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img }, stdout: "pipe", stderr: "pipe" });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...restoreEnv, BUN_IMAGE_IN: img },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
     const line = out.split("\n").find(l => l.startsWith("[js] "));
     expect(line, err.slice(-600)).toBeDefined();
@@ -168,12 +305,22 @@ test("DNS answers cached by the builder are not served after restore; keep-alive
   const img = join(String(dir), "dns.img");
   const fixture = join(import.meta.dir, "dns-fixture.js");
   {
-    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img, BUN_IMAGE_IO_WARN: "1" }, stdout: "pipe", stderr: "pipe" });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...buildEnv, BUN_IMAGE_OUT: img, BUN_IMAGE_IO_WARN: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const out = await p.stdout.text();
     await p.exited;
     expect(JSON.parse(out.match(/\[js\] build (.*)/)![1]).size).toBeGreaterThan(0);
   }
-  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img }, stdout: "pipe", stderr: "pipe" });
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_IMAGE_IN: img },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   const m = out.match(/\[js\] restored (.*)/);
   expect(m, err.slice(-600)).not.toBeNull();
@@ -185,23 +332,39 @@ test("DNS answers cached by the builder are not served after restore; keep-alive
   expect(code).toBe(0);
 }, 60000);
 
-test.skipIf(process.platform !== "darwin")("restore: 'restore' precedes any poll delivery; a stdio poll follows the re-seated fd; dns works again", async () => {
-  using dir = tempDir("bun-image-polls", {});
-  const img = join(String(dir), "polls.img");
-  const fixture = join(import.meta.dir, "polls-fixture.js");
-  {
-    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img, BUN_IMAGE_IO_WARN: "1" }, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-    await p.exited; // stdin pipe deliberately left open and unread-to-EOF
-  }
-  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img }, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-  p.stdin.write("hello\n");
-  await p.stdin.flush();
-  const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
-  const m = out.match(/\[js\] (.*)/);
-  expect(m, err.slice(-800)).not.toBeNull();
-  const events = JSON.parse(m![1]) as string[];
-  expect(events[0]).toBe("restore");
-  expect(events).toContain("dns-ok");
-  expect(events).toContain("stdin:hello"); // the builder's fd-0 poll was re-armed on this process's stdin
-  expect(code).toBe(0);
-}, 60000);
+test.skipIf(process.platform !== "darwin")(
+  "restore: 'restore' precedes any poll delivery; a stdio poll follows the re-seated fd; dns works again",
+  async () => {
+    using dir = tempDir("bun-image-polls", {});
+    const img = join(String(dir), "polls.img");
+    const fixture = join(import.meta.dir, "polls-fixture.js");
+    {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: { ...buildEnv, BUN_IMAGE_OUT: img, BUN_IMAGE_IO_WARN: "1" },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await p.exited; // stdin pipe deliberately left open and unread-to-EOF
+    }
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...restoreEnv, BUN_IMAGE_IN: img },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    p.stdin.write("hello\n");
+    await p.stdin.flush();
+    const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    const m = out.match(/\[js\] (.*)/);
+    expect(m, err.slice(-800)).not.toBeNull();
+    const events = JSON.parse(m![1]) as string[];
+    expect(events[0]).toBe("restore");
+    expect(events).toContain("dns-ok");
+    expect(events).toContain("stdin:hello"); // the builder's fd-0 poll was re-armed on this process's stdin
+    expect(code).toBe(0);
+  },
+  60000,
+);

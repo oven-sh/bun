@@ -162,6 +162,10 @@ void* _mi_os_get_aligned_hint(size_t try_alignment, size_t size)
     const char* e = getenv("MIMALLOC_DETERMINISTIC_HINT"); deterministic_env = (e && *e == '1') ? 1 : 0;
     // MIMALLOC_HINT_FLOOR=0x...: start hinted OS allocations at/above this address (a heap image will be mapped below it)
     const char* fl = getenv("MIMALLOC_HINT_FLOOR"); if (fl && *fl) { unsigned long long v = strtoull(fl, NULL, 0); if (v) mi_os_hint_floor((void*)(uintptr_t)v); }
+    // An image-capable executable that is not building an image may be about to restore one, which maps over the default hint
+    // area: keep this process's own early heap 64GiB above it, so nothing allocated before the restore (libc scratch, dyld,
+    // the image inflater) is overlaid. The builder (BUN_IMAGE_OUT set) must stay at the default base: its heap *is* the image.
+    else if (bun_heap_image_mode && !getenv("BUN_IMAGE_OUT")) mi_os_hint_floor((void*)(uintptr_t)0x21000000000ULL);
   }
   // deterministic mode: every OS allocation gets a bump-pointer hint in the hint area (so nothing lands at kernel-chosen addresses)
   const int deterministic_all = deterministic_env || bun_heap_image_mode;

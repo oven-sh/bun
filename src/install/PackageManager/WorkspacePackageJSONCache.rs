@@ -128,6 +128,57 @@ pub struct WorkspacePackageJSONCache {
 }
 
 impl WorkspacePackageJSONCache {
+    /// Seed a cache entry from in-memory JSON so later [`Self::get_with_path`]
+    /// calls hit it instead of reading disk (used by `bun add --dry-run`).
+    pub fn seed_with_contents(
+        &mut self,
+        log: &mut Log,
+        abs_package_json_path: &[u8],
+        contents: &'static [u8],
+    ) -> Result<(), Error> {
+        debug_assert!(is_absolute(abs_package_json_path));
+
+        #[cfg(windows)]
+        let mut buf = PathBuffer::uninit();
+        #[cfg(not(windows))]
+        let path: &[u8] = abs_package_json_path;
+        #[cfg(windows)]
+        let path: &[u8] = {
+            buf[..abs_package_json_path.len()].copy_from_slice(abs_package_json_path);
+            bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(
+                &mut buf[..abs_package_json_path.len()],
+            );
+            &buf[..abs_package_json_path.len()]
+        };
+
+        if self.map.contains_key(path) {
+            return Ok(());
+        }
+
+        let key = bun_core::ZBox::from_bytes(path);
+        let source = Source::init_path_string(key.as_bytes(), contents);
+
+        initialize_store();
+
+        let json_bump = bun_alloc::Arena::new();
+        let parsed = parse_package_json(&source, log, &json_bump, false)?;
+
+        let value = MapEntry {
+            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
+            source,
+            indentation: parsed.indentation,
+            _path_storage: key,
+            json_arena: json_bump,
+            stale_contents: Vec::new(),
+        };
+
+        let entry = bun_core::handle_oom(self.map.get_or_put(path));
+        debug_assert!(!entry.found_existing);
+        *entry.value_ptr = value;
+
+        Ok(())
+    }
+
     /// Given an absolute path to a workspace package.json, return the AST
     /// and contents of the file. If the package.json is not present in the
     /// cache, it will be read from disk and parsed, and stored in the cache.

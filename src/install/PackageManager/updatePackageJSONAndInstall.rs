@@ -19,8 +19,8 @@ use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
 use super::update_request::Array as UpdateRequestArray;
 use super::{
-    Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
-    attempt_to_create_package_json, install_with_manager, patch_package,
+    Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest, install_with_manager,
+    patch_package,
 };
 
 fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
@@ -868,33 +868,29 @@ pub fn update_package_json_and_install_and_cli(
     subcommand: Subcommand,
     cli: CommandLineArguments,
 ) -> Result<(), Error> {
-    let (manager_ptr, original_cwd) = 'brk: {
-        match super::init(ctx, cli.clone(), subcommand) {
-            Ok(v) => v,
-            Err(e) => {
-                if e == crate::Error::MissingPackageJSON {
-                    match subcommand {
-                        Subcommand::Update => {
-                            bun_core::pretty_errorln!("<r>No package.json, so nothing to update");
-                            Global::crash();
-                        }
-                        Subcommand::Remove => {
-                            bun_core::pretty_errorln!("<r>No package.json, so nothing to remove");
-                            Global::crash();
-                        }
-                        Subcommand::Patch | Subcommand::PatchCommit => {
-                            bun_core::pretty_errorln!("<r>No package.json, so nothing to patch");
-                            Global::crash();
-                        }
-                        _ => {
-                            attempt_to_create_package_json()?;
-                            break 'brk super::init(ctx, cli, subcommand)?;
-                        }
+    let (manager_ptr, original_cwd) = match super::init(ctx, cli, subcommand) {
+        Ok(v) => v,
+        Err(e) => {
+            if e == crate::Error::MissingPackageJSON {
+                match subcommand {
+                    Subcommand::Update => {
+                        bun_core::pretty_errorln!("<r>No package.json, so nothing to update");
+                        Global::crash();
                     }
+                    Subcommand::Remove => {
+                        bun_core::pretty_errorln!("<r>No package.json, so nothing to remove");
+                        Global::crash();
+                    }
+                    Subcommand::Patch | Subcommand::PatchCommit => {
+                        bun_core::pretty_errorln!("<r>No package.json, so nothing to patch");
+                        Global::crash();
+                    }
+                    // `init()` handles `Subcommand::Add` before this error can surface.
+                    _ => {}
                 }
-
-                return Err(e);
             }
+
+            return Err(e);
         }
     };
     // `defer ctx.allocator.free(original_cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.

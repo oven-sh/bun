@@ -1258,7 +1258,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         .handles
         .iter_mut()
         .filter(|handle| handle.remaining_dependencies == 0)
-        .map(|handle| std::ptr::from_mut(handle))
+        .map(std::ptr::from_mut)
         .collect();
     for handle in roots {
         // SAFETY: points into `state.handles`, which lives for the whole loop.

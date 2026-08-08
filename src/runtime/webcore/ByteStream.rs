@@ -311,9 +311,8 @@ impl ByteStream {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData err  action.reject()");
 
                 let global = self.parent_const().global_this();
-                // R-2: move the action out of the cell *before* calling
-                // `signal_drained` or `reject` (both can re-enter `on_data` /
-                // `on_cancel` and consume the slot).
+                // R-2: move the action out of the cell *before* `signal_drained`
+                // and `reject`; both can re-enter and consume the slot.
                 let mut action = self.buffer_action.replace(None).unwrap();
                 self.signal_drained();
                 let res = action.reject(global, err);
@@ -331,10 +330,8 @@ impl ByteStream {
                 return res;
             }
 
-            // R-2: `signal_drained` dispatches to the producer, which can run
-            // JS or synchronously deliver more data, re-entering `on_data` /
-            // `on_cancel`; either consumes `buffer_action`, so re-take it with
-            // `let`-`else` below instead of `unwrap`.
+            // R-2: the drain signal can re-enter and consume `buffer_action`,
+            // so the paths below re-take it with `let`-`else`.
             self.signal_drained();
 
             if self.has_received_last_chunk.get() {

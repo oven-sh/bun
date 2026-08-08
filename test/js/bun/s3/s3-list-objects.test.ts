@@ -1043,6 +1043,19 @@ describe.concurrent("S3 - List Objects", () => {
     expect(error?.message).toBe("try again");
   });
 
+  it("Should reject a listing whose <Contents> has no <Key>", async () => {
+    using server = createBunServer(
+      async () =>
+        new Response(`<ListBucketResult><Name>b</Name><Contents><Key>a</Key></Contents><Contents><Size>1</Size></Contents></ListBucketResult>`),
+    );
+    const client = new S3Client({ ...options, endpoint: server.url.href });
+    const error = await client.list().then(
+      () => undefined,
+      e => e,
+    );
+    expect(error?.code).toBe("InvalidResponse");
+  });
+
   it("Should fall back to NoSuchKey for a 404 whose <Error> has no usable <Code>", async () => {
     for (const body of [
       `<Error><Code></Code><Message/></Error>`,

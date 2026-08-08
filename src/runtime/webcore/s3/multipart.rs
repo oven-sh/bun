@@ -665,10 +665,14 @@ impl MultiPartUpload {
                         .flatten()
                 })
                 .flatten()
+                // It goes into query strings as is: printable, and nothing
+                // that would end or split a query value.
                 .filter(|id| {
                     !id.is_empty()
                         && id.len() <= Self::MAX_UPLOAD_ID_LEN
-                        && id.iter().all(|b| b.is_ascii() && !b.is_ascii_control())
+                        && id
+                            .iter()
+                            .all(|&b| b.is_ascii_graphic() && !matches!(b, b'&' | b'#' | b'?'))
                 });
                 let valid = upload_id.is_some();
                 if let Some(upload_id) = upload_id {

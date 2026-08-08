@@ -175,9 +175,10 @@ pub(crate) fn parse_s3_list_objects_result(body: &[u8]) -> Option<S3ListObjectsV
         if root.name != b"ListBucketResult" {
             return None;
         }
+        // Every `<Contents>` names a key, or the listing is not one.
         let contents: Vec<S3ListObjectsContents> = root
             .children(b"Contents")
-            .filter_map(|object| {
+            .map(|object| {
                 Some(S3ListObjectsContents {
                     key: object.child_text(b"Key")?,
                     etag: object.child_text(b"ETag"),
@@ -194,7 +195,7 @@ pub(crate) fn parse_s3_list_objects_result(body: &[u8]) -> Option<S3ListObjectsV
                     }),
                 })
             })
-            .collect();
+            .collect::<Option<_>>()?;
         let common_prefixes: Vec<Box<[u8]>> = root
             .children(b"CommonPrefixes")
             .flat_map(|entry| entry.children(b"Prefix"))

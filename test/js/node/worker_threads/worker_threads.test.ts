@@ -2260,6 +2260,45 @@ test("terminate()/exit while Bun.build with a slow plugin is mid-flight in the w
   expect(exitCode).toBe(0);
 }, 60_000);
 
+// The IPC channel belongs to the process; a worker in a forked child sees the
+// inherited NODE_CHANNEL_FD but must not open a second endpoint on it (Node:
+// process.send is undefined in worker threads).
+test("a worker inside a process with an IPC channel has no process.send of its own", async () => {
+  using dir = tempDir("worker-no-ipc", {
+    "main.js": `
+      if (process.argv[2] === "child") {
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(
+          'const { parentPort } = require("node:worker_threads"); parentPort.postMessage({ send: typeof process.send, connected: process.connected, channel: typeof process.channel });',
+          { eval: true },
+        );
+        w.once("message", m => {
+          process.send({ worker: m, main: { send: typeof process.send, connected: process.connected } });
+          w.terminate().then(() => process.exit(0));
+        });
+      } else {
+        const { fork } = require("node:child_process");
+        const child = fork(__filename, ["child"]);
+        child.on("message", m => console.log(JSON.stringify(m)));
+        child.on("exit", code => process.exit(code));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({
+    worker: { send: "undefined", connected: false, channel: "undefined" },
+    main: { send: "function", connected: true },
+  });
+  expect(exitCode).toBe(0);
+});
+
 describe("VM teardown ordering", () => {
   // The exiting main thread must not park the process-wide HTTP thread while a
   // child can still start a request: the child then waits for a hand-back that

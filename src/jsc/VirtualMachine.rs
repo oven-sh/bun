@@ -3494,20 +3494,25 @@ impl VirtualMachine {
             // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
             // Parsing as `u32` then `as i32` would silently wrap values in
             // `2^31..2^32` to a negative fd instead of taking the warn branch.
-            match bun_core::fmt::parse_int::<i32>(&fd_s, 10)
-                .ok()
-                .filter(|&n| n >= 0)
-            {
-                Some(fd) => {
-                    self.pending_ipc = Some(PendingIpc {
-                        fd: bun_sys::Fd::from_uv(fd),
-                        advanced,
-                    })
+            // The channel belongs to the process (its main thread). A worker
+            // sees the same inherited variables but must not open a second
+            // endpoint over the same fd (Node: no process.send() in workers).
+            if self.is_main_thread() {
+                match bun_core::fmt::parse_int::<i32>(&fd_s, 10)
+                    .ok()
+                    .filter(|&n| n >= 0)
+                {
+                    Some(fd) => {
+                        self.pending_ipc = Some(PendingIpc {
+                            fd: bun_sys::Fd::from_uv(fd),
+                            advanced,
+                        })
+                    }
+                    None => bun_core::warn!(
+                        "Failed to parse IPC channel number '{}'",
+                        bstr::BStr::new(&fd_s[..])
+                    ),
                 }
-                None => bun_core::warn!(
-                    "Failed to parse IPC channel number '{}'",
-                    bstr::BStr::new(&fd_s[..])
-                ),
             }
         }
 

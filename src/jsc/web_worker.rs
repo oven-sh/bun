@@ -1170,6 +1170,14 @@ fn on_unhandled_rejection(
     // Prevent recursion
     vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
 
+    // The stop was already requested (terminate(), or the worker's own exit):
+    // whatever rejects or throws from here on is a consequence of stopping —
+    // a cancelled lookup, an aborted request — and is not the worker's error
+    // to report. Node: terminate() wins; no 'error' event.
+    if !vm.script_allowed() {
+        return;
+    }
+
     let mut error_instance = error_instance_or_exception
         .to_error()
         .unwrap_or(error_instance_or_exception);

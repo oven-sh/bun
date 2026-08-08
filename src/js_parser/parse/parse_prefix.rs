@@ -183,6 +183,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 AwaitOrYield::AllowIdent => {
                     p.lexer.prev_token_was_await_keyword = true;
+                    p.lexer.await_keyword_loc = loc;
                     p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
                 }
             },

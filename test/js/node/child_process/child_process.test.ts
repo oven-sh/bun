@@ -1,7 +1,18 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isPosix,
+  isWindows,
+  nodeExe,
+  runBunInstall,
+  shellExe,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import { promisify } from "node:util";
@@ -599,6 +610,79 @@ describe("execSync()", () => {
   it("should execute a command in the shell synchronously", () => {
     const result = execSync(bunExe() + " -v", { encoding: "utf8", env: bunEnv });
     expect(isValidSemver(result.trim())).toBe(true);
+  });
+});
+
+// An executable file with no shebang returns ENOEXEC from execve(). Node/libuv
+// transparently retry the exec through /bin/sh, so the file runs as a shell
+// script. https://github.com/oven-sh/bun/issues/31710
+describe.if(isPosix)("spawning an executable with no shebang", () => {
+  const scriptBody = 'echo "arg0=$0"\necho "args=$*"\n';
+
+  it("execFileSync runs it through /bin/sh with args passed verbatim", () => {
+    // The retry is `sh <file> <args...>` with each arg as its own argv entry,
+    // so shell metachars reach the script un-expanded and embedded spaces stay
+    // intact. A `sh -c`-style retry would expand $HOME and glob `*`.
+    using dir = tempDir("enoexec-execFileSync", {
+      "script.sh": `printf '[%s]' "$0" "$#" "$@"; echo\n`,
+    });
+    const scriptPath = path.join(String(dir), "script.sh");
+    fs.chmodSync(scriptPath, 0o755);
+
+    const args = ["$HOME", "a b", "*", "'quote'"];
+    const result = execFileSync(scriptPath, args, { encoding: "utf8", env: bunEnv });
+    expect(result).toBe(`[${scriptPath}][4][$HOME][a b][*]['quote']\n`);
+  });
+
+  it("spawnSync runs it through /bin/sh and succeeds", () => {
+    using dir = tempDir("enoexec-spawnSync", { "script.sh": scriptBody });
+    const scriptPath = path.join(String(dir), "script.sh");
+    fs.chmodSync(scriptPath, 0o755);
+
+    const result = spawnSync(scriptPath, ["a", "b"], { encoding: "utf8", env: bunEnv });
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe(`arg0=${scriptPath}\nargs=a b\n`);
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+  });
+
+  it("spawnSync with a relative path and cwd replays the chdir on retry", () => {
+    using dir = tempDir("enoexec-cwd", { "script.sh": scriptBody });
+    fs.chmodSync(path.join(String(dir), "script.sh"), 0o755);
+
+    const result = spawnSync("./script.sh", ["rel"], { cwd: String(dir), encoding: "utf8", env: bunEnv });
+    expect(result.stderr).toBe("");
+    // $0 is the caller-supplied relative path, matching Node/libuv.
+    expect(result.stdout).toBe("arg0=./script.sh\nargs=rel\n");
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+  });
+
+  it("execFile (async) runs it through /bin/sh", async () => {
+    using dir = tempDir("enoexec-execFile", { "script.sh": scriptBody });
+    const scriptPath = path.join(String(dir), "script.sh");
+    fs.chmodSync(scriptPath, 0o755);
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    execFile(scriptPath, ["x", "y"], { encoding: "utf8", env: bunEnv }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(stdout);
+    });
+    expect(await promise).toBe(`arg0=${scriptPath}\nargs=x y\n`);
+  });
+
+  it("resolves the command from PATH before falling back to /bin/sh", () => {
+    using dir = tempDir("enoexec-path", { "noshebang-cmd": scriptBody });
+    const scriptPath = path.join(String(dir), "noshebang-cmd");
+    fs.chmodSync(scriptPath, 0o755);
+
+    // The command has no slash, so it must be resolved via PATH. $0 is then the
+    // fully-resolved path, matching Node/libuv.
+    const result = execFileSync("noshebang-cmd", ["one"], {
+      encoding: "utf8",
+      env: { ...bunEnv, PATH: `${String(dir)}:${bunEnv.PATH}` },
+    });
+    expect(result).toBe(`arg0=${scriptPath}\nargs=one\n`);
   });
 });
 

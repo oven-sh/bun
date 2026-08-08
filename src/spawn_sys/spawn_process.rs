@@ -980,7 +980,42 @@ pub unsafe fn spawn_process_posix(
     let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
     // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
     let argv0_cstr = unsafe { bun_core::ffi::cstr(argv0) };
-    let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
+    // Android ships the shell at /system/bin/sh; /bin only exists on API 29+.
+    #[cfg(target_os = "android")]
+    const SHELL_PATH: &core::ffi::CStr = c"/system/bin/sh";
+    #[cfg(not(target_os = "android"))]
+    const SHELL_PATH: &core::ffi::CStr = c"/bin/sh";
+
+    let spawn_result =
+        match posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp) {
+            // ENOEXEC (e.g. script with no shebang): retry as `sh <file> argv[1..]` like libuv.
+            Err(err) if err.get_errno() == bun_sys::E::ENOEXEC => {
+                let mut sh_argv: Vec<*const c_char> = Vec::new();
+                sh_argv.push(SHELL_PATH.as_ptr());
+                sh_argv.push(argv0_cstr.as_ptr());
+                // Skip the original argv[0] (arg0); keep the user-supplied args.
+                let mut i = 1usize;
+                loop {
+                    // SAFETY: argv is a NULL-terminated array (caller contract), so
+                    // `argv[i]` is valid until the NULL terminator is reached.
+                    let arg = unsafe { *argv.add(i) };
+                    if arg.is_null() {
+                        break;
+                    }
+                    sh_argv.push(arg);
+                    i += 1;
+                }
+                sh_argv.push(core::ptr::null());
+                posix_spawn::spawn_z(
+                    SHELL_PATH,
+                    Some(&actions),
+                    Some(&attr),
+                    sh_argv.as_ptr(),
+                    envp,
+                )
+            }
+            other => other,
+        };
 
     match spawn_result {
         Err(err) => {

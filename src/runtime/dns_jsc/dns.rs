@@ -3038,10 +3038,18 @@ pub mod internal {
             bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
         );
         // schedule the request to be executed on the work pool
+        run_on_work_pool(req);
+        Some(req)
+    }
+
+    /// getaddrinfo() on the work pool; the result reaches every waiter through
+    /// the global cache, whichever thread asked. Also how a lookup whose
+    /// per-thread mDNSResponder connection went away with its thread is
+    /// finished (see `SharedConnection::close_for_terminate`).
+    pub(super) fn run_on_work_pool(req: *mut Request) {
         let _ = bun_threading::work_pool::WorkPool::go(SendPtr(req), |r: SendPtr<Request>| {
             work_pool_callback(r.0)
         });
-        Some(req)
     }
 
     #[host_fn]

@@ -2035,18 +2035,7 @@ pub mod bv2_impl {
                 // fail the rest here, and wait only for our own parse tasks.
                 if !self.graph.cancelled {
                     self.graph.cancelled = true;
-                    let this: *mut Self = self;
-                    // SAFETY: `linker.r#loop` is the Mini loop owned by this
-                    // bundle pass's stack frame; the tasks it runs re-enter
-                    // `*this` exactly as `tick_once` would between `is_done` calls.
-                    unsafe {
-                        if let bun_event_loop::AnyEventLoop::Mini(mini) =
-                            &mut *(*this).any_loop_mut()
-                        {
-                            mini.run_ready(this.cast());
-                        }
-                    }
-                    // And the pass as a whole fails at its next checkpoint.
+                    // The pass as a whole fails at its next checkpoint.
                     self.transpiler.log_mut().add_error(
                         None,
                         bun_ast::Loc::EMPTY,
@@ -2056,6 +2045,20 @@ pub mod bv2_impl {
                 // Every check, not just the first: `dispatch()` refuses new
                 // requests once cancelled, but one may have been linked between
                 // the completion's flag flipping and this thread observing it.
+                // Answers already sitting in our queue are consumed first (each
+                // unlinks its request), so nothing is failed here and then
+                // answered again.
+                let this: *mut Self = self;
+                // SAFETY: `linker.r#loop` is the Mini loop owned by this
+                // bundle pass's stack frame; the tasks it runs re-enter
+                // `*this` exactly as `tick_once` would between `is_done` calls.
+                unsafe {
+                    if let bun_event_loop::AnyEventLoop::Mini(mini) =
+                        &mut *(*this).any_loop_mut()
+                    {
+                        mini.run_ready(this.cast());
+                    }
+                }
                 self.fail_outstanding_plugin_requests();
                 return self.graph.pending_items == 0;
             }

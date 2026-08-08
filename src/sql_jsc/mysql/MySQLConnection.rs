@@ -5,6 +5,7 @@ use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 use bun_sql::mysql::Capabilities;
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::auth_method::AuthMethod;
+use bun_sql::mysql::capabilities::MariaDBCapabilities;
 use bun_sql::mysql::connection_state::ConnectionState;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, Error as AnyMySQLError};
@@ -65,6 +66,7 @@ pub struct MySQLConnection {
     server_version: Vec<u8>,
     connection_id: u32,
     capabilities: Capabilities,
+    mariadb_capabilities: MariaDBCapabilities,
     character_set: CharacterSet,
     status_flags: StatusFlags,
 
@@ -105,6 +107,7 @@ impl Default for MySQLConnection {
             server_version: Vec::<u8>::default(),
             connection_id: 0,
             capabilities: Capabilities::default(),
+            mariadb_capabilities: MariaDBCapabilities::default(),
             character_set: CharacterSet::default(),
             status_flags: StatusFlags::default(),
             auth_plugin: None,
@@ -647,6 +650,8 @@ impl MySQLConnection {
             !self.database.is_empty(),
         )
         .intersect(handshake.capability_flags);
+        self.mariadb_capabilities = MariaDBCapabilities::get_default_capabilities()
+            .intersect(handshake.mariadb_capability_flags);
 
         // Override with utf8mb4 instead of using server's default
         self.character_set = CharacterSet::default();
@@ -693,6 +698,7 @@ impl MySQLConnection {
         if self.capabilities.CLIENT_SSL {
             let mut response = SSLRequest {
                 capability_flags: self.capabilities,
+                mariadb_capability_flags: self.mariadb_capabilities,
                 max_packet_size: 0, // 16777216,
                 character_set: CharacterSet::default(),
                 // bun always send connection attributes
@@ -1035,6 +1041,7 @@ impl MySQLConnection {
 
         let mut response = HandshakeResponse41 {
             capability_flags: self.capabilities,
+            mariadb_capability_flags: self.mariadb_capabilities,
             max_packet_size: 0, // 16777216,
             character_set: CharacterSet::default(),
             username: Data::Temporary(bun_ptr::RawSlice::new(&self.user)),
@@ -1188,16 +1195,18 @@ impl MySQLConnection {
                 self.check_if_prepared_statement_is_done(statement);
                 return Ok(());
             }
+            let extended_type_info = self.mariadb_capabilities.MARIADB_CLIENT_EXTENDED_TYPE_INFO;
             if (statement.params_received as usize) < statement.params.len() {
                 let mut column = ColumnDefinition41::default();
-                column.decode(&mut reader)?;
+                column.decode(&mut reader, extended_type_info)?;
                 statement.params[statement.params_received as usize] = Param {
                     r#type: column.column_type,
                     flags: column.flags,
                 };
                 statement.params_received += 1;
             } else if (statement.columns_received as usize) < statement.columns.len() {
-                statement.columns[statement.columns_received as usize].decode(&mut reader)?;
+                statement.columns[statement.columns_received as usize]
+                    .decode(&mut reader, extended_type_info)?;
                 statement.columns_received += 1;
             }
             // In CLIENT_DEPRECATE_EOF mode, there are no trailing EOF packets, so
@@ -1483,8 +1492,10 @@ impl MySQLConnection {
                         .insert(mysql_statement::ExecutionFlags::HEADER_RECEIVED);
                     return Ok(());
                 } else if (statement.columns_received as usize) < statement.columns.len() {
-                    let changed = statement.columns[statement.columns_received as usize]
-                        .decode(&mut reader)?;
+                    let changed = statement.columns[statement.columns_received as usize].decode(
+                        &mut reader,
+                        self.mariadb_capabilities.MARIADB_CLIENT_EXTENDED_TYPE_INFO,
+                    )?;
                     if changed {
                         statement.cached_structure = Default::default();
                         statement.fields_flags = Default::default();

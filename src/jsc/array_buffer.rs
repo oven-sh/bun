@@ -822,6 +822,15 @@ pub struct MarkedArrayBuffer {
     pub pinned: bool,
 }
 
+/// Bytes produced off-thread (`from_bytes`/`from_string`) are owned until they
+/// are handed to JSC; a result that is never converted (its VM went away, the
+/// conversion path bailed) frees them here.
+impl Drop for MarkedArrayBuffer {
+    fn drop(&mut self) {
+        self.destroy();
+    }
+}
+
 impl MarkedArrayBuffer {
     pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
@@ -889,8 +898,8 @@ impl MarkedArrayBuffer {
     }
 
     /// Releases the owned byte buffer if this `MarkedArrayBuffer` was created with an
-    /// allocator (e.g. via `from_string`/`from_bytes`). Does not free the struct itself;
-    /// `MarkedArrayBuffer` is passed and stored by value, so callers own its storage.
+    /// allocator (e.g. via `from_string`/`from_bytes`) and never handed to JSC.
+    /// Idempotent; also what `Drop` does.
     pub fn destroy(&mut self) {
         if self.owns_buffer {
             self.owns_buffer = false;
@@ -899,18 +908,22 @@ impl MarkedArrayBuffer {
         }
     }
 
-    pub fn to_node_buffer(&self, global: &JSGlobalObject) -> JSValue {
+    /// Ownership of the bytes moves to JSC (freed by the buffer's deallocator).
+    pub fn to_node_buffer(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // `JSValue::create_buffer` takes `&mut [u8]` (ownership transfers to JSC
         // via the deallocator). `ArrayBuffer` is `Copy` over a raw pointer, so
         // copy the descriptor and project a mutable slice.
+        self.owns_buffer = false;
         let mut buf = self.buffer;
         JSValue::create_buffer(global, buf.byte_slice_mut())
     }
 
-    pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    /// Ownership of the bytes moves to JSC (freed by `MarkedArrayBuffer_deallocator`).
+    pub fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if !self.buffer.value.is_empty_or_undefined_or_null() {
             return Ok(self.buffer.value);
         }
+        self.owns_buffer = false;
         if self.buffer.byte_len == 0 {
             // SAFETY: null `ptr` with `len == 0` and no deallocator — every
             // obligation of the callee's contract holds trivially.

@@ -1,0 +1,118 @@
+// Hostnames, IP addresses, and SNI servernames become NUL-terminated C
+// strings at the resolver/connect boundary (getaddrinfo, ares_inet_pton,
+// SSL_set_tlsext_host_name). A JS string containing an embedded NUL
+// ("127.0.0.1\0evil.example.com") would silently truncate there, so the
+// socket goes to "127.0.0.1" while JS-level allow/deny-list checks see the
+// full string. Every entry point must reject instead.
+//
+// Unix socket paths have the same defect; that surface is fixed separately
+// with an EINVAL at the usockets layer.
+//
+// These tests are hermetic (no external DNS, no internet): after the fix each
+// rejection is pure input validation that fires before any I/O.
+import { connect } from "bun";
+import { describe, expect, it } from "bun:test";
+import { tls as certs } from "harness";
+import dns from "node:dns";
+import net from "node:net";
+
+describe.concurrent("NUL bytes in addresses are rejected, not truncated", () => {
+  it("dns.promises.lookupService rejects an address containing a NUL", async () => {
+    // "127.0.0.1\0..." must not be treated as "127.0.0.1" (node throws
+    // ERR_INVALID_ARG_VALUE for any address that is not an IP literal).
+    let err: any;
+    try {
+      await dns.promises.lookupService("127.0.0.1\0.example.invalid", 80);
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_INVALID_ARG_VALUE");
+  });
+
+  it("dns.lookupService (callback) rejects an address containing a NUL", () => {
+    expect(() => dns.lookupService("127.0.0.1\0.example.invalid", 80, () => {})).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+
+  it("dns.promises.reverse rejects an IP containing a NUL", async () => {
+    // Must fail like any other unparseable IP (dns.reverse("zzz") -> ENOTIMP),
+    // not PTR-query the "8.8.8.8" prefix.
+    let err: any;
+    try {
+      await dns.promises.reverse("8.8.8.8\0.example.invalid");
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ENOTIMP");
+  });
+
+  it("resolver.setLocalAddress rejects an IP containing a NUL", () => {
+    const resolver = new dns.Resolver();
+    expect(() => resolver.setLocalAddress("127.0.0.1\0.example.invalid")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_IP_ADDRESS" }),
+    );
+  });
+
+  it("resolver.setServers rejects an IP containing a NUL", () => {
+    // Contract test: this rejection comes from the JS layer's pre-existing
+    // isIP validation; the native guard behind it is unreachable depth.
+    const resolver = new dns.Resolver();
+    for (const address of ["8.8.8.8\0.example.invalid", "8.8.8.8\0"]) {
+      expect(() => resolver.setServers([address])).toThrow(expect.objectContaining({ code: "ERR_INVALID_IP_ADDRESS" }));
+    }
+  });
+
+  it.each([
+    ["127.0.0.1\0evil.example.invalid", "ipv4"],
+    ["127.0.0.1\0", "ipv4"],
+    ["::1\0evil.example.invalid", "ipv6"],
+  ] as const)("new net.SocketAddress rejects address %j", (address, family) => {
+    // init_js hands the address to ares_inet_pton as a C string; without the
+    // check it parses the pre-NUL prefix while .address reports the full string.
+    expect(() => new net.SocketAddress({ address, family })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_IP_ADDRESS" }),
+    );
+  });
+
+  it("BlockList rejects addresses containing a NUL", () => {
+    // Without the check, addAddress("127.0.0.1\0evil") registers an entry
+    // that matches 127.0.0.1.
+    const blockList = new net.BlockList();
+    expect(() => blockList.addAddress("127.0.0.1\0evil.example.invalid", "ipv4")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_IP_ADDRESS" }),
+    );
+    // check() swallows parse errors like any other invalid input.
+    expect({
+      nul: blockList.check("127.0.0.1\0evil.example.invalid", "ipv4"),
+      truncated: blockList.check("127.0.0.1", "ipv4"),
+    }).toEqual({ nul: false, truncated: false });
+  });
+
+  it("Bun.connect({ tls: { serverName } }) rejects a serverName containing a NUL byte", async () => {
+    // The serverName becomes the C string handed to SSL_set_tlsext_host_name,
+    // so "good.example\0evil" would silently send "good.example" on the wire.
+    // A real local TLS server: without the check, the handshake COMPLETES with
+    // the truncated SNI, so a successful connect fails the assertion below.
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: certs,
+      socket: { data() {} },
+    });
+    let err: any;
+    let socket: Awaited<ReturnType<typeof connect>> | undefined;
+    try {
+      socket = await connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { serverName: "localhost\0.example.invalid", rejectUnauthorized: false },
+        socket: { data() {} },
+      });
+    } catch (e) {
+      err = e;
+    }
+    socket?.end();
+    expect(err?.message).toContain("must not contain null bytes");
+  });
+});

@@ -3081,6 +3081,11 @@ pub mod internal {
             );
         };
 
+        if strings::contains_char(hostname_slice.slice(), 0) {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("hostname must not contain null bytes")));
+        }
+
         let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
 
         let port: u16 = if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
@@ -5680,6 +5685,12 @@ impl Resolver {
         // ZigStringSlice has no `into_owned_slice_z`; build the
         // NUL-terminated buffer inline.
         let bytes = str_.slice();
+        if strings::contains_char(bytes, 0) {
+            return Err(jsc::Error::INVALID_IP_ADDRESS.throw(
+                global_this,
+                format_args!("Invalid IP address: \"{}\"", bstr::BStr::new(bytes)),
+            ));
+        }
         let mut slice = bytes.to_vec();
         slice.push(0);
 
@@ -5796,6 +5807,16 @@ impl Resolver {
                     .to_bun_string(global_this)?,
             );
             let address_slice = address_string.to_owned_slice();
+
+            if strings::contains_char(&address_slice, 0) {
+                return Err(jsc::Error::INVALID_IP_ADDRESS.throw(
+                    global_this,
+                    format_args!(
+                        "Invalid IP address: \"{}\"",
+                        bstr::BStr::new(&address_slice)
+                    ),
+                ));
+            }
 
             let mut address_buffer = vec![0u8; address_slice.len() + 1];
             let _ = strings::copy(&mut address_buffer, &address_slice);

@@ -141,3 +141,25 @@ test("opened reports the X509 code name for validationErrorCode", async () => {
     reason: "unable to get local issuer certificate",
   });
 });
+
+test("connect() rejects a servername containing a NUL byte", async () => {
+  // The servername becomes the C string handed to lsquic, so
+  // "agent2.example\0evil" would silently send "agent2.example" on the wire
+  // (and be served that certificate) while JS-level checks see the full string.
+  await using server = await listen(ignoreErrors, { sni: { "*": identity1 }, alpn: ["quic-test"] });
+
+  let err: any;
+  try {
+    const session = await connect(server.address, {
+      alpn: "quic-test",
+      servername: "agent2.example\0evil.example.invalid",
+      verifyPeer: "manual",
+    });
+    ignoreErrors(session);
+    await session.opened;
+    await session.close();
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.message).toContain("must not contain null bytes");
+});

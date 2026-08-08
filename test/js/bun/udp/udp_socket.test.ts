@@ -643,3 +643,64 @@ test("sendMany() sends every packet of a larger-than-one-batch call", async () =
     server.close();
   }
 });
+
+describe("hostnames containing NUL bytes", () => {
+  // Bind/connect hostnames become C strings; a NUL would silently bind or
+  // connect to the truncated prefix ("127.0.0.1\0evil" -> 127.0.0.1) while
+  // JS-level checks see the full string. A trailing NUL is the same bypass:
+  // "127.0.0.1\0" !== "127.0.0.1" in JS but reaches C as "127.0.0.1".
+  const hostnames = ["127.0.0.1\0.example.invalid", "127.0.0.1\0"];
+
+  test.concurrent.each(hostnames)("bind hostname %j is rejected", async hostname => {
+    let err;
+    let socket;
+    try {
+      socket = await udpSocket({ hostname, port: 0 });
+    } catch (e) {
+      err = e;
+    }
+    socket?.close();
+    expect(err?.message).toContain("must not contain null bytes");
+  });
+
+  test.concurrent.each(hostnames)("connect hostname %j is rejected", async hostname => {
+    let err;
+    let socket;
+    try {
+      socket = await udpSocket({ connect: { hostname, port: 53 } });
+    } catch (e) {
+      err = e;
+    }
+    socket?.close();
+    expect(err?.message).toContain("must not contain null bytes");
+  });
+});
+
+test.concurrent("bind hostname is coerced exactly once", async () => {
+  // `is_string` admits String objects; a stateful toString must not be able to
+  // show the validator a clean value and hand the bind a different one.
+  let calls = 0;
+  const host = new String("placeholder");
+  // @ts-expect-error deliberate override
+  host.toString = () => (++calls === 1 ? "127.0.0.1" : "127.0.0.1\0evil.example.invalid");
+  const socket = await udpSocket({ hostname: host as any, port: 0 });
+  const bound = socket.hostname;
+  socket.close();
+  expect({ calls, bound }).toEqual({ calls: 1, bound: "127.0.0.1" });
+});
+
+test.concurrent("send() rejects an address containing a NUL byte", async () => {
+  // parse_addr feeds ip_address::to_ip_address, whose C parser reads to the
+  // first NUL: "127.0.0.1\0evil" must not send to 127.0.0.1.
+  const receiver = await udpSocket({ socket: { data() {} } });
+  let sender;
+  try {
+    sender = await udpSocket({});
+    for (const address of ["127.0.0.1\0evil.example.invalid", "127.0.0.1\0"]) {
+      expect(() => sender.send("x", receiver.port, address)).toThrow("Invalid address");
+    }
+  } finally {
+    sender?.close();
+    receiver.close();
+  }
+});

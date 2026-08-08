@@ -18,6 +18,15 @@ const fs = require("internal/fs/streams");
 // that state per ReadStream rather than per process.
 const kRawModeState = Symbol("rawModeState");
 
+// Node emits an ErrnoException (code/errno/syscall populated) on setRawMode
+// failure so callers can branch on `err.code`. Loaded lazily on the error
+// path to keep the common `require("node:tty")` light.
+let ErrnoException;
+function setRawModeError(uvErr) {
+  ErrnoException ??= require("internal/shared").ErrnoException;
+  return new ErrnoException(uvErr, "setRawMode");
+}
+
 function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
@@ -65,9 +74,12 @@ Object.defineProperty(ReadStream, "prototype", {
         // Special case for stdin, as it has a shared uv_tty handle
         // and it's stream is constructed differently
         if (this.fd === 0) {
+          // Source__setRawModeStdin returns a signed libuv error code, so
+          // (unlike the raw positive errno from the POSIX branch) it is not
+          // negated before building the exception.
           const err = ttySetMode(flag);
           if (err) {
-            this.emit("error", new Error("setRawMode failed with errno: " + err));
+            this.emit("error", setRawModeError(err));
             return this;
           }
         } else {
@@ -82,6 +94,8 @@ Object.defineProperty(ReadStream, "prototype", {
           // This corresponds to the `ensureConstructed` function in `native-readable.ts`
           this.$start();
 
+          // On failure this returns a native SystemError object with
+          // code/errno/syscall already populated, so emit it as-is.
           const err = handle.setRawMode(flag);
           if (err) {
             this.emit("error", err);
@@ -92,7 +106,7 @@ Object.defineProperty(ReadStream, "prototype", {
         const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
         const err = ttySetMode(this.fd, flag, state);
         if (err) {
-          this.emit("error", new Error("setRawMode failed with errno: " + err));
+          this.emit("error", setRawModeError(-err));
           return this;
         }
       }

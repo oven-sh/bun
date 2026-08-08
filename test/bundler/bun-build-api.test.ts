@@ -329,6 +329,38 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  // https://github.com/oven-sh/bun/issues/37184
+  test("BuildArtifact.sourcemap pairing with a CSS asset between chunk and map", async () => {
+    const dir = tempDirWithFiles("build-artifact-sourcemap-css", {
+      "entry.ts": `import "./style.css";\nconsole.log("hi");\n`,
+      "style.css": `body { margin: 0; }\n`,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      target: "browser",
+      sourcemap: "linked",
+    });
+    expect(build.success).toBe(true);
+
+    expect(
+      build.outputs.map(o => ({
+        path: path.basename(o.path),
+        kind: o.kind,
+        sourcemap: o.sourcemap ? path.basename(o.sourcemap.path) : null,
+      })),
+    ).toEqual([
+      { path: "entry.js", kind: "entry-point", sourcemap: "entry.js.map" },
+      { path: "entry.css", kind: "asset", sourcemap: null },
+      { path: "entry.js.map", kind: "sourcemap", sourcemap: null },
+    ]);
+
+    const js = build.outputs.find(o => o.kind === "entry-point")!;
+    const map2 = build.outputs.find(o => o.kind === "sourcemap")!;
+    expect(js.sourcemap).toBe(map2);
+    Bun.gc(true);
+  });
+
   test("BuildArtifact sourcemap is traced from the owner, not rooted separately", async () => {
     // `.sourcemap` is the wrapper's `m_sourcemap` WriteBarrier slot (visited in
     // visitChildren); it must not also be held by a Strong root.

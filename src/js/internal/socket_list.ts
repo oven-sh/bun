@@ -3,12 +3,6 @@
 // the receiving process (NODE_SOCKET_* internal messages).
 const EventEmitter = require("node:events");
 
-function ERR_CHILD_CLOSED_BEFORE_REPLY() {
-  const err = new Error("Child closed before reply received");
-  err.code = "ERR_CHILD_CLOSED_BEFORE_REPLY";
-  return err;
-}
-
 const kChannelSockets = Symbol("kChannelSockets");
 // Maps a Bun.spawn subprocess to its ChildProcess wrapper (a property on the
 // subprocess would transition its structure and break native downcasts).
@@ -47,7 +41,7 @@ class SocketListSend extends EventEmitter {
 
     function onclose() {
       self.child.removeListener("internalMessage", onreply);
-      callback(ERR_CHILD_CLOSED_BEFORE_REPLY());
+      callback($ERR_CHILD_CLOSED_BEFORE_REPLY("Child closed before reply received"));
     }
 
     function onreply(msg) {

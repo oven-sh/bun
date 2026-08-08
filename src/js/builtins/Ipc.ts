@@ -111,8 +111,8 @@ export function parseHandle(target, serialized, fd) {
       const wrap = new UDP();
       const err = wrap.open(fd);
       if (err) {
-        // The wrap only owns the descriptor on success; don't leak it.
-        require("node:fs").closeSync(fd);
+        // A synchronous throw reaches ipc.rs's Err branch, which closes fd;
+        // closing here too would double-close (cross-thread fd-reuse hazard).
         throw new Error(`failed to open received dgram handle: ${err}`);
       }
       emit(target, serialized.msg, wrap);

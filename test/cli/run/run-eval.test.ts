@@ -173,6 +173,56 @@ describe("--print for cjs/esm", () => {
     expect(stdout.toString()).toBe("true\n");
     expect(exitCode).toBe(0);
   });
+
+  test.each([
+    'Promise.reject(new Error("rej"))',
+    'new Promise((_, rej) => setTimeout(() => rej(new Error("rej")), 1))',
+    'Promise.resolve().then(() => { throw new Error("rej") })',
+  ])("-p reports a rejected promise once: %s", async expr => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-p", expr],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const err = stderr.toString("utf8");
+    const out = stdout.toString("utf8");
+    expect({
+      stderrErrors: (err.match(/^error: rej$/gm) ?? []).length,
+      stdoutErrors: (out.match(/^error: rej$/gm) ?? []).length,
+      stdout: out,
+    }).toEqual({ stderrErrors: 1, stdoutErrors: 0, stdout: "Promise { <rejected> }\n" });
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    'const p = Promise.reject(new Error("rej")); p.catch(() => {}); p',
+    'process.on("unhandledRejection", () => {}); Promise.reject(new Error("rej"))',
+  ])("-p prints a handled rejected promise: %s", async expr => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-p", expr],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    expect({
+      stderr: stderr.toString("utf8"),
+      stdout: stdout.toString("utf8"),
+    }).toEqual({ stderr: "", stdout: "Promise { <rejected> }\n" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["Promise.resolve(41)", "new Promise(res => setTimeout(() => res(41), 1))"])(
+    "-p on a fulfilled promise still prints the value: %s",
+    async expr => {
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "-p", expr],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      expect(stderr.toString("utf8")).toBe("");
+      expect(stdout.toString("utf8")).toBe("41\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {

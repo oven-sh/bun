@@ -1,5 +1,6 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Body
 
+use bun_core::ZigStringSlice;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -1084,9 +1085,8 @@ impl Value {
         &mut self,
         new: &mut Value,
         global: &JSGlobalObject,
-        // Opaque C++ handle, mutated via FFI. Taking
-        // `NonNull` (not `&`/`&mut`) avoids manufacturing aliased Rust borrows.
-        headers: Option<NonNull<FetchHeaders>>,
+        // The owner's `Content-Type`, consulted only for a pending `blob()`.
+        content_type: impl FnOnce() -> Option<ZigStringSlice>,
     ) -> JsTerminated<()> {
         bun_core::scoped_log!(BodyValue, "resolve");
         if let Value::Locked(locked) = self {
@@ -1184,19 +1184,9 @@ impl Value {
                         let blob_ptr = Blob::new(new.use_());
                         // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
                         let blob = unsafe { &mut *blob_ptr };
-                        if let Some(fetch_headers) = headers {
-                            // `headers` is a live C++ FetchHeaders handle;
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            let fetch_headers =
-                                bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                            if let Some(content_type) =
-                                fetch_headers.fast_get(HTTPHeaderName::ContentType)
-                            {
-                                let content_slice = content_type.to_slice();
-                                let mime_type = MimeType::init(content_slice.slice(), true, None);
-                                set_blob_content_type(blob, mime_type);
-                                // content_slice dropped (replaces defer content_slice.deinit())
-                            }
+                        if let Some(content_type) = content_type() {
+                            let mime_type = MimeType::init(content_type.slice(), true, None);
+                            set_blob_content_type(blob, mime_type);
                         }
                         if !blob.content_type_was_set.get() && blob.store.get().is_some() {
                             set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
@@ -1666,6 +1656,15 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
     fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
+    /// The owner's `Content-Type`. Split out so `Response` can answer without
+    /// building its `FetchHeaders`.
+    fn get_content_type_header(&self) -> Option<ZigStringSlice> {
+        let headers = self.get_fetch_headers()?;
+        // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+        bun_opaque::opaque_deref_mut(headers.as_ptr())
+            .fast_get(HTTPHeaderName::ContentType)
+            .map(|value| value.to_slice())
+    }
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     // ────────────────────────────────────────────────────────────────────
@@ -2209,16 +2208,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
         let blob = unsafe { &mut *blob_ptr };
         if blob.content_type().is_empty() {
-            if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
-                // `fetch_headers` is a live C++ FetchHeaders handle;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_slice();
-                    let mime_type = MimeType::init(content_slice.slice(), true, None);
-                    set_blob_content_type(blob, mime_type);
-                    // content_slice dropped (replaces defer content_slice.deinit())
-                }
+            if let Some(content_type) = self.get_content_type_header() {
+                let mime_type = MimeType::init(content_type.slice(), true, None);
+                set_blob_content_type(blob, mime_type);
             }
             if !blob.content_type_was_set.get() && blob.store.get().is_some() {
                 set_blob_content_type(blob, bun_http_types::MimeType::TEXT);

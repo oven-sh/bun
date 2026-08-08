@@ -67,6 +67,8 @@ unsafe extern "C" {
         haystack_len: usize,
     ) -> usize;
 
+    fn highway_index_of_http_ctl(haystack: *const u8, haystack_len: usize) -> usize;
+
     fn highway_contains_newline_or_non_ascii_or_quote(text: *const u8, text_len: usize) -> bool;
 
     fn highway_index_of_needs_escape_for_javascript_string(
@@ -770,6 +772,28 @@ pub fn index_of_space_or_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> 
     }
 
     Some(result)
+}
+
+/// True for the octets [`index_of_http_ctl`] stops at: CTL (0x00-0x1F, 0x7F)
+/// other than HTAB.
+#[inline(always)]
+pub const fn is_http_ctl(c: u8) -> bool {
+    (c < 0x20 && c != b'\t') || c == 0x7F
+}
+
+/// Index of the first CTL octet other than HTAB — the octets that terminate
+/// (CR/LF) or invalidate an HTTP/1.x field value or reason phrase. SP, HTAB,
+/// VCHAR and obs-text (0x80-0xFF) are skipped.
+#[inline(always)]
+pub fn index_of_http_ctl(haystack: &[u8]) -> Option<usize> {
+    if scalar_only(haystack.len()) {
+        return haystack.iter().position(|&c| is_http_ctl(c));
+    }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    let result = unsafe { highway_index_of_http_ctl(haystack.as_ptr(), haystack.len()) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| is_http_ctl(haystack[i])));
+    found
 }
 
 /// XxHash3 (`XXH3_64bits_withSeed`), runtime-dispatched to the widest SIMD ISA

@@ -30,10 +30,9 @@ use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
-use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
-use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
+use crate::webcore::{AbortSignal, DrainResult, InternalBlob, Response, SinkHandle};
 
 use bun_jsc::JsTerminatedResult;
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
@@ -115,6 +114,9 @@ pub struct FetchTasklet {
     pub(crate) upgraded_connection: bool,
     // Custom Hostname
     pub(crate) hostname: Option<Box<[u8]>>,
+    /// Set (under `mutex`) once the HTTP thread delivers the response head;
+    /// `metadata` itself moves into the `Response` when that is created.
+    pub(crate) response_head_received: bool,
     pub(crate) is_waiting_body: bool,
     /// Set by `on_start_buffering_callback` (JS thread) and read by
     /// `callback()` (HTTP thread, under `mutex`): the body is being
@@ -859,7 +861,7 @@ impl FetchTasklet {
                 }
             }
 
-            // raw ptr: `body` and `get_fetch_headers()` are disjoint fields but borrowck can't see through the accessors.
+            // raw ptr: `body` and `get_content_type_header()` are disjoint fields but borrowck can't see through the accessors.
             let body: *mut BodyValue = response.get_body_value();
             // `BodyAbortListener::on_abort` may have set `Error` while this
             // callback was queued; checked before `buffer_reset.set(false)` so
@@ -897,17 +899,15 @@ impl FetchTasklet {
                 if matches!(old, BodyValue::Locked(_)) {
                     bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
                     let mut old = old;
-                    // BodyValue::resolve takes `Option<NonNull<FetchHeaders>>` (opaque C++ handle
-                    // mutated via FFI); the inherent `get_fetch_headers` returns `Option<&_>`, so
-                    // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
-                    // response.body) and outlives this block.
-                    let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
+                    // SAFETY: `body` points into `response.body`, disjoint from
+                    // `response.init`; both live for this block.
+                    let body = unsafe { &mut *body };
                     // Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
                     // now; narrow back to the real `JsTerminated` here.
-                    // SAFETY: `body` points into `response.body`, disjoint from `headers`
-                    // (response.init); both live for this block.
-                    BodyValue::resolve(&mut old, unsafe { &mut *body }, &self.global_this, headers)
-                        .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
+                    BodyValue::resolve(&mut old, body, &self.global_this, || {
+                        response.get_content_type_header()
+                    })
+                    .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
                 }
             }
         }
@@ -984,7 +984,7 @@ impl FetchTasklet {
             // The JSC-only drain is `&self`, runs just promise reactions (sufficient
             // for the queued `endSink(err)` to land in `write_end_request` →
             // `abort_reason`), and leaves the Bun event loop untouched.
-            if self.metadata.is_some() && !self.is_waiting_body {
+            if self.response_head_received && !self.is_waiting_body {
                 vm.jsc_vm().drain_microtasks();
             }
         }
@@ -1080,7 +1080,7 @@ impl FetchTasklet {
             // — falls through to the reject logic with `result.fail` set.
         }
 
-        if self.metadata.is_none() && self.result.is_success() {
+        if !self.response_head_received && self.result.is_success() {
             cleanup(self);
             return Ok(());
         }
@@ -1104,7 +1104,7 @@ impl FetchTasklet {
         // WHATWG fetch: once the response head is available the promise
         // resolves; post-head failures (body decompression etc.) surface on
         // the body reader regardless of whether head+body arrived in one read.
-        let success = self.result.is_success() || self.metadata.is_some();
+        let success = self.result.is_success() || self.response_head_received;
 
         // Paired with the microtask drain after
         // startRequestStream above: the request-body sink may have set `abort_reason`
@@ -1337,6 +1337,9 @@ impl FetchTasklet {
         // some times we don't have metadata so we also check http.url
         let path = if let Some(metadata) = &self.metadata {
             BunString::clone_utf8(metadata.url.slice())
+        } else if let Some(response) = self.get_current_response() {
+            // SAFETY: live Response kept by `response`/`native_response`.
+            unsafe { (*response).url() }.clone()
         } else if let Some(http_) = &self.http {
             BunString::clone_utf8(http_.url.href)
         } else {
@@ -1793,13 +1796,9 @@ impl FetchTasklet {
 
     fn to_response(&mut self) -> Response {
         bun_output::scoped_log!(FetchTasklet, "toResponse");
-        debug_assert!(self.metadata.is_some());
-        // at this point we always should have metadata
-        let metadata = self.metadata.as_ref().unwrap();
+        let metadata = self.metadata.as_ref().expect("response head received");
         let http_response = &metadata.response;
         self.is_waiting_body = self.result.has_more;
-        // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
-        let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
         // status_text and url must NOT be atomized: the Response can be
         // destroyed from the HTTP thread via deref_from_thread() -> deinit()
@@ -1819,15 +1818,18 @@ impl FetchTasklet {
         };
         let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
+        // `to_body_value` may build an error that reads `self.metadata`, so
+        // the head moves into the Response only afterwards; the Response then
+        // builds `FetchHeaders` from it only if asked (`Init::wire_headers`).
+        let body = Body::new(self.to_body_value());
         Response::init(
             crate::webcore::response::Init {
-                // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
-                headers: Some(unsafe { HeadersRef::adopt(headers) }),
+                wire_headers: self.metadata.take(),
                 status_code,
                 status_text: status_text.into(),
                 ..Default::default()
             },
-            Body::new(self.to_body_value()),
+            body,
             url,
             redirected,
         )
@@ -1946,6 +1948,7 @@ impl FetchTasklet {
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
             hostname: fetch_options.hostname,
+            response_head_received: false,
             is_waiting_body: false,
             is_buffering_body: AtomicBool::new(false),
             is_waiting_abort: false,
@@ -2468,7 +2471,8 @@ impl FetchTasklet {
         // metadata should be provided only once
         if let Some(metadata) = task_ref.result.metadata.take().or(prev_metadata) {
             bun_output::scoped_log!(FetchTasklet, "added callback metadata");
-            if task_ref.metadata.is_none() {
+            if !task_ref.response_head_received {
+                task_ref.response_head_received = true;
                 task_ref.metadata = Some(metadata);
             }
 

@@ -806,9 +806,8 @@ pub fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
 ///
 /// Chunk size and "copy unconditionally" vs "borrow if already lowercase" are
 /// output-irrelevant — streaming Wyhash is chunk-invariant and the bytes fed
-/// to the hasher are identical either way — so this collapses the three
-/// open-coded copies in `http::hash_header_name`,
-/// `s3_signing::S3Credentials::hash_const`, and
+/// to the hasher are identical either way — so this collapses the
+/// open-coded copies in `s3_signing::S3Credentials::hash_const` and
 /// `collections::CaseInsensitiveAsciiStringContext::hash_bytes`.
 #[inline]
 pub fn hash_ascii_lowercase(seed: u64, bytes: &[u8]) -> u64 {

@@ -673,3 +673,56 @@ it("proper error if missing CRLF after chunk data", async () => {
     expect(e?.code).toBe("InvalidHTTPResponse");
   }
 });
+
+async function fetchRawChunked(...bodyWrites) {
+  const { promise, resolve } = Promise.withResolvers();
+  await using server = net
+    .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
+      socket.once("data", () => {
+        socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+        for (const chunk of bodyWrites) socket.write(chunk);
+        socket.end();
+      });
+    })
+    .listen(0, "localhost", () => {
+      resolve(server.address());
+    });
+  const address = await promise;
+  const res = await fetch(`http://localhost:${address.port}`);
+  return await res.text();
+}
+
+// RFC 9112 §7.1: chunk-size and chunk-data are each terminated by CRLF; a bare
+// LF is not a line terminator (§2.2) and lenient parsing here enables response
+// smuggling through intermediaries that disagree.
+it.each([
+  ["after chunk-size", ["5\nHello\r\n", "0\r\n\r\n"]],
+  ["after chunk-ext", ["5;a=b\nHello\r\n", "0\r\n\r\n"]],
+  ["after chunk-data", ["5\r\nHello\n", "0\r\n\r\n"]],
+  ["after last-chunk", ["5\r\nHello\r\n", "0\n\r\n"]],
+  ["CR without LF after chunk-size", ["5\rHello\r\n", "0\r\n\r\n"]],
+])("rejects bare LF %s", async (_, writes) => {
+  await expect(fetchRawChunked(...writes)).rejects.toMatchObject({ code: "InvalidHTTPResponse" });
+});
+
+it.each([
+  ["trailing garbage", "5x"],
+  ["0x prefix", "0x5"],
+  ["sign", "+5"],
+  ["leading space", " 5"],
+])("rejects malformed chunk-size (%s)", async (_, size) => {
+  await expect(fetchRawChunked(`${size}\r\nHello\r\n`, "0\r\n\r\n")).rejects.toMatchObject({
+    code: "InvalidHTTPResponse",
+  });
+});
+
+it("accepts BWS between chunk-size and extension", async () => {
+  expect(await fetchRawChunked("5 \t;a=b\r\nHello\r\n", "0\r\n\r\n")).toBe("Hello");
+});
+
+it("accepts many small well-formed chunks", async () => {
+  const count = 50_000;
+  const body = Buffer.alloc(count * 6, "1\r\nx\r\n").toString();
+  expect(await fetchRawChunked(body, "0\r\n\r\n")).toBe(Buffer.alloc(count, "x").toString());
+});

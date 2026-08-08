@@ -390,16 +390,6 @@ export interface Provides {
   includes: string[];
   /** Preprocessor defines to add to bun's compilation. */
   defines?: string[];
-  /**
-   * Source files (relative to the SOURCE dir) that bun compiles directly
-   * into its own binary — no nested build producing a `.a`. Declared as
-   * implicit outputs of the fetch rule so ninja knows where they come from;
-   * bun.ts adds them to its C/C++ source lists.
-   *
-   * Most deps provide `.a` files via `libs`. This is for the rare case of
-   * a single-file dep with no build system (picohttpparser: one .c file).
-   */
-  sources?: string[];
 }
 
 /**
@@ -483,11 +473,6 @@ export interface ResolvedDep {
   /** Absolute include paths for -I flags. */
   includes: string[];
   defines: string[];
-  /**
-   * Absolute paths to .c/.cpp files bun compiles directly (from
-   * Provides.sources). Empty for most deps — they provide .a files.
-   */
-  sources: string[];
   /**
    * The final build output(s). Use these as implicit inputs on anything
    * downstream that needs this dep built first.
@@ -730,15 +715,10 @@ export function resolveDep(
   // we don't want patches changing between emitFetch and the hash check.
   const patches = dep.patches === undefined ? [] : typeof dep.patches === "function" ? dep.patches(cfg) : dep.patches;
 
-  // Sources bun compiles directly (from Provides.sources). Resolved to
-  // absolute paths for (a) the ResolvedDep return and (b) declaring as
-  // implicit outputs of fetch so ninja knows where they come from.
-  const resolvedSources = (provides.sources ?? []).map(s => resolve(srcDir, s));
-
-  // DirectBuild sources are ALSO compiled in our ninja graph, so they need
-  // the same implicit-output-of-fetch treatment. Include the codegen tool
-  // source, its input, and any HeaderSubst templates — all read at build
-  // time from the fetched tree.
+  // DirectBuild sources are compiled in our ninja graph, so they must be
+  // declared as implicit outputs of fetch so ninja knows where they come
+  // from. Include the codegen tool source, its input, and any HeaderSubst
+  // templates — all read at build time from the fetched tree.
   const directSources: string[] = [];
   if (buildSpec.kind === "direct") {
     for (const s of buildSpec.sources) {
@@ -762,7 +742,7 @@ export function resolveDep(
   //   (CMakeLists.txt) as the stamp. Editing it → reconfigure.
   let sourceStamp: string;
   if (source.kind === "github-archive") {
-    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
+    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, directSources);
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
     // as the stamp — touching it triggers reconfigure/rebuild.
@@ -842,9 +822,7 @@ export function resolveDep(
     // are link inputs, not include-order dependencies).
     outputs = result.headerOutputs;
   } else {
-    // No build step. Source stamp is the only output. For deps with
-    // provides.sources (picohttpparser), emitBun adds a phony pointing at
-    // the compiled .o files so `--target <name>` actually compiles them.
+    // No build step (header-only). Source stamp is the only output.
     libs = [];
     outputs = [sourceStamp];
   }
@@ -868,7 +846,6 @@ export function resolveDep(
     objects,
     includes,
     defines: provides.defines ?? [],
-    sources: resolvedSources,
     outputs,
   };
 }
@@ -933,7 +910,7 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
     return [resolve(buildDir, `${cfg.libPrefix}${dep.name}${cfg.libSuffix}`)];
   }
 
-  // none: no libs (header-only or directly-compiled sources).
+  // none: no libs (header-only).
   return [];
 }
 
@@ -974,7 +951,7 @@ function emitFetch(
 
   n.build({
     outputs: [refStamp],
-    // Source files bun compiles directly (picohttpparser.c). Declaring
+    // Source files bun compiles directly (DirectBuild deps). Declaring
     // them as outputs tells ninja "fetch creates these" — otherwise ninja
     // errors "missing and no known rule to make it" on fresh checkouts.
     ...(compiledSources.length > 0 && { implicitOutputs: compiledSources }),
@@ -1062,7 +1039,6 @@ function emitPrebuilt(
     objects: [],
     includes,
     defines: provides.defines ?? [],
-    sources: [],
     outputs,
   };
 }

@@ -41,6 +41,7 @@ const MIRI_CRATES = [
   "bun_http_types",
   "bun_md",
   "bun_paths",
+  "bun_picohttp",
   "bun_ptr",
   "bun_resolve_builtins",
   "bun_shell_parser",

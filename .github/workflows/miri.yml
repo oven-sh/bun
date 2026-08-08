@@ -19,6 +19,7 @@ on:
       - "src/http_types/**"
       - "src/md/**"
       - "src/paths/**"
+      - "src/picohttp/**"
       - "src/ptr/**"
       - "src/resolve_builtins/**"
       - "src/shell_parser/**"

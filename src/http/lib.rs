@@ -87,6 +87,7 @@ pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
 pub use bun_http_types::FetchRedirect::FetchRedirect;
 pub use bun_http_types::Method::Method;
 pub use bun_picohttp as picohttp;
+use picohttp::HeaderName;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -631,14 +632,6 @@ trait SocketTimeout {
     fn set_timeout(&self, seconds: core::ffi::c_uint);
 }
 
-// lowercase hash header names so that we can be sure
-pub(crate) fn hash_header_name(name: &[u8]) -> u64 {
-    // Uses the std Wyhash algorithm; safe —
-    // every comparison hash is computed by this same fn at runtime, no
-    // persisted hashes.
-    bun_wyhash::hash_ascii_lowercase(0, name)
-}
-
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
 // The heavy `impl HTTPClient` (socket dispatch / state machine) remains
 // gated below until the missing
@@ -1048,15 +1041,6 @@ fn get_user_agent_header() -> picohttp::Header {
     )
 }
 
-// ── header-hash constants ───────────────────────────────────────────────
-// `Wyhash` is not `const fn`, so the per-header `match` arms inside
-// `build_request` / `handle_response_metadata` call this runtime alias of
-// `hash_header_name`.
-#[inline(always)]
-fn hash_header_const(name: &[u8]) -> u64 {
-    hash_header_name(name)
-}
-
 bun_core::comptime_string_map! {
     /// Request-body-header names
     /// (https://fetch.spec.whatwg.org/#request-body-header-name).
@@ -1423,7 +1407,6 @@ pub(crate) fn print_request(
             path: url,
             minor_version: request.minor_version,
             headers: request.headers,
-            bytes_read: request.bytes_read,
         };
         bun_core::pretty_errorln!("{}", request_.curl(ignore_insecure, body));
     }
@@ -2380,9 +2363,8 @@ impl<'a> HTTPClient<'a> {
         const MAX_USER_HEADERS: usize = MAX_REQUEST_HEADERS - MAX_DEFAULT_HEADERS;
 
         for (i, head) in header_names.iter().enumerate() {
-            let name = self.header_str(*head);
-            // Hash it as lowercase
-            let hash = hash_header_name(name);
+            let header =
+                picohttp::Header::new(self.header_str(*head), self.header_str(header_values[i]));
 
             // Whether this header will actually be written to the buffer.
             // Override flags must only be set when the header is kept, otherwise
@@ -2392,13 +2374,13 @@ impl<'a> HTTPClient<'a> {
 
             // Skip host and connection header
             // we manage those
-            match hash {
-                h if h == hash_header_const(b"Content-Length") => {
+            match header.well_known() {
+                Some(HeaderName::ContentLength) => {
                     // Content-Length is always consumed (never written to the buffer).
                     original_content_length = Some(self.header_str(header_values[i]));
                     continue;
                 }
-                h if h == hash_header_const(b"Connection") => {
+                Some(HeaderName::Connection) => {
                     if will_append {
                         override_connection_header = true;
                         match connection_header_keep_alive(self.header_str(header_values[i])) {
@@ -2413,7 +2395,7 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
-                h if h == hash_header_const(b"if-modified-since") => {
+                Some(HeaderName::IfModifiedSince) => {
                     if self.flags.force_last_modified && self.if_modified_since.is_empty() {
                         // SAFETY: header_str() returns a slice into self.header_buf which outlives
                         // this client; lifetime is erased here only because we don't yet thread
@@ -2422,34 +2404,34 @@ impl<'a> HTTPClient<'a> {
                             unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
                     }
                 }
-                h if h == hash_header_const(HOST_HEADER_NAME) => {
+                Some(HeaderName::Host) => {
                     if will_append {
                         override_host_header = true;
                     }
                 }
-                h if h == hash_header_const(b"Accept") => {
+                Some(HeaderName::Accept) => {
                     if will_append {
                         override_accept_header = true;
                     }
                 }
-                h if h == hash_header_const(b"User-Agent") => {
+                Some(HeaderName::UserAgent) => {
                     if will_append {
                         override_user_agent = true;
                     }
                 }
-                h if h == hash_header_const(b"Accept-Encoding") => {
+                Some(HeaderName::AcceptEncoding) => {
                     if will_append {
                         override_accept_encoding = true;
                     }
                 }
-                h if h == hash_header_const(b"Upgrade") => {
+                Some(HeaderName::Upgrade) => {
                     if will_append {
                         if upgrade_header_is_not_h2(self.header_str(header_values[i])) {
                             self.flags.upgrade_state = HTTPUpgradeState::Pending;
                         }
                     }
                 }
-                h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
+                Some(HeaderName::TransferEncoding) => {
                     if !self.flags.is_streaming_request_body {
                         continue;
                     }
@@ -2466,8 +2448,7 @@ impl<'a> HTTPClient<'a> {
                 continue;
             }
 
-            request_headers_buf[header_count] =
-                picohttp::Header::new(name, self.header_str(header_values[i]));
+            request_headers_buf[header_count] = header;
 
             header_count += 1;
         }
@@ -2555,7 +2536,6 @@ impl<'a> HTTPClient<'a> {
             // SAFETY: `request_headers_buf` is the per-HTTP-thread
             // `SHARED_REQUEST_HEADERS_BUF` static, outliving the returned `Request`.
             headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
-            bytes_read: 0,
         }
     }
 
@@ -3645,6 +3625,8 @@ impl<'a> HTTPClient<'a> {
         // here once `clone_metadata()` has deep-copied the parsed headers.
         let mut buffer = std::mem::take(&mut self.state.response_message_buffer);
         let needs_move = buffer.list.is_empty();
+        // Bytes already known to be an incomplete (but so far valid) head.
+        let mut already_seen = buffer.list.len();
         let mut to_read: &[u8] = if needs_move {
             incoming_data
         } else {
@@ -3677,49 +3659,49 @@ impl<'a> HTTPClient<'a> {
                 return;
             }};
         }
+        // An incomplete head: keep accumulating unless it has outgrown the cap.
+        // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/request-side
+        // knob (Node `--max-http-header-size`); reusing it here rejects
+        // legitimate responses with large `Location`/`Set-Cookie` headers. The
+        // intent is to bound `response_message_buffer` growth, so use a
+        // generous fixed cap independent of that knob.
+        macro_rules! incomplete_head {
+            () => {{
+                const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
+                if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
+                    self.close_and_fail::<IS_SSL>(crate::Error::ResponseHeadersTooLarge, socket);
+                    return;
+                }
+                short_read!();
+            }};
+        }
 
         let shared_resp = scratch::response_headers();
         let mut response = loop {
-            let mut amount_read: usize = 0;
-
             // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
             // if less than 16 it will always be a ShortRead
             if to_read.len() < 16 {
                 short_read!();
             }
+            // Don't re-parse an accumulating head from the start on every read
+            // unless the new bytes could have completed it (quadratic under a
+            // trickling server otherwise). Anything stored below the 16-byte
+            // floor above was never parsed, so it doesn't count as seen.
+            let seen = core::mem::take(&mut already_seen);
+            if seen >= 16 && !picohttp::Response::may_be_complete(to_read, seen) {
+                incomplete_head!();
+            }
 
-            let parsed = match picohttp::Response::parse_parts(
-                to_read,
-                &mut shared_resp[..],
-                Some(&mut amount_read),
-            ) {
+            let parsed = match picohttp::Response::parse(to_read, &mut shared_resp[..]) {
                 Ok(r) => r,
-                Err(picohttp::ParseResponseError::ShortRead) => {
-                    // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
-                    // request-side knob (Node `--max-http-header-size`); reusing
-                    // it here rejects legitimate responses with large
-                    // `Location`/`Set-Cookie` headers. The intent is to bound
-                    // `response_message_buffer` growth, so use a generous fixed
-                    // cap independent of that knob.
-                    const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
-                    if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
-                        self.close_and_fail::<IS_SSL>(
-                            crate::Error::ResponseHeadersTooLarge,
-                            socket,
-                        );
-                        return;
-                    }
-                    short_read!();
-                }
+                Err(picohttp::ParseResponseError::ShortRead) => incomplete_head!(),
                 Err(e) => {
                     self.close_and_fail::<IS_SSL>(e.into(), socket);
                     return;
                 }
             };
 
-            let bytes_read =
-                (usize::try_from(parsed.bytes_read).expect("int cast")).min(to_read.len());
-            to_read = &to_read[bytes_read..];
+            to_read = &to_read[parsed.bytes_read..];
 
             if parsed.status_code == 101 {
                 if self.flags.upgrade_state == HTTPUpgradeState::None
@@ -4659,79 +4641,48 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
     ) -> crate::Result<bool> {
-        // reshaped for borrowck — `chunked_decoder` and the body
-        // buffer (`compressed_body` / `decoded_body`) are disjoint fields of
-        // `self.state`, so borrow them once together via the split accessor and
-        // operate on safe references. Deep-cloning the buffer here would
-        // diverge (mutations from process_body_buffer would be lost).
         let (decoder, body_buf) = self.state.chunked_decoder_and_body_buffer();
         body_buf.append_slice(incoming_data)?;
 
-        // set consume_trailer to 1 to discard the trailing header
-        // using content-encoding per chunk is not supported
-        decoder.consume_trailer = 1;
-
-        let mut bytes_decoded = incoming_data.len();
-        // phr_decode_chunked mutates in-place
-        // SAFETY: body_buf.list is initialized for [0..len()) and uniquely
-        // borrowed here; the offset is len() - incoming_data.len() (the
-        // just-appended tail), which is in bounds.
-        let pret = unsafe {
-            picohttp::phr_decode_chunked(
-                &raw mut *decoder,
-                body_buf
-                    .list
-                    .as_mut_ptr()
-                    .add(body_buf.list.len().saturating_sub(incoming_data.len())),
-                &raw mut bytes_decoded,
-            )
+        let start = body_buf.list.len() - incoming_data.len();
+        let Ok(decoded) = decoder.decode(&mut body_buf.list[start..]) else {
+            return Err(crate::Error::InvalidHTTPResponse);
         };
-        let new_len = body_buf
-            .list
-            .len()
-            .saturating_sub(incoming_data.len() - bytes_decoded);
-        body_buf.list.truncate(new_len);
+        body_buf.list.truncate(start + decoded.written);
         let buffer_len = body_buf.list.len();
-        self.state.total_body_received += bytes_decoded;
+        self.state.total_body_received += decoded.written;
         bun_core::scoped_log!(
             fetch,
             "handleResponseBodyChunkedEncodingFromMultiplePackets {}",
             self.state.total_body_received
         );
 
-        match pret {
-            // Invalid HTTP response body
-            -1 => return Err(crate::Error::InvalidHTTPResponse),
-            // Needs more data
-            -2 => {
-                self.report_progress(buffer_len);
-                // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming)
-                    || self.signals.body_receive_mode.is_some()
-                {
-                    // If we're streaming, we cannot use the libdeflate fast path
-                    self.state.flags.is_libdeflate_fast_path_disabled = true;
-                    // Move the
-                    // bytes out so no `&` into self.state aliases the `&mut self.state` call.
-                    let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, false);
-                }
-
-                return Ok(false);
-            }
-            // Done
-            _ => {
-                self.state.flags.received_last_chunk = true;
+        if !decoded.complete {
+            self.report_progress(buffer_len);
+            // streaming chunks
+            if self.signals.get(signals::Field::ResponseBodyStreaming)
+                || self.signals.body_receive_mode.is_some()
+            {
+                // If we're streaming, we cannot use the libdeflate fast path
+                self.state.flags.is_libdeflate_fast_path_disabled = true;
                 // Move the
                 // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                 let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                let _ = self.state.process_body_buffer(buffer_snap, true)?;
-
-                self.report_progress(buffer_len);
-
-                return Ok(true);
+                return self.state.process_body_buffer(buffer_snap, false);
             }
+
+            return Ok(false);
         }
+
+        self.state.flags.received_last_chunk = true;
+        // Move the
+        // bytes out so no `&` into self.state aliases the `&mut self.state` call.
+        let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+        let _ = self.state.process_body_buffer(buffer_snap, true)?;
+
+        self.report_progress(buffer_len);
+
+        Ok(true)
     }
 
     fn handle_response_body_chunked_encoding_from_single_packet(
@@ -4741,72 +4692,50 @@ impl<'a> HTTPClient<'a> {
         let small = scratch::single_packet_small_buffer();
         debug_assert!(incoming_data.len() <= small.len());
 
-        // set consume_trailer to 1 to discard the trailing header
-        // using content-encoding per chunk is not supported
-        self.state.chunked_decoder.consume_trailer = 1;
-
         // `handle_on_data_headers` moves `response_message_buffer` into a
         // local before dispatching here, so `incoming_data` never aliases
         // `self` and the scratch copy is always sufficient (the dispatcher
         // bounds `incoming_data.len()` to the scratch size).
-        let in_len = incoming_data.len();
-        let buffer = &mut small[0..in_len];
+        let buffer = &mut small[0..incoming_data.len()];
         buffer.copy_from_slice(incoming_data);
 
-        let mut bytes_decoded = in_len;
-        // phr_decode_chunked mutates in-place
-        // SAFETY: `buffer` is an exclusive &mut [u8] of len == in_len; offset
-        // len - in_len == 0 is trivially in bounds. `chunked_decoder` is a
-        // disjoint field of `self.state` (`buffer` borrows `small`).
-        let pret = unsafe {
-            picohttp::phr_decode_chunked(
-                &raw mut self.state.chunked_decoder,
-                buffer.as_mut_ptr().add(buffer.len().saturating_sub(in_len)),
-                &raw mut bytes_decoded,
-            )
+        let Ok(decoded) = self.state.chunked_decoder.decode(buffer) else {
+            return Err(crate::Error::InvalidHTTPResponse);
         };
-        let new_len = buffer.len().saturating_sub(in_len - bytes_decoded);
-        let buffer = &mut buffer[..new_len];
-        self.state.total_body_received += bytes_decoded;
+        let buffer = &mut buffer[..decoded.written];
+        self.state.total_body_received += decoded.written;
         bun_core::scoped_log!(
             fetch,
             "handleResponseBodyChunkedEncodingFromSinglePacket {}",
             self.state.total_body_received
         );
-        match pret {
-            // Invalid HTTP response body
-            -1 => Err(crate::Error::InvalidHTTPResponse),
-            // Needs more data
-            -2 => {
-                self.report_progress(buffer.len());
-                self.state.get_body_buffer().append_slice_exact(buffer)?;
+        if !decoded.complete {
+            self.report_progress(buffer.len());
+            self.state.get_body_buffer().append_slice_exact(buffer)?;
 
-                // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming)
-                    || self.signals.body_receive_mode.is_some()
-                {
-                    // If we're streaming, we cannot use the libdeflate fast path
-                    self.state.flags.is_libdeflate_fast_path_disabled = true;
+            // streaming chunks
+            if self.signals.get(signals::Field::ResponseBodyStreaming)
+                || self.signals.body_receive_mode.is_some()
+            {
+                // If we're streaming, we cannot use the libdeflate fast path
+                self.state.flags.is_libdeflate_fast_path_disabled = true;
 
-                    // Move
-                    // the bytes out so no `&` into self.state aliases the `&mut self.state`
-                    // taken by process_body_buffer (which mutates compressed_body/decoded_body).
-                    let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, false);
-                }
-
-                Ok(false)
+                // Move
+                // the bytes out so no `&` into self.state aliases the `&mut self.state`
+                // taken by process_body_buffer (which mutates compressed_body/decoded_body).
+                let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+                return self.state.process_body_buffer(buffer_snap, false);
             }
-            // Done
-            _ => {
-                self.state.flags.received_last_chunk = true;
-                self.handle_response_body_from_single_packet(buffer)?;
-                debug_assert!(self.state.decoded_body.list.as_ptr() != buffer.as_ptr());
-                self.report_progress(buffer.len());
 
-                Ok(true)
-            }
+            return Ok(false);
         }
+
+        self.state.flags.received_last_chunk = true;
+        self.handle_response_body_from_single_packet(buffer)?;
+        debug_assert!(self.state.decoded_body.list.as_ptr() != buffer.as_ptr());
+        self.report_progress(buffer.len());
+
+        Ok(true)
     }
 
     pub(crate) fn handle_response_metadata(
@@ -4818,8 +4747,8 @@ impl<'a> HTTPClient<'a> {
         let mut is_server_sent_events = false;
         let mut content_codings: u32 = 0;
         for (header_i, header) in response.headers.list.iter().enumerate() {
-            match hash_header_name(header.name()) {
-                h if h == hash_header_const(b"Content-Length") => {
+            match header.well_known() {
+                Some(HeaderName::ContentLength) => {
                     // RFC 9110 section 9.3.6: a client MUST ignore
                     // Content-Length in a successful response to CONNECT —
                     // the connection becomes an opaque tunnel and is never
@@ -4858,12 +4787,17 @@ impl<'a> HTTPClient<'a> {
                         self.state.content_length = Some(0);
                     }
                 }
-                h if h == hash_header_const(b"Content-Type") => {
-                    if strings::index_of(header.value(), b"text/event-stream").is_some() {
+                Some(HeaderName::ContentType) => {
+                    const SSE: &[u8] = b"text/event-stream";
+                    let value = header.value();
+                    // The media type itself, optionally followed by parameters.
+                    if strings::starts_with_case_insensitive_ascii(value, SSE)
+                        && matches!(value.get(SSE.len()), None | Some(b';' | b' ' | b'\t'))
+                    {
                         is_server_sent_events = true;
                     }
                 }
-                h if h == hash_header_const(b"Content-Encoding") => {
+                Some(HeaderName::ContentEncoding) => {
                     if !self.flags.disable_decompression {
                         for token in HeaderValueIterator::init(header.value()) {
                             match Encoding::from_token(token) {
@@ -4883,7 +4817,7 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
-                h if h == hash_header_const(b"Transfer-Encoding") => {
+                Some(HeaderName::TransferEncoding) => {
                     // RFC 9110 section 9.3.6: as with Content-Length above, a
                     // client MUST ignore Transfer-Encoding in a successful
                     // response to CONNECT.
@@ -4907,23 +4841,23 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
-                h if h == hash_header_const(b"Location") => {
+                Some(HeaderName::Location) => {
                     location = header.value();
                 }
-                h if h == hash_header_const(b"Connection") => {
+                Some(HeaderName::Connection) => {
                     // `close` on any field line, any status, is sticky (RFC 9110 §5.3, RFC 9112 §9.6).
                     if connection_header_keep_alive(header.value()) == Some(false) {
                         self.state.flags.allow_keepalive = false;
                     }
                 }
-                h if h == hash_header_const(b"Last-Modified") => {
+                Some(HeaderName::LastModified) => {
                     pretend_304 = self.flags.force_last_modified
                         && response.status_code > 199
                         && response.status_code < 300
                         && !self.if_modified_since.is_empty()
                         && self.if_modified_since == header.value();
                 }
-                h if h == hash_header_const(b"Alt-Svc") => {
+                None if header.name().eq_ignore_ascii_case(b"alt-svc") => {
                     // Record regardless of *this* request's shape — a future
                     // request to the same origin may be h3-eligible even if this
                     // one was pinned/proxied/sendfile.

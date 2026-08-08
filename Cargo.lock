@@ -1439,14 +1439,10 @@ dependencies = [
 name = "bun_picohttp"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
+ "bun_highway",
+ "bun_http_types",
  "strum",
 ]
 

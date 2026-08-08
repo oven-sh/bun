@@ -2315,8 +2315,7 @@ void GlobalObject::finishCreation(VM& vm)
                     return;
                 }
             }
-            // A LazyProperty initializer must always set a value. Keep the
-            // exception pending for the caller and install a stub.
+            // LazyProperty initializers must always set a value; leave the exception pending for the caller.
             scope.release();
             init.set(JSFunction::create(init.vm, init.owner, 0, "inspect"_s, jsFunctionNotImplemented, ImplementationVisibility::Public));
         });
@@ -2353,8 +2352,7 @@ void GlobalObject::finishCreation(VM& vm)
                     return;
                 }
             }
-            // A LazyProperty initializer must always set a value. Keep the
-            // exception pending for the caller and fall back to no colors.
+            // LazyProperty initializers must always set a value; leave the exception pending for the caller.
             scope.release();
             init.set(JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
         });

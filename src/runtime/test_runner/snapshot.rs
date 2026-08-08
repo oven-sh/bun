@@ -28,6 +28,8 @@ pub struct Snapshots<'a> {
     pub(crate) added: usize,
     pub(crate) passed: usize,
     pub(crate) failed: usize,
+    /// `file_buf` differs from `_current_file` on disk; cleared by `flush_current_file`.
+    pub(crate) needs_write: bool,
 
     pub(crate) file_buf: &'a mut Vec<u8>,
     // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
@@ -201,6 +203,7 @@ impl<'a> Snapshots<'a> {
         .map_err(|_| crate::Error::WriteError)?;
 
         self.added += 1;
+        self.needs_write = true;
         self.values
             .insert(name_hash, Box::<[u8]>::from(target_value));
         Ok(None)
@@ -329,11 +332,27 @@ impl<'a> Snapshots<'a> {
         Ok(())
     }
 
+    /// Overwrite the open `.snap` file with `file_buf` + ftruncate. Keeps the fd open.
+    pub(crate) fn flush_current_file(&mut self) -> Result<(), Error> {
+        if !self.needs_write {
+            return Ok(());
+        }
+        let Some(file) = self._current_file.as_ref() else {
+            return Ok(());
+        };
+        file.file.seek_to(0).map_err(Error::from)?;
+        file.file
+            .write_all(self.file_buf)
+            .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
+        bun_sys::ftruncate(file.file.handle, self.file_buf.len() as i64)
+            .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
+        self.needs_write = false;
+        Ok(())
+    }
+
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
+        self.flush_current_file()?;
         if let Some(file) = self._current_file.take() {
-            file.file
-                .write_all(self.file_buf)
-                .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
             let _ = file.file.close();
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();
@@ -878,10 +897,7 @@ impl<'a> Snapshots<'a> {
             // SAFETY: buf[pos] == 0 written above
             let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
-            let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-            if self.update_snapshots {
-                flags |= bun_sys::O::TRUNC;
-            }
+            let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
             let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
                 bun_sys::Result::Ok(fd) => fd,
                 bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),
@@ -894,6 +910,7 @@ impl<'a> Snapshots<'a> {
 
             if self.update_snapshots {
                 self.file_buf.extend_from_slice(Self::FILE_HEADER);
+                self.needs_write = true;
             } else {
                 let length = file.file.get_end_pos().map_err(Error::from)?;
                 if length == 0 {

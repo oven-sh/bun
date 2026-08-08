@@ -16,6 +16,14 @@ console.log('GC #1 (synchronous, same stack) returned without crashing');
 setImmediate(() => {
   global.gc ? global.gc() : (process.isBun && Bun.gc ? Bun.gc(true) : null);
   console.log('GC #2 (from a fresh event-loop turn) returned without crashing');
+  // Diagnostics for the no-crash path: which napi-related cells are still
+  // live after two full GCs (a live NapiHandleScopeImpl / counts of Object).
+  const { heapStats } = require("bun:jsc");
+  const counts = heapStats().objectTypeCounts;
+  const pick = {};
+  for (const k of Object.keys(counts)) if (/napi|Napi|External|^Object$|^Array$|Finaliz|Weak/i.test(k)) pick[k] = counts[k];
+  console.log('live cells after GC #2: ' + JSON.stringify(pick));
+  console.log('protected: ' + JSON.stringify(heapStats().protectedObjectTypeCounts));
   console.log('ERROR: Did not crash! Test failed!');
   process.exit(1);
 });
@@ -23,7 +31,7 @@ setImmediate(() => {
   env: { 
     ...process.env,
     // Diagnostics: one line per GC cycle on stderr (C:<n> = conservative roots visited).
-    BUN_JSC_logGC: "1",
+    BUN_JSC_logGC: "2",
     BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
     ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0"
   }

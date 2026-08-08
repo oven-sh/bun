@@ -373,9 +373,9 @@ impl JSValue {
         }
         JSC__JSValue__isAggregateError(self, global)
     }
-    /// `JSValue.getErrorsProperty(globalObject)`. Returns the
-    /// own `errors` data property via `JSObject::getDirect` — no prototype
-    /// walk, no getters invoked, nothrow. Used for `AggregateError.errors`.
+    /// Own `errors` data property via `getDirect` (nothrow, no getter call).
+    /// Absent and accessor slots return `undefined`; the internal GetterSetter
+    /// cell never escapes. Used for `AggregateError.errors`.
     #[inline]
     pub(crate) fn get_errors_property(self, global: &JSGlobalObject) -> JSValue {
         unsafe extern "C" {

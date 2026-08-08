@@ -5125,77 +5125,100 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) {
-        // Note: the post-print stack/exception_list block is handled at the
-        // tail instead of via a drop guard (the body has no early-`?` returns
-        // once the AggregateError branch is taken).
-        let global_ref = self.global();
+        // Bounds total aggregate unwraps (`depth` alone allows fan_out^depth
+        // for a cyclic `errors`); 256 fits one full level of legit nesting.
+        let mut remaining_unwraps: u16 = 256;
+        self.print_errorlike_object_at_depth(
+            value,
+            exception,
+            exception_list,
+            formatter,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+            0,
+            &mut remaining_unwraps,
+        );
+    }
 
-        if value.is_aggregate_error(global_ref) {
-            // Note: `JSValue::for_each` takes a C-ABI fn
-            // pointer + erased ctx, so thread the captures through a struct.
-            // The C trampoline erases lifetimes via `*mut c_void`; round-trip
-            // the caller's `&mut ExceptionList` as a raw pointer so child
-            // errors append to the same list.
-            struct AggCtx<'a> {
-                formatter: *mut crate::console_object::Formatter<'a>,
-                writer: *mut bun_core::io::Writer,
-                exception_list: *mut ExceptionList,
-                allow_ansi_color: bool,
-                allow_side_effects: bool,
-            }
-            extern "C" fn agg_iter(
-                _vm: *mut crate::VM,
-                _global: &JSGlobalObject,
-                ctx: *mut c_void,
-                next_value: JSValue,
-            ) {
-                // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
-                // SAFETY: per-thread VM.
-                let vm = VirtualMachine::get().as_mut();
-                let exception_list = if ctx.exception_list.is_null() {
-                    None
-                } else {
-                    // SAFETY: non-null branch; borrows the caller's stack
-                    // `ExceptionList`, live for the synchronous `for_each`.
-                    Some(unsafe { &mut *ctx.exception_list })
-                };
-                // SAFETY: `ctx.formatter` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let formatter = unsafe { &mut *ctx.formatter };
-                // SAFETY: `ctx.writer` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let writer = unsafe { &mut *ctx.writer };
-                vm.print_errorlike_object(
-                    next_value,
-                    None,
-                    exception_list,
-                    formatter,
-                    writer,
-                    ctx.allow_ansi_color,
-                    ctx.allow_side_effects,
-                );
-            }
-            let mut ctx = AggCtx {
-                formatter: std::ptr::from_mut(formatter),
-                writer: std::ptr::from_mut(writer),
-                exception_list: exception_list
-                    .map(std::ptr::from_mut::<ExceptionList>)
-                    .unwrap_or(core::ptr::null_mut()),
-                allow_ansi_color,
-                allow_side_effects,
-            };
-            // `getErrorsProperty` is
-            // `getDirect` (own data prop, nothrow); `for_each` may throw, in
-            // which case the error is swallowed.
+    /// `depth` bounds the `AggregateError.errors` recursion so a cyclic
+    /// `errors` (`e.errors = [e]`) terminates instead of blowing the stack;
+    /// `remaining_unwraps` bounds total unwraps so a wide cycle can't fan out.
+    #[allow(clippy::too_many_arguments)]
+    fn print_errorlike_object_at_depth(
+        &mut self,
+        value: JSValue,
+        exception: Option<&Exception>,
+        exception_list: Option<&mut ExceptionList>,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+        depth: u8,
+        remaining_unwraps: &mut u16,
+    ) {
+        const MAX_AGGREGATE_ERROR_DEPTH: u8 = 8;
+        const MAX_AGGREGATE_ERRORS_PER_LEVEL: u64 = 256;
+
+        let global_ref = self.global();
+        let mut exception_list = exception_list;
+
+        if value.is_aggregate_error(global_ref)
+            && depth < MAX_AGGREGATE_ERROR_DEPTH
+            && *remaining_unwraps > 0
+        {
+            *remaining_unwraps -= 1;
+            // Own data slot only (nothrow, no getter call); only iterate the
+            // spec-created shape. Tampered values fall through to plain printing.
             let errors = value.get_errors_property(global_ref);
-            let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
-            return;
+            if errors.is_array() {
+                // Indexed access instead of the iterator protocol: a
+                // user-supplied `Symbol.iterator` never runs, and a sparse
+                // `Array(1e9)` costs at most the cap, not its length.
+                let len = errors.get_length(global_ref).unwrap_or_else(|_| {
+                    global_ref.clear_exception_except_termination();
+                    0
+                });
+                let cap = len.min(MAX_AGGREGATE_ERRORS_PER_LEVEL);
+                let mut printed: u64 = 0;
+                for i in 0..cap {
+                    let child = match errors.get_index(global_ref, i as u32) {
+                        Ok(child) => child,
+                        Err(_) => {
+                            // An index getter threw; stop expanding.
+                            global_ref.clear_exception_except_termination();
+                            break;
+                        }
+                    };
+                    // Skips holes and explicit `undefined`/`null` entries
+                    // alike: an "error: undefined" line carries no information.
+                    if child.is_undefined_or_null() {
+                        continue;
+                    }
+                    self.print_errorlike_object_at_depth(
+                        child,
+                        None,
+                        exception_list.as_deref_mut(),
+                        formatter,
+                        writer,
+                        allow_ansi_color,
+                        allow_side_effects,
+                        depth + 1,
+                        remaining_unwraps,
+                    );
+                    printed += 1;
+                }
+                if printed > 0 {
+                    if len > cap {
+                        let _ = write!(writer, "... {} more errors\n", len - cap);
+                    }
+                    return;
+                }
+                // Zero sub-errors printed (e.g. `Promise.any([])`): fall
+                // through so the AggregateError itself is printed, not nothing.
+            }
         }
 
-        // Note: reborrow so the add-to-error-list tail can still see it after
-        // `print_error_from_maybe_private_data`.
-        let mut exception_list = exception_list;
         let was_internal = self.print_error_from_maybe_private_data(
             value,
             exception_list.as_deref_mut(),

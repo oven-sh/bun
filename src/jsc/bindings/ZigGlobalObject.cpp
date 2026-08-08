@@ -2324,7 +2324,10 @@ void GlobalObject::finishCreation(VM& vm)
             }
             // LazyProperty initializers must set even on exception (callFunc asserts).
             (void)scope.tryClearException();
-            init.set(JSFunction::create(init.vm, init.owner, 2, "inspect"_s, functionUtilInspectFallback, ImplementationVisibility::Public));
+            JSFunction* fallback = JSFunction::create(init.vm, init.owner, 2, "inspect"_s, functionUtilInspectFallback, ImplementationVisibility::Public);
+            // stylizeWithColor reads inspect.styles; empty keeps it on the identity path.
+            fallback->putDirect(init.vm, Identifier::fromString(init.vm, "styles"_s), constructEmptyObject(init.owner), 0);
+            init.set(fallback);
         });
 
     m_utilInspectOptionsStructure.initLater(
@@ -2346,6 +2349,8 @@ void GlobalObject::finishCreation(VM& vm)
             auto scope = DECLARE_THROW_SCOPE(init.vm);
             JSC::MarkedArgumentBuffer args;
             args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
+            // Its initializer clears its own exceptions and always sets.
+            scope.assertNoException();
 
             JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
 

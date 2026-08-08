@@ -204,6 +204,18 @@ describe.concurrent("--print reports a throw raised while formatting the result"
     expect(exitCode).toBe(1);
   });
 
+  test("result settled after the event loop drains", async () => {
+    // An unref'd timer made overdue by a sync sleep: the event loop drains
+    // with the entry promise still pending, so this prints via the
+    // entry-point promise reactions instead of the settled-result path.
+    const { stdout, stderr, exitCode } = await run(
+      `await new Promise(resolve => { setTimeout(() => resolve(${throwingInspect}), 1).unref(); Bun.sleepSync(50); })`,
+    );
+    expect(stdout).toBe("");
+    expect(stderr).toContain("inspect failed");
+    expect(exitCode).toBe(1);
+  });
+
   test("an uncaughtException handler observes the throw", async () => {
     const { stderr, exitCode } = await run(
       `process.on("uncaughtException", err => console.error("caught:", err.message)); ${throwingInspect}`,

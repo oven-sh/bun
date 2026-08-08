@@ -73,7 +73,7 @@ pub struct FileSink {
     pub(crate) stdio_waiters: JsCell<Vec<(bun_jsc::js_promise::Strong, f64)>>,
     /// This stdio sink is relying on `pwritev2(RWF_NOWAIT)` (Linux ≥ 6.4
     /// pipes) instead of `O_NONBLOCK`; see `refresh_stdio_mode`.
-    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) stdio_rwf_nowait: Cell<bool>,
 
     pub(crate) auto_flusher: JsCell<AutoFlusher>,
@@ -2006,6 +2006,7 @@ impl FileSink {
             stdio_js: JsCell::new(bun_jsc::strong::Optional::empty()),
             stdio_error: JsCell::new(None),
             stdio_waiters: JsCell::new(Vec::new()),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             stdio_rwf_nowait: Cell::new(false),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             run_pending_later: FlushPendingTask::default(),

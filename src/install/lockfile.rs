@@ -1746,14 +1746,10 @@ impl<'a> Printer<'a> {
         env_loader.quiet = true;
 
         env_loader.load_process()?;
+        let env_suffix = env_loader.default_suffix();
         // `DotEnv::Loader::load` takes `impl DirEntryProbe` (bun_dotenv sits
         // below `bun_resolver` in the crate graph); `Fs::DirEntry` impls it.
-        env_loader.load(
-            &*entries,
-            &[] as &[&[u8]],
-            DotEnv::DotEnvFileSuffix::Production,
-            false,
-        )?;
+        env_loader.load(&*entries, &[] as &[&[u8]], env_suffix, false)?;
         let mut log = bun_ast::Log::init();
         options.load(
             &mut log,

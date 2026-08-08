@@ -1736,14 +1736,16 @@ pub fn init(
     };
 
     env.load_process()?;
+    let env_suffix = env.default_suffix();
+    let skip_default_env = cli.no_env_file || ctx.args.disable_default_env_files;
     // Reborrow the BSSMap-owned `*DirEntry` for the
     // call; `env.load` only reads it (`hasComptimeQuery` lookups for `.env*`).
     env.load(
         // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
         unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(entries_option) },
-        &[],
-        dot_env::DotEnvFileSuffix::Production,
-        false,
+        cli.env_files,
+        env_suffix,
+        skip_default_env,
     )?;
 
     initialize_store();

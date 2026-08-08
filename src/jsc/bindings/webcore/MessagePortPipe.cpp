@@ -99,6 +99,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     RefPtr<MessagePort> port;
     size_t limit;
+    bool ownsDispatching;
     {
         Locker locker { s.lock };
         // This task was posted to `expectedCtx` (and is running there). If
@@ -115,20 +116,21 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             return;
         }
         limit = std::max<size_t>(s.inbox.size(), 1000);
-        // Hand DrainScheduled off to Dispatching before any user JS runs: a
-        // 'message' handler (or a promise continuation its microtask drain
-        // unblocks) can park this loop in a nested event-loop wait (e.g.
-        // bun:test's expect().rejects), and a send() arriving then must post
-        // a fresh drain task or that wait never wakes (#37189). Dispatching
-        // keeps hasPendingActivity() true across the dispatch window that
-        // DrainScheduled used to cover.
+        // Trade DrainScheduled for Dispatching before user JS runs: a handler
+        // can park this loop in a nested event-loop wait, and a send() arriving
+        // then must post a fresh drain task (#37189). Dispatching keeps
+        // hasPendingActivity() true across the dispatch window DrainScheduled
+        // used to cover. A nested drain (posted by such a send) finds the bit
+        // already set and leaves clearing it to this outer invocation.
+        ownsDispatching = !(st & Dispatching);
         s.state.store((st & ~DrainScheduled) | Dispatching, std::memory_order_release);
     }
 
-    // Clears Dispatching only while this drain still owns the side: a detach
-    // mid-dispatch already cleared it, and by now it may belong to the next
-    // owner's drain.
+    // Clear Dispatching only if this invocation set it and still owns the
+    // side; after a detach the bit belongs to the next owner's drain.
     auto finish = [&] {
+        if (!ownsDispatching)
+            return;
         Locker locker { s.lock };
         if (s.ctxId == expectedCtx && s.port.get() == port)
             s.state.fetch_and(~uint64_t(Dispatching), std::memory_order_acq_rel);
@@ -164,18 +166,21 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
                 return;
             uint64_t st = s.state.load(std::memory_order_relaxed);
             if (!(st & Attached) || s.inbox.isEmpty()) {
-                s.state.store(st & ~Dispatching, std::memory_order_release);
+                if (ownsDispatching)
+                    s.state.store(st & ~uint64_t(Dispatching), std::memory_order_release);
                 return;
             }
             if (limit-- == 0) {
-                // Budget spent; yield to the rest of the event loop. If a
-                // racing send already posted a wakeup, let that task drain
-                // the rest; otherwise claim the flag and reschedule.
+                // Budget spent; yield. If a racing send already posted a
+                // wakeup let that task drain the rest, else claim the flag
+                // and reschedule.
                 if (!(st & DrainScheduled)) {
                     st |= DrainScheduled;
                     rescheduleCtx = s.ctxId;
                 }
-                s.state.store(st & ~Dispatching, std::memory_order_release);
+                if (ownsDispatching)
+                    st &= ~uint64_t(Dispatching);
+                s.state.store(st, std::memory_order_release);
                 break;
             }
             message = s.inbox.takeFirst();
@@ -272,10 +277,7 @@ void MessagePortPipe::detach(uint8_t side)
     // flight on the old context can't be recalled, but it captured the old
     // ctxId and drainAndDispatch()'s s.ctxId != expectedCtx check makes it a
     // no-op — even if a new owner attach()es to a different context before
-    // it runs. A drain mid-dispatch on this thread (detach happens on the
-    // owning thread, so only re-entrantly, from inside its handler) exits at
-    // that same check without touching the flags again. Messages remain
-    // queued for the next owner.
+    // it runs. Messages remain queued for the next owner.
     s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled | Dispatching), std::memory_order_acq_rel);
 }
 

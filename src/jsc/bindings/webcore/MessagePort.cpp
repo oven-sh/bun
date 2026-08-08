@@ -430,10 +430,8 @@ bool MessagePort::hasPendingActivity() const
     // message is invisible to the queued count; without these bits a concurrent GC
     // running inside that window (queue empty, peer already closed) severs the
     // wrapper weak and the dispatch hits a dead JSEventListener wrapper (debug
-    // ASSERT m_wrapper). DrainScheduled covers schedule until the drain starts;
-    // Dispatching covers the dispatch loop itself (drainAndDispatch trades one
-    // for the other before running user JS so a racing send can post a fresh
-    // wakeup — see #37189).
+    // ASSERT m_wrapper). DrainScheduled covers schedule -> drain start;
+    // Dispatching covers the dispatch loop itself.
     uint64_t s = m_pipe->state(m_side);
     if (s & (MessagePortPipe::DrainScheduled | MessagePortPipe::Dispatching))
         return true;

@@ -58,9 +58,8 @@ worker.terminate();
 console.log("OK");`;
 
 async function expectExitsCleanly(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("OK\n");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
 }
 
 test.concurrent(

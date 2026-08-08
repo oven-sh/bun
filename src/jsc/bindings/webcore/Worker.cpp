@@ -273,13 +273,12 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 // queueMicrotask/Promise callbacks observe messages one at a time, then
 // yields and reschedules if more remain.
 //
-// drainScheduled is cleared before the first dispatch, so it is only set
-// while a posted drain task has not yet started draining. A handler (or a
-// promise continuation its microtask drain unblocks) can park this loop in a
-// nested event-loop wait (e.g. bun:test's expect().rejects); a send arriving
-// then must post a fresh wakeup task or that wait never wakes (#37189).
-// Messages are popped one at a time under the lock so such a nested drain
-// observes the shared queue and delivery stays FIFO.
+// drainScheduled is only set while a posted drain task has not yet started
+// draining. It must be clear while user JS runs: a handler can park this loop
+// in a nested event-loop wait, and a send arriving then has to post a fresh
+// wakeup or that wait never wakes (#37189). Per-message pops under the lock
+// (rather than swapping the queue out) keep delivery FIFO when such a nested
+// drain runs.
 template<typename Dispatch>
 static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
 {
@@ -299,10 +298,9 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
             if (inbox.queue.isEmpty())
                 return false;
             if (limit-- == 0) {
-                // Budget spent; yield to the rest of the event loop. If a
-                // racing send already posted a wakeup, let that task drain
-                // the rest; otherwise claim the flag and have the caller
-                // reschedule.
+                // Budget spent; yield. If a racing send already posted a
+                // wakeup let that task drain the rest, else claim the flag
+                // and have the caller reschedule.
                 if (inbox.drainScheduled.load(std::memory_order_relaxed))
                     return false;
                 inbox.drainScheduled.store(true, std::memory_order_relaxed);

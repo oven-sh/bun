@@ -118,37 +118,6 @@ impl LineOffsetTable {
         Self::find_line(offsets, loc)
     }
 
-    pub fn find_index(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> Option<usize> {
-        debug_assert!(loc.start > -1); // checked by caller
-        let mut original_line: usize = 0;
-        let loc_start = usize::try_from(loc.start).expect("int cast");
-
-        let mut count = byte_offsets_to_start_of_line.len();
-        while count > 0 {
-            let step = count / 2;
-            let i = original_line + step;
-            let byte_offset = byte_offsets_to_start_of_line[i] as usize;
-            if byte_offset == loc_start {
-                return Some(i);
-            }
-            if i + 1 < byte_offsets_to_start_of_line.len() {
-                let next_byte_offset = byte_offsets_to_start_of_line[i + 1] as usize;
-                if byte_offset < loc_start && loc_start < next_byte_offset {
-                    return Some(i);
-                }
-            }
-
-            if byte_offset < loc_start {
-                original_line = i + 1;
-                count = count - step - 1;
-            } else {
-                count = step;
-            }
-        }
-
-        None
-    }
-
     /// `Global`-allocator convenience wrapper around [`generate_in`].
     pub fn generate(contents: &[u8], approximate_line_count: i32) -> Result<List, AllocError> {
         Self::generate_in::<Global>(contents, approximate_line_count)

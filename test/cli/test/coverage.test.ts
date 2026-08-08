@@ -1,7 +1,52 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMacOS, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
+
+test("coverage report generation scales with ranges, not bytes", () => {
+  // A .ts module wrapped in nested functions so JSC reports many overlapping
+  // function blocks that each span most of the file. The per-byte report path
+  // in generate_report_from_blocks walked every byte of every block (O(depth *
+  // bytes)); the per-range path walks one entry per covered line / segment.
+  // Debug+ASAN uses a smaller, deeper module so the file compiles quickly but
+  // the sum-of-block-bytes stays large.
+  const [depth, n] = isDebug ? [100, 150] : [1, 4800];
+  const lines = ["export function f0() {"];
+  for (let i = 1; i < depth; i++) lines.push(`function f${i}() {`);
+  for (let i = 0; i < n; i++) {
+    lines.push(`  if (globalThis.never) { console.log("pad pad pad pad pad pad pad pad ${i}"); }`);
+  }
+  for (let i = depth - 1; i >= 1; i--) lines.push(`} f${i}();`);
+  lines.push("}", "f0();", "");
+  using dir = tempDir("cov", {
+    "big.ts": lines.join("\n"),
+    "t.test.ts": `import { f0 } from "./big"; import { test } from "bun:test"; test("t", () => { f0(); });\n`,
+  });
+
+  const run = (coverage: boolean) => {
+    const t0 = Bun.nanoseconds();
+    const r = Bun.spawnSync(
+      [bunExe(), "test", ...(coverage ? ["--coverage", "--coverage-reporter", "lcov"] : []), "./t.test.ts"],
+      { cwd: dir, env: bunEnv, stdio: ["ignore", "ignore", "ignore"] },
+    );
+    const ms = (Bun.nanoseconds() - t0) / 1e6;
+    expect(r.exitCode).toBe(0);
+    return ms;
+  };
+
+  // warm: first process spawn can carry ~1s cold-start on darwin
+  Bun.spawnSync([bunExe(), "--revision"], { env: bunEnv, stdio: ["ignore", "ignore", "ignore"] });
+  const covered = run(true);
+  const plain = run(false);
+  // The per-byte path adds ~2s on release / ~4.5s on debug+ASAN; the per-range
+  // path keeps `covered` close to `plain`. Floor guards against noise on fast
+  // release lanes where `plain` is a few tens of ms; macOS 26 arm64 sees ~500ms
+  // of JSC ControlFlowProfiler overhead here, so use a higher floor on darwin.
+  const floor = isMacOS ? 250 : 150;
+  expect(covered, `plain=${plain.toFixed(0)}ms covered=${covered.toFixed(0)}ms`).toBeLessThan(
+    Math.max(plain, floor) * 3,
+  );
+});
 
 test("coverage crash", () => {
   using dir = tempDir("cov", {
@@ -538,6 +583,47 @@ Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
+
+for (const ignoreSourcemaps of [false, true]) {
+  test(`lcov output shapes (coverageIgnoreSourcemaps=${ignoreSourcemaps})`, () => {
+    // Lock lcov output across file shapes that exercise distinct paths in
+    // generate_report_from_blocks: plain .js, transpiled .ts with several
+    // original statements on one generated line, and a never-executed function.
+    using dir = tempDir("cov", {
+      "bunfig.toml": `[test]\ncoverageIgnoreSourcemaps = ${ignoreSourcemaps}\ncoverageSkipTestFiles = true\n`,
+      "plain.js": [
+        "exports.a = function a() { return 1; };",
+        "exports.b = function b() { return 2; };",
+        "exports.dead = function dead() { return 3; };",
+        "",
+      ].join("\n"),
+      "multi.ts": [
+        "export function f(a: number, b: number) { const x = a; const y = b; return x + y; }",
+        "export function dead() {",
+        "  const a = 1;",
+        "  return a;",
+        "}",
+        "",
+      ].join("\n"),
+      "shapes.test.ts": [
+        `import { a, b } from "./plain.js";`,
+        `import { f } from "./multi";`,
+        `import { test, expect } from "bun:test";`,
+        `test("x", () => { expect(a() + b() + f(1, 2)).toBe(6); });`,
+        "",
+      ].join("\n"),
+    });
+
+    const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./shapes.test.ts"], {
+      cwd: dir,
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(result.exitCode).toBe(0);
+    const lcov = normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir);
+    expect(lcov).toMatchSnapshot();
+  });
+}
 
 test("coveragePathIgnorePatterns - ignore all files", () => {
   using dir = tempDir("cov", {

@@ -604,7 +604,7 @@ impl ByteStream {
         streams::Result::Pending(self.pending.as_ptr())
     }
 
-    fn on_cancel(&self) {
+    pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let view = self.value();
         if self.buffer.get().capacity() > 0 {
@@ -766,3 +766,28 @@ impl ByteStream {
         Ok(promise)
     }
 }
+
+pub mod testing_apis {
+    use super::*;
+
+    /// `bun:internal-for-testing`: swap the stream's producer for
+    /// [`streams::SourceHandle::TestingCancelOnDrain`], whose drain signal
+    /// re-enters `on_cancel` and consumes the pending buffer action.
+    pub(crate) fn byte_stream_cancel_on_drain(
+        global: &JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<JSValue> {
+        let stream = readable_stream::ReadableStream::from_js(frame.argument(0), global)?;
+        let Some(bytes) = stream.and_then(|s| s.ptr.bytes()) else {
+            return Err(global.throw(format_args!("expected a ByteStream-backed ReadableStream")));
+        };
+        bytes
+            .parent_const()
+            .producer
+            .set(streams::SourceHandle::TestingCancelOnDrain(bytes));
+        Ok(JSValue::UNDEFINED)
+    }
+}
+// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
+// (acronym splitter treats `AP|Is` as two words); alias so both resolve.
+pub use testing_apis as testing_ap_is;

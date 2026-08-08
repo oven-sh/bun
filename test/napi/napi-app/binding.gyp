@@ -165,6 +165,17 @@
             ],
         },
         {
+            "target_name": "test_async_cleanup_hook_deferred",
+            "sources": ["test_async_cleanup_hook_deferred.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+        },
+        {
             "target_name": "test_cleanup_hook_duplicates",
             "sources": ["test_cleanup_hook_duplicates.c"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],

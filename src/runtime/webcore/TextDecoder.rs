@@ -2,6 +2,7 @@ use crate::webcore::EncodingLabel;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
+use bun_jsc::HostReturn as _;
 use core::cell::Cell;
 use core::ptr::NonNull;
 
@@ -756,5 +757,5 @@ pub extern "C" fn TextDecoder__decodeForStream(
     } else {
         this.decode_slice::<true>(global, slice)
     };
-    result.unwrap_or(JSValue::ZERO)
+    result.or_pending_exception()
 }

@@ -51,19 +51,6 @@ void CheckPrimeJobCtx::deinit()
     delete this;
 }
 
-extern "C" CheckPrimeJob* Bun__CheckPrimeJob__create(JSGlobalObject*, CheckPrimeJobCtx*, EncodedJSValue callback);
-CheckPrimeJob* CheckPrimeJob::create(JSGlobalObject* globalObject, ncrypto::BignumPointer candidate, int32_t checks, JSValue callback)
-{
-    CheckPrimeJobCtx* ctx = new CheckPrimeJobCtx(WTF::move(candidate), checks);
-    return Bun__CheckPrimeJob__create(globalObject, ctx, JSValue::encode(callback));
-}
-
-extern "C" void Bun__CheckPrimeJob__schedule(CheckPrimeJob*);
-void CheckPrimeJob::schedule()
-{
-    Bun__CheckPrimeJob__schedule(this);
-}
-
 extern "C" void Bun__CheckPrimeJob__createAndSchedule(JSGlobalObject*, CheckPrimeJobCtx*, EncodedJSValue callback);
 void CheckPrimeJob::createAndSchedule(JSGlobalObject* globalObject, ncrypto::BignumPointer candidate, int32_t checks, JSValue callback)
 {
@@ -224,19 +211,6 @@ extern "C" void Bun__GeneratePrimeJobCtx__deinit(GeneratePrimeJobCtx* ctx)
 void GeneratePrimeJobCtx::deinit()
 {
     delete this;
-}
-
-extern "C" GeneratePrimeJob* Bun__GeneratePrimeJob__create(JSGlobalObject*, GeneratePrimeJobCtx*, EncodedJSValue callback);
-GeneratePrimeJob* GeneratePrimeJob::create(JSGlobalObject* globalObject, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSValue callback)
-{
-    GeneratePrimeJobCtx* ctx = new GeneratePrimeJobCtx(size, safe, WTF::move(prime), WTF::move(add), WTF::move(rem), bigint);
-    return Bun__GeneratePrimeJob__create(globalObject, ctx, JSValue::encode(callback));
-}
-
-extern "C" void Bun__GeneratePrimeJob__schedule(GeneratePrimeJob*);
-void GeneratePrimeJob::schedule()
-{
-    Bun__GeneratePrimeJob__schedule(this);
 }
 
 extern "C" void Bun__GeneratePrimeJob__createAndSchedule(JSGlobalObject*, GeneratePrimeJobCtx*, EncodedJSValue callback);

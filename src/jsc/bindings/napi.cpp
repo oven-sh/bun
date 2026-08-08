@@ -16,6 +16,7 @@
 #include "napi_type_tag.h"
 
 #include "helpers.h"
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
 #include <wtf/text/ExternalStringImpl.h>
@@ -105,16 +106,16 @@ using namespace Zig;
         NAPI_CHECK_ARG(_env, _env);        \
     } while (0)
 
-// Like NAPI_PREAMBLE but does NOT return napi_pending_exception when the env
-// has a stashed napi_throw* exception. Mirrors Node.js's CHECK_ENV_NOT_IN_GC
-// for pure value constructors/accessors that are safe to call while an
-// exception is pending. Still declares a throw scope so NAPI_RETURN_SUCCESS
-// can assert and VM-level exceptions from JSC internals are caught.
-#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                    \
-    NAPI_LOG_CURRENT_FUNCTION;                                                  \
-    NAPI_CHECK_ARG(_env, _env);                                                 \
-    auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm()); \
-    NAPI_RETURN_IF_VM_EXCEPTION(_env)
+// Like NAPI_PREAMBLE but for pure value constructors/accessors, which Node lets an addon call while
+// an exception is pending (CHECK_ENV_NOT_IN_GC only) — node-addon-api relies on that to build the
+// Error it wraps a failed call in. Any exception already on the VM (a napi_throw*, or a termination
+// request that materialised in an earlier call while a worker is being stopped) is stashed for the
+// duration and restored on return; the throw scope still catches what the body itself raises.
+#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                       \
+    NAPI_LOG_CURRENT_FUNCTION;                                                     \
+    NAPI_CHECK_ARG(_env, _env);                                                    \
+    JSC::SuspendExceptionScope napi_preamble_suspended_exception__ { _env->vm() }; \
+    auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm());
 
 // Return an error code if arg is null. Only use for input validation.
 #define NAPI_CHECK_ARG(_env, arg)                               \
@@ -2292,6 +2293,10 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
 // armed only after the wrapping JS object (JSUint8Array / JSArrayBuffer)
 // is successfully created. If creation throws, the destructor runs
 // disarmed and skips finalize_cb so the caller retains ownership.
+// Once armed, the addon's finalizer runs exactly once: when the buffer's contents die, or —
+// if the env is torn down first (a Worker exiting while the addon still holds the buffer) —
+// from NapiEnv::cleanup() together with the other bound finalizers, as Node's env teardown
+// finalizes every remaining reference (test_worker_buffer_callback/test-free-called).
 class NapiExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
     NapiExternalBufferDestructor(WTF::Ref<NapiEnv>&& env, napi_finalize cb, void* hint)
@@ -2301,21 +2306,44 @@ public:
     {
     }
 
+    // The contents died (GC, or the heap going away).
     void run(void* data) override
     {
-        if (m_armed) {
-            NAPI_LOG("external buffer finalizer");
-            m_env->doFinalizer(m_cb, data, m_hint);
+        if (!m_armed || m_finalized)
+            return;
+        m_finalized = true;
+        if (m_bound) {
+            m_bound->deactivate(m_env.get());
+            m_bound = nullptr;
         }
+        NAPI_LOG("external buffer finalizer");
+        m_env->doFinalizer(m_cb, data, m_hint);
     }
 
-    void arm() { m_armed = true; }
+    void arm(void* data)
+    {
+        m_armed = true;
+        if (m_cb)
+            m_bound = &m_env->addFinalizer(finalizeAtEnvCleanup, this, data);
+    }
 
 private:
+    // NapiEnv::cleanup(): the env goes before the buffer did. `hint` is this destructor, alive
+    // because the contents it belongs to still are (run() unbinds it before they go).
+    static void finalizeAtEnvCleanup(napi_env env, void* data, void* hint)
+    {
+        auto* self = static_cast<NapiExternalBufferDestructor*>(hint);
+        self->m_bound = nullptr;
+        self->m_finalized = true;
+        self->m_cb(env, data, self->m_hint);
+    }
+
     WTF::Ref<NapiEnv> m_env;
     napi_finalize m_cb;
     void* m_hint;
+    const NapiEnv::BoundFinalizer* m_bound { nullptr };
     bool m_armed { false };
+    bool m_finalized { false };
 };
 
 extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
@@ -2360,7 +2388,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 
     // Arm only after successful creation: if create threw, the destructor
     // runs disarmed and skips finalize_cb (caller retains ownership).
-    destructorPtr->arm();
+    destructorPtr->arm(data);
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2392,7 +2420,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(arrayBuffer));
     // Arm only after successful creation so that if a future change makes
     // create() throw, the destructor runs disarmed and skips finalize_cb.
-    destructorPtr->arm();
+    destructorPtr->arm(external_data);
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -3325,6 +3353,11 @@ extern "C" bool NapiEnv__getAndClearPendingException(napi_env env, JSC::EncodedJ
     }
 
     return false;
+}
+
+extern "C" const ::BunVmHandleRef* NapiEnv__vmHandle(napi_env env)
+{
+    return env->vmHandle();
 }
 
 extern "C" void NapiEnv__ref(napi_env env)

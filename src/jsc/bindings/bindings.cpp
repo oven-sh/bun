@@ -970,6 +970,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
             bool result = true;
             bool sameStructure = o2Structure->id() == o1Structure->id();
+            // Comparing values runs user getters that can rehash this PropertyTable mid-walk (use-after-free), so collect the pairs first and compare after.
+            MarkedArgumentBuffer pairs;
             if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
@@ -990,18 +992,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return false;
                     }
 
-                    if (left == right) return true;
-                    auto same = JSC::sameValue(globalObject, left, right);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (same) return true;
-
-                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (!eql) {
-                        result = false;
-                        return false;
-                    }
-
+                    pairs.appendWithCrashOnOverflow(left);
+                    pairs.appendWithCrashOnOverflow(right);
                     return true;
                 });
             } else {
@@ -1039,18 +1031,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return false;
                     }
 
-                    if (left == right) return true;
-                    auto same = JSC::sameValue(globalObject, left, right);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (same) return true;
-
-                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (!eql) {
-                        result = false;
-                        return false;
-                    }
-
+                    pairs.appendWithCrashOnOverflow(left);
+                    pairs.appendWithCrashOnOverflow(right);
                     return true;
                 });
 
@@ -1067,10 +1049,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                             }
                         }
 
-                        // Try to get the right value from the left. We don't need to check if they're equal
-                        // because the above loop has already iterated each property in the left. If we've
-                        // seen this property before, it was already `deepEquals`ed. If it doesn't exist,
-                        // the objects are not equal.
+                        // Membership check only; every left property is in `pairs` and compared below.
                         if (o1->getDirectOffset(vm, JSC::PropertyName(entry.key())) == invalidOffset) {
                             result = false;
                             return false;
@@ -1087,7 +1066,27 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            return result;
+            if (!result) {
+                return false;
+            }
+
+            for (size_t i = 0; i < pairs.size(); i += 2) {
+                JSValue left = pairs.at(i);
+                JSValue right = pairs.at(i + 1);
+
+                if (left == right) continue;
+                auto same = JSC::sameValue(globalObject, left, right);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (same) continue;
+
+                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!eql) {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 
@@ -2531,8 +2530,8 @@ extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, 
     if (str.isNull()) {
         // isNull() will be true for empty strings and for strings which are too long.
         // So we need to check the length is plausibly due to a long string.
-        if (strPtr->len > Bun__stringSyntheticAllocationLimit) {
-            scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2^32-1 characters"_s));
+        if (strPtr->len > Bun__stringSyntheticAllocationLimit || strPtr->len > WTF::String::MaxLength) {
+            scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2147483647 characters"_s));
             return {};
         }
     }
@@ -3144,6 +3143,15 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
+
+    // The native→JS boundary for the Rust side (Node: InternalMakeCallback's can_call_into_js;
+    // WebCore: JSEventListener's isJSExecutionForbidden): once the VM's stop was requested or
+    // teardown has forbidden script, a callback from any event source is a silent no-op rather
+    // than each source checking.
+    if (vm.executionForbidden() || !WebCore::clientData(vm)->scriptAllowed()) [[unlikely]] {
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
+    }
 
     JSC::JSValue jsObject = JSValue::decode(object);
     ASSERT_WITH_MESSAGE(jsObject, "Cannot call function with JSValue zero.");
@@ -5158,11 +5166,6 @@ bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
 }
 
 [[ZIG_EXPORT(nothrow)]]
-void JSC__VM__clearHasTerminationRequest(JSC::VM* vm)
-{
-    vm->clearHasTerminationRequest();
-}
-[[ZIG_EXPORT(nothrow)]]
 bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
 {
     return vm->hasTerminationRequest();
@@ -5171,6 +5174,23 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
 void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
 {
     (*arg0).setExecutionForbidden();
+}
+
+// JS thread. Make the VM's stop concrete on this thread: after this a TerminationException is
+// pending (unless termination is currently deferred), whether or not the NeedTermination trap the
+// requester fired had been serviced yet. What RETURN_IF_EXCEPTION would have done at the next check.
+[[ZIG_EXPORT(nothrow)]]
+void JSC__VM__ensureTerminationExceptionPending(JSC::VM* arg0)
+{
+    JSC::VM& vm = *arg0;
+    if (vm.hasPendingTerminationException())
+        return;
+    if (!vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
+        vm.notifyNeedTermination();
+    if (vm.hasTerminationRequest())
+        vm.throwTerminationException();
+    else
+        vm.traps().handleTraps(JSC::VMTraps::NeedTermination);
 }
 
 // These may be called concurrently from another thread.
@@ -5468,6 +5488,21 @@ restart:
     if (fast) {
         bool anyHits = false;
         JSC::JSObject* objectToUse = prototypeObject.getObject();
+
+        // The iter callback can run user code (a nested value's inspect.custom, Proxy
+        // traps) that adds properties to this object, rehashing the PropertyTable
+        // mid-walk (use-after-free). Same for getters resolved through
+        // getIfPropertyExists. Collect the entries with no side effects first, then
+        // do the getter calls and callbacks on the snapshot.
+        struct SnapshottedProperty {
+            Identifier key;
+            unsigned attributes;
+        };
+        WTF::Vector<SnapshottedProperty, 16> snapshot;
+        // Parallel to `snapshot`; keeps the collected values visible to GC. Empty
+        // slots mark prototype properties that are fetched after the walk.
+        MarkedArgumentBuffer snapshotValues;
+
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
             if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
                 return true;
@@ -5487,18 +5522,25 @@ restart:
             }
             visitedProperties.append(Identifier::fromUid(vm, prop));
 
-            ZigString key = toZigString(prop);
             JSC::JSValue propertyValue = JSValue();
-
             if (objectToUse == object) {
                 propertyValue = objectToUse->getDirect(entry.offset());
-                if (!propertyValue) {
-                    (void)scope.tryClearException();
+                if (!propertyValue)
                     return true;
-                }
             }
 
-            if (!propertyValue || propertyValue.isGetterSetter() && !((entry.attributes() & PropertyAttribute::Accessor) != 0)) {
+            snapshot.append({ Identifier::fromUid(vm, prop), entry.attributes() });
+            snapshotValues.appendWithCrashOnOverflow(propertyValue);
+            return true;
+        });
+
+        for (size_t i = 0; i < snapshot.size(); i++) {
+            const auto& snapshotted = snapshot[i];
+            auto* prop = snapshotted.key.impl();
+            ZigString key = toZigString(prop);
+
+            JSC::JSValue propertyValue = snapshotValues.at(i);
+            if (!propertyValue || propertyValue.isGetterSetter() && !((snapshotted.attributes & PropertyAttribute::Accessor) != 0)) {
                 propertyValue = objectToUse->getIfPropertyExists(globalObject, prop);
             }
 
@@ -5506,24 +5548,20 @@ restart:
             CLEAR_IF_EXCEPTION(scope);
 
             if (!propertyValue)
-                return true;
+                continue;
 
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
 
-            bool isPrivate = prop->isSymbol() && Identifier::fromUid(vm, prop).isPrivateName();
+            bool isPrivate = prop->isSymbol() && snapshotted.key.isPrivateName();
 
             if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
-                return true;
+                continue;
 
             iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol(), isPrivate);
             // Propagate exceptions from callbacks.
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        });
-
-        // Propagate exceptions from callbacks.
-        RETURN_IF_EXCEPTION(scope, );
+            RETURN_IF_EXCEPTION(scope, );
+        }
 
         if (anyHits) {
             if (prototypeCount++ < 5) {
@@ -6283,13 +6321,12 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, J
     return map->size();
 }
 
-CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)
+// Enable only: compiled instrumented code holds raw pointers into the profiler,
+// so it lives as long as the VM (see JSInspectorProfiler.cpp).
+CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* vm)
 {
-    if (isEnabled) {
+    if (!vm->controlFlowProfiler())
         vm->enableControlFlowProfiler();
-    } else {
-        vm->disableControlFlowProfiler();
-    }
 }
 
 CPP_DECL void JSC__VM__performOpportunisticallyScheduledTasks(JSC::VM* vm, double until)

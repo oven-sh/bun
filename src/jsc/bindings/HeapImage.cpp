@@ -472,6 +472,8 @@ static uint64_t envGateHash(const char* names, size_t len)
     }
     return h ? h : 1;
 }
+extern "C" void Bun__imageUnwindJS(JSC::VM* vm) { vm->notifyNeedTermination(); }
+extern "C" void Bun__imageClearTerminationRequest(JSC::VM* vm) { vm->clearHasTerminationRequest(); }
 extern "C" void Bun__imageDumpNow(JSC::VM* vm, const char* path)
 {
     mi_scavenger_stop(); // joins mimalloc's background thread: nothing may hold allocator locks while we freeze

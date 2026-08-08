@@ -730,9 +730,15 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
         jsFunctionSetCJSWrapperItem, JSC::ImplementationVisibility::Public,
         JSC::NoIntrinsic));
 
+    auto scope = DECLARE_THROW_SCOPE(vm);
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args, returnedException);
-    ASSERT(!returnedException);
+    if (returnedException) {
+        // The builtin does not throw on its own; what comes back is a
+        // termination (or stack exhaustion) that the getter's caller must see.
+        JSC::throwException(global, scope, returnedException.get());
+        return {};
+    }
     ASSERT(result.isCell());
     return JSC::JSValue::encode(result);
 }
@@ -1245,8 +1251,11 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
         JSValue value = constructor->get(globalObject, property);
 
         if (topExceptionScope.exception()) [[unlikely]] {
-            value = {};
-            (void)topExceptionScope.tryClearException();
+            // A termination (worker terminate() mid-import) cannot be cleared:
+            // stop the walk and leave it pending for the loader.
+            if (!topExceptionScope.tryClearException())
+                return;
+            value = jsUndefined();
         }
 
         exportNames.append(property);

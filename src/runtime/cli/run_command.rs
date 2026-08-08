@@ -952,6 +952,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
         vm.preload = std::mem::take(&mut ctx.preloads);
+        record_passthrough_offset(&ctx.passthrough);
         vm.argv = std::mem::take(&mut ctx.passthrough);
         // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
@@ -1172,6 +1173,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let vm = unsafe { &mut *vm_ptr };
 
         vm.preload = std::mem::take(&mut ctx.preloads);
+        record_passthrough_offset(&ctx.passthrough);
         vm.argv = std::mem::take(&mut ctx.passthrough);
 
         // `vm.main` is a BACKREF (`*const [u8]`) into `entry_path`'s heap
@@ -1655,6 +1657,29 @@ impl Run {
 // The Rust `VirtualMachine`/event loop objects come from the image (heap); only thread-locals need re-seating.
 unsafe extern "C" {
     fn Bun__imageDumpNow(vm: *mut bun_jsc::VM, path: *const ::core::ffi::c_char);
+    safe fn Bun__imageClearTerminationRequest(vm: &bun_jsc::VM);
+    safe fn Bun__imageUnwindJS(vm: &bun_jsc::VM);
+}
+
+/// `process.argv`/`Bun.argv` are derived from the live process argv whenever the script's arguments are exactly its
+/// tail (`bun [flags] entry a b`, compiled executables), so they follow the launch of a process restored from an image;
+/// shapes that rearrange the arguments (`-e code a b` merges positionals back in, stdin mode prepends "-") keep the
+/// CLI's own list. Decided here, on the list the VM actually gets, not on an intermediate one.
+fn record_passthrough_offset(passthrough: &[Box<[u8]>]) {
+    let all = bun_core::argv();
+    let offset = match all.len().checked_sub(passthrough.len()) {
+        Some(offset)
+            if all
+                .iter()
+                .skip(offset)
+                .zip(passthrough)
+                .all(|(a, b)| a == &b[..]) =>
+        {
+            offset
+        }
+        _ => 0,
+    };
+    bun_core::set_standalone_passthrough_offset(offset);
 }
 
 /// The app asked for a snapshot and every JS frame has unwound (termination). Quiesce the runtime and write the image from the top of the run loop.
@@ -1662,7 +1687,7 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
     let Some(path) = bun_core::image::take_snapshot_request() else {
         unreachable!()
     };
-    vm.jsc_vm().clear_has_termination_request();
+    Bun__imageClearTerminationRequest(vm.jsc_vm()); // the request unwound JS with a termination; the quiesce below runs JS again
     // Only a quiet process makes a sound image: let in-flight work finish (bounded), and refuse to dump over anything still pending.
     let deadline = std::time::Instant::now()
         + std::time::Duration::from_secs(
@@ -1785,7 +1810,7 @@ pub extern "C" fn Bun__requestSnapshot(vm: &bun_jsc::VM, path: *const ::core::ff
     // SAFETY: NUL-terminated C string from the caller.
     let path = unsafe { ::core::ffi::CStr::from_ptr(path) }.to_string_lossy();
     bun_core::image::request_snapshot(&path);
-    vm.notify_need_termination(); // unwinds any running JS; the outermost `EventLoop::tick` then takes the snapshot
+    Bun__imageUnwindJS(vm); // termination trap: unwinds any running JS; the outermost `EventLoop::tick` then takes the snapshot
     if let Some(main) =
         unsafe { bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr().as_mut() }
     {

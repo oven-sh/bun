@@ -314,6 +314,21 @@ private:
 
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
+        /* node:http compat: forward the raw TCP payload to the JS socket
+         * wrapper so a user 'data' listener on the 'connection' socket sees the
+         * raw request bytes (Node feeds its parser from that event). Tunnel
+         * mode routes through onSocketData instead. */
+        bool rawTapCoveredThisRead = false;
+        if constexpr (IsNodeHttp) {
+            if (!httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketRawData) {
+                rawTapCoveredThisRead = httpContextData->onSocketRawData(httpResponseData->socketData, SSL, s, data, length);
+                if (us_socket_is_closed(s)) {
+                    us_socket_unref(s);
+                    return s;
+                }
+            }
+        }
+
         /* node:http compat: HTTP parsing stopped on this connection (a parse error
          * was already delivered to 'clientError', or the JS layer freed the
          * parser); ignore further request bytes. CONNECT/Upgrade tunnels are not
@@ -510,7 +525,7 @@ private:
             /* Continue parsing */
             return s;
 
-        }, [httpResponseData, httpContextData](void *user, std::string_view data, bool fin) -> void * {
+        }, [httpResponseData, httpContextData, rawTapCoveredThisRead](void *user, std::string_view data, bool fin) -> void * {
 
             /* node:http compat: an accepted Upgrade request's body just completed -
              * after this fin chunk has been delivered to the request body stream
@@ -534,7 +549,7 @@ private:
                 }
             }
 
-            if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
+            if (httpResponseData->isConnectRequest && !rawTapCoveredThisRead && httpResponseData->socketData && httpContextData->onSocketData) {
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
             }
 

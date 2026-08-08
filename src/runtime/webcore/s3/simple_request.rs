@@ -351,7 +351,8 @@ impl S3HttpSimpleTask {
                     let context = this.callback_context;
                     xml_response::with_document(
                         this.response_buffer.list.as_slice(),
-                        |document| match document {
+                        |document| {
+                            match document {
                             Some(root) if root.name == b"ListBucketResult" => {
                                 let success = list_objects::parse_s3_list_objects_result(root);
                                 callback(S3ListObjectsResult::Success(Box::new(success)), context)
@@ -367,6 +368,7 @@ impl S3HttpSimpleTask {
                                 }),
                                 context,
                             ),
+                        }
                         },
                     )?;
                 }

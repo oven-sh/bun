@@ -55,7 +55,6 @@ pub struct S3ListObjectsV2Result<'a> {
     pub(crate) contents: Option<Vec<S3ListObjectsContents<'a>>>,
 }
 
-
 impl<'a> S3ListObjectsV2Result<'a> {
     pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let js_result = JSValue::create_empty_object(global_object, 0);

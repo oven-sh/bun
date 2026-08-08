@@ -122,9 +122,10 @@ pub(crate) fn with_error<R>(
     f: impl FnOnce(Option<(Option<&[u8]>, Option<&[u8]>)>) -> R,
 ) -> R {
     with_document(body, |root| match root {
-        Some(error) if error.name == b"Error" => {
-            f(Some((error.child_text(b"Code"), error.child_text(b"Message"))))
-        }
+        Some(error) if error.name == b"Error" => f(Some((
+            error.child_text(b"Code"),
+            error.child_text(b"Message"),
+        ))),
         _ => f(None),
     })
 }

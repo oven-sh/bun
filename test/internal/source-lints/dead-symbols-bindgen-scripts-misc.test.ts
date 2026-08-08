@@ -36,7 +36,7 @@ test("dead zig-emission machinery in bindgen does not reappear", () => {
     ["src/codegen/bindgen.ts", /\bzigInternal\b|\bemitZigStruct\b|\bzigTypeName\b|\breturnStrategyZigType\b/],
     ["src/codegen/bindgen.ts", /\bemitNullableZigDecoder\b|\bemitComplexZigDecoder\b|\bzigEnum\b/],
     ["src/codegen/bindgen-lib-internal.ts", /\bemitZig\b|\bzigPrefix\b|\bzigMappedName\b|\bzigEnum\b/],
-    ["src/codegen/bindgen-lib-internal.ts", /\ballFunctions\b|\bexport const snake\b/],
+    ["src/codegen/bindgen-lib-internal.ts", /\ballFunctions\b|\bexport const snake\b|\bArgStrategyChildItem\b/],
     ["src/codegen/bindgen-lib.ts", /\bzigEnum\b|\bexposedOn\b|\bExposedOn\b|\bimplNamespace\b/],
     ["src/jsc/fmt_jsc.bind.ts", /\bimplNamespace\b/],
     // class option read by nothing in generate-classes.ts or any .classes.ts.

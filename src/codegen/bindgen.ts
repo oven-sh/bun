@@ -6,7 +6,6 @@
 import assert from "node:assert";
 import * as path from "node:path";
 import {
-  ArgStrategyChildItem,
   CodeWriter,
   Func,
   NodeValidator,
@@ -70,13 +69,14 @@ function resolveVariantStrategies(vari: Variant, name: string) {
 
     communicationStruct ??= new Struct();
     const prefix = `${arg.name}`;
-    const children = isNullable
-      ? resolveNullableArgumentStrategy(arg.type, prefix, communicationStruct)
-      : resolveComplexArgumentStrategy(arg.type, prefix, communicationStruct);
+    if (isNullable) {
+      resolveNullableArgumentStrategy(arg.type, prefix, communicationStruct);
+    } else {
+      resolveComplexArgumentStrategy(arg.type, prefix, communicationStruct);
+    }
     arg.loweringStrategy = {
       type: "uses-communication-buffer",
       prefix,
-      children,
     };
   }
 
@@ -108,30 +108,17 @@ function resolveVariantStrategies(vari: Variant, name: string) {
   vari.communicationStruct = communicationStruct;
 }
 
-function resolveNullableArgumentStrategy(
-  type: TypeImpl,
-  prefix: string,
-  communicationStruct: Struct,
-): ArgStrategyChildItem[] {
+function resolveNullableArgumentStrategy(type: TypeImpl, prefix: string, communicationStruct: Struct): void {
   assert(type.flags.optional && !("default" in type.flags));
   communicationStruct.add(`${prefix}Set`, "bool");
-  return resolveComplexArgumentStrategy(type, `${prefix}Value`, communicationStruct);
+  resolveComplexArgumentStrategy(type, `${prefix}Value`, communicationStruct);
 }
 
-function resolveComplexArgumentStrategy(
-  type: TypeImpl,
-  prefix: string,
-  communicationStruct: Struct,
-): ArgStrategyChildItem[] {
+function resolveComplexArgumentStrategy(type: TypeImpl, prefix: string, communicationStruct: Struct): void {
   const abiType = type.canDirectlyMapToCAbi();
   if (abiType) {
     communicationStruct.add(prefix, abiType);
-    return [
-      {
-        type: "c-abi-compatible",
-        abiType,
-      },
-    ];
+    return;
   }
 
   switch (type.kind) {

@@ -735,24 +735,6 @@ export type ArgStrategy =
        * boundary uses two fields, `bool {prefix}_set` and `T {prefix}_value`.
        */
       prefix: string;
-      /**
-       * For compound complex types, such as `?union(enum) { a: u32, b:
-       * bun.String }`, the child item is assigned the prefix
-       * `{prefix_of_optional}_value`. The interpretation of this array depends
-       * on `arg.type.kind`.
-       */
-      children: ArgStrategyChildItem[];
-    };
-
-export type ArgStrategyChildItem =
-  | {
-      type: "c-abi-compatible";
-      abiType: CAbiType;
-    }
-  | {
-      type: "uses-communication-buffer";
-      prefix: string;
-      children: ArgStrategyChildItem[];
     };
 /**
  * In addition to moving a payload over, an additional bit of information

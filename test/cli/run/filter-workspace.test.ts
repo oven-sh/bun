@@ -811,6 +811,8 @@ describe("output timing", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("early-line");
     expect(stdout).toContain("late-line");
+    // The exit status line is printed at finish, after the output has ended.
+    expect(stdout.indexOf("late-line")).toBeLessThan(stdout.indexOf("Exited with code 0"));
     expect(exitCode).toBe(0);
   });
 });

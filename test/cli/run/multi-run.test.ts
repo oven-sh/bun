@@ -991,6 +991,8 @@ describe.concurrent("timing edge cases", () => {
     expectPrefixed(r.stdout, "late", "late-line");
     expectPrefixed(r.stdout, "other", "other-ran");
     expect(r.stdout.indexOf("late-line")).toBeLessThan(r.stdout.indexOf("other-ran"));
+    expectDone(r.stderr, "late");
+    expectDone(r.stderr, "other");
     expect(r.exitCode).toBe(0);
   });
 });

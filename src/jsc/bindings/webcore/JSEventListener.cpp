@@ -56,10 +56,15 @@ JSEventListener::JSEventListener(JSObject* function, JSObject* wrapper, bool isA
         m_jsFunction = JSC::Weak<JSC::JSObject>(function);
         m_isInitialized = true;
     }
-    WebCore::clientData(isolatedWorld.vm())->addClient(*this);
+    WebCore::clientData(isolatedWorld.vm())->linkEventListener(*this);
 }
 
-JSEventListener::~JSEventListener() = default;
+JSEventListener::~JSEventListener()
+{
+    // Still linked ⇒ the VM is alive (its teardown unlinks before invalidating).
+    if (isOnList())
+        remove();
+}
 
 void JSEventListener::invalidate()
 {
@@ -69,6 +74,7 @@ void JSEventListener::invalidate()
     m_isolatedWorld = nullptr;
 }
 
+// ~JSVMClientData, after unlinking: the heap these handles point into is going.
 void JSEventListener::willDestroyVM()
 {
     invalidate();

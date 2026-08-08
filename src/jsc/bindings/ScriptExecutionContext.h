@@ -170,7 +170,9 @@ private:
     uint32_t m_contextThreadUID;
 
     WeakHashSet<ActiveDOMObject> m_activeDOMObjects;
-    WeakHashSet<ContextDestructionObserver> m_destructionObservers;
+    // Registered in the observer's constructor, removed in its destructor, both
+    // on this context's thread: plain pointers, nothing allocated per observer.
+    HashSet<ContextDestructionObserver*> m_destructionObservers;
 
     std::atomic<bool> m_activeDOMObjectsAreStopped { false };
     mutable bool m_activeDOMObjectAdditionForbidden { false };

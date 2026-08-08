@@ -117,7 +117,7 @@ ScriptExecutionContext::~ScriptExecutionContext()
     m_inScriptExecutionContextDestructor = true;
 #endif // ASSERT_ENABLED
 
-    while (RefPtr destructionObserver = m_destructionObservers.takeAny())
+    while (auto* destructionObserver = m_destructionObservers.takeAny())
         destructionObserver->contextDestroyed();
 
 #if ASSERT_ENABLED
@@ -202,12 +202,12 @@ void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObse
 #if ASSERT_ENABLED
     ASSERT(!m_inScriptExecutionContextDestructor);
 #endif // ASSERT_ENABLED
-    m_destructionObservers.add(observer);
+    m_destructionObservers.add(&observer);
 }
 
 void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionObserver& observer)
 {
-    m_destructionObservers.remove(observer);
+    m_destructionObservers.remove(&observer);
 }
 
 bool ScriptExecutionContext::isJSExecutionForbidden()
@@ -294,8 +294,8 @@ ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionCont
 void ScriptExecutionContext::checkConsistency() const
 {
 #if ASSERT_ENABLED
-    for (auto& destructionObserver : m_destructionObservers)
-        ASSERT(destructionObserver.scriptExecutionContext() == this);
+    for (auto* destructionObserver : m_destructionObservers)
+        ASSERT(destructionObserver->scriptExecutionContext() == this);
 
     // This can run on a GC thread.
     for (SUPPRESS_UNCOUNTED_LOCAL auto& activeDOMObject : m_activeDOMObjects) {

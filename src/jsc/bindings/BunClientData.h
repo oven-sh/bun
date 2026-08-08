@@ -30,6 +30,7 @@ class DOMWrapperWorld;
 }
 
 #include "root.h"
+#include <wtf/SentinelLinkedList.h>
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -104,9 +105,14 @@ private:
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 
-class JSVMClientDataClient : public AbstractRefCountedAndCanMakeWeakPtr<JSVMClientDataClient> {
+// A JS event listener holds JSC::Weak<> handles that must be cleared before the
+// heap they point into dies, and its C++ EventTarget can outlive the VM (an
+// AbortSignal an in-flight request holds, a MessagePort in transit). Each one
+// links itself here for its lifetime — two pointer stores, no allocation — and
+// ~JSVMClientData invalidates whichever are still alive.
+class JSEventListenerVMLink : public BasicRawSentinelNode<JSEventListenerVMLink> {
 public:
-    virtual ~JSVMClientDataClient() = default;
+    virtual ~JSEventListenerVMLink() = default;
     virtual void willDestroyVM() = 0;
 };
 
@@ -204,10 +210,11 @@ private:
 
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
 
-    WeakHashSet<JSVMClientDataClient> m_clients;
+    SentinelLinkedList<JSEventListenerVMLink, BasicRawSentinelNode<JSEventListenerVMLink>> m_eventListeners;
 
 public:
-    void addClient(JSVMClientDataClient& client) { m_clients.add(client); }
+    // VM thread. Unlinking is the listener's own (`remove()` in its destructor).
+    void linkEventListener(JSEventListenerVMLink& listener) { m_eventListeners.append(&listener); }
 };
 
 } // namespace WebCore

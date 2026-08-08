@@ -314,9 +314,17 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
         dispatch(event.event);
 
         if (globalObject->drainMicrotasks()) {
-            // Termination pending. Drop the rest — dispatch is a no-op
-            // once m_terminateRequested is set (drainToParent), and the
-            // worker thread is tearing down (drainToWorker).
+            // Termination pending. Drop everything still queued — dispatch
+            // is a no-op once m_terminateRequested is set (drainToParent),
+            // and the worker thread is tearing down (drainToWorker).
+            // Destructing the messages now (outside the lock) closes any
+            // transferred ports so their peers see 'close' promptly instead
+            // of waiting for ~Worker.
+            Deque<MessageWithMessagePorts> dropped;
+            {
+                Locker locker { inbox.lock };
+                dropped = std::exchange(inbox.queue, {});
+            }
             return false;
         }
     }

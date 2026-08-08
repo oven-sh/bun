@@ -75,10 +75,11 @@ test.skipIf(!isASAN || isWindows)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [buildOut, buildErr, buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect({ buildErr: buildErr.includes("error") ? buildErr : "", buildOut: "", buildCode }).toEqual({
+    // stdout is drained but not asserted: `bun build --compile` prints
+    // progress there on success.
+    const [, buildErr, buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ buildErr: buildErr.includes("error") ? buildErr : "", buildCode }).toEqual({
       buildErr: "",
-      buildOut: "",
       buildCode: 0,
     });
 

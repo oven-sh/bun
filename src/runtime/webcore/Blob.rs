@@ -5045,7 +5045,9 @@ pub(crate) fn write_file_internal(
     }
 
     // Bun.write(Bun.stdout | Bun.stderr, data): through the stdio sink, so it is
-    // ordered with console.* / process.stdout and gets the same EAGAIN handling
+    // ordered with everything already handed to the sink (console.*,
+    // process.stdout — though not with chunks process.stdout's Writable is still
+    // holding: cork(), backpressure buffer) and gets the same EAGAIN handling
     // (and never lands on the thread pool, whose LIFO queue reversed
     // back-to-back writes to a file-backed stdout).
     if let PathOrBlob::Blob(ref b) = *path_or_blob {

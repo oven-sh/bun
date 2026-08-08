@@ -318,6 +318,9 @@ pub fn deliver(global: &JSGlobalObject, stream: ConsoleStream, bytes: &[u8]) -> 
 pub struct ConsoleWriter<'a> {
     buf: &'a mut Vec<u8>,
     spill: Option<(*mut VirtualMachine, bun_sys::Fd)>,
+    /// A spill already failed (EPIPE, ...) and was reported: the rest of this
+    /// message is dropped rather than re-failing (and re-reporting) per block.
+    failed: bool,
 }
 
 /// How much of one message to accumulate before writing it out on the native
@@ -329,11 +332,14 @@ const SPILL_AT: usize = 64 * 1024;
 impl bun_io::Write for ConsoleWriter<'_> {
     #[inline]
     fn write_all(&mut self, bytes: &[u8]) -> bun_core::CrateResult<()> {
+        if self.failed {
+            return Ok(());
+        }
         self.buf.extend_from_slice(bytes);
         if self.buf.len() >= SPILL_AT {
             if let Some((vm, fd)) = self.spill {
                 // SAFETY: `vm` is the live per-thread VM (set in `emit`).
-                let _ = unsafe { __bun_stdio_sink_write(vm, fd, self.buf) };
+                self.failed = unsafe { __bun_stdio_sink_write(vm, fd, self.buf) }.is_err();
                 self.buf.clear();
             }
         }
@@ -368,8 +374,10 @@ pub fn emit(
                 stream.fd(),
             )
         }),
+        failed: false,
     };
     let result = match f(&mut writer, colors) {
+        Ok(()) if writer.failed => Ok(()),
         Ok(()) => deliver_to(global, stream, target, &buf),
         Err(err) => Err(err),
     };

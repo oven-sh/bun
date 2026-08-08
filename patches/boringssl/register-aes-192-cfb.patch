@@ -1,0 +1,20 @@
+--- a/crypto/cipher/get_cipher.cc
++++ b/crypto/cipher/get_cipher.cc
+@@ -37,6 +37,7 @@
+     {NID_aes_128_gcm, "aes-128-gcm", EVP_aes_128_gcm},
+     {NID_aes_128_ofb128, "aes-128-ofb", EVP_aes_128_ofb},
+     {NID_aes_192_cbc, "aes-192-cbc", EVP_aes_192_cbc},
++    {NID_aes_192_cfb128, "aes-192-cfb", EVP_aes_192_cfb128},
+     {NID_aes_192_ctr, "aes-192-ctr", EVP_aes_192_ctr},
+     {NID_aes_192_ecb, "aes-192-ecb", EVP_aes_192_ecb},
+     {NID_aes_192_gcm, "aes-192-gcm", EVP_aes_192_gcm},
+--- a/decrepit/evp/evp_do_all.cc
++++ b/decrepit/evp/evp_do_all.cc
+@@ -31,6 +31,7 @@
+   callback(EVP_aes_128_gcm(), "aes-128-gcm", nullptr, arg);
+   callback(EVP_aes_128_ofb(), "aes-128-ofb", nullptr, arg);
+   callback(EVP_aes_192_cbc(), "aes-192-cbc", nullptr, arg);
++  callback(EVP_aes_192_cfb128(), "aes-192-cfb", nullptr, arg);
+   callback(EVP_aes_192_ctr(), "aes-192-ctr", nullptr, arg);
+   callback(EVP_aes_192_ecb(), "aes-192-ecb", nullptr, arg);
+   callback(EVP_aes_192_gcm(), "aes-192-gcm", nullptr, arg);

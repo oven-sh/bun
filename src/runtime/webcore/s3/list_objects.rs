@@ -60,7 +60,11 @@ impl S3ListObjectsV2Result {
         js_result.put_optional_utf8(global_object, b"prefix", self.prefix.as_deref())?;
         js_result.put_optional_utf8(global_object, b"delimiter", self.delimiter.as_deref())?;
         js_result.put_optional_utf8(global_object, b"startAfter", self.start_after.as_deref())?;
-        js_result.put_optional_utf8(global_object, b"encodingType", self.encoding_type.as_deref())?;
+        js_result.put_optional_utf8(
+            global_object,
+            b"encodingType",
+            self.encoding_type.as_deref(),
+        )?;
         js_result.put_optional_utf8(
             global_object,
             b"continuationToken",

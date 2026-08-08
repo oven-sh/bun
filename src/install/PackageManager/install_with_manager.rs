@@ -112,6 +112,7 @@ pub fn install_with_manager(
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
+    let mut reresolved_root_deps: Vec<(DependencyID, PackageID)> = Vec::new();
     manager.progress = Default::default();
 
     match &load_result {
@@ -386,9 +387,22 @@ pub fn install_with_manager(
                             &lockfile.buffers.string_bytes,
                             builder,
                         )?;
+                        let cloned_name_hash = cloned.name_hash;
                         lf.dependencies[off as usize + i] = cloned;
                         if mapping[i] != invalid_package_id {
                             lf.resolutions[off as usize + i] = old_resolutions[mapping[i] as usize];
+                        } else {
+                            let old_root_deps = &lf.dependencies[old_resolutions_list.off as usize
+                                ..(old_resolutions_list.off + old_resolutions_list.len) as usize];
+                            if let Some(old_i) = old_root_deps
+                                .iter()
+                                .position(|d| d.name_hash == cloned_name_hash)
+                            {
+                                let old_res = old_resolutions[old_i];
+                                if old_res != invalid_package_id {
+                                    reresolved_root_deps.push((off + i as u32, old_res));
+                                }
+                            }
                         }
                     }
 
@@ -589,6 +603,8 @@ pub fn install_with_manager(
     if manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0 {
         resolve_pending_tasks(manager, &root, log_level)?;
     }
+
+    dedupe_transitives_to_bumped_root_deps(&mut manager.lockfile, &reresolved_root_deps);
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager
@@ -1313,6 +1329,52 @@ pub(crate) fn get_workspace_filters(
     }
 
     Ok((workspace_filters, install_root_dependencies))
+}
+
+/// After a root dependency's version literal changed and its new package has
+/// resolved, redirect every transitive edge that still points at the root's
+/// previous package to the new one when the edge's range is satisfied by it.
+/// `Tree::hoist_dependency` re-dedupes peer edges against the hoisted version;
+/// non-peer edges loaded from a lockfile never reach resolution-time dedupe
+/// because `get_or_put_resolved_package` early-returns on a populated slot,
+/// so without this a bump leaves a stale nested copy (oven-sh/bun#15694).
+fn dedupe_transitives_to_bumped_root_deps(
+    lockfile: &mut Lockfile,
+    reresolved_root_deps: &[(DependencyID, PackageID)],
+) {
+    if reresolved_root_deps.is_empty() {
+        return;
+    }
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_mut_slice();
+    let packages_len = lockfile.packages.len();
+    let pkg_name_hashes = lockfile.packages.items_name_hash();
+    let pkg_resolutions = lockfile.packages.items_resolution();
+    for &(root_dep_id, old_root_res) in reresolved_root_deps {
+        let new_res = resolutions[root_dep_id as usize];
+        if new_res == old_root_res || (new_res as usize) >= packages_len {
+            continue;
+        }
+        let new_pkg_name_hash = pkg_name_hashes[new_res as usize];
+        let new_pkg_resolution = pkg_resolutions[new_res as usize];
+        if new_pkg_resolution.tag != ResolutionTag::Npm {
+            continue;
+        }
+        if (old_root_res as usize) < packages_len
+            && pkg_name_hashes[old_root_res as usize] != new_pkg_name_hash
+        {
+            continue;
+        }
+        for (j, dep) in dependencies.iter().enumerate() {
+            if resolutions[j] != old_root_res {
+                continue;
+            }
+            if new_pkg_resolution.satisfies_dependency_version(&dep.version, buf, buf) {
+                resolutions[j] = new_res;
+            }
+        }
+    }
 }
 
 /// Adds a contextual error for a dependency resolution failure.

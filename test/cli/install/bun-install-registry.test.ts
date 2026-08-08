@@ -2167,6 +2167,133 @@ test("peerDependency in child npm dependency should not maintain old version whe
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 });
 
+// https://github.com/oven-sh/bun/issues/15694
+// Same as the peer test above, but for a regular (non-peer) transitive dependency.
+// A fresh install dedupes `one-range-dep`'s `no-deps: ^1.0.0` to the root's
+// `no-deps`; after the root bumps within the satisfying range, the next install
+// must not leave the old version nested under `one-range-dep`.
+for (const [kind, saveTextLockfile] of [
+  ["text lockfile", true],
+  ["binary lockfile", false],
+] as const) {
+  test(`non-peer dependency in child npm dependency should not maintain old version when package is upgraded (${kind})`, async () => {
+    ({ packageDir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { saveTextLockfile, linker: "hoisted" },
+    }));
+    env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+    env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "one-range-dep": "1.0.0",
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await stderr.text();
+    var out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    } as any);
+    // one-range-dep's `no-deps: ^1.0.0` deduped to root's 1.0.0
+    expect(await exists(join(packageDir, "node_modules", "one-range-dep", "node_modules"))).toBeFalse();
+    expect(await exited).toBe(0);
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "one-range-dep": "1.0.0",
+          "no-deps": "1.0.1", // bump; ^1.0.0 is still satisfied
+        },
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.1",
+    } as any);
+    // before the fix this held a stale no-deps@1.0.0 carried from the lockfile
+    expect(await exists(join(packageDir, "node_modules", "one-range-dep", "node_modules"))).toBeFalse();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      expect.stringContaining("+ no-deps@1.0.1"),
+      "",
+      "1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+
+    // bump outside the transitive range: the nested copy is required now
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "one-range-dep": "1.0.0",
+          "no-deps": "2.0.0", // ^1.0.0 is NOT satisfied
+        },
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "2.0.0",
+    } as any);
+    expect(
+      await file(join(packageDir, "node_modules", "one-range-dep", "node_modules", "no-deps", "package.json")).json(),
+    ).toEqual({
+      name: "no-deps",
+      version: "1.0.1",
+    } as any);
+    expect(await exited).toBe(0);
+  });
+}
+
 test("package added after install", async () => {
   await writeFile(
     packageJson,

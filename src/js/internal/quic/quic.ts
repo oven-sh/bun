@@ -282,6 +282,7 @@ const {
   kTrailers,
   kVersionNegotiation,
   kInspect,
+  inspectChildOptions,
 } = require("internal/quic/symbols");
 
 const { QuicEndpointStats, QuicStreamStats, QuicSessionStats, kCreateDisconnected } = require("internal/quic/stats");
@@ -2582,16 +2583,11 @@ class QuicStream {
   }
 
   [kInspect](depth, options) {
-    if (depth < 0) {
+    if (typeof depth === "number" && depth < 0) {
       return "QuicStream { }";
     }
 
-    const opts = {
-      __proto__: null,
-      ...options,
-      depth: options.depth == null ? null : options.depth - 1,
-    };
-
+    const opts = inspectChildOptions(depth, options);
     const { id, direction, pending, stats, session } = this;
 
     return `QuicStream ${inspect(
@@ -3878,16 +3874,11 @@ class QuicSession {
   }
 
   [kInspect](depth, options) {
-    if (depth < 0) {
+    if (typeof depth === "number" && depth < 0) {
       return "QuicSession { }";
     }
 
-    const opts = {
-      __proto__: null,
-      ...options,
-      depth: options.depth == null ? null : options.depth - 1,
-    };
-
+    const opts = inspectChildOptions(depth, options);
     const { isPendingClose: closing, endpoint, path, state, stats, streams } = this.#inner;
 
     return `QuicSession ${inspect(
@@ -4561,16 +4552,11 @@ class QuicEndpoint {
   }
 
   [kInspect](depth, options) {
-    if (depth < 0) {
+    if (typeof depth === "number" && depth < 0) {
       return "QuicEndpoint { }";
     }
 
-    const opts = {
-      __proto__: null,
-      ...options,
-      depth: options.depth == null ? null : options.depth - 1,
-    };
-
+    const opts = inspectChildOptions(depth, options);
     const { address, busy, isPendingClose: closing, listening, sessions, stats, state } = this.#inner;
 
     return `QuicEndpoint ${inspect(

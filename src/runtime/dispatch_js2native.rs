@@ -79,16 +79,11 @@ pub(crate) fn bun_get_use_system_ca(
 /// active as now - loopStart - idle).
 pub(crate) fn bun_get_loop_elu(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-    // SAFETY: the VM owns this loop and this runs on its thread. Raw *mut, no
-    // &Loop — a &mut PosixLoop is live above us via tick_with_timeout for the
-    // whole tick (see the re-export comment in Loop.rs).
-    let loop_ptr = unsafe { (*vm.event_loop).usockets_loop() };
-    if loop_ptr.is_null() {
-        return Ok(JSValue::NULL);
-    }
-    // SAFETY: `loop_ptr` was just null-checked and stays valid for this tick
-    // under the same ownership argument as above.
-    let idle_ms = unsafe { bun_uws::us_loop_idle_ns(loop_ptr) } as f64 / 1_000_000.0;
+    // SAFETY: the VM owns this loop (installed by `ensure_waker` before any JS ran; `usockets_loop`
+    // panics rather than return null) and this runs on its thread. Raw *mut, no &Loop — a
+    // &mut PosixLoop is live above us via tick_with_timeout for the whole tick.
+    let idle_ms =
+        unsafe { bun_uws::us_loop_idle_ns((*vm.event_loop).usockets_loop()) } as f64 / 1_000_000.0;
     let elapsed_ms = vm.loop_start.elapsed().as_secs_f64() * 1000.0;
     let arr = JSValue::create_empty_array(global, 2)?;
     arr.put_index(global, 0, JSValue::js_number(elapsed_ms))?;

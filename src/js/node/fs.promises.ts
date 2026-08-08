@@ -7,6 +7,7 @@ const {
   validateInteger,
   validateBoolean,
   validateObject,
+  validateOneOf,
   validateAbortSignal,
   validateEncoding,
 } = require("internal/validators");
@@ -69,6 +70,10 @@ function watch(
   const queue = $createFIFO();
   const ignoreMatcher = require("internal/fs/watch").createIgnoreMatcher(options?.ignore);
   const signal = options?.signal;
+  const maxQueue = options?.maxQueue ?? 2048;
+  const overflow = options?.overflow ?? "ignore";
+  validateInteger(maxQueue, "options.maxQueue");
+  validateOneOf(overflow, "options.overflow", ["ignore", "error"]);
   validateAbortSignal(signal, "options.signal");
   function makeAbortError() {
     return $makeAbortError(undefined, { cause: signal!.reason });
@@ -98,10 +103,26 @@ function watch(
   }
 
   const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
-    if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
+    const isControl = eventType === "close" || eventType === "error";
+    if (!isControl && filename != null && ignoreMatcher?.(filename)) {
       return;
     }
-    queue.push({ __proto__: null, eventType, filename });
+    if (!isControl && queue.size() >= maxQueue) {
+      if (overflow === "error") {
+        watcher.close();
+        queue.clear();
+        queue.push({
+          __proto__: null,
+          eventType: "error",
+          filename: $ERR_FS_WATCH_QUEUE_OVERFLOW(`fs.watch() queued more than ${maxQueue} events`),
+        });
+      } else {
+        process.emitWarning("fs.watch maxQueue exceeded");
+        return;
+      }
+    } else {
+      queue.push({ __proto__: null, eventType, filename });
+    }
     if (nextEventResolve) {
       const resolve = nextEventResolve;
       nextEventResolve = null;

@@ -7,11 +7,13 @@ description: Parse and render Markdown with Bun's built-in Markdown API, support
   **Unstable API** — This API is under active development and may change in future versions of Bun.
 </Callout>
 
-Bun includes a fast, built-in Markdown parser written in Rust. It supports GitHub Flavored Markdown (GFM) extensions and provides three APIs:
+Bun includes a fast, built-in Markdown parser written in Rust. It supports GitHub Flavored Markdown (GFM) extensions and provides these APIs:
 
 - `Bun.markdown.html()` — render Markdown to an HTML string
 - `Bun.markdown.render()` — render Markdown with custom callbacks for each element
 - `Bun.markdown.react()` — render Markdown to React JSX elements
+- `Bun.markdown.ansi()` — render Markdown to an ANSI-colored terminal string
+- `Bun.markdown.frontmatter()` — split a front-matter block from a document
 
 ---
 
@@ -52,23 +54,24 @@ const html = Bun.markdown.html("some markdown", {
 
 All available options:
 
-| Option                 | Default | Description                                                 |
-| ---------------------- | ------- | ----------------------------------------------------------- |
-| `tables`               | `true`  | GFM tables                                                  |
-| `strikethrough`        | `true`  | GFM strikethrough (`~~text~~`)                              |
-| `tasklists`            | `true`  | GFM task lists (`- [x] item`)                               |
-| `autolinks`            | `false` | Enable autolinks — see [Autolinks](#autolinks)              |
-| `headings`             | `false` | Heading IDs and autolinks — see [Heading IDs](#heading-ids) |
-| `hardSoftBreaks`       | `false` | Treat soft line breaks as hard breaks                       |
-| `wikiLinks`            | `false` | Enable `[[wiki links]]`                                     |
-| `underline`            | `false` | `__text__` renders as `<u>` instead of `<strong>`           |
-| `latexMath`            | `false` | Enable `$inline$` and `$$display$$` math                    |
-| `collapseWhitespace`   | `false` | Collapse whitespace in text                                 |
-| `permissiveAtxHeaders` | `false` | ATX headers without space after `#`                         |
-| `noIndentedCodeBlocks` | `false` | Disable indented code blocks                                |
-| `noHtmlBlocks`         | `false` | Disable HTML blocks                                         |
-| `noHtmlSpans`          | `false` | Disable inline HTML                                         |
-| `tagFilter`            | `false` | GFM tag filter for disallowed HTML tags                     |
+| Option                 | Default | Description                                                           |
+| ---------------------- | ------- | --------------------------------------------------------------------- |
+| `tables`               | `true`  | GFM tables                                                            |
+| `strikethrough`        | `true`  | GFM strikethrough (`~~text~~`)                                        |
+| `tasklists`            | `true`  | GFM task lists (`- [x] item`)                                         |
+| `autolinks`            | `false` | Enable autolinks — see [Autolinks](#autolinks)                        |
+| `headings`             | `false` | Heading IDs and autolinks — see [Heading IDs](#heading-ids)           |
+| `hardSoftBreaks`       | `false` | Treat soft line breaks as hard breaks                                 |
+| `wikiLinks`            | `false` | Enable `[[wiki links]]`                                               |
+| `underline`            | `false` | `__text__` renders as `<u>` instead of `<strong>`                     |
+| `latexMath`            | `false` | Enable `$inline$` and `$$display$$` math                              |
+| `collapseWhitespace`   | `false` | Collapse whitespace in text                                           |
+| `permissiveAtxHeaders` | `false` | ATX headers without space after `#`                                   |
+| `noIndentedCodeBlocks` | `false` | Disable indented code blocks                                          |
+| `noHtmlBlocks`         | `false` | Disable HTML blocks                                                   |
+| `noHtmlSpans`          | `false` | Disable inline HTML                                                   |
+| `tagFilter`            | `false` | GFM tag filter for disallowed HTML tags                               |
+| `frontmatter`          | `true`  | Skip a leading front-matter block — see [Front matter](#front-matter) |
 
 #### Autolinks
 
@@ -96,6 +99,56 @@ Bun.markdown.html("## Hello World", { headings: true });
 // Enable only heading IDs (no autolink)
 Bun.markdown.html("## Hello World", { headings: { ids: true } });
 // '<h2 id="hello-world">Hello World</h2>\n'
+```
+
+---
+
+## Front matter
+
+Documents from static-site generators often start with a metadata block: `---` fences around YAML (Jekyll, Astro, Eleventy, VitePress) or `+++` fences around TOML (Hugo, Zola). All of the renderers — `html()`, `render()`, `react()`, `ansi()`, and `bun file.md` in the terminal — recognize a front-matter block at the very start of the input and skip it instead of rendering it:
+
+```ts
+const html = Bun.markdown.html(`---
+title: Hello
+---
+# Heading
+`);
+// "<h1>Heading</h1>\n"
+```
+
+Detection is purely structural, the same rule other Markdown engines use: the opening fence must sit at the very start of the input (a UTF-8 BOM is allowed), the first line inside the block must not be blank, and a matching closing fence — exactly three markers — must start a later line. The metadata is never parsed to decide, so a block with a YAML typo is still skipped. YAML's `...` document-end marker is not accepted as a closer, and `----` is a thematic break, not a fence.
+
+Because the rule is structural, two CommonMark readings change under the default: `---\n---` at the very start of a document is an empty front-matter block rendering to nothing (instead of two thematic breaks), and a document like `---\nFoo\n---` has its first block skipped (instead of a thematic break plus a setext heading). Pass `frontmatter: false` to restore the plain CommonMark reading:
+
+```ts
+Bun.markdown.html("---\ntitle: Hello\n---\n", { frontmatter: false });
+// "<hr />\n<h2>title: Hello</h2>\n"
+```
+
+### `Bun.markdown.frontmatter()`
+
+Parse the metadata and get the remaining body — no extra dependency needed:
+
+```ts
+const { data, content } = Bun.markdown.frontmatter(await Bun.file("post.md").text());
+data; // { title: "Hello", tags: ["a", "b"] }
+content; // the document after the block
+```
+
+The fence picks the parser: `---` is YAML and `+++` is TOML. JSON front matter between `---` fences works too, since JSON is valid YAML. `data` distinguishes the three possible shapes:
+
+- an **object** when the block has metadata
+- **`{}`** when the block is empty (`---\n---`)
+- **`null`** when the input has no front-matter block, in which case `content` is the input unchanged
+
+Metadata that fails to parse throws a `SyntaxError`, and so does metadata that parses to something other than a mapping: `---\ntitle Hello\n---` (a missing colon) is a valid YAML scalar, and "YAML front matter must be a mapping" beats silently dropping the block. Error positions point into the document you passed, not the metadata slice.
+
+```ts
+Bun.markdown.frontmatter("+++\ntitle = 'Hello'\n+++\nbody");
+// { data: { title: "Hello" }, content: "body" }
+
+Bun.markdown.frontmatter("# Just a doc");
+// { data: null, content: "# Just a doc" }
 ```
 
 ---

@@ -6,6 +6,7 @@ pub mod autolinks;
 pub(crate) mod blocks;
 pub(crate) mod containers;
 pub(crate) mod entity;
+pub mod frontmatter;
 pub mod helpers;
 pub mod html_renderer;
 pub mod inlines;

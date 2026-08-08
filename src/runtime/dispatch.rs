@@ -1391,6 +1391,13 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr, &global.js_thread()) };
             true
         }
+        // A napi finalizer queued before the loop stopped: Node runs an addon's
+        // finalizers during environment cleanup (script already forbidden), and
+        // an addon counts on them (external buffers freed when a Worker exits).
+        task_tag::NapiFinalizerTask => {
+            NapiFinalizerTask::run_on_js_thread(task.ptr.cast());
+            true
+        }
         // Re-queued by the caller; the box stays reachable from the
         // static-rooted VM queue, because running these callbacks
         // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,

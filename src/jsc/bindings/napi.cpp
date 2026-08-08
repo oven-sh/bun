@@ -2293,6 +2293,10 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
 // armed only after the wrapping JS object (JSUint8Array / JSArrayBuffer)
 // is successfully created. If creation throws, the destructor runs
 // disarmed and skips finalize_cb so the caller retains ownership.
+// Once armed, the addon's finalizer runs exactly once: when the buffer's contents die, or —
+// if the env is torn down first (a Worker exiting while the addon still holds the buffer) —
+// from NapiEnv::cleanup() together with the other bound finalizers, as Node's env teardown
+// finalizes every remaining reference (test_worker_buffer_callback/test-free-called).
 class NapiExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
     NapiExternalBufferDestructor(WTF::Ref<NapiEnv>&& env, napi_finalize cb, void* hint)
@@ -2302,21 +2306,44 @@ public:
     {
     }
 
+    // The contents died (GC, or the heap going away).
     void run(void* data) override
     {
-        if (m_armed) {
-            NAPI_LOG("external buffer finalizer");
-            m_env->doFinalizer(m_cb, data, m_hint);
+        if (!m_armed || m_finalized)
+            return;
+        m_finalized = true;
+        if (m_bound) {
+            m_bound->deactivate(m_env.get());
+            m_bound = nullptr;
         }
+        NAPI_LOG("external buffer finalizer");
+        m_env->doFinalizer(m_cb, data, m_hint);
     }
 
-    void arm() { m_armed = true; }
+    void arm(void* data)
+    {
+        m_armed = true;
+        if (m_cb)
+            m_bound = &m_env->addFinalizer(finalizeAtEnvCleanup, this, data);
+    }
 
 private:
+    // NapiEnv::cleanup(): the env goes before the buffer did. `hint` is this destructor, alive
+    // because the contents it belongs to still are (run() unbinds it before they go).
+    static void finalizeAtEnvCleanup(napi_env env, void* data, void* hint)
+    {
+        auto* self = static_cast<NapiExternalBufferDestructor*>(hint);
+        self->m_bound = nullptr;
+        self->m_finalized = true;
+        self->m_cb(env, data, self->m_hint);
+    }
+
     WTF::Ref<NapiEnv> m_env;
     napi_finalize m_cb;
     void* m_hint;
+    const NapiEnv::BoundFinalizer* m_bound { nullptr };
     bool m_armed { false };
+    bool m_finalized { false };
 };
 
 extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
@@ -2361,7 +2388,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 
     // Arm only after successful creation: if create threw, the destructor
     // runs disarmed and skips finalize_cb (caller retains ownership).
-    destructorPtr->arm();
+    destructorPtr->arm(data);
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2393,7 +2420,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(arrayBuffer));
     // Arm only after successful creation so that if a future change makes
     // create() throw, the destructor runs disarmed and skips finalize_cb.
-    destructorPtr->arm();
+    destructorPtr->arm(external_data);
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);

@@ -319,10 +319,15 @@ function getRetry() {
     // 255: the test runner exits 0/2 (getExitCode in runner.node.mjs), and
     // across 700 builds every failed bare-255 job was one of these ssh
     // failures. A retry clones a fresh VM with a fresh IP, which is the
-    // recovery this failure mode needs.
+    // recovery this failure mode needs. `limit: 2` like agent_stop, because
+    // the failed attempt frees its agent in under a minute and the re-queued
+    // job is preferentially re-captured by that same still-sick host
+    // (observed back-to-back in builds 90681->90682 and 90684->90686);
+    // denial attempts are cheap, and the expensive repeat (a hang until
+    // timeout) records signal_reason=cancel and is never retried.
     automatic: [
       { exit_status: -1, signal_reason: "none", limit: 1 },
-      { exit_status: 255, signal_reason: "none", limit: 1 },
+      { exit_status: 255, signal_reason: "none", limit: 2 },
       { signal_reason: "agent_stop", limit: 2 },
       { signal_reason: "process_run_error", limit: 1 },
     ],

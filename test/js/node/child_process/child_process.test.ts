@@ -1146,11 +1146,8 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
   });
 });
 
-// A throw inside a child stdio 'data' listener must surface as an
-// uncaughtException, as in node, where these events dispatch from the native
-// read callback. When the internal reader takes its async pull path the emit
-// runs from a promise reaction, which used to turn the throw into an
-// unhandledRejection and stall the stream before EOF (so 'close' never fired).
+// Node dispatches child stdio 'data' from its native read callback, so a
+// listener throw is an uncaughtException, never an unhandledRejection.
 it("throw from a child stdio 'data' listener is an uncaughtException and the stream still ends", async () => {
   const script = `
     const { spawn } = require("node:child_process");
@@ -1171,8 +1168,9 @@ it("throw from a child stdio 'data' listener is an uncaughtException and the str
     function next() {
       if (n >= N) return;
       n++;
-      // The delayed write guarantees the parent's pull is pending when data
-      // arrives, so the 'data' emit runs from the async (promise) path.
+      // The parent queues its first pipe read on the next tick, while the
+      // child needs process startup plus the timer before it first writes,
+      // so the write always lands on the async (pending-pull) path.
       const c = spawn(process.execPath, ["-e", "setTimeout(() => console.log('hi'), 50)"], {
         stdio: ["ignore", "pipe", "ignore"],
       });

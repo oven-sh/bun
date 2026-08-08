@@ -135,6 +135,9 @@ pub struct WebSocketProxyTunnel {
     sni_hostname: Option<Box<[u8]>>,
     /// Whether to reject unauthorized certificates
     reject_unauthorized: bool,
+    /// The TLS-complete notification fired; a TLS 1.2 renegotiation
+    /// re-dispatches on_handshake and the upgrade-request kick is single-shot.
+    handshake_reported: bool,
 }
 
 use bun_uws::MaybeAnySocket as SocketUnion;
@@ -175,6 +178,7 @@ impl WebSocketProxyTunnel {
             ssl: None,
             sni_hostname: Some(Box::<[u8]>::from(sni_hostname)),
             reject_unauthorized,
+            handshake_reported: false,
         });
         // ref_count initialized to 1; caller owns the Box allocation via the
         // returned raw pointer (paired with `heap::take` in `deref()`).
@@ -342,12 +346,25 @@ impl WebSocketProxyTunnel {
         // re-enter `tunnel.detach_upgrade_client()` / `tunnel.write()`, so no borrow of
         // `*this` may span the dispatch.
         // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
-        let (upgrade_client, reject_unauthorized) =
-            unsafe { ((*this).upgrade_client, (*this).reject_unauthorized) };
+        let (upgrade_client, reject_unauthorized, handshake_reported) = unsafe {
+            (
+                (*this).upgrade_client,
+                (*this).reject_unauthorized,
+                (*this).handshake_reported,
+            )
+        };
 
         if upgrade_client.is_none() {
             return;
         }
+        if handshake_reported {
+            // TLS 1.2 renegotiation repeat dispatch; a failed renegotiation is
+            // handled by the wrapper's close callback.
+            return;
+        }
+        // SAFETY: ScopedRef guard holds a ref; plain field write, no
+        // whole-struct borrow is formed.
+        unsafe { (*this).handshake_reported = true };
 
         if !success {
             upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);

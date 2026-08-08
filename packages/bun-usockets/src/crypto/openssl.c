@@ -1938,10 +1938,25 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   ssl_update_handshake(s);
   if (ssl_gone(s)) return s;
 
-  if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
+  if (s->ssl_handshake_state == HANDSHAKE_PENDING) {
     /* Surface ECONNRESET-style handshake failure exactly once so callers
      * (fetch, sockets) don't each have to check on_close themselves. */
     ssl_trigger_handshake_econnreset(s);
+    if (ssl_gone(s)) return s;
+  } else if (s->ssl_handshake_state == HANDSHAKE_RENEGOTIATION_PENDING) {
+    /* The initial handshake completed long ago: this close must not be
+     * reported as a pre-handshake ECONNRESET. A renegotiation that finished
+     * inside the same SSL_read as the peer's close_notify still gets its
+     * success dispatch (same init-finished rule ssl_update_handshake applies
+     * to the initial handshake); one cut short by the close surfaces a
+     * protocol reason SSL_read parked, or stays silent like any other
+     * post-handshake failure. */
+    if (SSL_is_init_finished(s_ssl(s))) {
+      ssl_trigger_handshake(s, 1);
+    } else {
+      s->ssl_handshake_state = HANDSHAKE_COMPLETED;
+      ssl_dispatch_parked_reason(s);
+    }
     if (ssl_gone(s)) return s;
   }
 
@@ -2198,7 +2213,16 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
    * direction. */
   if (ssl_wants_eof_dispatch(s) && us_internal_ssl_is_shut_down(s)) return s;
 
-  if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
+  /* Suppress write-completion dispatch only while the INITIAL handshake is
+   * in flight (the app hasn't been told the socket is up yet). During a
+   * renegotiation the drain being signaled belongs to bytes SSL accepted
+   * before the renegotiation began, and loop.c consumes the writable event
+   * on dispatch, so suppressing it loses that drain until the peer happens
+   * to send. Mid-renegotiation writes themselves park on WANT_READ (BoringSSL
+   * rejects app data for the whole window) and resume via
+   * ssl_retry_parked_write at completion, which is what makes dispatching
+   * during the window safe as well as necessary. */
+  if (s->ssl_handshake_state != HANDSHAKE_PENDING) {
     s = us_dispatch_writable(s);
   }
   return s;
@@ -2277,6 +2301,25 @@ restart:
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE &&
           err != SSL_ERROR_PENDING_CERTIFICATE) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
+          /* The initial handshake can complete inside this same SSL_read with
+           * the HelloRequest coalesced into the batch right behind the
+           * server's Finished. None of the completion checks have run yet and
+           * ssl_renegotiate is about to overwrite the state, so report the
+           * initial handshake first or its dispatch is lost for good. The
+           * save/restore mirrors the app-data branch below: the BIO still
+           * holds the renegotiation records and a JS write from the callback
+           * must not clobber them. */
+          if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
+            char *saved_input = loop_ssl_data->ssl_read_input;
+            unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
+            unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
+            ssl_trigger_handshake(s, 1);
+            if (ssl_gone(s)) return NULL;
+            loop_ssl_data->ssl_read_input = saved_input;
+            loop_ssl_data->ssl_read_input_length = saved_length;
+            loop_ssl_data->ssl_read_input_offset = saved_offset;
+            loop_ssl_data->ssl_socket = s;
+          }
           if (ssl_renegotiate(s)) continue;
           if (ssl_gone(s)) return NULL;
           err = SSL_ERROR_SSL;
@@ -2340,8 +2383,11 @@ restart:
          * (SSL_in_init throttles to 5/tick) reorder the server's
          * secureConnection event past the client's close under fan-out
          * loads. The save/restore below makes this safe even if the JS
-         * callback writes; with read==0 the buffer is empty anyway. */
-        if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
+         * callback writes; with read==0 the buffer is empty anyway.
+         * RENEGOTIATION_PENDING takes the same path: node re-emits 'secure'
+         * per completed handshake, and without the dispatch the state stays
+         * latched (no drain dispatch, and close misreports ECONNRESET). */
+        if (s->ssl_handshake_state != HANDSHAKE_COMPLETED && SSL_is_init_finished(s_ssl(s))) {
           ssl_trigger_handshake(s, 1);
           if (ssl_gone(s)) return NULL;
           loop_ssl_data->ssl_socket = s;

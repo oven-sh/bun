@@ -1154,7 +1154,16 @@ impl<const SSL: bool> Handler<SSL> {
             // handshake completed but we may have ssl errors
             client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
             if handshake_success {
-                if client.flags.reject_unauthorized {
+                // A TLS 1.2 renegotiation re-dispatches on_handshake with the
+                // same pinned certificate; the verification below is
+                // first-dispatch work (its JS checkServerIdentity path parks
+                // the request while waiting for approval).
+                let initial_dispatch = matches!(
+                    client.state.request_stage,
+                    crate::internal_state::HTTPStage::Pending
+                        | crate::internal_state::HTTPStage::Opened
+                );
+                if initial_dispatch && client.flags.reject_unauthorized {
                     // only reject the connection if reject_unauthorized == true
                     if client.flags.did_have_handshaking_error {
                         client.close_and_fail::<SSL>(

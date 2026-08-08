@@ -647,11 +647,21 @@ pub mod ssl_wrapper {
                 }
                 self.flags.set_received_ssl_shutdown(true);
                 // Reset pending handshake because we are closed for sure now
-                if self.flags.handshake_state() != HandshakeState::HandshakeCompleted {
-                    self.flags
-                        .set_handshake_state(HandshakeState::HandshakeCompleted);
-                    let verify = self.get_verify_error();
-                    self.trigger_handshake_callback(false, verify);
+                match self.flags.handshake_state() {
+                    HandshakeState::HandshakeCompleted => {}
+                    HandshakeState::HandshakeRenegotiationPending => {
+                        // The initial handshake completed; a finished
+                        // renegotiation reports success, never a failure.
+                        self.handle_end_of_renegotiation();
+                        self.flags
+                            .set_handshake_state(HandshakeState::HandshakeCompleted);
+                    }
+                    HandshakeState::HandshakePending => {
+                        self.flags
+                            .set_handshake_state(HandshakeState::HandshakeCompleted);
+                        let verify = self.get_verify_error();
+                        self.trigger_handshake_callback(false, verify);
+                    }
                 }
 
                 // we need to trigger close because we are not receiving a SSL_shutdown
@@ -991,6 +1001,22 @@ pub mod ssl_wrapper {
                         && err != boring_sys::SSL_ERROR_WANT_WRITE
                     {
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
+                            // The initial handshake can complete inside this
+                            // same SSL_read with the HelloRequest coalesced
+                            // right behind the peer's Finished; report it
+                            // before the renegotiation state overwrites it.
+                            if self.flags.handshake_state() == HandshakeState::HandshakePending
+                                // SAFETY: ssl is still valid.
+                                && unsafe { boring_sys::SSL_is_init_finished(ssl.as_ptr()) } != 0
+                            {
+                                self.flags
+                                    .set_handshake_state(HandshakeState::HandshakeCompleted);
+                                let verify = self.get_verify_error();
+                                self.trigger_handshake_callback(true, verify);
+                                if self.ssl.get().is_none() || self.flags.closed_notified() {
+                                    return false;
+                                }
+                            }
                             self.flags
                                 .set_handshake_state(HandshakeState::HandshakeRenegotiationPending);
                             // An over-limit renegotiation request is treated
@@ -1059,6 +1085,9 @@ pub mod ssl_wrapper {
                         return false;
                     } else {
                         log!("wanna read/write just break");
+                        // A renegotiation can finish inside SSL_read with no
+                        // app data to deliver; unlatch like the paths below.
+                        self.handle_end_of_renegotiation();
                         // we wanna read/write just break
                         break;
                     }

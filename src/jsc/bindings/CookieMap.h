@@ -3,7 +3,7 @@
 
 #include "Cookie.h"
 #include "ExceptionOr.h"
-#include <wtf/HashMap.h>
+#include <wtf/KeyValuePair.h>
 #include <wtf/Vector.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
@@ -23,7 +23,7 @@ public:
 
     // Define a simple struct to hold the key-value pair
 
-    static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
+    static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String>&& init, bool throwOnInvalidCookieString = true);
 
     std::optional<String> get(const String& name) const;
     Vector<Ref<Cookie>> getAllChanges() const { return m_modifiedCookies; }

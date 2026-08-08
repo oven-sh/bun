@@ -16,6 +16,7 @@
 #include "JSDOMConvertRecord.h"
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
+#include "JSDOMConvertUnion.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
@@ -102,79 +103,22 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
     auto* castedThis = uncheckedDowncast<JSCookieMapDOMConstructor>(callFrame->jsCallee());
 
     // Check arguments
-    JSValue initValue = callFrame->argument(0);
+    EnsureStillAliveScope argument0 = callFrame->argument(0);
+    JSValue initValue = argument0.value();
 
-    std::variant<Vector<Vector<String>>, HashMap<String, String>, String> init;
+    std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String> init;
 
-    if (initValue.isUndefinedOrNull() || (initValue.isString() && initValue.getString(lexicalGlobalObject).isEmpty())) {
+    if (initValue.isUndefinedOrNull()) {
         init = String();
     } else if (initValue.isString()) {
         init = initValue.getString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else if (initValue.isObject()) {
-        auto* object = initValue.getObject();
-
-        // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
-        auto* array = dynamicDowncast<JSArray>(object);
-        if (array) {
-            Vector<Vector<String>> seqSeq;
-
-            uint32_t length = array->length();
-            for (uint32_t i = 0; i < length; ++i) {
-                auto element = array->getIndex(lexicalGlobalObject, i);
-                RETURN_IF_EXCEPTION(throwScope, {});
-
-                if (!element.isObject() || !dynamicDowncast<JSArray>(element)) {
-                    throwTypeError(lexicalGlobalObject, throwScope, "Expected each element to be an array of two strings"_s);
-                    return {};
-                }
-
-                auto* subArray = uncheckedDowncast<JSArray>(element);
-                if (subArray->length() != 2) {
-                    throwTypeError(lexicalGlobalObject, throwScope, "Expected arrays of exactly two strings"_s);
-                    return {};
-                }
-
-                auto first = subArray->getIndex(lexicalGlobalObject, 0);
-                RETURN_IF_EXCEPTION(throwScope, {});
-                auto second = subArray->getIndex(lexicalGlobalObject, 1);
-                RETURN_IF_EXCEPTION(throwScope, {});
-
-                auto firstStr = first.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(throwScope, {});
-                auto secondStr = second.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(throwScope, {});
-
-                Vector<String> pair;
-                pair.append(firstStr);
-                pair.append(secondStr);
-                seqSeq.append(WTF::move(pair));
-            }
-            init = WTF::move(seqSeq);
-        } else {
-            // Handle as record<USVString, USVString>. Build a sequence so the
-            // CookieMap preserves insertion order — going through HashMap would
-            // scramble it (and the hash order itself shifted when WTF moved
-            // its string hash to RapidHash).
-            Vector<Vector<String>> seqSeq;
-
-            PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
-            RETURN_IF_EXCEPTION(throwScope, {});
-
-            for (const auto& propertyName : propertyNames) {
-                JSValue value = object->get(lexicalGlobalObject, propertyName);
-                RETURN_IF_EXCEPTION(throwScope, {});
-
-                auto valueStr = value.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(throwScope, {});
-
-                Vector<String> pair;
-                pair.append(propertyName.string());
-                pair.append(WTF::move(valueStr));
-                seqSeq.append(WTF::move(pair));
-            }
-            init = WTF::move(seqSeq);
-        }
+        // WebIDL union: any object with @@iterator is treated as
+        // sequence<sequence<USVString>>; otherwise record<USVString, USVString>.
+        auto converted = convert<IDLUnion<IDLSequence<IDLSequence<IDLUSVString>>, IDLRecord<IDLUSVString, IDLUSVString>>>(*lexicalGlobalObject, initValue);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        std::visit([&](auto&& arg) { init = WTF::move(arg); }, converted);
     } else {
         throwTypeError(lexicalGlobalObject, throwScope, "Invalid initializer type"_s);
         return {};

@@ -1460,6 +1460,14 @@ where
             return;
         }
 
+        if let Some(byte_stream) = this.byte_stream.take() {
+            bun_ptr::BackRef::from(byte_stream).cancel_from_sink(None);
+            any_js_calls.set(true);
+            this.response_body_readable_stream_ref
+                .with_mut(|s| s.deinit());
+            this.deref();
+        }
+
         // if we can, free the request now.
         if this.is_dead_request() {
             this.finalize_without_deinit();
@@ -3334,6 +3342,7 @@ where
         // SAFETY: caller passes the live `*mut RequestContext` stored as the
         // sink ctx; `_ref` keeps it alive for this call.
         let this = unsafe { &*this };
+        this.byte_stream.set(None);
 
         if this.is_aborted_or_ended() {
             return;
@@ -3347,7 +3356,6 @@ where
             if !this.flags.has_written_status() {
                 let global_this = this.server().global_this();
                 let js_err = err.to_js(global_this);
-                this.byte_stream.set(None);
                 this.response_body_readable_stream_ref
                     .with_mut(|s| s.deinit());
                 this.run_error_handler(js_err);

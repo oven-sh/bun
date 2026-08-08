@@ -1600,6 +1600,32 @@ extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
 }
 #endif
 
+// At exit, once JS can no longer run, a signal that was only being forwarded
+// to `process.on(...)` listeners would be swallowed; give those (and only
+// those — not JSC's thread-suspend signal, our stdio-restore handler, or an
+// inherited SIG_IGN) back their default action so a process still writing out
+// the last of its stdio stays killable with ^C / SIGTERM. (Node resets every
+// signal here: ResetSignalHandlers.)
+extern "C" void bun_reset_signal_handlers_for_exit()
+{
+#if !OS(WINDOWS)
+    for (int nr = 1; nr < NSIG; nr++) {
+        if (nr == SIGKILL || nr == SIGSTOP)
+            continue;
+        struct sigaction current;
+        if (sigaction(nr, nullptr, &current) != 0)
+            continue;
+        if ((current.sa_flags & SA_SIGINFO) || current.sa_handler != forwardSignal)
+            continue;
+        struct sigaction dfl;
+        memset(&dfl, 0, sizeof(dfl));
+        dfl.sa_handler = SIG_DFL;
+        sigemptyset(&dfl.sa_mask);
+        sigaction(nr, &dfl, nullptr);
+    }
+#endif
+}
+
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
 

@@ -384,7 +384,8 @@ unsafe extern "C" {
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn Bun__JSCTaskScheduler__markShuttingDown(global: &JSGlobalObject);
-    /// `c-bindings.cpp`: every catchable signal back to `SIG_DFL` (no-op on Windows).
+    /// `BunProcess.cpp`: signals that were only forwarded to JS listeners go
+    /// back to `SIG_DFL` (no-op on Windows).
     safe fn bun_reset_signal_handlers_for_exit();
 }
 
@@ -1514,10 +1515,10 @@ impl VirtualMachine {
         }
     }
 
-    /// The exit-time drain. JS will not run again, so its signal handlers
-    /// can't either: hand SIGINT/SIGTERM/... back to their defaults first (as
-    /// Node's `ResetSignalHandlers` does at teardown) so that waiting on a
-    /// reader that never reads stays killable the ordinary way.
+    /// The exit-time drain. JS will not run again, so its signal listeners
+    /// can't either: hand the signals they had claimed back to their defaults
+    /// first (cf. Node's `ResetSignalHandlers` at teardown) so that waiting on
+    /// a reader that never reads stays killable the ordinary way.
     fn drain_stdio_for_exit(&mut self) {
         if self
             .rare_data

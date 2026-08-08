@@ -586,25 +586,6 @@ static void bun_restore_stdio_nonblock()
 }
 #endif
 
-// Node's ResetSignalHandlers(): at teardown, once JS can no longer run, put
-// every catchable signal back to its default so a process blocked writing out
-// the last of its stdio is still killable with ^C / SIGTERM.
-extern "C" void bun_reset_signal_handlers_for_exit()
-{
-#if !OS(WINDOWS)
-    struct sigaction act;
-    memset(&act, 0, sizeof(act));
-    for (int nr = 1; nr < 32; nr++) {
-        if (nr == SIGKILL || nr == SIGSTOP)
-            continue;
-        // Writing to a closed pipe / an oversized file must keep failing with
-        // EPIPE / EFBIG rather than kill us mid-flush.
-        act.sa_handler = (nr == SIGPIPE || nr == SIGXFSZ) ? SIG_IGN : SIG_DFL;
-        sigaction(nr, &act, nullptr);
-    }
-#endif
-}
-
 extern "C" void bun_restore_stdio()
 {
 

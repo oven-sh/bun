@@ -1905,8 +1905,8 @@ pub extern "C" fn Bun__imageContinueEventLoop() -> ! {
         }
     }
     // The 'restore' listeners just ran synchronously; continuations of anything that awaited them are microtasks and
-    // may be the only pending work (a skeleton image parks on such an await with every timer cancelled). Run one
-    // tick unconditionally so they execute and get the chance to make the loop alive again.
+    // may be the only pending work (an image taken with every timer cancelled has nothing else). Run one tick
+    // unconditionally so they execute and get the chance to make the loop alive again.
     vm.tick();
     while vm.is_event_loop_alive() {
         vm.tick();

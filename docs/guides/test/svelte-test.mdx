@@ -37,7 +37,7 @@ plugin({
         const source = readFileSync(path.substring(0, path.includes("?") ? path.indexOf("?") : path.length), "utf-8");
 
         const result = compile(source, {
-          filetitle: path,
+          filename: path,
           generate: "client",
           dev: false,
         });
@@ -71,13 +71,14 @@ preload = ["./svelte-loader.ts"]
 
 Add an example `.svelte` file in your project.
 
+{/* prettier-ignore */}
 ```html Counter.svelte icon="file-code"
 <script>
   export let initialCount = 0;
   let count = initialCount;
 </script>
 
-<button on:click="{()" ="">(count += 1)}>+1</button>
+<button on:click={() => (count += 1)}>+1</button>
 ```
 
 ---

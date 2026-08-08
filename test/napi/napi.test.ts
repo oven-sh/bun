@@ -1329,10 +1329,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         bunProc.exited,
       ]);
 
+      // Checked first so a failure prints everything the wrapper and child wrote.
+      expect(bunStdout + "\n---- stderr ----\n" + bunStderr).toContain("TEST PASSED: Process crashed as expected");
       expect(bunStdout + bunStderr).toContain("Loading experimental module");
       expect(bunStdout + bunStderr).toContain("Created");
       expect(bunStderr).toContain("FATAL ERROR");
-      expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
       // The wrapper script should exit with 0 if the test passed
       expect(bunExitCode).toBe(0);
 

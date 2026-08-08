@@ -407,6 +407,14 @@ describe("execArgv option", async () => {
     expect(err?.message).toBe("Initiated Worker with invalid execArgv flags: --redirect-warnings requires an argument");
   });
 
+  it("a required value consumes the next token even when it starts with a dash", async () => {
+    // node pops the next token unconditionally, so the dash-prefixed token is
+    // the value, not a new flag; both validators must agree.
+    const w1 = new Worker("1", { eval: true, execArgv: ["--redirect-warnings", "--no-warnings"] });
+    const w2 = new Worker("1", { eval: true, env: { NODE_OPTIONS: "--redirect-warnings --no-warnings" } });
+    await Promise.all([once(w1, "exit"), once(w2, "exit")]);
+  });
+
   it("stops validating at the first positional, like node", async () => {
     // node accepts these: parsing stops at `--`/the first non-flag token.
     const w1 = new Worker("1", { eval: true, execArgv: ["foo.js"] });

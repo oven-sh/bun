@@ -545,12 +545,9 @@ pub unsafe extern "C" fn Bun__Worker__validateWorkerNodeOptions(
             _ => return fail(not_allowed(name, eq_value.is_some())),
         };
         if spec.value == ValueMode::Required && !glued_value && eq_value.is_none() {
-            let next_is_value = tokens.get(i).is_some_and(|t| {
-                let t = t.as_bytes();
-                let t = t.strip_suffix(b"\0").unwrap_or(t);
-                !t.starts_with(b"-")
-            });
-            if next_is_value {
+            // Node pops the next token unconditionally (no leading-dash
+            // check), matching scan_exec_argv above.
+            if tokens.get(i).is_some() {
                 i += 1;
             } else {
                 let mut msg = key;

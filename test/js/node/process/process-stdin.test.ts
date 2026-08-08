@@ -239,6 +239,39 @@ test.concurrent("touching stdin again after 'end' does not keep the process aliv
   expect(await stdioResult(proc)).toEqual({ stdout: "END\nEXIT\n", exitCode: 0 });
 });
 
+test.concurrent("readableEnded stays latched after a resume() following 'end'", async () => {
+  // resume() is a common post-'end' no-op (finally { stream.resume() },
+  // readline teardown). It must not un-latch readableEnded.
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const si = process.stdin;
+      si.on("data", () => {});
+      si.on("end", () => {
+        const atEnd = si.readableEnded;
+        si.pause();
+        si.resume();
+        const afterResume = si.readableEnded;
+        setImmediate(() => {
+          console.log(JSON.stringify({ atEnd, afterResume, later: si.readableEnded }));
+        });
+      });`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("abc");
+  proc.stdin.end();
+
+  expect(await stdioResult(proc)).toEqual({
+    stdout: JSON.stringify({ atEnd: true, afterResume: true, later: true }) + "\n",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("'end' is not emitted when the buffer is never drained, and the process still exits", async () => {
   const proc = Bun.spawn({
     cmd: [

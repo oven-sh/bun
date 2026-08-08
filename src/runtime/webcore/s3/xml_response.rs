@@ -90,6 +90,10 @@ impl<'a> Node<'a> {
 /// a well-formed XML document). Everything a `Node` lends lives until `f`
 /// returns.
 pub(crate) fn with_document<R>(body: &[u8], f: impl FnOnce(Option<Node<'_>>) -> R) -> R {
+    // `CompleteMultipartUpload` streams keep-alive whitespace ahead of the
+    // document (even ahead of an `<Error>` on a 200), which XML proper does
+    // not allow before the declaration.
+    let body = body.trim_ascii_start();
     // The parser's positions are 32-bit.
     if body.is_empty() || body.len() > i32::MAX as usize {
         return f(None);

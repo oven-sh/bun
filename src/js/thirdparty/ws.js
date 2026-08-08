@@ -425,10 +425,6 @@ class BunWebSocket extends EventEmitter {
     return this.#armAndOn(event, listener);
   }
 
-  once(event, listener) {
-    return super.once(event, listener);
-  }
-
   addListener(event, listener) {
     return this.#armAndOn(event, listener);
   }

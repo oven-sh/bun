@@ -186,9 +186,10 @@ class FSWatcher extends EventEmitter {
       });
       return;
     } else if (eventType === "abort") {
-      try {
-        this.emit("error", filenameOrError);
-      } catch {}
+      // node emits only "close" on abort; the "error" delivery is bun's own,
+      // so with no listener it stays silent instead of ERR_UNHANDLED_ERROR.
+      // A present listener's throw still reaches guardCallback, like "error".
+      if (this.listenerCount("error") > 0) this.emit("error", filenameOrError);
       return;
     } else if (eventType === "error") {
       // Next.js/watchpack ends up watching paths it does not have access to,

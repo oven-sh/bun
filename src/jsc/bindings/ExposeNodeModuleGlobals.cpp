@@ -6,6 +6,8 @@
 #include "JSCommonJSModule.h"
 
 #include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSGlobalProxyInlines.h>
+#include <JavaScriptCore/PropertyDescriptor.h>
 #include <JavaScriptCore/PropertySlot.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSMap.h>
@@ -74,10 +76,53 @@ FOREACH_EXPOSED_BUILTIN_IMR(DECL_GETTER)
 
 } // namespace ExposeNodeModuleGlobalGetters
 
+// Assignment behaves like writing to a writable data property (the old
+// null-setter CustomValue behavior): a receiver that owns the configurable
+// lazy accessor gets it replaced with a plain data property; any other
+// receiver gets an ordinary data property defined on it, which honors
+// extensibility and Proxy traps. Custom setters cannot see the caller's
+// strict mode, so failures are silent instead of strict-mode TypeErrors.
+JSC_DEFINE_CUSTOM_SETTER(exposedNodeModuleGlobalSetter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue decodedThis = JSC::JSValue::decode(thisValue);
+    if (auto* proxy = dynamicDowncast<JSC::JSGlobalProxy>(decodedThis))
+        decodedThis = proxy->target();
+    JSC::JSObject* thisObject = decodedThis.getObject();
+    if (!thisObject)
+        return false;
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+
+    JSC::PropertySlot slot(thisObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+    bool hasProperty = thisObject->methodTable()->getOwnPropertySlot(thisObject, lexicalGlobalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (hasProperty) {
+        if (slot.attributes() & static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor)) {
+            // The lazy accessor itself, normally on the global object. Frozen
+            // (DontDelete) means it can no longer be replaced.
+            if (slot.attributes() & static_cast<unsigned>(JSC::PropertyAttribute::DontDelete))
+                return false;
+            thisObject->putDirect(vm, propertyName, value, 0);
+            return true;
+        }
+        if (slot.attributes() & (static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly) | static_cast<unsigned>(JSC::PropertyAttribute::Accessor)))
+            return false;
+        JSC::PropertyDescriptor descriptor;
+        descriptor.setValue(value);
+        RELEASE_AND_RETURN(scope, thisObject->methodTable()->defineOwnProperty(thisObject, lexicalGlobalObject, propertyName, descriptor, false));
+    }
+    RELEASE_AND_RETURN(scope, thisObject->createDataProperty(lexicalGlobalObject, propertyName, value, false));
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
 {
 
     auto& vm = JSC::getVM(globalObject);
+    // CustomAccessor, not CustomValue: JSC computes a CustomValue during
+    // [[GetOwnProperty]], so the global-declaration shadow check for a
+    // top-level `const zlib = ...` would load node:zlib before the script's
+    // first statement. An accessor's descriptor never invokes the getter.
 #define PUT_CUSTOM_GETTER_SETTER(id, field) \
     globalObject->putDirectCustomAccessor( \
         vm, \
@@ -85,8 +130,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
         JSC::CustomGetterSetter::create( \
             vm, \
             ExposeNodeModuleGlobalGetters::id, \
-            nullptr), \
-        0 | JSC::PropertyAttribute::CustomValue \
+            exposedNodeModuleGlobalSetter), \
+        0 | JSC::PropertyAttribute::CustomAccessor \
     );
 
     FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)

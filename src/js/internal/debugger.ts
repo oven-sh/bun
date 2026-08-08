@@ -644,8 +644,9 @@ class Debugger {
 
     switch (pathname) {
       case "/json/version":
-        // Same predicate as /json/list below: any CDP endpoint gets the Node shape.
-        return Response.json(this.#nodeInspector || this.#cdpPathname ? nodeVersionInfo() : versionInfo());
+        // Unlike /json/list below, CLI --inspect keeps the Bun shape: that payload
+        // predates the CDP endpoint and test/cli/inspect/inspect.test.ts pins it.
+        return Response.json(this.#nodeInspector ? nodeVersionInfo() : versionInfo());
       case "/json":
       case "/json/list":
         // Discovery endpoint used by CDP clients (chrome://inspect,

@@ -121,7 +121,6 @@ unsafe impl Sync for Inner {}
 #[repr(transparent)]
 pub struct VmHandle(Arc<Inner>);
 
-
 bun_core::define_scoped_log!(log, vm_handle, hidden);
 pub use bun_event_loop::Posted;
 
@@ -179,7 +178,10 @@ impl VmHandle {
 
     #[cold]
     fn maybe_park(&self) {
-        if !self.0.park_posts.load(core::sync::atomic::Ordering::Relaxed)
+        if !self
+            .0
+            .park_posts
+            .load(core::sync::atomic::Ordering::Relaxed)
             || std::thread::current().id() == self.0.js_thread
             || self.0.embedded.load(Ordering::SeqCst) != 0
         {
@@ -235,7 +237,11 @@ impl VmHandle {
         if let LoopKind::Isolated(p) = kind {
             return p.post(task);
         }
-        if self.0.park_posts.load(core::sync::atomic::Ordering::Relaxed) {
+        if self
+            .0
+            .park_posts
+            .load(core::sync::atomic::Ordering::Relaxed)
+        {
             self.maybe_park();
         }
         let Some(_a) = self.enter() else {
@@ -418,7 +424,11 @@ impl VmHandle {
             .hot
             .state
             .store(State::Closed as u8, Ordering::SeqCst);
-        if self.0.park_posts.load(core::sync::atomic::Ordering::Relaxed) {
+        if self
+            .0
+            .park_posts
+            .load(core::sync::atomic::Ordering::Relaxed)
+        {
             // Posts parked by the test gate go now (and are refused).
             self.0.drained.0.lock();
             self.0.drained.1.notify_all();

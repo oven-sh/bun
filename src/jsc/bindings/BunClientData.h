@@ -8,7 +8,9 @@ extern "C" void Bun__VmHandle__release(BunVmHandle*);
 // One strong count on the handle's VM (no allocation), consumed by exactly one postRetainedCppTask.
 struct BunVmHandleInner;
 extern "C" const BunVmHandleInner* Bun__VmHandle__retain(const BunVmHandle*);
-namespace WebCore { class EventLoopTask; }
+namespace WebCore {
+class EventLoopTask;
+}
 extern "C" void Bun__VmHandle__postRetainedCppTask(const BunVmHandleInner*, WebCore::EventLoopTask*);
 extern "C" void Bun__VmHandle__refKeepAlive(BunVmHandle*, int delta);
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.

@@ -25,18 +25,58 @@ type Row = {
 };
 
 const ROWS: Row[] = [
-  { name: "fs.readFile", worker: `require("node:fs").readFile(process.execPath, () => {});`, refused: "args::ReadFile" },
+  {
+    name: "fs.readFile",
+    worker: `require("node:fs").readFile(process.execPath, () => {});`,
+    refused: "args::ReadFile",
+  },
   { name: "fs.promises.stat", worker: `require("node:fs").promises.stat(process.execPath);`, refused: "args::Stat" },
-  { name: "fs.realpath", worker: `require("node:fs").realpath(process.execPath, () => {});`, refused: "args::Realpath" },
-  { name: "Bun.file().text()", worker: `Bun.file(process.execPath).slice(0, 65536).text();`, refused: "blob::read_file::ReadFile" },
-  { name: "crypto.pbkdf2", worker: `require("node:crypto").pbkdf2("p", "s", 1000, 32, "sha256", () => {});`, refused: "Pbkdf2Job" },
+  {
+    name: "fs.realpath",
+    worker: `require("node:fs").realpath(process.execPath, () => {});`,
+    refused: "args::Realpath",
+  },
+  {
+    name: "Bun.file().text()",
+    worker: `Bun.file(process.execPath).slice(0, 65536).text();`,
+    refused: "blob::read_file::ReadFile",
+  },
+  {
+    name: "crypto.pbkdf2",
+    worker: `require("node:crypto").pbkdf2("p", "s", 1000, 32, "sha256", () => {});`,
+    refused: "Pbkdf2Job",
+  },
   { name: "crypto.scrypt", worker: `require("node:crypto").scrypt("p", "s", 32, () => {});`, refused: "ScryptJob" },
-  { name: "crypto.randomFill", worker: `require("node:crypto").randomFill(Buffer.alloc(65536), () => {});`, refused: "RandomFillJob" },
-  { name: "crypto.generateKeyPair", worker: `require("node:crypto").generateKeyPair("ec", { namedCurve: "P-256" }, () => {});`, refused: "EcKeyPairJob" },
-  { name: "crypto.subtle.digest", worker: `crypto.subtle.digest("SHA-256", Buffer.alloc(65536));`, refused: "refused post: CppTask" },
-  { name: "Bun.password.hash", worker: `Bun.password.hash("x", { algorithm: "bcrypt", cost: 4 });`, refused: "PasswordJob" },
-  { name: "Bun.Glob scan", worker: `new Bun.Glob("*").scan({ cwd: require("node:os").tmpdir() })[Symbol.asyncIterator]().next();`, refused: "glob::WalkTask" },
-  { name: "dns lookup on the thread pool", worker: `Bun.dns.lookup("localhost", { backend: "libc" });`, refused: "get_addr_info_request::LibcLookup" },
+  {
+    name: "crypto.randomFill",
+    worker: `require("node:crypto").randomFill(Buffer.alloc(65536), () => {});`,
+    refused: "RandomFillJob",
+  },
+  {
+    name: "crypto.generateKeyPair",
+    worker: `require("node:crypto").generateKeyPair("ec", { namedCurve: "P-256" }, () => {});`,
+    refused: "EcKeyPairJob",
+  },
+  {
+    name: "crypto.subtle.digest",
+    worker: `crypto.subtle.digest("SHA-256", Buffer.alloc(65536));`,
+    refused: "refused post: CppTask",
+  },
+  {
+    name: "Bun.password.hash",
+    worker: `Bun.password.hash("x", { algorithm: "bcrypt", cost: 4 });`,
+    refused: "PasswordJob",
+  },
+  {
+    name: "Bun.Glob scan",
+    worker: `new Bun.Glob("*").scan({ cwd: require("node:os").tmpdir() })[Symbol.asyncIterator]().next();`,
+    refused: "glob::WalkTask",
+  },
+  {
+    name: "dns lookup on the thread pool",
+    worker: `Bun.dns.lookup("localhost", { backend: "libc" });`,
+    refused: "get_addr_info_request::LibcLookup",
+  },
   {
     name: "child exit reported by the waiter thread",
     worker: `require("node:child_process").execFile(process.execPath, ["-e", "0"], () => {});`,
@@ -82,28 +122,31 @@ function host(row: Row) {
   `;
 }
 
-describe.skipIf(!isDebug && !isASAN)("a completion for a worker that is gone is refused and released by its producer", () => {
-  for (const row of ROWS) {
-    test.concurrent.skipIf(!!row.skip)(row.name, async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", host(row)],
-        // bunEnv keeps every other debug scope quiet; the one named scope prints through it.
-        env: { ...bunEnv, ...row.env, BUN_TEST_WORKER_REFUSAL_GATE: "1", BUN_DEBUG_vm_handle: "1" },
-        stdout: "pipe",
-        stderr: "pipe",
+describe.skipIf(!isDebug && !isASAN)(
+  "a completion for a worker that is gone is refused and released by its producer",
+  () => {
+    for (const row of ROWS) {
+      test.concurrent.skipIf(!!row.skip)(row.name, async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", host(row)],
+          // bunEnv keeps every other debug scope quiet; the one named scope prints through it.
+          env: { ...bunEnv, ...row.env, BUN_TEST_WORKER_REFUSAL_GATE: "1", BUN_DEBUG_vm_handle: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // The debug logger may write to either stream and decorates the scope name.
+        const refusals = (stdout + "\n" + stderr)
+          .replace(/\x1b\[[0-9;]*m/g, "")
+          .split("\n")
+          .filter(l => l.startsWith("[vm_handle] refused "));
+        expect({
+          exitCode,
+          refused: refusals.some(l => l.includes(row.refused)),
+          // On a failure, everything the host printed.
+          detail: exitCode === 0 && refusals.some(l => l.includes(row.refused)) ? "" : stdout + stderr,
+        }).toEqual({ exitCode: 0, refused: true, detail: "" });
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // The debug logger may write to either stream and decorates the scope name.
-      const refusals = (stdout + "\n" + stderr)
-        .replace(/\x1b\[[0-9;]*m/g, "")
-        .split("\n")
-        .filter(l => l.startsWith("[vm_handle] refused "));
-      expect({
-        exitCode,
-        refused: refusals.some(l => l.includes(row.refused)),
-        // On a failure, everything the host printed.
-        detail: exitCode === 0 && refusals.some(l => l.includes(row.refused)) ? "" : stdout + stderr,
-      }).toEqual({ exitCode: 0, refused: true, detail: "" });
-    });
-  }
-});
+    }
+  },
+);

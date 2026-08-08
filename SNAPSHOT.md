@@ -162,6 +162,29 @@ The first reboot of this machine since the work began invalidated every image: t
 
 `--compile-image` (and CC's builder) now embed the `.img.zst` (33 MB for the 213 MB CC image) instead of the raw image; the first launch inflates it into `~/.cache/bun/images/<exe size-mtime-payload-libsId^buildId>.img` (tmp+rename, so concurrent first launches are safe) and later launches map that file. `BUN_IMAGE_EMBED_RAW=1` / `CLAUDE_CODE_HEAP_IMAGE_RAW=1` keep the raw in-binary form (no cache directory needed). Also fixed the same day: hangups for fds that died with the builder are delivered from the loop after `'restore'` (they used to run during adopt — CC's imaged dns_sd connection ran `DNSServiceProcessResult` on a dead fd → syslog on every restore), stdio polls are re-armed on the re-seated fds, and dns_sd's shared connection is closed at snapshot.
 
+
+## State at the end of Aug 8 (what ships, and the honest numbers)
+
+One mode remains: CC images its mounted REPL at idle, built in a hermetic HOME with sample config under the bg-spare-worker
+environment (FORCE_COLOR=3 etc.), network refused (`BUN_IMAGE_ALLOW_LOCAL_IO`: files/helpers/local sockets allowed);
+`hydrateAfterRestore` re-reads cwd, colors, config, settings (fan-out), credentials, the messaging socket and the
+/login-derived state; `envGate` declines the image for boot-shaping variables; the runtime's argv key declines it for
+any non-default invocation. Compressed image embedded (22 MB; 182 MB inflated into `~/.cache/bun/images` on first launch).
+
+Same binary, this machine, real turn each (`misctools/cc-image-demo.sh`): plain 279 MB idle / 2.5 s CPU to idle;
+image 162–235 MB idle (varies with what the machine-specific managers do and GC timing at the sample) / 0.8–1.25 s;
+time to prompt 1.0 s both; first turn identical. Untouched-and-unhydrated the image sits at ~50 MB: the difference is
+the state CC builds for the real machine after restore, which a plain boot also pays — GrowthBook refresh →
+1P event-logging provider (+36 MB), settings fan-out → plugins/MCP/hooks (+63 MB), file index, keychain. Those are the
+next targets and they help every boot; the image work is done when they are cheap, not the other way round.
+
+Bugs found by running the imaged REPL for real today, all fixed with tests: reboots (dyld cache slide → per-segment
+fixup table on Darwin), builder-dlopen'd libraries never initialized in the restorer (CF allocator → malloc recursion),
+this process's malloc zone overwritten by the overlay, dead-fd hangups delivered during adopt, dns_sd/FSEvents threads
+imaged live, `%f` before restore (libc dtoa scratch overlaid; compiled restorers now keep their early heap above image
+space), the mimalloc fork's hole-sweep `__thread` state (dyld TLV bootstrap re-enters malloc under the Darwin zone
+override — a fork bug independent of images), and frozen pages reachable through abandoned maps and sweeps.
+
 ## Perf when the feature is compiled in but unused (merge bar: zero cost)
 
 Harness: `misctools/run-jetstream.js` (JetStream2 shell-runner shim for bun) + `/tmp/ab-jetstream.sh` on `bun-fuzz` — paired rounds alternating arms, per-benchmark medians, geomean. Two comparisons: (a) stock bun+WebKit vs lowmem everything: geomean **1.029** but with ±10–20 % swings both ways that come from the mimalloc fork / bun side, not JSC (needs its own A/B with deterministic hints off); (b) stock bun linked against the *lowmem WebKit* (isolates the JSC patches): initially **0.984** — a uniform 1–3 % tax — traced to checks on the hottest paths: `RefCounted::ref/deref/hasOneRef/refCount` testing the image-immortal range on every refcount op (with the mode off — pure tax; reverted to stock), `getenv("JSC_IMM_LOG")` in `linkFor` on every call link (debug leftover; deleted), and the `m_isImmortal` branches in `MarkedBlock::aboutToMark/isMarked/testAndSetMarked`. With all three out: **0.9996** (17 benchmarks × 6 rounds) — parity. The mark-fast-path branches had to go back in for now (removing them lets `testAndSetMarked` mark+visit *dead* image cells → junk traversal → SIGILL in CC): with them in and the other two fixes kept the isolate reads **0.983** — i.e. those three branches alone cost ~1.5 %, the single biggest remaining item. Why they are needed today: cells that died in the freeze GC still have referrers that JSC only clears lazily (weak references, IC stubs, watchpoints — cleared in finalizers/sweep, which immortal blocks skip); the branch makes such a referent read as marked-and-never-visited. Setting all bits at freeze is not viable (the builder's and the tooling's `forEachLiveCell` walks then touch zapped slots). Zero-cost plan: before `makeImmortal`, run the freeze GC to completion *including* `finalizeUnconditionally`/weak clearing/IC unlinking and an eager sweep of every block, so no live referrer points at a dead cell; then `m_marks` = liveness, dead slots are zapped and unreferenced, and the three fast paths can be stock (a dead image address is then unreachable by precise marking, and conservative roots already filter through `Handle::isLive` → frozen bit). Still to measure: `StringImpl::ref/deref` static-string check (un-guarded from `TSAN_ENABLED` so image strings stay clean), the `m_link` extra load in virtual-call thunks, the borrowed-`InstructionStream` `View` branch per bytecode read, and Bun-side/mimalloc effects; plus memory/CPU-at-idle/stability with the feature compiled in and no image.

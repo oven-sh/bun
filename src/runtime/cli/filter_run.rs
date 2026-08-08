@@ -810,8 +810,9 @@ pub(crate) fn run_scripts_with_filter(
                 continue;
             };
 
+            let passthrough = RunCommand::passthrough_for_script(&ctx.passthrough);
             let mut copy_script_capacity: usize = original_content.len();
-            for part in &ctx.passthrough {
+            for part in passthrough {
                 copy_script_capacity += 1 + part.len();
             }
             // we leak this
@@ -820,7 +821,7 @@ pub(crate) fn run_scripts_with_filter(
             RunCommand::replace_package_manager_run(&mut copy_script, original_content)?;
             let len_command_only = copy_script.len();
 
-            for part in &ctx.passthrough {
+            for part in passthrough {
                 copy_script.push(b' ');
                 if crate::shell::needs_escape_utf8_ascii_latin1(part) {
                     crate::shell::escape_8bit::<true, false>(part, &mut copy_script)?;

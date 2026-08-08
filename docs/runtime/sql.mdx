@@ -422,6 +422,8 @@ Simple queries cannot use parameters (`${value}`). If you need parameters, split
 const result = await sql.file("query.sql", [1, 2, 3]);
 ```
 
+With the SQLite adapter, parameters can also be an object of named parameters (`:name`, `$name`, or `@name` placeholders), the same form `sql.unsafe` accepts below.
+
 ### Unsafe Queries
 
 `sql.unsafe` executes raw SQL strings. Use it with caution: it does not escape user input. Without parameters, the string can contain more than one command.

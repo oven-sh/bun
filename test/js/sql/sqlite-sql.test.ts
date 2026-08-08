@@ -1391,11 +1391,23 @@ describe("SQL helpers", () => {
     await defaultSql`CREATE TABLE default_named_test (id INTEGER, name TEXT)`;
 
     await defaultSql.unsafe("INSERT INTO default_named_test VALUES (:id, :name)", { ":id": 1, ":name": "Bob" });
+    await defaultSql.unsafe("INSERT INTO default_named_test VALUES ($id, $name)", { $id: 2, $name: "Dan" });
+    await defaultSql.unsafe("INSERT INTO default_named_test VALUES (@id, @name)", { "@id": 3, "@name": "Eve" });
 
-    const results = await defaultSql.unsafe("SELECT * FROM default_named_test WHERE id = :id_param", {
+    const byColon = await defaultSql.unsafe("SELECT * FROM default_named_test WHERE id = :id_param", {
       ":id_param": 1,
     });
-    expect(results).toEqual([{ id: 1, name: "Bob" }]);
+    expect(byColon).toEqual([{ id: 1, name: "Bob" }]);
+
+    const byDollar = await defaultSql.unsafe("SELECT name FROM default_named_test WHERE id = $wanted", {
+      $wanted: 2,
+    });
+    expect(byDollar).toEqual([{ name: "Dan" }]);
+
+    const byAt = await defaultSql.unsafe("SELECT name FROM default_named_test WHERE id = @wanted", {
+      "@wanted": 3,
+    });
+    expect(byAt).toEqual([{ name: "Eve" }]);
   });
 
   test("unsafe with named parameters supports values() and raw() modes", async () => {

@@ -523,6 +523,7 @@ describe("SNI matching is case-insensitive", () => {
     server.addContext("*.test.com", SNIContexts["asterisk.test.com"]); // agent3
     try {
       const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
       server.listen(0, listening.resolve);
       await listening.promise;
       const port = (server.address() as AddressInfo).port;

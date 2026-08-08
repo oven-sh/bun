@@ -599,10 +599,7 @@ impl<'a> Run<'a> {
             T::Double => self.coerce(T::Double, value),
             T::String => self.coerce(T::String, value),
             T::Promise => self.coerce(T::Promise, value),
-            // Like Date (whose JSON coercion also fails), Temporal values have
-            // no AST representation; erroring beats emitting `{}`. Their
-            // ClassInfo names are the generic "Object", so name the type via
-            // its label.
+            // No AST representation (same as Date); ClassInfo name is just "Object", so use the label.
             T::Temporal => {
                 let (label, _text) = value.temporal_display_string(self.global)?;
                 self.log.add_error_fmt(

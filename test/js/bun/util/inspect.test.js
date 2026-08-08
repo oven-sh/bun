@@ -956,5 +956,6 @@ it("keeps walking properties when a lazy property initializer throws", async () 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe(["archive: true", "zstd: true", "sql: TypeError", ""].join("\n"));
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

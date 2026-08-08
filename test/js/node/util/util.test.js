@@ -23,7 +23,7 @@
 
 import assert from "assert";
 import { describe, expect, it } from "bun:test";
-import "harness";
+import { bunEnv, bunExe } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -151,6 +151,40 @@ describe("util", () => {
       class Error3 extends Error2 {}
       let err8 = new Error3();
       strictEqual(util.isError(err8), true);
+    });
+
+    // Spawned: these inputs crashed the whole process before the fix (the
+    // VMInquiry slot outlived the toStringTag check, so any getPrototypeOf
+    // trap aborted), and a regression must not take the file down with it.
+    it.concurrent("handles Proxy getPrototypeOf traps", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const util = require("node:util");
+           const expected = new Error("nope");
+           let caught;
+           try {
+             util.isError(new Proxy({}, { getPrototypeOf() { throw expected; } }));
+           } catch (error) {
+             caught = error;
+           }
+           console.log("identity:" + (caught === expected));
+           console.log("proto-error:" + util.isError(new Proxy({}, { getPrototypeOf: () => Error.prototype })));
+           console.log("proto-null:" + util.isError(new Proxy({}, { getPrototypeOf: () => null })));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+        stdout: "identity:true\nproto-error:true\nproto-null:false\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 

@@ -150,3 +150,115 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
+
+it.concurrent("console.log(Bun) survives lazy properties whose initializer throws", async () => {
+  // With the Symbol global clobbered, initializing lazy properties like Bun.$
+  // throws. The property walk must skip them without leaving the exception
+  // pending for the next property's initializer (used to abort debug builds),
+  // and the custom inspect path must survive node:util failing to load.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const custom = Symbol.for("nodejs.util.inspect.custom");
+       const withCustom = { [custom]: () => "custom-ok" };
+       globalThis.Symbol = NaN;
+       console.log(Bun);
+       console.log(withCustom);
+       console.log("alive");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Properties after the throwing $ must still render; the leaked exception
+  // used to make the rest of the walk report not found.
+  expect(stdout).toContain("Archive");
+  expect(stdout).toContain("custom-ok");
+  expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: expect.stringContaining("alive"),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("console.log stops the prototype walk when a getPrototypeOf trap throws", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const proto = new Proxy({}, { getPrototypeOf() { throw new Error("nope"); } });
+       console.log(Object.assign(Object.create(proto), { x: 1 }));
+       console.log(new Proxy({ y: 2 }, { getPrototypeOf() { throw new Error("nope"); } }));
+       console.log("alive");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Own properties render before the walk stops at the throwing trap.
+  expect(stdout).toContain("x: 1");
+  expect(stdout).toContain("y: 2");
+  expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: expect.stringContaining("alive"),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("custom inspect survives util.inspect being replaced with a non-function", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `require("util").inspect = 42;
+       const custom = Symbol.for("nodejs.util.inspect.custom");
+       console.log({ [custom]: () => "custom-ok" });
+       console.log("alive");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: expect.stringContaining("custom-ok"),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("custom inspect stylize with colors survives node:util failing to load", async () => {
+  const env = { ...bunEnv, FORCE_COLOR: "1" };
+  delete env.NO_COLOR;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const custom = Symbol.for("nodejs.util.inspect.custom");
+       const obj = { [custom](depth, options) { return options.stylize("styled-ok", "special"); } };
+       globalThis.Symbol = NaN;
+       console.log(obj);
+       console.log("alive");`,
+    ],
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: expect.stringContaining("styled-ok"),
+    stderr: "",
+    exitCode: 0,
+  });
+});

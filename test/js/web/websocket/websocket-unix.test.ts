@@ -132,7 +132,9 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
   });
 
   test("ws+unix:// without a socket path throws SyntaxError", () => {
-    expect(() => new WebSocket("ws+unix://")).toThrow(SyntaxError);
+    expect(() => new WebSocket("ws+unix://")).toThrow(
+      expect.objectContaining({ name: "SyntaxError", constructor: DOMException }),
+    );
   });
 
   test("wss+unix:// connects to a TLS server over a unix socket", async () => {

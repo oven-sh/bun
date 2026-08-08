@@ -111,6 +111,62 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("compile cache does not change ESM evaluation order", async () => {
+    // A `.cjs` sibling with no CommonJS features is loaded as ESM and must
+    // evaluate after the `.mjs` module imported before it, with or without
+    // the compile cache (cold and warm), and via the API enable path.
+    using dir = tempDir("compile-cache-eval-order", {
+      "main.mjs": `import "./e.mjs";\nimport "./c.cjs";\nconsole.log(globalThis.o.join(","));`,
+      "e.mjs": `(globalThis.o ??= []).push("esm");\nexport {};`,
+      "c.cjs": `(globalThis.o ??= []).push("cjs");`,
+      "preload.cjs": `require("node:module").enableCompileCache(__dirname + "/cc-api");`,
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    const apiCacheDir = path.join(String(dir), "cc-api");
+    const run = async (args, env) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: { ...bunEnv, NODE_COMPILE_CACHE: undefined, ...env },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("esm,cjs");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    };
+    await run(["main.mjs"], {});
+    await run(["main.mjs"], { NODE_COMPILE_CACHE: cacheDir }); // cold
+    await run(["main.mjs"], { NODE_COMPILE_CACHE: cacheDir }); // warm
+    await run(["--preload", "./preload.cjs", "main.mjs"], {});
+    // The cached runs only prove anything if the cache was actually active.
+    for (const dirToCheck of [cacheDir, apiCacheDir]) {
+      const tagged = fs.readdirSync(dirToCheck);
+      expect(tagged).toHaveLength(1);
+      expect(fs.readdirSync(path.join(dirToCheck, tagged[0])).length).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  test("compile cache records a parse-failed .mjs as ESM regardless of package type", async () => {
+    // Parse-failure bookkeeping keys off the file extension like the
+    // synchronous loader and Node, not the enclosing package.json "type".
+    using dir = tempDir("compile-cache-parse-failure-type", {
+      "main.mjs": `import "./pkg/broken.mjs";`,
+      "pkg/package.json": `{"type":"commonjs"}`,
+      "pkg/broken.mjs": `import {;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: { ...bunEnv, NODE_COMPILE_CACHE: path.join(String(dir), "cc"), NODE_DEBUG_NATIVE: "COMPILE_CACHE" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toMatch(/skip persisting ESM file:.*broken\.mjs because the cache was not initialized/);
+    expect(exitCode).not.toBe(0);
+  });
+
   test.skipIf(process.platform === "win32")(
     "compile cache persists modules loaded after a non-fatal self-kill",
     async () => {

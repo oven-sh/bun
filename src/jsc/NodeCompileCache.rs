@@ -5,11 +5,12 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use bstr::ByteSlice;
+use bun_ast::Loader;
 use bun_boringssl::c as boring;
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
 use bun_core::{Mutex, ZStr, env_var};
-use bun_options_types::Format;
+use bun_options_types::{Format, ModuleType};
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_sys::{self as sys, Fd, O};
 
@@ -510,6 +511,38 @@ pub fn get_dir() -> Option<Vec<u8>> {
 // ──────────────────────────────────────────────────────────────────────────
 // Fetch-time hook (read + validate)
 // ──────────────────────────────────────────────────────────────────────────
+
+/// Guarded [`fetch`] for the transpile paths (synchronous and concurrent):
+/// only file-backed, JS-like modules participate. `code` is the exact
+/// post-transpile byte text and is copied, so callers may reuse or replace
+/// their buffer afterwards. Returns `(null, 0)` when the cache is disabled,
+/// the module does not participate, or no on-disk entry validates.
+pub fn fetch_for_transpiled_module(
+    path: &bun_paths::fs::Path<'_>,
+    loader: Loader,
+    is_cjs: bool,
+    code: &[u8],
+) -> (*mut u8, usize) {
+    if !is_enabled() || !path.is_file() || !loader.is_java_script_like() {
+        return (core::ptr::null_mut(), 0);
+    }
+    fetch(path.text, is_cjs, code).unwrap_or((core::ptr::null_mut(), 0))
+}
+
+/// Guarded [`note_parse_failure`] for the transpile paths: register the
+/// failed module so exit-time persist logs the "was not initialized" skip
+/// (Node parity). `module_type` is the extension-sniffed type
+/// ([`ModuleType::from_extension`]); `Unknown` records as CommonJS, like Node.
+pub fn note_parse_failure_for_module(
+    path: &bun_paths::fs::Path<'_>,
+    loader: Loader,
+    module_type: ModuleType,
+) {
+    if !is_enabled() || !path.is_file() || !loader.is_java_script_like() {
+        return;
+    }
+    note_parse_failure(path.text, !matches!(module_type, ModuleType::Esm));
+}
 
 /// Module-fetch hook: register/refresh the entry for `filename`; returns the
 /// validated bytecode blob when the on-disk cache matches `code` (post-

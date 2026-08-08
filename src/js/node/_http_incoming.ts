@@ -218,15 +218,20 @@ ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
       const source = this[kHeaderSource];
       let built = source != null ? source.takeRawHeaders() : undefined;
       if (built === undefined) built = [];
-      // Node.js's parser keeps at most server.maxHeadersCount header pairs
-      // (parser.maxHeaderPairs); the native parser does not enforce it, so
-      // truncate here.
+      // Node clamps only the count fed to _addHeaderLines; rawHeaders itself is
+      // truncated only once >= 32 pairs route through parserOnHeaders (the llhttp
+      // binding's kMaxHeaderFieldsCount flush batch). Reproduce that split here.
+      let count = built.length;
       const maxHeadersCount = this[fakeSocketSymbol]?.server?.maxHeadersCount;
-      if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && built.length > maxHeadersCount * 2) {
-        built = ArrayPrototypeSlice.$call(built, 0, maxHeadersCount * 2);
+      if (typeof maxHeadersCount === "number") {
+        const maxHeaderPairs = maxHeadersCount << 1;
+        if (maxHeaderPairs > 0 && count > maxHeaderPairs) {
+          if (count >= 64) built = ArrayPrototypeSlice.$call(built, 0, maxHeaderPairs);
+          count = maxHeaderPairs;
+        }
       }
       raw = this[kRawHeaders] = built;
-      this[kHeadersCount] = built.length;
+      this[kHeadersCount] = count;
     }
     return raw;
   },

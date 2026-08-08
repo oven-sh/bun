@@ -1,38 +1,38 @@
 import { expect, test } from "bun:test";
-import { mkdirSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, tempDir } from "harness";
 
-test("import.meta.main", async () => {
-  const dir = tmpdirSync();
-  mkdirSync(dir, { recursive: true });
-  await Bun.write(
-    join(dir, "index1.js"),
-    `import "fs"; console.log(JSON.stringify([typeof require, import.meta.main, !import.meta.main, require.main === module, require.main !== module]));`,
-  );
-  const { stdout } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "index1.js")],
-    cwd: dir,
-    env: bunEnv,
-    stderr: "inherit",
-    stdout: "pipe",
+const probe = `console.log(JSON.stringify([typeof require, import.meta.main, !import.meta.main, require.main === module, require.main !== module]));`;
+
+test.concurrent("import.meta.main", async () => {
+  using dir = tempDir("importmetamain-esm", {
+    "index1.js": `import "fs"; ${probe}`,
   });
-  expect(stdout.toString("utf8").trim()).toEqual(JSON.stringify(["function", true, false, true, false]));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index1.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(JSON.stringify(["function", true, false, true, false]));
+  expect(exitCode).toBe(0);
 });
 
-test("import.meta.main in a common.js file", async () => {
-  const dir = tmpdirSync();
-  mkdirSync(dir, { recursive: true });
-  await Bun.write(
-    join(dir, "index1.js"),
-    `module.exports = {}; console.log(JSON.stringify([typeof require, import.meta.main, !import.meta.main, require.main === module, require.main !== module]));`,
-  );
-  const { stdout } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "index1.js")],
-    cwd: dir,
-    env: bunEnv,
-    stderr: "inherit",
-    stdout: "pipe",
+test.concurrent("import.meta.main in a common.js file", async () => {
+  using dir = tempDir("importmetamain-cjs", {
+    "index1.js": `module.exports = {}; ${probe}`,
   });
-  expect(stdout.toString("utf8").trim()).toEqual(JSON.stringify(["function", true, false, true, false]));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index1.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(JSON.stringify(["function", true, false, true, false]));
+  expect(exitCode).toBe(0);
 });

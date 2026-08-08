@@ -929,6 +929,10 @@ pub enum SourceHandle {
     ServerRequestBody(crate::server::AnyRequestContext),
     S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper, bun_ptr::Mut>),
     HTMLRewriter(BackRef<crate::api::html_rewriter::RewriterPipe>),
+    /// `bun:internal-for-testing` only: `ready()` re-enters the stream's
+    /// `on_cancel`, making consumed-during-`signal_drained` re-entrancy
+    /// deterministic for tests.
+    TestingCancelOnDrain(BackRef<crate::webcore::ByteStream>),
 }
 
 impl SourceHandle {
@@ -971,6 +975,7 @@ impl SourceHandle {
             SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
+            SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
 
@@ -994,6 +999,7 @@ impl SourceHandle {
             SourceHandle::FetchResponseBody(p) => p.on_ready(),
             SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
             SourceHandle::HTMLRewriter(p) => p.on_ready(),
+            SourceHandle::TestingCancelOnDrain(p) => p.on_cancel(),
             // Remaining variants leave `on_ready` at the trait default (no-op).
             SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
@@ -1013,7 +1019,8 @@ impl SourceHandle {
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
             | SourceHandle::S3DownloadBody(_)
-            | SourceHandle::HTMLRewriter(_) => {}
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
 }

@@ -1350,6 +1350,23 @@ impl Interpreter {
 
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
+                // The script is still in flight (e.g. `worker.terminate()`
+                // mid-command) and `Node` has no `Drop` for its raw-pointer
+                // resources: deinit every live `Cmd` (kills the child, frees
+                // the `ShellSubprocess`, readers, redirection fd). Slots stay
+                // occupied so the env walk below still sees pipeline-duped
+                // Cmd envs. Windows: leak-over-UAF, see
+                // `ShellSubprocess::abort_after_failed_start`.
+                #[cfg(not(windows))]
+                {
+                    let node_count = this.nodes.get().len();
+                    for i in 0..node_count {
+                        let id = NodeId(i as u32);
+                        if matches!(this.nodes.get()[id.idx()].kind(), StateKind::Cmd) {
+                            Cmd::deinit_from_finalizer(&this, id);
+                        }
+                    }
+                }
                 // A node owns `base.shell` iff it was created via `dupe_for_subshell`,
                 // i.e. its `base.shell` differs from its parent's.
                 {

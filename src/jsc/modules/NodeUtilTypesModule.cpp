@@ -913,8 +913,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
                     }
                 }
             }
-            // The VMInquiry slot disallows VM entry for its lifetime; it must die
-            // before getPrototype below can legally run a Proxy trap.
+            // The VMInquiry slot disallows VM entry while alive; the Proxy trap below needs it dead.
         }
 
         JSValue proto = object->getPrototype(globalObject);

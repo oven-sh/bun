@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { gc as gcTrace, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc as gcTrace, withoutAggressiveGC } from "harness";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -681,5 +681,69 @@ describe("TextEncoder UTF-16 exact-size path", () => {
         expect(encoded).toEqual(expected);
       }
     }
+  });
+});
+
+describe.concurrent("TextEncoder encodeInto with zero-length destination", () => {
+  // Detaching drives the view's byteLength to 0 and its backing pointer to null.
+  // Before this fix a debug build aborted on the `from_raw_parts_mut` precondition
+  // (null pointer at len 0); run in a subprocess so a reintroduction surfaces as
+  // a non-null signalCode instead of aborting the whole test file.
+  // "x" exercises the Latin-1 path; "Ā" and "💕" exercise the UTF-16 path.
+  it.each([["x"], ["Ā"], ["💕"]])(
+    "returns { read: 0, written: 0 } for a detached Uint8Array with input %j",
+    async input => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const ab = new ArrayBuffer(8);
+         const dest = new Uint8Array(ab);
+         structuredClone(ab, { transfer: [ab] });
+         if (dest.byteLength !== 0) throw new Error("not detached");
+         process.stdout.write(JSON.stringify(new TextEncoder().encodeInto(${JSON.stringify(input)}, dest)));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+        stdout: '{"read":0,"written":0}',
+        stderr: "",
+        signalCode: null,
+        exitCode: 0,
+      });
+    },
+  );
+
+  it("returns { read: 0, written: 0 } when source toString() detaches the destination mid-call", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const ab = new ArrayBuffer(16);
+         const dest = new Uint8Array(ab);
+         const src = { toString() { structuredClone(ab, { transfer: [ab] }); return "hello"; } };
+         const r = new TextEncoder().encodeInto(src, dest);
+         process.stdout.write(JSON.stringify({ ...r, byteLength: dest.byteLength }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: '{"read":0,"written":0,"byteLength":0}',
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
+  it("returns { read: 0, written: 0 } for a non-detached zero-length destination", () => {
+    const encoder = new TextEncoder();
+    expect(encoder.encodeInto("x", new Uint8Array(0))).toEqual({ read: 0, written: 0 });
+    expect(encoder.encodeInto("Ā", new Uint8Array(0))).toEqual({ read: 0, written: 0 });
   });
 });

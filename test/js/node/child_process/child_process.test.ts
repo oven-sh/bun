@@ -1145,3 +1145,24 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     expect(errors.map(e => e.code)).toEqual(["ENOENT"]);
   });
 });
+
+it.if(!isWindows)("execFile timeout invokes ChildProcess.kill once", async () => {
+  const child = execFile("sleep", ["10"], { timeout: 300, killSignal: "SIGCONT" }, () => {});
+  const closed = once(child, "close");
+  const originalKill = child.kill.bind(child);
+  const timeoutKillCalls: unknown[] = [];
+
+  child.kill = signal => {
+    timeoutKillCalls.push(signal);
+    return originalKill(signal);
+  };
+
+  try {
+    await Bun.sleep(600);
+    expect(timeoutKillCalls).toHaveLength(1);
+    expect(child.exitCode).toBeNull();
+  } finally {
+    originalKill("SIGKILL");
+    await closed;
+  }
+});

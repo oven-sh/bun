@@ -485,9 +485,9 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
 });
 
 // ─── session-key regressions ─────────────────────────────────────────────────
-// The TLS handshake verifies the peer against the Host-header override when one
-// is present (get_tls_hostname), so the override must be part of the HTTP/2
-// session key — mirroring the HTTP/1.1 keep-alive pool's proxy_auth_hash.
+// The TLS handshake sends the Host-header override as SNI when one is present
+// (get_tls_sni_hostname), so the override must be part of the HTTP/2 session
+// key — mirroring the HTTP/1.1 keep-alive pool's proxy_auth_hash.
 test("HTTP/2 session keyed by a Host header override is not reused for a request without one", async () => {
   await withAdversarialServer(
     {
@@ -500,15 +500,15 @@ test("HTTP/2 session keyed by a Host header override is not reused for a request
       const h2 = { protocol: "http2" as const, tls: { rejectUnauthorized: false } };
       const errcode = (e: any) => e.code || e.name;
 
-      // 1. Request with a Host override: TLS verification (when enabled) runs
-      //    against "other.example", not the URL hostname.
+      // 1. Request with a Host override: the TLS ClientHello sends
+      //    SNI="other.example", not the URL hostname.
       const a = await fetch(url, { ...h2, headers: { Host: "other.example" } }).then(r => r.status, errcode);
       expect(a).toBe(200);
       expect(state.connections).toBe(1);
 
-      // 2. A request without an override expects verification against the URL
-      //    hostname. It must not multiplex onto the session that was verified
-      //    against the override — a fresh connection is required.
+      // 2. A request without an override sends the URL hostname as SNI. It
+      //    must not multiplex onto the session that was negotiated with the
+      //    override SNI — a fresh connection is required.
       const b = await fetch(url, h2).then(r => r.status, errcode);
       expect(b).toBe(200);
       expect(state.connections).toBe(2);

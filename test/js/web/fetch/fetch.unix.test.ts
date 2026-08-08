@@ -1,7 +1,7 @@
 import { serve, ServeOptions, Server } from "bun";
-import { afterAll, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
-import { isWindows, tmpdirSync } from "harness";
+import { isWindows, tempDir, tmpdirSync, tls as validTls } from "harness";
 import { request } from "http";
 import { join } from "path";
 const tmp_dir = tmpdirSync();
@@ -243,4 +243,64 @@ it("handle redirect to non-unix", async () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("world");
   }
+});
+
+// Per-request `tls` options that require a custom SSL_CTX (ca / cert / key /
+// ciphers / minVersion / ...) must be applied when the transport is a unix
+// socket, exactly as they are for a TCP connect to the same server. The
+// failure mode was that the unix-socket connect path returned on the default
+// HTTPS context before the per-request SSL_CTX was resolved, so every
+// context-level option was silently dropped.
+describe.skipIf(isWindows)("tls over unix socket", () => {
+  it("honors tls.ca for server verification", async () => {
+    using dir = tempDir("fetch-unix-tls-ca", {});
+    const unix = join(String(dir), "s.sock");
+    using server = Bun.serve({
+      unix,
+      tls: { cert: validTls.cert, key: validTls.key },
+      fetch: () => new Response("ok"),
+    });
+    const res = await fetch("https://localhost/", { unix, tls: { ca: validTls.cert } });
+    expect(await res.text()).toBe("ok");
+    expect(res.status).toBe(200);
+  });
+
+  it("presents tls.cert + tls.key to a requestCert server (mTLS)", async () => {
+    using dir = tempDir("fetch-unix-tls-mtls", {});
+    const unix = join(String(dir), "s.sock");
+    using server = Bun.serve({
+      unix,
+      tls: {
+        cert: validTls.cert,
+        key: validTls.key,
+        ca: validTls.cert,
+        requestCert: true,
+        rejectUnauthorized: true,
+      },
+      fetch: () => new Response("ok-mtls"),
+    });
+    const res = await fetch("https://localhost/", {
+      unix,
+      tls: { ca: validTls.cert, cert: validTls.cert, key: validTls.key },
+    });
+    expect(await res.text()).toBe("ok-mtls");
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects an invalid tls.ciphers string the same way a TCP connect does", async () => {
+    using dir = tempDir("fetch-unix-tls-ciphers", {});
+    const unix = join(String(dir), "s.sock");
+    using server = Bun.serve({
+      unix,
+      tls: { cert: validTls.cert, key: validTls.key },
+      fetch: () => new Response("ok"),
+    });
+    // A ciphers string BoringSSL cannot parse fails SSL_CTX creation. Over
+    // TCP this surfaces as FailedToOpenSocket; over a unix socket it must
+    // fail the same way rather than being ignored. rejectUnauthorized is off
+    // so the only failure source is the ciphers option itself.
+    await expect(
+      fetch("https://localhost/", { unix, tls: { rejectUnauthorized: false, ciphers: "NOT-A-REAL-CIPHER" } }),
+    ).rejects.toMatchObject({ code: "FailedToOpenSocket" });
+  });
 });

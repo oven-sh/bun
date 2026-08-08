@@ -486,13 +486,8 @@ impl HttpThread {
         // `bun_ptr::RawSlice` (encapsulated outlives-holder invariant) so the
         // borrow of `client` ends before we hand `&mut client` to
         // `connect_socket`. Backing storage is `client.unix_socket_path`, which
-        // `connect_socket` does not touch.
+        // neither `connect_socket` nor the `'custom_ctx` block touches.
         let unix_path = bun_ptr::RawSlice::new(client.unix_socket_path.slice());
-        if !unix_path.is_empty() {
-            return self
-                .context::<IS_SSL>()
-                .connect_socket(client, unix_path.slice());
-        }
 
         if IS_SSL {
             'custom_ctx: {
@@ -514,7 +509,9 @@ impl HttpThread {
                     client.set_custom_ssl_ctx(entry.ctx);
                     let ctx = entry.ctx_mut();
                     // Keepalive is now supported for custom SSL contexts
-                    return if let Some(url) = client.http_proxy.clone() {
+                    return if !unix_path.is_empty() {
+                        ctx.connect_socket(client, unix_path.slice())
+                    } else if let Some(url) = client.http_proxy.clone() {
                         ctx.connect(client, url.hostname, url.get_port_auto())
                     } else {
                         let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
@@ -575,7 +572,9 @@ impl HttpThread {
 
                 client.set_custom_ssl_ctx(ctx_nn);
                 // Keepalive is now supported for custom SSL contexts
-                let result = if let Some(url) = client.http_proxy.clone() {
+                let result = if !unix_path.is_empty() {
+                    custom_context.connect_socket(client, unix_path.slice())
+                } else if let Some(url) = client.http_proxy.clone() {
                     if url.protocol.is_empty() || url.has_http_like_protocol() {
                         custom_context.connect(client, url.hostname, url.get_port_auto())
                     } else {
@@ -588,6 +587,11 @@ impl HttpThread {
                 // Note: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
                 return result.map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
             }
+        }
+        if !unix_path.is_empty() {
+            return self
+                .context::<IS_SSL>()
+                .connect_socket(client, unix_path.slice());
         }
         if let Some(url) = client.http_proxy.clone() {
             if !url.href.is_empty() {

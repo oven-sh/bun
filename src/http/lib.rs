@@ -1230,35 +1230,59 @@ fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
     }
 }
 
-/// Returns the hostname to use for TLS SNI and certificate verification.
-/// Priority: tls_props.server_name > client.hostname > client.url.hostname
-/// The Host header value (client.hostname) may contain a port suffix which
-/// must be stripped because it is not part of the DNS name in certificates.
-fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
+/// Returns the hostname to send in the TLS ClientHello SNI extension.
+/// Priority: tls_props.server_name > client.hostname (Host header) >
+/// client.url.hostname. The Host header value may contain a port suffix which
+/// must be stripped because SNI is a bare DNS name.
+fn get_tls_sni_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
     if allow_proxy_url {
         if let Some(proxy) = &client.http_proxy {
             return proxy.hostname;
         }
     }
-    // Prefer the explicit TLS server_name (e.g. from Node.js servername option)
-    if let Some(props) = &client.tls_props {
-        let sn = props.get().server_name;
-        if !sn.is_null() {
-            // SAFETY: server_name is a NUL-terminated CStr owned by the
-            // SSLConfig; `ffi::cstr` yields an unbound-lifetime borrow of that
-            // C allocation, so `to_bytes()` already satisfies `'c` (tied to
-            // `client.tls_props`) without a `(ptr,len)` round-trip.
-            let sn_slice = unsafe { bun_core::ffi::cstr(sn) }.to_bytes();
-            if !sn_slice.is_empty() {
-                return sn_slice;
-            }
-        }
+    if let Some(sn) = tls_props_server_name(client) {
+        return sn;
     }
     // client.hostname comes from the Host header and may include ":port"
     if let Some(host) = &client.hostname {
         return strip_port_from_host(host);
     }
     client.url.hostname
+}
+
+/// Returns the hostname to verify the peer certificate against (native SAN
+/// match and the JS `checkServerIdentity` hostname argument).
+/// Priority: tls_props.server_name > client.url.hostname. The Host request
+/// header is never consulted here (RFC 6125/9525: verify the URL authority).
+fn get_tls_verify_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
+    if allow_proxy_url {
+        if let Some(proxy) = &client.http_proxy {
+            return proxy.hostname;
+        }
+    }
+    if let Some(sn) = tls_props_server_name(client) {
+        return sn;
+    }
+    client.url.hostname
+}
+
+/// The explicit `tls.serverName` option, if present and non-empty.
+#[inline]
+fn tls_props_server_name<'c>(client: &'c HTTPClient<'_>) -> Option<&'c [u8]> {
+    let props = client.tls_props.as_ref()?;
+    let sn = props.get().server_name;
+    if sn.is_null() {
+        return None;
+    }
+    // SAFETY: server_name is a NUL-terminated CStr owned by the
+    // SSLConfig; `ffi::cstr` yields an unbound-lifetime borrow of that
+    // C allocation, so `to_bytes()` already satisfies `'c` (tied to
+    // `client.tls_props`) without a `(ptr,len)` round-trip.
+    let sn_slice = unsafe { bun_core::ffi::cstr(sn) }.to_bytes();
+    if sn_slice.is_empty() {
+        return None;
+    }
+    Some(sn_slice)
 }
 
 // ── support types ───────────────────────────────────────────────────────
@@ -1680,7 +1704,7 @@ impl<'a> HTTPClient<'a> {
                 // SAFETY: cert_chain is a live STACK_OF(X509) owned by the SSL session; index 0 is in bounds when non-null is returned
                 let x509 = unsafe { boringssl::c::sk_X509_value(cert_chain, 0) };
                 if !x509.is_null() {
-                    let hostname = get_tls_hostname(self, allow_proxy_url);
+                    let hostname = get_tls_verify_hostname(self, allow_proxy_url);
 
                     // check if we need to report the error (probably to `checkServerIdentity` was informed from JS side)
                     // this is the slow path
@@ -1823,7 +1847,7 @@ impl<'a> HTTPClient<'a> {
                 .unwrap_or(core::ptr::null_mut());
             // SAFETY: ssl_ptr is a live *mut SSL for the just-opened TLS socket
             if !ssl_ptr.is_null() && unsafe { boringssl::c::SSL_is_init_finished(ssl_ptr) } == 0 {
-                let raw_hostname = get_tls_hostname(self, self.http_proxy.is_some());
+                let raw_hostname = get_tls_sni_hostname(self, self.http_proxy.is_some());
 
                 // Build a NUL-terminated SNI string only when the hostname is not an
                 // IP literal (RFC 6066 forbids IP SNI). ALPN/SCT/OCSP must still be
@@ -2216,11 +2240,11 @@ impl<'a> HTTPClient<'a> {
     /// none apply.
     ///
     /// target_hostname in the pool stores url.hostname (the CONNECT TCP target
-    /// at writeProxyConnect line 346). But the inner TLS SNI/cert verification
-    /// uses `hostname`, falling back to url.hostname. If a Host header
-    /// override sets hostname != url.hostname, two requests to different IPs
-    /// with the same Host header must NOT share a tunnel — they're physically
-    /// connected to different servers. Hashing hostname here catches that.
+    /// at writeProxyConnect line 346). But the inner TLS SNI uses `hostname`,
+    /// falling back to url.hostname. If a Host header override sets
+    /// hostname != url.hostname, two requests to different IPs with the same
+    /// Host header must NOT share a tunnel — they're physically connected to
+    /// different servers. Hashing hostname here catches that.
     ///
     /// Per-header hashes are combined with wrapping add so insertion order
     /// doesn't matter and duplicate headers don't cancel to zero.
@@ -2615,10 +2639,11 @@ impl<'a> HTTPClient<'a> {
         } else if self.state.request_stage == RequestStage::Done
             && self.is_keep_alive_possible()
             && !socket.is_closed_or_has_error()
-            // A direct TLS socket verified against a Host-header override
-            // (get_tls_hostname) must not be pooled here: this.url has already
-            // been repointed at the redirect destination, so proxy_auth_hash()
-            // can no longer compute the correct pool key. Close it instead.
+            // A direct TLS socket whose SNI was set from a Host-header override
+            // (get_tls_sni_hostname) must not be pooled here: this.url has
+            // already been repointed at the redirect destination, so
+            // proxy_auth_hash() can no longer compute the correct pool key.
+            // Close it instead.
             && (!IS_SSL || self.http_proxy.is_some() || self.hostname.is_none())
         {
             // request_stage == .done: a 303 to a streaming POST can arrive before
@@ -4236,8 +4261,8 @@ impl<'a> HTTPClient<'a> {
                         0
                     },
                     if had_tunnel || (IS_SSL && self.http_proxy.is_none()) {
-                        // Direct TLS: the handshake verified the peer against
-                        // the Host-header override (get_tls_hostname), so the
+                        // Direct TLS: the handshake SNI was set from the
+                        // Host-header override (get_tls_sni_hostname), so the
                         // override hash must be part of the pool key. Matches
                         // the lookup in HTTPContext::connect.
                         self.proxy_auth_hash()

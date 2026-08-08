@@ -1030,20 +1030,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
     RETURN_IF_EXCEPTION(scope, {});
     bool waitForConnection = callFrame->argument(1).toBoolean(globalObject);
 
+    // `state` and `notAcceptingConnectionsContext` are process-global and the
+    // debugger-thread closure debugs main's context, so every route below is
+    // main-thread-only: a worker gets null before touching any of it.
+    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
+    if (!context || !context->isMainThread()) {
+        return JSValue::encode(jsNull());
+    }
+
     auto& state = nodeInspectorState();
     bool reopen = false;
     {
         Locker<Lock> locker(state.lock);
         if (state.serverStarted && !state.url.isEmpty()) {
             // A node:inspector server is already listening. Bun's _debugEnd leaves the listener
-            // up, so a main-thread open() after _debugEnd() re-arms the exit handshake and the
-            // accept gate. `state` is process-global, so a worker can reach this branch too;
-            // the listener is main's, so a worker's failed open() must not touch either flag.
-            auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
-            if (context && context->isMainThread()) {
-                Debugger__clearDebugEnd();
-                notAcceptingConnectionsContext.store(0);
-            }
+            // up, so an open() after _debugEnd() re-arms the exit handshake and the accept gate.
+            Debugger__clearDebugEnd();
+            notAcceptingConnectionsContext.store(0);
             return JSValue::encode(jsNull());
         }
         if (state.serverStarted && state.controlCallback) {

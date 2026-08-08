@@ -644,7 +644,8 @@ class Debugger {
 
     switch (pathname) {
       case "/json/version":
-        return Response.json(this.#nodeInspector ? nodeVersionInfo() : versionInfo());
+        // Same predicate as /json/list below: any CDP endpoint gets the Node shape.
+        return Response.json(this.#nodeInspector || this.#cdpPathname ? nodeVersionInfo() : versionInfo());
       case "/json":
       case "/json/list":
         // Discovery endpoint used by CDP clients (chrome://inspect,

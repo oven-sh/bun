@@ -54,10 +54,14 @@ const errorCaptureStackTrace = ErrorObject.captureStackTrace;
 let activeInspectorUrl: string | undefined;
 
 function isLoopbackHost(host: string) {
+  // Called with the raw open() host, before the URL bracketing below; Node's
+  // IsLoopback in inspector_socket.cc checks the unbracketed forms.
   const hostLower = host.toLowerCase();
   return (
     hostLower === "localhost" ||
     hostLower.startsWith("127.") ||
+    hostLower === "::1" ||
+    hostLower === "0:0:0:0:0:0:0:1" ||
     hostLower === "[::1]" ||
     hostLower === "[0:0:0:0:0:0:0:1]"
   );

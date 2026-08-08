@@ -326,6 +326,10 @@ class InspectorCDPAdapter {
     }
   > = new SafeMap();
   #breakpointIdAliases = new Map<string, string>();
+  // Set when the stale-breakpoint auto-resume below sends Debugger.resume: the
+  // client never saw the pause, so it must not see the matching resumed either.
+  // Backend events arrive FIFO, so the very next resumed is the one to drop.
+  #suppressNextResumed = false;
   #profilerTracking = false;
   #profilerStartTime = 0;
   #profilerStopClientIds: (number | string)[] = [];
@@ -1210,6 +1214,7 @@ class InspectorCDPAdapter {
           typeof params.data?.breakpointId === "string" &&
           this.#isStaleResetBreakpoint(params.data.breakpointId)
         ) {
+          this.#suppressNextResumed = true;
           this.#sendToBackend("Debugger.resume");
           return;
         }
@@ -1245,6 +1250,10 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.resumed":
+        if (this.#suppressNextResumed) {
+          this.#suppressNextResumed = false;
+          return;
+        }
         this.#emitToClient("Debugger.resumed", {});
         return;
 

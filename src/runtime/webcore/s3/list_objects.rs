@@ -20,59 +20,56 @@ pub struct S3ListObjectsOptions {
 // Each Utf8Slice field cleans up via Drop, so no explicit `impl Drop` is
 // needed here.
 
-// The result structs borrow from the parsed response document handed to
-// `parse_s3_list_objects_result`; the caller consumes them (toJS) inside
-// that document's scope.
-
-struct ObjectOwner<'a> {
-    id: Option<&'a [u8]>,
-    display_name: Option<&'a [u8]>,
+struct ObjectOwner {
+    id: Option<Box<[u8]>>,
+    display_name: Option<Box<[u8]>>,
 }
 
-pub struct S3ListObjectsContents<'a> {
-    key: &'a [u8],
-    etag: Option<&'a [u8]>,
-    checksum_type: Option<&'a [u8]>,
-    checksum_algorithm: Option<&'a [u8]>,
-    last_modified: Option<&'a [u8]>,
+pub struct S3ListObjectsContents {
+    key: Box<[u8]>,
+    etag: Option<Box<[u8]>>,
+    checksum_type: Option<Box<[u8]>>,
+    checksum_algorithm: Option<Box<[u8]>>,
+    last_modified: Option<Box<[u8]>>,
     object_size: Option<i64>,
-    storage_class: Option<&'a [u8]>,
-    owner: Option<ObjectOwner<'a>>,
+    storage_class: Option<Box<[u8]>>,
+    owner: Option<ObjectOwner>,
 }
 
-pub struct S3ListObjectsV2Result<'a> {
-    pub name: Option<&'a [u8]>,
-    pub(crate) prefix: Option<&'a [u8]>,
+#[derive(Default)]
+pub struct S3ListObjectsV2Result {
+    pub name: Option<Box<[u8]>>,
+    pub(crate) prefix: Option<Box<[u8]>>,
     pub(crate) key_count: Option<i64>,
     pub(crate) max_keys: Option<i64>,
-    pub(crate) delimiter: Option<&'a [u8]>,
-    pub(crate) encoding_type: Option<&'a [u8]>,
+    pub(crate) delimiter: Option<Box<[u8]>>,
+    pub(crate) encoding_type: Option<Box<[u8]>>,
     pub(crate) is_truncated: Option<bool>,
-    pub(crate) continuation_token: Option<&'a [u8]>,
-    pub(crate) next_continuation_token: Option<&'a [u8]>,
-    pub(crate) start_after: Option<&'a [u8]>,
-    pub(crate) common_prefixes: Option<Vec<&'a [u8]>>,
-    pub(crate) contents: Option<Vec<S3ListObjectsContents<'a>>>,
+    pub(crate) continuation_token: Option<Box<[u8]>>,
+    pub(crate) next_continuation_token: Option<Box<[u8]>>,
+    pub(crate) start_after: Option<Box<[u8]>>,
+    pub(crate) common_prefixes: Option<Vec<Box<[u8]>>>,
+    pub(crate) contents: Option<Vec<S3ListObjectsContents>>,
 }
 
-impl<'a> S3ListObjectsV2Result<'a> {
+impl S3ListObjectsV2Result {
     pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let js_result = JSValue::create_empty_object(global_object, 0);
 
-        js_result.put_optional_utf8(global_object, b"name", self.name)?;
-        js_result.put_optional_utf8(global_object, b"prefix", self.prefix)?;
-        js_result.put_optional_utf8(global_object, b"delimiter", self.delimiter)?;
-        js_result.put_optional_utf8(global_object, b"startAfter", self.start_after)?;
-        js_result.put_optional_utf8(global_object, b"encodingType", self.encoding_type)?;
+        js_result.put_optional_utf8(global_object, b"name", self.name.as_deref())?;
+        js_result.put_optional_utf8(global_object, b"prefix", self.prefix.as_deref())?;
+        js_result.put_optional_utf8(global_object, b"delimiter", self.delimiter.as_deref())?;
+        js_result.put_optional_utf8(global_object, b"startAfter", self.start_after.as_deref())?;
+        js_result.put_optional_utf8(global_object, b"encodingType", self.encoding_type.as_deref())?;
         js_result.put_optional_utf8(
             global_object,
             b"continuationToken",
-            self.continuation_token,
+            self.continuation_token.as_deref(),
         )?;
         js_result.put_optional_utf8(
             global_object,
             b"nextContinuationToken",
-            self.next_continuation_token,
+            self.next_continuation_token.as_deref(),
         )?;
         js_result.put_optional(global_object, b"isTruncated", self.is_truncated);
         js_result.put_optional(global_object, b"keyCount", self.key_count.map(|n| n as f64));
@@ -86,11 +83,11 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 object_info.put(
                     global_object,
                     b"key",
-                    create_utf8_for_js(global_object, item.key)?,
+                    create_utf8_for_js(global_object, &item.key)?,
                 );
 
-                object_info.put_optional_utf8(global_object, b"eTag", item.etag)?;
-                if let Some(algorithm) = item.checksum_algorithm {
+                object_info.put_optional_utf8(global_object, b"eTag", item.etag.as_deref())?;
+                if let Some(algorithm) = item.checksum_algorithm.as_deref() {
                     let js_algorithm = create_utf8_for_js(global_object, algorithm)?;
                     object_info.put(global_object, b"checksumAlgorithm", js_algorithm);
                     // Back-compat alias for the original misspelling (#19142).
@@ -103,12 +100,12 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 object_info.put_optional_utf8(
                     global_object,
                     b"checksumType",
-                    item.checksum_type,
+                    item.checksum_type.as_deref(),
                 )?;
                 object_info.put_optional_utf8(
                     global_object,
                     b"lastModified",
-                    item.last_modified,
+                    item.last_modified.as_deref(),
                 )?;
                 object_info.put_optional(
                     global_object,
@@ -118,16 +115,16 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 object_info.put_optional_utf8(
                     global_object,
                     b"storageClass",
-                    item.storage_class,
+                    item.storage_class.as_deref(),
                 )?;
 
                 if let Some(owner) = &item.owner {
                     let js_owner = JSValue::create_empty_object(global_object, 0);
-                    js_owner.put_optional_utf8(global_object, b"id", owner.id)?;
+                    js_owner.put_optional_utf8(global_object, b"id", owner.id.as_deref())?;
                     js_owner.put_optional_utf8(
                         global_object,
                         b"displayName",
-                        owner.display_name,
+                        owner.display_name.as_deref(),
                     )?;
                     object_info.put(global_object, b"owner", js_owner);
                 }
@@ -167,70 +164,55 @@ impl<'a> S3ListObjectsV2Result<'a> {
     }
 }
 
-/// Reads a `ListObjectsV2` response's `<ListBucketResult>`; the result
-/// borrows from it.
-pub(crate) fn parse_s3_list_objects_result<'a>(
-    root: xml_response::Node<'a>,
-) -> S3ListObjectsV2Result<'a> {
-    let mut result = S3ListObjectsV2Result {
-        contents: None,
-        common_prefixes: None,
-        continuation_token: None,
-        delimiter: None,
-        encoding_type: None,
-        is_truncated: None,
-        key_count: None,
-        max_keys: None,
-        name: None,
-        next_continuation_token: None,
-        prefix: None,
-        start_after: None,
-    };
-    result.name = root.child_text(b"Name");
-    result.prefix = root.child_text(b"Prefix").filter(|p| !p.is_empty());
-    result.delimiter = root.child_text(b"Delimiter");
-    result.start_after = root.child_text(b"StartAfter");
-    result.encoding_type = root.child_text(b"EncodingType");
-    result.continuation_token = root.child_text(b"ContinuationToken");
-    result.next_continuation_token = root.child_text(b"NextContinuationToken");
-    result.is_truncated = root.child_bool(b"IsTruncated");
-    result.key_count = root.child_i64(b"KeyCount");
-    result.max_keys = root.child_i64(b"MaxKeys");
-
-    let contents: Vec<S3ListObjectsContents<'a>> = root
-        .children(b"Contents")
-        .filter_map(|object| {
-            Some(S3ListObjectsContents {
-                key: object.child_text(b"Key")?,
-                etag: object.child_text(b"ETag"),
-                checksum_type: object.child_text(b"ChecksumType"),
-                checksum_algorithm: object.child_text(b"ChecksumAlgorithm"),
-                last_modified: object.child_text(b"LastModified"),
-                object_size: object.child_i64(b"Size"),
-                storage_class: object.child_text(b"StorageClass"),
-                owner: object.child(b"Owner").and_then(|owner| {
-                    let id = owner.child_text(b"ID").filter(|s| !s.is_empty());
-                    let display_name = owner.child_text(b"DisplayName").filter(|s| !s.is_empty());
-                    (id.is_some() || display_name.is_some())
-                        .then_some(ObjectOwner { id, display_name })
-                }),
+/// Reads a `ListObjectsV2` response body; `None` unless it is a well-formed
+/// `<ListBucketResult>` document.
+pub(crate) fn parse_s3_list_objects_result(body: &[u8]) -> Option<S3ListObjectsV2Result> {
+    xml_response::parse(body, |root| {
+        if root.name != b"ListBucketResult" {
+            return None;
+        }
+        let contents: Vec<S3ListObjectsContents> = root
+            .children(b"Contents")
+            .filter_map(|object| {
+                Some(S3ListObjectsContents {
+                    key: object.child_text(b"Key")?,
+                    etag: object.child_text(b"ETag"),
+                    checksum_type: object.child_text(b"ChecksumType"),
+                    checksum_algorithm: object.child_text(b"ChecksumAlgorithm"),
+                    last_modified: object.child_text(b"LastModified"),
+                    object_size: object.child_i64(b"Size"),
+                    storage_class: object.child_text(b"StorageClass"),
+                    owner: object.child(b"Owner").and_then(|owner| {
+                        let id = owner.child_nonempty_text(b"ID");
+                        let display_name = owner.child_nonempty_text(b"DisplayName");
+                        (id.is_some() || display_name.is_some())
+                            .then_some(ObjectOwner { id, display_name })
+                    }),
+                })
             })
+            .collect();
+        let common_prefixes: Vec<Box<[u8]>> = root
+            .children(b"CommonPrefixes")
+            .flat_map(|entry| entry.children(b"Prefix"))
+            .filter_map(xml_response::Node::text)
+            .filter(|prefix| !prefix.is_empty())
+            .collect();
+        Some(S3ListObjectsV2Result {
+            name: root.child_text(b"Name"),
+            prefix: root.child_nonempty_text(b"Prefix"),
+            key_count: root.child_i64(b"KeyCount"),
+            max_keys: root.child_i64(b"MaxKeys"),
+            delimiter: root.child_text(b"Delimiter"),
+            encoding_type: root.child_text(b"EncodingType"),
+            is_truncated: root.child_bool(b"IsTruncated"),
+            continuation_token: root.child_text(b"ContinuationToken"),
+            next_continuation_token: root.child_text(b"NextContinuationToken"),
+            start_after: root.child_text(b"StartAfter"),
+            common_prefixes: (!common_prefixes.is_empty()).then_some(common_prefixes),
+            contents: (!contents.is_empty()).then_some(contents),
         })
-        .collect();
-    if !contents.is_empty() {
-        result.contents = Some(contents);
-    }
-
-    let common_prefixes: Vec<&'a [u8]> = root
-        .children(b"CommonPrefixes")
-        .flat_map(|entry| entry.children(b"Prefix"))
-        .map(xml_response::Node::text)
-        .filter(|prefix| !prefix.is_empty())
-        .collect();
-    if !common_prefixes.is_empty() {
-        result.common_prefixes = Some(common_prefixes);
-    }
-    result
+    })
+    .flatten()
 }
 
 pub(crate) fn get_list_objects_options_from_js(

@@ -85,25 +85,29 @@ impl S3HttpDownloadStreamingTask {
             if has_more {
                 return;
             }
-            let callback = self.callback;
-            let context = self.callback_context.as_ptr().cast();
             let empty = MutableString::default();
-            let message: &[u8] = b"an unexpected error has occurred";
+            let mut code: &[u8] = b"UnknownError";
+            let mut message: &[u8] = b"an unexpected error has occurred";
+            let parsed;
             if let Some(req_err) = self.request_error {
-                let code = req_err.name().as_bytes();
-                callback(&empty, false, Some(S3Error { code, message }), context);
-                return;
+                code = req_err.name().as_bytes();
+            } else {
+                let bytes = self.reported_response_buffer.list.as_slice();
+                if !bytes.is_empty() {
+                    message = bytes;
+                }
+                parsed = xml_response::parse_error(bytes);
+                if let Some(error) = &parsed {
+                    code = error.code.as_deref().unwrap_or(code);
+                    message = error.message.as_deref().unwrap_or(message);
+                }
             }
-            // `code` / `message` borrow the parsed body; the callback consumes
-            // them before it returns.
-            let bytes = self.reported_response_buffer.list.as_slice();
-            xml_response::with_error(bytes, |error| {
-                let (code, body_message) = error.unwrap_or((None, None));
-                let code = code.unwrap_or(b"UnknownError");
-                let message =
-                    body_message.unwrap_or(if bytes.is_empty() { message } else { bytes });
-                callback(&empty, false, Some(S3Error { code, message }), context);
-            });
+            (self.callback)(
+                &empty,
+                false,
+                Some(S3Error { code, message }),
+                self.callback_context.as_ptr().cast(),
+            );
             return;
         }
 

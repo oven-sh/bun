@@ -659,24 +659,21 @@ impl MultiPartUpload {
                 // response.body is bun.MutableString — `list` is a Vec<u8>
                 let slice = response.body.list.as_slice();
                 // <InitiateMultipartUploadResult><Bucket/><Key/><UploadId/></…>
-                let valid = xml_response::with_document(slice, |document| {
-                    match document
-                        .filter(|root| root.name == b"InitiateMultipartUploadResult")
-                        .and_then(|root| root.child_text(b"UploadId"))
-                    {
-                        Some(upload_id)
-                            if !upload_id.is_empty()
-                                && upload_id.len() <= Self::MAX_UPLOAD_ID_LEN
-                                && upload_id
-                                    .iter()
-                                    .all(|b| b.is_ascii() && !b.is_ascii_control()) =>
-                        {
-                            self_.upload_id.set(Box::<[u8]>::from(upload_id));
-                            true
-                        }
-                        _ => false,
-                    }
+                let upload_id = xml_response::parse(slice, |root| {
+                    (root.name == b"InitiateMultipartUploadResult")
+                        .then(|| root.child_text(b"UploadId"))
+                        .flatten()
+                })
+                .flatten()
+                .filter(|id| {
+                    !id.is_empty()
+                        && id.len() <= Self::MAX_UPLOAD_ID_LEN
+                        && id.iter().all(|b| b.is_ascii() && !b.is_ascii_control())
                 });
+                let valid = upload_id.is_some();
+                if let Some(upload_id) = upload_id {
+                    self_.upload_id.set(upload_id);
+                }
                 if !valid {
                     // Unknown type of response error from AWS
                     scoped_log!(

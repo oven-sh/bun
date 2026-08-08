@@ -942,6 +942,16 @@ pub(crate) fn defines_from_transform_options(
         }
     }
 
+    // `globalThis.` so a local `const process` binding doesn't capture the rewrite.
+    if target == Target::Node {
+        user_defines
+            .get_or_put_value(b"Bun.env", Box::from(b"globalThis.process.env".as_slice()))?;
+        user_defines.get_or_put_value(
+            b"import.meta.env",
+            Box::from(b"globalThis.process.env".as_slice()),
+        )?;
+    }
+
     let resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, bump)?;
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");

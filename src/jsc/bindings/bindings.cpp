@@ -970,9 +970,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
             bool result = true;
             bool sameStructure = o2Structure->id() == o1Structure->id();
-            // Comparing values can run user getters that mutate o1/o2 and
-            // rehash the PropertyTable mid-walk, so collect the value pairs
-            // side-effect-free first and compare after the walk.
+            // Comparing values runs user getters that can rehash this PropertyTable mid-walk (use-after-free), so collect the pairs first and compare after.
             MarkedArgumentBuffer pairs;
             if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
@@ -1051,8 +1049,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                             }
                         }
 
-                        // Membership check only: every left property is in `pairs` and
-                        // compared below, so a key missing from the left means not equal.
+                        // Membership check only; every left property is in `pairs` and compared below.
                         if (o1->getDirectOffset(vm, JSC::PropertyName(entry.key())) == invalidOffset) {
                             result = false;
                             return false;

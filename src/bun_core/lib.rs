@@ -1026,13 +1026,13 @@ pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
 /// Extension-method form of [`handle_oom`]: `.unwrap_or_oom()` on any
 /// `Result<T, E>`. The *loose* idiom
 /// that panics on **any** `Err`, not just OOM-only error sets. For the
-/// narrowing version see `bun_crash_handler::HandleOom`.
+/// narrowing version see `bun_crash_handler::handle_oom::handle_oom`.
 ///
 /// This is intentionally a blanket `impl<T, E>` — it matches the
 /// existing `bun_core::handle_oom` free fn and the two pre-existing local
 /// blanket impls in `run_command.rs` / `valkey.rs`. Callers that want a strict
-/// `error{OutOfMemory}`-only whitelist should use `bun_crash_handler::HandleOom`
-/// instead.
+/// `error{OutOfMemory}`-only whitelist should use `bun_crash_handler`'s
+/// `handle_oom` instead.
 pub trait UnwrapOrOom {
     type Output;
     fn unwrap_or_oom(self) -> Self::Output;

@@ -842,6 +842,9 @@ it.concurrent("console.log falls back when node:util cannot load for custom insp
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The custom hook must not run; the object falls back to default rendering.
+  expect(stdout).toContain("Symbol(nodejs.util.inspect.custom)");
+  expect(stdout).not.toContain("custom!");
   expect(stdout).toContain("after-inspect");
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });

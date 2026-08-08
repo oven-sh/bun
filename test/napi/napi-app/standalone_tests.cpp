@@ -2203,6 +2203,55 @@ static napi_value test_napi_object_coercion(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// The descriptor-filter walk in napi_get_all_property_names must return
+// napi_pending_exception when a proxy's getOwnPropertyDescriptor trap throws,
+// for both napi_key_own_only and napi_key_include_prototypes. The traps are
+// stateless (keyed on the property name) so Bun and Node print identically.
+static napi_value test_napi_get_all_property_names_throwing_traps(
+    const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+#ifndef _WIN32
+  BlockingStdoutScope blocking_stdout;
+#endif
+
+  napi_value setup;
+  NODE_API_CALL(
+      env,
+      napi_create_string_utf8(
+          env,
+          "(() => {"
+          "  const handler = {"
+          "    getOwnPropertyDescriptor(t, k) {"
+          "      if (k === 'b') throw new Error('gopd trap');"
+          "      return Object.getOwnPropertyDescriptor(t, k);"
+          "    },"
+          "  };"
+          "  return ["
+          "    new Proxy({ a: 1, b: 2 }, handler),"
+          "    Object.create(new Proxy({ a: 1, b: 2 }, handler)),"
+          "  ];"
+          "})()",
+          NAPI_AUTO_LENGTH, &setup));
+  napi_value objects;
+  NODE_API_CALL(env, napi_run_script(env, setup, &objects));
+
+  napi_value own_proxy, proto_proxy;
+  NODE_API_CALL(env, napi_get_element(env, objects, 0, &own_proxy));
+  NODE_API_CALL(env, napi_get_element(env, objects, 1, &proto_proxy));
+
+  napi_value out;
+  report_status(env, "own_only enumerable filter",
+                napi_get_all_property_names(env, own_proxy, napi_key_own_only,
+                                            napi_key_enumerable,
+                                            napi_key_numbers_to_strings, &out));
+  report_status(env, "include_prototypes enumerable filter",
+                napi_get_all_property_names(
+                    env, proto_proxy, napi_key_include_prototypes,
+                    napi_key_enumerable, napi_key_numbers_to_strings, &out));
+
+  return ok(env);
+}
+
 // Test for napi_create_external_buffer with empty/null data
 static void empty_buffer_finalizer(napi_env env, void *data, void *hint) {
   // No-op finalizer for empty buffers
@@ -4425,6 +4474,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_null_env_and_result);
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_object_coercion);
+  REGISTER_FUNCTION(env, exports, test_napi_get_all_property_names_throwing_traps);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
   REGISTER_FUNCTION(env, exports, test_napi_v10_surface);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);

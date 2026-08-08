@@ -1762,6 +1762,12 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("numbers_to_strings key0 typeof=string");
     });
 
+    it("returns napi_pending_exception when a proxy descriptor trap throws", async () => {
+      const output = await checkSameOutput("test_napi_get_all_property_names_throwing_traps", []);
+      expect(output).toContain("own_only enumerable filter: status=10 pending=1");
+      expect(output).toContain("include_prototypes enumerable filter: status=10 pending=1");
+    });
+
     it("coerces primitives for define_properties/freeze/seal/type_tag/set_prototype", async () => {
       const output = await checkSameOutput("test_napi_toobject_coercion_node26", []);
       expect(output).toContain("define_properties(number): status=0 pending=0");

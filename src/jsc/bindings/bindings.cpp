@@ -4118,9 +4118,14 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
     snapshotBuilder.buildSnapshot();
 
     WTF::String jsonString = snapshotBuilder.json();
-    JSC::EncodedJSValue result = JSC::JSValue::encode(JSONParse(globalObject, jsonString));
-    scope.releaseAssertNoException();
-    return result;
+    RETURN_IF_EXCEPTION(scope, {});
+    if (jsonString.isNull()) [[unlikely]] {
+        // HeapSnapshotBuilder::json() returns the null string when the snapshot
+        // overflowed the maximum string length or its allocation failed.
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSONParseWithException(globalObject, jsonString)));
 }
 
 // One load. always_inline so ThinLTO importers and the inliner never leave

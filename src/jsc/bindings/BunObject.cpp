@@ -840,6 +840,14 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     JSC::HeapSnapshotBuilder builder(heapProfiler);
     builder.buildSnapshot();
     auto json = builder.json();
+    if (json.isNull()) [[unlikely]] {
+        // HeapSnapshotBuilder::json() returns the null string when the snapshot
+        // overflowed the maximum string length or its allocation failed;
+        // JSONParseWithException maps a null string to an empty value without
+        // throwing, which is not a valid host function result.
+        throwOutOfMemoryError(globalObject, throwScope);
+        return {};
+    }
     // Returning an object was a bad idea but it's a breaking change
     // so we'll just keep it for now.
     JSC::JSValue jsonValue = JSONParseWithException(globalObject, json);

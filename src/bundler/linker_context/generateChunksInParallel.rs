@@ -497,6 +497,65 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             return Err(crate::Error::DuplicateOutputPath);
         }
+
+        // Same check for copy-loader assets; identical-content collisions are allowed.
+        let additional = c.parse_graph().additional_output_files.as_slice();
+        if !additional.is_empty() {
+            #[derive(Default)]
+            struct AssetPathEntry {
+                hash: u64,
+                inputs: Vec<usize>,
+                collides: bool,
+            }
+            let mut asset_paths: StringArrayHashMap<AssetPathEntry> = StringArrayHashMap::default();
+            let mut has_collision = false;
+
+            for (i, out) in additional.iter().enumerate() {
+                let collides_with_chunk = path_names_map.get_or_put(&out.dest_path)?.found_existing;
+                let entry = asset_paths.get_or_put(&out.dest_path)?;
+                if !entry.found_existing {
+                    entry.value_ptr.hash = out.hash;
+                    entry.value_ptr.collides = collides_with_chunk;
+                } else if entry.value_ptr.hash != out.hash {
+                    entry.value_ptr.collides = true;
+                }
+                entry.value_ptr.inputs.push(i);
+                has_collision |= entry.value_ptr.collides;
+            }
+
+            if has_collision {
+                let sources = c.parse_graph().input_files.items_source();
+                let mut msg: Vec<u8> = Vec::new();
+                writeln!(&mut msg, "Multiple files share the same output path")?;
+                for (key, entry) in asset_paths.keys().iter().zip(asset_paths.values().iter()) {
+                    if !entry.collides {
+                        continue;
+                    }
+                    writeln!(&mut msg, "  {}:", bstr::BStr::new(key))?;
+                    for &i in entry.inputs.iter() {
+                        let pretty: &[u8] = match additional[i].source_index.get() {
+                            Some(idx) if idx.get_usize() < sources.len() => {
+                                sources[idx.get_usize()].path.pretty
+                            }
+                            _ => additional[i].src_path.text,
+                        };
+                        writeln!(&mut msg, "    from input {}", bstr::BStr::new(pretty))?;
+                    }
+                }
+                c.log_disjoint().add_error(None, bun_ast::Loc::EMPTY, msg);
+                c.log_disjoint().add_msg(bun_ast::Msg {
+                    kind: bun_ast::Kind::Note,
+                    data: bun_ast::Data {
+                        text: Cow::Borrowed(
+                            b"consider adding '[hash]' to asset naming to make filenames unique",
+                        ),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+                return Err(crate::Error::DuplicateOutputPath);
+            }
+        }
     }
 
     // After final_rel_path is computed for all chunks, fix up module_info

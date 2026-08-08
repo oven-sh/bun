@@ -4,6 +4,7 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ArrayConstructor.h"
 
+#include "AsyncStackTrace.h"
 #include "ZigGlobalObject.h"
 
 namespace Bun {
@@ -27,7 +28,11 @@ JSC_DEFINE_HOST_FUNCTION(jsCleanupLater, (JSC::JSGlobalObject * globalObject, JS
 JSC_DEFINE_HOST_FUNCTION(jsSetAsyncHooksEnabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ASSERT(callFrame->argumentCount() == 1);
-    globalObject->setAsyncContextTrackingEnabled(callFrame->uncheckedArgument(0).toBoolean(globalObject));
+    bool enabled = callFrame->uncheckedArgument(0).toBoolean(globalObject);
+    globalObject->setAsyncContextTrackingEnabled(enabled);
+    auto& vm = JSC::getVM(globalObject);
+    if (enabled && !vm.onAppendStackTrace())
+        vm.setOnAppendStackTrace(Bun::appendAsyncLocalStorageStackFrames);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

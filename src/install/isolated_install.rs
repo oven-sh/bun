@@ -32,7 +32,7 @@ use bun_collections::{
     ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
     StringArrayHashMap,
 };
-use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt};
+use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt, strings};
 use bun_paths::path_options::AssumeOk as _;
 use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
 use bun_semver as semver;
@@ -2356,37 +2356,49 @@ pub(crate) fn install_isolated_packages(
                     {
                         install::PreinstallState::Done => false,
                         _ => 'missing_from_cache: {
-                            if matches!(patch_info, installer::PatchInfo::None) {
-                                let exists = match pkg_res_tag {
-                                    ResolutionTag::Npm => {
-                                        // Reshaped for borrowck — capture length
-                                        // instead of `save()` so the path stays unborrowed.
-                                        let cache_dir_path_save = pkg_cache_dir_subpath.len();
-                                        pkg_cache_dir_subpath.append(b"package.json").assume_ok();
-                                        let exists = sys::exists_at(
-                                            cache_dir,
-                                            pkg_cache_dir_subpath.slice_z(),
-                                        );
-                                        pkg_cache_dir_subpath.set_length(cache_dir_path_save);
-                                        exists
-                                    }
-                                    _ => sys::directory_exists_at(
-                                        cache_dir,
-                                        pkg_cache_dir_subpath.slice_z(),
+                            // Downloads only produce the unpatched folder;
+                            // re-enqueueing one the resolve phase already
+                            // extracted deadlocks the install (#37136).
+                            if matches!(patch_info, installer::PatchInfo::Patch(_)) {
+                                let idx = strings::last_index_of(
+                                    pkg_cache_dir_subpath.slice(),
+                                    b"_patch_hash=",
+                                )
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "Patched dependency cache dir subpath does not have the \
+                                         \"_patch_hash=HASH\" suffix. This is a bug, please file \
+                                         a GitHub issue."
                                     )
-                                    .unwrap_or(false),
-                                };
-                                if exists {
-                                    installer.manager_mut().set_preinstall_state(
-                                        pkg_id,
-                                        install::PreinstallState::Done,
-                                    );
-                                }
-                                break 'missing_from_cache !exists;
+                                });
+                                pkg_cache_dir_subpath.set_length(idx);
                             }
-
-                            // TODO: why does this look like it will never work?
-                            break 'missing_from_cache true;
+                            let exists = match pkg_res_tag {
+                                // `Remove`'s subpath is already unpatched.
+                                ResolutionTag::Npm
+                                    if !matches!(patch_info, installer::PatchInfo::Patch(_)) =>
+                                {
+                                    // Reshaped for borrowck — capture length
+                                    // instead of `save()` so the path stays unborrowed.
+                                    let cache_dir_path_save = pkg_cache_dir_subpath.len();
+                                    pkg_cache_dir_subpath.append(b"package.json").assume_ok();
+                                    let exists =
+                                        sys::exists_at(cache_dir, pkg_cache_dir_subpath.slice_z());
+                                    pkg_cache_dir_subpath.set_length(cache_dir_path_save);
+                                    exists
+                                }
+                                _ => sys::directory_exists_at(
+                                    cache_dir,
+                                    pkg_cache_dir_subpath.slice_z(),
+                                )
+                                .unwrap_or(false),
+                            };
+                            if exists {
+                                installer
+                                    .manager_mut()
+                                    .set_preinstall_state(pkg_id, install::PreinstallState::Done);
+                            }
+                            break 'missing_from_cache !exists;
                         }
                     };
 

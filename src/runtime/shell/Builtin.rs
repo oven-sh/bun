@@ -743,6 +743,13 @@ impl Builtin {
                     if redirect.stderr() {
                         me.stderr = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
                     }
+                } else if crate::webcore::ReadableStream::is_readable_stream(jsval) {
+                    let name = Self::of(interp, cmd).kind.as_str();
+                    let _ = global.throw(format_args!(
+                        "ReadableStream cannot be redirected to a builtin command ('{name}'). \
+                         Use an external command or buffer the stream first",
+                    ));
+                    return Some(Yield::failed());
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)
                 {

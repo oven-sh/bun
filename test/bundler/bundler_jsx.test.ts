@@ -1146,6 +1146,26 @@ describe("bundler", () => {
       },
     });
 
+    // Transpile-only output (--no-bundle, same single-file path as the
+    // runtime transpiler) never tree-shakes parts, so the synthesized runtime
+    // import must survive even when every JSX expression is dead.
+    itBundled("jsx/AutoImportKeptWhenNotBundling", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          console.log('only-this');
+        `,
+      },
+      bundling: false,
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).toMatch(/from\s*"react\/jsx-(dev-)?runtime"/);
+        // Transpile-only keeps the hashed import alias, e.g. `jsx_w77yafs4(`.
+        expect(file).toMatch(/jsx(DEV)?(_\w+)?\(/);
+      },
+    });
+
     // Two entry modules: one where JSX survives, one where it is all dead.
     // The JSX source must be bundled (for the live entry) without leaking an
     // extra import into the dead entry's chunk.

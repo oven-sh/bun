@@ -17,7 +17,10 @@ async function runTerminateScenario(workerSource: string, extraEnv: Record<strin
   using dir = tempDir("shell-worker-terminate-leak", {
     "main.ts": `
       const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
-      await new Promise(resolve => (worker.onmessage = resolve));
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.onmessage = resolve;
+      worker.onerror = e => reject(e.error ?? e.message);
+      await promise;
       await worker.terminate();
     `,
     "worker.ts": workerSource,
@@ -172,7 +175,10 @@ test.skipIf(!isLinux)(
       "main.ts": `
         import { readFileSync } from "node:fs";
         const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
-        const pid: number = await new Promise(resolve => (worker.onmessage = e => resolve(e.data)));
+        const { promise, resolve, reject } = Promise.withResolvers<number>();
+        worker.onmessage = e => resolve(e.data);
+        worker.onerror = e => reject(e.error ?? e.message);
+        const pid: number = await promise;
         await worker.terminate();
         const deadline = Date.now() + 20_000;
         let state = "alive";

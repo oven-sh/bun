@@ -11,7 +11,6 @@ export const src = path.join(import.meta.dirname, "../");
 
 export type TypeKind = keyof typeof t;
 
-export let allFunctions: Func[] = [];
 export let files = new Map<string, File>();
 /** A reachable type is one that is required for code generation */
 export let typeHashToReachableType = new Map<string, TypeImpl>();
@@ -25,14 +24,6 @@ export const str = (v: any) => JSON.stringify(v);
 export const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 /** Escape an identifier */
 export const zid = (s: string) => (s.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/) ? s : "@" + str(s));
-/** Snake Case */
-export const snake = (s: string) =>
-  s[0].toLowerCase() +
-  s
-    .slice(1)
-    .replace(/([A-Z])/g, "_$1")
-    .replace(/-/g, "_")
-    .toLowerCase();
 /** Camel Case */
 export const camel = (s: string) =>
   s[0].toLowerCase() + s.slice(1).replace(/[_-](\w)?/g, (_, letter) => letter?.toUpperCase() ?? "");
@@ -61,10 +52,6 @@ interface TypeDataDefs {
   record: {
     value: TypeImpl;
     repr: "kv-slices";
-  };
-  zigEnum: {
-    file: string;
-    impl: string;
   };
   stringEnum: string[];
   oneOf: TypeImpl[];
@@ -139,9 +126,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "record":
         h += this.data.value.hash();
         break;
-      case "zigEnum":
-        h += `${this.data.file}:${this.data.impl}`;
-        break;
       case "stringEnum":
         h += this.data.join(",");
         break;
@@ -169,7 +153,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "oneOf":
       case "dictionary":
       case "stringEnum":
-      case "zigEnum":
         return true;
       default:
         return false;
@@ -208,8 +191,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         return "*JSGlobalObject";
       case "stringEnum":
         return cAbiTypeForEnum(this.data.length);
-      case "zigEnum":
-        throw new Error("TODO");
       case "undefined":
         return "u0";
       case "oneOf": // `union(enum)`
@@ -283,7 +264,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     const name = this.name();
     const cAbiType = this.canDirectlyMapToCAbi();
     const namespace = typeHashToNamespace.get(this.hash());
-    if (cAbiType && typeof cAbiType === "string" && this.kind !== "zigEnum" && this.kind !== "stringEnum") {
+    if (cAbiType && typeof cAbiType === "string" && this.kind !== "stringEnum") {
       return cAbiTypeName(cAbiType);
     }
     return namespace ? `${namespace}::${cap(name)}` : name;
@@ -714,7 +695,6 @@ export const isFunc = Symbol("isFunc");
 export interface Func {
   [isFunc]: true;
   name: string;
-  zigPrefix: string;
   snapshot: string;
   zigFile: string;
   variants: Variant[];
@@ -735,7 +715,6 @@ export interface Arg {
   name: string;
   type: TypeImpl;
   loweringStrategy?: ArgStrategy;
-  zigMappedName?: string;
 }
 
 /**
@@ -837,12 +816,10 @@ export function registerFunction(opts: FuncOptions) {
   const func: Func = {
     [isFunc]: true,
     name: "",
-    zigPrefix: opts.implNamespace ? `${opts.implNamespace}.` : "",
     snapshot,
     zigFile,
     variants,
   };
-  allFunctions.push(func);
   file.functions.push(func);
   return func;
 }
@@ -1050,16 +1027,6 @@ export class Struct {
   add(name: string, cType: CAbiType) {
     const [size, naturalAlignment] = cAbiTypeInfo(cType);
     this.fields.push({ name, type: cType, size, naturalAlignment });
-  }
-
-  emitZig(zig: CodeWriter, semi: "with-semi" | "no-semi") {
-    zig.line("extern struct {");
-    zig.indent();
-    for (const field of this.fields) {
-      zig.line(`${snake(field.name)}: ${field.type},`);
-    }
-    zig.dedent();
-    zig.line("}" + (semi === "with-semi" ? ";" : ""));
   }
 
   emitCpp(cpp: CodeWriter, structName: string) {

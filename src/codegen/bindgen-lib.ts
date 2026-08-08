@@ -285,17 +285,9 @@ export namespace t {
   > {
     return new TypeImpl("stringEnum", values.sort());
   }
-
-  /**
-   * Equivalent to `stringEnum`, but using an enum sourced from the given
-   * file. Use this to get an enum type that can have functions added.
-   */
-  export function zigEnum(file: string, impl: string): Type<string, "zigEnum"> {
-    return new TypeImpl("zigEnum", { file, impl });
-  }
 }
 
-interface FuncOptionsWithVariant extends FuncMetadata {
+interface FuncOptionsWithVariant {
   /**
    * Declare a function with multiple overloads. Each overload gets its own
    * native function named "name`n`" where `n` is the 1-based index of the
@@ -332,24 +324,10 @@ interface FuncOptionsWithVariant extends FuncMetadata {
    */
   variants: FuncVariant[];
 }
-type FuncWithoutOverloads = FuncMetadata & FuncVariant;
+type FuncWithoutOverloads = FuncVariant;
 export type FuncOptions = FuncOptionsWithVariant | FuncWithoutOverloads;
 
-export interface FuncMetadata {
-  /**
-   * The namespace where the implementation is, by default it's in the root.
-   */
-  implNamespace?: string;
-  /**
-   * TODO:
-   * Automatically generate code to expose this function on a well-known object
-   */
-  exposedOn?: ExposedOn;
-}
-
 export type FuncReference = { [isFunc]: true };
-
-export type ExposedOn = "JSGlobalObject" | "BunObject";
 
 export interface FuncVariant {
   /** Ordered record. Cannot include ".required" types since required is the default. */

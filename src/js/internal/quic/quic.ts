@@ -1550,7 +1550,6 @@ function isSyncIterable(obj) {
 let getQuicStreamState;
 let getQuicSessionState;
 let isQuicSessionDestroying;
-let getQuicEndpointState;
 let assertIsQuicEndpoint;
 let assertIsQuicStream;
 let assertIsQuicSession;
@@ -3939,11 +3938,6 @@ class QuicEndpoint {
       }
     };
 
-    getQuicEndpointState = function (endpoint) {
-      assertIsQuicEndpoint(endpoint);
-      return endpoint.#inner.state;
-    };
-
     releaseEndpointSocket = function (endpoint) {
       endpoint.#handle?.releaseSocket();
     };
@@ -5233,7 +5227,4 @@ export default {
   CC_ALGO_BBR,
   DEFAULT_CIPHERS,
   DEFAULT_GROUPS,
-  getQuicStreamState,
-  getQuicSessionState,
-  getQuicEndpointState,
 };

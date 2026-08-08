@@ -3,8 +3,6 @@
 pub mod error;
 pub use error::{Error, Result};
 
-use core::cell::RefCell;
-
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
@@ -878,7 +876,6 @@ pub struct QueryStringMap {
     slice: *const [u8],
     pub(crate) buffer: Vec<u8>,
     pub(crate) list: ParamList,
-    pub(crate) name_count: Option<usize>,
 }
 
 impl Clone for QueryStringMap {
@@ -903,28 +900,13 @@ impl Clone for QueryStringMap {
             slice,
             buffer,
             list: self.list.clone(),
-            name_count: self.name_count,
         }
     }
-}
-
-thread_local! {
-    // Unused in current code (commented-out path in get_name_count).
-    static NAME_COUNT_BUF: RefCell<[*const [u8]; 8]> = const { RefCell::new([std::ptr::from_ref::<[u8]>(&[]); 8]) };
 }
 
 impl QueryStringMap {
     pub fn get_name_count(&mut self) -> usize {
         self.list.len()
-        // if (this.name_count == null) {
-        //     var count: usize = 0;
-        //     var iterate = this.iter();
-        //     while (iterate.next(&_name_count) != null) {
-        //         count += 1;
-        //     }
-        //     this.name_count = count;
-        // }
-        // return this.name_count.?;
     }
 
     pub fn iter(&self) -> Iterator<'_> {
@@ -1092,7 +1074,6 @@ impl QueryStringMap {
             list,
             buffer: buf,
             slice: slice_ptr,
-            name_count: None,
         }))
     }
 
@@ -1146,7 +1127,6 @@ impl QueryStringMap {
                 buffer: Vec::new(),
                 // `slice` borrows the caller's query_string; lifetime not tracked here
                 slice: std::ptr::from_ref::<[u8]>(query_string),
-                name_count: None,
             }));
         }
 
@@ -1220,7 +1200,6 @@ impl QueryStringMap {
             list,
             buffer: buf,
             slice: slice_ptr,
-            name_count: None,
         }))
     }
 }

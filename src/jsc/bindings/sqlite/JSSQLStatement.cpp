@@ -1083,8 +1083,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             JSValue value;
             bool hasProperty = false;
 
-            // Getters for earlier parameters can mutate the object, so the
-            // Structure and the fast-path check must be re-done per parameter.
+            // Getters for earlier parameters can mutate the object, so the Structure and fast-path check are re-done per parameter.
             Structure* structure = target->structure();
             if (property.isEmpty()) {
                 value = target->getDirectIndex(globalObject, i);

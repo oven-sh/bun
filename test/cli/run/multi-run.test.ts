@@ -7,7 +7,7 @@ import path from "path";
 async function runMulti(
   args: string[],
   dir: string,
-  extraEnv?: Record<string, string>,
+  extraEnv?: Record<string, string | undefined>,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
@@ -982,7 +982,11 @@ describe.concurrent("timing edge cases", () => {
         },
       }),
     });
-    const r = await runMulti(["run", "--sequential", "late", "other"], String(dir));
+    // CI ASAN lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which makes the script's
+    // bun SIGKILL the detached child on exit, defeating the late write.
+    const r = await runMulti(["run", "--sequential", "late", "other"], String(dir), {
+      BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    });
     expectPrefixed(r.stdout, "late", "early-line");
     expectPrefixed(r.stdout, "late", "late-line");
     expectPrefixed(r.stdout, "other", "other-ran");

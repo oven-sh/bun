@@ -801,7 +801,9 @@ describe("output timing", () => {
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "--filter", "pkg-late", "go"],
-      env: bunEnv,
+      // CI ASAN lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which makes the script's
+      // bun SIGKILL the detached child on exit, defeating the late write.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

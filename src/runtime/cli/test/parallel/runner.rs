@@ -669,16 +669,19 @@ pub(crate) fn run_as_worker(
 
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
-    // sees repeat_bufs / junit_chunk / coverage_chunk.
-    while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
-        // SAFETY: event_loop pointer is valid while vm lives.
-        unsafe { (*vm_ref.event_loop()).tick() };
-        if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
-            break;
+    // sees repeat_bufs / junit_chunk / coverage_chunk. Ticking runs JS
+    // (microtasks, weak-ref release), hence the API lock.
+    vm_ref.run_with_api_lock(|| {
+        while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
+            // SAFETY: event_loop pointer is valid while vm lives.
+            unsafe { (*vm_ref.event_loop()).tick() };
+            if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
+                break;
+            }
+            // SAFETY: event_loop pointer is valid while vm lives.
+            unsafe { (*vm_ref.event_loop()).auto_tick() };
         }
-        // SAFETY: event_loop pointer is valid while vm lives.
-        unsafe { (*vm_ref.event_loop()).auto_tick() };
-    }
+    });
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm_ref.exit_handler.exit_code = 0;

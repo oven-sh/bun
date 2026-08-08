@@ -1311,12 +1311,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         bunProc.exited,
       ]);
 
-      // Content assertions come before the exit-code assertion so a failure
-      // surfaces the child's actual output in CI.
+      // Combined-output assertions come first so a failure surfaces the
+      // child's actual output in CI: on the no-crash path stderr is empty,
+      // so the stderr-only assertion would fail with Received: "".
       expect(bunStdout + bunStderr).toContain("Loading experimental module");
       expect(bunStdout + bunStderr).toContain("Created");
-      expect(bunStderr).toContain("FATAL ERROR");
       expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
+      expect(bunStderr).toContain("FATAL ERROR");
 
       // The marker must NOT have actually been printed. Only check stdout: the
       // fixture prints the marker via console.log (stdout), while stderr contains
@@ -1324,7 +1325,6 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // source, including the literal "ERROR: Did not crash! Test failed!".
       expect(bunStdout).not.toContain("ERROR: Did not crash");
 
-      // The wrapper script exits 0 iff it saw the expected crash
       expect(bunExitCode).toBe(0);
     },
     25_000,

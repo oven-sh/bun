@@ -52,12 +52,14 @@ proc.stdout.on('data', (data) => {
 proc.stderr.on('data', (data) => {
   stderr += data.toString();
   process.stderr.write(data);
-  
-  // Check if we've seen the expected crash messages
-  if (data.toString().includes('FATAL ERROR')) {
+
+  // Check the accumulated output, not the chunk: the crash handler emits
+  // "panic" and "(main thread)" as separate writes, so a marker can span
+  // chunk boundaries.
+  if (stderr.includes('FATAL ERROR')) {
     sawFatalError = true;
   }
-  if (data.toString().includes('panic(main thread)')) {
+  if (stderr.includes('panic(main thread)')) {
     sawPanic = true;
   }
   

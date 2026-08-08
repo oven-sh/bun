@@ -1,6 +1,6 @@
 // Guards against reintroduction of symbols removed as dead code from the
 // bindgen codegen scripts, orphaned developer scripts, bun_core, bun_url,
-// bun_semver, the dns/napi JSC glue, and two built-in JS modules.
+// the dns/napi JSC glue, and the internal sql builtin.
 // Each entry was verified to have zero references across src/, scripts/,
 // test/, packages/, and freshly regenerated build/debug/codegen/ output
 // before deletion. src/codegen/bindgen.ts produces byte-identical output
@@ -10,26 +10,22 @@
 // This is a source-tree lint: it reads files from src/ and does not touch the
 // built binary, so it belongs in test/internal/source-lints/ per the README.
 //
-// All checks read the committed tree (HEAD): `git stash` round-trips can
-// temporarily restore files a branch deletes (see the same note in
-// dead-code-escapes.test.ts), and those strays must not fail the lint. CI
-// runs against the committed tree, so HEAD is what matters.
+// Checks on files the removal MODIFIES read the working tree, so the lint
+// fails while the dead symbols are present and passes once they are gone.
+// Checks on files the removal DELETES outright read the committed tree (HEAD)
+// instead: `git stash` round-trips can temporarily restore deleted files as
+// strays (see the same note in dead-code-escapes.test.ts), and those must not
+// fail the lint. CI runs against the committed tree, so HEAD is what matters
+// there.
 
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 
-function headFile(p: string): string {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", repoRoot, "show", `HEAD:${p}`],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (r.exitCode !== 0) {
-    throw new Error(`git show HEAD:${p} failed: ${r.stderr.toString()}`);
-  }
-  return r.stdout.toString();
+function src(p: string): string {
+  return readFileSync(path.join(repoRoot, p), "utf8");
 }
 
 function existsInHead(p: string): boolean {
@@ -74,9 +70,7 @@ test("dead zig-emission machinery in bindgen does not reappear", () => {
     // class option read by nothing in generate-classes.ts or any .classes.ts.
     ["src/codegen/class-definitions.ts", /\bisEventEmitter\b/],
   ];
-  const resurrected = checks
-    .filter(([file, re]) => re.test(headFile(file)))
-    .map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });
 
@@ -96,26 +90,17 @@ test("dead Rust symbols (bun_core, bun_url, dns/napi glue) do not reappear", () 
     // live C++ implementation.
     ["src/runtime/napi/napi_body.rs", /napi_get_property_names/],
   ];
-  const resurrected = checks
-    .filter(([file, re]) => re.test(headFile(file)))
-    .map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });
 
 test("dead built-in JS exports do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
-    // getQuicEndpointState was assigned but never called; the other two
-    // entries exported functions node/quic.ts never destructures (the
-    // functions themselves stay, used in-file).
-    ["src/js/internal/quic/quic.ts", /\bgetQuicEndpointState\b/],
-    ["src/js/internal/quic/quic.ts", /^\s*getQuicStreamState,$/m],
-    ["src/js/internal/quic/quic.ts", /^\s*getQuicSessionState,$/m],
-    // Export entries no requirer destructures (the backing Symbols stay,
-    // used as private class keys).
+    // Export entries no requirer destructures, including the vendored Node
+    // tests that import internal modules under --expose-internals (the
+    // backing Symbols stay, used as private class keys).
     ["src/js/internal/sql/query.ts", /^\s*(_resolve|_reject|_queryStatus|_handler|_flags),$/m],
   ];
-  const resurrected = checks
-    .filter(([file, re]) => re.test(headFile(file)))
-    .map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });

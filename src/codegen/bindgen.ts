@@ -1120,7 +1120,7 @@ for (const type of typeHashToReachableType.values()) {
   }
 }
 
-for (const [filename, { functions, typedefs }] of files) {
+for (const [filename, { functions }] of files) {
   const namespaceVar = fileMap.get(filename)!;
   assert(namespaceVar, `namespaceVar not found for ${filename}, ${inspect(fileMap)}`);
 

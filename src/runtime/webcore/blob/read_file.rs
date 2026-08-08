@@ -157,22 +157,37 @@ pub enum ReadFileResultType {
     Err(SystemError),
 }
 
-pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
+/// The completion token a `ReadFile` keeps across its async I/O.
+pub type ReadFileTask = bun_jsc::Completion<ReadFile>;
 
-// `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
-// cannot be marked `unsafe fn` and the parameter type cannot change, so the
-// lint is unsatisfiable here. The pointers come from the work-pool hand-off
-// and are guaranteed live (see SAFETY notes below).
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-impl bun_jsc::work_task::WorkTaskContext for ReadFile {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ReadFileTask;
-    fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
-        // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
-        unsafe { (*this).run(task) }
+// SAFETY: file store / byte store / blob store ref (atomic), the read buffer,
+// io-loop registration state, and an opaque completion ctx that only the
+// JS-thread completion dereferences — nothing used off-thread is thread-affine.
+unsafe impl Send for ReadFile {}
+
+impl bun_jsc::JobContext for ReadFile {
+    type OffThread = Self;
+    /// The completion is delivered through `on_complete_callback(ctx, ..)`.
+    type Js = ();
+    fn run(
+        this: &mut Self,
+        _vm: &bun_jsc::vm_handle::Borrow,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        // Starts the read; finishes from the io loop via the token.
+        this.run(done);
+        None
     }
-    fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `this` was heap-allocated by the WorkTask flow; consumed here.
-        ReadFile::then(unsafe { bun_core::heap::take(this) }, global)
+    fn then(this: Self, _: (), cx: &bun_jsc::JsThread<'_>) -> jsc::JsResult<()> {
+        Ok(ReadFile::then(this, cx.global())?)
+    }
+}
+
+impl ReadFile {
+    /// JS thread: hand a prepared `ReadFile` to the work pool (the job is
+    /// its one heap allocation).
+    pub fn schedule(this: ReadFile, global: &JSGlobalObject) {
+        bun_jsc::Job::<ReadFile>::schedule(&global.js_thread(), this, ());
     }
 }
 
@@ -204,7 +219,7 @@ pub struct ReadFile {
     pub(crate) on_complete_ctx: *mut c_void,
     pub(crate) on_complete_callback: ReadFileOnReadFileCallback,
     #[cfg(not(windows))]
-    pub(crate) io_task: Option<*mut ReadFileTask>,
+    pub(crate) io_task: Option<ReadFileTask>,
     pub(crate) io_poll: io::Poll,
     pub(crate) io_request: io::Request,
     #[cfg(not(windows))]
@@ -347,10 +362,10 @@ impl ReadFile {
         on_complete_callback: ReadFileOnReadFileCallback,
         off: SizeType,
         max_len: SizeType,
-    ) -> Result<Box<ReadFile>, Error> {
+    ) -> Result<ReadFile, Error> {
         // store.ref() — `StoreRef` carries the +1; held in `self.store`.
         let file_store = store.data.as_file().clone();
-        let read_file = Box::new(ReadFile {
+        let read_file = ReadFile {
             file_store,
             byte_store: ByteStore::default(),
             store: Some(store),
@@ -380,7 +395,7 @@ impl ReadFile {
             could_block: false,
             close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
-        });
+        };
         Ok(read_file)
     }
 
@@ -390,7 +405,7 @@ impl ReadFile {
         off: SizeType,
         max_len: SizeType,
         context: *mut C,
-    ) -> Result<Box<ReadFile>, Error> {
+    ) -> Result<ReadFile, Error> {
         // `ReadFileCompletion`
         // monomorphizes per `C`, so `handler_run::<C>` calls `C::run` directly
         // and `on_complete_ctx` is the unwrapped `*mut C` — no extra heap box,
@@ -577,7 +592,7 @@ impl ReadFile {
         true
     }
 
-    pub(crate) fn then(this: Box<Self>, _: &JSGlobalObject) -> jsc::JsTerminatedResult<()> {
+    pub(crate) fn then(this: Self, _: &JSGlobalObject) -> jsc::JsTerminatedResult<()> {
         let cb = this.on_complete_callback;
         let cb_ctx = this.on_complete_ctx;
 
@@ -630,15 +645,16 @@ impl ReadFile {
         Ok(())
     }
 
-    pub(crate) fn run(&mut self, task: *mut ReadFileTask) {
+    pub(crate) fn run(&mut self, task: ReadFileTask) {
         self.run_async(task);
     }
 
-    fn run_async(&mut self, task: *mut ReadFileTask) {
+    fn run_async(&mut self, task: ReadFileTask) {
         #[cfg(windows)]
         {
+            // Windows reads go through ReadFileUV, never the pool.
             let _ = task;
-            return; // why
+            unreachable!("ReadFile on the work pool (Windows uses ReadFileUV)");
         }
         #[cfg(not(windows))]
         {
@@ -672,8 +688,7 @@ impl ReadFile {
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
                 bloblog!("ReadFile.onFinish() = immediately");
-                // SAFETY: io_task is a non-null backref set in run(); WorkTask owns lifetime.
-                ReadFileTask::on_finish(unsafe { &mut *io_task });
+                io_task.finish();
             }
         }
     }
@@ -1089,7 +1104,7 @@ impl<'a> ReadFileUV<'a> {
         log!("ReadFileUV.start");
         // SAFETY: `event_loop` is the per-thread `EventLoop` singleton owned by
         // the VM (`global.bun_vm().event_loop()`); it strictly outlives this
-        // async op, which additionally pins it via `ref_concurrently()` below.
+        // async op, which additionally holds a keep-alive on it below.
         let event_loop: &'a EventLoop = unsafe { &*event_loop };
         let file_store = store.data.as_file().clone();
         let this = Box::new(ReadFileUV {
@@ -1118,7 +1133,7 @@ impl<'a> ReadFileUV<'a> {
             open_callback: Self::on_file_open,
         });
         // Keep the event loop alive while the async operation is pending
-        event_loop.ref_concurrently();
+        event_loop.ref_keep_alive();
         let this_ptr: *mut ReadFileUV = bun_core::heap::into_raw(this);
         // SAFETY: this_ptr is freshly boxed and uniquely owned by the async op.
         unsafe { (*this_ptr).get_fd(Self::on_file_open) };
@@ -1157,7 +1172,7 @@ impl<'a> ReadFileUV<'a> {
         this_box.req.deinit();
         drop(this_box);
         // Release the event loop reference now that we're done
-        event_loop.unref_concurrently();
+        event_loop.unref_keep_alive();
         log!("ReadFileUV.finalize destroy");
     }
 

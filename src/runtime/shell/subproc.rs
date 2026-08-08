@@ -493,6 +493,103 @@ impl ShellSubprocess {
         }
     }
 
+    /// Stop stdio still active because the `Cmd` is deinited mid-flight (VM
+    /// shutdown); a no-op after a normal close. Readers stop without firing
+    /// `on_reader_done`, queued capture chunks are cancelled (the `IOWriter`
+    /// queue holds a raw pointer into the freed `PipeReader`), a pending
+    /// buffer-stdin writer is closed. POSIX-only, same tradeoff as
+    /// [`Self::abort_after_failed_start`].
+    ///
+    /// # Safety
+    /// `this` must be the live `heap::alloc`'d subprocess with no outstanding
+    /// borrows; single-threaded shell. Raw (not `&mut self`) because the
+    /// stdin close re-enters `on_close_io(&mut Self)` through the writer's
+    /// process backref.
+    #[cfg(not(windows))]
+    pub(crate) unsafe fn deinit_in_flight_io(this: *mut Self) {
+        // Claim `start()`'s +1, `close()` (fires `on_close` → `on_close_io`:
+        // slot → `Ignore`, `create()`'s ref released), release the claimed
+        // ref — the JS `Subprocess::close_io` stdin shape.
+        // SAFETY: caller contract; the `stdin` borrow ends before `close()`.
+        let pending_start: *mut StaticPipeWriter = match unsafe { &(*this).stdin } {
+            Writable::Buffer(buffer) => {
+                // SAFETY: single-threaded; temporary `&mut` for the flag swap.
+                let writer = unsafe { buffer_mut(buffer) };
+                if core::mem::replace(&mut writer.started, false) {
+                    buffer.as_ptr()
+                } else {
+                    core::ptr::null_mut()
+                }
+            }
+            _ => core::ptr::null_mut(),
+        };
+        if !pending_start.is_null() {
+            // SAFETY: live writer holding `create()`'s ref plus the claimed
+            // start ref.
+            unsafe { (*pending_start).close() };
+            // SAFETY: releases the claimed start ref; last use of the pointer.
+            unsafe { bun_ptr::RefCount::deref(pending_start) };
+        }
+
+        // SAFETY: disjoint field projections of the live subprocess.
+        let slots = unsafe { [&raw mut (*this).stdout, &raw mut (*this).stderr] };
+        for slot in slots {
+            // SAFETY: `slot` projects from `this`; borrow scoped to the match.
+            let pipe: *mut PipeReader = match unsafe { &*slot } {
+                Readable::Pipe(pipe) => arc_as_mut_ptr(pipe),
+                _ => continue,
+            };
+            // SAFETY: see `arc_as_mut_ptr` — single-threaded shell, no other
+            // borrow of the `PipeReader` is live; neither `reader.deinit()`
+            // nor `cancel_chunks` fires a callback.
+            unsafe {
+                if matches!((*pipe).state, PipeReaderState::Pending) {
+                    // Deregisters the poll and closes the fd without
+                    // `on_reader_done`; `Err` satisfies the drop's done-assert.
+                    (*pipe).reader.deinit();
+                    (*pipe).state = PipeReaderState::Err(None);
+                }
+                let captured: *mut CapturedWriter = &raw mut (*pipe).captured_writer;
+                if let Some(writer) = (*captured).writer.take() {
+                    writer.cancel_chunks(io_writer::ChildPtr::subproc_capture(
+                        captured.cast::<c_void>(),
+                    ));
+                    (*captured).dead = true;
+                }
+            }
+        }
+    }
+
+    /// `Heap::lastChanceToFinalize` deletes the `JSC::ArrayBuffer` impls
+    /// before the sweep that reaches us, so the `> ${arraybuffer}` unpin in
+    /// `BufferedOutput::drop` would write to a freed impl. Clear the value
+    /// so the drop skips it; the `Strong` handle still releases normally.
+    ///
+    /// # Safety
+    /// Same contract as [`Self::deinit_in_flight_io`]; VM-shutdown finalizer
+    /// only (on a live heap this would leak the pin).
+    #[cfg(not(windows))]
+    pub(crate) unsafe fn defuse_array_buffer_unpins(this: *mut Self) {
+        // SAFETY: disjoint field projections of the live subprocess.
+        let slots = unsafe { [&raw mut (*this).stdout, &raw mut (*this).stderr] };
+        for slot in slots {
+            // SAFETY: `slot` projects from `this`; borrow scoped to the match.
+            let pipe: *mut PipeReader = match unsafe { &*slot } {
+                Readable::Pipe(pipe) => arc_as_mut_ptr(pipe),
+                _ => continue,
+            };
+            // SAFETY: see `arc_as_mut_ptr` — single-threaded shell, no other
+            // borrow of the `PipeReader` is live.
+            unsafe {
+                if let BufferedOutput::ArrayBuffer { buf, .. } = &mut (*pipe).buffered_output {
+                    // `Default` has `value: JSValue::ZERO`, which
+                    // `BufferedOutput::drop` reads as "nothing to unpin".
+                    let _ = core::mem::take(&mut buf.array_buffer);
+                }
+            }
+        }
+    }
+
     // `sh::Result`'s `ShellErr` is a shared shell-wide error type defined in
     // `shell_body.rs`; boxing it here would change `pub fn` signatures across
     // every `?`-propagating shell caller.
@@ -1704,11 +1801,11 @@ impl PipeReader {
         // on Windows — `start()` goes through `start_with_current_pipe`).
         let stdio_result = match result {
             StdioResult::Buffer(buf) => {
-                reader.source = Some(bun_io::Source::Pipe(buf));
+                reader.set_source(bun_io::Source::Pipe(buf));
                 StdioResult::Unavailable
             }
             StdioResult::BufferFd(fd) => {
-                reader.source = Some(bun_io::Source::File(bun_io::Source::open_file(fd)));
+                reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
                 StdioResult::BufferFd(fd)
             }
             StdioResult::Unavailable => panic!("Shouldn't happen."),

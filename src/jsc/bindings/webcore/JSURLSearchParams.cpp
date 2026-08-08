@@ -589,7 +589,7 @@ static void putIntoObject(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject,
 
             if constexpr (hasIndex) {
                 obj->putDirectIndex(lexicalGlobalObject, index.value(), array);
-                throwScope.assertNoException(); // not a proxy.
+                RETURN_IF_EXCEPTION(throwScope, ); // not a proxy: OOM / termination only
             } else {
                 obj->putDirect(vm, ident, array);
             }
@@ -604,7 +604,7 @@ static void putIntoObject(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject,
         seenKeys.add(key);
         if constexpr (hasIndex) {
             obj->putDirectIndex(lexicalGlobalObject, index.value(), stringValue);
-            throwScope.assertNoException(); // not a proxy.
+            RETURN_IF_EXCEPTION(throwScope, ); // not a proxy: OOM / termination only
         } else {
             obj->putDirect(vm, ident, stringValue);
         }

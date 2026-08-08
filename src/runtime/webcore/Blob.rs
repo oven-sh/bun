@@ -485,25 +485,14 @@ impl BlobExt for Blob {
                 handler,
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            let read_file_task = read_file::ReadFileTask::create_on_js_thread(
-                global,
-                bun_core::heap::into_raw(file_read),
-            );
-
             // Create the Promise only after the store has been ref()'d.
-            // The garbage collector runs on memory allocations
-            // The JSPromise is the next GC'd memory allocation.
-            // This shouldn't really fix anything, but it's a little safer.
-            // `JSPromiseStrong.strong` is private; `init` creates the
-            // JSPromise *and* the strong handle in one step.
             // SAFETY: handler was just boxed; sole owner.
             unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
             // SAFETY: same `handler` as above; still solely owned here.
             let promise_value = unsafe { (*handler).promise.value() };
             promise_value.ensure_still_alive();
 
-            // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
-            read_file::ReadFileTask::schedule(unsafe { &mut *read_file_task });
+            read_file::ReadFile::schedule(file_read, global);
 
             debug!("doReadFile: read_file_task scheduled");
             promise_value
@@ -699,12 +688,7 @@ impl BlobExt for Blob {
                 self.size.get(),
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            let read_file_task = read_file::ReadFileTask::create_on_js_thread(
-                global,
-                bun_core::heap::into_raw(file_read),
-            );
-            // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
-            read_file::ReadFileTask::schedule(unsafe { &mut *read_file_task });
+            read_file::ReadFile::schedule(file_read, global);
         }
     }
     fn get_content_type(&self) -> Option<ZigStringSlice> {
@@ -4738,17 +4722,13 @@ pub(crate) fn write_file_with_source_destination(
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
-            let task = write_file_mod::WriteFileTask::create_on_js_thread(ctx, file_copier);
             // Defer promise creation until we're just about to schedule the task.
-            // `JSPromiseStrong.strong` is private in `bun_jsc`, so use `init` (which
-            // creates the JSPromise *and* the strong handle in one step).
             // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
             unsafe { (*write_file_promise).promise = jsc::JSPromiseStrong::init(ctx) };
             // SAFETY: same `write_file_promise` as above; still solely owned here.
             let promise_value = unsafe { (*write_file_promise).promise.value() };
             promise_value.ensure_still_alive();
-            // SAFETY: `task` was just heap-allocated by `create_on_js_thread`.
-            write_file_mod::WriteFileTask::schedule(unsafe { &mut *task });
+            write_file_mod::WriteFile::schedule(file_copier, ctx);
             return Ok(promise_value);
         }
     }
@@ -4767,7 +4747,7 @@ pub(crate) fn write_file_with_source_destination(
         }
         #[cfg(not(windows))]
         {
-            let mut file_copier = copy_file::CopyFile::create(
+            return Ok(copy_file::CopyFile::create(
                 destination_store,
                 source_store,
                 destination_blob.offset.get(),
@@ -4775,14 +4755,7 @@ pub(crate) fn write_file_with_source_destination(
                 ctx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,
-            );
-            file_copier.schedule();
-            // `ConcurrentPromiseTask` is consumed by the work-pool and freed via
-            // `ManualDeinit` → `destroy(*mut Self)`, so hand ownership over as a
-            // raw pointer (paired with `heap::take` in `destroy()`).
-            let promise_value = file_copier.promise.value();
-            let _ = bun_core::heap::into_raw(file_copier);
-            return Ok(promise_value);
+            ));
         }
     } else if destination_type == store::DataTag::File && source_type == store::DataTag::S3 {
         let s3 = source_store.data.as_s3();

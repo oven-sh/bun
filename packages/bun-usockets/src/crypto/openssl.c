@@ -2751,6 +2751,45 @@ int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
          (packed & US_SNI_POLICY_REJECT_UNAUTHORIZED);
 }
 
+/* Whether serving a request whose Host header is `host` on this connection
+ * would bypass a per-serverName client-certificate policy: the name resolves
+ * in the accepting listener's SNI tree to a context with requestCert
+ * recorded, but the handshake negotiated a different context (the client
+ * sent no SNI, or a name selecting another entry), so that policy was never
+ * applied to this connection. Same posture as nginx's 421 when the Host
+ * names a verify-enabled virtual server other than the SNI-negotiated one. */
+int us_socket_host_header_bypasses_sni_policy(struct us_socket_t *s,
+                                              const char *host, size_t host_len) {
+  if (!s->ssl || us_ctx_sni_policy_ex_idx < 0 || us_ssl_listener_ex_idx < 0) return 0;
+  SSL *ssl = s_ssl(s);
+  if (!ssl) return 0;
+  struct us_listen_socket_t *ls =
+      (struct us_listen_socket_t *)SSL_get_ex_data(ssl, us_ssl_listener_ex_idx);
+  if (!ls || !ls->sni_has_cert_policy || !ls->sni) return 0;
+  /* An IP literal never names a tree entry (SNI forbids IPs); `[` starts an
+   * IPv6 literal, whose colons would confuse the port strip below. */
+  if (!host || host_len == 0 || host[0] == '[') return 0;
+  /* Host is case-insensitive and may carry :port and a trailing root dot;
+   * the SNI tree matches bytes. Sized for a maximal 253-char DNS name plus
+   * the root dot (stripped below) and NUL; anything longer cannot match. */
+  char name[255];
+  size_t n = 0;
+  for (; n < host_len && host[n] != ':'; n++) {
+    if (n >= sizeof(name) - 1) return 0;
+    char c = host[n];
+    name[n] = (c >= 'A' && c <= 'Z') ? (char)(c | 0x20) : c;
+  }
+  if (n > 1 && name[n - 1] == '.') n--;
+  if (n == 0) return 0;
+  name[n] = 0;
+  struct sni_node_t *node = (struct sni_node_t *)sni_find(ls->sni, name);
+  if (!node || !node->ctx) return 0;
+  uintptr_t policy =
+      (uintptr_t)SSL_CTX_get_ex_data(node->ctx, us_ctx_sni_policy_ex_idx);
+  if (!(policy & US_SNI_POLICY_REQUEST_CERT)) return 0;
+  return node->ctx != SSL_get_SSL_CTX(ssl);
+}
+
 /* Extracts the host_name from the ClientHello's server_name extension.
  * Returns the length written to `out` (NUL-terminated), or 0 if absent /
  * malformed. BoringSSL does document SSL_get_servername as usable inside
@@ -2969,6 +3008,11 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
      * (which frees the per-domain HttpRouter it just built) actually fires. */
     sni_node_destructor(node);
     return 1;
+  }
+  if (us_ctx_sni_policy_ex_idx >= 0 &&
+      ((uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx) &
+       US_SNI_POLICY_REQUEST_CERT)) {
+    ls->sni_has_cert_policy = 1;
   }
   return 0;
 }

@@ -56,6 +56,9 @@ pub(crate) struct ProcessHandle<'a> {
 
     stdout: BufferedReader,
     stderr: BufferedReader,
+    /// Pipes started and not yet at EOF/error; a script is finished only when
+    /// its process has exited and this is 0 (see `State::maybe_finish`).
+    remaining_fds: i8,
     buffer: Vec<u8>,
 
     process: Option<ProcessInfo>,
@@ -159,16 +162,20 @@ impl<'a> ProcessHandle<'a> {
         {
             if let Some(stdout) = stdout_fd {
                 let _ = sys::set_nonblocking(stdout);
+                handle.remaining_fds += 1;
                 handle.stdout.start(stdout, true)?;
             }
             if let Some(stderr) = stderr_fd {
                 let _ = sys::set_nonblocking(stderr);
+                handle.remaining_fds += 1;
                 handle.stderr.start(stderr, true)?;
             }
         }
         #[cfg(not(unix))]
         {
+            handle.remaining_fds += 1;
             handle.stdout.start_with_current_pipe()?;
+            handle.remaining_fds += 1;
             handle.stderr.start_with_current_pipe()?;
         }
 
@@ -210,10 +217,23 @@ impl<'a> ProcessHandle<'a> {
         true
     }
 
-    fn on_reader_done(&mut self) {}
+    fn on_reader_done(&mut self) {
+        debug_assert!(self.remaining_fds > 0);
+        self.remaining_fds -= 1;
+        let mut state_ref = self.state;
+        // SAFETY: state backref valid (see start()).
+        let state = unsafe { state_ref.get_mut() };
+        let _ = state.maybe_finish(self);
+    }
 
     fn on_reader_error(&mut self, err: &sys::Error) {
         let _ = err;
+        debug_assert!(self.remaining_fds > 0);
+        self.remaining_fds -= 1;
+        let mut state_ref = self.state;
+        // SAFETY: state backref valid (see start()).
+        let state = unsafe { state_ref.get_mut() };
+        let _ = state.maybe_finish(self);
     }
 }
 
@@ -233,7 +253,7 @@ impl<'a> ProcessHandle<'a> {
         let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
         let state = unsafe { state_ref.get_mut() };
-        let _ = state.process_exit(self);
+        let _ = state.maybe_finish(self);
     }
 
     fn loop_(&self) -> *mut bun_io::Loop {
@@ -339,7 +359,15 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> crate::Result<()> {
+    /// A script is finished once its process has exited *and* both pipes have
+    /// reached EOF: the exit notification can arrive before the last output
+    /// has been read, and finishing then would drop that output (or, for the
+    /// last script, exit before printing it).
+    fn maybe_finish(&mut self, handle: &mut ProcessHandle<'a>) -> crate::Result<()> {
+        let exited = matches!(&handle.process, Some(p) if !matches!(p.status, Status::Running));
+        if !exited || handle.remaining_fds != 0 {
+            return Ok(());
+        }
         self.remaining_scripts -= 1;
         if !self.aborted {
             for &dependent in &handle.dependents {
@@ -953,6 +981,7 @@ pub(crate) fn run_scripts_with_filter(
             stdout: BufferedReader::init::<ProcessHandle>(),
             stderr: BufferedReader::init::<ProcessHandle>(),
             buffer: Vec::new(),
+            remaining_fds: 0,
             process: None,
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
@@ -1042,14 +1071,20 @@ pub(crate) fn run_scripts_with_filter(
         }
     }
 
-    // start inital scripts
-    for handle in state.handles.iter_mut() {
-        if handle.remaining_dependencies == 0 {
-            if handle.start().is_err() {
-                // todo this should probably happen in "start"
-                bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
-                Global::exit(1);
-            }
+    // Collect the roots before starting any: a script that has already exited
+    // when `start()` watches it can finish (and cascade) inside `start()`,
+    // which zeroes `remaining_dependencies` of later handles it started.
+    let roots: Vec<*mut ProcessHandle> = state
+        .handles
+        .iter_mut()
+        .filter(|handle| handle.remaining_dependencies == 0)
+        .map(|handle| std::ptr::from_mut(handle))
+        .collect();
+    for handle in roots {
+        // SAFETY: points into `state.handles`, which lives for the whole loop.
+        if unsafe { (*handle).start() }.is_err() {
+            bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
+            Global::exit(1);
         }
     }
 

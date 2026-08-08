@@ -772,3 +772,43 @@ describe.skipIf(!isWindows).each([
     30000,
   );
 });
+
+describe("output timing", () => {
+  // A script is finished when its process has exited AND its output has reached
+  // EOF; treating the exit alone as "finished" drops output that hasn't been
+  // read yet (here: written by a child the script left behind).
+  test("output written after the script's shell exits is not dropped", async () => {
+    using dir = tempDir("filter-late-output", {
+      "package.json": JSON.stringify({
+        name: "ws-late",
+        workspaces: ["packages/*"],
+      }),
+      "packages/late/package.json": JSON.stringify({
+        name: "pkg-late",
+        scripts: {
+          go: `${bunExe()} late.js`,
+        },
+      }),
+      "packages/late/late.js": `
+        Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(300); console.log('late-line')"],
+          stdio: ["ignore", "inherit", "inherit"],
+          // Windows: keep the child out of this process's kill-on-close job.
+          detached: true,
+        }).unref();
+        console.log("early-line");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "pkg-late", "go"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("early-line");
+    expect(stdout).toContain("late-line");
+    expect(exitCode).toBe(0);
+  });
+});

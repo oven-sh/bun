@@ -406,6 +406,9 @@ pub struct PackageManager {
     // (catalog name, dependency name) -> original version literal
     pub updating_catalogs: Vec<CatalogUpdateInfo>,
 
+    // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
+    pub(crate) update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
+
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
 
@@ -545,6 +548,97 @@ impl WorkspaceFilter {
             WorkspaceFilter::Name(buf)
         })
     }
+
+    /// Every workspace (root included), filtered by `filter_patterns` (empty = all).
+    pub fn select_workspaces(
+        lockfile: &crate::Lockfile,
+        filter_patterns: &[&[u8]],
+        original_cwd: &[u8],
+    ) -> Vec<PackageID> {
+        use crate::lockfile::package::PackageColumns as _;
+
+        let packages = lockfile.packages.slice();
+        let pkg_names = packages.items_name();
+        let pkg_resolutions = packages.items_resolution();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+
+        let mut ids: Vec<PackageID> = Vec::new();
+        for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
+            if res.tag == crate::resolution::Tag::Workspace
+                || res.tag == crate::resolution::Tag::Root
+            {
+                ids.push(pkg_id as PackageID);
+            }
+        }
+
+        if filter_patterns.is_empty() {
+            return ids;
+        }
+
+        let mut path_buf = PathBuffer::uninit();
+        let converted_filters: Vec<WorkspaceFilter> = filter_patterns
+            .iter()
+            .map(|filter| {
+                bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
+            })
+            .collect();
+
+        let top_level_dir = FileSystem::instance().top_level_dir();
+
+        let has_positive = converted_filters.iter().any(|f| match f {
+            WorkspaceFilter::All => true,
+            WorkspaceFilter::Path(p) | WorkspaceFilter::Name(p) => p.first() != Some(&b'!'),
+        });
+
+        let mut i = 0;
+        while i < ids.len() {
+            let pkg_id = ids[i];
+            let mut matched = !has_positive;
+            for filter in &converted_filters {
+                let (pattern, subject): (&[u8], &[u8]) = match filter {
+                    WorkspaceFilter::All => {
+                        matched = true;
+                        continue;
+                    }
+                    WorkspaceFilter::Path(pattern) => {
+                        if pattern.is_empty() {
+                            continue;
+                        }
+                        let res = &pkg_resolutions[pkg_id as usize];
+                        let res_path: &[u8] = match res.tag {
+                            crate::resolution::Tag::Workspace => res.workspace().slice(string_buf),
+                            crate::resolution::Tag::Root => top_level_dir,
+                            _ => unreachable!(),
+                        };
+                        let abs = resolve_path::join_abs_string_buf::<platform::Posix>(
+                            top_level_dir,
+                            &mut path_buf.0,
+                            &[res_path],
+                        );
+                        (pattern, strings::without_trailing_slash(abs))
+                    }
+                    WorkspaceFilter::Name(pattern) => {
+                        (pattern, pkg_names[pkg_id as usize].slice(string_buf))
+                    }
+                };
+                if pattern.first() == Some(&b'!') {
+                    if bun_glob::r#match(&pattern[1..], subject).matches() {
+                        matched = false;
+                        break;
+                    }
+                } else if bun_glob::r#match(pattern, subject).matches() {
+                    matched = true;
+                }
+            }
+            if matched {
+                i += 1;
+            } else {
+                ids.swap_remove(i);
+            }
+        }
+
+        ids
+    }
 }
 
 // deinit → Drop is automatic for Box<[u8]> variants; no explicit impl needed.
@@ -563,6 +657,22 @@ pub struct CatalogUpdateInfo {
     pub dep_name: Box<[u8]>,
     pub original_version_literal: Box<[u8]>,
     pub is_alias: bool,
+}
+
+pub struct UpdateTargetWorkspace {
+    pub is_root: bool,
+    pub name_hash: PackageNameHash,
+    pub name: Box<[u8]>,
+}
+
+impl UpdateTargetWorkspace {
+    /// Root is unique, so `is_root` alone identifies it; members match by hash then name.
+    pub fn matches(&self, is_root: bool, name_hash: PackageNameHash, name: &[u8]) -> bool {
+        if self.is_root || is_root {
+            return self.is_root && is_root;
+        }
+        self.name_hash == name_hash && &*self.name == name
+    }
 }
 
 #[derive(Default)]
@@ -1945,6 +2055,7 @@ pub fn init(
         wr!(any_failed_to_install, false);
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
+        wr!(update_target_workspaces, None);
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
@@ -2383,6 +2494,7 @@ fn init_with_runtime_once(
         );
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
+        wr!(update_target_workspaces, None);
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);

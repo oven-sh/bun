@@ -20,9 +20,9 @@ use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
-    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
-    get_cache_directory, get_preinstall_state, get_temporary_directory, run_tasks,
-    set_preinstall_state,
+    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, UpdateRequest,
+    determine_preinstall_state, get_cache_directory, get_preinstall_state, get_temporary_directory,
+    run_tasks, set_preinstall_state,
 };
 use crate::package_manager_task as Task;
 use crate::patch_install::EnqueueAfterState;
@@ -654,6 +654,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         _ => dependency.name_hash,
     };
 
+    let mut version_was_replaced = true;
     let version: dependency::Version = 'version: {
         // An `npm:` alias names its registry target explicitly, so only plain
         // dependencies may be redirected to a same-named alias elsewhere in the tree.
@@ -750,6 +751,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
         // explicit copy here due to `dependency.version` becoming undefined
         // when `getOrPutResolvedPackageWithFindResult` is called and resizes the list.
+        version_was_replaced = false;
         break 'version dependency.version.clone();
     };
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
@@ -765,6 +767,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     name,
                     dependency,
                     &version,
+                    version_was_replaced,
                     dependency.behavior,
                     id,
                     resolution,
@@ -1364,6 +1367,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 name,
                 dependency,
                 &version,
+                version_was_replaced,
                 dependency.behavior,
                 id,
                 resolution,
@@ -1966,22 +1970,32 @@ fn get_or_put_resolved_package_with_find_result(
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
     // borrows `this.lockfile` and `this` at once. Split via raw root.
-    let should_update = {
-        let this_ptr: *mut PackageManager = this;
-        // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
-        // `manager.workspace_package_json_cache` only — disjoint from
-        // `manager.lockfile`.
-        this.to_update
-            // Update direct deps of the current workspace; catalogs are root-scoped.
-            && (dependency.version.tag == dependency::version::Tag::Catalog
+    let should_update = this.to_update
+        && if !this.update_requests.is_empty() {
+            // `bun update <name>`: every `<name>` slot, else other resolutions stay pinned.
+            UpdateRequest::contains_name(
+                &this.update_requests,
+                dependency.name_hash,
+                dependency
+                    .name
+                    .slice(this.lockfile.buffers.string_bytes.as_slice()),
+            )
+        } else if let Some(targets) = this.update_target_workspaces.as_deref() {
+            // `bun update -r`/`--filter`: direct deps of the selected workspaces; catalogs are root-scoped.
+            dependency.version.tag == dependency::version::Tag::Catalog
+                || this
+                    .lockfile
+                    .is_dependency_of_workspace_in(targets, dependency_id)
+        } else {
+            // Bare `bun update`: direct deps of the cwd workspace; catalogs are root-scoped.
+            let this_ptr: *mut PackageManager = this;
+            // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
+            // `manager.workspace_package_json_cache` only — disjoint from
+            // `manager.lockfile`.
+            dependency.version.tag == dependency::version::Tag::Catalog
                 || unsafe { &*(*this_ptr).lockfile }
-                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id))
-            // no need to do a look up if update requests are empty (`bun update` with no args)
-            && (this.update_requests.is_empty()
-                || this.updating_packages.contains(
-                    dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice()),
-                ))
-    };
+                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+        };
 
     // Was this package already allocated? Let's reuse the existing one.
     //
@@ -2159,6 +2173,7 @@ fn get_or_put_resolved_package(
     name: SemverString,
     dependency: &Dependency,
     version: &dependency::Version,
+    version_was_replaced: bool,
     behavior: Behavior,
     dependency_id: DependencyID,
     resolution: PackageID,
@@ -2368,7 +2383,29 @@ fn get_or_put_resolved_package(
             };
             let manifest: &Npm::PackageManifest = manifest;
 
+            // `bun update -r/--filter --latest`: resolve targeted workspaces' npm deps by dist-tag `latest`.
+            let latest_for_target = !version_was_replaced
+                && matches!(
+                    version.tag,
+                    dependency::version::Tag::Npm | dependency::version::Tag::DistTag
+                )
+                && this.to_update
+                && this.update_requests.is_empty()
+                && this
+                    .options
+                    .do_
+                    .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST)
+                && this.update_target_workspaces.as_deref().is_some_and(|t| {
+                    this.lockfile
+                        .is_dependency_of_workspace_in(t, dependency_id)
+                });
+
             let version_result: Npm::FindVersionResult = match version.tag {
+                _ if latest_for_target => manifest.find_by_dist_tag_with_filter(
+                    b"latest",
+                    this.options.minimum_release_age_ms,
+                    this.options.minimum_release_age_excludes,
+                ),
                 // SAFETY: `version.tag` discriminates the union arm.
                 dependency::version::Tag::DistTag => manifest.find_by_dist_tag_with_filter(
                     this.lockfile.str(&version.dist_tag().tag),

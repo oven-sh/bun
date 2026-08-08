@@ -1830,9 +1830,8 @@ impl CronJob {
                         return;
                     }
                     let global_ref = vm.global();
-                    // SAFETY: single JS thread; `&mut` derived via the thread-local
-                    // raw pointer (avoids `&T` → `&mut T` provenance laundering).
-                    let _ = VirtualMachine::get().as_mut().uncaught_exception(
+                    // SAFETY: single JS thread; `&mut` via the thread-local raw pointer.
+                    let _ = VirtualMachine::get().as_mut().uncaught_exception_fatal(
                         global_ref,
                         err,
                         bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,

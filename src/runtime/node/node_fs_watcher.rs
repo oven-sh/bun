@@ -794,15 +794,15 @@ impl FSWatcher {
                 listener.ensure_still_alive();
                 let global_this = self.global_this;
                 let args = [
-                    EventType::Error.to_js(&global_this),
+                    EventType::Abort.to_js(&global_this),
                     if err.is_empty_or_undefined_or_null() {
                         CommonAbortReason::UserAbort.to_js(&global_this)
                     } else {
                         err
                     },
                 ];
-                if listener.call_with_global_this(&global_this, &args).is_err() {
-                    global_this.clear_exception();
+                if let Err(e) = listener.call_with_global_this(&global_this, &args) {
+                    global_this.report_active_exception_as_unhandled(e);
                 }
             }
         }

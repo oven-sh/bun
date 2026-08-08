@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
@@ -572,13 +572,30 @@ describe("dns.lookupService", () => {
   });
 });
 
-// Deprecated reference: https://nodejs.org/api/deprecations.html#DEP0118
-describe("lookup deprecated behavior", () => {
-  it.each([undefined, false, null, NaN, ""])("dns.lookup", domain => {
-    dns.lookup(domain, (error, address, family) => {
-      expect(error).toBeNull();
-      expect(address).toBeNull();
-      expect(family).toBe(4);
+describe("lookup rejects falsy hostnames", () => {
+  it.each([undefined, false, null, NaN, ""])("dns.lookup(%p) throws without calling back", domain => {
+    const callback = jest.fn();
+    expect(() => dns.lookup(domain, callback)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        name: "TypeError",
+        message: `The argument 'hostname' must be a non-empty string. Received ${util.inspect(domain)}`,
+      }),
+    );
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it("dns.promises.lookup('') rejects instead of throwing", async () => {
+    const p = dns_promises.lookup("");
+    expect(p).toBeInstanceOf(Promise);
+    expect(
+      await p.then(
+        () => null,
+        e => ({ code: e.code, message: e.message }),
+      ),
+    ).toEqual({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "The argument 'hostname' must be a non-empty string. Received ''",
     });
   });
 });

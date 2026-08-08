@@ -1,6 +1,7 @@
 // fs.watch is lazily loaded so the FSWatcher class is only set up when it is used.
 const EventEmitter = require("node:events");
 const { basename } = require("node:path");
+const { guardCallback } = require("internal/shared");
 
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
@@ -158,7 +159,7 @@ class FSWatcher extends EventEmitter {
     this.#ignoreMatcher = createIgnoreMatcher(options?.ignore);
     this.#listener = listener;
     try {
-      this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
+      this.#watcher = fs.watch(path, options || {}, guardCallback(this.#onEvent.bind(this)));
     } catch (e: any) {
       e.path = path;
       e.filename = path;
@@ -183,6 +184,12 @@ class FSWatcher extends EventEmitter {
       queueMicrotask(() => {
         this.emit("close", filenameOrError);
       });
+      return;
+    } else if (eventType === "abort") {
+      // node emits only "close" on abort; the "error" delivery is bun's own,
+      // so with no listener it stays silent instead of ERR_UNHANDLED_ERROR.
+      // A present listener's throw still reaches guardCallback, like "error".
+      if (this.listenerCount("error") > 0) this.emit("error", filenameOrError);
       return;
     } else if (eventType === "error") {
       // Next.js/watchpack ends up watching paths it does not have access to,

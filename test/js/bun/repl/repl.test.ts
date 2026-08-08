@@ -344,6 +344,18 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("an async throw from nextTick keeps the session alive", async () => {
+      const { stdout, stderr, exitCode } = await runRepl([
+        "process.nextTick(() => { throw new Error('from-tick') })",
+        "'REPL-SURVIVED:' + (7 * 6)",
+        ".exit",
+      ]);
+      const allOutput = stripAnsi(stdout + stderr);
+      expect(allOutput).toContain("from-tick");
+      expect(allOutput).toContain("REPL-SURVIVED:42");
+      expect(exitCode).toBe(1);
+    });
+
     test("shows system error properties", async () => {
       const { stdout, stderr, exitCode } = await runRepl(["fs.readFileSync('/nonexistent/path/file.txt')", ".exit"]);
       const allOutput = stripAnsi(stdout + stderr);

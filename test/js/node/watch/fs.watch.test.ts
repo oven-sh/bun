@@ -1621,3 +1621,82 @@ test("fs.watch wrapper reference survives GC across event, abort and close paths
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+test("fs.watch callback throw is a fatal uncaught exception", async () => {
+  using dir = tempDir("watch-throw", {});
+  const fixture = `
+    const fs = require("node:fs");
+    const dir = ${JSON.stringify(String(dir))};
+    fs.watch(dir, () => {
+      throw new Error("watch-boom");
+    });
+    // Rewrite until the watcher fires; the fatal exit ends the process.
+    setInterval(() => fs.writeFileSync(dir + "/x", String(Date.now())), 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: expect.stringContaining("watch-boom"),
+    exitCode: 1,
+  });
+}, 15_000);
+
+test("fs.promises.watch throwing ignore matcher is a fatal uncaught exception", async () => {
+  using dir = tempDir("pwatch-throw", {});
+  const fixture = `
+    const fs = require("node:fs");
+    const dir = ${JSON.stringify(String(dir))};
+    (async () => {
+      for await (const e of fs.promises.watch(dir, { ignore: () => { throw new Error("ignore-boom"); } })) {
+      }
+    })();
+    setInterval(() => fs.writeFileSync(dir + "/x", String(Date.now())), 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: expect.stringContaining("ignore-boom"),
+    exitCode: 1,
+  });
+}, 15_000);
+
+test("fs.watch callback throw reaches an uncaughtException handler", async () => {
+  using dir = tempDir("watch-caught", {});
+  const fixture = `
+    const fs = require("node:fs");
+    const dir = ${JSON.stringify(String(dir))};
+    process.on("uncaughtException", err => {
+      console.log("CAUGHT:" + err.message);
+      watcher.close();
+      clearInterval(timer);
+    });
+    const watcher = fs.watch(dir, () => {
+      throw new Error("watch-boom");
+    });
+    const timer = setInterval(() => fs.writeFileSync(dir + "/x", String(Date.now())), 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: expect.stringContaining("CAUGHT:watch-boom"),
+    stderr: "",
+    exitCode: 0,
+  });
+}, 15_000);

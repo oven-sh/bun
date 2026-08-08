@@ -88,7 +88,7 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValu
     crate::mark_binding!();
 
     if !value.is_termination_exception() {
-        let _ = global.bun_vm().as_mut().uncaught_exception(
+        let _ = global.bun_vm().as_mut().uncaught_exception_fatal(
             global,
             value,
             crate::virtual_machine::UncaughtExceptionOrigin::Exception,

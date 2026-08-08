@@ -596,6 +596,26 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("callback 1\nmicrotask 1\ncallback 2\nmicrotask 2\ncallback 3");
     });
 
+    // Node dispatches the callback via CallbackIntoModule, so a throw is a
+    // fatal uncaught exception (enforced by default since node 26). A
+    // keep-alive report would leave the fixture's interval ticking forever.
+    it("a throw from the JS callback is a fatal uncaught exception", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/tsfn-throw-fixture.js")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(stderr).toContain("tsfn-boom");
+      expect(stdout).not.toContain("callback 2");
+      expect(exitCode).toBe(1);
+    });
+
     // An addon's own threads outlive the worker that created the threadsafe
     // function (next-swc's tokio pool does this): the last call and the last
     // release land after the worker's VM, and its event loop, are gone.

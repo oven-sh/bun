@@ -44,7 +44,13 @@ const { kStateSymbol, guessHandleType } = require("internal/dgram");
 const kOwnerSymbol = Symbol("owner symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
-const { throwNotImplemented, ErrnoException, ExceptionWithHostPort } = require("internal/shared");
+const {
+  throwNotImplemented,
+  ErrnoException,
+  ExceptionWithHostPort,
+  guardCallback,
+  reportUncaughtException,
+} = require("internal/shared");
 const {
   validateString,
   validateNumber,
@@ -706,24 +712,30 @@ function startBunSocket(self, state, createOptions) {
     Bun.udpSocket({
       ...createOptions,
       socket: {
+        // Five args from native, past guardCallback's arity fast path, so the
+        // per-packet handler reroutes its throw inline.
         data: (_socket, data, port, address, flags) => {
-          // Per-packet, from the received sockaddr's family: bind({ fd }) can
-          // adopt a descriptor of the other family than `type`.
-          const family = flags?.ipv6 ? "IPv6" : "IPv4";
-          if (state.receiveBlockList?.check(address, flags?.ipv6 ? "ipv6" : "ipv4")) {
-            return;
+          try {
+            // Per-packet, from the received sockaddr's family: bind({ fd }) can
+            // adopt a descriptor of the other family than `type`.
+            const family = flags?.ipv6 ? "IPv6" : "IPv4";
+            if (state.receiveBlockList?.check(address, flags?.ipv6 ? "ipv6" : "ipv4")) {
+              return;
+            }
+            self.emit("message", data, {
+              port: port,
+              address: address,
+              size: data.length,
+              family,
+            });
+          } catch (err) {
+            reportUncaughtException(err);
           }
-          self.emit("message", data, {
-            port: port,
-            address: address,
-            size: data.length,
-            family,
-          });
         },
-        drain: () => {
+        drain: guardCallback(() => {
           handleDrain.$call(state.handle);
-        },
-        error: error => {
+        }),
+        error: guardCallback(error => {
           if (error?.syscall === "recv") {
             // Drop errqueue-origin ICMP errors on unconnected sockets like
             // Node (which never enables IP_RECVERR); always emit real
@@ -739,7 +751,7 @@ function startBunSocket(self, state, createOptions) {
             return;
           }
           self.emit("error", error);
-        },
+        }),
       },
     }).$then(
       socket => {

@@ -1866,13 +1866,20 @@ impl napi_async_work {
         // SAFETY: env is valid for the duration of this call.
         let env_ref = unsafe { &*env };
         if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-            let _ = vm.uncaught_exception(
+            let _ = vm.uncaught_exception_fatal(
                 global,
                 exception,
                 bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
             );
         } else if global.has_exception() {
-            global.report_active_exception_as_unhandled(jsc::JsError::Thrown);
+            let exception = global.take_exception(jsc::JsError::Thrown);
+            if !exception.is_termination_exception() {
+                let _ = vm.uncaught_exception_fatal(
+                    global,
+                    exception,
+                    bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                );
+            }
         }
     }
 }
@@ -2323,7 +2330,7 @@ impl Finalizer {
         unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
         if let Some(exception) = env_ref.to_js().try_take_exception() {
-            let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception(
+            let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception_fatal(
                 env_ref.to_js(),
                 exception,
                 bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
@@ -2331,7 +2338,7 @@ impl Finalizer {
         }
 
         if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-            let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception(
+            let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception_fatal(
                 env_ref.to_js(),
                 exception,
                 bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
@@ -2700,9 +2707,16 @@ impl ThreadSafeFunction {
                     return Ok(());
                 }
 
-                let _ = js
-                    .call(global_object, JSValue::UNDEFINED, &[])
-                    .map_err(|err| global_object.report_active_exception_as_unhandled(err));
+                if let Err(err) = js.call(global_object, JSValue::UNDEFINED, &[]) {
+                    let exception = global_object.take_exception(err);
+                    if !exception.is_termination_exception() {
+                        let _ = global_object.bun_vm().as_mut().uncaught_exception_fatal(
+                            global_object,
+                            exception,
+                            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                        );
+                    }
+                }
             }
             TsfnCallback::C {
                 js: cb_js,
@@ -2717,6 +2731,22 @@ impl ThreadSafeFunction {
                     None => napi_value(0),
                 };
                 napi_threadsafe_function_call_js(env, js, self.ctx, task);
+                if let Some(exception) = env_ref.get_and_clear_pending_exception() {
+                    let _ = global_object.bun_vm().as_mut().uncaught_exception_fatal(
+                        global_object,
+                        exception,
+                        bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                    );
+                } else if global_object.has_exception() {
+                    let exception = global_object.take_exception(jsc::JsError::Thrown);
+                    if !exception.is_termination_exception() {
+                        let _ = global_object.bun_vm().as_mut().uncaught_exception_fatal(
+                            global_object,
+                            exception,
+                            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                        );
+                    }
+                }
             }
         }
         Ok(())

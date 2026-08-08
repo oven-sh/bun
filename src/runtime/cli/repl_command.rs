@@ -236,7 +236,9 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
                 vm.on_before_exit();
             }
         } else {
-            // Interactive: run the REPL loop
+            // Interactive REPL: keep async throws at print-and-continue like Node's domain-wrapped
+            // REPL (https://github.com/nodejs/node/blob/main/lib/repl.js); `-e`/`-p` stay fatal.
+            vm.suppress_fatal_uncaught = true;
             if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
                 bun_core::pretty_errorln!("<r><red>REPL error: {}<r>", err.name());
             }

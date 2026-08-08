@@ -514,7 +514,7 @@ void HostClient::onData(const char* data, int length)
         // clear so one bad frame doesn't poison the rest of the batch.
         if (auto* exception = catchScope.exception()) [[unlikely]] {
             if (!catchScope.clearExceptionExceptTermination()) break;
-            global->reportUncaughtExceptionAtEventLoop(global, exception);
+            Bun__reportError(global, JSC::JSValue::encode(JSC::JSValue(exception)));
         }
     }
     if (off) rx.removeAt(0, off);

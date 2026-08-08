@@ -24,6 +24,8 @@
 #include <time.h>
 #ifndef WIN32
 #include <sys/ioctl.h>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 #ifdef __linux__
 #include <netinet/in.h>
@@ -45,6 +47,34 @@ extern const size_t Bun__lock__size;
 #endif
 
 extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
+extern void Bun__warnAcceptEMFILE(int err);
+
+/* accept() returned an error that means "out of file descriptors" (per-process
+ * or system-wide). The listener poll is level-triggered, so leaving it armed
+ * would spin the loop re-failing accept() at full speed. */
+static int us_internal_is_emfile(int err) {
+#ifdef _WIN32
+    return err == WSAEMFILE || err == WSAENOBUFS;
+#else
+    return err == EMFILE || err == ENFILE;
+#endif
+}
+
+/* Re-arm every listener that was paused on EMFILE. Runs from the backoff
+ * deadline (POSIX) or the sweep timer (libuv). Returns how many were resumed. */
+static int us_internal_resume_emfile_paused_listeners(struct us_loop_t *loop) {
+    int resumed = 0;
+    for (struct us_socket_group_t *g = loop->data.head; g; g = g->next) {
+        for (struct us_listen_socket_t *ls = g->head_listen_sockets; ls; ls = ls->next) {
+            if (ls->emfile_paused) {
+                ls->emfile_paused = 0;
+                us_poll_change((struct us_poll_t *) ls, loop, LIBUS_SOCKET_READABLE);
+                resumed++;
+            }
+        }
+    }
+    return resumed;
+}
 
 #ifdef LIBUS_USE_LIBUV
 
@@ -66,6 +96,21 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     if (loop->data.sweep_timer_count == 0) {
         us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_noop, 0, 0);
     }
+}
+
+/* Windows: no reserve-fd trick (sockets are a separate table from file
+ * handles). Pause the listener poll and let the sweep timer re-arm it. */
+void us_internal_accept_emfile(struct us_listen_socket_t *ls, struct us_loop_t *loop) {
+    Bun__warnAcceptEMFILE(LIBUS_ERR);
+    if (ls->emfile_paused) return;
+    us_poll_change((struct us_poll_t *) ls, loop, 0);
+    ls->emfile_paused = 1;
+    us_internal_enable_sweep_timer(loop);
+}
+
+static void us_internal_accept_rearm_libuv(struct us_loop_t *loop) {
+    int resumed = us_internal_resume_emfile_paused_listeners(loop);
+    while (resumed--) us_internal_disable_sweep_timer(loop);
 }
 
 #else
@@ -94,12 +139,17 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
 }
 
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop) {
-    if (loop->data.sweep_next_tick_ns < 0) {
+    long long deadline = loop->data.sweep_next_tick_ns;
+    long long rearm = loop->data.accept_rearm_next_tick_ns;
+    if (rearm >= 0 && (deadline < 0 || rearm < deadline)) {
+        deadline = rearm;
+    }
+    if (deadline < 0) {
         return -1;
     }
     /* Its own reading, deliberately: this bounds the poll so the sweep is not
      * starved, and a caller's older reading would round the deadline up. */
-    long long diff = loop->data.sweep_next_tick_ns - (long long) us_internal_monotonic_ns();
+    long long diff = deadline - (long long) us_internal_monotonic_ns();
     return diff > 0 ? diff : 0;
 }
 
@@ -116,6 +166,67 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     us_internal_timer_sweep(loop);
 }
 
+#define LIBUS_ACCEPT_REARM_NS (200LL * 1000000LL)
+
+static int us_internal_open_accept_reserve_fd(void) {
+    int fd;
+    do {
+        fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    } while (fd == -1 && errno == EINTR);
+    return fd;
+}
+
+/* accept() hit EMFILE/ENFILE. First try the libuv uv__emfile_trick: close the
+ * reserved fd, accept() as many queued connections as that one slot allows and
+ * close each immediately so the peer sees a clean refusal instead of a
+ * connection that never answers. Draining the backlog clears the
+ * level-triggered readable. If the drain exhausts before the backlog does (or
+ * the reserve is spent), fall back to unpolling the listener and scheduling a
+ * re-arm via accept_rearm_next_tick_ns so the loop idles instead of spinning. */
+void us_internal_accept_emfile(struct us_listen_socket_t *ls, struct us_loop_t *loop) {
+    int err = LIBUS_ERR;
+    Bun__warnAcceptEMFILE(err);
+
+    if (err == EMFILE && loop->data.accept_reserve_fd != -1) {
+        close(loop->data.accept_reserve_fd);
+        loop->data.accept_reserve_fd = -1;
+        struct bsd_addr_t addr;
+        LIBUS_SOCKET_DESCRIPTOR fd;
+        while ((fd = bsd_accept_socket(us_poll_fd((struct us_poll_t *) ls), &addr)) != LIBUS_SOCKET_ERROR) {
+            bsd_close_socket(fd);
+        }
+        int drain_err = LIBUS_ERR;
+        loop->data.accept_reserve_fd = us_internal_open_accept_reserve_fd();
+        if (!us_internal_is_emfile(drain_err)) {
+            /* Backlog drained to EAGAIN (or some other terminal error); the
+             * level-triggered readable is clear, no backoff needed. */
+            return;
+        }
+    }
+
+    if (ls->emfile_paused) return;
+    us_poll_change((struct us_poll_t *) ls, loop, 0);
+    ls->emfile_paused = 1;
+    long long deadline = (long long) us_internal_monotonic_ns() + LIBUS_ACCEPT_REARM_NS;
+    if (loop->data.accept_rearm_next_tick_ns < 0 || deadline < loop->data.accept_rearm_next_tick_ns) {
+        loop->data.accept_rearm_next_tick_ns = deadline;
+    }
+}
+
+void us_internal_accept_rearm_if_due(struct us_loop_t *loop) {
+    if (loop->data.accept_rearm_next_tick_ns < 0) {
+        return;
+    }
+    if ((long long) us_internal_monotonic_ns() < loop->data.accept_rearm_next_tick_ns) {
+        return;
+    }
+    loop->data.accept_rearm_next_tick_ns = -1;
+    if (loop->data.accept_reserve_fd == -1) {
+        loop->data.accept_reserve_fd = us_internal_open_accept_reserve_fd();
+    }
+    us_internal_resume_emfile_paused_listeners(loop);
+}
+
 #endif
 
 
@@ -126,6 +237,8 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
 #else
     loop->data.sweep_next_tick_ns = -1;
+    loop->data.accept_rearm_next_tick_ns = -1;
+    loop->data.accept_reserve_fd = us_internal_open_accept_reserve_fd();
 #endif
     loop->data.sweep_timer_count = 0;
     loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
@@ -155,6 +268,11 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_LIBUV
     us_timer_close(loop->data.sweep_timer, 0);
     if (loop->data.quic_timer) us_timer_close(loop->data.quic_timer, 0);
+#else
+    if (loop->data.accept_reserve_fd != -1) {
+        close(loop->data.accept_reserve_fd);
+        loop->data.accept_reserve_fd = -1;
+    }
 #endif
     us_internal_async_close(loop->data.wakeup_async);
 }
@@ -386,6 +504,7 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
 
 #ifdef LIBUS_USE_LIBUV
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
+    us_internal_accept_rearm_libuv(cb->loop);
     us_internal_timer_sweep(cb->loop);
     /* Escalate paused sockets whose peer FIN was deferred behind buffered
      * data and whose peer has since reset (poll_cb consumed the only
@@ -505,13 +624,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 struct bsd_addr_t addr;
 
                 LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
-                if (client_fd == LIBUS_SOCKET_ERROR) {
-                    /* Todo: start timer here */
-
-                } else {
-
-                    /* Todo: stop timer if any */
-
+                if (client_fd != LIBUS_SOCKET_ERROR) {
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
@@ -574,6 +687,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         }
 
                     } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
+                }
+                /* EAGAIN is normal (backlog drained). EMFILE/ENFILE with a
+                 * connection still pending would spin the level-triggered
+                 * poll; drain it with the reserve fd and/or back off. */
+                if (client_fd == LIBUS_SOCKET_ERROR
+                    && !us_socket_is_closed(&listen_socket->s)
+                    && us_internal_is_emfile(LIBUS_ERR)) {
+                    us_internal_accept_emfile(listen_socket, loop);
                 }
             }
         break;

@@ -161,6 +161,45 @@ describe("url", () => {
     expect(h2.host).toBe("xn--foo-7ka:81");
   });
 
+  it("rejects special-scheme hosts made only of IDNA-ignored code points", () => {
+    // U+180E and U+206A..U+206F map to nothing under UTS #46, so these hosts
+    // map to the empty string: domain-to-ASCII failure (node throws
+    // ERR_INVALID_URL), never "promote the first path segment to the host".
+    const inputs = [
+      "http://\u180E/evil.example/x",
+      "https://\u206A\u206F/other.example/p",
+      "ws://\u180E/h/p",
+      "file://\u180E/some/dir/f",
+      "http://\u180E\u206B:8080/x",
+      "http://user@\u180E/x",
+    ];
+    for (const input of inputs) {
+      expect(() => new URL(input)).toThrow();
+      expect(URL.canParse(input)).toBe(false);
+      expect(URL.parse(input)).toBeNull();
+      const u = new URL("http://ok.example/");
+      expect(() => (u.href = input)).toThrow();
+    }
+    // Scheme-relative input and an all-ignored base reach the same host span.
+    expect(() => new URL("//\u180E/evil.example/", "http://good.example/")).toThrow();
+    expect(URL.canParse("//\u180E/evil.example/", "http://good.example/")).toBe(false);
+    expect(() => new URL("/x", "http://\u206A/base.example/")).toThrow();
+    // Mixed hosts still strip the ignored code point rather than failing.
+    expect(new URL("http://a\u180Eb/").href).toBe("http://ab/");
+    expect(new URL("file://a\u180Eb/x").host).toBe("ab");
+    // Setters: a non-empty host that maps to empty is a failed host parse and
+    // no-ops, even for file: where assigning a literal "" clears the host.
+    const f1 = new URL("file://server/share");
+    f1.host = "\u180E";
+    expect(f1.href).toBe("file://server/share");
+    const f2 = new URL("file://server/share");
+    f2.hostname = "\u180E";
+    expect(f2.href).toBe("file://server/share");
+    const f3 = new URL("file://server/share");
+    f3.host = "";
+    expect(f3.href).toBe("file:///share");
+  });
+
   it("prints", () => {
     // URL.prototype carries [Symbol.for("nodejs.util.inspect.custom")], so
     // Bun.inspect matches node's util.inspect output.

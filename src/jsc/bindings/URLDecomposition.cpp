@@ -125,6 +125,10 @@ void URLDecomposition::setHost(StringView value)
         auto hostSpan = hostEnd == notFound ? value : value.left(hostEnd);
         if (Bun::containsUnicode16IDNADeltaSource(hostSpan)) {
             auto mappedHost = Bun::applyUnicode16IDNADelta(hostSpan.toString());
+            // A non-empty host span mapping to empty is domain-to-ASCII failure
+            // (setter no-ops, even for file: where a literal "" is assignable).
+            if (mappedHost.isEmpty())
+                return;
             mappedValue = hostEnd == notFound ? mappedHost : makeString(mappedHost, value.substring(hostEnd));
             value = mappedValue;
         }
@@ -175,6 +179,9 @@ void URLDecomposition::setHostname(StringView host)
     String mappedHost;
     if (fullURL.hasSpecialScheme() && !host.startsWith('[') && Bun::containsUnicode16IDNADeltaSource(host)) {
         mappedHost = Bun::applyUnicode16IDNADelta(host.toString());
+        // See setHost: mapping a non-empty hostname to empty is failure, not "".
+        if (mappedHost.isEmpty())
+            return;
         host = mappedHost;
     }
     if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())

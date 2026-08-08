@@ -150,6 +150,13 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
         return {};
 
     auto mappedHost = Bun::applyUnicode16IDNADelta(hostView.toString());
+    // A host of only ignored-class code points maps to the empty string, which is
+    // domain-to-ASCII failure (node throws ERR_INVALID_URL). Splicing an empty host
+    // back in would instead let the special-authority-ignore-slashes state promote
+    // the first path segment to the host (http://\u180E/a -> http:///a -> host "a").
+    // Leave the input untouched so the parser rejects the original code points.
+    if (mappedHost.isEmpty())
+        return {};
     StringBuilder builder;
     builder.append(view.left(hostStart));
     builder.append(mappedHost);

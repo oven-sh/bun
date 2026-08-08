@@ -401,6 +401,12 @@ it("process.release", () => {
   expect(process.release.sourceUrl).toBeOneOf([nonbaseline, baseline]);
 });
 
+it("process.features.typescript", () => {
+  // Node 26 returns "strip" by default and false under --no-strip-types;
+  // "transform" was removed upstream, so feature detection expects "strip".
+  expect(process.features.typescript).toBe("strip");
+});
+
 it("process.env", () => {
   process.env["LOL SMILE UTF16 😂"] = "😂";
   expect(process.env["LOL SMILE UTF16 😂"]).toBe("😂");

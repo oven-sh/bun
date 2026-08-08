@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import crypto from "crypto";
+import { promisify } from "util";
 
 // Regression test for issue #11029
 // crypto.verify() should support null/undefined algorithm parameter
@@ -105,6 +106,43 @@ test("crypto.verify cross-verification between null and explicit SHA256", () => 
   // Should be able to verify with explicit SHA256
   const isVerifiedWithSHA256 = crypto.verify("SHA256", data, publicKey, signatureNull);
   expect(isVerifiedWithSHA256).toBe(true);
+});
+
+describe.each(["prime256v1", "secp384r1", "secp521r1"])("crypto.sign/verify with null algorithm for EC (%s)", curve => {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: curve });
+  const data = Buffer.from("test data");
+
+  test.each([null, undefined])("sync sign(%p)", algorithm => {
+    const signature = crypto.sign(algorithm, data, privateKey);
+    expect(signature).toBeInstanceOf(Buffer);
+    expect(crypto.verify(algorithm, data, publicKey, signature)).toBe(true);
+    expect(crypto.verify(algorithm, Buffer.from("wrong data"), publicKey, signature)).toBe(false);
+  });
+
+  test("async sign(null)", async () => {
+    const signature = await promisify(crypto.sign)(null, data, privateKey);
+    expect(signature).toBeInstanceOf(Buffer);
+    expect(await promisify(crypto.verify)(null, data, publicKey, signature)).toBe(true);
+  });
+
+  test("null defaults to SHA256 (cross-verification)", () => {
+    // Node.js/OpenSSL default the digest to SHA256 for EC keys when algorithm is null.
+    const signedWithSha256 = crypto.sign("sha256", data, privateKey);
+    expect(crypto.verify(null, data, publicKey, signedWithSha256)).toBe(true);
+
+    const signedWithNull = crypto.sign(null, data, privateKey);
+    expect(crypto.verify("sha256", data, publicKey, signedWithNull)).toBe(true);
+  });
+
+  test("sign(null) with ieee-p1363 encoding", () => {
+    const signature = crypto.sign(null, data, { key: privateKey, dsaEncoding: "ieee-p1363" });
+    expect(signature).toBeInstanceOf(Buffer);
+    expect(crypto.verify(null, data, { key: publicKey, dsaEncoding: "ieee-p1363" }, signature)).toBe(true);
+  });
+
+  test("verify(null) returns false for a bad signature instead of throwing", () => {
+    expect(crypto.verify(null, data, publicKey, Buffer.alloc(70))).toBe(false);
+  });
 });
 
 test("crypto.createVerify should also work with RSA keys", () => {

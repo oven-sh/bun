@@ -76,7 +76,8 @@ public:
 
     // Active objects are not garbage collected even if inaccessible, e.g. because their activity may result in callbacks being invoked.
     void stopActiveDOMObjects();
-    bool activeDOMObjectsAreStopped() const { return m_activeDOMObjectsAreStopped; }
+    // Also read on the GC thread (isContextStopped() from isReachableFromOpaqueRoots).
+    bool activeDOMObjectsAreStopped() const { return m_activeDOMObjectsAreStopped.load(std::memory_order_relaxed); }
 
     // Called from the constructor and destructors of ActiveDOMObject.
     void didCreateActiveDOMObject(ActiveDOMObject&);
@@ -171,7 +172,7 @@ private:
     WeakHashSet<ActiveDOMObject> m_activeDOMObjects;
     WeakHashSet<ContextDestructionObserver> m_destructionObservers;
 
-    bool m_activeDOMObjectsAreStopped { false };
+    std::atomic<bool> m_activeDOMObjectsAreStopped { false };
     mutable bool m_activeDOMObjectAdditionForbidden { false };
 
 public:

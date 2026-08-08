@@ -34,7 +34,7 @@ use super::uuid::UUID;
 //   - `cron_jobs` / `node_fs_stat_watcher_scheduler`
 //     → erased `*mut c_void` slots; high tier lazy-inits.
 //   - the `bun test --isolate` watcher/server registries → moved to
-//     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
+//     `bun_runtime::jsc_hooks::ActiveHandles` so the entries keep their
 //     concrete types.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
 //     `__bun_stdio_blob_store_new` (link-time extern).
@@ -858,21 +858,20 @@ impl RareData {
     }
 
     // ── close_all_socket_groups ───────────────────────────────────────────
-    /// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
-    /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
-    /// after `WebWorker__teardownJSCVM`, so doing the closeAll
-    /// there would dispatch into freed JSC heap.
+    /// Drain every embedded socket group. Runs in teardown's stop phase (script
+    /// already forbidden) and must run BEFORE JSC teardown: native close paths
+    /// release Strong handles and touch heap-owned state. RareData.deinit() runs
+    /// after `WebWorker__teardownJSCVM`, so doing the closeAll there would touch
+    /// freed JSC heap.
     pub(crate) fn close_all_socket_groups(
         &mut self,
         vm: &VirtualMachine,
     ) -> crate::virtual_machine::SweepResult {
-        // closeAll() dispatches on_close into JS while the VM is still alive, so a
-        // handler can call Bun.connect/postgres/etc. and re-populate a group we
-        // just drained. Loop until every group is observed empty in the same pass
-        // (bounded — each retry only happens if a JS callback opened a *new*
-        // socket, and the cap stops a deliberately-spinning on_close from wedging
-        // teardown; the post-close force-drain in close_all handles whatever's
-        // left after the cap).
+        // A native close path can cascade (closing one socket completes or
+        // fails another, whose own close lands in a group already drained), so
+        // loop until every group is observed empty in the same pass — bounded;
+        // the post-close force-drain in close_all handles whatever is left
+        // after the cap.
         // Walk the loop's linked-group list rather than just our 14 embedded
         // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
         // sockets land *there*, not in RareData. Iterating only the embedded

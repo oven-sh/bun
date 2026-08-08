@@ -563,7 +563,8 @@ unsafe impl Sync for JsPoster {}
 
 impl JsPoster {
     /// # Safety
-    /// `data`/`vtable` come from `bun_jsc` (`VmHandle::into_js_poster`).
+    /// `data`/`vtable` come from one of `bun_jsc::vm_handle`'s `to_js_poster`
+    /// implementations (`VmHandle` / `LoopHandle` / the isolated poster).
     #[inline]
     pub unsafe fn from_raw(data: *const (), vtable: &'static JsPosterVTable) -> Self {
         Self { data, vtable }

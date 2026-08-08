@@ -3909,15 +3909,37 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     return Zig::ImportMetaObject::create(globalObject, key);
 }
 
-extern "C" void Bun__VM__noteModuleEvaluationStarted(void*);
+extern "C" bool Bun__VM__entryEvaluationStarted(void*);
+extern "C" void Bun__VM__entryRootKey(void*, BunString*);
+extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
+
+// A module body is about to run. That means "the entry's graph is linked and executing" only if it is
+// part of the entry root's own evaluation — the root's record is Evaluating (or beyond) from the moment
+// linkAndEvaluateModule() enters it, and its dependencies run inside that (post-order). A module that
+// evaluates before then is some other root: a preload's un-awaited import() finishing while the entry is
+// still fetching.
+static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
+{
+    void* bunVM = globalObject->bunVM();
+    if (Bun__VM__entryEvaluationStarted(bunVM))
+        return;
+    BunString rootKey;
+    Bun__VM__entryRootKey(bunVM, &rootKey);
+    auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
+    if (!entry)
+        return;
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+    if (!cyclic || cyclic->status() < JSC::CyclicModuleRecord::Status::Evaluating)
+        return;
+    Bun__VM__noteEntryEvaluationStarted(bunVM);
+}
 
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
-    // Reached from inside the root record's evaluate(): the graph is linked and executing.
-    Bun__VM__noteModuleEvaluationStarted(defaultGlobalObject(lexicalGlobalObject)->bunVM());
+    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
     return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
 }
@@ -3934,7 +3956,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Bun__VM__noteModuleEvaluationStarted(globalObject->bunVM());
+    noteModuleEvaluation(globalObject, moduleLoader);
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of

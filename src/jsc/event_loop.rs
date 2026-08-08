@@ -739,11 +739,11 @@ impl EventLoop {
 
     /// Drain `concurrent_tasks` without running them and `delete` any
     /// `EventLoopTask*` payloads so their captured `Ref<>`s drop. Called from
-    /// `global_exit` after `terminate_all_workers_and_wait` (every worker has
-    /// posted its close task by then) and before `destructOnExit` (so
-    /// `~Worker` runs during the final GC sweep with the JSC VM still alive).
-    /// Without this, the last worker's close-task lambda — and the
-    /// `WebWorker` box reachable through its `protectedThis` — leak.
+    /// `release_queued_tasks` in teardown, after `join_child_workers()` (every
+    /// child has posted its close task by then) and before the JSC VM is
+    /// destroyed (so the Refs' destructors run against a live heap). Without
+    /// this, the last child's close-task lambda — and the proxy reachable
+    /// through it — leak.
     pub fn drop_concurrent_cpp_tasks(&mut self) {
         unsafe extern "C" {
             fn Bun__deleteEventLoopTask(task: *mut CppTask);
@@ -847,9 +847,9 @@ impl EventLoop {
         // visibility they had via `concurrent_tasks` before
         // `drop_concurrent_cpp_tasks` drained it. CppTasks must NOT be deleted
         // here: this runs after JSC VM teardown on both worker and main paths,
-        // and a Worker dispatchExit task's `~Ref<Worker>` would walk freed
-        // WeakBlock storage via `~JSEventListener`. They are reclaimed before
-        // teardown by `release_queued_tasks`'s CppTask arm.
+        // and a queued lambda's captured Refs may have destructors that touch
+        // the (freed) JSC heap. They are reclaimed before teardown by
+        // `release_queued_tasks`'s CppTask arm.
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             if task.tag == bun_event_loop::task_tag::ManagedTask {

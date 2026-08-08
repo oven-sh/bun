@@ -242,11 +242,12 @@ pub struct VirtualMachine {
     // outlives the VM.
     pub arena: Option<NonNull<bun_alloc::Arena>>,
     pub has_loaded: bool,
-    /// The current entry load reached module evaluation: the graph is linked and
-    /// its synchronous prefixes have run (set from the moduleLoaderEvaluate
-    /// hook; armed by `reload_entry_point` after preloads ran, so a preload's
-    /// modules do not count). What is still pending on the entry promise after
-    /// that is a top-level await.
+    /// The current entry load reached module evaluation: the root's graph is
+    /// linked and executing (set from the moduleLoaderEvaluate hook once the
+    /// root record — `Bun__VM__entryRootKey` — is Evaluating; a module some
+    /// other root evaluates meanwhile, e.g. a preload's un-awaited import(),
+    /// does not count). What is still pending on the entry promise after that
+    /// is a top-level await.
     pub entry_evaluation_started: bool,
     /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
     pub(crate) jobs: core::cell::UnsafeCell<crate::job::JobList>,
@@ -552,8 +553,25 @@ impl ExitHandler {
     }
 
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__VM__noteModuleEvaluationStarted(vm: &mut VirtualMachine) {
+    pub(crate) extern "C" fn Bun__VM__noteEntryEvaluationStarted(vm: &mut VirtualMachine) {
         vm.entry_evaluation_started = true;
+    }
+
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
+        vm.entry_evaluation_started
+    }
+
+    /// The module-registry key of the current entry load's root: the
+    /// `bun:main` wrapper when the entry is transpiled through it, else the
+    /// entry path itself (see `reload_entry_point`). Borrowed.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__entryRootKey(vm: &VirtualMachine, out: &mut bun_core::String) {
+        *out = if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
+            bun_core::String::static_(MAIN_FILE_NAME)
+        } else {
+            bun_core::String::borrow_utf8(vm.main())
+        };
     }
 
     #[unsafe(no_mangle)]
@@ -4939,7 +4957,7 @@ impl VirtualMachine {
 
     /// Replaces the global object between test files so each file runs in a fresh realm.
     ///
-    /// Callers must run `bun_runtime::jsc_hooks::close_isolation_handles(vm)`
+    /// Callers must run `bun_runtime::jsc_hooks::stop_active_handles_for_test_isolation(vm)`
     /// first so leaked watchers/servers are stopped (dropping their JS-side
     /// Strongs, which otherwise pin the outgoing global) before the blind
     /// socket-group close below. That helper lives in the higher-tier crate
@@ -5019,7 +5037,7 @@ impl VirtualMachine {
         //
         // The hook also runs `StatWatcherScheduler::shutdown_for_exit` first:
         // it drains the (already-closed — the caller ran
-        // `close_isolation_handles` before this swap) watcher queue and retires
+        // `stop_active_handles_for_test_isolation` before this swap) watcher queue and retires
         // the per-VM scheduler singleton, which the next file's first
         // `fs.watchFile` lazily recreates. That per-file reset is intentional
         // — the scheduler's queue and in-flight work-pool task belong to the

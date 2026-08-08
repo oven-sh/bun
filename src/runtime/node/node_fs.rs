@@ -1683,7 +1683,7 @@ mod _async_tasks {
 
         pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
             if IS_SHELL {
-                // SAFETY: shelltask is set by create_with_shell_task/create_mini and outlives this task
+                // SAFETY: shelltask is set by create_for_shell and outlives this task
                 // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
                 // `Ok(())` placeholder.
                 let result = core::mem::replace(self.result.get_mut(), Ok(()));
@@ -1743,11 +1743,11 @@ mod _async_tasks {
         }
 
         /// SAFETY: `this` must be the pointer returned by Box::leak in
-        /// `create_with_shell_task()`/`create_mini()`; called exactly once.
+        /// `schedule_new()`; called exactly once.
         pub(crate) unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in
-            // create_with_shell_task()/create_mini()).
+            // schedule_new()).
             let mut task = unsafe { bun_core::heap::take(this) };
             if !IS_SHELL {
                 let ctx = event_loop_handle_to_ctx(task.evtloop);

@@ -1241,8 +1241,6 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             });
             true
         }
-        // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
-        // `destroy()` (called from `run_from_js_thread`'s scopeguard).
         // A libuv fs request (Windows) that completed into the queue after the
         // last tick: destroy releases its promise handle and keep-alive.
         #[cfg(windows)]
@@ -1260,11 +1258,6 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             for_each_fs_uv_op!(__fs_destroy);
             true
         }
-        // A cross-thread Atomics.notify (or Wasm/FinalizationRegistry
-        // completion) enqueued this after the event loop's last tick. The
-        // dispatch arm above would have `delete`d it; mirror that here so the
-        // re-queue path doesn't keep it alive past worker VM dealloc. Runs
-        // before JSC teardown, so ~Ref<Ticket> is safe.
         // Deferred out of a finalizer or a late completion; the loop is gone,
         // so do the JS-free part of what the dispatch arm would have done.
         task_tag::StreamPending => {
@@ -1282,6 +1275,11 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             .run();
             true
         }
+        // A cross-thread Atomics.notify (or Wasm/FinalizationRegistry
+        // completion) enqueued this after the event loop's last tick. The
+        // dispatch arm above would have `delete`d it; mirror that here so the
+        // re-queue path doesn't keep it alive past worker VM dealloc. Runs
+        // before JSC teardown, so ~Ref<Ticket> is safe.
         task_tag::JSCDeferredWorkTask => {
             unsafe extern "C" {
                 fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
@@ -1294,9 +1292,9 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         }
         // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
         // that were already batch-moved into `self.tasks`. Must run before
-        // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks
-        // `~JSEventListener` Weak<> handles. Worker `shutdown()` calls
-        // `release_queued_tasks` for the same reason.
+        // JSC teardown: a queued lambda may capture Refs whose destructors
+        // touch the JSC heap. Worker `shutdown()` calls `release_queued_tasks`
+        // for the same reason.
         task_tag::CppTask => {
             unsafe extern "C" {
                 fn Bun__deleteEventLoopTask(task: *mut CppTask);

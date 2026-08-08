@@ -460,6 +460,30 @@ describe("web worker", () => {
       expect(exitCode).toBe(0);
     });
 
+    // A preload's un-awaited import() finishing while the entry is still
+    // fetching is not "the entry started evaluating": message delivery opens
+    // only once the entry's own graph runs (and installs its handler).
+    test("preload with an un-awaited import() does not open message delivery before the entry runs", async () => {
+      using dir = tempDir("worker-preload-dynamic-import", {
+        "side.js": `globalThis.sideRan = true;`,
+        "preload.js": `import("./side.js");`,
+        // big enough that the entry graph is still transpiling when side.js evaluates
+        "big.js": Array.from({ length: 4000 }, (_, i) => `export function f${i}(x) { return x * ${i} + ${i % 7}; }`).join("\n"),
+        "worker.js": `import "./big.js";
+          const got = [];
+          self.onmessage = e => { got.push(e.data); if (e.data === "last") postMessage(got); };`,
+      });
+      for (let i = 0; i < 3; i++) {
+        const w = new Worker(path.join(String(dir), "worker.js"), { preload: [path.join(String(dir), "preload.js")] });
+        w.postMessage("first");
+        w.postMessage("second");
+        w.postMessage("last");
+        const [ev] = await once(w, "message");
+        expect(ev.data).toEqual(["first", "second", "last"]);
+        w.terminate();
+      }
+    });
+
     // Everything a worker posted before it exited arrives before 'close'.
     test("messages posted right before a natural exit are all delivered before close", async () => {
       const K = 5000;

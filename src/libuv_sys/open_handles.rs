@@ -89,7 +89,7 @@ pub fn count() -> usize {
     OPEN.with(|o| o.borrow().len())
 }
 
-/// Thread teardown, VM alive, script still allowed: close every open pipe /
+/// Thread teardown's stop phase (VM alive, script forbidden): close every open pipe /
 /// tty / process handle — through its owner when it has one, directly when
 /// nothing adopted it. Owners may close other handles from their callbacks,
 /// so take one entry at a time.

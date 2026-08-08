@@ -691,8 +691,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref, (JSGlobalObject * lexi
 }
 
 // Resolve/reject a cross-VM introspection promise on the parent thread. The
-// promise lives in Worker::m_pendingCrossVMRequests keyed by reqId; if it was
-// already drained by dispatchExit's rejectAllCrossVMRequests, this is a no-op.
+// promise lives in WorkerMessagingProxy::m_pendingCrossVMRequests keyed by reqId; if it was
+// already drained by workerGlobalScopeDestroyedInternal's rejectAllCrossVMRequests, this is a no-op.
 static void resolveCrossVMRequest(WorkerMessagingProxy& proxy, uint64_t reqId, ScriptExecutionContext& parentCtx, JSValue value)
 {
     if (auto handle = proxy.takeCrossVMRequest(reqId))
@@ -729,15 +729,15 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     // m_state is still Pending. postTaskToWorkerGlobalScope queues into
     // m_pendingTasks for Pending and returns false only for Closing/Closed,
     // which the !accepted reject below handles. If the worker never reaches
-    // Running (entry threw or failed to load), dispatchExit clears
-    // m_pendingTasks on the parent thread and rejectAllCrossVMRequests()
+    // Running (entry threw or failed to load), workerGlobalScopeDestroyedInternal
+    // clears m_pendingTasks on the parent thread and rejectAllCrossVMRequests()
     // rejects + frees the Strong<>.
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
 
     // The promise is registered in a parent-side map keyed by reqId; only the id
     // crosses threads, so the worker thread never touches the parent VM's
-    // HandleSet. dispatchExit rejects any entries still in the map (worker
-    // terminated mid-round-trip), so the promise always settles.
+    // HandleSet. workerGlobalScopeDestroyedInternal rejects any entries still in
+    // the map (worker terminated mid-round-trip), so the promise always settles.
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {

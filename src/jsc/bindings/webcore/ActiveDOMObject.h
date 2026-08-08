@@ -28,6 +28,7 @@
 
 #include "ContextDestructionObserver.h"
 #include "TaskSource.h"
+#include <atomic>
 #include <wtf/Assertions.h>
 #include <wtf/CurrentThread.h>
 #include <wtf/Forward.h>
@@ -47,7 +48,8 @@ public:
     void assertSuspendIfNeededWasCalled() const;
 
     // This function is used by JS bindings to determine if the JS wrapper should be kept alive or not.
-    bool hasPendingActivity() const { return m_pendingActivityInstanceCount || virtualHasPendingActivity(); }
+    // Also read on the GC thread (JS*Owner::isReachableFromOpaqueRoots), concurrently with the mutator.
+    bool hasPendingActivity() const { return m_pendingActivityInstanceCount.load(std::memory_order_relaxed) || virtualHasPendingActivity(); }
 
     // This function must not have a side effect of creating an ActiveDOMObject.
     // That means it must not result in calls to arbitrary JavaScript.
@@ -60,13 +62,13 @@ public:
         explicit PendingActivity(T& thisObject)
             : m_thisObject(thisObject)
         {
-            ++(m_thisObject->m_pendingActivityInstanceCount);
+            m_thisObject->m_pendingActivityInstanceCount.fetch_add(1, std::memory_order_relaxed);
         }
 
         ~PendingActivity()
         {
-            ASSERT(m_thisObject->m_pendingActivityInstanceCount > 0);
-            --(m_thisObject->m_pendingActivityInstanceCount);
+            ASSERT(m_thisObject->m_pendingActivityInstanceCount.load(std::memory_order_relaxed) > 0);
+            m_thisObject->m_pendingActivityInstanceCount.fetch_sub(1, std::memory_order_relaxed);
         }
 
         T& object() { return m_thisObject.get(); }
@@ -111,7 +113,7 @@ private:
     void queueTaskInEventLoop(TaskSource, Function<void()>&&);
     void queueTaskToDispatchEventInternal(EventTarget&, TaskSource, Ref<Event>&&);
 
-    uint64_t m_pendingActivityInstanceCount { 0 };
+    std::atomic<uint64_t> m_pendingActivityInstanceCount { 0 };
 #if ASSERT_ENABLED
     bool m_suspendIfNeededWasCalled { false };
     const uint32_t m_creationThreadID { currentThreadID() };

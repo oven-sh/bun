@@ -122,7 +122,7 @@ pub enum Status {
     Start,
     /// `spin()` has begun; entry point is loading.
     Starting,
-    /// `dispatchOnline` has fired; event loop is running.
+    /// `workerGlobalScopeStarted` has fired; event loop is running.
     Running,
     /// `shutdown()` has begun; no further JS will run.
     Terminated,
@@ -463,14 +463,17 @@ impl WebWorker {
     #[unsafe(export_name = "WebWorker__requestTermination")]
     pub(crate) extern "C" fn request_termination(this: *mut WebWorker) {
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        // vm_lock serialises against shutdown() nulling `vm` and freeing the
+        // arena it lives in — and is taken *before* the flag is published: a
+        // worker that breaks out of its loop because it saw the flag then blocks
+        // in shutdown() until `terminated_by_parent` and the gate are set here,
+        // instead of racing past with neither.
+        this.vm_lock.lock();
         if this.set_requested_terminate() {
+            this.vm_lock.unlock();
             return;
         }
         log!("[{}] requestTermination", this.execution_context_id);
-
-        // vm_lock serialises against shutdown() nulling `vm` and freeing the
-        // arena it lives in.
-        this.vm_lock.lock();
         // vm_lock held; `vm` is published/unpublished under vm_lock.
         let vm_ptr = this.vm_ptr();
         if !vm_ptr.is_null() {
@@ -483,10 +486,10 @@ impl WebWorker {
             // SAFETY: vm_ptr published under vm_lock; the handle is any-thread.
             unsafe { (*vm_ptr).handle().stop() };
             // SAFETY: vm_ptr published under vm_lock and non-null here.
-            // jsc_vm is a valid JSC::VM*; request_termination is
+            // jsc_vm is a valid JSC::VM*; notify_need_termination is
             // documented thread-safe (VMTraps). Cast through the real opaque
             // `crate::VM` (the `crate::VM` stub is layout-only). No
-            // `&VirtualMachine` binding — see `request_termination`.
+            // `&VirtualMachine` binding (raw field reads only, off-thread).
             unsafe { (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination() };
             // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
             unsafe { (*(*vm_ptr).event_loop()).wakeup() };
@@ -657,7 +660,7 @@ impl WebWorker {
         self.worker_env_loader.set(loader_ptr);
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
-        // VM. If terminateAllAndWait() fired while we were cloning the env
+        // VM. If a parent's request_termination() fired while we were cloning the env
         // above, bail now rather than spending ~50–100ms (release) creating a
         // VM that will immediately tear down.
         if self.has_requested_terminate() {
@@ -702,7 +705,7 @@ impl WebWorker {
         }
 
         // Publish `vm` now (rather than at the end of startVM) so that:
-        //   - a concurrent notifyNeedTermination()/terminateAllAndWait() can
+        //   - a concurrent request_termination() (parent, or an exiting ancestor) can
         //     wake us once JS starts running, and
         //   - early returns below reach spin()/shutdown() with this.vm set,
         //     so teardownJSCVM/vm.deinit() run and the just-built JSC::VM
@@ -852,7 +855,7 @@ impl WebWorker {
 
         // Fire (and clear) the entryEvaluated hook on EVERY post-evaluation path
         // so buffered postMessageToThread deliveries drain and the sender's
-        // Atomics.waitAsync settles. dispatchOnline re-calls it as a no-op.
+        // Atomics.waitAsync settles. WebWorker__entrySettled re-calls it as a no-op.
         WebWorker__entrySettled(vm.global());
 
         // The entry's evaluation outcome is checked once now and then after every
@@ -917,7 +920,7 @@ impl WebWorker {
         }
 
         // Always do a first tick so we call CppTask without delay after
-        // dispatchOnline.
+        // workerGlobalScopeStarted.
         vm.as_mut().tick();
         let mut stopped_by_entry = matches!(observe_entry(vm), EntryOutcome::Stop);
 
@@ -1089,7 +1092,7 @@ impl WebWorker {
         let vm_ptr = self.vm_ptr();
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr non-null; jsc_vm is a valid JSC::VM*;
-            // request_termination is documented thread-safe (VMTraps).
+            // notify_need_termination is documented thread-safe (VMTraps).
             // Cast through the real opaque `crate::VM`.
             unsafe {
                 // As for a parent's terminate(): nothing more may enter script
@@ -1254,13 +1257,14 @@ fn on_unhandled_rejection(
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy
-    // the `JSC::VM`, free the Bun `VirtualMachine` + arena, and post
-    // `dispatchExit` (after which `worker` itself may be freed), then return
-    // through `VirtualMachine::uncaught_exception` (which writes
+    // the `JSC::VM`, free the Bun `VirtualMachine` + arena, and report
+    // `workerGlobalScopeDestroyed`, then return through
+    // `VirtualMachine::uncaught_exception` (which writes
     // `is_handling_uncaught_exception = false` on the freed VM), through live
     // JSC C++ frames operating on a destroyed `JSC::VM`, and back into
     // `spin()` which dereferences the freed `*vm` and calls `shutdown()` a
-    // second time (double `dispatchExit` → double C++ `Worker` deref).
+    // second time (a second `workerGlobalScopeDestroyed` → double deref of
+    // the proxy's thread-held reference).
     //
     // Instead, arm the JSC termination trap so any further JS halts at the
     // next safepoint, and let the stack unwind normally back to `spin()`,
@@ -1270,7 +1274,7 @@ fn on_unhandled_rejection(
     // `uncaught_exception` returns `handled == false`, so `spin()` calls
     // `return self.shutdown()` directly — same observable ordering.
     // `vm.jsc_vm` is the worker's live `JSC::VM*` (we just used it via
-    // `global_object`); `request_termination` is documented thread-safe
+    // `global_object`); `notify_need_termination` is documented thread-safe
     // (VMTraps). The gate closes with it, as for exit()/terminate(): the
     // native→JS entries still reached this tick refuse rather than run into
     // the pending termination.

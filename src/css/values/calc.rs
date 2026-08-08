@@ -851,14 +851,46 @@ impl<V: CalcValue> Calc<V> {
             }
         }
 
-        if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
-            return Ok(v);
+        // The length/percentage/time parses below re-descend the entire
+        // argument subtree, which — because `atan2()` arguments may contain
+        // nested `atan2()`/`min()`/… — is exponential in the nesting depth if
+        // left unchecked. The `hit_unrecoverable` arms above cut the re-parses
+        // off when the `<angle>`/`<number>` attempt itself descended into a
+        // nested `<angle>`/`<number>`-only function that failed, but a
+        // reduction failure (e.g. a `min()` of unitless numbers that can't
+        // fold to an angle) fails *before* ever reaching a nested function, so
+        // the re-parses still run.
+        //
+        // Re-check the failure counter after each one. A nested
+        // `<angle>`/`<number>`-only function parses identically under every
+        // value type — its only type-dependence is `V::try_from_angle` on the
+        // result, which is `None` for all of Length/Percentage/Time/CSSNumber
+        // — so once one has failed during an attempt, every remaining attempt
+        // must fail at that same function. Skipping them bounds the work to
+        // one descent of the argument subtree per nesting level.
+        match try_parse_atan2_args::<C, Length>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
-        if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
-            return Ok(v);
+        match try_parse_atan2_args::<C, Percentage>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
-        if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {
-            return Ok(v);
+        match try_parse_atan2_args::<C, Time>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
 
         let parse_ident_fn = move |c: C, ident: &[u8]| -> Option<Calc<CSSNumber>> {

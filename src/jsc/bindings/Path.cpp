@@ -28,7 +28,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 using namespace JSC;
 
-using PathFunction = JSC::EncodedJSValue (*SYSV_ABI)(JSGlobalObject*, bool, EncodedJSValue*, uint16_t len);
+using PathFunction = JSC::EncodedJSValue (*SYSV_ABI)(JSGlobalObject*, bool, EncodedJSValue*, size_t len);
 
 template<bool isWindows, PathFunction Function>
 static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
@@ -38,6 +38,10 @@ static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject
     MarkedArgumentBufferWithSize<8> args = MarkedArgumentBufferWithSize<8>();
     for (unsigned i = 0, size = callFrame->argumentCount(); i < size; ++i) {
         args.append(callFrame->argument(i));
+    }
+    if (args.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
     const auto result = Function(globalObject, isWindows, args.data(), args.size());
     RETURN_IF_EXCEPTION(scope, {});

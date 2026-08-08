@@ -314,7 +314,7 @@ function settleInProcessPost(callback, error, value) {
 }
 
 function settleLocalPost(callback, result) {
-  if (result instanceof Error) {
+  if (result instanceof ErrorObject) {
     callback(result, undefined);
   } else if (result !== null && typeof result === "object" && kProtocolError in result) {
     callback(result[kProtocolError], undefined);
@@ -561,7 +561,7 @@ function emitToSession(session: Session, method: string, params: object) {
 
 function toWarning(e: unknown): Error {
   try {
-    return e instanceof Error ? e : new ErrorObject(String(e));
+    return e instanceof ErrorObject ? e : new ErrorObject(String(e));
   } catch {
     return new ErrorObject("inspector listener threw a value that could not be stringified");
   }
@@ -685,15 +685,17 @@ function sessionRequestWillBeSent(session, state, ctx) {
 
 function sessionResponseReceived(session, state, ctx) {
   const { requestId, response } = ctx;
-  const entry = state.requests.get(requestId);
-  if (entry === undefined) return;
-  entry.responseIsUTF8 = response.charset === "utf-8";
+  // Emit before the entry lookup like the loadingFinished/loadingFailed
+  // siblings: eviction can drop an in-flight entry, and the lifecycle event
+  // must still reach the client. Only the buffer bookkeeping needs the entry.
   emitToSession(session, "Network.responseReceived", {
     requestId,
     timestamp: ctx.timestamp,
     type: ctx.type,
     response,
   });
+  const entry = state.requests.get(requestId);
+  if (entry !== undefined) entry.responseIsUTF8 = response.charset === "utf-8";
 }
 
 function sessionLoadingFinished(session, state, ctx) {

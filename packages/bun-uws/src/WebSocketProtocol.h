@@ -128,6 +128,11 @@ struct CloseFrame {
 static inline CloseFrame parseClosePayload(char *src, size_t length) {
     /* If we get no code or message, default to reporting 1005 no status code present */
     CloseFrame cf = {1005, nullptr, 0};
+    if (length == 1) {
+        /* RFC 6455 §5.5.1: if a body is present its first two bytes MUST be the
+         * status code, so a 1-byte body is malformed. Only length 0 maps to 1005. */
+        return {1006, nullptr, 0};
+    }
     if (length >= 2) {
         memcpy(&cf.code, src, 2);
         cf = {cond_byte_swap<uint16_t>(cf.code), src + 2, length - 2};

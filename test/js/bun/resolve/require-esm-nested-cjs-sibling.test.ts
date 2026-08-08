@@ -73,28 +73,31 @@ throw new Error("boom from f.cjs");`,
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("a caught require() of a throwing CJS sibling still fails its import edge with the original error", async () => {
-  using dir = tempDir("require-esm-nested-cjs-caught", {
-    "main.cjs": `require("./a.mjs");`,
-    "a.mjs": `import "./e.mjs";
+test.concurrent(
+  "a caught require() of a throwing CJS sibling still fails its import edge with the original error",
+  async () => {
+    using dir = tempDir("require-esm-nested-cjs-caught", {
+      "main.cjs": `require("./a.mjs");`,
+      "a.mjs": `import "./e.mjs";
 console.log("a evaluated");`,
-    "e.mjs": `import "./g.cjs";
+      "e.mjs": `import "./g.cjs";
 import "./f.cjs";`,
-    // g.cjs evaluates f.cjs first (both are in the require cache before either
-    // runs) and swallows the throw; the import edge of f.cjs must still reject
-    // with f's real error, not succeed with an empty module.
-    "g.cjs": `try { require("./f.cjs"); } catch {}`,
-    "f.cjs": `throw new Error("boom from f.cjs");`,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.cjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Before the fix: "a evaluated" and exit 0, with f.cjs silently skipped.
-  expect(stderr).toContain("boom from f.cjs");
-  expect(stdout).toBe("");
-  expect(exitCode).toBe(1);
-});
+      // g.cjs evaluates f.cjs first (both are in the require cache before either
+      // runs) and swallows the throw; the import edge of f.cjs must still reject
+      // with f's real error, not succeed with an empty module.
+      "g.cjs": `try { require("./f.cjs"); } catch {}`,
+      "f.cjs": `throw new Error("boom from f.cjs");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Before the fix: "a evaluated" and exit 0, with f.cjs silently skipped.
+    expect(stderr).toContain("boom from f.cjs");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  },
+);

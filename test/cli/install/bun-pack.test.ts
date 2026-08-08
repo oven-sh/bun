@@ -691,6 +691,98 @@ describe("workspaces", () => {
     });
   }
 
+  // https://github.com/oven-sh/bun/issues/20477
+  const staleLockfileWorkspaceProtocolTests = [
+    { input: "workspace:*", expected: "2.0.0" },
+    { input: "workspace:^", expected: "^2.0.0" },
+    { input: "workspace:~", expected: "~2.0.0" },
+  ];
+
+  for (const { input, expected } of staleLockfileWorkspaceProtocolTests) {
+    test(`replaces ${input} with package.json version when lockfile is stale (#20477)`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "root",
+            private: true,
+            workspaces: ["pkgs/*"],
+          }),
+        ),
+        write(join(packageDir, "pkgs", "pkg-a", "package.json"), JSON.stringify({ name: "pkg-a", version: "1.0.0" })),
+        write(
+          join(packageDir, "pkgs", "pkg-b", "package.json"),
+          JSON.stringify({
+            name: "pkg-b",
+            version: "1.0.0",
+            dependencies: { "pkg-a": input },
+          }),
+        ),
+      ]);
+
+      await runBunInstall(bunEnv, packageDir);
+
+      // Bump pkg-a's version on disk without re-running `bun install`, so the
+      // lockfile's cached workspace version is stale.
+      await write(
+        join(packageDir, "pkgs", "pkg-a", "package.json"),
+        JSON.stringify({ name: "pkg-a", version: "2.0.0" }),
+      );
+
+      await pack(join(packageDir, "pkgs", "pkg-b"), bunEnv);
+
+      const tarball = readTarball(join(packageDir, "pkgs", "pkg-b", "pkg-b-1.0.0.tgz"));
+      expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+      expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+        name: "pkg-b",
+        version: "1.0.0",
+        dependencies: {
+          "pkg-a": expected,
+        },
+      });
+    });
+  }
+
+  test("falls back to lockfile version when workspace package.json has no version", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: ["pkgs/*"],
+        }),
+      ),
+      write(join(packageDir, "pkgs", "pkg-a", "package.json"), JSON.stringify({ name: "pkg-a", version: "1.0.0" })),
+      write(
+        join(packageDir, "pkgs", "pkg-b", "package.json"),
+        JSON.stringify({
+          name: "pkg-b",
+          version: "1.0.0",
+          dependencies: { "pkg-a": "workspace:*" },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // Drop the version field so the on-disk read yields nothing and pack has
+    // to fall back to the lockfile's cached workspace version.
+    await write(join(packageDir, "pkgs", "pkg-a", "package.json"), JSON.stringify({ name: "pkg-a" }));
+
+    await pack(join(packageDir, "pkgs", "pkg-b"), bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pkgs", "pkg-b", "pkg-b-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+    expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+      name: "pkg-b",
+      version: "1.0.0",
+      dependencies: {
+        "pkg-a": "1.0.0",
+      },
+    });
+  });
+
   test("fails gracefully when workspace version fails to resolve", async () => {
     await Promise.all([
       write(

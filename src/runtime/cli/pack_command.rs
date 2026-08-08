@@ -29,6 +29,7 @@ use crate::cli::run_command::RunCommand;
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path;
+use bun_resolver::fs::FileSystem;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
 use bun_sys::{
@@ -3290,6 +3291,35 @@ fn add_archive_entry(
     Ok(entry.clear())
 }
 
+/// Read `"version"` from a workspace dependency's on-disk `package.json`.
+/// `None` on I/O/parse failure.
+fn read_workspace_version_from_package_json(
+    lockfile: &Lockfile,
+    dependency_name: &[u8],
+) -> Option<&'static [u8]> {
+    let name_hash = Semver::string::Builder::string_hash(dependency_name);
+    let workspace_path = lockfile.workspace_paths.get(&name_hash)?;
+    let workspace_path = lockfile.str(workspace_path);
+
+    let mut path_buf = PathBuffer::uninit();
+    let abs_package_json = resolve_path::join_abs_string_buf_z::<resolve_path::platform::Auto>(
+        FileSystem::instance().top_level_dir(),
+        &mut path_buf,
+        &[workspace_path, b"package.json"],
+    );
+
+    let bytes = File::read_from(Fd::cwd(), abs_package_json).ok()?;
+    let source = bun_ast::Source::init_path_string_owned(abs_package_json.as_bytes(), bytes);
+    let mut log = bun_ast::Log::init();
+    let json = JSON::parse_package_json_utf8(&source, &mut log, pack_bump()).ok()?;
+
+    let version = json.get(b"version")?.as_string(pack_bump())?;
+    if version.is_empty() {
+        return None;
+    }
+    Some(pack_bump().alloc_slice_copy(version))
+}
+
 /// Strips workspace and catalog protocols from dependency versions then
 /// returns the printed json
 fn edit_root_package_json(
@@ -3354,26 +3384,36 @@ fn edit_root_package_json(
                                     let Some(lockfile) = maybe_lockfile else {
                                         break 'failed_to_resolve false;
                                     };
-                                    let Some(workspace_version) = lockfile.workspace_versions.get(
-                                        &Semver::string::Builder::string_hash(dependency_name),
-                                    ) else {
-                                        break 'failed_to_resolve false;
-                                    };
                                     let prefix: &[u8] = match c {
                                         b'^' => b"^",
                                         b'~' => b"~",
                                         b'*' => b"",
                                         _ => unreachable!(),
                                     };
-                                    // Format on the heap then copy into the
-                                    // pack arena; `EString::init` erases the
-                                    // lifetime.
-                                    let tmp = format!(
-                                        "{}{}",
-                                        bstr::BStr::new(prefix),
-                                        workspace_version
-                                            .fmt(lockfile.buffers.string_bytes.as_slice()),
-                                    );
+                                    // on-disk version is authoritative; the lockfile's cached version may be stale
+                                    let tmp = if let Some(version) =
+                                        read_workspace_version_from_package_json(
+                                            lockfile,
+                                            dependency_name,
+                                        ) {
+                                        format!(
+                                            "{}{}",
+                                            bstr::BStr::new(prefix),
+                                            bstr::BStr::new(version),
+                                        )
+                                    } else if let Some(workspace_version) = lockfile
+                                        .workspace_versions
+                                        .get(&Semver::string::Builder::string_hash(dependency_name))
+                                    {
+                                        format!(
+                                            "{}{}",
+                                            bstr::BStr::new(prefix),
+                                            workspace_version
+                                                .fmt(lockfile.buffers.string_bytes.as_slice()),
+                                        )
+                                    } else {
+                                        break 'failed_to_resolve false;
+                                    };
                                     let data = pack_bump().alloc_slice_copy(tmp.as_bytes());
                                     dependency.value = Some(Expr::init(
                                         E::EString::init(data),

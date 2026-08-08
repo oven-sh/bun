@@ -248,6 +248,37 @@ enum SourceEncoding {
     Utf16Text,
 }
 
+/// The calling thread's scratch arena for parsing one document, handed back
+/// (reset, keeping up to 2 MiB) on drop. A private mi_heap costs microseconds
+/// to create — more than parsing a small document — so one is kept per thread.
+/// `#[thread_local]` rather than `thread_local!` so there is no destructor
+/// racing mimalloc's own thread teardown (as in `ast_memory_allocator.rs`); a
+/// parked heap is reclaimed with the thread. Re-entrant use just gets a fresh
+/// arena.
+pub(crate) struct RecycledArena(Option<bun_alloc::Arena>);
+
+#[thread_local]
+static PARKED_ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = core::cell::Cell::new(None);
+
+impl RecycledArena {
+    pub(crate) fn take() -> Self {
+        Self(Some(PARKED_ARENA.take().unwrap_or_default()))
+    }
+
+    pub(crate) fn arena(&self) -> &bun_alloc::Arena {
+        self.0.as_ref().expect("live until drop")
+    }
+}
+
+impl Drop for RecycledArena {
+    fn drop(&mut self) {
+        if let Some(mut arena) = self.0.take() {
+            arena.reset_retain_with_limit(2 * 1024 * 1024);
+            PARKED_ARENA.set(Some(arena));
+        }
+    }
+}
+
 fn with_text_format_source_encoded<R>(
     global: &bun_jsc::JSGlobalObject,
     frame: &bun_jsc::CallFrame,
@@ -264,24 +295,8 @@ fn with_text_format_source_encoded<R>(
 ) -> bun_jsc::JsResult<R> {
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-    // A private mi_heap costs microseconds to create, more than parsing a
-    // small document: keep one per thread and recycle it between calls.
-    // `#[thread_local]` rather than `thread_local!` so there is no
-    // destructor racing mimalloc's own thread teardown (as in
-    // `ast_memory_allocator.rs`); a parked heap is reclaimed with the thread.
-    #[thread_local]
-    static ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = core::cell::Cell::new(None);
-    struct Recycle(Option<bun_alloc::Arena>);
-    impl Drop for Recycle {
-        fn drop(&mut self) {
-            if let Some(mut arena) = self.0.take() {
-                arena.reset_retain_with_limit(2 * 1024 * 1024);
-                ARENA.set(Some(arena));
-            }
-        }
-    }
-    let recycle = Recycle(Some(ARENA.take().unwrap_or_default()));
-    let arena = recycle.0.as_ref().expect("set above");
+    let recycle = RecycledArena::take();
+    let arena = recycle.arena();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
 

@@ -28,9 +28,6 @@
 #include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
 #include "Exception.h"
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"

@@ -54,6 +54,12 @@ enum us_fault_syscall {
      * US_FAULT_ERRNO applies, and the errno value is ignored — the simulated
      * failure is a thrown JS out-of-memory error, not an errno. */
     US_FAULT_SESSION_BUFFER,
+    /* Not a syscall: the event-loop poll delivery for a listening socket.
+     * Simulates libuv's uv_poll_cb(status < 0) path — the AFD poll ioctl
+     * failing (e.g. INSUFFICIENT_RESOURCES) — which zeroes handle->events so
+     * the listen poll stops firing until re-armed. Only US_FAULT_ERRNO
+     * applies; the errno value is not surfaced. */
+    US_FAULT_LISTEN_POLL,
     US_FAULT_COUNT
 };
 

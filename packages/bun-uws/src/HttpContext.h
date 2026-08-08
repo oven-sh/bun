@@ -495,6 +495,12 @@ private:
              * while this dispatch is on the stack. */
             if constexpr (IsNodeHttp) {
                 httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_PIPELINED_DISPATCH;
+                /* Same-chunk Upgrade body remainder was already delivered as
+                 * req->head: suppress the one onSocketData call for it below. */
+                if (httpRequest->bodyCompleteInHead
+                        && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_TUNNEL_HEAD_PENDING;
+                }
             }
 
             /* Returning from a request handler without responding or attaching an onAborted handler is ill-use */
@@ -535,7 +541,11 @@ private:
             }
 
             if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
-                httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
+                if (IsNodeHttp && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_HEAD_PENDING)) {
+                    httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_TUNNEL_HEAD_PENDING;
+                } else {
+                    httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
+                }
             }
 
             if (switchToTunnelAfterThisChunk) {
@@ -633,6 +643,8 @@ private:
                     nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
                     nodeHttpResponseData->headersCompleted = false;
                 }
+                /* Scope the same-chunk-head suppression to this parse call only. */
+                httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_TUNNEL_HEAD_PENDING;
             }
 
             /* Timeout on uncork failure */
@@ -823,13 +835,18 @@ private:
             /* CONNECT/Upgrade tunnels allow half-open: the peer finishing its
              * writable side ends the JS socket's readable side ('end' event) but
              * the server can keep writing until it ends the socket itself, like
-             * Node's http server (allowHalfOpen: true). This includes an accepted
-             * Upgrade whose body never completed (HTTP_NODE_TUNNEL_AFTER_BODY): the
-             * EOF ends the upgrade socket, exactly like Node's UpgradeStream. */
-            if (httpResponseData->isConnectRequest || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
+             * Node's http server (allowHalfOpen: true). */
+            if (httpResponseData->isConnectRequest) {
                 if (httpResponseData->socketData && httpContextData->onSocketData) {
                     httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
                 }
+                return s;
+            }
+            /* Accepted Upgrade whose body never completed: Node tears the
+             * connection down (unsatisfied body, no valid tunnel state to keep
+             * half-open). onClose delivers the fin and releases the request. */
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) {
+                asyncSocket->close();
                 return s;
             }
 

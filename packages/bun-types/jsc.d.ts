@@ -31,7 +31,7 @@ declare module "bun:jsc" {
    * @param value The value to serialize, usually an object or array
    * @returns A SharedArrayBuffer that can be sent to another Bun instance
    */
-  function serialize(value: any, options?: { binaryType?: "arraybuffer" }): SharedArrayBuffer;
+  function serialize(value: any, options?: { binaryType?: undefined }): SharedArrayBuffer;
 
   /**
    * Serializes a JavaScript value into a binary representation that can be sent to another Bun instance.
@@ -41,7 +41,17 @@ declare module "bun:jsc" {
    * @param value The value to serialize, usually an object or array
    * @returns A Buffer that can be sent to another Bun instance
    */
-  function serialize(value: any, options?: { binaryType: "nodebuffer" }): Buffer;
+  function serialize(value: any, options: { binaryType: "nodebuffer" }): Buffer;
+
+  /**
+   * Serializes a JavaScript value into a binary representation that can be sent to another Bun instance.
+   *
+   * Internally, this uses the serialization format from WebKit/Safari.
+   *
+   * @param value The value to serialize, usually an object or array
+   * @returns An ArrayBuffer that can be sent to another Bun instance
+   */
+  function serialize(value: any, options: { binaryType: "arraybuffer" }): ArrayBuffer;
 
   /**
    * Converts an ArrayBuffer or Buffer to a JavaScript value compatible with the HTML Structured Clone Algorithm.

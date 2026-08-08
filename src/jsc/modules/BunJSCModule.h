@@ -830,6 +830,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     JSValue value = callFrame->argument(0);
     JSValue optionsObject = callFrame->argument(1);
     bool asNodeBuffer = false;
+    bool asArrayBuffer = false;
     if (optionsObject.isObject()) {
         JSC::JSObject* options = optionsObject.getObject();
         auto binaryTypeValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "binaryType"_s));
@@ -840,8 +841,10 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
                 return {};
             }
 
-            asNodeBuffer = binaryTypeValue.toWTFString(globalObject) == "nodebuffer"_s;
+            auto binaryType = binaryTypeValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(throwScope, {});
+            asNodeBuffer = binaryType == "nodebuffer"_s;
+            asArrayBuffer = binaryType == "arraybuffer"_s;
         }
     }
 
@@ -855,15 +858,23 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     }
 
     auto serializedValue = serialized.releaseReturnValue();
-    auto arrayBuffer = serializedValue->toArrayBuffer();
 
     if (asNodeBuffer) {
-        size_t byteLength = arrayBuffer->byteLength();
-        auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-        JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(arrayBuffer), 0, byteLength);
+        JSC::JSUint8Array* uint8Array = Bun::createBuffer(lexicalGlobalObject, serializedValue->wireBytes());
         RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(uint8Array);
     }
+
+    if (asArrayBuffer) {
+        auto arrayBuffer = ArrayBuffer::tryCreate(serializedValue->wireBytes().span());
+        if (!arrayBuffer) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, throwScope);
+            return {};
+        }
+        return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), arrayBuffer.releaseNonNull()));
+    }
+
+    auto arrayBuffer = serializedValue->toArrayBuffer();
 
     if (arrayBuffer->isShared()) {
         return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructureWithSharingMode<ArrayBufferSharingMode::Shared>(), WTF::move(arrayBuffer)));

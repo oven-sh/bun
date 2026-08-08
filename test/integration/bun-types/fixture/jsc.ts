@@ -8,3 +8,9 @@ const clone = deserialize(buffer);
 if (deepEquals(obj, clone)) {
   console.log("They are equal!");
 }
+
+serialize(obj) satisfies SharedArrayBuffer;
+serialize(obj, undefined) satisfies SharedArrayBuffer;
+serialize(obj, {}) satisfies SharedArrayBuffer;
+serialize(obj, { binaryType: "nodebuffer" }) satisfies Buffer;
+serialize(obj, { binaryType: "arraybuffer" }) satisfies ArrayBuffer;

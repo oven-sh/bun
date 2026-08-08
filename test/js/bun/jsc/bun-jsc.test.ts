@@ -157,7 +157,8 @@ describe("bun:jsc", () => {
   it("serialize (binaryType: 'nodebuffer')", () => {
     const serialized = serialize({ a: 1 }, { binaryType: "nodebuffer" });
     expect(serialized).toBeInstanceOf(Buffer);
-    expect(serialized.buffer).toBeInstanceOf(SharedArrayBuffer);
+    expect(serialized.buffer).toBeInstanceOf(ArrayBuffer);
+    expect(serialized.buffer).not.toBeInstanceOf(SharedArrayBuffer);
     expect(deserialize(serialized)).toStrictEqual({ a: 1 });
     const nested = serialize(serialized);
     expect(deserialize(deserialize(nested))).toStrictEqual({ a: 1 });
@@ -232,6 +233,66 @@ describe("bun:jsc", () => {
     expect(result3.stackTraces).toBeDefined();
     expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
   });
+});
+
+it("node:v8 serialize returns a Buffer backed by a plain ArrayBuffer", async () => {
+  // The Buffer returned by v8.serialize must be backed by a non-shared
+  // ArrayBuffer so it can be transferred and passed to sinks that reject
+  // SharedArrayBuffer views (e.g. crypto.subtle.digest, crypto.subtle.importKey).
+  // bun:jsc serialize with no options continues to return a SharedArrayBuffer.
+  const script = `
+    import * as v8 from "node:v8";
+    import * as jsc from "bun:jsc";
+
+    const buf = v8.serialize({ a: 1 });
+    console.log(Buffer.isBuffer(buf), Object.prototype.toString.call(buf.buffer));
+
+    const { port1, port2 } = new MessageChannel();
+    port1.postMessage(buf.buffer, [buf.buffer]);
+    console.log("postMessage ok", buf.buffer.byteLength);
+    port1.close();
+    port2.close();
+
+    const buf2 = v8.serialize({ a: 1 });
+    structuredClone(buf2, { transfer: [buf2.buffer] });
+    console.log("transfer ok", buf2.buffer.byteLength);
+
+    const digest = await crypto.subtle.digest("SHA-256", v8.serialize({ a: 1 }));
+    console.log("digest ok", digest.byteLength);
+
+    const key = await crypto.subtle.importKey("raw", v8.serialize({ a: 1 }), { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+    console.log("importKey ok", key.type);
+
+    const round = v8.deserialize(v8.serialize({ a: 1 }));
+    console.log("round", JSON.stringify(round));
+
+    const ab = jsc.serialize({ a: 1 }, { binaryType: "arraybuffer" });
+    console.log(Object.prototype.toString.call(ab), JSON.stringify(jsc.deserialize(ab)));
+
+    console.log(Object.prototype.toString.call(jsc.serialize({ a: 1 })));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    [
+      "true [object ArrayBuffer]",
+      "postMessage ok 0",
+      "transfer ok 0",
+      "digest ok 32",
+      "importKey ok secret",
+      'round {"a":1}',
+      '[object ArrayBuffer] {"a":1}',
+      "[object SharedArrayBuffer]",
+      "",
+    ].join("\n"),
+  );
+  expect(exitCode).toBe(0);
 });
 
 it("deserialize rejects an object reference index outside the deserialized object pool", async () => {

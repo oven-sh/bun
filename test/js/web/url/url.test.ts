@@ -173,17 +173,18 @@ describe("url", () => {
       "http://\u180E\u206B:8080/x",
       "http://user@\u180E/x",
     ];
+    const errInvalidURL = expect.objectContaining({ code: "ERR_INVALID_URL" });
     for (const input of inputs) {
-      expect(() => new URL(input)).toThrow();
+      expect(() => new URL(input)).toThrow(errInvalidURL);
       expect(URL.canParse(input)).toBe(false);
       expect(URL.parse(input)).toBeNull();
       const u = new URL("http://ok.example/");
-      expect(() => (u.href = input)).toThrow();
+      expect(() => (u.href = input)).toThrow(errInvalidURL);
     }
     // Scheme-relative input and an all-ignored base reach the same host span.
-    expect(() => new URL("//\u180E/evil.example/", "http://good.example/")).toThrow();
+    expect(() => new URL("//\u180E/evil.example/", "http://good.example/")).toThrow(errInvalidURL);
     expect(URL.canParse("//\u180E/evil.example/", "http://good.example/")).toBe(false);
-    expect(() => new URL("/x", "http://\u206A/base.example/")).toThrow();
+    expect(() => new URL("/x", "http://\u206A/base.example/")).toThrow(errInvalidURL);
     // Mixed hosts still strip the ignored code point rather than failing.
     expect(new URL("http://a\u180Eb/").href).toBe("http://ab/");
     expect(new URL("file://a\u180Eb/x").host).toBe("ab");

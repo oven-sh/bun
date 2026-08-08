@@ -5453,11 +5453,8 @@ restart:
         bool anyHits = false;
         JSC::JSObject* objectToUse = prototypeObject.getObject();
 
-        // The iter callback and getIfPropertyExists can run user code that mutates
-        // this object, rehashing the PropertyTable mid-walk (use-after-free).
-        // Snapshot the keys with no side effects, then resolve values by name on
-        // the live object and invoke the callbacks; mutation between callbacks
-        // behaves like the slow path below.
+        // The iter callback runs user code that can rehash this PropertyTable mid-walk
+        // (use-after-free), so collect the keys first and resolve values by name after.
         WTF::Vector<Identifier, 16> snapshot;
 
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {

@@ -5490,7 +5490,20 @@ restart:
                 propertyValue = objectToUse->getDirect(vm, property, attributes);
             }
 
-            if (!propertyValue || propertyValue.isGetterSetter() && !((attributes & PropertyAttribute::Accessor) != 0)) {
+            if (!propertyValue) {
+                // Deleted mid-format, or a prototype-walk property: resolve through
+                // the prototype chain preserving accessors, like the slow path.
+                PropertySlot slot(objectToUse, PropertySlot::InternalMethodType::Get);
+                bool found = objectToUse->getPropertySlot(globalObject, property, slot);
+                CLEAR_IF_EXCEPTION(scope);
+                if (found) {
+                    if (slot.isAccessor()) {
+                        propertyValue = slot.isCacheableGetter() ? slot.getPureResult() : slot.getterSetter();
+                    } else {
+                        propertyValue = slot.getValue(globalObject, property);
+                    }
+                }
+            } else if (propertyValue.isGetterSetter() && !((attributes & PropertyAttribute::Accessor) != 0)) {
                 propertyValue = objectToUse->getIfPropertyExists(globalObject, prop);
             }
 

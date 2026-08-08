@@ -886,6 +886,16 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         console.log("shadowed delete:", Bun.inspect(p).includes('z: "inherited"'));
       }
       {
+        // Deleting an own key that shadows an inherited getter must show the
+        // accessor, not invoke it.
+        const p = Object.create({ get z() { throw new Error("must not invoke"); } });
+        for (let i = 0; i < 8; i++) p["k" + i] = i;
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) delete p.z; return "a"; } };
+        Object.defineProperty(p, "z", { value: 1, enumerable: true, configurable: true, writable: true });
+        console.log("shadowed getter delete:", Bun.inspect(p).includes("z: [Getter]"));
+      }
+      {
         // A getter on a built-in subclass (Map.size) is another way the
         // formatter runs user code for a nested value.
         const p = makeParent();
@@ -966,6 +976,7 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         "delete+readd later: true",
         "redefine later: true",
         "shadowed delete: true",
+        "shadowed getter delete: true",
         "map size getter: true true",
         "prototype walk: true true",
         "gc churn: true",
@@ -1001,7 +1012,8 @@ describe("mid-format sibling mutation agrees across formatter paths", () => {
         return "a";
       },
     };
-    p.z = 1;
+    // defineProperty, not `p.z = 1`: a getter-only inherited z would reject the assignment.
+    Object.defineProperty(p, "z", { value: 1, enumerable: true, configurable: true, writable: true });
     return p;
   }
 
@@ -1018,6 +1030,16 @@ describe("mid-format sibling mutation agrees across formatter paths", () => {
       "z: [Getter]",
     ],
     ["delete a shadowing key", p => void delete p.z, { z: "inherited" }, 'z: "inherited"'],
+    [
+      "delete a key shadowing an inherited getter",
+      p => void delete p.z,
+      {
+        get z() {
+          throw new Error("inspect must not invoke the inherited getter");
+        },
+      },
+      "z: [Getter]",
+    ],
   ])("%s", (_name, mutate, proto, expected) => {
     expect({
       fast: zLine(Bun.inspect(make(mutate, { proto }))),

@@ -345,6 +345,36 @@ Bytecode compilation moves parsing overhead for large input files from runtime t
 
 <Note>Bytecode compilation supports both `cjs` and `esm` formats when used with `--compile`.</Note>
 
+### Heap images (experimental)
+
+`--compile-image` goes one step further than bytecode: after producing the executable, `bun build` runs it once, and when the app reports that it has finished starting up, the runtime writes an image of the whole process heap — every module already evaluated, every object your startup code built, JIT-compiled code included — and embeds it (zstd-compressed) into the executable. Later launches map that image instead of booting, and continue in the event loop.
+
+```bash icon="terminal" terminal
+bun build --compile --bytecode --compile-image ./app.ts --outfile myapp
+```
+
+The app decides when the image is taken. Once startup work that does not depend on the machine it will later run on is done, call:
+
+```ts app.ts icon="/icons/typescript.svg"
+process.on("restore", () => {
+  // Runs first thing in every process started from the image, before the
+  // first event-loop turn: re-read whatever depends on this machine.
+});
+
+if (process.env.BUN_IMAGE_OUT) {
+  Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, {
+    keepTimers: true, // timers armed now keep running after restore, re-based on the new clock
+    envGate: ["APP_MODE"], // launches where these variables differ from the build boot normally
+  });
+}
+```
+
+What the runtime refreshes on its own in a restored process: `process.argv`, `process.env`, the working directory, `process.pid`, clocks (`performance.now()`, `process.uptime()`), every source of randomness, timers, the DNS cache, and its own threads. What it cannot know about is yours: files and sockets the build process had open are gone (the app gets hangups for them after `'restore'`), and anything you computed from the build machine's environment must be recomputed in the `'restore'` listener.
+
+While the image is being built, the runtime refuses to talk to the network, so nothing fetched during the build can end up frozen into the executable; set `BUN_IMAGE_ALLOW_LOCAL_IO=1` for the build run if startup legitimately reads files, runs helpers or binds local sockets. An image is only used when the executable is launched with the same arguments as the build run, on the same OS build (system libraries may move between reboots; that is handled), and when the `envGate` variables match; in every other case, and with `BUN_IMAGE=0`, the executable boots normally. The first launch inflates the image into `$XDG_CACHE_HOME/bun/images` (or `~/.cache/bun/images`).
+
+<Note>The saving is startup work: an app that builds a lot of state at startup starts in the time it takes to map a file, and the imaged state stays shared, file-backed and clean until written to. State that must be rebuilt per machine costs the same as before.</Note>
+
 ### What do these flags do?
 
 The `--minify` argument reduces the size of the transpiled output code. For a large application, this can save megabytes of space. For smaller applications, it might still improve start time a little.

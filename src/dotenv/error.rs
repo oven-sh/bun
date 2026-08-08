@@ -1,5 +1,10 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
+    /// An explicit `--env-file` could not be opened. The loader has already
+    /// printed the detailed message; callers should exit non-zero without
+    /// adding a second generic line.
+    #[error("EnvFileNotFound")]
+    EnvFileNotFound,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -16,6 +21,7 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
+            Self::EnvFileNotFound => "EnvFileNotFound",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
         }

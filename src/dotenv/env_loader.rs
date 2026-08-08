@@ -892,15 +892,20 @@ impl Loader {
 
         let file = match bun_sys::open_file(file_path, bun_sys::OpenFlags::READ_ONLY) {
             Ok(f) => f,
-            Err(_) => {
-                // prevent retrying
-                // `Source::init_path_string` requires a `'static` path; the
-                // map key already carries `file_path` (boxed), and the value is never
-                // read for its path/contents — only `.contains()` and key iteration —
-                // so an empty placeholder is observationally identical.
-                self.custom_files_loaded
-                    .put(file_path, bun_ast::Source::default())?;
-                return Ok(());
+            Err(err) => {
+                // Only explicitly requested files reach here (default `.env`
+                // discovery goes through `load_default_files`), so a failed open
+                // is a user error: Node exits non-zero for
+                // `--env-file=<missing>`. Print the detailed line here while we
+                // have both the path and the errno, and return a sentinel the
+                // CLI sinks recognize as already reported.
+                bun_core::err_generic!(
+                    "{} reading env file {}",
+                    bstr::BStr::new(err.name()),
+                    bun_core::fmt::QuotedFormatter { text: file_path },
+                );
+                Output::flush();
+                return Err(crate::Error::EnvFileNotFound);
             }
         };
 

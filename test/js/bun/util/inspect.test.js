@@ -936,9 +936,13 @@ it("keeps walking properties when a lazy property initializer throws", async () 
   // later property (and tripping an exception-scope assert in debug builds).
   const fixture = `
     globalThis.Symbol = NaN;
-    const out = Bun.inspect(Bun);
-    console.log("archive:", out.includes("Archive"));
-    console.log("zstd:", out.includes("zstdCompress"));
+    try {
+      const out = Bun.inspect(Bun);
+      console.log("archive:", out.includes("Archive"));
+      console.log("zstd:", out.includes("zstdCompress"));
+    } catch (e) {
+      console.log("inspect threw:", e.constructor.name);
+    }
     try {
       Bun.sql;
       console.log("sql: no throw");
@@ -955,7 +959,42 @@ it("keeps walking properties when a lazy property initializer throws", async () 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toBe(["archive: true", "zstd: true", "sql: TypeError", ""].join("\n"));
+  // On Windows process.env is a Proxy, so the walk reaches the custom inspect
+  // path, which needs node:util; its evaluation throws with the clobbered
+  // Symbol and that error propagates out of Bun.inspect.
+  const expected = isWindows
+    ? ["inspect threw: TypeError", "sql: TypeError", ""]
+    : ["archive: true", "zstd: true", "sql: TypeError", ""];
+  expect(stdout).toBe(expected.join("\n"));
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+it("throws instead of crashing when util.inspect cannot load for a custom inspect hook", async () => {
+  // The util.inspect lazy property is initialized on first use; if node:util
+  // fails to evaluate (clobbered Symbol), the initializer still has to set a
+  // value or LazyProperty aborts the process.
+  const fixture = `
+    const custom = Symbol.for("nodejs.util.inspect.custom");
+    const obj = { [custom]() { return "custom!"; } };
+    globalThis.Symbol = NaN;
+    try {
+      Bun.inspect(obj);
+      console.log("no throw");
+    } catch (e) {
+      console.log("threw:", e.constructor.name);
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("threw: TypeError\n");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

@@ -2307,12 +2307,18 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSFunction>& init) {
             auto scope = DECLARE_THROW_SCOPE(init.vm);
             JSValue nodeUtilValue = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-            RETURN_IF_EXCEPTION(scope, );
-            RELEASE_ASSERT(nodeUtilValue.isObject());
-            auto prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
-            RETURN_IF_EXCEPTION(scope, );
-            ASSERT(prop);
-            init.set(uncheckedDowncast<JSFunction>(prop));
+            if (!scope.exception()) [[likely]] {
+                RELEASE_ASSERT(nodeUtilValue.isObject());
+                auto prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
+                if (!scope.exception() && prop) [[likely]] {
+                    init.set(uncheckedDowncast<JSFunction>(prop));
+                    return;
+                }
+            }
+            // A LazyProperty initializer must always set a value. Keep the
+            // exception pending for the caller and install a stub.
+            scope.release();
+            init.set(JSFunction::create(init.vm, init.owner, 0, "inspect"_s, jsFunctionNotImplemented, ImplementationVisibility::Public));
         });
 
     m_utilInspectOptionsStructure.initLater(
@@ -2334,21 +2340,23 @@ void GlobalObject::finishCreation(VM& vm)
             auto scope = DECLARE_THROW_SCOPE(init.vm);
             JSC::MarkedArgumentBuffer args;
             args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
-            RETURN_IF_EXCEPTION(scope, );
-
-            JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
-            RETURN_IF_EXCEPTION(scope, );
-
-            JSC::CallData callData = JSC::getCallData(getStylize);
-            NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
-            RETURN_IF_EXCEPTION(scope, );
-
-            if (returnedException) {
-                throwException(init.owner, scope, returnedException.get());
+            if (!scope.exception()) [[likely]] {
+                JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
+                JSC::CallData callData = JSC::getCallData(getStylize);
+                NakedPtr<JSC::Exception> returnedException = nullptr;
+                auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
+                if (returnedException) [[unlikely]] {
+                    throwException(init.owner, scope, returnedException.get());
+                }
+                if (!scope.exception() && result) [[likely]] {
+                    init.set(uncheckedDowncast<JSFunction>(result));
+                    return;
+                }
             }
-            RETURN_IF_EXCEPTION(scope, );
-            init.set(uncheckedDowncast<JSFunction>(result));
+            // A LazyProperty initializer must always set a value. Keep the
+            // exception pending for the caller and fall back to no colors.
+            scope.release();
+            init.set(JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
         });
 
     m_utilInspectStylizeNoColorFunction.initLater(

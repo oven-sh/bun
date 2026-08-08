@@ -1,11 +1,8 @@
-// Consolidated shims for Node.js internal modules consumed by the ported
-// node:repl / internal/readline stack. Each export matches the name and
-// calling convention of the Node internal it replaces; implementations
-// delegate to Bun equivalents.
 const util = require("node:util");
 const Module = require("node:module");
 const path = require("node:path");
 const {
+  ArrayPrototypeIncludes,
   ArrayPrototypeJoin,
   ArrayPrototypeMap,
   ArrayPrototypePush,
@@ -14,16 +11,14 @@ const {
   RegExpPrototypeSymbolReplace,
   RegExpPrototypeSymbolSplit,
   StringPrototypeIncludes,
+  StringPrototypeSlice,
   StringPrototypeSplit,
+  StringPrototypeStartsWith,
 } = require("internal/repl/node-primordials");
 
 // ---- internal/util ----------------------------------------------------
 
-// Node's real implementation reconstructs the regex in an internal realm so a
-// tampered `RegExp.prototype[Symbol.replace]` can't observe it. Bun has no
-// internal realm; the load-time-captured intrinsics close the `[Symbol.*]`
-// override hole (a tampered `RegExp.prototype.exec` is still observable per
-// spec — see `@@replace`/`@@split` `Get(rx,"exec")`).
+// https://github.com/nodejs/node/blob/main/lib/internal/util.js
 function SideEffectFreeRegExpPrototypeSymbolReplace(regexp, str, replacement) {
   return RegExpPrototypeSymbolReplace(regexp, str, replacement);
 }
@@ -113,8 +108,15 @@ function has() {
 
 const BuiltinModule = {
   getSchemeOnlyModuleNames() {
-    // Bare names; completion.js prefixes them with "node:" itself.
-    return ["test"];
+    const names = ["test", "quic"];
+    const modules = Module.builtinModules;
+    for (let i = 0; i < modules.length; i++) {
+      const id = modules[i];
+      if (!StringPrototypeStartsWith(id, "node:")) continue;
+      const bare = StringPrototypeSlice(id, 5);
+      if (!ArrayPrototypeIncludes(names, bare)) ArrayPrototypePush(names, bare);
+    }
+    return names;
   },
   exists(id) {
     return Module.isBuiltin(id);
@@ -293,11 +295,6 @@ class CJSModuleShim {
 // ---- internalBinding('contextify') ----------------------------------------------
 
 function startSigintWatchdog() {
-  // breakOnSigint interruption of synchronous eval WORKS via Bun's own
-  // SigintWatcher (wired in NodeVMScript.cpp). Only Node's `had_pending_
-  // signals` race — SIGINT landing after the script exits but before raw mode
-  // is restored — is unimplemented, so stopSigintWatchdog() always reports no
-  // pending signal.
   return true;
 }
 
@@ -344,10 +341,6 @@ function getOwnNonIndexProperties(obj, filter = ALL_PROPERTIES) {
 }
 
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
-// Bun only implements the single-callback set/clear API; emulate Node's
-// additive API with a dispatcher list. The shim occupies the exclusive slot
-// for the process lifetime once the first REPL starts — see repl.js
-// setupExceptionCapture() for the rationale.
 
 let captureCallbacks = null;
 
@@ -372,10 +365,6 @@ function addUncaughtExceptionCaptureCallback(cb) {
         process.exit(1);
       });
     } catch {
-      // A user capture callback already occupies the exclusive slot. Node's
-      // additive API coexists with it natively; without that engine support,
-      // defer to the user's callback and don't push (the dispatcher isn't
-      // wired, so a queued cb would never fire).
       return;
     }
   }
@@ -426,7 +415,6 @@ export default {
   Module: CJSModuleShim,
   // internal/modules/helpers
   addBuiltinLibsToObject,
-  getBuiltinLibs,
   makeRequireFunction,
   // internal/vm
   makeContextifyScript,

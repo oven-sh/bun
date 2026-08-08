@@ -11,8 +11,7 @@ const { validateBoolean, validateInteger } = require("internal/validators");
 const {
   codes: { ERR_INVALID_ARG_TYPE },
 } = require("internal/repl/node-errors");
-// Inlined from node-shims (which eagerly loads node:{util,module,path,vm}).
-const isWritable = stream => typeof stream?.write === "function";
+const { isWritable } = require("internal/streams/utils");
 
 const { kClearToLineBeginning, kClearToLineEnd, kClearLine, kClearScreenDown } = CSI;
 

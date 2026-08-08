@@ -2,6 +2,7 @@ import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { truncateSync, unlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import os from "node:os";
 import path from "path";
 describe("Memory", () => {
   beforeAll(() => {
@@ -152,8 +153,9 @@ describe("Bun.file", () => {
 // "ASSERTION FAILED: data.size() <= MaxLength" / a RELEASE_ASSERT in
 // StringImplShape. Lengths >= 2^32 were already caught. These allocate a real
 // 2 GiB, so each case runs in a subprocess to keep the peak away from the
-// test runner.
-describe("byte sources at the 2 GiB string limit", () => {
+// test runner, and the block skips on small machines (same gate as
+// buffer.test.js's 4 GiB case).
+describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("byte sources at the 2 GiB string limit", () => {
   test("Blob.text() and Blob.json() at 2^31 bytes throw ERR_STRING_TOO_LONG instead of aborting", async () => {
     await using proc = Bun.spawn({
       cmd: [

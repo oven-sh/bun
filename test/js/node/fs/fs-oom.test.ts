@@ -2,6 +2,7 @@ import { memfd_create, setSyntheticAllocationLimitForTesting } from "bun:interna
 import { describe, expect, test } from "bun:test";
 import { closeSync, readFileSync, truncateSync, writeFileSync, writeSync } from "fs";
 import { bunEnv, bunExe, isASAN, isLinux, isPosix, tempDir } from "harness";
+import os from "node:os";
 import { join } from "path";
 setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
 
@@ -56,8 +57,9 @@ if (isLinux) {
 // errno), matching the existing >= 2^32 and /dev/zero behavior above.
 // 2^31 - 1 is the largest length WTF accepts and must keep working. The file
 // is sparse so only the in-memory read costs 2 GiB; each case runs in a
-// subprocess to keep the peak away from the test runner.
-describe("readFileSync at the 2 GiB string limit", () => {
+// subprocess to keep the peak away from the test runner, and the block skips
+// on small machines (same gate as buffer.test.js's 4 GiB case).
+describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("readFileSync at the 2 GiB string limit", () => {
   const spawnRead = async (size: number) => {
     using dir = tempDir("readfile-2gib", {});
     const file = join(String(dir), "big.txt");

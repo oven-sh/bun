@@ -1377,6 +1377,7 @@ impl Expect {
                     own_properties_only: false,
                     observable: true,
                     only_non_index_properties: false,
+                    include_symbols: true,
                 },
             )?;
 

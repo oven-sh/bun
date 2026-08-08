@@ -36,7 +36,7 @@ public:
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSPropertyIterator);
 };
 
-extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, size_t* count, bool own_properties_only, bool only_non_index_properties)
+extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, size_t* count, bool own_properties_only, bool only_non_index_properties, bool include_symbols)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue value = JSValue::decode(encodedValue);
@@ -45,7 +45,7 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     ASSERT(count);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::PropertyNameArrayBuilder array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArrayBuilder array(vm, include_symbols ? PropertyNameMode::StringsAndSymbols : PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
 
     if (object->hasNonReifiedStaticProperties()) [[unlikely]] {
         object->reifyAllStaticProperties(globalObject);

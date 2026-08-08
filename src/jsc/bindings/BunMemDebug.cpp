@@ -1962,6 +1962,7 @@ static void imageRestoreAndRun(const char* path)
     __atomic_add_fetch(&bun_image_epoch, 1, __ATOMIC_ACQ_REL);
     if (!getenv("BUN_IMAGE_NO_CPU_REPROBE")) imageReprobeCPUDispatch();
     Bun__imageAdoptMainThreadVM();
+    JSC::JSLockHolder restoreLock(*vm); // held until 'restore' has been emitted: releasing a JSLock drains microtasks, and imaged continuations must not run before the app hears about the restore
     vm->refreshStackBoundsAfterImageRestore(); // before any JSLock/sanitizeStack: the VM still holds the builder's stack addresses (asserts once the stack lands elsewhere, i.e. with ASLR)
     { JSC::JSLockHolder lock(*vm); vm->didRestoreFromImage();
       fprintf(stderr, "[image] termination state: request=%d pendingTermException=%d exception=%p trapsNeedTermination=%d\n", (int)vm->hasTerminationRequest(), (int)vm->hasPendingTerminationException(), vm->exceptionForInspection(), (int)vm->traps().needHandling(JSC::VMTraps::NeedTermination));

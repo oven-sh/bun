@@ -117,3 +117,21 @@ test("keepTimers: timers armed before the snapshot keep running after restore, r
   expect(await p.exited).toBe(0);
   expect(out).toContain('stdin data: "q"');
 }, 60000);
+
+test("spawnSync used before the snapshot still works after restore (isolated spawnSync loop is rebuilt)", async () => {
+  using dir = tempDir("bun-image-spawnsync", {});
+  const img = join(String(dir), "ss.img");
+  const fixture = join(import.meta.dir, "spawnsync-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img, BUN_IMAGE_IO_WARN: "1" }, stdout: "pipe", stderr: "pipe" });
+    const out = await p.stdout.text();
+    await p.exited;
+    expect(out).toContain('[js] build default: status=0 stdout="out\\n"');
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img }, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  for (const variant of ["default", "stdio-ignore-pipe-pipe", "shell+ignore", "shell+pipe-in"]) {
+    expect(out, err.slice(-600)).toContain(`[js] restored ${variant}: status=0 stdout="out\\n" stderr="err\\n"`);
+  }
+  expect(code).toBe(0);
+}, 60000);

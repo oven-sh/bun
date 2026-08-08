@@ -731,6 +731,13 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
+    /// Heap-image restore: the isolated spawnSync loop (if the builder ever spawnSync'd) wraps the builder's kqueue/epoll fd; forget it so the next spawnSync makes one here.
+    pub fn forget_spawn_sync_event_loop_for_image_restore(&mut self) {
+        if let Some(stale) = self.spawn_sync_event_loop_.take() {
+            core::mem::forget(stale); // its fds/handles belong to another process; running Drop would close unrelated fds of ours
+        }
+    }
+
     pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the

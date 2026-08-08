@@ -1861,6 +1861,12 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
         unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
     }
     crate::jsc_hooks::adopt_main_thread_runtime_state();
+    // SAFETY: main-thread VM adopted; single-threaded at this point of restore.
+    unsafe {
+        (*vm_ptr)
+            .rare_data()
+            .forget_spawn_sync_event_loop_for_image_restore()
+    };
     #[cfg(target_os = "macos")]
     {
         // SAFETY: main-thread VM adopted above; single-threaded at this point of restore.

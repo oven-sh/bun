@@ -957,13 +957,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             const int run_recv = events & LIBUS_SOCKET_READABLE;
 #endif
             if (run_recv && !u->closed) {
-                /* Bounded per readiness event: the poll is level-triggered, so
-                 * whatever is left re-fires next iteration. Unbounded, a peer
-                 * (or the socket itself) sending faster than on_data returns
-                 * keeps this fd's kernel buffer non-empty and nothing else on
-                 * the loop -- timers, other polls, a pending stop -- ever runs.
-                 * libuv caps its UDP reads per event for the same reason. */
-                int recv_batches = 32;
 
                 do {
                     struct udp_recvbuf recvbuf;
@@ -1016,7 +1009,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                         break;
                     }
-                } while (!u->closed && --recv_batches > 0);
+                } while (!u->closed);
             }
 
             if (events & LIBUS_SOCKET_WRITABLE && !u->closed) {

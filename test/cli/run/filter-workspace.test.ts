@@ -811,6 +811,7 @@ describe("output timing", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("early-line");
     expect(stdout).toContain("late-line");
+    expect(stdout).toContain("Exited with code 0");
     // The exit status line is printed at finish, after the output has ended.
     expect(stdout.indexOf("late-line")).toBeLessThan(stdout.indexOf("Exited with code 0"));
     expect(exitCode).toBe(0);
@@ -864,9 +865,11 @@ describe("output timing", () => {
     // (bun run and the script), but not the detached grandchild.
     process.kill(-proc.pid, "SIGINT");
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Reap the pipe-holding grandchild so nothing outlives the test.
+    // Reap the pipe-holding grandchild so nothing outlives the test. Guard the
+    // pid: kill(0) would signal this whole process group.
     try {
-      process.kill(Number(await Bun.file(ready).text()), "SIGKILL");
+      const pid = Number(await Bun.file(ready).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
     } catch {}
     // 128 + SIGINT: go is killed by the signal and is the only script. stderr
     // rides along so a regression surfaces it in the failure output.

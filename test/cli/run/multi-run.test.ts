@@ -1024,9 +1024,11 @@ describe.concurrent("timing edge cases", () => {
     const r = await runMulti(["run", "--parallel", "fail", "bg"], String(dir), {
       BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
     });
-    // Reap the pipe-holding child so nothing outlives the test.
+    // Reap the pipe-holding child so nothing outlives the test. Guard the pid:
+    // kill(0) would signal this whole process group.
     try {
-      process.kill(Number(await Bun.file(path.join(String(dir), "ready.txt")).text()), "SIGKILL");
+      const pid = Number(await Bun.file(path.join(String(dir), "ready.txt")).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
     } catch {}
     expectExited(r.stderr, "fail", 1);
     expect(r.exitCode).toBe(1);

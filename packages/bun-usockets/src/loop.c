@@ -480,21 +480,46 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * rather than exact equality so the connect-complete is still
              * recognized; listen sockets only ever poll READABLE. */
             if (us_poll_events(p) & LIBUS_SOCKET_WRITABLE) {
-                /* The connecting fd became writable with an error/HUP flag also
-                 * set: the handshake may have completed and then been reset
-                 * before we collected the event. Report the kernel's actual
-                 * SO_ERROR (ECONNRESET for that race) instead of the literal
-                 * boolean, which downstream would misreport as ECONNREFUSED.
-                 * libuv does the same getsockopt in uv__stream_connect. */
+                /* The connecting fd became writable with an error/HUP flag
+                 * also set. Report the kernel's actual SO_ERROR instead of
+                 * the literal boolean, which downstream would misreport as
+                 * ECONNREFUSED; libuv does the same getsockopt in
+                 * uv__stream_connect. SO_ERROR == 0 is ambiguous:
+                 * - the connect succeeded and the peer already closed (an
+                 *   AF_UNIX server that accepts, replies and closes within
+                 *   one event-loop turn of the client raises EPOLLHUP with
+                 *   no socket error). The connection must OPEN so the read
+                 *   path delivers the reply and EOF; fabricating an error
+                 *   here discarded the server's data.
+                 * - the connect failed but its error was already consumed
+                 *   (Linux then reports a bare EPOLLHUP: observed when the
+                 *   refused candidate of a multi-address attempt is
+                 *   re-reported after the first dispatch cleared sk_err).
+                 *   Opening would hand the caller a dead, never-connected
+                 *   socket.
+                 * Two probes, because each is conclusive on a different
+                 * platform: getpeername succeeding proves establishment, but
+                 * Darwin severs a closed AF_UNIX peer's binding (ENOTCONN for
+                 * the established case too), where peeked pending data still
+                 * proves it. A peek of 0 proves nothing: Linux reads 0 from
+                 * the consumed refused connect as well, so data-less
+                 * ambiguity stays on the error path (as it always was). */
                 int connect_error = 0;
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
                     if (connect_error == 0) {
+                        struct bsd_addr_t peer;
+                        if (bsd_remote_addr(us_poll_fd(p), &peer)) {
+                            char probe;
+                            ssize_t peeked = bsd_recv(us_poll_fd(p), &probe, 1, MSG_PEEK | MSG_DONTWAIT);
+                            if (peeked <= 0) {
 #ifdef _WIN32
-                        connect_error = WSAECONNRESET;
+                                connect_error = WSAECONNRESET;
 #else
-                        connect_error = ECONNRESET;
+                                connect_error = ECONNRESET;
 #endif
+                            }
+                        }
                     }
                 }
                 us_internal_socket_after_open((struct us_socket_t *) p, connect_error);

@@ -252,9 +252,14 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     }
 
     if (c->addrinfo_req) {
-        /* Invalidate the cache entry for a refused connect (addresses may be
-         * stale) and for a resolver failure (never cache a negative result). */
-        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED || c->error_is_dns);
+        /* Invalidate the cache entry for a failed connect (addresses may be
+         * stale) and for a resolver failure (never cache a negative result).
+         * ECONNABORTED is the caller aborting, not the addresses failing, so
+         * it keeps the entry. The exhausted paths now preserve the real
+         * errno (ETIMEDOUT, EHOSTUNREACH, ...) instead of a blanket
+         * ECONNREFUSED, and those failures are exactly as stale-address-
+         * suspect as a refusal. */
+        Bun__addrinfo_freeRequest(c->addrinfo_req, (c->error && c->error != ECONNABORTED) || c->error_is_dns);
         c->addrinfo_req = 0;
     }
     us_dispatch_connecting_error(c, c->error);

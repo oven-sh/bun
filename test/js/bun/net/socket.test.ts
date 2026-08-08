@@ -362,6 +362,14 @@ describe.concurrent("socket", () => {
     expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
   });
 
+  // SEMI_SOCKET dispatch fabricated ECONNRESET when the connect-complete event
+  // carried an eof/error hint but SO_ERROR was 0 (peer accepted, replied, and
+  // fully closed before our first dispatch): the reply was discarded and the
+  // connect reported as failed. SO_ERROR alone decides, like libuv.
+  it.skipIf(isWindows)("connect to a server that replies and closes immediately still delivers the data", async () => {
+    expect(await bunRun(fileURLToPath(new URL("./connect-unix-peer-closed-fixture.ts", import.meta.url)))).toSpawn();
+  });
+
   it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), fileURLToPath(new URL("./socket-reload-fixture.ts", import.meta.url))],

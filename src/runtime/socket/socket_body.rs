@@ -1114,39 +1114,29 @@ impl<const SSL: bool> NewSocket<SSL> {
             } else {
                 errno
             };
-            // Unix-path connect errors keep their real code (a non-socket file
-            // is ENOTSOCK, a permission-denied path is EACCES, a missing one is
-            // ENOENT, an inexpressible path is EINVAL); everything else stays
-            // ECONNREFUSED.
-            let errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int
-                || errno == sys::SystemErrno::ENOTSOCK as c_int
-                || errno == sys::SystemErrno::EACCES as c_int
-                || errno == sys::SystemErrno::EINVAL as c_int
-                || errno == sys::SystemErrno::ECONNRESET as c_int
-                || errno == sys::SystemErrno::EADDRINUSE as c_int
-                || errno == sys::SystemErrno::EADDRNOTAVAIL as c_int
-            {
-                errno
-            } else {
-                sys::SystemErrno::ECONNREFUSED as c_int
+            // Connect errnos node reports verbatim (unix-path errors and the
+            // unreachable/timeout class); everything else stays ECONNREFUSED.
+            let known: &[(sys::SystemErrno, &'static str)] = &[
+                (sys::SystemErrno::ENOENT, "ENOENT"),
+                (sys::SystemErrno::ENOTSOCK, "ENOTSOCK"),
+                (sys::SystemErrno::EACCES, "EACCES"),
+                (sys::SystemErrno::EINVAL, "EINVAL"),
+                (sys::SystemErrno::ECONNRESET, "ECONNRESET"),
+                (sys::SystemErrno::EADDRINUSE, "EADDRINUSE"),
+                (sys::SystemErrno::EADDRNOTAVAIL, "EADDRNOTAVAIL"),
+                (sys::SystemErrno::ETIMEDOUT, "ETIMEDOUT"),
+                (sys::SystemErrno::EHOSTUNREACH, "EHOSTUNREACH"),
+                (sys::SystemErrno::ENETUNREACH, "ENETUNREACH"),
+            ];
+            let matched = known.iter().find(|(e, _)| errno == *e as c_int);
+            let errno_: c_int = match matched {
+                Some((e, _)) => *e as c_int,
+                None => sys::SystemErrno::ECONNREFUSED as c_int,
             };
-            let code_ = if errno == sys::SystemErrno::ENOENT as c_int {
-                BunString::static_("ENOENT")
-            } else if errno == sys::SystemErrno::ENOTSOCK as c_int {
-                BunString::static_("ENOTSOCK")
-            } else if errno == sys::SystemErrno::EACCES as c_int {
-                BunString::static_("EACCES")
-            } else if errno == sys::SystemErrno::EINVAL as c_int {
-                BunString::static_("EINVAL")
-            } else if errno == sys::SystemErrno::ECONNRESET as c_int {
-                BunString::static_("ECONNRESET")
-            } else if errno == sys::SystemErrno::EADDRINUSE as c_int {
-                BunString::static_("EADDRINUSE")
-            } else if errno == sys::SystemErrno::EADDRNOTAVAIL as c_int {
-                BunString::static_("EADDRNOTAVAIL")
-            } else {
-                BunString::static_("ECONNREFUSED")
-            };
+            let code_ = BunString::static_(match matched {
+                Some((_, code)) => *code,
+                None => "ECONNREFUSED",
+            });
             #[cfg(windows)]
             let errno_ = -sys::windows::libuv::e_discriminant_to_uv(errno_ as u16)
                 .unwrap_or(sys::windows::libuv::UV_ECONNREFUSED);

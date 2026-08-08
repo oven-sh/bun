@@ -2415,3 +2415,84 @@ test("terminate() while dns lookups keep completing in the worker", async () => 
   expect(stdout).toBe("exit 1\n");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// What a worker's own handlers may observe of its stop, in what order. Every
+// callback the worker could run appends a tag to a shared log the parent reads
+// after the thread is gone, so ordering is checked from outside the dying VM.
+//  - terminate(): the stop is not the worker's choice — no 'exit' handler, no
+//    resource 'close'/'error' handler, nothing at all runs after the request.
+//  - process.exit() from inside a callback: 'exit' handlers run exactly once and
+//    are the last script the worker runs; resources are closed natively after
+//    that, so none of their handlers follow.
+// In both the parent's loop returns to idle afterwards (nothing the worker held
+// keeps it alive) — the test process exiting at all is that check.
+describe("worker stop ordering as seen by the worker's own handlers", () => {
+  const TAG = { exitHandler: 1, serverClose: 2, socketClose: 3, socketError: 4, udpClose: 5, watcherClose: 6, intervalTick: 7, streamCancel: 8, portClose: 9, beforeExit: 10, afterExitCall: 11, ready: 12 } as const;
+  const workerSource = (door: "terminate" | "exit") => `
+    const { workerData, parentPort } = require("node:worker_threads");
+    const log = workerData.log;
+    const put = tag => { const i = Atomics.add(log, 0, 1) + 1; if (i < log.length) Atomics.store(log, i, tag); };
+    process.on("exit", () => put(${TAG.exitHandler}));
+    process.on("beforeExit", () => put(${TAG.beforeExit}));
+    const net = require("node:net"), dgram = require("node:dgram"), fs = require("node:fs"), os = require("node:os");
+    const server = net.createServer(() => {}).listen(0, "127.0.0.1");
+    server.on("close", () => put(${TAG.serverClose}));
+    const udp = dgram.createSocket("udp4"); udp.bind(0, "127.0.0.1"); udp.on("close", () => put(${TAG.udpClose}));
+    const watcher = fs.watch(os.tmpdir(), () => {}); watcher.on("close", () => put(${TAG.watcherClose}));
+    setInterval(() => put(${TAG.intervalTick}), 1).unref();
+    const { port1, port2 } = new MessageChannel(); port1.on("message", () => {}); port1.on("close", () => put(${TAG.portClose})); globalThis.keepPeer = port2;
+    Bun.serve({ port: 0, development: false, fetch: () => new Response("x") });
+    new ReadableStream({ pull() {}, cancel() { put(${TAG.streamCancel}); } }).getReader().read();
+    server.on("listening", () => {
+      const sock = net.connect(server.address().port, "127.0.0.1");
+      sock.on("close", () => put(${TAG.socketClose}));
+      sock.on("error", () => put(${TAG.socketError}));
+      sock.on("connect", () => {
+        put(${TAG.ready});
+        parentPort.postMessage("ready");
+        ${door === "exit" ? `parentPort.on("message", () => { process.exit(7); put(${TAG.afterExitCall}); });` : `parentPort.on("message", () => {});`}
+      });
+    });
+  `;
+
+  async function run(door: "terminate" | "exit") {
+    const log = new Int32Array(new SharedArrayBuffer(4 * 256));
+    const w = new Worker(workerSource(door), { eval: true, workerData: { log } });
+    const errors: unknown[] = [];
+    w.on("error", e => errors.push(e));
+    const exited = once(w, "exit").then(([code]) => code as number);
+    await once(w, "message"); // "ready": every resource is up
+    let code: number;
+    if (door === "terminate") {
+      const t = w.terminate();
+      code = await exited;
+      // terminate() resolves the same code the 'exit' event carried.
+      expect(await t).toBe(code);
+    } else {
+      w.postMessage("go");
+      code = await exited;
+    }
+    const n = Math.min(Atomics.load(log, 0), log.length - 1);
+    const tags = Array.from(log.slice(1, 1 + n)).filter(t => t !== TAG.intervalTick);
+    return { code, tags, errors };
+  }
+
+  test("terminate(): nothing of the worker's runs after the request", async () => {
+    const { code, tags, errors } = await run("terminate");
+    expect(errors).toEqual([]);
+    // Only what ran before the parent asked: the "ready" marker. No 'exit'
+    // handler (not the worker's choice), no close/error/cancel handler.
+    expect(tags).toEqual([TAG.ready]);
+    expect(code).toBe(1);
+  });
+
+  test("process.exit() inside a callback: 'exit' handlers are the last script; no resource handler follows", async () => {
+    const { code, tags, errors } = await run("exit");
+    expect(errors).toEqual([]);
+    // ready → the 'exit' handler once → nothing: the statement after
+    // process.exit() never runs, and closing the server/socket/udp/watcher/
+    // port/stream natively afterwards dispatches none of their handlers.
+    expect(tags).toEqual([TAG.ready, TAG.exitHandler]);
+    expect(code).toBe(7);
+  });
+});

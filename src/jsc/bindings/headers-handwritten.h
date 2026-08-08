@@ -237,6 +237,7 @@ typedef struct ZigException {
     void* exception;
     bool remapped;
     int fd;
+    BunString stack_string;
 } ZigException;
 
 typedef uint8_t JSErrorCode;

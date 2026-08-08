@@ -149,6 +149,23 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("can call a basic native function", async () => {
       await checkSameOutput("test_v8_native_call");
     });
+
+    // https://github.com/oven-sh/bun/issues/9785
+    it("loads a module that exports node_register_module_v<ABI> (NODE_MODULE_INITIALIZER)", async () => {
+      const addon = join(directories.badModules, "build/Release/context_aware_initializer.node");
+      // Load in a child process: the initializer runs through the V8 shim, so a
+      // regression here must not take down the test runner.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `console.log(require(${JSON.stringify(addon)}).hello)`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("napi_register_module_v1");
+      expect(stdout.replaceAll(/^\[\w+\].+\n/gm, "").trim()).toBe("world");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("primitives", () => {

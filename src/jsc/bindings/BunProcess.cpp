@@ -616,6 +616,38 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     tryToDeleteIfNecessary();
 #endif
 
+#define BUN_STRINGIFY_IMPL_(x) #x
+#define BUN_STRINGIFY_(x) BUN_STRINGIFY_IMPL_(x)
+
+    // NODE_MODULE_INITIALIZER-style addons (e.g. uWebSockets.js) export
+    // node_register_module_v<ABI> instead of self-registering from a static
+    // constructor. If nothing registered during dlopen and we have no cached
+    // registration for this handle, look the symbol up and synthesize a
+    // registration so the existing self-registered path below handles it.
+    if (callCountAtStart == globalObject->napiModuleRegisterCallCount && !Bun::DLHandleMap::singleton().get(handle)) {
+#if OS(WINDOWS)
+        auto* initializer = reinterpret_cast<node::addon_context_register_func>(
+            GetProcAddress(handle, "node_register_module_v" BUN_STRINGIFY_(REPORTED_NODEJS_ABI_VERSION)));
+#else
+        auto* initializer = reinterpret_cast<node::addon_context_register_func>(
+            dlsym(handle, "node_register_module_v" BUN_STRINGIFY_(REPORTED_NODEJS_ABI_VERSION)));
+#endif
+        if (initializer) {
+            auto* mod = new node::node_module {
+                .nm_version = REPORTED_NODEJS_ABI_VERSION,
+                .nm_flags = 0,
+                .nm_dso_handle = nullptr,
+                .nm_filename = "",
+                .nm_register_func = nullptr,
+                .nm_context_register_func = initializer,
+                .nm_modname = "",
+                .nm_priv = nullptr,
+                .nm_link = nullptr,
+            };
+            node::node_module_register(mod);
+        }
+    }
+
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
         // Module self-registered via static constructor(s).
         // Move pending registrations into locals before iterating: an
@@ -731,8 +763,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #define dlsym GetProcAddress
 #endif
 
-    // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
-    // and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
     auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
 
     auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
@@ -749,10 +779,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
 
         if (!scope.exception()) [[likely]] {
-            JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
+            JSC::throwTypeError(globalObject, scope, "Module did not self-register: no 'napi_register_module_v1' or 'node_register_module_v" BUN_STRINGIFY_(REPORTED_NODEJS_ABI_VERSION) "' symbol, and neither napi_module_register nor node_module_register was called"_s);
         }
         return {};
     }
+
+#undef BUN_STRINGIFY_
+#undef BUN_STRINGIFY_IMPL_
 
     // TODO(@heimskr): get the API version without node_api_module_get_api_version_v1 a different way
     int module_version = 8;

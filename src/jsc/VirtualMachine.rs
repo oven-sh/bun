@@ -557,9 +557,11 @@ impl ExitHandler {
         vm.entry_evaluation_started = true;
     }
 
+    /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
+    /// any other VM answers `true` so the hook's registry probe never runs there.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
-        vm.entry_evaluation_started
+        vm.entry_evaluation_started || vm.worker.is_none()
     }
 
     /// The module-registry key of the current entry load's root: the

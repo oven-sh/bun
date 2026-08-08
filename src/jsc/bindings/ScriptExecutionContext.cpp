@@ -212,7 +212,7 @@ void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionOb
 
 bool ScriptExecutionContext::isJSExecutionForbidden()
 {
-    return !m_vm || m_vm->executionForbidden() || !Bun__VmHandle__scriptAllowed(m_vmHandle);
+    return !m_vm || m_vm->executionForbidden() || !WebCore::clientData(*m_vm)->scriptAllowed();
 }
 
 void ScriptExecutionContext::prepareForDestruction()

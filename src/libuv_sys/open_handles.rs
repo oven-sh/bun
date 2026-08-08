@@ -9,7 +9,7 @@
 //! construction and `Environment::CleanupHandles()` (node/src/env.cc) walks that
 //! list calling `Close()`; `uv_walk` alone is not enough because it yields bare
 //! `uv_handle_t*`s with no typed owner to close through. Insert on open, remove
-//! on close (a linear scan over this thread's open handles) — off any hot path.
+//! on close — both keyed by address, so neither costs more as handles pile up.
 //!
 //! A reader over a *file* has no handle — its `uv_fs_read` is a request, which
 //! cannot be closed and completes only when the loop is drained — so such a
@@ -20,12 +20,12 @@
 use super::*;
 
 use core::cell::RefCell;
+use std::collections::HashMap;
 
 /// How a teardown closes a handle that has an owner: `close(owner)`.
 pub type CloseViaOwner = unsafe fn(owner: *mut c_void);
 
 struct Entry {
-    handle: *mut uv_handle_t,
     kind: Kind,
     owner: *mut c_void,
     close_via_owner: Option<CloseViaOwner>,
@@ -36,27 +36,31 @@ enum Kind {
     Pipe,
     Tty,
     Process,
-    /// Keyed by `owner` (a reader mid `uv_fs_read`); `handle` is null.
-    FileRead,
+}
+
+#[derive(Default)]
+struct Open {
+    /// By handle address.
+    handles: HashMap<*mut uv_handle_t, Entry>,
+    /// Readers mid `uv_fs_read`, by owner address.
+    file_readers: HashMap<*mut c_void, CloseViaOwner>,
 }
 
 std::thread_local! {
-    static OPEN: RefCell<Vec<Entry>> = const { RefCell::new(Vec::new()) };
+    static OPEN: RefCell<Open> = RefCell::new(Open::default());
 }
 
 fn add(handle: *mut uv_handle_t, kind: Kind) {
     OPEN.with(|o| {
-        let mut o = o.borrow_mut();
-        debug_assert!(
-            !o.iter().any(|e| e.handle == handle),
-            "uv handle registered twice"
-        );
-        o.push(Entry {
+        let previous = o.borrow_mut().handles.insert(
             handle,
-            kind,
-            owner: ptr::null_mut(),
-            close_via_owner: None,
-        });
+            Entry {
+                kind,
+                owner: ptr::null_mut(),
+                close_via_owner: None,
+            },
+        );
+        debug_assert!(previous.is_none(), "uv handle registered twice");
     });
 }
 
@@ -73,10 +77,7 @@ pub(super) fn add_process(p: *mut Process) {
 /// The `uv_close` for `handle` has been (or is about to be) issued.
 pub(super) fn remove(handle: *mut uv_handle_t) {
     OPEN.with(|o| {
-        let mut o = o.borrow_mut();
-        if let Some(i) = o.iter().position(|e| e.handle == handle) {
-            o.swap_remove(i);
-        }
+        o.borrow_mut().handles.remove(&handle);
     });
 }
 
@@ -84,32 +85,13 @@ pub(super) fn remove(handle: *mut uv_handle_t) {
 /// may be in flight); `remove_file_reader` when it lets go of it.
 pub fn add_file_reader(owner: *mut c_void, close: CloseViaOwner) {
     OPEN.with(|o| {
-        let mut o = o.borrow_mut();
-        if let Some(e) = o
-            .iter_mut()
-            .find(|e| e.kind == Kind::FileRead && e.owner == owner)
-        {
-            e.close_via_owner = Some(close);
-            return;
-        }
-        o.push(Entry {
-            handle: ptr::null_mut(),
-            kind: Kind::FileRead,
-            owner,
-            close_via_owner: Some(close),
-        });
+        o.borrow_mut().file_readers.insert(owner, close);
     });
 }
 
 pub fn remove_file_reader(owner: *mut c_void) {
     OPEN.with(|o| {
-        let mut o = o.borrow_mut();
-        if let Some(i) = o
-            .iter()
-            .position(|e| e.kind == Kind::FileRead && e.owner == owner)
-        {
-            o.swap_remove(i);
-        }
+        o.borrow_mut().file_readers.remove(&owner);
     });
 }
 
@@ -118,7 +100,7 @@ pub fn remove_file_reader(owner: *mut c_void) {
 /// on this thread, already closing, or the process-static stdin tty).
 pub fn set_owner(handle: *mut uv_handle_t, owner: *mut c_void, close: Option<CloseViaOwner>) {
     OPEN.with(|o| {
-        if let Some(e) = o.borrow_mut().iter_mut().find(|e| e.handle == handle) {
+        if let Some(e) = o.borrow_mut().handles.get_mut(&handle) {
             e.owner = owner;
             e.close_via_owner = if owner.is_null() { None } else { close };
         }
@@ -127,17 +109,47 @@ pub fn set_owner(handle: *mut uv_handle_t, owner: *mut c_void, close: Option<Clo
 
 #[cfg(debug_assertions)]
 pub fn count() -> usize {
-    OPEN.with(|o| o.borrow().len())
+    OPEN.with(|o| {
+        let o = o.borrow();
+        o.handles.len() + o.file_readers.len()
+    })
+}
+
+enum Next {
+    Handle(*mut uv_handle_t, Entry),
+    FileReader(*mut c_void, CloseViaOwner),
+}
+
+/// One entry out of the registry, if any is left. Owners may close other
+/// handles from their callbacks, so the stop phase takes one at a time and
+/// never holds the borrow across a close.
+fn take_next() -> Option<Next> {
+    OPEN.with(|o| {
+        let mut o = o.borrow_mut();
+        if let Some(&owner) = o.file_readers.keys().next() {
+            let close = o.file_readers.remove(&owner).unwrap();
+            return Some(Next::FileReader(owner, close));
+        }
+        let &handle = o.handles.keys().next()?;
+        let entry = o.handles.remove(&handle).unwrap();
+        Some(Next::Handle(handle, entry))
+    })
 }
 
 /// Thread teardown's stop phase (VM alive, script forbidden): close every open pipe /
-/// tty / process handle — through its owner when it has one, directly when
-/// nothing adopted it. Owners may close other handles from their callbacks,
-/// so take one entry at a time.
+/// tty / process handle and every reader mid file-read — through its owner when
+/// it has one, directly when nothing adopted it.
 pub fn stop_all_for_vm_teardown() {
-    loop {
-        let Some(e) = OPEN.with(|o| o.borrow_mut().pop()) else {
-            break;
+    while let Some(next) = take_next() {
+        let (handle, e) = match next {
+            Next::FileReader(owner, close) => {
+                log!("teardown: closing reader mid file-read (owner {:p})", owner);
+                // SAFETY: the reader listed itself while holding the source and
+                // unlists before letting go of it (add_file_reader contract).
+                unsafe { close(owner) };
+                continue;
+            }
+            Next::Handle(handle, e) => (handle, e),
         };
         log!(
             "teardown: closing open {} handle @{:p} (owner {:p})",
@@ -145,20 +157,17 @@ pub fn stop_all_for_vm_teardown() {
                 Kind::Pipe => "pipe",
                 Kind::Tty => "tty",
                 Kind::Process => "process",
-                Kind::FileRead => "file read",
             },
-            e.handle,
+            handle,
             e.owner
         );
         match (e.close_via_owner, e.kind) {
             // SAFETY: the owner recorded itself for this live handle and clears
             // or replaces the slot before it goes away (set_owner contract).
             (Some(close), _) => unsafe { close(e.owner) },
-            // Listed only with its owner (`add_file_reader`).
-            (None, Kind::FileRead) => unreachable!("file reader listed without its owner"),
             // SAFETY: listed ⇒ initialised on this thread and not closing; a
             // pipe/tty nobody adopted is a leaked Box handed to libuv here.
-            (None, Kind::Pipe) => unsafe { Pipe::close_and_destroy_unlisted(e.handle.cast()) },
+            (None, Kind::Pipe) => unsafe { Pipe::close_and_destroy_unlisted(handle.cast()) },
             // SAFETY: as above (a leaked Box<uv_tty_t> nobody adopted).
             (None, Kind::Tty) => unsafe {
                 unsafe extern "C" fn free_tty(t: *mut uv_tty_t) {
@@ -166,7 +175,7 @@ pub fn stop_all_for_vm_teardown() {
                     drop(unsafe { Box::from_raw(t) });
                 }
                 uv_close(
-                    e.handle,
+                    handle,
                     Some(mem::transmute::<
                         unsafe extern "C" fn(*mut uv_tty_t),
                         unsafe extern "C" fn(*mut uv_handle_t),
@@ -176,7 +185,7 @@ pub fn stop_all_for_vm_teardown() {
             // A process handle is embedded in its owner and always adopted at
             // spawn; an unowned one cannot be freed safely — close in place.
             // SAFETY: listed ⇒ an initialised, not-closing handle on this loop.
-            (None, Kind::Process) => unsafe { uv_close(e.handle, None) },
+            (None, Kind::Process) => unsafe { uv_close(handle, None) },
         }
     }
 }

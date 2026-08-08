@@ -1483,6 +1483,9 @@ impl WindowsBufferedReader {
             if let Some(source) = self.source.as_mut() {
                 source.set_owner(self_ptr, Self::stop_for_vm_teardown);
             }
+            if matches!(self.source, Some(Source::File(_) | Source::SyncFile(_))) {
+                self.list_file_read();
+            }
         }
     }
 
@@ -1655,9 +1658,24 @@ impl WindowsBufferedReader {
         debug_assert!(self.source.is_none());
         self.source = Some(source);
         let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
-        if let Some(source @ (Source::Pipe(_) | Source::Tty(_))) = self.source.as_mut() {
-            source.set_owner(self_ptr, Self::stop_for_vm_teardown);
+        match self.source.as_mut() {
+            Some(source @ (Source::Pipe(_) | Source::Tty(_))) => {
+                source.set_owner(self_ptr, Self::stop_for_vm_teardown)
+            }
+            Some(Source::File(_) | Source::SyncFile(_)) => self.list_file_read(),
+            None => {}
         }
+    }
+
+    /// A read over a file is a uv request with no handle to close: list this
+    /// reader by address so a thread teardown closes it (`close()` below) before
+    /// draining the loop. Unlisted wherever the source leaves this reader
+    /// (`close_impl`, `from`, `Drop`).
+    fn list_file_read(&mut self) {
+        uv::open_handles::add_file_reader(
+            core::ptr::from_mut(self).cast(),
+            Self::stop_for_vm_teardown,
+        );
     }
 
     /// `uv::open_handles` closes this reader's stream through here at teardown.
@@ -1812,8 +1830,9 @@ impl WindowsBufferedReader {
         // Mark no longer in flight
         this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
 
-        // If canceled, check if we need to call deferred done
-        if was_canceled {
+        // Cancelled, or `close()` was asked for while this read was out (the
+        // cancel need not have won): finish the close, deliver nothing.
+        if was_canceled || this.flags.contains(WindowsFlags::DEFER_DONE_CALLBACK) {
             if this.flags.contains(WindowsFlags::DEFER_DONE_CALLBACK) {
                 this.flags.remove(WindowsFlags::DEFER_DONE_CALLBACK);
                 // Now safe to call done - buffer will be freed by deinit

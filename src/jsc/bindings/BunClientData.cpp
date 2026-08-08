@@ -107,6 +107,7 @@ void JSVMClientData::create(VM* vm, void* bunVM)
     JSVMClientData* clientData = new JSVMClientData(*vm, provider);
     clientData->bunVM = bunVM;
     clientData->vmHandle = Bun__VmHandle__create(bunVM);
+    clientData->vmHandleState = Bun__VmHandle__stateAddress(clientData->vmHandle);
     vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
         Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTF::move(ticket), kind);
     };

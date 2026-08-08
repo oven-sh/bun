@@ -63,8 +63,24 @@ impl core::fmt::Debug for LoopKind {
     }
 }
 
-pub struct Inner {
+/// The part of [`Inner`] every native→JS entry on the JS thread reads
+/// (`state`, and `vm` on each post) but that changes twice per VM lifetime.
+/// Kept on its own cache line: the counters below are RMW'd by pool / HTTP
+/// threads on every completion, and sharing a line with them made each of the
+/// JS thread's reads a miss whenever another thread had just posted.
+#[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "powerpc64"), repr(align(64)))]
+#[cfg_attr(target_arch = "s390x", repr(align(128)))]
+struct ReadMostly {
     state: AtomicU8,
+    /// Dereferenced only while an `Access` guard is held and `state != Closed`,
+    /// or on the JS thread. Nulled by `close()`.
+    vm: core::cell::UnsafeCell<*mut VirtualMachine>,
+}
+
+#[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "powerpc64"), repr(align(64)))]
+#[cfg_attr(target_arch = "s390x", repr(align(128)))]
+pub struct Inner {
+    hot: ReadMostly,
     /// Threads currently inside `post`/`wake`/`ref`/`unref` or holding a
     /// [`Borrow`]. `close()` waits for zero after publishing `Closed`.
     active: AtomicU32,
@@ -74,9 +90,6 @@ pub struct Inner {
     /// Pool work scheduled with storage inside a JS-owned object (see
     /// [`VmHandle::embedded_work_scheduled`]); teardown waits for zero.
     embedded: AtomicU32,
-    /// Dereferenced only while an `Access` guard is held and `state != Closed`,
-    /// or on the JS thread. Nulled by `close()`.
-    vm: core::cell::UnsafeCell<*mut VirtualMachine>,
     #[cfg(debug_assertions)]
     js_thread: std::thread::ThreadId,
 }
@@ -100,7 +113,7 @@ struct Access<'a>(&'a Inner);
 impl Drop for Access<'_> {
     fn drop(&mut self) {
         if self.0.active.fetch_sub(1, Ordering::SeqCst) == 1
-            && self.0.state.load(Ordering::SeqCst) == State::Closed as u8
+            && self.0.hot.state.load(Ordering::SeqCst) == State::Closed as u8
         {
             self.0.drained.0.lock();
             self.0.drained.1.notify_all();
@@ -122,11 +135,13 @@ impl VmHandle {
     /// JS thread, at VM creation.
     pub(crate) fn new(vm: *mut VirtualMachine) -> Self {
         VmHandle(Arc::new(Inner {
-            state: AtomicU8::new(State::Open as u8),
+            hot: ReadMostly {
+                state: AtomicU8::new(State::Open as u8),
+                vm: core::cell::UnsafeCell::new(vm),
+            },
             active: AtomicU32::new(0),
             drained: (Mutex::new(), Condvar::new()),
             embedded: AtomicU32::new(0),
-            vm: core::cell::UnsafeCell::new(vm),
             #[cfg(debug_assertions)]
             js_thread: std::thread::current().id(),
         }))
@@ -136,7 +151,7 @@ impl VmHandle {
     fn enter(&self) -> Option<Access<'_>> {
         self.0.active.fetch_add(1, Ordering::SeqCst);
         let a = Access(&self.0);
-        if self.0.state.load(Ordering::SeqCst) == State::Closed as u8 {
+        if self.0.hot.state.load(Ordering::SeqCst) == State::Closed as u8 {
             drop(a);
             return None;
         }
@@ -150,7 +165,7 @@ impl VmHandle {
     #[inline]
     unsafe fn vm(&self) -> *mut VirtualMachine {
         // SAFETY: per fn contract.
-        unsafe { *self.0.vm.get() }
+        unsafe { *self.0.hot.vm.get() }
     }
 
     #[inline]
@@ -250,7 +265,7 @@ impl VmHandle {
     /// only consumer is script.
     pub fn borrow_if_running(&self) -> Option<Borrow> {
         let b = self.borrow()?;
-        (self.0.state.load(Ordering::SeqCst) == State::Open as u8).then_some(b)
+        (self.0.hot.state.load(Ordering::SeqCst) == State::Open as u8).then_some(b)
     }
 
     // ── embedded work ─────────────────────────────────────────────────────
@@ -269,7 +284,7 @@ impl VmHandle {
     /// [`accepting_work`](Self::accepting_work) first and fails instead.
     pub fn embedded_work_scheduled(&self) {
         debug_assert!(
-            self.0.state.load(Ordering::SeqCst) != State::Closed as u8,
+            self.0.hot.state.load(Ordering::SeqCst) != State::Closed as u8,
             "embedded work started on a closed VM handle"
         );
         self.0.embedded.fetch_add(1, Ordering::SeqCst);
@@ -278,14 +293,14 @@ impl VmHandle {
     /// Whether new off-thread work may still be started for this VM (it has
     /// not begun stopping). JS thread.
     pub fn accepting_work(&self) -> bool {
-        self.0.state.load(Ordering::SeqCst) == State::Open as u8
+        self.0.hot.state.load(Ordering::SeqCst) == State::Open as u8
     }
 
     /// Pool thread, after its last touch of the embedded storage (i.e. after
     /// posting the completion).
     pub fn embedded_work_finished(&self) {
         if self.0.embedded.fetch_sub(1, Ordering::SeqCst) == 1
-            && self.0.state.load(Ordering::SeqCst) != State::Open as u8
+            && self.0.hot.state.load(Ordering::SeqCst) != State::Open as u8
         {
             self.0.drained.0.lock();
             self.0.drained.1.notify_all();
@@ -301,7 +316,7 @@ impl VmHandle {
     /// holds no embedded work of this VM.
     pub(crate) fn wait_for_embedded_work(&self) {
         self.assert_js_thread();
-        debug_assert!(self.0.state.load(Ordering::SeqCst) != State::Open as u8);
+        debug_assert!(self.0.hot.state.load(Ordering::SeqCst) != State::Open as u8);
         if self.0.embedded.load(Ordering::SeqCst) != 0 {
             self.0.drained.0.lock();
             while self.0.embedded.load(Ordering::SeqCst) != 0 {
@@ -327,7 +342,7 @@ impl VmHandle {
     /// requesting thread; this thread's own exit path calls it via
     /// `VirtualMachine::forbid_script`.
     pub fn stop(&self) {
-        let _ = self.0.state.compare_exchange(
+        let _ = self.0.hot.state.compare_exchange(
             State::Open as u8,
             State::Stopping as u8,
             Ordering::SeqCst,
@@ -338,7 +353,7 @@ impl VmHandle {
     /// May native code call into user JS / settle its promises right now?
     /// (Node's `can_call_into_js()`.) Any thread; meaningful on the JS thread.
     pub fn script_allowed(&self) -> bool {
-        self.0.state.load(Ordering::Acquire) == State::Open as u8
+        self.0.hot.state.load(Ordering::Acquire) == State::Open as u8
     }
 
     /// Teardown, JS thread, after children are joined and before queued work
@@ -348,7 +363,7 @@ impl VmHandle {
     /// release.
     pub(crate) fn close(&self) {
         self.assert_js_thread();
-        self.0.state.store(State::Closed as u8, Ordering::SeqCst);
+        self.0.hot.state.store(State::Closed as u8, Ordering::SeqCst);
         if self.0.active.load(Ordering::SeqCst) != 0 {
             self.0.drained.0.lock();
             while self.0.active.load(Ordering::SeqCst) != 0 {
@@ -357,7 +372,7 @@ impl VmHandle {
             self.0.drained.0.unlock();
         }
         // SAFETY: JS thread; no accessor can be inside any more.
-        unsafe { *self.0.vm.get() = core::ptr::null_mut() };
+        unsafe { *self.0.hot.vm.get() = core::ptr::null_mut() };
     }
 }
 
@@ -419,6 +434,17 @@ pub extern "C" fn Bun__VmHandle__refKeepAlive(handle: &VmHandle, delta: core::ff
 pub extern "C" fn Bun__VmHandle__scriptAllowed(handle: &VmHandle) -> bool {
     handle.script_allowed()
 }
+
+/// The address of this handle's state byte, for C++ to test
+/// `*addr == BUN_VM_HANDLE_STATE_OPEN` inline on its native→JS entries instead
+/// of calling out per callback. Valid as long as C++ holds a box on the handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VmHandle__stateAddress(handle: &VmHandle) -> *const AtomicU8 {
+    &handle.0.hot.state
+}
+
+// C++ (BunClientData.h) hard-codes this value.
+const _: () = assert!(State::Open as u8 == 0);
 
 // ── Producers that serve either a JS VM or a MiniEventLoop ────────────────
 //

@@ -8,6 +8,15 @@ extern "C" void Bun__VmHandle__release(BunVmHandle*);
 extern "C" void Bun__VmHandle__refKeepAlive(BunVmHandle*, int delta);
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.
 extern "C" bool Bun__VmHandle__scriptAllowed(const BunVmHandle*);
+// The handle's state byte, so hot paths test it inline (BUN_VM_HANDLE_STATE_OPEN == bun_jsc::vm_handle::State::Open).
+extern "C" const unsigned char* Bun__VmHandle__stateAddress(const BunVmHandle*);
+#define BUN_VM_HANDLE_STATE_OPEN 0
+#include <atomic>
+inline bool Bun__VmHandle__scriptAllowedInline(const unsigned char* state)
+{
+    // Rust's AtomicU8 has the layout of u8; a relaxed load pairs with its stores.
+    return reinterpret_cast<const std::atomic<unsigned char>*>(state)->load(std::memory_order_relaxed) == BUN_VM_HANDLE_STATE_OPEN;
+}
 // JS thread only: adjust the keep-alive of the VM this thread runs.
 extern "C" void Bun__eventLoop__refKeepAlive(void* bunVM, int delta);
 
@@ -139,6 +148,9 @@ public:
     // to post work / ref the loop (never bunVM). Created in create(), released
     // in the destructor; valid however long C++ holds it.
     ::BunVmHandle* vmHandle { nullptr };
+    // vmHandle's state byte (Bun__VmHandle__stateAddress): the per-callback "may run script" test is one load.
+    const unsigned char* vmHandleState { nullptr };
+    ALWAYS_INLINE bool scriptAllowed() const { return Bun__VmHandle__scriptAllowedInline(vmHandleState); }
     Bun::JSCTaskScheduler deferredWorkTimer;
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles

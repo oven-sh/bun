@@ -293,9 +293,9 @@ impl Source {
 
     /// `owner` (a reader or writer) now drives this source: point the uv
     /// handle's `data` at it and record it as the one a thread teardown closes
-    /// the handle through (`uv::open_handles`). Files carry requests, not
-    /// handles, so only `data` is set for them here; a *reader* over a file
-    /// lists itself (`WindowsBufferedReader::list_file_read`).
+    /// the source through (`uv::open_handles`). A file is listed only by a
+    /// reader (`WindowsBufferedReader::set_source`); for anything else the
+    /// file arm just sets `data`.
     pub fn set_owner(
         &mut self,
         owner: *mut c_void,
@@ -311,7 +311,21 @@ impl Source {
             Source::Tty(tty) => {
                 uv::open_handles::set_owner(tty.as_ptr().cast(), owner, Some(close_via_owner))
             }
-            Source::SyncFile(_) | Source::File(_) => {}
+            Source::SyncFile(file) | Source::File(file) => uv::open_handles::set_file_owner(
+                core::ptr::from_mut::<File>(file).cast(),
+                owner,
+                close_via_owner,
+            ),
+        }
+    }
+
+    /// The boxed `File`'s address — the key a reader lists it under.
+    pub fn file_key(&mut self) -> Option<*mut c_void> {
+        match self {
+            Source::SyncFile(file) | Source::File(file) => {
+                Some(core::ptr::from_mut::<File>(file).cast())
+            }
+            _ => None,
         }
     }
 

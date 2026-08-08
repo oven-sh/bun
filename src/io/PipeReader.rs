@@ -1444,11 +1444,9 @@ impl WindowsBufferedReader {
         self.flags = other.flags;
         self._buffer = mem::take(other.buffer());
         self._offset = other._offset;
-        // Ownership of the handle moves with the source; `set_parent` below
-        // re-records this reader as the one a VM teardown stops it through.
-        if matches!(other.source, Some(Source::File(_) | Source::SyncFile(_))) {
-            uv::open_handles::remove_file_reader(core::ptr::from_mut(other).cast());
-        }
+        // Ownership of the handle (or listed file) moves with the source;
+        // `set_parent` below re-records this reader as the one a VM teardown
+        // stops it through.
         self.source = other.source.take();
 
         other.flags.insert(WindowsFlags::IS_DONE);
@@ -1482,9 +1480,6 @@ impl WindowsBufferedReader {
             let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(source) = self.source.as_mut() {
                 source.set_owner(self_ptr, Self::stop_for_vm_teardown);
-            }
-            if matches!(self.source, Some(Source::File(_) | Source::SyncFile(_))) {
-                self.list_file_read();
             }
         }
     }
@@ -1658,24 +1653,16 @@ impl WindowsBufferedReader {
         debug_assert!(self.source.is_none());
         self.source = Some(source);
         let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
-        match self.source.as_mut() {
-            Some(source @ (Source::Pipe(_) | Source::Tty(_))) => {
-                source.set_owner(self_ptr, Self::stop_for_vm_teardown)
+        if let Some(source) = self.source.as_mut() {
+            // A read over a file is a uv request with no handle to close: list
+            // the boxed File so a thread teardown closes this reader (`close()`
+            // below) before draining the loop. Unlisted where the box leaves
+            // this reader (`close_impl`, `Drop`).
+            if let Some(file) = source.file_key() {
+                uv::open_handles::add_file(file);
             }
-            Some(Source::File(_) | Source::SyncFile(_)) => self.list_file_read(),
-            None => {}
+            source.set_owner(self_ptr, Self::stop_for_vm_teardown);
         }
-    }
-
-    /// A read over a file is a uv request with no handle to close: list this
-    /// reader by address so a thread teardown closes it (`close()` below) before
-    /// draining the loop. Unlisted wherever the source leaves this reader
-    /// (`close_impl`, `from`, `Drop`).
-    fn list_file_read(&mut self) {
-        uv::open_handles::add_file_reader(
-            core::ptr::from_mut(self).cast(),
-            Self::stop_for_vm_teardown,
-        );
     }
 
     /// `uv::open_handles` closes this reader's stream through here at teardown.
@@ -2073,8 +2060,8 @@ impl WindowsBufferedReader {
     pub fn close_impl<const CALL_DONE: bool>(&mut self) {
         if let Some(source) = self.source.take() {
             match source {
-                Source::SyncFile(file) | Source::File(file) => {
-                    uv::open_handles::remove_file_reader(core::ptr::from_mut(self).cast());
+                Source::SyncFile(mut file) | Source::File(mut file) => {
+                    uv::open_handles::remove_file(core::ptr::from_mut(&mut *file).cast());
                     // Hand the Box off to libuv: detach() leaves either an
                     // in-flight uv_fs_read (on_file_read) or a scheduled
                     // uv_fs_close (on_close_complete) pending; the callback
@@ -2294,8 +2281,9 @@ impl Drop for WindowsBufferedReader {
                 self.source = Some(source);
                 self.close_impl::<false>();
             } else {
-                if matches!(source, Source::File(_) | Source::SyncFile(_)) {
-                    uv::open_handles::remove_file_reader(core::ptr::from_mut(self).cast());
+                let mut source = source;
+                if let Some(file) = source.file_key() {
+                    uv::open_handles::remove_file(file);
                 }
                 core::mem::forget(source);
             }

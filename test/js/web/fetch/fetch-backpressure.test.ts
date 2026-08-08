@@ -487,3 +487,116 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
     }
   });
 });
+
+// Dropping a Response without reading or cancelling its body used to resume the
+// paused transport in the Response's Weak finalizer and drain the whole body to
+// return the socket to the keep-alive pool. That costs the full transfer for
+// the "just read the headers" pattern. The finalizer now aborts the request so
+// the server sees a close and stops at the kernel send window, matching undici.
+describe.each(["content-length", "chunked"] as const)("fetch() abandoned Response body (%s)", encoding => {
+  test.concurrent(
+    "GC-collecting the Response closes the connection instead of draining the body",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+        const net = require("node:net");
+        const CHUNK = Buffer.alloc(65536, 0x61);
+        // Body must exceed kernel loopback send+recv autotuning (approaching
+        // 256 MiB on some CI hosts) so the server's push() blocks before
+        // reaching TOTAL; the server only actually writes until it blocks.
+        const TOTAL = 1024 * 1024 * 1024;
+        const chunked = ${JSON.stringify(encoding === "chunked")};
+        const conns = [];
+        const { promise: settled, resolve: settle } = Promise.withResolvers();
+        const server = net.createServer(socket => {
+          const c = { written: 0 };
+          conns.push(c);
+          const first = conns.length === 1;
+          socket.on("error", () => {});
+          if (first) socket.on("close", () => settle("closed"));
+          socket.once("data", () => {
+            const head = chunked
+              ? "HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n"
+              : "HTTP/1.1 200 OK\\r\\nContent-Length: " + TOTAL + "\\r\\n\\r\\n";
+            socket.write(head);
+            let sent = 0;
+            const frame = chunked
+              ? Buffer.concat([Buffer.from(CHUNK.length.toString(16) + "\\r\\n"), CHUNK, Buffer.from("\\r\\n")])
+              : CHUNK;
+            const push = () => {
+              while (sent < TOTAL && !socket.destroyed) {
+                sent += CHUNK.length;
+                c.written += CHUNK.length;
+                if (!socket.write(frame)) return void socket.once("drain", push);
+              }
+              if (chunked && !socket.destroyed) socket.write("0\\r\\n\\r\\n");
+              if (first) settle("drained");
+            };
+            push();
+          });
+        });
+        await new Promise(r => server.listen(0, "127.0.0.1", r));
+        const base = "http://127.0.0.1:" + server.address().port;
+
+        let res = await fetch(base + "/big");
+        if (res.status !== 200) throw new Error("status " + res.status);
+        const ref = new WeakRef(res);
+        res = null;
+
+        // Collect the unreachable Response. Weak finalizers run in
+        // WeakBlock::sweep, which needs an allocation between GCs to sweep the
+        // block the dead Response sits in; the number of cycles needed varies
+        // by platform.
+        let outcome;
+        for (let i = 0; i < 200; i++) {
+          new Error("alloc");
+          Bun.gc(true);
+          new Error("alloc");
+          Bun.gc(true);
+          await Bun.sleep(1);
+          // Either the server sees the first socket close (fix) or it finishes
+          // pushing the whole body into a still-open socket (the drain path).
+          outcome = await Promise.race([settled, Promise.resolve()]);
+          if (outcome) break;
+        }
+        outcome ??= ref.deref() ? "not-collected" : "settle-timeout";
+        const written = conns[0].written;
+
+        let second = "skipped";
+        if (outcome === "closed") {
+          // The first socket was closed, not pooled; a follow-up request must
+          // open a fresh connection and still complete.
+          const r2 = await fetch(base + "/big");
+          await r2.body.cancel();
+          second = r2.status === 200 ? "ok" : String(r2.status);
+        }
+
+        process.stdout.write(JSON.stringify({ outcome, written, total: TOTAL, conns: conns.length, second }));
+        process.exit(0);
+      `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (!stdout) throw new Error(`client exited ${exitCode}: ${stderr}`);
+      const { outcome, written, total, conns, second } = JSON.parse(stdout);
+      // Before the fix the finalizer resumed the transport and the server wrote
+      // the full body before pooling the socket (outcome "drained", conns 1).
+      // After, the server sees the close at the kernel send+recv window and the
+      // second fetch opens a fresh connection.
+      expect({ outcome, drained: written >= total, conns, second }).toEqual({
+        outcome: "closed",
+        drained: false,
+        conns: 2,
+        second: "ok",
+      });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+});

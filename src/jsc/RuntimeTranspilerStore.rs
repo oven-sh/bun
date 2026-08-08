@@ -881,7 +881,6 @@ impl TranspilerJob {
                             input_file_fd,
                             path.text,
                             hash,
-                            loader,
                             Fd::INVALID,
                             package_json,
                         );
@@ -909,7 +908,6 @@ impl TranspilerJob {
                         input_file_fd,
                         path.text,
                         hash,
-                        loader,
                         Fd::INVALID,
                         package_json,
                     );

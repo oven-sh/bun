@@ -28,8 +28,6 @@ pub enum Error {
     TooManySections,
     #[error("SectionExists")]
     SectionExists,
-    #[error("InputIsSigned")]
-    InputIsSigned,
     #[error("InvalidSecurityDirectory")]
     InvalidSecurityDirectory,
     #[error("SecurityDirInsideImage")]

@@ -1624,20 +1624,6 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
     BunString::dead()
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString {
-    // SAFETY: `pt` is the non-null pointer previously attached via
-    // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
-    let pt = unsafe { &*pt };
-    let utf8 = key.to_utf8();
-    if let Some(value) = pt.source_maps.get(utf8.slice()) {
-        return pt.bundled_outputs[value.get() as usize]
-            .value
-            .to_bun_string_ref();
-    }
-    BunString::dead()
-}
-
 /// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)
 #[repr(transparent)]
 #[derive(Clone, Copy)]

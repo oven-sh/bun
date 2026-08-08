@@ -1550,7 +1550,6 @@ __node_module__.exports = {
   kWordRight,
   kWriteToOutput,
   kMultilinePrompt,
-  kRestorePreviousState,
   kAddNewLineOnTTY,
   kLastCommandErrored,
 };

@@ -291,7 +291,6 @@ pub mod bun_object {
         BunObject_callback_jest => Jest::call,
         BunObject_callback_listen => super::static_adapters::listener_listen,
         BunObject_callback_mmap => super::mmap_file,
-        BunObject_callback_nanoseconds => super::nanoseconds,
         BunObject_callback_openInEditor => super::open_in_editor,
         BunObject_callback_registerMacro => super::register_macro,
         BunObject_callback_resolve => super::resolve,
@@ -1467,18 +1466,6 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     }
 
     Ok(JSValue::js_number_from_int32(-1))
-}
-
-#[bun_jsc::host_fn]
-fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let ns = global_this
-        .bun_vm()
-        .as_mut()
-        .origin_timer
-        .elapsed()
-        .as_nanos() as u64;
-    Ok(JSValue::js_number_from_uint64(ns))
 }
 
 #[bun_jsc::host_fn]

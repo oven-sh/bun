@@ -370,11 +370,7 @@ pub enum Error {
     DiffTooLarge,
     #[error("InputsTooLarge")]
     InputsTooLarge,
-    #[error("OutOfMemory")]
-    OutOfMemory,
 }
-
-bun_core::oom_from_alloc!(Error);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DiffKind {

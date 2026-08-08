@@ -1421,9 +1421,7 @@ pub(crate) fn print_request(
         let request_ = picohttp::Request {
             method: request.method,
             path: url,
-            minor_version: request.minor_version,
             headers: request.headers,
-            bytes_read: request.bytes_read,
         };
         bun_core::pretty_errorln!("{}", request_.curl(ignore_insecure, body));
     }
@@ -2551,11 +2549,9 @@ impl<'a> HTTPClient<'a> {
             method: self.method.as_str().as_bytes(),
             // SAFETY: `url.pathname` borrows `self.url`, which outlives the returned `Request`.
             path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
-            minor_version: 1,
             // SAFETY: `request_headers_buf` is the per-HTTP-thread
             // `SHARED_REQUEST_HEADERS_BUF` static, outliving the returned `Request`.
             headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
-            bytes_read: 0,
         }
     }
 

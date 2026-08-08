@@ -917,14 +917,6 @@ impl BufferReadStream {
     }
 
     pub(crate) fn open_read(&mut self) -> lib::Result {
-        // lib.archive_read_set_open_callback(this.archive, this.);
-        // _ = lib.archive_read_set_read_callback(this.archive, archive_read_callback);
-        // _ = lib.archive_read_set_seek_callback(this.archive, archive_seek_callback);
-        // _ = lib.archive_read_set_skip_callback(this.archive, archive_skip_callback);
-        // _ = lib.archive_read_set_close_callback(this.archive, archive_close_callback);
-        // // lib.archive_read_set_switch_callback(this.archive, this.archive_s);
-        // _ = lib.archive_read_set_callback_data(this.archive, this);
-
         let archive = self.archive();
 
         let _ = archive.read_support_format_tar();
@@ -937,47 +929,12 @@ impl BufferReadStream {
         // the first concatenated archive would be read.
         let _ = archive.read_set_options(c"read_concatenated_archives");
 
-        // _ = lib.archive_read_support_filter_none(this.archive);
-
         let rc = archive.read_open_memory(self.buf());
 
         self.reading = (rc as c_int) > -1;
 
-        // _ = lib.archive_read_support_compression_all(this.archive);
-
         rc
     }
-
-    // pub fn archive_write_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    //     buffer: *const anyopaque,
-    //     len: usize,
-    // ) callconv(.c) lib.la_ssize_t {
-    //     var this = fromCtx(ctx_);
-    // }
-
-    // pub fn archive_close_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx_);
-    // }
-    // pub fn archive_free_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx_);
-    // }
-
-    // pub fn archive_switch_callback(
-    //     archive: *Archive,
-    //     ctx1: *anyopaque,
-    //     ctx2: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx1);
-    //     var that = fromCtx(ctx2);
-    // }
 }
 
 impl Drop for BufferReadStream {

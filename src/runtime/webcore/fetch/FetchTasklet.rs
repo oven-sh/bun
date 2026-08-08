@@ -389,6 +389,14 @@ impl FetchTasklet {
     // stay `*mut` because the call may drop the last ref and free the allocation.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn deref_from_thread(this: *mut FetchTasklet) {
+        // Test-only fault injection (exiting.test.ts): hold the HTTP thread so
+        // the JS thread wins the final-deref race and the handoff below lands
+        // in the exit window.
+        if bun_core::env_var::feature_flag::BUN_INTERNAL_FETCH_DELAY_DEREF_FROM_THREAD.get()
+            == Some(true)
+        {
+            std::thread::sleep(core::time::Duration::from_millis(200));
+        }
         // SAFETY: caller contract.
         if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
             return;
@@ -562,6 +570,10 @@ impl FetchTasklet {
     /// `has_schedule_callback` is written exclusively by the HTTP-thread
     /// `callback` and the JS-thread `on_progress_update`; the JS thread is
     /// parked in `wait_timeout_while` here, so the load is race-free.
+    ///
+    /// Drain-hop refs (`on_write_request_data_drain`'s `+1`) are outside this
+    /// ledger: each is owned by its queued `FetchTaskletResumeRequestStream`
+    /// entry and released by `release_queued_tasks_for_shutdown`.
     ///
     /// SAFETY: `this` is the live `*mut FetchTasklet` registered as
     /// `result_callback.ctx` in `get()`; HTTP-thread-only at this point.

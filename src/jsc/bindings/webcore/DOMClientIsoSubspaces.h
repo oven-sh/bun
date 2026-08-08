@@ -100,6 +100,8 @@ public:
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExposedToWorkerAndWindow;
 
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboard;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboardItem;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFetchHeaders;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFetchHeadersIterator;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForByteLengthQueuingStrategy;
@@ -151,6 +153,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoKey;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSubtleCrypto;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBroadcastChannel;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboardEvent;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCustomEvent;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageChannel;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageEvent;

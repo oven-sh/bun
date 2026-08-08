@@ -30,6 +30,8 @@
 
 #include "Event.h"
 #include "JSEvent.h"
+#include "ClipboardEvent.h"
+#include "JSClipboardEvent.h"
 #include "CloseEvent.h"
 #include "JSCloseEvent.h"
 #include "ErrorEvent.h"

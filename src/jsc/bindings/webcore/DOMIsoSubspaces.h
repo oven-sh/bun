@@ -82,6 +82,8 @@ public:
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 
+    std::unique_ptr<IsoSubspace> m_subspaceForClipboard;
+    std::unique_ptr<IsoSubspace> m_subspaceForClipboardItem;
     std::unique_ptr<IsoSubspace> m_subspaceForFetchHeaders;
     std::unique_ptr<IsoSubspace> m_subspaceForFetchHeadersIterator;
     std::unique_ptr<IsoSubspace> m_subspaceForByteLengthQueuingStrategy;
@@ -134,6 +136,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForSubtleCrypto;
 
     std::unique_ptr<IsoSubspace> m_subspaceForBroadcastChannel;
+    std::unique_ptr<IsoSubspace> m_subspaceForClipboardEvent;
     std::unique_ptr<IsoSubspace> m_subspaceForCustomEvent;
 
     std::unique_ptr<IsoSubspace> m_subspaceForMessageChannel;

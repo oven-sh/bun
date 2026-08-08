@@ -39,6 +39,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     case EventInterfaceType: {
         return createWrapper<Event>(globalObject, WTF::move(impl));
     }
+    case ClipboardEventInterfaceType: {
+        return createWrapper<ClipboardEvent>(globalObject, WTF::move(impl));
+    }
     case CloseEventInterfaceType: {
         return createWrapper<CloseEvent>(globalObject, WTF::move(impl));
     }

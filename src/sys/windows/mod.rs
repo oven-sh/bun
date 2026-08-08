@@ -92,6 +92,71 @@ pub mod kernel32 {
     }
 }
 
+/// Win32 clipboard (user32) plus the movable global memory it exchanges
+/// (kernel32). https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard
+pub mod clipboard {
+    use super::{BOOL, DWORD, HANDLE, LPVOID, UINT};
+
+    pub const CF_UNICODETEXT: UINT = 13;
+    pub const GMEM_MOVEABLE: UINT = 0x0002;
+    pub const GMEM_ZEROINIT: UINT = 0x0040;
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        // safe: by-value args; failure is FALSE/NULL + GetLastError, no UB.
+        pub safe fn OpenClipboard(hWndNewOwner: HANDLE) -> BOOL;
+        pub safe fn CloseClipboard() -> BOOL;
+        pub safe fn EmptyClipboard() -> BOOL;
+        pub safe fn GetClipboardData(uFormat: UINT) -> HANDLE;
+        pub safe fn IsClipboardFormatAvailable(uFormat: UINT) -> BOOL;
+        pub safe fn GetClipboardSequenceNumber() -> DWORD;
+        /// On success the system owns `hMem`.
+        pub fn SetClipboardData(uFormat: UINT, hMem: HANDLE) -> HANDLE;
+        pub fn RegisterClipboardFormatA(lpszFormat: *const core::ffi::c_char) -> UINT;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        // safe: by-value args; failure is NULL, no UB.
+        pub safe fn GlobalAlloc(uFlags: UINT, dwBytes: usize) -> HANDLE;
+        pub fn GlobalFree(hMem: HANDLE) -> HANDLE;
+        pub fn GlobalLock(hMem: HANDLE) -> LPVOID;
+        pub fn GlobalUnlock(hMem: HANDLE) -> BOOL;
+        pub fn GlobalSize(hMem: HANDLE) -> usize;
+        // safe: by-value duration; cannot fault.
+        pub safe fn Sleep(dwMilliseconds: DWORD);
+    }
+
+    /// 0 on failure; registering the same name twice returns the same id.
+    pub fn register_format(name: &core::ffi::CStr) -> UINT {
+        // SAFETY: `&CStr` guarantees a readable NUL-terminated name.
+        unsafe { RegisterClipboardFormatA(name.as_ptr()) }
+    }
+
+    /// Copies `bytes` into a fresh `GMEM_MOVEABLE` HGLOBAL, allocating at
+    /// least one zeroed byte (a 0-byte HGLOBAL is discarded and cannot be
+    /// locked). Null on allocation failure; otherwise the caller owns the
+    /// unlocked handle.
+    pub fn global_from_bytes(bytes: &[u8]) -> HANDLE {
+        let h = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes.len().max(1));
+        if h.is_null() {
+            return core::ptr::null_mut();
+        }
+        // SAFETY: `h` is a fresh unlocked HGLOBAL of >= bytes.len() bytes;
+        // the copy stays in bounds, and a failed lock frees it.
+        unsafe {
+            let dst = GlobalLock(h);
+            if dst.is_null() {
+                GlobalFree(h);
+                return core::ptr::null_mut();
+            }
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.cast::<u8>(), bytes.len());
+            GlobalUnlock(h);
+        }
+        h
+    }
+}
+
 pub use bun_windows_sys::BOOL;
 pub use bun_windows_sys::BOOLEAN;
 pub use bun_windows_sys::CHAR;

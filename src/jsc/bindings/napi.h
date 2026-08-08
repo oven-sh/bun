@@ -30,8 +30,6 @@ extern "C" void napi_internal_threadsafe_function_env_teardown(void* tsfn);
 extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
-static bool equal(napi_async_cleanup_hook_handle, napi_async_cleanup_hook_handle);
-
 namespace Napi {
 
 static constexpr int DEFAULT_NAPI_VERSION = 10;
@@ -80,15 +78,7 @@ struct AsyncCleanupHook : CleanupHook {
 
     bool operator==(const AsyncCleanupHook& other) const
     {
-        if (this == &other || (function == other.function && data == other.data)) {
-            if (handle && other.handle) {
-                return equal(handle, other.handle);
-            }
-
-            return !handle && !other.handle;
-        }
-
-        return false;
+        return this == &other || (function == other.function && data == other.data && handle == other.handle);
     }
 };
 
@@ -129,26 +119,17 @@ using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope);
 }
 
+// Owned by the addon: allocated by napi_add_async_cleanup_hook and freed only
+// by napi_remove_async_cleanup_hook, which the addon may call after the hook
+// itself has already run (that call is how it signals completion).
 struct napi_async_cleanup_hook_handle__ {
     napi_env env;
-    Napi::HookSet::iterator iter;
 
-    napi_async_cleanup_hook_handle__(napi_env env, decltype(iter) iter)
+    explicit napi_async_cleanup_hook_handle__(napi_env env)
         : env(env)
-        , iter(iter)
     {
-    }
-
-    bool operator==(const napi_async_cleanup_hook_handle__& other) const
-    {
-        return this == &other || (env == other.env && iter == other.iter);
     }
 };
-
-static bool equal(napi_async_cleanup_hook_handle one, napi_async_cleanup_hook_handle two)
-{
-    return one == two || *one == *two;
-}
 
 #define NAPI_ABORT(message)                                    \
     do {                                                       \
@@ -382,11 +363,10 @@ public:
             }
         }
 
-        auto handle = std::make_unique<napi_async_cleanup_hook_handle__>(this, m_cleanupHooks.end());
+        auto handle = std::make_unique<napi_async_cleanup_hook_handle__>(this);
 
-        auto [iter, inserted] = m_cleanupHooks.emplace(Napi::AsyncCleanupHook(function, handle.get(), data, ++m_cleanupHookCounter));
+        bool inserted = m_cleanupHooks.emplace(Napi::AsyncCleanupHook(function, handle.get(), data, ++m_cleanupHookCounter)).second;
         NAPI_RELEASE_ASSERT(inserted, "Attempted to add a duplicate async NAPI environment cleanup hook");
-        handle->iter = iter;
         return handle.release();
     }
 
@@ -396,19 +376,21 @@ public:
             return false; // Invalid handle
         }
 
-        for (const auto& hook : m_cleanupHooks) {
-            if (auto* async = std::get_if<Napi::AsyncCleanupHook>(&hook)) {
+        for (auto iter = m_cleanupHooks.begin(), end = m_cleanupHooks.end(); iter != end; ++iter) {
+            if (auto* async = std::get_if<Napi::AsyncCleanupHook>(&*iter)) {
                 if (async->handle == handle) {
-                    m_cleanupHooks.erase(handle->iter);
-                    delete handle;
-                    return true;
+                    m_cleanupHooks.erase(iter);
+                    break;
                 }
             }
         }
 
-        // Node.js silently ignores removal of non-existent handles
-        // See: node/src/node_api.cc:849-855
-        return false;
+        // The handle is freed here unconditionally, matching Node.js
+        // (node/src/node_api.cc napi_remove_async_cleanup_hook): when drain()
+        // has already run the hook (and erased it from the set), the addon
+        // still owns the handle and this call is its completion signal.
+        delete handle;
+        return true;
     }
 
     bool inGC() const
@@ -656,8 +638,12 @@ private:
             } else {
                 auto& async = std::get<Napi::AsyncCleanupHook>(hook);
                 ASSERT(async.function != nullptr);
+                // The addon keeps ownership of the handle: it frees it via
+                // napi_remove_async_cleanup_hook, possibly after this hook
+                // returns (e.g. from a threadsafe function finalizer that runs
+                // later during cleanup()). Deleting it here is a use-after-free
+                // in that case (#37201).
                 async.function(async.handle, async.data);
-                delete async.handle;
             }
             // Same invariant as the finalizer loop in cleanup(): a hook
             // that leaked an exception must not poison the next hook.

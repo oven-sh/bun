@@ -7,7 +7,7 @@ description: "Run test files across CPU cores with --parallel, isolate files fro
 
 | Flag                               | Unit of parallelism             | What it does                                                                                                         |
 | ---------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `--parallel[=N]`                   | test **files**, in processes    | Runs files across `N` worker processes (default: number of CPU cores). Implies `--isolate`; `--no-isolate` opts out. |
+| `--parallel[=N\|max:N]`            | test **files**, in processes    | Runs files across `N` worker processes (default: number of CPU cores). Implies `--isolate`; `--no-isolate` opts out. |
 | `--concurrent` / `test.concurrent` | **tests** within one file       | Lets `async` tests in the same file overlap while one is awaiting.                                                   |
 | `--shard=i/n`                      | test files, across **machines** | Runs the `i`-th of `n` deterministic slices of the suite. Combine with `--timings` to balance by duration.           |
 
@@ -16,9 +16,12 @@ They compose: a CI job can run `bun test --shard=2/4 --parallel`, and files in t
 ## `--parallel`
 
 ```sh terminal icon="terminal"
-bun test --parallel        # one worker per CPU core
-bun test --parallel=4      # exactly 4 workers
+bun test --parallel         # one worker per CPU core
+bun test --parallel=4       # exactly 4 workers
+bun test --parallel=max:8   # one per core, but never more than 8
 ```
+
+`max:N` is for running the same command on machines of different sizes. A 32-core workstation that also has a browser and an editor open shouldn't hand all 32 cores to the test runner, but a 4-core CI box dedicated to the job should use all 4 — `--parallel=max:8` gives you 8 on the first and 4 on the second. A fixed `--parallel=8` would oversubscribe the CI box.
 
 The main `bun test` process becomes a coordinator. It discovers test files as usual, then starts worker processes and hands each one file at a time. Results stream back as each test finishes, so the output looks the same as a serial run — each file's results are printed together under its filename, and `console.log` output from a test is never interleaved with another file's.
 

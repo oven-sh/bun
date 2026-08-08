@@ -17,6 +17,7 @@ const {
   utimesSync,
 } = require("node:fs");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+const { isUtf8 } = require("node:buffer");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
@@ -146,8 +147,41 @@ function areIdentical(srcStat, destStat) {
   return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev;
 }
 
+let sepBuf;
+// Stay string while the path is UTF-8-clean (for options.filter); switch to Buffer once any name is not.
+function joinEntry(dir, name) {
+  if (typeof dir === "string") {
+    if (isUtf8(name)) return join(dir, name.toString());
+    dir = Buffer.from(dir);
+  }
+  return Buffer.concat([dir, (sepBuf ??= Buffer.from(sep)), name]);
+}
+
+// latin1 is the 1:1 byte<->code-unit bridge for feeding Buffer paths to node:path.
+function pathAsString(p) {
+  return typeof p === "string" ? p : Buffer.prototype.toString.$call(p, "latin1");
+}
+
+// Produce an absolute Buffer target so the copied link resolves from /, not from dest's directory.
+function resolveLinkTarget(src, target) {
+  if (typeof src === "string" && isUtf8(target)) {
+    return Buffer.from(resolve(dirname(src), target.toString()));
+  }
+  sepBuf ??= Buffer.from(sep);
+  let dir;
+  if (typeof src === "string") {
+    dir = Buffer.from(resolve(dirname(src)));
+  } else {
+    const d = dirname(pathAsString(src));
+    dir = isAbsolute(d)
+      ? Buffer.from(d, "latin1")
+      : Buffer.concat([Buffer.from(process.cwd()), sepBuf, Buffer.from(d, "latin1")]);
+  }
+  return Buffer.concat([dir, sepBuf, target]);
+}
+
 const normalizePathToArray = path =>
-  ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(path), sep), Boolean);
+  ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(pathAsString(path)), sep), Boolean);
 
 // Return true if dest is a subdir of src, otherwise false.
 // It only checks the path strings.
@@ -442,26 +476,25 @@ function mkDirAndCopy(srcMode, src, dest, opts) {
 }
 
 function copyDir(src, dest, opts) {
-  for (const dirent of readdirSync(src, { withFileTypes: true })) {
-    const { name } = dirent;
-    const srcItem = join(src, name);
-    const destItem = join(dest, name);
+  for (const name of readdirSync(src, { encoding: "buffer" })) {
+    const srcItem = joinEntry(src, name);
+    const destItem = joinEntry(dest, name);
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);
     if (!skipped) getStats(destStat, srcItem, destItem, opts);
   }
 }
 
 function onLink(destStat, src, dest, opts) {
-  let resolvedSrc = readlinkSync(src);
-  if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
-    resolvedSrc = resolve(dirname(src), resolvedSrc);
+  let resolvedSrc = readlinkSync(src, { encoding: "buffer" });
+  if (!opts.verbatimSymlinks && !isAbsolute(pathAsString(resolvedSrc))) {
+    resolvedSrc = resolveLinkTarget(src, resolvedSrc);
   }
   if (!destStat) {
     return symlinkSync(resolvedSrc, dest);
   }
   let resolvedDest;
   try {
-    resolvedDest = readlinkSync(dest);
+    resolvedDest = readlinkSync(dest, { encoding: "buffer" });
   } catch (err: any) {
     // Dest exists and is a regular file or directory,
     // Windows may throw UNKNOWN error. If dest already exists,
@@ -471,8 +504,8 @@ function onLink(destStat, src, dest, opts) {
     }
     throw err;
   }
-  if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(dest), resolvedDest);
+  if (!isAbsolute(pathAsString(resolvedDest))) {
+    resolvedDest = resolveLinkTarget(dest, resolvedDest);
   }
   let srcIsDir = false;
   try {
@@ -523,4 +556,7 @@ export default {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  joinEntry,
+  pathAsString,
+  resolveLinkTarget,
 };

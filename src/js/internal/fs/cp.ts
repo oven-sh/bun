@@ -12,21 +12,12 @@ const {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  joinEntry,
+  pathAsString,
+  resolveLinkTarget,
 } = require("internal/fs/cp-sync");
 
-const {
-  chmod,
-  copyFile,
-  lstat,
-  mkdir,
-  opendir,
-  readdir,
-  readlink,
-  stat,
-  symlink,
-  unlink,
-  utimes,
-} = require("node:fs/promises");
+const { chmod, copyFile, lstat, mkdir, readdir, readlink, stat, symlink, unlink, utimes } = require("node:fs/promises");
 const { dirname, isAbsolute, join, parse, resolve } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
@@ -335,27 +326,25 @@ async function mkDirAndCopy(srcMode, src, dest, opts) {
 }
 
 async function copyDir(src, dest, opts) {
-  const dir = await opendir(src);
-
-  for await (const { name } of dir) {
-    const srcItem = join(src, name);
-    const destItem = join(dest, name);
+  for (const name of await readdir(src, { encoding: "buffer" })) {
+    const srcItem = joinEntry(src, name);
+    const destItem = joinEntry(dest, name);
     const { destStat, skipped } = await checkPaths(srcItem, destItem, opts);
     if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts);
   }
 }
 
 async function onLink(destStat, src, dest, opts) {
-  let resolvedSrc = await readlink(src);
-  if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
-    resolvedSrc = resolve(dirname(src), resolvedSrc);
+  let resolvedSrc = await readlink(src, { encoding: "buffer" });
+  if (!opts.verbatimSymlinks && !isAbsolute(pathAsString(resolvedSrc))) {
+    resolvedSrc = resolveLinkTarget(src, resolvedSrc);
   }
   if (!destStat) {
     return symlink(resolvedSrc, dest);
   }
   let resolvedDest;
   try {
-    resolvedDest = await readlink(dest);
+    resolvedDest = await readlink(dest, { encoding: "buffer" });
   } catch (err: any) {
     // Dest exists and is a regular file or directory,
     // Windows may throw UNKNOWN error. If dest already exists,
@@ -365,8 +354,8 @@ async function onLink(destStat, src, dest, opts) {
     }
     throw err;
   }
-  if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(dest), resolvedDest);
+  if (!isAbsolute(pathAsString(resolvedDest))) {
+    resolvedDest = resolveLinkTarget(dest, resolvedDest);
   }
   // stat(src) follows the link; a dangling src symlink throws ENOENT here,
   // same as before (both gated checks below only apply to directories).

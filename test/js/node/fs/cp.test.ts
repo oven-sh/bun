@@ -420,6 +420,149 @@ for (const [name, copy] of impls) {
       }
       expect(err?.code).toBe("ERR_FS_CP_EINVAL");
     });
+
+    // POSIX filenames are arbitrary bytes. A latin1 "café" (63 61 66 e9) or a
+    // 0xff 0xfe sequence is not valid UTF-8; decoding it to a string yields
+    // U+FFFD and lstat on that string fails ENOENT. The walker must pass the
+    // raw bytes through to the syscalls. Windows filenames are UTF-16 so the
+    // byte-sequence form cannot exist there; macOS (APFS/HFS+) rejects
+    // non-UTF-8 names at create time.
+    test.skipIf(!isLinux)("recursive - copies entries with non-UTF-8 filenames byte-exact", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/ok.txt": "ascii",
+      });
+      const src = basename + "/from";
+      const dst = basename + "/to";
+      const latin1 = Buffer.concat([Buffer.from(src + "/"), Buffer.from([0x63, 0x61, 0x66, 0xe9])]);
+      const invalid = Buffer.concat([Buffer.from(src + "/foo"), Buffer.from([0xff, 0xfe]), Buffer.from("bar")]);
+      const subdir = Buffer.concat([Buffer.from(src + "/dir"), Buffer.from([0x80])]);
+      fs.writeFileSync(latin1, "latin1");
+      fs.writeFileSync(invalid, "invalid");
+      fs.mkdirSync(subdir);
+      fs.writeFileSync(Buffer.concat([subdir, Buffer.from("/nested.txt")]), "nested");
+
+      await copy(src, dst, { recursive: true });
+
+      const entries = fs
+        .readdirSync(dst, { encoding: "buffer" })
+        .map(b => b.toString("hex"))
+        .sort();
+      expect(entries).toEqual(
+        [
+          Buffer.from([0x63, 0x61, 0x66, 0xe9]),
+          Buffer.from("dir\x80", "latin1"),
+          Buffer.concat([Buffer.from("foo"), Buffer.from([0xff, 0xfe]), Buffer.from("bar")]),
+          Buffer.from("ok.txt"),
+        ]
+          .map(b => b.toString("hex"))
+          .sort(),
+      );
+      expect(
+        fs.readFileSync(Buffer.concat([Buffer.from(dst + "/"), Buffer.from([0x63, 0x61, 0x66, 0xe9])]), "utf8"),
+      ).toBe("latin1");
+      expect(
+        fs.readFileSync(
+          Buffer.concat([Buffer.from(dst + "/dir"), Buffer.from([0x80]), Buffer.from("/nested.txt")]),
+          "utf8",
+        ),
+      ).toBe("nested");
+    });
+
+    test.skipIf(!isLinux)("recursive - non-UTF-8 filenames survive filter/preserveTimestamps slow path", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/ok.txt": "ascii",
+      });
+      const src = basename + "/from";
+      const dst = basename + "/to";
+      const latin1 = Buffer.concat([Buffer.from(src + "/"), Buffer.from([0x63, 0x61, 0x66, 0xe9])]);
+      fs.writeFileSync(latin1, "latin1");
+
+      const seen: unknown[] = [];
+      await copy(src, dst, {
+        recursive: true,
+        preserveTimestamps: true,
+        filter: (s, _d) => {
+          seen.push(s);
+          return true;
+        },
+      });
+
+      // The non-UTF-8 entry reaches the filter as a Buffer (only correct
+      // representation); the rest of the tree stays strings.
+      expect(seen.some(p => Buffer.isBuffer(p) && (p as Buffer).includes(0xe9))).toBe(true);
+      expect(seen.some(p => typeof p === "string" && p.endsWith("ok.txt"))).toBe(true);
+
+      const entries = fs
+        .readdirSync(dst, { encoding: "buffer" })
+        .map(b => b.toString("hex"))
+        .sort();
+      expect(entries).toEqual(
+        [Buffer.from([0x63, 0x61, 0x66, 0xe9]).toString("hex"), Buffer.from("ok.txt").toString("hex")].sort(),
+      );
+    });
+
+    test.skipIf(!isLinux)("recursive - symlink with a non-UTF-8 name is copied", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/target.txt": "hello",
+      });
+      const src = basename + "/from";
+      const dst = basename + "/to";
+      const linkName = Buffer.concat([Buffer.from(src + "/link"), Buffer.from([0xe9])]);
+      fs.symlinkSync("target.txt", linkName);
+
+      await copy(src, dst, { recursive: true });
+
+      const dstLink = Buffer.concat([Buffer.from(dst + "/link"), Buffer.from([0xe9])]);
+      expect(fs.readFileSync(dstLink, "utf8")).toBe("hello");
+    });
+
+    test.skipIf(!isLinux)("recursive - symlink whose target is non-UTF-8 is copied byte-exact", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/placeholder": "",
+      });
+      const src = basename + "/from";
+      const dst = basename + "/to";
+      const target = Buffer.concat([Buffer.from("caf"), Buffer.from([0xe9])]);
+      fs.writeFileSync(Buffer.concat([Buffer.from(src + "/"), target]), "hello");
+      // Link name is plain ASCII; only the target carries non-UTF-8 bytes.
+      fs.symlinkSync(target, src + "/link");
+      fs.unlinkSync(src + "/placeholder");
+
+      await copy(src, dst, { recursive: true });
+
+      const copied = fs.readlinkSync(dst + "/link", { encoding: "buffer" });
+      // The written target is resolved against the source tree, so it is
+      // <src>/caf\xe9; what matters is that the trailing bytes are exact.
+      expect(copied.subarray(copied.length - 4).toString("hex")).toBe("636166e9");
+      expect(fs.readFileSync(dst + "/link", "utf8")).toBe("hello");
+    });
+
+    test.skipIf(!isLinux)(
+      "recursive - relative src with non-UTF-8 symlink target resolves against the source tree",
+      async () => {
+        const basename = tempDirWithFiles("cp", {
+          "from/placeholder": "",
+        });
+        const target = Buffer.concat([Buffer.from("caf"), Buffer.from([0xe9])]);
+        fs.writeFileSync(Buffer.concat([Buffer.from(basename + "/from/"), target]), "hello");
+        fs.symlinkSync(target, basename + "/from/link");
+        fs.unlinkSync(basename + "/from/placeholder");
+
+        const prev = process.cwd();
+        process.chdir(basename);
+        try {
+          await copy("from", "to", { recursive: true });
+        } finally {
+          process.chdir(prev);
+        }
+
+        // The copied link must be absolute (resolves against the source tree,
+        // not to/'s directory) and must follow to the source file.
+        const copied = fs.readlinkSync(basename + "/to/link", { encoding: "buffer" });
+        expect(copied[0]).toBe(0x2f);
+        expect(fs.readFileSync(basename + "/to/link", "utf8")).toBe("hello");
+      },
+    );
   });
 }
 

@@ -114,12 +114,15 @@ impl Clone for PathLike {
             } else {
                 s.borrow()
             }),
-            Self::Buffer(b) => Self::Buffer(MarkedArrayBuffer {
-                buffer: b.buffer,
-                // The clone borrows the JS-owned backing store; only the
-                // original (if any) owns the allocation.
-                owns_buffer: false,
-                pinned: false,
+            Self::Buffer(b) => Self::Buffer(if b.owns_buffer {
+                // Owned snapshot: dupe so the clone's `Drop` is independent.
+                bun_core::handle_oom(MarkedArrayBuffer::from_string(b.slice()))
+            } else {
+                MarkedArrayBuffer {
+                    buffer: b.buffer,
+                    owns_buffer: false,
+                    pinned: false,
+                }
             }),
             Self::SliceWithUnderlyingString(s) => {
                 // `dupe_ref()` alone leaves `utf8` empty (lib.rs:1603) — a
@@ -155,6 +158,7 @@ impl Drop for PathLike {
                     b.pinned = false;
                     b.buffer.unpin();
                 }
+                b.destroy();
             }
             Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => {
                 core::mem::take(s).deinit();

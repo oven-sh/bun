@@ -2,13 +2,13 @@
 // started, that thread's completion is refused at the worker's VM handle and
 // the producer releases what it owns itself. Here that path runs
 // deterministically for one producer at a time: with
-// BUN_TEST_WORKER_REFUSAL_GATE the completion waits for the worker's handle to
-// close and is then refused, and the runtime names each refusal on the
-// vm_handle debug log. A row passes only if the named refusal happened (the
-// work really was on another thread and its release path ran) and the process
-// exited cleanly; on the ASAN build the release path is also checked for
-// use-after-free and leaks. Debug/ASAN builds only: release builds carry
-// neither the gate's log nor the assertions that make this meaningful.
+// BUN_DEBUG_TEST_WORKER_REFUSAL_GATE the completion waits for the worker's
+// handle to close and is then refused, and the runtime names each refusal on
+// stderr. A row passes only if the named refusal happened (the work really was
+// on another thread and its release path ran) and the process exited cleanly;
+// on the ASAN build the release path is also checked for use-after-free and
+// leaks. Builds with debug assertions only (debug, ASAN): the gate does not
+// exist in release builds.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 
@@ -129,17 +129,12 @@ describe.skipIf(!isDebug && !isASAN)(
       test.concurrent.skipIf(!!row.skip)(row.name, async () => {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "-e", host(row)],
-          // bunEnv keeps every other debug scope quiet; the one named scope prints through it.
-          env: { ...bunEnv, ...row.env, BUN_TEST_WORKER_REFUSAL_GATE: "1", BUN_DEBUG_vm_handle: "1" },
+          env: { ...bunEnv, ...row.env, BUN_DEBUG_TEST_WORKER_REFUSAL_GATE: "1" },
           stdout: "pipe",
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        // The debug logger may write to either stream and decorates the scope name.
-        const refusals = (stdout + "\n" + stderr)
-          .replace(/\x1b\[[0-9;]*m/g, "")
-          .split("\n")
-          .filter(l => l.startsWith("[vm_handle] refused "));
+        const refusals = stderr.split("\n").filter(l => l.startsWith("[vm_handle] refused "));
         expect({
           exitCode,
           refused: refusals.some(l => l.includes(row.refused)),

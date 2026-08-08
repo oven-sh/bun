@@ -99,7 +99,7 @@ extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataD
     bool stdoutInherit, bool stderrInherit);
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
-extern "C" void Bun__VmHandle__refKeepAlive(::BunVmHandle*, int delta);
+extern "C" void Bun__VmHandle__refKeepAlive(const ::BunVmHandleRef*, int delta);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__runCallback2(JSGlobalObject*, EncodedJSValue cb,

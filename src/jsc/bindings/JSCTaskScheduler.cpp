@@ -12,7 +12,7 @@ using Task = JSC::DeferredWorkTimer::Task;
 namespace Bun {
 using namespace JSC;
 
-extern "C" void Bun__queueJSCDeferredWorkTaskConcurrently(::BunVmHandle*, void* task);
+extern "C" void Bun__queueJSCDeferredWorkTaskConcurrently(const ::BunVmHandleRef*, void* task);
 
 class JSCDeferredWorkTask {
 public:
@@ -99,7 +99,7 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
         Bun__VmHandle__refKeepAlive(vmHandle, -1);
 }
 
-static void runPendingWork(::BunVmHandle* vmHandle, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
+static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
 {
     Locker<Lock> holder { scheduler.m_lock };
     auto pendingTicket = scheduler.m_pendingTicketsKeepingEventLoopAlive.take(job->ticket);

@@ -67,14 +67,15 @@ bun_opaque::opaque_ffi! {
     pub struct NapiEnv;
 }
 
+#[allow(improper_ctypes)] // `vm_handle::Shared` is opaque to C++ (`BunVmHandleRef`)
 unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
     fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
-    /// Opaque `BunVmHandle*` — a boxed `bun_jsc::VmHandle` owned by the env.
-    fn NapiEnv__vmHandle(env: *mut NapiEnv) -> *const c_void;
+    /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
+    fn NapiEnv__vmHandle(env: *mut NapiEnv) -> *const bun_jsc::vm_handle::Shared;
     fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
 }
 
@@ -85,9 +86,9 @@ impl NapiEnv {
     }
 
     /// Any thread holding an env ref: the env's VM handle.
-    pub(crate) fn vm_handle(&self) -> &bun_jsc::VmHandle {
-        // SAFETY: the env owns a boxed handle for its whole lifetime.
-        unsafe { &*NapiEnv__vmHandle(self.as_mut_ptr()).cast::<bun_jsc::VmHandle>() }
+    pub(crate) fn vm_handle(&self) -> bun_jsc::vm_handle::BorrowedRef {
+        // SAFETY: the env holds a reference for its whole lifetime.
+        unsafe { bun_jsc::VmHandle::borrow_ref(NapiEnv__vmHandle(self.as_mut_ptr())) }
     }
 
     /// Convert err to an extern napi_status, and store the error code in env so that it can be

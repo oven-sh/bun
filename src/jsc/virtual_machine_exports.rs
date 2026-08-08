@@ -105,12 +105,13 @@ pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_ta
 // HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
 #[allow(clippy::not_unsafe_ptr_arg_deref)] // the C ABI boundary is the unsafe part
 pub fn vm_handle_queue_task_concurrently(
-    handle: &crate::VmHandle,
+    r: *const crate::vm_handle::Shared,
     task: *mut crate::cpp_task::CppTask,
 ) {
     crate::mark_binding!();
-    // SAFETY: C++ hands over a live heap EventLoopTask.
-    unsafe { handle.post_cpp_task(task) };
+    // SAFETY: C++ passes the reference its ScriptExecutionContext holds, and
+    // hands over a live heap EventLoopTask.
+    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(task) };
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)

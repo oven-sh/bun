@@ -12,7 +12,7 @@ class EventLoopTaskNoContext {
 
 public:
     EventLoopTaskNoContext(JSC::JSGlobalObject* globalObject, Function<void()>&& task)
-        : m_vmHandle(Bun__VmHandle__clone(WebCore::clientData(JSC::getVM(globalObject))->vmHandle))
+        : m_vmHandle(Bun__VmHandle__retainRef(WebCore::clientData(JSC::getVM(globalObject))->vmHandle))
         , m_task(WTF::move(task))
     {
     }
@@ -28,15 +28,15 @@ public:
         delete this;
     }
 
-    // The creating VM's handle: an owned clone, since a pool task can outlive that VM.
-    ::BunVmHandle* vmHandle() const { return m_vmHandle; }
+    // A reference to the creating VM's handle, since a pool task can outlive that VM.
+    const ::BunVmHandleRef* vmHandle() const { return m_vmHandle; }
 
 private:
-    ::BunVmHandle* m_vmHandle;
+    const ::BunVmHandleRef* m_vmHandle;
     Function<void()> m_task;
 };
 
 extern "C" void Bun__EventLoopTaskNoContext__performTask(EventLoopTaskNoContext* task);
-extern "C" ::BunVmHandle* Bun__EventLoopTaskNoContext__vmHandle(const EventLoopTaskNoContext* task);
+extern "C" const ::BunVmHandleRef* Bun__EventLoopTaskNoContext__vmHandle(const EventLoopTaskNoContext* task);
 
 } // namespace Bun

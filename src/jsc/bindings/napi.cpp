@@ -3355,7 +3355,7 @@ extern "C" bool NapiEnv__getAndClearPendingException(napi_env env, JSC::EncodedJ
     return false;
 }
 
-extern "C" ::BunVmHandle* NapiEnv__vmHandle(napi_env env)
+extern "C" const ::BunVmHandleRef* NapiEnv__vmHandle(napi_env env)
 {
     return env->vmHandle();
 }

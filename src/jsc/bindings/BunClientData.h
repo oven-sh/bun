@@ -1,22 +1,22 @@
 #pragma once
 
-// Opaque box of the Rust per-VM handle (bun_jsc::VmHandle); see JSVMClientData::vmHandle.
-struct BunVmHandle;
-extern "C" BunVmHandle* Bun__VmHandle__create(void* bunVM);
-extern "C" BunVmHandle* Bun__VmHandle__clone(const BunVmHandle*);
-extern "C" void Bun__VmHandle__release(BunVmHandle*);
-// One strong count on the handle's VM (no allocation), consumed by exactly one postRetainedCppTask.
-struct BunVmHandleInner;
-extern "C" const BunVmHandleInner* Bun__VmHandle__retain(const BunVmHandle*);
+// A counted reference to a VM's handle (bun_jsc::VmHandle): what any thread other than the
+// VM's own uses to post work to it, keep its loop alive, or ask whether it may still run
+// script. retain / retainRef take a count, release gives one up; valid however long it is held.
+struct BunVmHandleRef;
+extern "C" const BunVmHandleRef* Bun__VmHandle__retain(void* bunVM); // JS thread
+extern "C" const BunVmHandleRef* Bun__VmHandle__retainRef(const BunVmHandleRef*); // any thread
+extern "C" void Bun__VmHandle__release(const BunVmHandleRef*);
 namespace WebCore {
 class EventLoopTask;
 }
-extern "C" void Bun__VmHandle__postRetainedCppTask(const BunVmHandleInner*, WebCore::EventLoopTask*);
-extern "C" void Bun__VmHandle__refKeepAlive(BunVmHandle*, int delta);
+// Post through a reference and give it up in one step (a reference taken only to outlive a lock).
+extern "C" void Bun__VmHandle__postAndRelease(const BunVmHandleRef*, WebCore::EventLoopTask*);
+extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, int delta);
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.
-extern "C" bool Bun__VmHandle__scriptAllowed(const BunVmHandle*);
+extern "C" bool Bun__VmHandle__scriptAllowed(const BunVmHandleRef*);
 // The handle's state byte, so hot paths test it inline (BUN_VM_HANDLE_STATE_OPEN == bun_jsc::vm_handle::State::Open).
-extern "C" const unsigned char* Bun__VmHandle__stateAddress(const BunVmHandle*);
+extern "C" const unsigned char* Bun__VmHandle__stateAddress(const BunVmHandleRef*);
 #define BUN_VM_HANDLE_STATE_OPEN 0
 #include <atomic>
 inline bool Bun__VmHandle__scriptAllowedInline(const unsigned char* state)
@@ -162,7 +162,7 @@ public:
     // Opaque box of the Rust VmHandle for this VM: what any *other* thread uses
     // to post work / ref the loop (never bunVM). Created in create(), released
     // in the destructor; valid however long C++ holds it.
-    ::BunVmHandle* vmHandle { nullptr };
+    const ::BunVmHandleRef* vmHandle { nullptr };
     // vmHandle's state byte (Bun__VmHandle__stateAddress): the per-callback "may run script" test is one load.
     const unsigned char* vmHandleState { nullptr };
     ALWAYS_INLINE bool scriptAllowed() const { return Bun__VmHandle__scriptAllowedInline(vmHandleState); }

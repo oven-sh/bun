@@ -43,13 +43,37 @@ const PRELUDE = `
 
 const FAMILIES: Record<string, Entry[]> = {
   timers: [
-    { name: "setTimeout", phases: ALL, worker: `setTimeout(() => hit(() => setTimeout(() => {}, 0)), phase === "armed" ? 1e8 : 0); armed();` },
-    { name: "setInterval", phases: ALL, worker: `let n = 0; const t = setInterval(() => { if (n++ === 0) hit(); }, phase === "armed" ? 1e8 : 1); armed();` },
-    { name: "setImmediate", phases: ["inside", "after"], worker: `setImmediate(() => hit(() => setImmediate(() => {})));` },
-    { name: "promise reaction", phases: ["inside", "after"], worker: `Promise.resolve().then(() => hit(() => Promise.resolve().then(() => {})));` },
-    { name: "process.nextTick", phases: ["inside", "after"], worker: `process.nextTick(() => hit(() => process.nextTick(() => {})));` },
+    {
+      name: "setTimeout",
+      phases: ALL,
+      worker: `setTimeout(() => hit(() => setTimeout(() => {}, 0)), phase === "armed" ? 1e8 : 0); armed();`,
+    },
+    {
+      name: "setInterval",
+      phases: ALL,
+      worker: `let n = 0; const t = setInterval(() => { if (n++ === 0) hit(); }, phase === "armed" ? 1e8 : 1); armed();`,
+    },
+    {
+      name: "setImmediate",
+      phases: ["inside", "after"],
+      worker: `setImmediate(() => hit(() => setImmediate(() => {})));`,
+    },
+    {
+      name: "promise reaction",
+      phases: ["inside", "after"],
+      worker: `Promise.resolve().then(() => hit(() => Promise.resolve().then(() => {})));`,
+    },
+    {
+      name: "process.nextTick",
+      phases: ["inside", "after"],
+      worker: `process.nextTick(() => hit(() => process.nextTick(() => {})));`,
+    },
     // The timeout's own timer is unref'd (as in Node); the port listener keeps the worker up until it fires.
-    { name: "AbortSignal.timeout", phases: ALL, worker: `parentPort.on("message", () => {}); AbortSignal.timeout(phase === "armed" ? 1e8 : 1).addEventListener("abort", () => hit()); armed();` },
+    {
+      name: "AbortSignal.timeout",
+      phases: ALL,
+      worker: `parentPort.on("message", () => {}); AbortSignal.timeout(phase === "armed" ? 1e8 : 1).addEventListener("abort", () => hit()); armed();`,
+    },
     { name: "keep-alive only", phases: ["armed"], worker: `parentPort.on("message", () => {}); armed();` },
   ],
 
@@ -61,7 +85,9 @@ const FAMILIES: Record<string, Entry[]> = {
       host: (phase, worker) => ({
         // Deliver only once the listener exists; for "after", a second message is in flight at stop.
         params: undefined,
-        onSignal: () => { if (phase === "after") worker().postMessage(2); },
+        onSignal: () => {
+          if (phase === "after") worker().postMessage(2);
+        },
       }),
     },
     {
@@ -84,11 +110,15 @@ const FAMILIES: Record<string, Entry[]> = {
       `,
       host: phase => {
         const { port1, port2 } = new MessageChannel();
-        port1.on("message", () => { if (phase !== "armed") port1.postMessage(1); });
+        port1.on("message", () => {
+          if (phase !== "armed") port1.postMessage(1);
+        });
         return {
           params: { port: port2 },
           transfer: [port2],
-          onSignal: () => { if (phase === "after") port1.postMessage(2); },
+          onSignal: () => {
+            if (phase === "after") port1.postMessage(2);
+          },
           close: () => port1.close(),
         } as any;
       },
@@ -109,8 +139,13 @@ const FAMILIES: Record<string, Entry[]> = {
         sub.onmessage = () => bc.postMessage(1);
         return {
           params: { name },
-          onSignal: () => { if (phase === "after") bc.postMessage(2); },
-          close: () => { bc.close(); sub.close(); },
+          onSignal: () => {
+            if (phase === "after") bc.postMessage(2);
+          },
+          close: () => {
+            bc.close();
+            sub.close();
+          },
         };
       },
     },
@@ -119,7 +154,7 @@ const FAMILIES: Record<string, Entry[]> = {
       phases: ["armed"],
       // Not terminated: the worker floods and exits by itself; the parent must get every message then 'exit'.
       worker: `for (let i = 0; i < 3000; i++) parentPort.postMessage(i);`,
-      host: () => ({ natural: 3000 } as any),
+      host: () => ({ natural: 3000 }) as any,
     },
   ],
 
@@ -154,10 +189,19 @@ const FAMILIES: Record<string, Entry[]> = {
       `,
       host: (phase, worker) => {
         let port = 0;
-        const connect = () => { const c = net.connect(port, "127.0.0.1"); c.on("error", () => {}); c.on("connect", () => c.end()); };
+        const connect = () => {
+          const c = net.connect(port, "127.0.0.1");
+          c.on("error", () => {});
+          c.on("connect", () => c.end());
+        };
         return {
-          onPort: (p: number) => { port = p; if (phase !== "armed") connect(); },
-          onSignal: () => { if (phase === "after") connect(); },
+          onPort: (p: number) => {
+            port = p;
+            if (phase !== "armed") connect();
+          },
+          onSignal: () => {
+            if (phase === "after") connect();
+          },
         } as any;
       },
     },
@@ -180,8 +224,20 @@ const FAMILIES: Record<string, Entry[]> = {
       `,
       host: phase => {
         let port = 0;
-        const connect = () => { const c = net.connect(port, "127.0.0.1"); c.on("error", () => {}); c.on("connect", () => c.end()); };
-        return { onPort: (p: number) => { port = p; if (phase !== "armed") connect(); }, onSignal: () => { if (phase === "after") connect(); } } as any;
+        const connect = () => {
+          const c = net.connect(port, "127.0.0.1");
+          c.on("error", () => {});
+          c.on("connect", () => c.end());
+        };
+        return {
+          onPort: (p: number) => {
+            port = p;
+            if (phase !== "armed") connect();
+          },
+          onSignal: () => {
+            if (phase === "after") connect();
+          },
+        } as any;
       },
     },
     {
@@ -196,8 +252,13 @@ const FAMILIES: Record<string, Entry[]> = {
         const c = dgram.createSocket("udp4");
         let port = 0;
         return {
-          onPort: (p: number) => { port = p; if (phase !== "armed") c.send("x", port, "127.0.0.1"); },
-          onSignal: () => { if (phase === "after") c.send("y", port, "127.0.0.1"); },
+          onPort: (p: number) => {
+            port = p;
+            if (phase !== "armed") c.send("x", port, "127.0.0.1");
+          },
+          onSignal: () => {
+            if (phase === "after") c.send("y", port, "127.0.0.1");
+          },
           close: () => c.close(),
         } as any;
       },
@@ -214,8 +275,19 @@ const FAMILIES: Record<string, Entry[]> = {
       `,
       host: phase => {
         let port = 0;
-        const get = () => fetch("http://127.0.0.1:" + port).then(r => r.text()).catch(() => {});
-        return { onPort: (p: number) => { port = p; if (phase !== "armed") get(); }, onSignal: () => { if (phase === "after") get(); } } as any;
+        const get = () =>
+          fetch("http://127.0.0.1:" + port)
+            .then(r => r.text())
+            .catch(() => {});
+        return {
+          onPort: (p: number) => {
+            port = p;
+            if (phase !== "armed") get();
+          },
+          onSignal: () => {
+            if (phase === "after") get();
+          },
+        } as any;
       },
     },
     {
@@ -249,8 +321,19 @@ const FAMILIES: Record<string, Entry[]> = {
       `,
       host: phase => {
         let port = 0;
-        const get = () => fetch("http://127.0.0.1:" + port).then(r => r.text()).catch(() => {});
-        return { onPort: (p: number) => { port = p; if (phase !== "armed") get(); }, onSignal: () => { if (phase === "after") get(); } } as any;
+        const get = () =>
+          fetch("http://127.0.0.1:" + port)
+            .then(r => r.text())
+            .catch(() => {});
+        return {
+          onPort: (p: number) => {
+            port = p;
+            if (phase !== "armed") get();
+          },
+          onSignal: () => {
+            if (phase === "after") get();
+          },
+        } as any;
       },
     },
     {
@@ -267,8 +350,17 @@ const FAMILIES: Record<string, Entry[]> = {
           port: 0,
           hostname: "127.0.0.1",
           development: false,
-          fetch(req, s) { return s.upgrade(req) ? undefined : new Response("no"); },
-          websocket: { open(ws) { if (phase !== "armed") ws.send("x"); }, message(ws) { ws.send("y"); } },
+          fetch(req, s) {
+            return s.upgrade(req) ? undefined : new Response("no");
+          },
+          websocket: {
+            open(ws) {
+              if (phase !== "armed") ws.send("x");
+            },
+            message(ws) {
+              ws.send("y");
+            },
+          },
         });
         return { params: { port: srv.port }, close: () => srv.stop(true) };
       },
@@ -288,9 +380,13 @@ const FAMILIES: Record<string, Entry[]> = {
           onPort: (p: number) => {
             ws = new WebSocket("ws://127.0.0.1:" + p);
             ws.onerror = () => {};
-            ws.onopen = () => { if (phase !== "armed") ws!.send("x"); };
+            ws.onopen = () => {
+              if (phase !== "armed") ws!.send("x");
+            };
           },
-          onSignal: () => { if (phase === "after") ws?.send("z"); },
+          onSignal: () => {
+            if (phase === "after") ws?.send("z");
+          },
           close: () => ws?.close(),
         } as any;
       },
@@ -298,9 +394,21 @@ const FAMILIES: Record<string, Entry[]> = {
   ],
 
   fs: [
-    { name: "fs.readFile", phases: ["inside", "after"], worker: `const fs = require("node:fs"); fs.readFile(process.execPath, () => hit(() => fs.readFile(process.execPath, () => {})));` },
-    { name: "fs.promises.stat", phases: ["inside", "after"], worker: `const fs = require("node:fs"); fs.promises.stat(process.execPath).then(() => hit(() => fs.promises.stat(process.execPath)));` },
-    { name: "fs.createReadStream data", phases: ["inside", "after"], worker: `const rs = require("node:fs").createReadStream(process.execPath, { highWaterMark: 1 << 16 }); rs.on("data", () => hit()); rs.on("error", () => {});` },
+    {
+      name: "fs.readFile",
+      phases: ["inside", "after"],
+      worker: `const fs = require("node:fs"); fs.readFile(process.execPath, () => hit(() => fs.readFile(process.execPath, () => {})));`,
+    },
+    {
+      name: "fs.promises.stat",
+      phases: ["inside", "after"],
+      worker: `const fs = require("node:fs"); fs.promises.stat(process.execPath).then(() => hit(() => fs.promises.stat(process.execPath)));`,
+    },
+    {
+      name: "fs.createReadStream data",
+      phases: ["inside", "after"],
+      worker: `const rs = require("node:fs").createReadStream(process.execPath, { highWaterMark: 1 << 16 }); rs.on("data", () => hit()); rs.on("error", () => {});`,
+    },
     {
       name: "fs.watch",
       phases: ALL,
@@ -319,13 +427,31 @@ const FAMILIES: Record<string, Entry[]> = {
         return {
           // A platform watcher may coalesce or drop the event for a file created
           // right after it was armed; keep producing changes until the callback ran.
-          onDir: (d: string) => { dir = d; if (phase !== "armed") { touch(); pump = setInterval(touch, 5); } },
-          onSignal: () => { clearInterval(pump); if (phase === "after") touch(); },
-          close: () => { clearInterval(pump); try { require("node:fs").rmSync(dir, { recursive: true, force: true }); } catch {} },
+          onDir: (d: string) => {
+            dir = d;
+            if (phase !== "armed") {
+              touch();
+              pump = setInterval(touch, 5);
+            }
+          },
+          onSignal: () => {
+            clearInterval(pump);
+            if (phase === "after") touch();
+          },
+          close: () => {
+            clearInterval(pump);
+            try {
+              require("node:fs").rmSync(dir, { recursive: true, force: true });
+            } catch {}
+          },
         } as any;
       },
     },
-    { name: "Bun.file().text()", phases: ["inside", "after"], worker: `Bun.file(process.execPath).slice(0, 1 << 20).text().then(() => hit(() => Bun.file(process.execPath).slice(0, 4096).text()));` },
+    {
+      name: "Bun.file().text()",
+      phases: ["inside", "after"],
+      worker: `Bun.file(process.execPath).slice(0, 1 << 20).text().then(() => hit(() => Bun.file(process.execPath).slice(0, 4096).text()));`,
+    },
     {
       name: "Bun.file().stream() pull",
       phases: ["inside", "after"],
@@ -342,13 +468,41 @@ const FAMILIES: Record<string, Entry[]> = {
   ],
 
   pool: [
-    { name: "crypto.pbkdf2", phases: ["inside", "after"], worker: `const c = require("node:crypto"); c.pbkdf2("p", "s", 1000, 32, "sha256", () => hit(() => c.pbkdf2("p", "s", 5000, 32, "sha256", () => {})));` },
-    { name: "crypto.scrypt", phases: ["inside", "after"], worker: `const c = require("node:crypto"); c.scrypt("p", "s", 32, () => hit(() => c.scrypt("p", "s", 32, () => {})));` },
-    { name: "crypto.randomFill", phases: ["inside", "after"], worker: `const c = require("node:crypto"); c.randomFill(Buffer.alloc(1 << 16), () => hit(() => c.randomFill(Buffer.alloc(1 << 16), () => {})));` },
-    { name: "crypto.generateKeyPair", phases: ["inside", "after"], worker: `const c = require("node:crypto"); c.generateKeyPair("ec", { namedCurve: "P-256" }, () => hit(() => c.generateKeyPair("ec", { namedCurve: "P-256" }, () => {})));` },
-    { name: "crypto.subtle.digest", phases: ["inside", "after"], worker: `crypto.subtle.digest("SHA-256", Buffer.alloc(1 << 16)).then(() => hit(() => crypto.subtle.digest("SHA-256", Buffer.alloc(1 << 20))));` },
-    { name: "zlib.gzip callback", phases: ["inside", "after"], worker: `const z = require("node:zlib"); z.gzip(Buffer.alloc(1 << 16), () => hit(() => z.gzip(Buffer.alloc(1 << 20), () => {})));` },
-    { name: "zlib stream data", phases: ["inside", "after"], worker: `const z = require("node:zlib"); const g = z.createGzip(); g.on("data", () => hit(() => g.write(Buffer.alloc(1 << 16)))); g.write(Buffer.alloc(1 << 16)); g.flush();` },
+    {
+      name: "crypto.pbkdf2",
+      phases: ["inside", "after"],
+      worker: `const c = require("node:crypto"); c.pbkdf2("p", "s", 1000, 32, "sha256", () => hit(() => c.pbkdf2("p", "s", 5000, 32, "sha256", () => {})));`,
+    },
+    {
+      name: "crypto.scrypt",
+      phases: ["inside", "after"],
+      worker: `const c = require("node:crypto"); c.scrypt("p", "s", 32, () => hit(() => c.scrypt("p", "s", 32, () => {})));`,
+    },
+    {
+      name: "crypto.randomFill",
+      phases: ["inside", "after"],
+      worker: `const c = require("node:crypto"); c.randomFill(Buffer.alloc(1 << 16), () => hit(() => c.randomFill(Buffer.alloc(1 << 16), () => {})));`,
+    },
+    {
+      name: "crypto.generateKeyPair",
+      phases: ["inside", "after"],
+      worker: `const c = require("node:crypto"); c.generateKeyPair("ec", { namedCurve: "P-256" }, () => hit(() => c.generateKeyPair("ec", { namedCurve: "P-256" }, () => {})));`,
+    },
+    {
+      name: "crypto.subtle.digest",
+      phases: ["inside", "after"],
+      worker: `crypto.subtle.digest("SHA-256", Buffer.alloc(1 << 16)).then(() => hit(() => crypto.subtle.digest("SHA-256", Buffer.alloc(1 << 20))));`,
+    },
+    {
+      name: "zlib.gzip callback",
+      phases: ["inside", "after"],
+      worker: `const z = require("node:zlib"); z.gzip(Buffer.alloc(1 << 16), () => hit(() => z.gzip(Buffer.alloc(1 << 20), () => {})));`,
+    },
+    {
+      name: "zlib stream data",
+      phases: ["inside", "after"],
+      worker: `const z = require("node:zlib"); const g = z.createGzip(); g.on("data", () => hit(() => g.write(Buffer.alloc(1 << 16)))); g.write(Buffer.alloc(1 << 16)); g.flush();`,
+    },
     {
       name: "CompressionStream",
       phases: ["inside", "after"],
@@ -357,33 +511,86 @@ const FAMILIES: Record<string, Entry[]> = {
           w.write(new Uint8Array(1 << 17)); await r.read(); hit(() => { w.write(new Uint8Array(1 << 17)); r.read().catch(() => {}); }); })();
       `,
     },
-    { name: "Bun.password.hash", phases: ["inside", "after"], worker: `Bun.password.hash("x", { algorithm: "bcrypt", cost: 4 }).then(() => hit(() => Bun.password.hash("y", { algorithm: "bcrypt", cost: 4 })));` },
-    { name: "Bun.Glob scan", phases: ["inside", "after"], worker: `(async () => { const it = new Bun.Glob("*").scan({ cwd: require("node:os").tmpdir() })[Symbol.asyncIterator](); await it.next(); hit(() => it.next().catch(() => {})); })();` },
+    {
+      name: "Bun.password.hash",
+      phases: ["inside", "after"],
+      worker: `Bun.password.hash("x", { algorithm: "bcrypt", cost: 4 }).then(() => hit(() => Bun.password.hash("y", { algorithm: "bcrypt", cost: 4 })));`,
+    },
+    {
+      name: "Bun.Glob scan",
+      phases: ["inside", "after"],
+      worker: `(async () => { const it = new Bun.Glob("*").scan({ cwd: require("node:os").tmpdir() })[Symbol.asyncIterator](); await it.next(); hit(() => it.next().catch(() => {})); })();`,
+    },
   ],
 
   subprocess: [
-    { name: "child_process exit", phases: ["inside", "after"], worker: `const cp = require("node:child_process"); cp.execFile(process.execPath, ["-e", "0"], () => hit(() => cp.execFile(process.execPath, ["-e", "0"], () => {})));` },
-    { name: "child stdout data", phases: ["inside", "after"], worker: `const cp = require("node:child_process"); const c = cp.spawn(process.execPath, ["-e", "process.stdout.write('x'.repeat(1<<16))"]); c.stdout.on("data", () => hit()); c.on("error", () => {});` },
+    {
+      name: "child_process exit",
+      phases: ["inside", "after"],
+      worker: `const cp = require("node:child_process"); cp.execFile(process.execPath, ["-e", "0"], () => hit(() => cp.execFile(process.execPath, ["-e", "0"], () => {})));`,
+    },
+    {
+      name: "child stdout data",
+      phases: ["inside", "after"],
+      worker: `const cp = require("node:child_process"); const c = cp.spawn(process.execPath, ["-e", "process.stdout.write('x'.repeat(1<<16))"]); c.stdout.on("data", () => hit()); c.on("error", () => {});`,
+    },
     {
       name: "Bun.spawn exited + stdout",
       phases: ["inside", "after"],
       worker: `(async () => { const p = Bun.spawn([process.execPath, "-e", "console.log('x')"], { stdout: "pipe" }); await p.exited; hit(() => Bun.spawn([process.execPath, "-e", "0"])); await p.stdout.text(); })();`,
     },
-    { name: "Bun.$", phases: ["inside", "after"], worker: "(async () => { await Bun.$`echo hi`.quiet(); hit(() => Bun.$`echo again`.quiet().catch(() => {})); })();" },
-    { name: "child running at stop", phases: ["armed"], worker: `const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(()=>{}, 30000)"]); c.on("spawn", () => armed()); c.on("error", () => {});` },
+    {
+      name: "Bun.$",
+      phases: ["inside", "after"],
+      worker:
+        "(async () => { await Bun.$`echo hi`.quiet(); hit(() => Bun.$`echo again`.quiet().catch(() => {})); })();",
+    },
+    {
+      name: "child running at stop",
+      phases: ["armed"],
+      worker: `const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(()=>{}, 30000)"]); c.on("spawn", () => armed()); c.on("error", () => {});`,
+    },
   ],
 
   dns: [
-    { name: "dns.lookup", phases: ["inside", "after"], worker: `const dns = require("node:dns"); dns.lookup("localhost", () => hit(() => dns.lookup("localhost", { all: true }, () => {})));` },
-    { name: "dns.promises.lookup", phases: ["inside", "after"], worker: `const dns = require("node:dns"); dns.promises.lookup("localhost").then(() => hit(() => dns.promises.lookup("localhost", { family: 6 }).catch(() => {})));` },
-    { name: "Bun.dns.lookup", phases: ["inside", "after"], worker: `Bun.dns.lookup("localhost").then(() => hit(() => Bun.dns.lookup("localhost", { family: 4 })));` },
-    { name: "lookup in flight at stop", phases: ["armed"], worker: `parentPort.on("message", () => {}); require("node:dns").lookup("localhost", () => {}); armed();` },
+    {
+      name: "dns.lookup",
+      phases: ["inside", "after"],
+      worker: `const dns = require("node:dns"); dns.lookup("localhost", () => hit(() => dns.lookup("localhost", { all: true }, () => {})));`,
+    },
+    {
+      name: "dns.promises.lookup",
+      phases: ["inside", "after"],
+      worker: `const dns = require("node:dns"); dns.promises.lookup("localhost").then(() => hit(() => dns.promises.lookup("localhost", { family: 6 }).catch(() => {})));`,
+    },
+    {
+      name: "Bun.dns.lookup",
+      phases: ["inside", "after"],
+      worker: `Bun.dns.lookup("localhost").then(() => hit(() => Bun.dns.lookup("localhost", { family: 4 })));`,
+    },
+    {
+      name: "lookup in flight at stop",
+      phases: ["armed"],
+      worker: `parentPort.on("message", () => {}); require("node:dns").lookup("localhost", () => {}); armed();`,
+    },
   ],
 
   loader: [
-    { name: "dynamic import settle", phases: ["inside", "after"], worker: `import("node:zlib").then(() => hit(() => import("node:tls")));` },
-    { name: "require inside a callback", phases: ["inside", "after"], worker: `setImmediate(() => { hit(); require("node:https"); require("node:vm"); });` },
-    { name: "vm.runInContext with timeout", phases: ["inside", "after"], worker: `const vm = require("node:vm"); setImmediate(() => { hit(() => vm.runInNewContext("1", {}, { timeout: 1000 })); vm.runInNewContext("for (let i=0;i<1e5;i++);", {}, { timeout: 1000 }); });` },
+    {
+      name: "dynamic import settle",
+      phases: ["inside", "after"],
+      worker: `import("node:zlib").then(() => hit(() => import("node:tls")));`,
+    },
+    {
+      name: "require inside a callback",
+      phases: ["inside", "after"],
+      worker: `setImmediate(() => { hit(); require("node:https"); require("node:vm"); });`,
+    },
+    {
+      name: "vm.runInContext with timeout",
+      phases: ["inside", "after"],
+      worker: `const vm = require("node:vm"); setImmediate(() => { hit(() => vm.runInNewContext("1", {}, { timeout: 1000 })); vm.runInNewContext("for (let i=0;i<1e5;i++);", {}, { timeout: 1000 }); });`,
+    },
     {
       name: "FinalizationRegistry callback",
       phases: ["inside", "after"],
@@ -408,8 +615,16 @@ const FAMILIES: Record<string, Entry[]> = {
       phases: ["inside", "after"],
       worker: `const bytes = new Uint8Array([0,97,115,109,1,0,0,0]); WebAssembly.instantiate(bytes).then(() => hit(() => WebAssembly.instantiate(bytes)));`,
     },
-    { name: "EventTarget dispatch", phases: ["inside", "after"], worker: `const et = new EventTarget(); et.addEventListener("x", () => hit(() => et.dispatchEvent(new Event("x")))); setImmediate(() => et.dispatchEvent(new Event("x")));` },
-    { name: "process.on('exit') handlers", phases: ["armed"], worker: `parentPort.on("message", () => {}); process.on("exit", () => {}); armed();` },
+    {
+      name: "EventTarget dispatch",
+      phases: ["inside", "after"],
+      worker: `const et = new EventTarget(); et.addEventListener("x", () => hit(() => et.dispatchEvent(new Event("x")))); setImmediate(() => et.dispatchEvent(new Event("x")));`,
+    },
+    {
+      name: "process.on('exit') handlers",
+      phases: ["armed"],
+      worker: `parentPort.on("message", () => {}); process.on("exit", () => {}); armed();`,
+    },
   ],
 
   counted: [
@@ -424,7 +639,11 @@ const FAMILIES: Record<string, Entry[]> = {
         } }] }).catch(() => {});
       `,
     },
-    { name: "zlib stream write in flight", phases: ["armed"], worker: `parentPort.on("message", () => {}); const g = require("node:zlib").createGzip(); g.on("data", () => {}); g.write(Buffer.alloc(1 << 22)); armed();` },
+    {
+      name: "zlib stream write in flight",
+      phases: ["armed"],
+      worker: `parentPort.on("message", () => {}); const g = require("node:zlib").createGzip(); g.on("data", () => {}); g.write(Buffer.alloc(1 << 22)); armed();`,
+    },
     {
       name: "fetch body streaming at stop",
       phases: ["armed"],
@@ -464,7 +683,10 @@ async function httpPeer(phase: Phase): Promise<Handle> {
       if (new URL(req.url).pathname === "/armed") return new Promise<Response>(() => {});
       return new Response(
         new ReadableStream({
-          start(c) { c.enqueue(enc.encode("x".repeat(1024))); pending.add(c); },
+          start(c) {
+            c.enqueue(enc.encode("x".repeat(1024)));
+            pending.add(c);
+          },
           cancel() {},
         }),
       );
@@ -472,13 +694,30 @@ async function httpPeer(phase: Phase): Promise<Handle> {
   });
   return {
     params: { port: srv.port },
-    onSignal: () => { if (phase === "after") for (const c of pending) { try { c.enqueue(enc.encode("y")); } catch {} } },
-    close: () => { for (const c of pending) { try { c.close(); } catch {} } srv.stop(true); },
+    onSignal: () => {
+      if (phase === "after")
+        for (const c of pending) {
+          try {
+            c.enqueue(enc.encode("y"));
+          } catch {}
+        }
+    },
+    close: () => {
+      for (const c of pending) {
+        try {
+          c.close();
+        } catch {}
+      }
+      srv.stop(true);
+    },
   };
 }
 
 // A one-connection TCP peer in the parent.
-async function tcpPeer(phase: Phase, o: { writeOnOpen?: boolean; endOnOpen?: boolean; writeOnSignal?: boolean }): Promise<Handle> {
+async function tcpPeer(
+  phase: Phase,
+  o: { writeOnOpen?: boolean; endOnOpen?: boolean; writeOnSignal?: boolean },
+): Promise<Handle> {
   let sock: net.Socket | undefined;
   const server = net.createServer(c => {
     sock = c;
@@ -489,8 +728,13 @@ async function tcpPeer(phase: Phase, o: { writeOnOpen?: boolean; endOnOpen?: boo
   await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
   return {
     params: { port: (server.address() as net.AddressInfo).port },
-    onSignal: () => { if (o.writeOnSignal) sock?.write("y"); },
-    close: () => { sock?.destroy(); server.close(); },
+    onSignal: () => {
+      if (o.writeOnSignal) sock?.write("y");
+    },
+    close: () => {
+      sock?.destroy();
+      server.close();
+    },
   };
 }
 
@@ -517,17 +761,25 @@ async function runCase(entry: Entry, phase: Phase): Promise<string | null> {
   if (h.natural) {
     const code = await Promise.race([exited, deadline]);
     h.close?.();
-    if (code === "deadline") { void w.terminate(); return "no exit"; }
+    if (code === "deadline") {
+      void w.terminate();
+      return "no exit";
+    }
     if (received !== h.natural) return `got ${received}/${h.natural} messages before exit`;
     return null;
   }
   // Wait for the worker to reach the point.
   const { async, value } = Atomics.waitAsync(ctl, 0, 0, DEADLINE_MS);
   const reached = async ? await Promise.race([value, exited.then(() => "exited-early")]) : value;
-  if (reached !== "ok" && reached !== "not-equal") { h.close?.(); void w.terminate(); return `never reached the ${phase} point (${reached}${error ? "; " + (error as Error).message : ""})`; }
+  if (reached !== "ok" && reached !== "not-equal") {
+    h.close?.();
+    void w.terminate();
+    return `never reached the ${phase} point (${reached}${error ? "; " + (error as Error).message : ""})`;
+  }
   await h.onSignal?.();
   const t = w.terminate();
-  Atomics.store(ctl, 1, 1); Atomics.notify(ctl, 1);   // release an "inside" callback
+  Atomics.store(ctl, 1, 1);
+  Atomics.notify(ctl, 1); // release an "inside" callback
   const code = await Promise.race([exited, deadline]);
   h.close?.();
   if (code === "deadline") return "no exit after terminate()";
@@ -537,21 +789,32 @@ async function runCase(entry: Entry, phase: Phase): Promise<string | null> {
 
 const family = process.argv[2];
 const entries = FAMILIES[family];
-if (!entries) { console.error("unknown family " + family + "; have " + Object.keys(FAMILIES).join(",")); process.exit(2); }
-if (process.argv[3] === "--list") { console.log(Object.keys(FAMILIES).join("\n")); process.exit(0); }
+if (!entries) {
+  console.error("unknown family " + family + "; have " + Object.keys(FAMILIES).join(","));
+  process.exit(2);
+}
+if (process.argv[3] === "--list") {
+  console.log(Object.keys(FAMILIES).join("\n"));
+  process.exit(0);
+}
 
 const cases = entries.flatMap(e => e.phases.map(p => [e, p] as const));
 const failures: string[] = [];
 // Bounded concurrency keeps wall time low without piling up live VMs.
 const K = 6;
 let next = 0;
-await Promise.all(Array.from({ length: K }, async () => {
-  while (next < cases.length) {
-    const [e, p] = cases[next++];
-    const why = await runCase(e, p).catch(err => "host error: " + (err?.stack ?? err));
-    if (why) failures.push(`${e.name} [${p}]: ${why}`);
-  }
-}));
-if (failures.length) { console.log("FAIL\n" + failures.join("\n")); process.exit(1); }
+await Promise.all(
+  Array.from({ length: K }, async () => {
+    while (next < cases.length) {
+      const [e, p] = cases[next++];
+      const why = await runCase(e, p).catch(err => "host error: " + (err?.stack ?? err));
+      if (why) failures.push(`${e.name} [${p}]: ${why}`);
+    }
+  }),
+);
+if (failures.length) {
+  console.log("FAIL\n" + failures.join("\n"));
+  process.exit(1);
+}
 console.log("ok " + cases.length);
 process.exit(0);

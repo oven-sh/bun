@@ -2,7 +2,7 @@
 
 #include "root.h"
 
-struct BunVmHandle;
+struct BunVmHandleRef;
 #include "SharedEnvStore.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
@@ -162,7 +162,7 @@ private:
     // The thread's Bun VM; outlives every global created on it and, during teardown, the JSC::VM.
     void* const m_bunVM;
     // What other threads use to reach the VM (see JSVMClientData::vmHandle).
-    ::BunVmHandle* const m_vmHandle;
+    const ::BunVmHandleRef* const m_vmHandle;
     WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
     // Snapshot of the creating thread's UID; used by isContextThread() so the

@@ -3963,7 +3963,10 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
-        if bun_core::env_var::feature_flag::BUN_TEST_WORKER_REFUSAL_GATE::get().unwrap_or(false) {
+        #[cfg(debug_assertions)]
+        if bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_REFUSAL_GATE::get()
+            .unwrap_or(false)
+        {
             vm_ref.handle.park_posts_until_closed();
         }
         // `parent_vm()` is a `BackRef`; the parent outlives this worker while

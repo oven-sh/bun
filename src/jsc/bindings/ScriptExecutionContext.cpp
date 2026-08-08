@@ -92,7 +92,7 @@ JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
 
 extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
 extern "C" void Bun__VM__queueTaskAfterYield(void* bunVM, EventLoopTask*);
-extern "C" void Bun__VmHandle__queueTaskConcurrently(::BunVmHandle*, EventLoopTask*);
+extern "C" void Bun__VmHandle__queueTaskConcurrently(const ::BunVmHandleRef*, EventLoopTask*);
 
 // JS thread (this context's thread): MessagePort / BroadcastChannel / worker global scope
 // keep-alives. Direct, so a ref taken before teardown is still released during it.
@@ -186,15 +186,15 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
     // deleted unrun once it does not (and anything queued during its teardown is
     // released unrun by that teardown). Posting inside the critical section would make
     // every other context's lookup wait on this VM's queue.
-    const BunVmHandleInner* retained = nullptr;
+    const BunVmHandleRef* retained = nullptr;
     {
         Locker locker { allScriptExecutionContextsMapLock };
         auto* context = allScriptExecutionContextsMap().get(identifier);
         if (!context || context->isTerminating())
             return false;
-        retained = Bun__VmHandle__retain(context->m_vmHandle);
+        retained = Bun__VmHandle__retainRef(context->m_vmHandle);
     }
-    Bun__VmHandle__postRetainedCppTask(retained, new EventLoopTask(WTF::move(task)));
+    Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)));
     return true;
 }
 
@@ -257,18 +257,18 @@ bool ScriptExecutionContext::isContextThread()
 bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
 {
     ScriptExecutionContext* context = nullptr;
-    const BunVmHandleInner* retained = nullptr;
+    const BunVmHandleRef* retained = nullptr;
     {
         Locker locker { allScriptExecutionContextsMapLock };
         context = allScriptExecutionContextsMap().get(identifier);
         if (!context)
             return false;
         if (!context->isContextThread())
-            retained = Bun__VmHandle__retain(context->m_vmHandle);
+            retained = Bun__VmHandle__retainRef(context->m_vmHandle);
     }
     if (retained) {
         // Off its thread: as postTaskTo(), through the handle, outside the lock.
-        Bun__VmHandle__postRetainedCppTask(retained, new EventLoopTask(WTF::move(task)));
+        Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)));
         return true;
     }
     // On its own thread the context cannot be destroyed under us.

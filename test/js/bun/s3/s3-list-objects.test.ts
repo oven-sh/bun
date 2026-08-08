@@ -1024,6 +1024,18 @@ describe.concurrent("S3 - List Objects", () => {
     expect(error?.message).toBe('The key "a&b<c>.txt" does not exist');
   });
 
+  it("Should fall back to NoSuchKey for a 404 whose <Error> has no usable <Code>", async () => {
+    for (const body of [`<Error><Code></Code><Message/></Error>`, `<Error><Message>gone</Message></Error>`, `not xml`]) {
+      using server = createBunServer(async () => new Response(body, { status: 404 }));
+      const client = new S3Client({ ...options, endpoint: server.url.href });
+      const error = await client.list().then(
+        () => undefined,
+        e => e,
+      );
+      expect(error?.code).toBe("NoSuchKey");
+    }
+  });
+
   it("Should throw Error if request failed", async () => {
     using server = createBunServer(async => {
       return new Response(

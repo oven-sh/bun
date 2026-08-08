@@ -948,7 +948,7 @@ it("inspecting Bun after replacing the Symbol global does not crash", async () =
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("string true");
   expect(stdout.trimEnd()).toEndWith("ok");
   expect(exitCode).toBe(0);

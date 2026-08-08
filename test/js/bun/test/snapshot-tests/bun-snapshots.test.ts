@@ -14,6 +14,77 @@ test("it will create a snapshot file if it doesn't exist", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/3521
+test("property matchers do not mutate the received object", () => {
+  const date = new Date(0);
+  const obj = { id: 42, when: date, nested: { name: "abc" }, list: [1, "two", 3] };
+  expect(obj).toMatchSnapshot({
+    id: expect.any(Number),
+    when: expect.any(Date),
+    nested: { name: expect.any(String) },
+    list: [1, expect.any(String), 3],
+  });
+  expect(obj.id).toBe(42);
+  expect(obj.when).toBe(date);
+  expect(obj.nested.name).toBe("abc");
+  expect(obj.list).toEqual([1, "two", 3]);
+});
+
+test("property matchers preserve class name and handle shared references", () => {
+  class User {
+    id: number;
+    name: string;
+    constructor() {
+      this.id = 1;
+      this.name = "alice";
+    }
+  }
+  const user = new User();
+  expect(user).toMatchSnapshot({ id: expect.any(Number) });
+  expect(user.id).toBe(1);
+  expect(user).toBeInstanceOf(User);
+
+  const shared = { x: 1 };
+  const dag = { a: shared, b: shared };
+  expect(dag).toMatchSnapshot({
+    a: { x: expect.any(Number) },
+    b: { x: expect.any(Number) },
+  });
+  expect(dag.a).toBe(shared);
+  expect(dag.b).toBe(shared);
+  expect(shared.x).toBe(1);
+
+  const cyclic: any = { id: 1 };
+  cyclic.self = cyclic;
+  expect(cyclic).toMatchSnapshot({ id: expect.any(Number) });
+  expect(cyclic.id).toBe(1);
+  expect(cyclic.self).toBe(cyclic);
+
+  const err: any = new Error("boom");
+  err.code = "E_FOO";
+  expect(err).toMatchSnapshot({ code: expect.any(String) });
+  expect(err.code).toBe("E_FOO");
+
+  let getterCalls = 0;
+  const withGetter = {
+    id: 1,
+    get ts() {
+      getterCalls++;
+      return Date.now();
+    },
+  };
+  expect(withGetter).toMatchSnapshot({ id: expect.any(Number) });
+  expect(withGetter.id).toBe(1);
+  expect(getterCalls).toBe(0);
+
+  const inner: any = { id: 1 };
+  const outer: any = { inner };
+  inner.parent = outer;
+  expect(outer).toMatchSnapshot({ inner: { id: expect.any(Number) } });
+  expect(inner.id).toBe(1);
+  expect(inner.parent).toBe(outer);
+});
+
 describe("toMatchSnapshot errors", () => {
   it("should throw if property matchers exist and received is not an object", () => {
     expect(() => {

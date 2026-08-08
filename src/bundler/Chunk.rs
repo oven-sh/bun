@@ -1407,7 +1407,11 @@ impl Layers {
 }
 
 impl CssImportOrder {
-    pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
+    pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(
+        &self,
+        hasher: &mut H,
+        sources: &[bun_ast::Source],
+    ) {
         // TODO: conditions, condition_import_records
 
         // core::mem::Discriminant is opaque/pointer-sized; hash an explicit u8 tag instead.
@@ -1417,26 +1421,32 @@ impl CssImportOrder {
             CssImportOrderKind::SourceIndex(_) => 2,
         };
         bun_core::write_any_to_hasher(hasher, tag);
+        // Length-prefix every count and byte string below: unescaped CSS
+        // identifiers can contain any byte, so separators can't delimit.
         match &self.kind {
             CssImportOrderKind::Layers(layers) => {
-                for layer in layers.inner().slice() {
-                    for (i, layer_name) in layer.v.slice().iter().enumerate() {
-                        let is_last = i == layers.inner().len() as usize - 1;
-                        if is_last {
-                            hasher.update(layer_name);
-                        } else {
-                            hasher.update(layer_name);
-                            hasher.update(b".");
-                        }
+                let layer_list = layers.inner().slice();
+                bun_core::write_any_to_hasher(hasher, layer_list.len());
+                for layer in layer_list {
+                    let parts = layer.v.slice();
+                    bun_core::write_any_to_hasher(hasher, parts.len());
+                    for layer_name in parts.iter() {
+                        bun_core::write_any_to_hasher(hasher, layer_name.len());
+                        hasher.update(layer_name);
                     }
                 }
-                hasher.update(b"\x00");
             }
-            CssImportOrderKind::ExternalPath(path) => hasher.update(path.text),
-            // Note: `Index` is a `#[repr(transparent)]` u32 newtype but
-            // doesn't impl `AsBytes`; hash the inner u32.
+            CssImportOrderKind::ExternalPath(path) => {
+                bun_core::write_any_to_hasher(hasher, path.text.len());
+                hasher.update(path.text);
+            }
+            // Hash the file's pretty path, not its source index: these hashes
+            // decide CSS chunk identity and output order, and source indices
+            // are assigned in a scheduling-dependent order.
             CssImportOrderKind::SourceIndex(idx) => {
-                bun_core::write_any_to_hasher(hasher, idx.get())
+                let pretty = sources[idx.get() as usize].path.pretty;
+                bun_core::write_any_to_hasher(hasher, pretty.len());
+                hasher.update(pretty);
             }
         }
     }

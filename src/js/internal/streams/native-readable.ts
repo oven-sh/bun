@@ -12,11 +12,6 @@ const transferToNativeReadable = $newCppFunction(
   1,
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
-
-// Node emits 'data' for process stdio from the native read callback (via
-// MakeCallback), so a throw from a listener becomes an uncaughtException. Our
-// pull-based reader can emit from a pull-promise reaction; a throw there would
-// otherwise reject a promise nobody observes and surface as unhandledRejection.
 const { reportUncaughtException } = require("internal/shared");
 
 const kRefCount = Symbol("refCount");
@@ -217,10 +212,10 @@ function pushAndCheck(stream: NativeReadable, chunk: any) {
   try {
     wantMore = stream.push(chunk);
   } catch (e) {
+    // A 'data' listener threw inside the pull-promise reaction. Node fires
+    // these from the native read callback, so reroute to uncaughtException,
+    // and schedule the read the unwound addChunk would have done.
     reportUncaughtException(e);
-    // The throw unwound addChunk before its maybeReadMore call, so nothing is
-    // scheduled to read again; without this the flowing stream stalls and
-    // never reaches EOF. The chunk was emitted, not buffered, so keep reading.
     wantMore = true;
     process.nextTick(readAfterListenerThrow, stream);
   }
@@ -231,8 +226,7 @@ function pushAndCheck(stream: NativeReadable, chunk: any) {
 }
 
 function readAfterListenerThrow(stream: NativeReadable) {
-  // When the native side already signaled close, handleResult scheduled the
-  // EOF push(null); pulling again is unnecessary.
+  // On native close, handleResult already scheduled the EOF push(null).
   if (stream.destroyed || stream[kCloseState][0]) return;
   stream.read(0);
 }

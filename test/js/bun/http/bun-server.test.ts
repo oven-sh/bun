@@ -13,6 +13,37 @@ import {
 } from "harness";
 import path from "path";
 
+const WEBSOCKET_ASYNC_FIRST_MESSAGE = "first";
+const WEBSOCKET_ASYNC_SECOND_MESSAGE = "second";
+const WEBSOCKET_ASYNC_DONE_PREFIX = "done:";
+const WEBSOCKET_ASYNC_POLL_TURNS = 20;
+const WEBSOCKET_ASYNC_NOT_FOUND_STATUS = 404;
+const WEBSOCKET_ASYNC_EXPECTED_MESSAGE_COUNT = 2;
+const HTTP_PROTOCOL_PREFIX = "http";
+const WS_PROTOCOL_PREFIX = "ws";
+
+async function didSettleWithinImmediateTurns<T>(promise: Promise<T>, turns: number): Promise<boolean> {
+  let settled = false;
+  let rejection: unknown;
+  promise.then(
+    () => {
+      settled = true;
+    },
+    error => {
+      rejection = error;
+    },
+  );
+
+  for (let turn = 0; turn < turns; turn++) {
+    if (rejection) throw rejection;
+    if (settled) return true;
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+
+  if (rejection) throw rejection;
+  return settled;
+}
+
 describe.concurrent("Server", () => {
   test("should not use 100% CPU when websocket is idle", async () => {
     await using proc = Bun.spawn({
@@ -1844,6 +1875,89 @@ test("should be able to async upgrade using custom protocol", async () => {
   };
 
   expect(await promise).toBe(true);
+});
+
+test("async websocket message handlers run serially per socket", async () => {
+  const firstEntered = Promise.withResolvers<void>();
+  const secondEntered = Promise.withResolvers<void>();
+  const releaseFirst = Promise.withResolvers<void>();
+  const clientOpened = Promise.withResolvers<void>();
+  const clientMessagesReceived = Promise.withResolvers<void>();
+  const clientMessages: string[] = [];
+  const handlerEntries: string[] = [];
+  let inFlightHandlers = 0;
+  let maxInFlightHandlers = 0;
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response(null, { status: WEBSOCKET_ASYNC_NOT_FOUND_STATUS });
+    },
+    websocket: {
+      async message(ws, message) {
+        inFlightHandlers++;
+        maxInFlightHandlers = Math.max(maxInFlightHandlers, inFlightHandlers);
+        const text = String(message);
+        handlerEntries.push(text);
+        if (text === WEBSOCKET_ASYNC_FIRST_MESSAGE) {
+          firstEntered.resolve();
+          await releaseFirst.promise;
+        } else if (text === WEBSOCKET_ASYNC_SECOND_MESSAGE) {
+          secondEntered.resolve();
+        }
+        ws.send(WEBSOCKET_ASYNC_DONE_PREFIX + text);
+        inFlightHandlers--;
+      },
+    },
+  });
+
+  const ws = new WebSocket(server.url.href.replace(HTTP_PROTOCOL_PREFIX, WS_PROTOCOL_PREFIX));
+  ws.onopen = () => clientOpened.resolve();
+  ws.onerror = event => {
+    clientOpened.reject(event);
+    clientMessagesReceived.reject(event);
+  };
+  ws.onmessage = event => {
+    clientMessages.push(String(event.data));
+    if (clientMessages.length === WEBSOCKET_ASYNC_EXPECTED_MESSAGE_COUNT) {
+      clientMessagesReceived.resolve();
+    }
+  };
+
+  await clientOpened.promise;
+  ws.send(WEBSOCKET_ASYNC_FIRST_MESSAGE);
+  await firstEntered.promise;
+
+  ws.send(WEBSOCKET_ASYNC_SECOND_MESSAGE);
+  const secondStartedBeforeFirstSettled = await didSettleWithinImmediateTurns(
+    secondEntered.promise,
+    WEBSOCKET_ASYNC_POLL_TURNS,
+  );
+
+  expect({
+    handlerEntries,
+    maxInFlightHandlers,
+    secondStartedBeforeFirstSettled,
+  }).toEqual({
+    handlerEntries: [WEBSOCKET_ASYNC_FIRST_MESSAGE],
+    maxInFlightHandlers: 1,
+    secondStartedBeforeFirstSettled: false,
+  });
+
+  releaseFirst.resolve();
+  await secondEntered.promise;
+  await clientMessagesReceived.promise;
+
+  expect({ clientMessages, maxInFlightHandlers }).toEqual({
+    clientMessages: [
+      WEBSOCKET_ASYNC_DONE_PREFIX + WEBSOCKET_ASYNC_FIRST_MESSAGE,
+      WEBSOCKET_ASYNC_DONE_PREFIX + WEBSOCKET_ASYNC_SECOND_MESSAGE,
+    ],
+    maxInFlightHandlers: 1,
+  });
+
+  ws.close();
 });
 
 test("should be able to abrubtly close a upload request", async () => {

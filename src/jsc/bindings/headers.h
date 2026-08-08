@@ -796,6 +796,8 @@ BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__bunTestThen);
 BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__bunTestCatch);
 BUN_DECLARE_HOST_FUNCTION(Bun__CronJob__onPromiseResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__CronJob__onPromiseReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__ServerWebSocket__onMessagePromiseResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__ServerWebSocket__onMessagePromiseReject);
 
 #endif
 

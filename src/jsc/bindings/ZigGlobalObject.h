@@ -416,6 +416,8 @@ public:
         Bun__FileSink__onRejectStream,
         Bun__CronJob__onPromiseResolve,
         Bun__CronJob__onPromiseReject,
+        Bun__ServerWebSocket__onMessagePromiseResolve,
+        Bun__ServerWebSocket__onMessagePromiseReject,
         Bun__HTTPRequestContextH3__onReject,
         Bun__HTTPRequestContextH3__onRejectStream,
         Bun__HTTPRequestContextH3__onResolve,

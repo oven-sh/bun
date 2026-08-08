@@ -1362,7 +1362,7 @@ static bool mi_arena_page_purge_holes_at(size_t slice_index, size_t slice_count,
     _mi_page_holes_count_page_freed();
     return true;
   }
-  _mi_page_purge_holes(page);
+  _mi_page_purge_holes(page, parg->tld);
   mi_bitmap_set(bitmap, slice_index);     // back in the map *before* unowning: unown may free the page
   mi_abandoned_page_unown(page, NULL);
   return true;
@@ -1374,7 +1374,7 @@ static bool mi_arena_page_purge_holes_at(size_t slice_index, size_t slice_count,
 void _mi_arenas_purge_abandoned_holes(mi_heap_t* heap, mi_tld_t* tld) {
   if (heap == NULL) return;
   if (!mi_option_is_enabled(mi_option_purge_holes)) return;
-  _mi_page_purge_holes_begin();
+  _mi_page_purge_holes_begin(tld);
   mi_forall_arenas(heap, ((mi_arena_t*)NULL), 0, arena) {
     mi_arena_pages_t* const arena_pages = mi_heap_arena_pages(heap, arena);
     if (arena_pages != NULL) {
@@ -1389,7 +1389,7 @@ void _mi_arenas_purge_abandoned_holes(mi_heap_t* heap, mi_tld_t* tld) {
     }
   }
   mi_forall_arenas_end();
-  _mi_page_purge_holes_end();
+  _mi_page_purge_holes_end(tld);
 }
 
 // The read-only counterpart of the sweep above: account for the holes in the abandoned pages

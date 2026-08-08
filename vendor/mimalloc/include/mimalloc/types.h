@@ -712,6 +712,14 @@ struct mi_tld_s {
   _Atomic(uint32_t)     park_swept;           // this park's sweep is done: don't claim it again until the thread re-parks
   mi_tld_t*             subproc_next;         // list of tlds in the subproc, so the scavenger can find parked threads
   size_t                holes_sweep_seq;      // idle sweeps run over THIS tld's heaps (paces `purge_holes_full_every`)
+  // State of the hole sweep currently running over this tld's pages (owner or scavenger; one sweeper at a time).
+  // Kept here, reached through the page or the tld in hand, rather than in `__thread` variables: on macOS a first
+  // access to a thread-local from inside the allocator makes dyld allocate the thread's TLV block with malloc, which
+  // re-enters the allocator before the variable exists (unbounded recursion on any new thread's first allocation).
+  bool                  holes_sweeping;       // `_mi_page_purge_holes_begin/end`: a sweep is rewriting this tld's pages
+  bool                  holes_sweep_full;     // this sweep ignores `page->swept_state`
+  size_t                holes_sweep_skipped;  // per-sweep counters, folded into the process-wide ones at the end
+  size_t                holes_sweep_visited;
   mi_msecs_t            holes_sweep_last;     // when this tld's heaps were last swept (paces `purge_holes_min_interval`)
 };
 

@@ -178,7 +178,7 @@ static bool mi_theap_page_purge_holes(mi_theap_t* theap, mi_page_queue_t* pq, mi
     _mi_page_free(page, pq);
     return true;
   }
-  _mi_page_purge_holes(page);
+  _mi_page_purge_holes(page, mi_page_tld(page));
   mi_assert_expensive(_mi_page_is_valid(page));
   return true; // continue
 }
@@ -193,9 +193,9 @@ static void mi_theap_purge_holes(mi_theap_t* theap) mi_attr_noexcept {
   if (theap->tld == NULL) return;
   if (theap->tld->thread_id != _mi_thread_id() &&
       mi_atomic_load_acquire(&theap->tld->park_state) != MI_PARK_SWEEPING) return;
-  _mi_page_purge_holes_begin();
+  _mi_page_purge_holes_begin(theap->tld);
   mi_theap_visit_pages(theap, &mi_theap_page_purge_holes, true /* include full pages */, NULL, NULL);
-  _mi_page_purge_holes_end();
+  _mi_page_purge_holes_end(theap->tld);
 }
 
 // Purge the holes in every page this thread may safely touch:

@@ -528,7 +528,9 @@ impl Queue {
         // `container_of`-derived `*mut` reborrow. The package manager is a
         // separate heap allocation, disjoint from `self` (= `vm.modules`).
         let pm = VirtualMachine::get().as_mut().package_manager();
-        if pm.pending_tasks.load(Ordering::Relaxed) > 0 {
+        if pm.pending_tasks.load(Ordering::Relaxed) > 0
+            || pm.pending_manifest_saves.load(Ordering::Relaxed) > 0
+        {
             return;
         }
 

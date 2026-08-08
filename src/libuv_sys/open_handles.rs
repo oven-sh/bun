@@ -165,8 +165,18 @@ fn take_next() -> Option<Next> {
 pub fn stop_all_for_vm_teardown() {
     while let Some(next) = take_next() {
         let (handle, e) = match next {
-            Next::File(file, FileEntry { owner, close_via_owner }) => {
-                log!("teardown: closing reader over file @{:p} (owner {:p})", file, owner);
+            Next::File(
+                file,
+                FileEntry {
+                    owner,
+                    close_via_owner,
+                },
+            ) => {
+                log!(
+                    "teardown: closing reader over file @{:p} (owner {:p})",
+                    file,
+                    owner
+                );
                 // A listed file always has its reader as owner: `set_source`
                 // lists and records it in one step, `set_parent` keeps it current.
                 let close = close_via_owner.expect("file listed without its reader");

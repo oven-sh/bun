@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { channel, Channel, hasSubscribers, subscribe, tracingChannel, unsubscribe } from "node:diagnostics_channel";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { connect as netConnect } from "node:net";
+import { connect as netConnect, createServer as netCreateServer } from "node:net";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -428,6 +428,46 @@ describe("node:http server channels", () => {
     }
 
     expect(counts).toEqual({ created: 1, start: 1, finish: 1 });
+  });
+
+  test("http.server.* channels publish on the emit('connection') fallback path", async () => {
+    // server.emit('connection', foreignSocket) routes through the llhttp-based
+    // fallback (internal/http1_server_fallback), which in Node converges on the
+    // same parserOnIncoming publishes as the native dispatch path.
+    const events: Array<{ name: string; message: any }> = [];
+    const onCreated = (message: any) => events.push({ name: "created", message });
+    const onStart = (message: any) => events.push({ name: "start", message });
+    const onFinish = (message: any) => events.push({ name: "finish", message });
+    subscribe("http.server.response.created", onCreated);
+    subscribe("http.server.request.start", onStart);
+    subscribe("http.server.response.finish", onFinish);
+
+    const httpServer = createServer((req, res) => res.end("ok"));
+    const tcp = netCreateServer(socket => httpServer.emit("connection", socket));
+    try {
+      const { promise: listening, resolve: onListening, reject } = Promise.withResolvers<void>();
+      tcp.on("error", reject);
+      tcp.listen(0, "127.0.0.1", onListening);
+      await listening;
+      const { port } = tcp.address() as AddressInfo;
+
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe("ok");
+    } finally {
+      unsubscribe("http.server.response.created", onCreated);
+      unsubscribe("http.server.request.start", onStart);
+      unsubscribe("http.server.response.finish", onFinish);
+      tcp.close();
+      httpServer.close();
+    }
+
+    expect(events.map(e => e.name)).toEqual(["created", "start", "finish"]);
+    for (const { message } of events) {
+      expect(message.request).toBeInstanceOf(IncomingMessage);
+      expect(message.response).toBeInstanceOf(ServerResponse);
+    }
+    expect(events[1].message.server).toBe(httpServer);
+    expect(events[2].message.server).toBe(httpServer);
   });
 
   test("http.Server.listen() publishes on net.server.listen", async () => {

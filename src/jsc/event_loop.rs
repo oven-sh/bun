@@ -1047,6 +1047,7 @@ impl EventLoop {
         }
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden() || !self.vm_ref().script_allowed() {
+                jsc_vm.ensure_termination_exception_pending();
                 return Err(jsc::JsTerminated::JSTerminated);
             }
             self.tick();

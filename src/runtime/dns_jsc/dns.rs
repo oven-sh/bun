@@ -982,8 +982,9 @@ pub mod get_addr_info_request {
             request: LibcRequest,
             cx: &bun_jsc::JsThread<'_>,
         ) -> bun_jsc::JsResult<()> {
-            let req = request.0.as_ptr();
-            core::mem::forget(request);
+            // Consumed here: `then` takes over the request on every path, so
+            // the release-on-drop must not run.
+            let req = core::mem::ManuallyDrop::new(request).0.as_ptr();
             // SAFETY: the live heap request; `then` consumes it on every path.
             unsafe { (*req).backend = Backend::Libc(this.backend) };
             super::GetAddrInfoRequest::then(req, cx.global());

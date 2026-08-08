@@ -10,6 +10,12 @@
 //! list calling `Close()`; `uv_walk` alone is not enough because it yields bare
 //! `uv_handle_t*`s with no typed owner to close through. Insert on open, remove
 //! on close (a linear scan over this thread's open handles) — off any hot path.
+//!
+//! A reader over a *file* has no handle — its `uv_fs_read` is a request, which
+//! cannot be closed and completes only when the loop is drained — so such a
+//! reader lists itself by owner (`add_file_reader`); the stop phase closes it the
+//! same way, and the drained completion then finds a closed reader instead of a
+//! parent that is gone or may no longer run script.
 
 use super::*;
 
@@ -30,6 +36,8 @@ enum Kind {
     Pipe,
     Tty,
     Process,
+    /// Keyed by `owner` (a reader mid `uv_fs_read`); `handle` is null.
+    FileRead,
 }
 
 std::thread_local! {
@@ -72,6 +80,33 @@ pub(super) fn remove(handle: *mut uv_handle_t) {
     });
 }
 
+/// A reader over a file: listed by owner while it holds the source (its read
+/// may be in flight); `remove_file_reader` when it lets go of it.
+pub fn add_file_reader(owner: *mut c_void, close: CloseViaOwner) {
+    OPEN.with(|o| {
+        let mut o = o.borrow_mut();
+        if let Some(e) = o.iter_mut().find(|e| e.kind == Kind::FileRead && e.owner == owner) {
+            e.close_via_owner = Some(close);
+            return;
+        }
+        o.push(Entry {
+            handle: ptr::null_mut(),
+            kind: Kind::FileRead,
+            owner,
+            close_via_owner: Some(close),
+        });
+    });
+}
+
+pub fn remove_file_reader(owner: *mut c_void) {
+    OPEN.with(|o| {
+        let mut o = o.borrow_mut();
+        if let Some(i) = o.iter().position(|e| e.kind == Kind::FileRead && e.owner == owner) {
+            o.swap_remove(i);
+        }
+    });
+}
+
 /// `owner` now drives `handle` and closes it via `close(owner)`; pass a
 /// null `owner` to clear. No-op for handles not listed (never initialised
 /// on this thread, already closing, or the process-static stdin tty).
@@ -104,6 +139,7 @@ pub fn stop_all_for_vm_teardown() {
                 Kind::Pipe => "pipe",
                 Kind::Tty => "tty",
                 Kind::Process => "process",
+                Kind::FileRead => "file read",
             },
             e.handle,
             e.owner
@@ -112,6 +148,8 @@ pub fn stop_all_for_vm_teardown() {
             // SAFETY: the owner recorded itself for this live handle and clears
             // or replaces the slot before it goes away (set_owner contract).
             (Some(close), _) => unsafe { close(e.owner) },
+            // Listed only with its owner (`add_file_reader`).
+            (None, Kind::FileRead) => unreachable!("file reader listed without its owner"),
             // SAFETY: listed ⇒ initialised on this thread and not closing; a
             // pipe/tty nobody adopted is a leaked Box handed to libuv here.
             (None, Kind::Pipe) => unsafe { Pipe::close_and_destroy_unlisted(e.handle.cast()) },

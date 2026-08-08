@@ -1244,14 +1244,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         use bun_http_jsc::method_jsc::MethodJsc as _;
         use node_http_response::Flags as NhrFlags;
 
-        // SAFETY: `this` is the live server backref registered as the uws
-        // userdata; only one borrow derived from it is alive at a time.
         // A stopped server, or a VM whose script gate has closed (a worker asked
         // to terminate, still draining its loop): uWS requires every dispatched
         // request to be answered or adopted, so answer natively.
-        if unsafe { &*this }.js_value_for_dispatch().is_none()
-            || !unsafe { &*this }.vm().script_allowed()
-        {
+        // SAFETY: `this` is the live server backref registered as the uws
+        // userdata; only one borrow derived from it is alive at a time.
+        let this_ref = unsafe { &*this };
+        if this_ref.js_value_for_dispatch().is_none() || !this_ref.vm().script_allowed() {
             server_body::respond_stopped_503(resp);
             return;
         }

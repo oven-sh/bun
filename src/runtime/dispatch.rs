@@ -207,9 +207,9 @@ pub(crate) fn run_task(
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
             // its `Completion`; the erased entry runs `then` and frees it.
-            if let Err(err) =
-                unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) }
-            {
+            let completed =
+                unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) };
+            if let Err(err) = completed {
                 report_error_or_terminate(global, err)?;
             }
         }

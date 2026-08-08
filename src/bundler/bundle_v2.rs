@@ -2077,8 +2077,6 @@ pub mod bv2_impl {
             false
         }
 
-        /// Every onResolve/onLoad a plugin still holds is answered with an
-        /// error (bundle thread; the plugins' VM runs no more script).
         /// Bundle thread: make the pass's own Mini loop return from its poll so
         /// `is_done` is evaluated again.
         pub(crate) fn wake_own_loop(&mut self) {
@@ -2087,6 +2085,8 @@ pub mod bv2_impl {
             }
         }
 
+        /// Every onResolve/onLoad a plugin still holds is answered with an
+        /// error (bundle thread; the plugins' VM runs no more script).
         fn fail_outstanding_plugin_requests(&mut self) {
             fn cancelled_msg(file: &[u8]) -> bun_ast::Msg {
                 bun_ast::Msg {

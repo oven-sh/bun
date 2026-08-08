@@ -302,6 +302,7 @@ impl S3HttpDownloadStreamingTask {
         // (`embedded_work_finished` below, after `this` may have been freed).
         // SAFETY: `this` is live for the duration of the request.
         let done_handle = is_done.then(|| unsafe { (*this).loop_handle.clone() });
+        // SAFETY: as above; the HTTP thread is the only one touching it here.
         if unsafe { (*this).process_http_callback(&mut *async_http, result) } {
             // we are always unlocked here and its safe to enqueue
             // SAFETY: same exclusivity as above; `task` is the inline `concurrent_task` field of

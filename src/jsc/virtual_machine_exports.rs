@@ -103,6 +103,7 @@ pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_ta
 
 /// Off-thread counterpart of [`vm_queue_task`]: see [`crate::VmHandle::post_cpp_task`].
 // HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // the C ABI boundary is the unsafe part
 pub fn vm_handle_queue_task_concurrently(
     handle: &crate::VmHandle,
     task: *mut crate::cpp_task::CppTask,

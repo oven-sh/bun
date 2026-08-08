@@ -343,8 +343,7 @@ impl RuntimeTranspilerStore {
                 global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: OwnedString::new(referrer),
                 vm,
-                // SAFETY: `vm` is the live per-thread VM (this is its JS thread).
-                loop_handle: unsafe { (*vm).loop_handle() },
+                loop_handle: global_object.bun_vm().loop_handle(),
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),

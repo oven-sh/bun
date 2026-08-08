@@ -1446,6 +1446,9 @@ impl WindowsBufferedReader {
         self._offset = other._offset;
         // Ownership of the handle moves with the source; `set_parent` below
         // re-records this reader as the one a VM teardown stops it through.
+        if matches!(other.source, Some(Source::File(_) | Source::SyncFile(_))) {
+            uv::open_handles::remove_file_reader(core::ptr::from_mut(other).cast());
+        }
         self.source = other.source.take();
 
         other.flags.insert(WindowsFlags::IS_DONE);
@@ -2052,6 +2055,7 @@ impl WindowsBufferedReader {
         if let Some(source) = self.source.take() {
             match source {
                 Source::SyncFile(file) | Source::File(file) => {
+                    uv::open_handles::remove_file_reader(core::ptr::from_mut(self).cast());
                     // Hand the Box off to libuv: detach() leaves either an
                     // in-flight uv_fs_read (on_file_read) or a scheduled
                     // uv_fs_close (on_close_complete) pending; the callback
@@ -2271,6 +2275,9 @@ impl Drop for WindowsBufferedReader {
                 self.source = Some(source);
                 self.close_impl::<false>();
             } else {
+                if matches!(source, Source::File(_) | Source::SyncFile(_)) {
+                    uv::open_handles::remove_file_reader(core::ptr::from_mut(self).cast());
+                }
                 core::mem::forget(source);
             }
         }

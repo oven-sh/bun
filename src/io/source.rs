@@ -293,8 +293,9 @@ impl Source {
 
     /// `owner` (a reader or writer) now drives this source: point the uv
     /// handle's `data` at it and record it as the one a thread teardown closes
-    /// the handle through (`uv::open_handles`). Files carry requests, not
-    /// handles, so only `data` is set for them.
+    /// the source through (`uv::open_handles`). Files carry requests, not
+    /// handles: they are listed by owner, and whoever takes the source back
+    /// off the owner unlists it (`uv::open_handles::remove_file_reader`).
     pub fn set_owner(
         &mut self,
         owner: *mut c_void,
@@ -310,7 +311,9 @@ impl Source {
             Source::Tty(tty) => {
                 uv::open_handles::set_owner(tty.as_ptr().cast(), owner, Some(close_via_owner))
             }
-            Source::SyncFile(_) | Source::File(_) => {}
+            Source::SyncFile(_) | Source::File(_) => {
+                uv::open_handles::add_file_reader(owner, close_via_owner)
+            }
         }
     }
 

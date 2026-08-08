@@ -296,7 +296,7 @@ void MessagePort::peerClosed()
     // Deliver whatever the peer sent before it closed, then fire 'close'. Node orders
     // them that way, and registerCloseContext()'s retroactive notify can land before any
     // drain is scheduled -- e.g. on('close') registered before on('message').
-    if (m_started && m_hasMessageEventListener)
+    if (m_started && hasMessageEventListener())
         flushQueuedMessagesBeforeClose();
     // Fire 'close' (guarded against a double dispatch) and release this side's loop refs
     // so the loop can idle, matching node.
@@ -455,6 +455,9 @@ bool MessagePort::virtualHasPendingActivity() const
     // the context dies; node retains more — it never collects an entangled port at all.
     if (m_hasCloseEventListener.load(std::memory_order_acquire) && !m_closeEventDispatched)
         return true;
+    // The port's own listeners only: a parentPort delivering to `self.onmessage` (the global-scope
+    // count hasMessageEventListener() adds) is rooted by the worker global for the worker's life, and
+    // this GC-thread path stays a single plain-bool read.
     if (!m_hasMessageEventListener)
         return false;
 

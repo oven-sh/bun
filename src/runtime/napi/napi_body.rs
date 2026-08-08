@@ -5156,7 +5156,7 @@ impl NapiFinalizerTask {
                 unsafe {
                     drop(bun_core::heap::take(ct.as_ptr()));
                     let task = bun_core::heap::take(this);
-                    core::mem::forget(task.finalizer.env);
+                    let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
                 }
             }
             return;

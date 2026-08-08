@@ -212,6 +212,7 @@ impl<T: ?Sized> JsPtr<T> {
     /// # Safety
     /// No other live reference aliases the pointee for `'b`.
     #[inline]
+    #[allow(clippy::mut_from_ref)] // the `&Borrow` is a liveness witness, not the pointee
     pub unsafe fn under_borrow<'b>(self, _: &'b Borrow) -> &'b mut T {
         // SAFETY: borrow held ⇒ VM alive ⇒ pointee alive (type contract); aliasing per fn contract.
         unsafe { &mut *self.0.as_ptr() }
@@ -219,6 +220,7 @@ impl<T: ?Sized> JsPtr<T> {
     /// # Safety
     /// No other live reference aliases the pointee for `'b`.
     #[inline]
+    #[allow(clippy::mut_from_ref)] // the `&JsThread` is a thread witness, not the pointee
     pub unsafe fn on_js_thread<'b>(self, _: &'b JsThread<'_>) -> &'b mut T {
         // SAFETY: JS thread with heap alive; aliasing per fn contract.
         unsafe { &mut *self.0.as_ptr() }
@@ -341,8 +343,8 @@ impl<C: JobContext> Job<C> {
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
-                // SAFETY (three entries): the erased dispatchers are only reached
-                // through this header, so `p` is this `Job<C>`.
+                // SAFETY: (this and the two entries below) the erased dispatchers
+                // are only reached through this header, so `p` is this `Job<C>`.
                 complete: |p, cx| unsafe { Self::complete(p.cast::<Self>(), cx) },
                 // SAFETY: as above.
                 release_unrun: |p, cx| unsafe { Self::release_unrun(p.cast::<Self>(), cx) },
@@ -474,8 +476,8 @@ pub struct Completion<C: JobContext>(NonNull<Job<C>>);
 unsafe impl<C: JobContext> Send for Completion<C> {}
 impl<C: JobContext> Completion<C> {
     pub fn finish(self) {
-        let job = self.0.as_ptr();
-        core::mem::forget(self);
+        // Consumed: the obligation is met here, so its Drop check must not run.
+        let job = core::mem::ManuallyDrop::new(self).0.as_ptr();
         // SAFETY: the live heap job this token was created for; consumed once.
         unsafe { crate::post_job(job) };
     }

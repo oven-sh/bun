@@ -890,6 +890,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             .is_ok()
     }
 
+    #[allow(clippy::not_unsafe_ptr_arg_deref)] // trait contract: dequeued ⇒ sole owner
     fn free_released_unstarted(this: *mut Self) {
         // The VM released everything thread-affine (`stop_for_vm_teardown`);
         // what is left — config, log, an empty promise slot, a `Done`

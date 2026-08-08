@@ -5171,6 +5171,23 @@ void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
     (*arg0).setExecutionForbidden();
 }
 
+// JS thread. Make the VM's stop concrete on this thread: after this a TerminationException is
+// pending (unless termination is currently deferred), whether or not the NeedTermination trap the
+// requester fired had been serviced yet. What RETURN_IF_EXCEPTION would have done at the next check.
+[[ZIG_EXPORT(nothrow)]]
+void JSC__VM__ensureTerminationExceptionPending(JSC::VM* arg0)
+{
+    JSC::VM& vm = *arg0;
+    if (vm.hasPendingTerminationException())
+        return;
+    if (!vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
+        vm.notifyNeedTermination();
+    if (vm.hasTerminationRequest())
+        vm.throwTerminationException();
+    else
+        vm.traps().handleTraps(JSC::VMTraps::NeedTermination);
+}
+
 // These may be called concurrently from another thread.
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {

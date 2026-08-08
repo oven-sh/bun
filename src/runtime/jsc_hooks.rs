@@ -367,6 +367,8 @@ unsafe fn init_runtime_state(
     // PORTING.md §Forbidden permits
     // `into_raw`-without-reclaim only for true process-lifetime singletons via
     // `OnceLock`, which this is not (per-VM / per-Worker-thread).
+    bun_sys::set_stdio_write_hook(crate::webcore::file_sink::before_output_write);
+
     let state = bun_core::heap::into_raw(Box::new(RuntimeState {
         timer: timer::All::init(),
         sql_rare: bun_sql_jsc::jsc::RareData {

@@ -1,7 +1,7 @@
 "use strict";
 
 const EE = require("node:events");
-const { isArrayBufferView, isUint8Array } = require("node:util/types");
+const { isArrayBufferView, isUint8Array, isAnyArrayBuffer } = require("node:util/types");
 
 const ReflectOwnKeys = Reflect.ownKeys;
 const ArrayIsArray = Array.isArray;
@@ -119,6 +119,7 @@ function prependListener(emitter, event, fn) {
 
 // Add helper methods to Stream
 Stream._isArrayBufferView = isArrayBufferView;
+Stream._isAnyArrayBuffer = isAnyArrayBuffer;
 Stream._isUint8Array = isUint8Array;
 Stream._uint8ArrayToBuffer = function _uint8ArrayToBuffer(chunk) {
   return new $Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);

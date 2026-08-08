@@ -450,43 +450,34 @@ function makePortWritable(port) {
 
 function setupWorkerStdio(stdio) {
   const { stdin, stdout, stderr } = stdio;
+  // Plain assignment, not Object.defineProperty: `process.stdout/stderr/stdin`
+  // are lazy native properties, and defineProperty would reify (and so build,
+  // and dup an fd for) the fd-backed stream we are replacing. Assignment just
+  // replaces the slot; the descriptor comes out {writable,enumerable,configurable}
+  // either way. The native console is then pointed at the port streams, which is
+  // what routes a worker's console.log to the parent (Node: console._stdout is
+  // process.stdout, which in a worker is a port-backed Writable).
+  const setConsoleStream = $newCppFunction("BunProcess.cpp", "jsFunctionSetConsoleStream", 2);
   if (stdout) {
-    Object.defineProperty(process, "stdout", {
-      value: makePortWritable(stdout),
-      writable: true,
-      configurable: true,
-      enumerable: true,
-    });
+    const stream = makePortWritable(stdout);
+    (process as any).stdout = stream;
+    setConsoleStream(1, stream);
   }
   if (stderr) {
-    Object.defineProperty(process, "stderr", {
-      value: makePortWritable(stderr),
-      writable: true,
-      configurable: true,
-      enumerable: true,
-    });
+    const stream = makePortWritable(stderr);
+    (process as any).stderr = stream;
+    setConsoleStream(2, stream);
   }
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
-  Object.defineProperty(process, "stdin", {
-    value: stdin
-      ? makePortReadable(stdin, true)
-      : new Readable({
-          read() {
-            this.push(null);
-          },
-        }),
-    writable: true,
-    configurable: true,
-    enumerable: true,
-  });
-  // node routes console.log through process.stdout/stderr; Bun's global console
-  // writes the fd directly, so rebind it to the captured streams when present.
-  if (stdout || stderr) {
-    const { Console } = require("node:console");
-    globalThis.console = new Console(process.stdout, process.stderr);
-  }
+  (process as any).stdin = stdin
+    ? makePortReadable(stdin, true)
+    : new Readable({
+        read() {
+          this.push(null);
+        },
+      });
 }
 
 // Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for

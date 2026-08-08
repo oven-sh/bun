@@ -493,6 +493,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
 }
 
 extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr);
+${name === "FileSink" ? `extern "C" bool FileSink__isStdio(void* sinkPtr);` : ""}
 
 // TODO: how to make this a property callback. then, we can expose this as a documented field
 // It should not be shipped as a function call.
@@ -532,7 +533,20 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
-
+${
+  name === "FileSink"
+    ? `
+    // The per-thread stdio sink is shared (process.stdout, Bun.stdout.writer(),
+    // console.*): closing one handle to it flushes, it does not take the
+    // wrapper away from the others.
+    if (FileSink__isStdio(ptr)) {
+        FileSink__close(lexicalGlobalObject, ptr);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+`
+    : ""
+}
     sink->detach();
     ${name}__close(lexicalGlobalObject, ptr);
     // detach() nulled m_sinkPtr so ~${className} won't finalize ptr; do the

@@ -8,10 +8,17 @@ const modulePath = path.join(__dirname, 'build/Debug/test_reference_unref_in_fin
 const proc = spawn(process.argv[0], ['--expose-gc', '-e', `
 const m = require("${modulePath}");
 console.log('Loading experimental module...');
-let arr = m.test_reference_unref_in_finalizer_experimental();
-console.log('Test function returned');
-arr = null;
-global.gc ? global.gc() : (process.isBun && Bun.gc ? Bun.gc(true) : null);
+// Allocate in a callee frame and scrub the stack afterwards so a conservative
+// scan of this frame can't keep the wrapped objects alive past gc() (which is
+// what decides whether their finalizers run *during* GC, i.e. whether this
+// crashes as it must).
+(function () {
+  m.test_reference_unref_in_finalizer_experimental();
+  console.log('Test function returned');
+})();
+(function scrub(n) { return n > 0 ? scrub(n - 1) + 1 : 0; })(128);
+const gc = () => (global.gc ? global.gc() : (process.isBun && Bun.gc ? Bun.gc(true) : null));
+gc(); gc();
 console.log('GC triggered - should crash now');
 console.log('ERROR: Did not crash! Test failed!');
 process.exit(1);

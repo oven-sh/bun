@@ -26,6 +26,8 @@ class Process : public WebCore::JSEventEmitter {
     // Function that looks up "emit" on "process" and calls it with the provided arguments
     // Only used by internal code via passing to queueNextTick
     LazyProperty<Process, JSFunction> m_emitHelperFunction;
+    // consoleObjectWriteToObservedStream builtin (the console's JS slow path).
+    LazyProperty<Process, JSFunction> m_consoleWriteFunction;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
@@ -33,7 +35,58 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
 
+    // ── console ⇄ process.stdout/stderr binding (index 0 = fd 1, 1 = fd 2) ──
+    //
+    // Node's global console writes through `this._stdout.write(chunk)`, where
+    // `_stdout` lazily binds to `process.stdout` on first use and can be
+    // reassigned. Bun's console formats natively and writes straight to the
+    // per-VM stdio sink *unless doing so would be observable*: the console's
+    // stream was reassigned or replaced, its `write` is no longer Bun's, or it
+    // is corked / ended. `consoleStream()` answers that per call in O(1).
+    enum class ConsoleStreamState : uint8_t {
+        Unresolved, // console has not written to this fd yet
+        Native, // bound to Bun's own stdio stream (whether or not the JS object exists yet)
+        Custom, // bound to m_consoleStream (console._stdout = x, or process.stdout replaced before first use)
+    };
+    ConsoleStreamState m_consoleStreamState[2] = { ConsoleStreamState::Unresolved, ConsoleStreamState::Unresolved };
+    // Bits set from JS while Bun's stdio stream is corked / ended, forcing the
+    // JS path so Writable semantics apply. See ProcessObjectInternals.ts.
+    uint8_t m_stdioObserved[2] = { 0, 0 };
+    WriteBarrier<Unknown> m_consoleStream[2];
+    // Bun's own process.stdout / process.stderr object once materialised, and
+    // the StructureID it had when pristine (no own `write`).
+    WriteBarrier<JSObject> m_stdioStream[2];
+    StructureID m_stdioPristineStructureID[2] = {};
+    // diagnostics_channel: bit i set while kConsoleChannelNames[i] has
+    // subscribers (log, warn, error, debug, info); m_consolePublish(i, args).
+    WriteBarrier<JSFunction> m_consolePublish;
+
 public:
+    uint8_t m_consoleChannelMask = 0;
+    JSFunction* consolePublish() { return m_consolePublish.get(); }
+    void setConsoleChannels(JSC::VM& vm, uint8_t mask, JSFunction* publish)
+    {
+        m_consoleChannelMask = mask;
+        m_consolePublish.set(vm, this, publish);
+    }
+    // fd is 1 or 2 for all of these.
+    void setStdioStream(JSC::VM&, int fd, JSObject* stream);
+    JSObject* stdioStream(int fd) { return m_stdioStream[fd - 1].get(); }
+    void setStdioObserved(int fd, uint8_t bits) { m_stdioObserved[fd - 1] = bits; }
+    // `console._stdout = value` / worker stdio rebinding. `value` may be anything.
+    void setConsoleStream(JSC::VM&, int fd, JSValue value);
+    // The stream the console must deliver through via JS `write()`, or the
+    // empty value when the native stdio sink may be used. A structure compare
+    // once resolved; the first (Unresolved) call may run — and throw from — a
+    // user getter installed on `process.stdout`/`stderr`.
+    JSValue consoleStream(JSC::JSGlobalObject*, int fd);
+    bool consoleStreamIsCustom(int fd) { return m_consoleStreamState[fd - 1] == ConsoleStreamState::Custom; }
+    bool consoleStreamIsResolved(int fd) const { return m_consoleStreamState[fd - 1] != ConsoleStreamState::Unresolved; }
+    // What `console._stdout` / `console._stderr` evaluate to (may materialise
+    // process.stdout; can throw).
+    JSValue consoleStreamForGetter(JSC::JSGlobalObject*, int fd);
+    JSFunction* consoleWriteFunction() { return m_consoleWriteFunction.getInitializedOnMainThread(this); }
+
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTF::move(impl))
     {
@@ -141,6 +194,14 @@ public:
 };
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
+// $newCppFunction("BunProcess.cpp", "jsFunctionSetStdioObserved", 2)
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetStdioObserved);
+// $newCppFunction("BunProcess.cpp", "jsFunctionSetConsoleStream", 2)
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetConsoleStream);
+// $newCppFunction("BunProcess.cpp", "jsFunctionSetConsoleChannels", 2)
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetConsoleChannels);
+// $newCppFunction("BunProcess.cpp", "jsFunctionConsoleStream", 1)
+JSC_DECLARE_HOST_FUNCTION(jsFunctionConsoleStream);
 
 // Routes its argument onto the uncaught-exception path. Used by the
 // process.nextTick drain and, via $newCppFunction, by the node-style

@@ -404,6 +404,9 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
+    /// `BunProcess.cpp`: signals that were only forwarded to JS listeners go
+    /// back to `SIG_DFL` (no-op on Windows).
+    safe fn bun_reset_signal_handlers_for_exit();
 }
 
 bun_core::define_scoped_log!(teardown_log, Worker, hidden);
@@ -1599,6 +1602,40 @@ impl VirtualMachine {
         }
     }
 
+    /// Synchronously flush this VM's stdio sinks (fd 1/2). No-op when they were
+    /// never created. Called before anything that must not overtake or discard
+    /// already-accepted `process.stdout`/`stderr` bytes: fatal-error printing
+    /// and exit.
+    #[inline]
+    pub fn drain_stdio(&mut self) {
+        if self
+            .rare_data
+            .as_ref()
+            .is_some_and(|r| r.stdio_sinks.iter().any(Option::is_some))
+        {
+            let vm = core::ptr::from_mut::<VirtualMachine>(self);
+            // SAFETY: `vm` is the live per-thread VM; no `&mut` is held across the call.
+            unsafe { crate::rare_data::__bun_stdio_sink_drain(vm) };
+        }
+    }
+
+    /// The exit-time drain. JS will not run again, so its signal listeners
+    /// can't either: hand the signals they had claimed back to their defaults
+    /// first (cf. Node's `ResetSignalHandlers` at teardown) so that waiting on
+    /// a reader that never reads stays killable the ordinary way.
+    fn drain_stdio_for_exit(&mut self) {
+        if self
+            .rare_data
+            .as_ref()
+            .is_some_and(|r| r.stdio_sinks.iter().any(Option::is_some))
+        {
+            if self.is_main_thread() {
+                bun_reset_signal_handlers_for_exit();
+            }
+            self.drain_stdio();
+        }
+    }
+
     pub fn on_exit(&mut self) {
         // Decide once whether the exit sequence may run script. It can be
         // entered with an exception pending: `process.exit()` from inside a
@@ -1650,6 +1687,11 @@ impl VirtualMachine {
             self.is_inside_deferred_task_queue.set(false);
         }
 
+        // Whatever process.stdout/stderr still had queued behind a slow reader
+        // is written now (blocking), like console.log always has been: an exit
+        // must not silently truncate output that was accepted before it.
+        self.drain_stdio_for_exit();
+
         self.is_shutting_down = true;
 
         // Make sure we run new cleanup hooks introduced by running cleanup
@@ -1681,6 +1723,9 @@ impl VirtualMachine {
 
     pub fn global_exit(&mut self) -> ! {
         debug_assert!(self.is_shutting_down());
+        // Paths that get here without `on_exit()` (early CLI/test-runner
+        // exits) still owe the fd whatever process.stdout/stderr queued.
+        self.drain_stdio_for_exit();
         // FIXME: we should be doing this, but we're not, but unfortunately
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
@@ -2382,20 +2427,8 @@ impl VirtualMachine {
             MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
         }
 
-        // ConsoleObject is self-referential (buffers + adapters) — allocate
-        // stable storage and init in place.
-        // `console.init(Output.rawErrorWriter(), Output.rawWriter())` must
-        // happen BEFORE the pointer is stored/passed; the previous port left
-        // it as raw `MaybeUninit` (UB on first C++ read).
-        let mut console_box: Box<core::mem::MaybeUninit<crate::console_object::ConsoleObject>> =
-            Box::new(core::mem::MaybeUninit::uninit());
-        crate::console_object::ConsoleObject::init_in_place(
-            &mut console_box,
-            bun_core::Output::raw_error_writer(),
-            bun_core::Output::raw_writer(),
-        );
         let console =
-            bun_core::heap::into_raw(console_box).cast::<crate::console_object::ConsoleObject>();
+            bun_core::heap::into_raw(Box::new(crate::console_object::ConsoleObject::new()));
 
         let context_id = opts
             .context_id
@@ -4688,6 +4721,12 @@ impl VirtualMachine {
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
+        // Stdio sinks need the loop (poll teardown) and `RareData.file_polls`;
+        // the usual exit paths released them in `release_js_handles()` already,
+        // this covers VMs torn down directly (e.g. `bun build`'s bake VM).
+        if let Some(rare) = self.rare_data.as_deref_mut() {
+            rare.release_stdio_sinks();
+        }
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
         // The VM's own clone of its handle; the shared inner is freed when the
@@ -5019,6 +5058,17 @@ impl VirtualMachine {
                     next
                 };
             }
+        }
+        // The stdio sinks carry over (they own the fd state); their JS wrapper
+        // belongs to the outgoing global and must not.
+        if self
+            .rare_data
+            .as_ref()
+            .is_some_and(|r| r.stdio_sinks.iter().any(Option::is_some))
+        {
+            let vm = core::ptr::from_mut::<VirtualMachine>(self);
+            // SAFETY: `vm` is the live per-thread VM; no `&mut` is held across the call.
+            unsafe { crate::rare_data::__bun_stdio_sink_release_js(vm) };
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.listening_sockets_for_watch_mode.lock().clear();

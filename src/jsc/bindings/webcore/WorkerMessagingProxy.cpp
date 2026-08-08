@@ -192,8 +192,6 @@ std::optional<bool> WorkerMessagingProxy::hasRef() const
     ASSERT(!m_scriptExecutionContext || m_scriptExecutionContext->isContextThread());
     if (!m_workerThread)
         return std::nullopt;
-    if (m_keepAliveReleased)
-        return false;
     return WebWorker__hasRef(m_workerThread);
 }
 

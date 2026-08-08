@@ -697,8 +697,11 @@ class Debugger {
 
     if (this.#nodeInspector || data.isCDP) {
       // Node prints this on every remote attach; tools gate on it. fs.writeSync avoids reifying
-      // Bun.stderr (its lazy Blob would leak at exit under LSAN).
-      require("node:fs").writeSync(2, "Debugger attached.\n");
+      // Bun.stderr (its lazy Blob would leak at exit under LSAN). Best-effort like Node's
+      // fprintf: a closed fd 2 (EBADF/EPIPE) must not abort the attach.
+      try {
+        require("node:fs").writeSync(2, "Debugger attached.\n");
+      } catch {}
       // CDP adapter between WebSocket and JSC backend. Never ref the event loop (`true` = no ref):
       // Node exits with a debugger attached. https://github.com/nodejs/node/blob/main/src/inspector_agent.cc
       let adapter: any;

@@ -5456,16 +5456,12 @@ restart:
         // The iter callback can run user code (a nested value's inspect.custom, Proxy
         // traps) that adds properties to this object, rehashing the PropertyTable
         // mid-walk (use-after-free). Same for getters resolved through
-        // getIfPropertyExists. Collect the entries with no side effects first, then
-        // do the getter calls and callbacks on the snapshot.
-        struct SnapshottedProperty {
-            Identifier key;
-            unsigned attributes;
-        };
-        WTF::Vector<SnapshottedProperty, 16> snapshot;
-        // Parallel to `snapshot`; keeps the collected values visible to GC. Empty
-        // slots mark prototype properties that are fetched after the walk.
-        MarkedArgumentBuffer snapshotValues;
+        // getIfPropertyExists. Collect the keys with no side effects first, then
+        // resolve the values and run the callbacks on the snapshot. Values are
+        // looked up by name on the live structure so a property the callback
+        // deletes is omitted and one it overwrites reports the current value,
+        // like the slow path below and Node.
+        WTF::Vector<Identifier, 16> snapshot;
 
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
             if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
@@ -5486,25 +5482,23 @@ restart:
             }
             visitedProperties.append(Identifier::fromUid(vm, prop));
 
-            JSC::JSValue propertyValue = JSValue();
-            if (objectToUse == object) {
-                propertyValue = objectToUse->getDirect(entry.offset());
-                if (!propertyValue)
-                    return true;
-            }
-
-            snapshot.append({ Identifier::fromUid(vm, prop), entry.attributes() });
-            snapshotValues.appendWithCrashOnOverflow(propertyValue);
+            snapshot.append(Identifier::fromUid(vm, prop));
             return true;
         });
 
-        for (size_t i = 0; i < snapshot.size(); i++) {
-            const auto& snapshotted = snapshot[i];
-            auto* prop = snapshotted.key.impl();
+        for (const Identifier& property : snapshot) {
+            auto* prop = property.impl();
             ZigString key = toZigString(prop);
 
-            JSC::JSValue propertyValue = snapshotValues.at(i);
-            if (!propertyValue || propertyValue.isGetterSetter() && !((snapshotted.attributes & PropertyAttribute::Accessor) != 0)) {
+            JSC::JSValue propertyValue = JSValue();
+            unsigned attributes = 0;
+            if (objectToUse == object) {
+                propertyValue = objectToUse->getDirect(vm, property, attributes);
+                if (!propertyValue)
+                    continue;
+            }
+
+            if (!propertyValue || propertyValue.isGetterSetter() && !((attributes & PropertyAttribute::Accessor) != 0)) {
                 propertyValue = objectToUse->getIfPropertyExists(globalObject, prop);
             }
 
@@ -5517,7 +5511,7 @@ restart:
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
 
-            bool isPrivate = prop->isSymbol() && snapshotted.key.isPrivateName();
+            bool isPrivate = prop->isSymbol() && property.isPrivateName();
 
             if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
                 continue;

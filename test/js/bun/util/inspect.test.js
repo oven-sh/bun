@@ -844,6 +844,38 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         console.log("custom delete:", s.includes("z: 1"));
       }
       {
+        // Mutating a sibling that has not been formatted yet: only the key
+        // list is snapshotted, values resolve live. An overwrite shows the
+        // new value, a delete is omitted, and an accessor redefinition shows
+        // [Getter] (matches Node and the slow path).
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) p.z = 777; return "a"; } };
+        p.z = 1;
+        console.log("overwrite later:", Bun.inspect(p).includes("z: 777"));
+      }
+      {
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) delete p.z; return "a"; } };
+        p.z = 1;
+        console.log("delete later:", !Bun.inspect(p).includes("z:"));
+      }
+      {
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) { delete p.z; p.z = 999; } return "a"; } };
+        p.z = 1;
+        console.log("delete+readd later:", Bun.inspect(p).includes("z: 999"));
+      }
+      {
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) Object.defineProperty(p, "z", { get() { return 5; }, enumerable: true, configurable: true }); return "a"; } };
+        p.z = 1;
+        console.log("redefine later:", Bun.inspect(p).includes("z: [Getter]"));
+      }
+      {
         // A getter on a built-in subclass (Map.size) is another way the
         // formatter runs user code for a nested value.
         const p = makeParent();
@@ -866,7 +898,8 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
       }
       {
         // Allocation churn + GC inside the hook, with object-valued siblings
-        // formatted afterwards: catches a snapshot that is invisible to GC.
+        // formatted afterwards: the snapshotted keys and the values resolved
+        // after the walk must survive the collection.
         const p = makeParent();
         let fired = 0;
         p.a = { [custom]() {
@@ -904,7 +937,7 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         "custom add: true",
         // console.log dump of the mutated parent: properties added by the
         // inspect.custom hook mid-format are not shown (the walk snapshots
-        // the properties up front, like Node).
+        // the key list up front, like Node).
         "{",
         "  k0: 0,",
         "  k1: 1,",
@@ -918,6 +951,10 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         "  z: 1,",
         "}",
         "custom delete: true",
+        "overwrite later: true",
+        "delete later: true",
+        "delete+readd later: true",
+        "redefine later: true",
         "map size getter: true true",
         "prototype walk: true true",
         "gc churn: true",

@@ -270,8 +270,9 @@ void WorkerMessagingProxy::rejectAllCrossVMRequests()
 // a fixed count rather than "everything that was queued when the drain began": with a producer on
 // another thread that snapshot can be arbitrarily large, and the receiving loop's timers and I/O
 // wait behind it. `UntilEmpty` is for the sender having exited: the queue is finite and everything
-// in it precedes 'close'. Worker inboxes never change owner, so the batch is swapped out under the
-// lock and dispatched uncontended.
+// in it precedes 'close'. Worker inboxes never change owner, so up to a budget's worth is moved out
+// under one lock acquisition and dispatched uncontended; the queue itself is only swapped out whole
+// when it fits the budget, so a continuation never has to hand a tail back.
 enum class DrainBudget { Bounded,
     UntilEmpty };
 static constexpr size_t drainBatchLimit = 1024;
@@ -279,30 +280,33 @@ static constexpr size_t drainBatchLimit = 1024;
 template<typename Dispatch>
 static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, Dispatch&& dispatch)
 {
-    size_t limit = budget == DrainBudget::UntilEmpty ? std::numeric_limits<size_t>::max() : drainBatchLimit;
-    Deque<MessageWithMessagePorts> batch;
-    {
-        Locker locker { inbox.lock };
-        if (inbox.queue.isEmpty()) {
-            inbox.drainScheduled = false;
-            return false;
-        }
-        batch = std::exchange(inbox.queue, {});
-    }
+    size_t remaining = budget == DrainBudget::UntilEmpty ? std::numeric_limits<size_t>::max() : drainBatchLimit;
 
     while (true) {
+        Deque<MessageWithMessagePorts> batch;
+        {
+            Locker locker { inbox.lock };
+            if (inbox.queue.isEmpty()) {
+                inbox.drainScheduled = false;
+                return false;
+            }
+            if (!remaining)
+                return true; // budget spent, messages left
+            if (inbox.queue.size() <= remaining)
+                batch = std::exchange(inbox.queue, {});
+            else {
+                for (size_t i = 0; i < remaining; ++i)
+                    batch.append(inbox.queue.takeFirst());
+            }
+        }
+        if (budget == DrainBudget::Bounded)
+            remaining -= batch.size();
+
         while (!batch.isEmpty()) {
             // The receiving VM is being stopped: nothing more is delivered (the
             // rest is dropped with the proxy).
             if (context.isJSExecutionForbidden())
                 return false;
-            if (limit-- == 0) {
-                // Budget spent: put the undrained tail back in front of anything enqueued meanwhile.
-                Locker locker { inbox.lock };
-                while (!batch.isEmpty())
-                    inbox.queue.prepend(batch.takeLast());
-                return true;
-            }
             auto message = batch.takeFirst();
             auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
             auto event = MessageEvent::create(globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
@@ -310,15 +314,6 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
             if (globalObject.drainMicrotasks())
                 return false; // termination pending
         }
-
-        Locker locker { inbox.lock };
-        if (inbox.queue.isEmpty()) {
-            inbox.drainScheduled = false;
-            return false;
-        }
-        if (limit == 0)
-            return true;
-        batch = std::exchange(inbox.queue, {});
     }
 }
 

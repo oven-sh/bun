@@ -95,6 +95,11 @@ private:
     struct Side {
         WTF::Lock lock;
         WTF::Deque<MessageWithMessagePorts> inbox WTF_GUARDED_BY_LOCK(lock);
+        // Messages the owner's drain has taken out of `inbox` (a small batch per lock
+        // acquisition) but not dispatched yet. Still counted as queued in `state`. If the
+        // handler transfers the port mid-batch, detach() puts them back in front of `inbox`
+        // so the next owner sees everything, in order; close() drops them with the rest.
+        WTF::Deque<MessageWithMessagePorts> draining WTF_GUARDED_BY_LOCK(lock);
         ScriptExecutionContextIdentifier ctxId WTF_GUARDED_BY_LOCK(lock) { 0 };
         ThreadSafeWeakPtr<MessagePort> port WTF_GUARDED_BY_LOCK(lock);
         // Packed flags + count. Written only while holding `lock`; read locklessly.

@@ -44,11 +44,20 @@ test("every automatic retry rule in the generated pipeline is scoped by signal_r
   // Generate the pipeline exactly as CI does, onto a clean slate so a broken
   // generator cannot pass against a stale ci.yml from an earlier run.
   // CI-detection env vars are dropped so the generator takes its plain local
-  // path regardless of where the test runs.
+  // path regardless of where the test runs. Outside CI the only network the
+  // generator touches is getCanaryRevision()'s two GitHub API calls, which
+  // degrade gracefully to revision 1 on any error; answering them locally
+  // with 404 (non-retryable in scripts/utils.mjs curl()) keeps the test off
+  // the network and fast instead of riding curl's multi-second retry backoff.
   rmSync(pipelinePath, { force: true });
+  await using github = Bun.serve({
+    port: 0,
+    fetch: () => new Response("{}", { status: 404 }),
+  });
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !/^(BUILDKITE|GITHUB_)/.test(name) && name !== "CI"),
   );
+  env.GITHUB_API_URL = String(github.url);
   await using proc = Bun.spawn({
     cmd: ["node", join(repoRoot, ".buildkite", "ci.mjs")],
     cwd: repoRoot,
@@ -85,4 +94,4 @@ test("every automatic retry rule in the generated pipeline is scoped by signal_r
   // Retries hold an agent for up to the full step timeout; keep them bounded.
   const unbounded = rules.filter(rule => typeof rule.limit !== "number" || rule.limit < 1 || rule.limit > 2);
   expect(unbounded).toEqual([]);
-}, 90_000);
+});

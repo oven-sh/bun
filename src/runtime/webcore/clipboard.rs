@@ -851,8 +851,6 @@ mod platform {
 // (text only) on the work pool, gated on `$WAYLAND_DISPLAY` / `$DISPLAY`.
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
-    use core::sync::atomic::{AtomicU32, Ordering};
-
     use bun_core::env_var;
     use bun_sys::{Fd, File, O};
 
@@ -1119,24 +1117,24 @@ mod platform {
         }
     }
 
-    /// `O_EXCL` refuses pre-planted files/symlinks at the predictable path.
+    /// The shared tmpname (random ^ nanoseconds + counter) makes collisions
+    /// impractical; `O_EXCL` still refuses anything pre-planted at the path.
     fn write_temp_file(bytes: &[u8]) -> Option<Vec<u8>> {
-        static COUNTER: AtomicU32 = AtomicU32::new(0);
         let dir = env_var::TMPDIR::get()
             .filter(|dir| !dir.is_empty())
             .unwrap_or(b"/tmp");
+        let mut name_buf = [0u8; 64];
+        let name = bun_paths::fs::FileSystem::tmpname(
+            b"bun-clipboard",
+            &mut name_buf,
+            bun_core::fast_random(),
+        )
+        .ok()?;
         let mut path = dir.to_vec();
         if path.last() != Some(&b'/') {
             path.push(b'/');
         }
-        path.extend_from_slice(
-            format!(
-                "bun-clipboard-{}-{}",
-                std::process::id(),
-                COUNTER.fetch_add(1, Ordering::Relaxed)
-            )
-            .as_bytes(),
-        );
+        path.extend_from_slice(name.as_bytes());
         let Ok(file) = File::openat(Fd::cwd(), &path, O::WRONLY | O::CREAT | O::EXCL, 0o600) else {
             return None;
         };

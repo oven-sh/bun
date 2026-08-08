@@ -115,6 +115,134 @@ export function asyncIterator(this: Console) {
   return ConsoleAsyncIterator();
 }
 
+// Route the global console's derived methods through this.log/warn/error so
+// user overrides of those slots capture their output (Node compat).
+export function bindNativeConsoleMethods(console: typeof globalThis.console) {
+  // Native group()/groupEnd() with no args is a pure indent bump on the
+  // Rust-side counter that the native `log` formatter reads.
+  const nativeGroup = console.group;
+  const nativeGroupEnd = console.groupEnd;
+
+  const MapGet = Map.prototype.get;
+  const MapSet = Map.prototype.set;
+  const MapDelete = Map.prototype.delete;
+  const StringPrototypeIndexOf = String.prototype.indexOf;
+  const StringPrototypeSlice = String.prototype.slice;
+  const StringPrototypeEndsWith = String.prototype.endsWith;
+  const NumberPrototypeToFixed = Number.prototype.toFixed;
+  const FunctionBind = Function.prototype.bind;
+  const ArrayPrototypeUnshift = Array.prototype.unshift;
+  const MathRound = Math.round;
+  const captureStackTrace = Error.captureStackTrace;
+
+  const counts = new Map<string, number>();
+  const times = new Map<string, number>();
+
+  let format: typeof import("node:util").format | undefined;
+  let inspectTable: typeof Bun.inspect.table | undefined;
+
+  const nanoseconds = Bun.nanoseconds;
+
+  function elapsed(ns: number) {
+    const ms = ns / 1e6;
+    return MathRound(ms) > 1500
+      ? `[${NumberPrototypeToFixed.$call(ms / 1000, 2)}s]`
+      : `[${NumberPrototypeToFixed.$call(ms, 2)}ms]`;
+  }
+
+  const methods: Record<string, (this: typeof console, ...args: any[]) => void> = {
+    count(label = "default") {
+      label = `${label}`;
+      const n = ((MapGet.$call(counts, label) as number | undefined) ?? 0) + 1;
+      MapSet.$call(counts, label, n);
+      this.log(`${label}: ${n}`);
+    },
+    countReset(label = "default") {
+      MapDelete.$call(counts, `${label}`);
+    },
+    time(label = "default") {
+      label = `${label}`;
+      if (MapGet.$call(times, label) !== undefined) return;
+      MapSet.$call(times, label, nanoseconds());
+    },
+    timeLog(label = "default", ...data) {
+      label = `${label}`;
+      const start = MapGet.$call(times, label) as number | undefined;
+      if (start === undefined) return;
+      const prefix = label.length > 0 ? `${elapsed(nanoseconds() - start)} ${label}` : elapsed(nanoseconds() - start);
+      if (data.length > 0) this.log("%s", prefix, ...data);
+      else this.log("%s", prefix);
+    },
+    timeEnd(label = "default") {
+      label = `${label}`;
+      const start = MapGet.$call(times, label) as number | undefined;
+      if (start === undefined) return;
+      MapDelete.$call(times, label);
+      this.log("%s", label.length > 0 ? `${elapsed(nanoseconds() - start)} ${label}` : elapsed(nanoseconds() - start));
+    },
+    assert(expression, ...args) {
+      if (!expression) {
+        const first = args[0];
+        if (args.length === 0) args[0] = "Assertion failed";
+        else if (typeof first === "string") args[0] = `Assertion failed: ${first}`;
+        else ArrayPrototypeUnshift.$call(args, "Assertion failed");
+        this.warn.$apply(this, args);
+      }
+    },
+    trace: function trace(...args) {
+      format ??= require("node:util").format;
+      const message = args.length > 0 ? format!.$apply(undefined, args) : "";
+      const header = message.length > 0 ? `Trace: ${message}` : "Trace";
+      const err: { stack?: unknown } = {};
+      captureStackTrace(err, trace);
+      const stack = err.stack;
+      if (typeof stack !== "string") return this.error(header, stack);
+      const nl = StringPrototypeIndexOf.$call(stack, "\n");
+      this.error(header + (nl >= 0 ? StringPrototypeSlice.$call(stack, nl) : ""));
+    },
+    table(tabularData, properties) {
+      if (properties !== undefined && !$isJSArray(properties)) {
+        throw $ERR_INVALID_ARG_TYPE("properties", "Array", properties);
+      }
+      if (tabularData === null || typeof tabularData !== "object") {
+        return this.log(tabularData);
+      }
+      inspectTable ??= Bun.inspect.table;
+      const stdout = this._stdout;
+      const env = Bun.env;
+      const colors =
+        env["FORCE_COLOR"] !== undefined || env["NO_COLOR"] !== undefined
+          ? Bun.enableANSIColors
+          : !!(stdout && stdout.isTTY);
+      const rendered =
+        properties === undefined
+          ? inspectTable(tabularData, { depth: 0, colors })
+          : inspectTable(tabularData, properties, { depth: 0, colors });
+      this.log(StringPrototypeEndsWith.$call(rendered, "\n") ? StringPrototypeSlice.$call(rendered, 0, -1) : rendered);
+    },
+    group(...data) {
+      if (data.length > 0) this.log.$apply(this, data);
+      nativeGroup.$call(this);
+    },
+    groupCollapsed(...data) {
+      if (data.length > 0) this.log.$apply(this, data);
+      nativeGroup.$call(this);
+    },
+    groupEnd() {
+      nativeGroupEnd.$call(this);
+    },
+    dirxml(...data) {
+      this.log.$apply(this, data);
+    },
+  };
+
+  for (const key in methods) {
+    const fn = FunctionBind.$call(methods[key], console);
+    $Object.$defineProperty(fn, "name", { value: key, configurable: true });
+    console[key] = fn;
+  }
+}
+
 export function write(this: Console, input) {
   if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
 
@@ -587,7 +715,10 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
     assert(expression, ...args) {
       if (!expression) {
-        args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
+        const first = args[0];
+        if (args.length === 0) args[0] = "Assertion failed";
+        else if (typeof first === "string") args[0] = `Assertion failed: ${first}`;
+        else ArrayPrototypeUnshift.$call(args, "Assertion failed");
         // The arguments will be formatted in warn() again
         this.warn.$apply(this, args);
       }

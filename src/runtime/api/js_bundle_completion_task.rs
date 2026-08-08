@@ -92,9 +92,13 @@ pub(crate) enum Stage {
     Queued = 0,
     /// The bundle thread is (or was) running it.
     Started = 1,
-    /// Its VM tore down first: the JS side is released and the count returned;
-    /// the bundle thread frees the rest when it dequeues it.
-    ReleasedUnstarted = 2,
+    /// Its VM is tearing down first and is releasing the JS side right now;
+    /// the bundle thread, if it dequeues it meanwhile, waits for
+    /// `ReleasedUnstarted` before freeing.
+    Releasing = 2,
+    /// The JS side is released and the count returned; the bundle thread
+    /// frees the rest when it dequeues it.
+    ReleasedUnstarted = 3,
 }
 
 impl JSBundleCompletionTask {
@@ -590,7 +594,7 @@ impl JSBundleCompletionTask {
                 .stage
                 .compare_exchange(
                     Stage::Queued as u8,
-                    Stage::ReleasedUnstarted as u8,
+                    Stage::Releasing as u8,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
@@ -601,7 +605,12 @@ impl JSBundleCompletionTask {
                     Plugin::destroy(plugin.as_ptr());
                 }
                 (*this).promise = jsc::JSPromiseStrong::default();
-                (*this).loop_handle.embedded_work_finished();
+                let handle = (*this).loop_handle.clone();
+                // Publish only now: from here the bundle thread may free `this`.
+                (*this)
+                    .stage
+                    .store(Stage::ReleasedUnstarted as u8, Ordering::Release);
+                handle.embedded_work_finished();
                 return;
             }
             if let Some(plugins) = (*this).plugins {
@@ -892,6 +901,13 @@ impl CompletionStruct for JSBundleCompletionTask {
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)] // trait contract: dequeued ⇒ sole owner
     fn free_released_unstarted(this: *mut Self) {
+        use core::sync::atomic::Ordering;
+        // `try_start` lost to the VM's teardown, which may still be releasing
+        // the JS side (`Releasing`): a handful of stores on the JS thread.
+        // SAFETY: dequeued and not started ⇒ live until we free it below.
+        while unsafe { (*this).stage.load(Ordering::Acquire) } != Stage::ReleasedUnstarted as u8 {
+            core::hint::spin_loop();
+        }
         // The VM released everything thread-affine (`stop_for_vm_teardown`);
         // what is left — config, log, an empty promise slot, a `Done`
         // keep-alive, the handle clone — is ours to drop here. The queue held

@@ -243,6 +243,10 @@ pub struct Connection {
     /// Header-block reassembly across CONTINUATION (RFC 9113 §4.3). 0 = not assembling; otherwise
     /// the stream id whose header block is mid-flight and which the next frame MUST continue.
     continuation_stream: u32,
+    /// CONTINUATION frames received for the in-progress header block.
+    continuation_count: u32,
+    /// Per-header-block CONTINUATION cap (nghttp2 NGHTTP2_DEFAULT_MAX_CONTINUATIONS, CVE-2024-28182).
+    pub max_continuations: u32,
     header_block: Vec<u8>,
     /// In-progress partial DATA frame streamed incrementally. nghttp2 delivers DATA in
     /// chunks as bytes arrive (node emits 'data' for a partial frame); buffering until the
@@ -307,6 +311,8 @@ impl Connection {
             hpack: hpack::Coder::new(local.header_table_size),
             streams: HashMap::new(),
             continuation_stream: 0,
+            continuation_count: 0,
+            max_continuations: wire::DEFAULT_MAX_CONTINUATIONS,
             header_block: Vec::new(),
             data_in_flight: None,
             header_end_stream: false,
@@ -1011,6 +1017,7 @@ impl Connection {
         self.header_stream_refused = refused;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
+            self.continuation_count = 0;
             return false;
         }
         self.finish_header_block(sink)
@@ -1019,6 +1026,17 @@ impl Connection {
     /// RFC 9113 §6.10 CONTINUATION: append the fragment; complete the block on END_HEADERS.
     fn handle_continuation(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         // dispatch() already enforced that we are assembling this exact stream.
+        // Frame-count cap (the byte cap below cannot catch a zero-length CONTINUATION drip).
+        self.continuation_count += 1;
+        if self.continuation_count > self.max_continuations {
+            self.local_connection_error(
+                sink,
+                ErrorCode::InternalError,
+                wire::lib_error::TOO_MANY_CONTINUATIONS,
+                b"too many CONTINUATION frames",
+            );
+            return true;
+        }
         // Cap the reassembled block at the header-list limit (floored so tiny custom settings
         // don't reject normal blocks): HPACK output is never smaller than its input, so a
         // compressed block already past max_header_list_size can only decode past it too —
@@ -1710,6 +1728,7 @@ impl Connection {
         self.header_stream_refused = false;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
+            self.continuation_count = 0;
             return false;
         }
         self.finish_header_block(sink)

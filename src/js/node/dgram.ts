@@ -723,7 +723,7 @@ function startBunSocket(self, state, createOptions) {
         drain: () => {
           handleDrain.$call(state.handle);
         },
-        error: error => {
+        error: (_socket, error) => {
           if (error?.syscall === "recv") {
             // Drop errqueue-origin ICMP errors on unconnected sockets like
             // Node (which never enables IP_RECVERR); always emit real

@@ -97,7 +97,7 @@ bun run --filter foo myscript
 
 ### Parallel and sequential mode
 
-Combine `--filter` or `--workspaces` with `--parallel` or `--sequential` to run scripts across workspace packages with Foreman-style prefixed output:
+Combine `--filter` or `--workspaces` with `--parallel` or `--sequential` to run scripts across workspace packages:
 
 ```bash terminal icon="terminal"
 # Run "build" in all matching packages concurrently
@@ -117,6 +117,8 @@ bun run --parallel --filter '*' build lint
 ```
 
 Each line of output is prefixed with the package and script name (`pkg-a:build | ...`). Without `--filter`/`--workspaces`, the prefix is just the script name (`build | ...`). When a package's `package.json` has no `name` field, Bun uses the relative path from the workspace root instead.
+
+On macOS and Linux, when stdout is an interactive terminal, `--parallel` and `--sequential` render one live pane per script instead. Each script runs on its own pseudo-terminal sized to the pane and its output is replayed into a virtual terminal (powered by [libghostty-vt](https://github.com/ghostty-org/ghostty)), so progress bars, carriage-return spinners, cursor movement, and colors display the way a real terminal would show them. Rows that scroll out of a pane are summarized as `[N lines elided]`; `--elide-lines` sets the pane height. When stdout is not a terminal (pipes, redirects, CI), the prefixed line output above is used instead.
 
 Use `--if-present` with `--workspaces` to skip packages that don't have the requested script instead of erroring.
 

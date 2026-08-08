@@ -242,13 +242,27 @@ function normalizeLf(s: string): string {
  * so a CRLF-mangled checkout still applies cleanly. --no-index: dest/ is
  * not a git repo. --ignore-whitespace / --ignore-space-change: patches are
  * authored against upstream which may have different trailing whitespace.
+ *
+ * Patches MUST be in plain unified-diff format (`--- a/X` / `+++ b/X`),
+ * not `git format-patch`/`git diff` output with a `diff --git` header.
+ * `dest/` sits inside bun's own git worktree, and `git apply` treats
+ * git-header patch paths as repo-toplevel-relative: `build.zig` resolves
+ * to `<repo>/build.zig`, falls outside the cwd, and is SILENTLY skipped
+ * with exit 0 and nothing changed on disk. Traditional diffs get the cwd
+ * prefix prepended instead, which is the behavior we want.
+ *
+ * The skip check below catches a regression. It depends on `-v`: git only
+ * says `Skipped patch '<path>'.` above normal verbosity (an unadorned
+ * `git apply` skips with exit 0 and EMPTY stderr), and the message goes
+ * through gettext, so `LC_ALL=C` pins it to the English spelling.
  */
 function applyPatch(dest: string, patchPath: string, patchBody: string): void {
-  const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
+  const result = spawnSync("git", ["apply", "-v", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
     cwd: dest,
     input: normalizeLf(patchBody),
     stdio: ["pipe", "ignore", "pipe"],
     encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
   });
 
   if (result.error) {
@@ -262,6 +276,17 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
     throw new BuildError(`Patch failed: ${result.stderr}`, {
       file: patchPath,
       hint: "The patch may be out of date with the pinned commit",
+    });
+  }
+
+  // `git apply` reports a path it decided not to touch with exit 0; that
+  // would leave the source unpatched while `.ref` claims otherwise.
+  if (result.stderr.includes("Skipped patch")) {
+    throw new BuildError(`git apply silently skipped a path: ${result.stderr}`, {
+      file: patchPath,
+      hint:
+        "Patches must be plain unified diffs ('--- a/file'), not `git diff` output " +
+        "with a 'diff --git' header — see the comment on applyPatch in fetch-cli.ts",
     });
   }
 }

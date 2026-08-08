@@ -1,0 +1,63 @@
+--- a/build.zig
++++ b/build.zig
+@@ -56,6 +56,29 @@ pub fn build(b: *std.Build) !void {
+         &deps,
+     );
+ 
++    // When only the VT library is requested, build it and stop. This avoids
++    // walking the full Ghostty app dependency graph (GTK, fonts, renderers,
++    // ...), which would otherwise lazily fetch dozens of packages that
++    // libghostty-vt does not need.
++    if (config.emit_lib_vt) {
++        const vt_static = try buildpkg.GhosttyLibVt.initStatic(b, &mod);
++        const static_lib_name = if (config.target.result.os.tag == .windows)
++            "ghostty-vt-static.lib"
++        else
++            "libghostty-vt.a";
++        b.getInstallStep().dependOn(&b.addInstallLibFile(
++            vt_static.output,
++            static_lib_name,
++        ).step);
++        b.getInstallStep().dependOn(&b.addInstallDirectory(.{
++            .source_dir = b.path("include/ghostty"),
++            .install_dir = .header,
++            .install_subdir = "ghostty",
++            .include_extensions = &.{".h"},
++        }).step);
++        return;
++    }
++
+     // All our steps which we'll hook up later. The steps are shown
+     // up here just so that they are more self-documenting.
+     const run_step = b.step("run", "Run the app");
+--- a/src/build/GhosttyLibVt.zig
++++ b/src/build/GhosttyLibVt.zig
+@@ -215,12 +215,22 @@
+     );
+ 
+     if (kind == .static) {
+-        // These must be bundled since we're compiling into a static lib.
+-        // Otherwise, you get undefined symbol errors. This could cause
+-        // problems if you're linking multiple static Zig libraries but
+-        // we'll cross that bridge when we get to it.
+-        lib.bundle_compiler_rt = true;
+-        lib.bundle_ubsan_rt = true;
++        // Do NOT bundle Zig's compiler_rt: it defines `memcpy`, `memset`,
++        // `memmove`, `memcmp`, and most of libm (`exp`, `log`, `fma`, ...)
++        // as weak globals. A consumer that links this archive before libc,
++        // which is every ordinary C link line, extracts those and silently
++        // replaces libc's optimized versions for its entire binary. The few
++        // `__`-prefixed builtins the Zig code needs (`__udivti3`, ...) come
++        // from the consumer's own compiler runtime instead, and ubsan_rt is
++        // never referenced because this library is built without sanitizers.
++        lib.bundle_compiler_rt = false;
++        lib.bundle_ubsan_rt = false;
++
++        // One section per function/data symbol so a consumer linking with
++        // --gc-sections / -dead_strip can drop the parts of the C API it
++        // does not call.
++        lib.link_function_sections = true;
++        lib.link_data_sections = true;
+ 
+         // Enable PIC so the static library can be linked into PIE
+         // executables, which is the default on most Linux distributions.

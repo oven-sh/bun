@@ -1,5 +1,4 @@
-#include "config.h"
-#include "ZigGlobalObject.h"
+#include "NodeDiagnosticsChannel.h"
 
 namespace Bun {
 

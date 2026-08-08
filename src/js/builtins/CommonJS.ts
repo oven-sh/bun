@@ -9,9 +9,13 @@ export function main() {
 $visibility = "Private";
 export function require(this: JSCommonJSModule, id: string, options: { paths?: string[] } | undefined = undefined) {
   // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
-  // $call with the two named params: $require handles the two-arg form
-  // identically when `options` is undefined, and this avoids materializing
-  // an `arguments` object on every require().
+  // $call with the named params avoids materializing an `arguments` object on
+  // every require(). The 1-arg form is forwarded as 1 arg so overridableRequire's
+  // $argumentCount() still distinguishes require(id) from require(id, options)
+  // and the native $require keeps its skip-options fast path.
+  if (options === undefined) {
+    return $overridableRequire.$call(this, id);
+  }
   return $overridableRequire.$call(this, id, options);
 }
 

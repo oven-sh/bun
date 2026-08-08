@@ -1939,7 +1939,12 @@ mod _async_tasks {
         unsafe fn dispose_without_post(this: *mut Self) {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation.
             let task = unsafe { bun_core::heap::take(this) };
-            let Self { promise, args, shelltask, .. } = *task;
+            let Self {
+                promise,
+                args,
+                shelltask,
+                ..
+            } = *task;
             // Intentionally never dropped: the Strong handle died with the VM heap.
             let _ = core::mem::ManuallyDrop::new(promise);
             args.dispose_skip_unprotect();

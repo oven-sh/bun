@@ -222,9 +222,9 @@ describe.skipIf(!isASAN)("object mutated from a getter during comparison", () =>
       env: {
         ...bunEnv,
         ...(isWindows ? {} : { Malloc: "1" }),
-        // Skip symbolizing a failure report; symbolization of the debug
-        // binary takes longer than the test timeout.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+        // symbolize=0: symbolizing a failure report outlasts the test timeout.
+        // detect_leaks=0: Malloc=1 exposes JSC's never-freed startup allocations to LSAN.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -245,7 +245,7 @@ describe.skipIf(!isASAN)("object mutated from a getter during comparison", () =>
         "",
       ].join("\n"),
     );
-    expect(stderr).not.toContain("AddressSanitizer");
+    expect(stderr).not.toContain("ERROR: AddressSanitizer");
     expect(exitCode).toBe(0);
   });
 });

@@ -859,7 +859,10 @@ pub(crate) fn parse_url(
                         else {
                             break 'try_data_url;
                         };
-                        if &after[..comma] != b"base64" {
+                        // RFC 2397 allows media-type parameters before `;base64`
+                        // (webpack/babel emit `;charset=utf-8;base64,`).
+                        let params = &after[..comma];
+                        if params != b"base64" && !params.ends_with(b";base64") {
                             break 'try_data_url;
                         }
                         let base64_data = &after[comma + 1..];
@@ -916,22 +919,16 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     }
 
     let Some(mappings_str) = json.get(b"mappings") else {
-        return Err(crate::Error::UnsupportedVersion);
+        return Err(if json.get(b"sections").is_some() {
+            crate::Error::UnsupportedFormat
+        } else {
+            crate::Error::UnsupportedVersion
+        });
     };
 
     let Some(mappings_vlq) = mappings_str.as_utf8_string_literal() else {
         return Err(crate::Error::InvalidSourceMap);
     };
-
-    let sources_content = match json
-        .get(b"sourcesContent")
-        .ok_or(crate::Error::InvalidSourceMap)?
-        .data
-    {
-        bun_ast::ExprData::EArrayJSON(arr) => arr,
-        _ => return Err(crate::Error::InvalidSourceMap),
-    };
-    let sources_content = sources_content.get();
 
     let sources_paths = match json
         .get(b"sources")
@@ -943,20 +940,43 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     };
     let sources_paths = sources_paths.get();
 
-    if sources_content.items().len() != sources_paths.items().len() {
+    // `sourcesContent` is optional in the spec (tsc omits it by default).
+    let sources_content = match json.get(b"sourcesContent").map(|e| e.data) {
+        Some(bun_ast::ExprData::EArrayJSON(arr)) => Some(arr),
+        Some(bun_ast::ExprData::ENull(_)) | None => None,
+        _ => return Err(crate::Error::InvalidSourceMap),
+    };
+    let sources_content = sources_content.as_ref().map(|a| a.get());
+
+    if sources_content.is_some_and(|c| c.items().len() != sources_paths.items().len()) {
         return Err(crate::Error::InvalidSourceMap);
     }
+
+    let source_root_expr = json.get(b"sourceRoot");
+    let source_root: &[u8] = source_root_expr
+        .as_ref()
+        .and_then(|e| e.as_utf8_string_literal())
+        .unwrap_or(b"");
 
     let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
 
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
-        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items().len());
+        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_paths.items().len());
         for item in sources_paths.items() {
             let Some(s) = item.as_str() else {
                 return Err(crate::Error::InvalidSourceMap);
             };
-            v.push(Box::<[u8]>::from(s));
+            if source_root.is_empty() {
+                v.push(Box::<[u8]>::from(s));
+            } else {
+                let sep: &[u8] = if source_root.ends_with(b"/") || s.starts_with(b"/") {
+                    b""
+                } else {
+                    b"/"
+                };
+                v.push([source_root, sep, s].concat().into_boxed_slice());
+            }
         }
         Some(v)
     } else {
@@ -1042,8 +1062,8 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         ParseUrlResultHint::MappingsOnly => (None, None),
     };
 
-    let content_slice: Option<Box<[u8]>> = match source_index {
-        Some(idx)
+    let content_slice: Option<Box<[u8]>> = match (source_index, sources_content) {
+        (Some(idx), Some(sources_content))
             if !matches!(hint, ParseUrlResultHint::MappingsOnly)
                 && (idx as usize) < sources_content.items().len() =>
         'content: {
@@ -1136,6 +1156,83 @@ pub fn append_source_map_chunk<'a>(
     // Then append everything after that without modification.
     j.push_static(source_map);
     Ok(())
+}
+
+/// Returns the value of a trailing `//# sourceMappingURL=` comment in a
+/// module's input bytes, for chaining through to the original source.
+pub fn find_input_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
+    const NEEDLE: &[u8] = b"//# sourceMappingURL=";
+    let found = bun_core::strings::last_index_of(source, NEEDLE)?;
+    // Must start a line so a match inside a string literal is rejected.
+    if found != 0 && source[found - 1] != b'\n' {
+        return None;
+    }
+    let start = found + NEEDLE.len();
+    let end = source[start..]
+        .iter()
+        .position(|&b| b == b'\n')
+        .map(|p| start + p)
+        .unwrap_or(source.len());
+    let url = bun_core::strings::trim_right(&source[start..end], b" \r");
+    if url.is_empty() {
+        return None;
+    }
+    Some(url)
+}
+
+/// Loads the map referenced by a `sourceMappingURL` value: `data:` URIs are
+/// decoded inline, anything else is read relative to `source_filename`.
+pub fn load_input_source_map(
+    source_filename: &[u8],
+    url: &[u8],
+    hint: ParseUrlResultHint,
+) -> Option<ParseUrl> {
+    if bun_core::strings::has_prefix_comptime(url, b"data:") {
+        let arena = bun_alloc::Arena::new();
+        return match parse_url(&arena, url, hint) {
+            Ok(parsed) => Some(parsed),
+            Err(err) => {
+                bun_core::warn!(
+                    "Could not decode sourcemap in '{}': {}",
+                    ::bstr::BStr::new(source_filename),
+                    ::bstr::BStr::new(err.name()),
+                );
+                crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
+                None
+            }
+        };
+    }
+
+    // Not fetched, matching node --enable-source-maps.
+    if bun_core::strings::has_prefix_comptime(url, b"http:")
+        || bun_core::strings::has_prefix_comptime(url, b"https:")
+    {
+        return None;
+    }
+
+    let url = url.strip_prefix(b"file://").unwrap_or(url);
+
+    let mut load_buf = bun_paths::path_buffer_pool::get();
+    let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(source_filename);
+    let load_path = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
+        dir,
+        &mut load_buf,
+        &[url],
+    );
+    let data = bun_sys::File::read_from(bun_core::Fd::cwd(), load_path).ok()?;
+
+    match parse_json(&data, hint) {
+        Ok(parsed) => Some(parsed),
+        Err(err) => {
+            bun_core::warn!(
+                "Could not decode sourcemap in '{}': {}",
+                ::bstr::BStr::new(source_filename),
+                ::bstr::BStr::new(err.name()),
+            );
+            crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
+            None
+        }
+    }
 }
 
 /// Always returns UTF-8.

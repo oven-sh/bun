@@ -27,6 +27,15 @@ pub struct ParsedSourceMap {
     /// loaded without transpilation but with external sources. This array
     /// maps `source_index` to the correct filename.
     pub external_source_names: Vec<Box<[u8]>>,
+    /// The input file's own source map, chained after this map's own mappings
+    /// so stack traces for runtime-transpiled pre-generated `.js` resolve to
+    /// the original source. Filled lazily so the table entry can stay in
+    /// place while the map loads.
+    pub input_map: std::sync::OnceLock<std::sync::Arc<ParsedSourceMap>>,
+    /// The `sourceMappingURL` `input_map` was loaded from, kept so the
+    /// code-frame preview can re-parse with `SourceOnly(index)` and recover
+    /// `sourcesContent` when the original is not on disk.
+    pub input_map_url: Option<Box<[u8]>>,
     /// In order to load source contents from a source-map after the fact,
     /// a handle to the underlying source provider is stored, along with a
     /// load hint recording whether the map is known to be inline or external.
@@ -67,6 +76,8 @@ impl Default for ParsedSourceMap {
             mappings: mapping::List::default(),
             internal: None,
             external_source_names: Vec::new(),
+            input_map: std::sync::OnceLock::new(),
+            input_map_url: None,
             underlying_provider: SourceContentPtr::NONE,
             is_standalone_module_graph: false,
         }
@@ -231,20 +242,66 @@ impl ParsedSourceMap {
             mappings: mapping::List::default(),
             internal: Some(internal),
             external_source_names: Vec::new(),
+            input_map: std::sync::OnceLock::new(),
+            input_map_url: None,
             underlying_provider: SourceContentPtr::NONE,
             is_standalone_module_graph: false,
         }
     }
 
+    /// [`Self::from_internal`] with `input_map_url` set so [`Self::input_map`]
+    /// can be filled once the referenced map is loaded.
+    pub fn from_internal_with_input_url(
+        internal: InternalSourceMap,
+        input_map_url: Box<[u8]>,
+    ) -> Self {
+        let mut this = Self::from_internal(internal);
+        this.input_map_url = Some(input_map_url);
+        this
+    }
+
+    #[inline]
+    pub fn input_map(&self) -> Option<&ParsedSourceMap> {
+        self.input_map.get().map(|a| a.as_ref())
+    }
+
     pub fn is_external(&self) -> bool {
-        !self.external_source_names.is_empty()
+        !self.external_source_names.is_empty() || self.input_map().is_some_and(Self::is_external)
     }
 
     pub fn find_mapping(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        if let Some(ism) = &self.internal {
-            return ism.find(line, column);
-        }
-        self.mappings.find(line, column)
+        let own = if let Some(ism) = &self.internal {
+            ism.find(line, column)
+        } else {
+            self.mappings.find(line, column)
+        };
+        let Some(input_map) = self.input_map() else {
+            // A chain is intended but not yet loaded: clear `source_index` so
+            // a later read of `input_map()` cannot pair this position with the
+            // input map's sources.
+            return if self.input_map_url.is_some() {
+                own.map(|m| Mapping {
+                    source_index: -1,
+                    ..m
+                })
+            } else {
+                own
+            };
+        };
+        // Our `original` positions are the input map's `generated` positions.
+        // On a miss, report the intermediate position with `source_index`
+        // cleared so it is not attributed to `input_map`'s sources.
+        let own = own?;
+        input_map
+            .find_mapping(own.original.lines, own.original.columns)
+            .map(|m| Mapping {
+                generated: own.generated,
+                ..m
+            })
+            .or(Some(Mapping {
+                source_index: -1,
+                ..own
+            }))
     }
 
     pub fn internal_cursor(&self) -> Option<crate::internal_source_map::Cursor> {
@@ -265,6 +322,8 @@ impl ParsedSourceMap {
         core::mem::size_of::<ParsedSourceMap>()
             + mappings_cost
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
+            + self.input_map().map_or(0, Self::memory_cost)
+            + self.input_map_url.as_deref().map_or(0, <[u8]>::len)
     }
 
     pub(crate) fn write_vlqs<W: bun_io::Write + ?Sized>(

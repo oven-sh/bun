@@ -63,16 +63,18 @@ impl SavedSourceMap {
 /// handle inside it borrowed) is a registered lazy external source provider.
 /// `ParsedSourceMap` is materialized lazily from such a provider for sources
 /// that ship their own external `.map`.
+/// `InternalWithInputUrl` (boxed) pairs an `InternalSourceMap` with the
+/// input file's own `sourceMappingURL`, resolved lazily on first lookup.
 pub(crate) type Value = TaggedPtrUnion<ValueTypes>;
 
 /// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
-/// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
-/// types (all three members live in `bun_sourcemap`), which the coherence
-/// checker rejects from this crate. Tags are `1024 - i`.
+/// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple containing
+/// foreign types (the `bun_sourcemap` members), which the coherence checker
+/// rejects from this crate. Tags are `1024 - i`.
 pub(crate) struct ValueTypes;
 
 impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
-    const MIN_TAG: TagType = 1024 - 2;
+    const MIN_TAG: TagType = 1024 - 3;
 }
 impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ParsedSourceMap {
     const TAG: TagType = 1024;
@@ -82,6 +84,16 @@ impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for AnySourceProvider {
 }
 impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalSourceMap {
     const TAG: TagType = 1022;
+}
+impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalWithInputUrl {
+    const TAG: TagType = 1021;
+}
+
+/// Transpiler blob plus the input file's `sourceMappingURL` value. Boxed into
+/// the table; the box owns `blob` (freed in [`SavedSourceMap::release_value`]).
+pub(crate) struct InternalWithInputUrl {
+    blob: InternalSourceMap,
+    url: Box<[u8]>,
 }
 
 impl SavedSourceMap {
@@ -108,6 +120,11 @@ impl SavedSourceMap {
         } else if let Some(provider) = value.get::<AnySourceProvider>() {
             // SAFETY: the box was allocated by `put_source_provider`.
             unsafe { bun_core::heap::destroy(provider) };
+        } else if let Some(chained) = value.get::<InternalWithInputUrl>() {
+            // SAFETY: the box was allocated by `put_mappings`; the blob inside
+            // was allocated via `Box<[u8]>::into_raw` there.
+            let boxed = unsafe { bun_core::heap::take(chained) };
+            boxed.blob.free_owned();
         }
     }
 }
@@ -249,6 +266,28 @@ impl SavedSourceMap {
         // `Drop`). On the error path the Box is reconstituted and dropped.
         let blob: Box<[u8]> = core::mem::take(&mut mappings.list).into_boxed_slice();
         let blob_ptr: *mut [u8] = bun_core::heap::into_raw(blob);
+
+        if let Some(url) = SourceMap::find_input_source_mapping_url(source.contents()) {
+            // Normalize once so `load_input_source_map` and
+            // `sources_anchor_dir` both see a plain path.
+            let url = url.strip_prefix(b"file://").unwrap_or(url);
+            let boxed = bun_core::heap::into_raw(Box::new(InternalWithInputUrl {
+                blob: InternalSourceMap {
+                    data: blob_ptr.cast::<u8>().cast_const(),
+                },
+                url: Box::<[u8]>::from(url),
+            }));
+            return match self.put_value(source.path.text, Value::init(boxed)) {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    // SAFETY: `boxed` / `blob_ptr` were not consumed on error.
+                    drop(unsafe { bun_core::heap::take(boxed) });
+                    drop(unsafe { Box::<[u8]>::from_raw(blob_ptr) });
+                    Err(e)
+                }
+            };
+        }
+
         // errdefer: on error, reconstitute and drop the Box.
         match self.put_value(
             source.path.text,
@@ -319,6 +358,36 @@ impl SavedSourceMap {
             let result = Arc::new(ParsedSourceMap::from_internal(ism));
             *mapping = Value::init(Arc::into_raw(Arc::clone(&result))).ptr();
             self.unlock();
+            return SourceMap::ParseUrl {
+                map: Some(result),
+                ..Default::default()
+            };
+        } else if tag == Value::case::<InternalWithInputUrl>() {
+            // SAFETY: box was stored by `put_mappings` and is live while in
+            // the table; we are under the lock.
+            let chained =
+                unsafe { bun_core::heap::take(tagged.as_unchecked::<InternalWithInputUrl>()) };
+            // Swap the slot to the interim `ParsedSourceMap` under the lock so
+            // concurrent readers get intermediate `.js` positions instead of
+            // an empty table while the input map loads below.
+            let result = Arc::new(ParsedSourceMap::from_internal_with_input_url(
+                chained.blob,
+                chained.url,
+            ));
+            *mapping = Value::init(Arc::into_raw(Arc::clone(&result))).ptr();
+            self.unlock();
+
+            if let Some(url) = result.input_map_url.as_deref() {
+                if let Some(input_map) = SourceMap::load_input_source_map(
+                    path,
+                    url,
+                    SourceMap::ParseUrlResultHint::MappingsOnly,
+                )
+                .and_then(|p| p.map)
+                {
+                    let _ = result.input_map.set(input_map);
+                }
+            }
             return SourceMap::ParseUrl {
                 map: Some(result),
                 ..Default::default()

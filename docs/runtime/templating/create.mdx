@@ -121,6 +121,12 @@ bun create remix
 bunx create-remix
 ```
 
+To pass flags to the `create-<template>` package, place them after a `--` separator (matching `npm create` and `yarn create`). The first `--` is consumed; anything after it is forwarded to the create script as-is:
+
+```sh terminal icon="terminal"
+bun create vite my-app -- --template react-ts
+```
+
 Refer to the `create-<template>` package's documentation for usage instructions.
 
 ## From GitHub

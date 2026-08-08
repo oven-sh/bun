@@ -1,8 +1,8 @@
 import { spawn, spawnSync } from "bun";
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, pack, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { join } from "path";
@@ -489,4 +489,115 @@ it("should not crash with --no-install and bun-create.postinstall starting with 
   const [err, _out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/29087
+describe("forwards args after `--` to the create script", () => {
+  const pkgName = "create-bun-issue29087-argv-printer";
+  let server: import("bun").Server;
+  let registryUrl: string;
+  let tarball: Uint8Array;
+
+  beforeAll(async () => {
+    using pkgDir = tempDir("bun-create-29087-pkg", {
+      "package.json": JSON.stringify({
+        name: pkgName,
+        version: "1.0.0",
+        bin: { [pkgName]: "index.js" },
+      }),
+      "index.js":
+        `#!/usr/bin/env node\n` +
+        `console.log("ARGV:" + JSON.stringify({argv: process.argv.slice(2), isBun: !!process.versions.bun}));\n`,
+    });
+    await pack(String(pkgDir), env);
+    tarball = await Bun.file(join(String(pkgDir), `${pkgName}-1.0.0.tgz`)).bytes();
+
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith(".tgz")) {
+          return new Response(tarball, { headers: { "Content-Type": "application/octet-stream" } });
+        }
+        if (url.pathname === `/${pkgName}`) {
+          return Response.json({
+            name: pkgName,
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: pkgName,
+                version: "1.0.0",
+                bin: { [pkgName]: "index.js" },
+                dist: { tarball: `${registryUrl}/${pkgName}/-/${pkgName}-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    registryUrl = `http://localhost:${server.port}`;
+  });
+
+  afterAll(() => server.stop(true));
+
+  async function runCreate(...createArgs: string[]): Promise<{ argv: string[]; isBun: boolean }> {
+    // Isolate TMPDIR per invocation so concurrent tests don't race on the
+    // shared bunx cache at <tmpdir>/bunx-<uid>-<pkg>.
+    using dir = tempDir("bun-create-29087", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${registryUrl}/"\n`,
+      "tmp/.keep": "",
+      ".cache/.keep": "",
+    });
+    const cwd = String(dir);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", ...createArgs],
+      cwd,
+      env: {
+        ...env,
+        BUN_TMPDIR: `${cwd}/tmp`,
+        TMPDIR: `${cwd}/tmp`,
+        TEMP: `${cwd}/tmp`,
+        BUN_INSTALL_CACHE_DIR: `${cwd}/.cache`,
+        npm_config_registry: `${registryUrl}/`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const match = stdout.match(/ARGV:(.+)/);
+    if (!match) {
+      throw new Error(`no ARGV line in stdout (exit ${exitCode}).\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+    }
+    expect(exitCode).toBe(0);
+    return JSON.parse(match[1]!);
+  }
+
+  it.concurrent("strips a single leading `--` separator", async () => {
+    const { argv } = await runCreate("bun-issue29087-argv-printer", "--", "-t", "v3");
+    expect(argv).toEqual(["-t", "v3"]);
+  });
+
+  it.concurrent("forwards long-form flags with no `--` separator unchanged", async () => {
+    const { argv } = await runCreate("bun-issue29087-argv-printer", "--template", "v3");
+    expect(argv).toEqual(["--template", "v3"]);
+  });
+
+  it.concurrent("preserves a second `--` as a literal arg", async () => {
+    const { argv } = await runCreate("bun-issue29087-argv-printer", "--", "--", "-t", "v3");
+    expect(argv).toEqual(["--", "-t", "v3"]);
+  });
+
+  it.concurrent("hoists `--bun` before the separator onto the bunx invocation", async () => {
+    const { argv, isBun } = await runCreate("bun-issue29087-argv-printer", "--bun", "--", "-t", "v3");
+    expect({ argv, isBun }).toEqual({ argv: ["-t", "v3"], isBun: true });
+  });
+
+  it.concurrent("preserves `--bun` after the separator as a literal arg", async () => {
+    const { argv } = await runCreate("bun-issue29087-argv-printer", "--", "--bun", "-t", "v3");
+    expect(argv).toEqual(["--bun", "-t", "v3"]);
+  });
 });

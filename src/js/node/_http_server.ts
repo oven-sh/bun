@@ -110,7 +110,7 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
-const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
+const kClusterSendOptions = { __proto__: null, "$internal": true };
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -320,6 +320,10 @@ function Server(options, callback): void {
   EventEmitter.$call(this);
   this.on("listening", setupConnectionsTracking);
   this.on("connection", connectionListener);
+
+  this.prependListener("connection", socket => {
+    if (socket != null && typeof socket === "object") socket.server = this;
+  });
 
   this.listening = false;
   this._unref = false;
@@ -641,8 +645,6 @@ Server.prototype.listen = function () {
 
     if (cluster === undefined) cluster = require("node:cluster");
 
-    // TODO: our net.Server and http.Server use different Bun APIs and our IPC doesnt support sending and receiving handles yet. use reusePort instead for now.
-
     // const serverQuery = {
     //   // address: address,
     //   port: port,
@@ -666,13 +668,17 @@ Server.prototype.listen = function () {
     server.once("listening", () => {
       cluster.worker.state = "listening";
       const address = server.address();
+      const isObjectAddress = address !== null && typeof address === "object";
+      const boundHost = host && isObjectAddress ? address : null;
       const message = {
+        cmd: "NODE_CLUSTER",
         act: "listening",
-        port: (address && address.port) || port,
+        port: socketPath ? -1 : (isObjectAddress && address.port) || port,
         data: null,
-        addressType: 4,
+        address: socketPath ?? (boundHost && boundHost.address) ?? null,
+        addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
       };
-      sendHelper(message, null);
+      process.send(message, undefined, kClusterSendOptions);
     });
 
     server[kRealListen](tls, port, host, socketPath, true, onListen);

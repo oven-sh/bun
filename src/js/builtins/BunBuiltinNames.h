@@ -108,6 +108,7 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
+    macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \

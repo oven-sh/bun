@@ -4,13 +4,12 @@ const { kHandle } = require("internal/shared");
 let net;
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
+const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
+const einvalErrorCode = $newRustFunction("node_util_binding.rs", "einvalErrorCode", 0);
 
 const ArrayIsArray = Array.isArray;
 
 const UV_TCP_IPV6ONLY = 1;
-const assert_fail = () => {
-  throw new Error("ERR_INTERNAL_ASSERTION");
-};
 
 export default class RoundRobinHandle {
   key;
@@ -19,6 +18,8 @@ export default class RoundRobinHandle {
   handles;
   handle;
   server;
+  listening;
+  inFlight;
 
   constructor(key, address, { port, fd, flags, backlog, readableAll, writableAll }) {
     net ??= require("node:net");
@@ -27,7 +28,12 @@ export default class RoundRobinHandle {
     this.free = new Map();
     this.handles = init(Object.create(null));
     this.handle = null;
-    this.server = net.createServer(assert_fail);
+    this.listening = false;
+    this.inFlight = new Map();
+    this.server = net.createServer(
+      { pauseOnConnect: true, allowHalfOpen: true },
+      RoundRobinHandle.prototype.onServerConnection.bind(this),
+    );
 
     if (fd >= 0) this.server.listen({ fd, backlog });
     else if (port >= 0) {
@@ -45,20 +51,39 @@ export default class RoundRobinHandle {
         readableAll,
         writableAll,
       }); // UNIX socket path.
-    this.server.once("listening", () => {
-      this.handle = this.server._handle;
-      this.handle.onconnection = (err, handle) => this.distribute(err, handle);
-      this.server._handle = null;
-      this.server = null;
-    });
+    this.server.once("listening", RoundRobinHandle.prototype.onServerListening.bind(this));
+  }
+
+  onServerConnection(socket) {
+    const handle = makeAcceptedHandle(socket);
+    socket.once("close", RoundRobinHandle.prototype.onAcceptedSocketClose.bind(this, handle));
+    this.distribute(0, handle);
+  }
+
+  onAcceptedSocketClose(handle) {
+    remove(handle);
+    const inFlight = this.inFlight;
+    for (const [id, pending] of inFlight) {
+      if (pending === handle) {
+        inFlight.delete(id);
+        const worker = this.all.get(id);
+        if (worker !== undefined) this.handoff(worker);
+        break;
+      }
+    }
+  }
+
+  onServerListening() {
+    this.listening = true;
+    this.handle = this.server._handle;
   }
 
   add(worker, send) {
-    // $assert(this.all.has(worker.id) === false);
+    $assert(this.all.has(worker.id) === false);
     this.all.set(worker.id, worker);
 
     const done = () => {
-      if (this.handle.getsockname) {
+      if (this.handle.getsockname && typeof this.server.address() === "object") {
         const out = {};
         this.handle.getsockname(out);
         // TODO(bnoordhuis) Check err.
@@ -70,13 +95,18 @@ export default class RoundRobinHandle {
       this.handoff(worker); // In case there are connections pending.
     };
 
-    if (this.server === null) return done();
+    if (this.listening) return done();
 
     // Still busy binding.
     this.server.once("listening", done);
     this.server.once("error", err => {
-      send(err.errno, null);
+      const raw = typeof err.errno === "number" && err.errno !== 0 ? err.errno : null;
+      send(raw != null ? uvTranslateSysError(raw) : einvalErrorCode(), null, null);
     });
+  }
+
+  has(worker) {
+    return this.all.has(worker.id);
   }
 
   remove(worker) {
@@ -86,6 +116,12 @@ export default class RoundRobinHandle {
 
     this.free.delete(worker.id);
 
+    const pending = this.inFlight.get(worker.id);
+    if (pending !== undefined) {
+      this.inFlight.delete(worker.id);
+      this.distribute(0, pending);
+    }
+
     if (this.all.size !== 0) return false;
 
     while (!isEmpty(this.handles)) {
@@ -94,7 +130,8 @@ export default class RoundRobinHandle {
       remove(handle);
     }
 
-    this.handle?.stop(false);
+    this.server?.close();
+    this.server = null;
     this.handle = null;
     return true;
   }
@@ -131,11 +168,35 @@ export default class RoundRobinHandle {
 
     const message = { act: "newconn", key: this.key };
 
-    sendHelper(worker.process[kHandle], message, handle, reply => {
+    this.inFlight.set(worker.id, handle);
+    const sent = sendHelper(worker.process[kHandle], message, handle, reply => {
+      if (this.inFlight.get(worker.id) !== handle) return;
+      this.inFlight.delete(worker.id);
       if (reply.accepted) handle.close();
       else this.distribute(0, handle); // Worker is shutting down. Send to another.
 
       this.handoff(worker);
     });
+    if (sent === null) {
+      const { id } = worker;
+      this.inFlight.delete(id);
+      if (handle.fd >= 0) this.distribute(0, handle);
+      else handle.close();
+      if (this.all.has(id)) {
+        this.free.set(id, worker);
+      }
+    }
   }
+}
+
+function makeAcceptedHandle(socket) {
+  return {
+    get fd() {
+      return socket.destroyed ? -1 : socket._handle.fd;
+    },
+    close(cb?) {
+      socket.destroy();
+      if (typeof cb === "function") process.nextTick(cb);
+    },
+  };
 }

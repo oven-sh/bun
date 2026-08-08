@@ -1408,18 +1408,18 @@ fn load_standalone_sourcemap(
 /// # Safety
 /// `global` is the live VM global; called on the JS thread inside an
 /// `event_loop.enter()` scope.
-pub(crate) unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) {
+pub(crate) unsafe fn handle_ipc_internal_child(
+    global: *mut JSGlobalObject,
+    data: JSValue,
+    handle: JSValue,
+) {
     // SAFETY: per fn contract.
     let global = unsafe { &*global };
     // Spec discards a JS exception here (`catch |err| switch (err) {
     // error.JSError => {} }`); the low tier already wrapped this call in
     // `event_loop.enter()/exit()` which clears any pending exception, so
     // dropping the `Err` is correct.
-    let _ = crate::node::node_cluster_binding::handle_internal_message_child(
-        global,
-        data,
-        JSValue::UNDEFINED,
-    );
+    let _ = crate::node::node_cluster_binding::handle_internal_message_child(global, data, handle);
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —
@@ -3843,6 +3843,7 @@ fn get_hardcoded_module(
             Some(js_synthetic_module(b"node:zlib/iter", specifier))
         }
         HardcodedModule::BunInternalForTesting
+        | HardcodedModule::InternalClusterRoundRobinHandle
         | HardcodedModule::NodeInternalRepl
         | HardcodedModule::NodeInternalReplAwait
         | HardcodedModule::NodeInternalReplHistory

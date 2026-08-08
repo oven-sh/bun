@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "Worker.h"
+#include "JSWorker.h"
 
 #include "BunClientData.h"
 #include "ErrorCode.h"
@@ -218,6 +219,34 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);
 
+// node:worker_threads internals that read a Worker's native state; private (handed to the module
+// through createNodeWorkerThreadsBinding), not properties of the web Worker.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionWorkerHasRef, (JSGlobalObject*, CallFrame* callFrame))
+{
+    auto* worker = dynamicDowncast<JSWorker>(callFrame->argument(0));
+    if (!worker)
+        return JSValue::encode(jsUndefined());
+    auto hasRef = worker->wrapped().hasRef();
+    return JSValue::encode(hasRef ? jsBoolean(*hasRef) : jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionWorkerEventLoopUtilization, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* worker = dynamicDowncast<JSWorker>(callFrame->argument(0));
+    double elapsedMs = 0;
+    double idleMs = 0;
+    if (!worker || !worker->wrapped().eventLoopUtilization(elapsedMs, idleMs))
+        return JSValue::encode(jsNull());
+    auto* result = constructEmptyArray(lexicalGlobalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectIndex(lexicalGlobalObject, 0, jsNumber(elapsedMs));
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectIndex(lexicalGlobalObject, 1, jsNumber(idleMs));
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -359,7 +388,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 12);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 14);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -373,6 +402,8 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 12, JSFunction::create(vm, globalObject, 1, "workerHasRef"_s, jsFunctionWorkerHasRef, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 13, JSFunction::create(vm, globalObject, 1, "workerEventLoopUtilization"_s, jsFunctionWorkerEventLoopUtilization, ImplementationVisibility::Public, NoIntrinsic));
     return array;
 }
 

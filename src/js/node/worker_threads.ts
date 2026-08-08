@@ -81,6 +81,8 @@ const {
   9: _setEntryEvaluatedHook,
   10: _isNodeWorker,
   11: _setParentPort,
+  12: _workerHasRef,
+  13: _workerEventLoopUtilization,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -94,6 +96,8 @@ const {
   (hook: () => void) => void,
   boolean,
   (port: MessagePort) => void,
+  (worker: WebWorker) => boolean | undefined,
+  (worker: WebWorker) => [number, number] | null,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -1159,7 +1163,7 @@ class Worker extends EventEmitter {
     // (through 'exit'), undefined once it has been released.
     const resource = {
       hasRef() {
-        return worker.#worker.hasRef();
+        return _workerHasRef(worker.#worker);
       },
     };
     const asyncId = newAsyncId();
@@ -1225,7 +1229,7 @@ class Worker extends EventEmitter {
   }
 
   #eventLoopUtilization(utilization1, utilization2) {
-    return internalEventLoopUtilization(this.#worker.eventLoopUtilizationInternal(), utilization1, utilization2);
+    return internalEventLoopUtilization(_workerEventLoopUtilization(this.#worker), utilization1, utilization2);
   }
 
   terminate(callback: unknown) {

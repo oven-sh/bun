@@ -452,13 +452,10 @@ impl Builtin {
         &self.args
     }
 
-    /// The owning VM is inside `Heap::lastChanceToFinalize`, where
-    /// `Heap::m_arrayBuffers` has already deleted the `JSC::ArrayBuffer`
-    /// impls: the unpin that `PinnedArrayBuf::drop` issues for a
-    /// `> ${arraybuffer}` redirect would write to a freed impl. Clear the
-    /// `pinned` flags so the drops skip it; the `Strong` handles still
-    /// release normally. Must only be called from the VM-shutdown finalizer
-    /// — on a live heap skipping the unpin would leak the pin.
+    /// `PinnedArrayBuf::drop`'s unpin would write to a `JSC::ArrayBuffer`
+    /// impl the heap sweep already deleted; see
+    /// `ShellSubprocess::defuse_array_buffer_unpins`. VM-shutdown finalizer
+    /// only.
     #[cfg(not(windows))]
     pub(crate) fn defuse_array_buf_pins(&mut self) {
         if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {

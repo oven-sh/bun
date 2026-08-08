@@ -493,31 +493,23 @@ impl ShellSubprocess {
         }
     }
 
-    /// Stop stdio that is still active because the owning `Cmd` is being
-    /// deinited mid-flight (VM shutdown finalizing the interpreter while the
-    /// subprocess runs). Pipe readers are stopped without firing
-    /// `on_reader_done` (no Cmd state transitions), capture chunks still
-    /// queued on the shell's `IOWriter` are cancelled (its queue holds a raw
-    /// pointer into the `PipeReader` this teardown frees), and a still-pending
-    /// buffer-stdin writer is closed with `start()`'s +1 released. A no-op
-    /// when the command already closed its stdio the normal way.
-    ///
-    /// POSIX-only for the same reason as [`Self::abort_after_failed_start`]:
-    /// tearing down live libuv sources here is unsafe, so Windows callers
-    /// leak instead.
+    /// Stop stdio still active because the `Cmd` is deinited mid-flight (VM
+    /// shutdown); a no-op after a normal close. Readers stop without firing
+    /// `on_reader_done`, queued capture chunks are cancelled (the `IOWriter`
+    /// queue holds a raw pointer into the freed `PipeReader`), a pending
+    /// buffer-stdin writer is closed. POSIX-only, same tradeoff as
+    /// [`Self::abort_after_failed_start`].
     ///
     /// # Safety
     /// `this` must be the live `heap::alloc`'d subprocess with no outstanding
     /// borrows; single-threaded shell. Raw (not `&mut self`) because the
-    /// stdin close below re-enters `on_close_io(&mut Self)` through the
-    /// writer's process backref.
+    /// stdin close re-enters `on_close_io(&mut Self)` through the writer's
+    /// process backref.
     #[cfg(not(windows))]
     pub(crate) unsafe fn deinit_in_flight_io(this: *mut Self) {
-        // stdin: claim `start()`'s +1 (so no other release site can fire for
-        // it), close the writer — which drives `on_close` → `on_close_io`,
-        // swapping the slot to `Ignore` and releasing `create()`'s ref — then
-        // release the claimed ref. Same shape as the JS `Subprocess::close_io`
-        // stdin arm.
+        // Claim `start()`'s +1, `close()` (fires `on_close` → `on_close_io`:
+        // slot → `Ignore`, `create()`'s ref released), release the claimed
+        // ref — the JS `Subprocess::close_io` stdin shape.
         // SAFETY: caller contract; the `stdin` borrow ends before `close()`.
         let pending_start: *mut StaticPipeWriter = match unsafe { &(*this).stdin } {
             Writable::Buffer(buffer) => {
@@ -552,9 +544,8 @@ impl ShellSubprocess {
             // nor `cancel_chunks` fires a callback.
             unsafe {
                 if matches!((*pipe).state, PipeReaderState::Pending) {
-                    // Stop the `BufferedReader` without `on_reader_done`
-                    // (deregisters the poll, closes the fd) and record the
-                    // forced stop so `PipeReader::drop`'s done-assert holds.
+                    // Deregisters the poll and closes the fd without
+                    // `on_reader_done`; `Err` satisfies the drop's done-assert.
                     (*pipe).reader.deinit();
                     (*pipe).state = PipeReaderState::Err(None);
                 }
@@ -569,17 +560,14 @@ impl ShellSubprocess {
         }
     }
 
-    /// The owning VM is inside `Heap::lastChanceToFinalize`, where
-    /// `Heap::m_arrayBuffers` has already deleted the `JSC::ArrayBuffer`
-    /// impls: the unpin that `BufferedOutput::drop` issues for a
-    /// `> ${arraybuffer}` redirect would write to a freed impl. Clear the
-    /// pinned value so the drop skips it; the `Strong` handle in the same
-    /// struct still releases normally (handle sets outlive the sweep).
+    /// `Heap::lastChanceToFinalize` deletes the `JSC::ArrayBuffer` impls
+    /// before the sweep that reaches us, so the `> ${arraybuffer}` unpin in
+    /// `BufferedOutput::drop` would write to a freed impl. Clear the value
+    /// so the drop skips it; the `Strong` handle still releases normally.
     ///
     /// # Safety
-    /// Same contract as [`Self::deinit_in_flight_io`], and must only be
-    /// called from the VM-shutdown finalizer — on a live heap skipping the
-    /// unpin would leak the pin.
+    /// Same contract as [`Self::deinit_in_flight_io`]; VM-shutdown finalizer
+    /// only (on a live heap this would leak the pin).
     #[cfg(not(windows))]
     pub(crate) unsafe fn defuse_array_buffer_unpins(this: *mut Self) {
         // SAFETY: disjoint field projections of the live subprocess.

@@ -1344,17 +1344,13 @@ impl Interpreter {
 
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
-                // The VM is shutting down with the script still in flight
-                // (e.g. `worker.terminate()` while a command runs), so no
-                // node was deinited the normal way and `Node` has no `Drop`
-                // for its raw-pointer-owned resources. Deinit every live
-                // `Cmd`: kills its child and frees the `ShellSubprocess`,
-                // its pipe readers and its redirection fd. Slots are left
-                // occupied (no `free_node`) so the env walk below still sees
-                // pipeline-duped Cmd envs; the arena `Vec` drops with the
-                // box. Windows: skipped, matching the leak-over-UAF tradeoff
-                // of `ShellSubprocess::abort_after_failed_start` (closing
-                // live uv sources here is unsafe).
+                // The script is still in flight (e.g. `worker.terminate()`
+                // mid-command) and `Node` has no `Drop` for its raw-pointer
+                // resources: deinit every live `Cmd` (kills the child, frees
+                // the `ShellSubprocess`, readers, redirection fd). Slots stay
+                // occupied so the env walk below still sees pipeline-duped
+                // Cmd envs. Windows: leak-over-UAF, see
+                // `ShellSubprocess::abort_after_failed_start`.
                 #[cfg(not(windows))]
                 {
                     let node_count = this.nodes.get().len();

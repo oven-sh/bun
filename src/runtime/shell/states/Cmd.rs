@@ -857,11 +857,9 @@ impl Cmd {
         Self::on_exec_done(interp, this, exit_code).run(interp);
     }
 
-    /// [`Self::deinit`] for the VM-shutdown finalizer. The heap is inside
-    /// `lastChanceToFinalize`, where the `JSC::ArrayBuffer` impls are
-    /// already deleted, so the unpins that the `PinnedArrayBuf` /
-    /// `BufferedOutput` drops would issue for `> ${arraybuffer}` redirects
-    /// must be defused first (they would write to freed impls).
+    /// [`Self::deinit`] for the VM-shutdown finalizer: defuses the
+    /// `> ${arraybuffer}` unpins first — the heap sweep already deleted the
+    /// `JSC::ArrayBuffer` impls they would write to.
     #[cfg(not(windows))]
     pub(crate) fn deinit_from_finalizer(interp: &Interpreter, this: NodeId) {
         {
@@ -891,10 +889,9 @@ impl Cmd {
             }
             core::mem::take(&mut me.exec)
         };
-        // Tear down the running exec. `me`'s borrow ended above:
-        // `deinit_in_flight_io` below can re-enter this Cmd through the
-        // subprocess's stdin `on_close_io` → `buffered_input_close` (a no-op
-        // now that `exec` is taken).
+        // `me`'s borrow ended above: the teardown below re-enters this Cmd
+        // via stdin `on_close_io` → `buffered_input_close` (a no-op once
+        // `exec` is taken).
         match exec {
             Exec::None => {}
             Exec::Builtin(b) => drop(b),
@@ -909,9 +906,8 @@ impl Cmd {
                         let _ = (*child).try_kill(9);
                     }
                     (*child).unref::<true>();
-                    // A VM-shutdown teardown reaches here with the command
-                    // still in flight; stop any still-active stdio before
-                    // the drop below (normal deinit already closed it all).
+                    // Stop any still-active stdio before the drop (only the
+                    // VM-shutdown path reaches here in flight).
                     #[cfg(not(windows))]
                     ShellSubprocess::deinit_in_flight_io(child);
                     drop(bun_core::heap::take(child));

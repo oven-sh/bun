@@ -610,6 +610,41 @@ describe("crypto.KeyObjects", () => {
     });
   });
 
+  describe("createPrivateKey rejects inconsistent EC JWK", () => {
+    for (const namedCurve of ["prime256v1", "secp384r1", "secp521r1"]) {
+      test(namedCurve, () => {
+        const a = generateKeyPairSync("ec", { namedCurve }).privateKey.export({ format: "jwk" });
+        const b = generateKeyPairSync("ec", { namedCurve }).privateKey.export({ format: "jwk" });
+
+        // valid key still imports and self-verifies
+        const good = createPrivateKey({ key: a, format: "jwk" });
+        const msg = Buffer.from("message");
+        expect(verify("sha256", msg, createPublicKey(good), sign("sha256", msg, good))).toBe(true);
+
+        // d from a different keypair on the same curve
+        expect(() => createPrivateKey({ key: { ...a, d: b.d }, format: "jwk" })).toThrow(
+          expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK" }),
+        );
+
+        // d truncated by one byte
+        const dBuf = Buffer.from(a.d, "base64url");
+        expect(() =>
+          createPrivateKey({
+            key: { ...a, d: dBuf.subarray(0, dBuf.length - 1).toString("base64url") },
+            format: "jwk",
+          }),
+        ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK" }));
+
+        // d with a leading zero byte is accepted by Node (same scalar value)
+        const padded = createPrivateKey({
+          key: { ...a, d: Buffer.concat([Buffer.alloc(1), dBuf]).toString("base64url") },
+          format: "jwk",
+        });
+        expect(padded.export({ format: "jwk" })).toEqual(a);
+      });
+    }
+  });
+
   test("private encrypted should work", async () => {
     // Reading an encrypted key without a passphrase should fail.
     expect(() => createPrivateKey(privateEncryptedPem)).toThrow();

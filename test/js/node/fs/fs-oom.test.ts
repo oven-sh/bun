@@ -90,13 +90,13 @@ describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("readFileSync at the 2 GiB strin
     const { result, exitCode } = await spawnRead(2 ** 31);
     expect(result).toEqual({ name: "Error", code: "ENOMEM" });
     expect(exitCode).toBe(0);
-  }, 180_000);
+  });
 
   test("2^31 - 1 bytes still decodes", async () => {
     const { result, exitCode } = await spawnRead(2 ** 31 - 1);
     expect(result).toEqual({ length: 2 ** 31 - 1 });
     expect(exitCode).toBe(0);
-  }, 180_000);
+  });
 });
 
 // The UTF-8 -> UTF-16 converters behind `fs.readFile*(.., "utf8")`,

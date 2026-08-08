@@ -188,7 +188,7 @@ describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("byte sources at the 2 GiB strin
       },
     ]);
     expect(exitCode).toBe(0);
-  }, 180_000);
+  });
 
   test("Bun.file().text() at 2^31 bytes throws ERR_STRING_TOO_LONG instead of aborting", async () => {
     using dir = tempDir("blob-2gib", {});
@@ -220,5 +220,5 @@ describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("byte sources at the 2 GiB strin
       },
     ]);
     expect(exitCode).toBe(0);
-  }, 180_000);
+  });
 });

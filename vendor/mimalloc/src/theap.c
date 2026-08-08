@@ -99,6 +99,7 @@ static bool mi_theap_page_collect(mi_theap_t* theap, mi_page_queue_t* pq, mi_pag
   MI_UNUSED(theap);
   mi_assert_expensive(mi_theap_page_is_valid(theap, pq, page, NULL, NULL));
   mi_collect_t collect = *((mi_collect_t*)arg_collect);
+  if (mi_page_thread_id(page) == MI_THREADID_FROZEN) return true;   // heap-image page: never freed, abandoned or rewritten
   // A collect has no allocation to serve, so it must not un-purge: the allocation path
   // (`mi_page_queue_find_free_ex`) hands a hole back when a page is actually needed. Otherwise
   // `mi_on_thread_idle`, which collects before it sweeps, un-purges a run of every page whose free
@@ -171,6 +172,7 @@ static bool mi_theap_page_purge_holes(mi_theap_t* theap, mi_page_queue_t* pq, mi
   // has to wait for us. Stopping between pages bounds that wait to one page's walk; the pages we
   // skip are simply swept at the next park (`swept_state` makes the re-walk cheap).
   if (theap->tld != NULL && mi_atomic_load_relaxed(&theap->tld->park_reclaim) != 0) return false;
+  if (mi_page_thread_id(page) == MI_THREADID_FROZEN) return true;   // heap-image page: its bytes are the image file's
   _mi_page_free_collect(page, true);   // force: fold local_free (and thread_free) into `free` first
   if (mi_page_all_free(page)) {
     // the forced collect emptied the page: hand it back instead of leaving it resident

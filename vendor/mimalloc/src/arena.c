@@ -1471,6 +1471,12 @@ void mi_arenas_seal_existing(void) mi_attr_noexcept {
   }
 }
 
+static bool mi_arena_abandoned_bit_clear(size_t slice_index, size_t slice_count, mi_arena_t* arena, void* arg) {
+  MI_UNUSED(slice_count); MI_UNUSED(arena);
+  mi_bitmap_clear((mi_bitmap_t*)arg, slice_index);
+  return true;
+}
+
 static bool mi_arena_page_freeze(size_t slice_index, size_t slice_count, mi_arena_t* arena, void* arg) {
   MI_UNUSED(slice_count); MI_UNUSED(arg);
   mi_page_t* page = mi_arena_page_at_slice(arena, slice_index);
@@ -1490,8 +1496,16 @@ void mi_arenas_freeze_pages(void) mi_attr_noexcept {
         mi_arena_t* arena = mi_arena_from_index(subproc, i);
         if (arena == NULL) continue;
         mi_arena_pages_t* arena_pages = mi_heap_arena_pages(heap, arena);
-        if (arena_pages != NULL) { (void)_mi_bitmap_forall_set(arena_pages->pages, &mi_arena_page_freeze, arena, NULL); }
+        if (arena_pages == NULL) continue;
+        (void)_mi_bitmap_forall_set(arena_pages->pages, &mi_arena_page_freeze, arena, NULL);
+        // A frozen page must not be findable as abandoned either: reclaiming it (or sweeping its holes) would allocate into
+        // and rewrite image memory. Everything abandoned at this point is image memory, so the heap's counts go to zero.
+        for (size_t bin = 0; bin < MI_ARENA_BIN_COUNT; bin++) {
+          mi_bitmap_t* const abandoned = arena_pages->pages_abandoned[bin];
+          (void)_mi_bitmap_forall_set(abandoned, &mi_arena_abandoned_bit_clear, arena, abandoned);
+        }
       }
+      for (size_t bin = 0; bin < MI_BIN_COUNT; bin++) { mi_atomic_store_relaxed(&heap->abandoned_count[bin], 0); }
     }
   }
 }

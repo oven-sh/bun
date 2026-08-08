@@ -1163,6 +1163,14 @@ void _mi_page_holes_report_print(const mi_holes_report_t* rep) {
 }
 
 
+// Is a hole sweep rewriting this page right now? Only an owned page can be (the sweep of abandoned pages holds them
+// exclusively); an abandoned page may still point at the theap of a thread that has since exited, so it is not looked at.
+static inline bool mi_page_holes_sweep_in_progress(const mi_page_t* page) {
+  if (mi_page_is_abandoned(page) || page->theap == NULL) return false;
+  const mi_tld_t* const tld = page->theap->tld;
+  return (tld != NULL && tld->holes_sweeping);
+}
+
 static void mi_page_free_collect_ex(mi_page_t* page, bool force, bool allow_unpurge) {
   mi_assert_internal(page!=NULL);
 
@@ -1196,7 +1204,7 @@ static void mi_page_free_collect_ex(mi_page_t* page, bool force, bool allow_unpu
   // Free list empty but this page has discarded holes: bring a whole run of them
   // back. Every caller re-checks `mi_page_immediate_available` after collect, so the
   // page becomes usable again without touching the other holes.
-  if (allow_unpurge && page->free == NULL && mi_page_has_purged(page) && !(page->theap != NULL && mi_page_tld(page)->holes_sweeping)) {
+  if (allow_unpurge && page->free == NULL && mi_page_has_purged(page) && !mi_page_holes_sweep_in_progress(page)) {
     _mi_page_unpurge_run(page);
   }
 }

@@ -27,6 +27,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_BUFFER_CONTEXT_NOT_AVAILABLE", Error],
   ["ERR_BUFFER_OUT_OF_BOUNDS", RangeError],
   ["ERR_BUFFER_TOO_LARGE", RangeError],
+  ["ERR_CHILD_CLOSED_BEFORE_REPLY", Error],
   ["ERR_CHILD_PROCESS_IPC_REQUIRED", Error],
   ["ERR_CHILD_PROCESS_STDIO_MAXBUFFER", RangeError],
   ["ERR_CLOSED_MESSAGE_PORT", Error],
@@ -367,6 +368,7 @@ const errors: ErrorCodeMapping = [
   // llhttp reports a missing CRLF after a chunk's data as HPE_STRICT,
   // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
   ["HPE_STRICT", Error],
+  ["ERR_NOT_BUILDING_SNAPSHOT", Error],
   ["ERR_CANNOT_WATCH_SIGINT", Error],
   ["ERR_INSPECTOR_NOT_AVAILABLE", Error],
   ["ERR_INVALID_REPL_EVAL_CONFIG", TypeError],

@@ -166,7 +166,7 @@ export default class RoundRobinHandle {
 
     remove(handle);
 
-    const message = { act: "newconn", key: this.key };
+    const message = { cmd: "NODE_CLUSTER", act: "newconn", key: this.key };
 
     this.inFlight.set(worker.id, handle);
     const sent = sendHelper(worker.process[kHandle], message, handle, reply => {

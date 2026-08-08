@@ -12,7 +12,7 @@
  * @param {Handle} handle
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(message, handle, _options) {
+export function serialize(message, handle, options, target) {
   const net = require("node:net");
   if (handle instanceof net.Server) {
     const native = handle._handle;
@@ -20,15 +20,54 @@ export function serialize(message, handle, _options) {
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Server" }];
   }
   if (handle instanceof net.Socket) {
-    const native = handle._handle;
+    const native = handle._handle ?? handle[require("internal/http").kHandle];
     if (!native) return null;
-    return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Socket" }];
+    const serialized: any = { cmd: "NODE_HANDLE", msg: message, type: "net.Socket" };
+    const keepOpen = !!options?.keepOpen;
+    const owner = target === null ? process : target;
+    const server = handle.server;
+    const connectionKey = server ? server._connectionKey : undefined;
+    if (owner && connectionKey !== undefined) {
+      serialized.key = connectionKey;
+      const { getSocketList, kChannelSockets } = require("internal/socket_list");
+      const firstTime = !owner[kChannelSockets]?.send[serialized.key];
+      const socketList = getSocketList("send", owner, serialized.key);
+      if (firstTime) server._setupWorker(socketList);
+      if (!keepOpen) {
+        server._connections--;
+        handle.server = null;
+        handle._server = null;
+      }
+    }
+    if (!keepOpen) {
+      handle.setTimeout(0);
+      const parser = handle.parser;
+      if (parser) {
+        const { freeParser, HTTPParser } = require("node:_http_common");
+        if (parser instanceof HTTPParser) {
+          freeParser(parser, null, handle);
+        } else if (typeof parser.free === "function") {
+          parser.incoming = null;
+          parser.socket = null;
+          parser.free();
+          handle.parser = null;
+        }
+        const { _httpMessage } = handle;
+        if (_httpMessage) _httpMessage.detachSocket(handle);
+      }
+    }
+    return [native, serialized];
   }
-  if (handle instanceof require("node:dgram").Socket) {
-    const { kStateSymbol } = require("internal/dgram");
-    const native = handle[kStateSymbol]?.handle?.socket;
-    if (!native) return null;
-    return [native, { cmd: "NODE_HANDLE", msg: message, type: "dgram.Socket", dgramType: handle.type }];
+  const dgram = require("node:dgram");
+  if (handle instanceof dgram.Socket) {
+    if (process.platform === "win32") {
+      throw $ERR_INVALID_HANDLE_TYPE();
+    }
+    const fd = handle[require("internal/dgram").kStateSymbol]?.handle?.fd;
+    return [
+      typeof fd === "number" ? fd : -1,
+      { cmd: "NODE_HANDLE", msg: message, type: "dgram.Socket", dgramType: handle.type },
+    ];
   }
   throw $ERR_INVALID_HANDLE_TYPE();
 }
@@ -40,6 +79,9 @@ export function serialize(message, handle, _options) {
  */
 export function parseHandle(target, serialized, fd) {
   const emit = $newRustFunction("ipc.rs", "emitHandleIPCMessage", 3);
+  function emitReceivedHandle(boundEmit, target, msg, handle) {
+    boundEmit(target, msg, handle);
+  }
   const net = require("node:net");
   // const dgram = require("node:dgram");
   switch (serialized.type) {
@@ -53,6 +95,12 @@ export function parseHandle(target, serialized, fd) {
     case "net.Socket": {
       const socket = new net.Socket({ readable: true, writable: true });
       socket.connect({ fd, fdIsRawSocket: true });
+      const { key: serializedKey } = serialized;
+      if (serializedKey) {
+        const { getSocketList, getChannelOwner } = require("internal/socket_list");
+        const owner = target === null ? process : getChannelOwner(target);
+        if (owner) getSocketList("got", owner, serializedKey).add({ socket });
+      }
       emit(target, serialized.msg, socket);
       return;
     }
@@ -63,19 +111,28 @@ export function parseHandle(target, serialized, fd) {
       const wrap = new UDP();
       const err = wrap.open(fd);
       if (err) {
-        // The wrap only owns the descriptor on success; don't leak it.
-        require("node:fs").closeSync(fd);
+        // A synchronous throw reaches ipc.rs's Err branch, which closes fd;
+        // closing here too would double-close (cross-thread fd-reuse hazard).
         throw new Error(`failed to open received dgram handle: ${err}`);
       }
-      emit(target, serialized.message, wrap);
+      emit(target, serialized.msg, wrap);
       return;
     }
     case "dgram.Socket": {
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js handleConversion['dgram.Socket'].got
       const dgram = require("node:dgram");
-      const socket = new dgram.Socket(serialized.dgramType || "udp4");
-      socket.bind({ fd, exclusive: true }, () => {
-        emit(target, serialized.msg, socket);
+      const socket = dgram.createSocket(serialized.dgramType);
+      function throwOnAdoptionFailure(err) {
+        try {
+          require("node:fs").closeSync(fd);
+        } catch {}
+        throw new Error(`failed to adopt received dgram handle: ${err.code || err.message}`);
+      }
+      socket.once("error", throwOnAdoptionFailure);
+      // exclusive: the SCM_RIGHTS descriptor is local; without it a cluster
+      // worker's bind({ fd }) would resolve fd in the primary's fd space.
+      socket.bind({ fd, exclusive: true }, function onAdopted() {
+        socket.removeListener("error", throwOnAdoptionFailure);
+        emitReceivedHandle(emit, target, serialized.msg, socket);
       });
       return;
     }
@@ -83,4 +140,20 @@ export function parseHandle(target, serialized, fd) {
       throw new Error("failed to parse handle");
     }
   }
+}
+
+/**
+ * @param {unknown} message
+ * @returns {[unknown, unknown[]] | null}
+ */
+export function tagAdvancedBuffers(message) {
+  return require("internal/serialization_buffers").tagBuffers(message);
+}
+
+/**
+ * @param {unknown} envelope
+ * @returns {unknown}
+ */
+export function restoreAdvancedBuffers(envelope) {
+  return require("internal/serialization_buffers").restoreBuffers(envelope);
 }

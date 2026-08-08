@@ -766,6 +766,8 @@ DEFINE_NATIVE_MODULE(NodeConstants)
 #ifdef SSL_OP_ALLOW_NO_DHE_KEX
     put(Identifier::fromString(vm, "SSL_OP_ALLOW_NO_DHE_KEX"_s),
         jsNumber(SSL_OP_ALLOW_NO_DHE_KEX));
+#else
+    put(Identifier::fromString(vm, "SSL_OP_ALLOW_NO_DHE_KEX"_s), jsNumber(0));
 #endif
 #ifdef SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION
     put(Identifier::fromString(vm, "SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION"_s),
@@ -778,14 +780,20 @@ DEFINE_NATIVE_MODULE(NodeConstants)
 #ifdef SSL_OP_CISCO_ANYCONNECT
     put(Identifier::fromString(vm, "SSL_OP_CISCO_ANYCONNECT"_s),
         jsNumber(SSL_OP_CISCO_ANYCONNECT));
+#else
+    put(Identifier::fromString(vm, "SSL_OP_CISCO_ANYCONNECT"_s), jsNumber(0));
 #endif
 #ifdef SSL_OP_COOKIE_EXCHANGE
     put(Identifier::fromString(vm, "SSL_OP_COOKIE_EXCHANGE"_s),
         jsNumber(SSL_OP_COOKIE_EXCHANGE));
+#else
+    put(Identifier::fromString(vm, "SSL_OP_COOKIE_EXCHANGE"_s), jsNumber(0));
 #endif
 #ifdef SSL_OP_CRYPTOPRO_TLSEXT_BUG
     put(Identifier::fromString(vm, "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s),
         jsNumber(SSL_OP_CRYPTOPRO_TLSEXT_BUG));
+#else
+    put(Identifier::fromString(vm, "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s), jsNumber(0));
 #endif
 #ifdef SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS
     put(Identifier::fromString(vm, "SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS"_s),
@@ -802,6 +810,8 @@ DEFINE_NATIVE_MODULE(NodeConstants)
 #ifdef SSL_OP_NO_ENCRYPT_THEN_MAC
     put(Identifier::fromString(vm, "SSL_OP_NO_ENCRYPT_THEN_MAC"_s),
         jsNumber(SSL_OP_NO_ENCRYPT_THEN_MAC));
+#else
+    put(Identifier::fromString(vm, "SSL_OP_NO_ENCRYPT_THEN_MAC"_s), jsNumber(0));
 #endif
 #ifdef SSL_OP_NO_QUERY_MTU
     put(Identifier::fromString(vm, "SSL_OP_NO_QUERY_MTU"_s),
@@ -847,57 +857,26 @@ DEFINE_NATIVE_MODULE(NodeConstants)
 #ifdef SSL_OP_PRIORITIZE_CHACHA
     put(Identifier::fromString(vm, "SSL_OP_PRIORITIZE_CHACHA"_s),
         jsNumber(SSL_OP_PRIORITIZE_CHACHA));
+#else
+    put(Identifier::fromString(vm, "SSL_OP_PRIORITIZE_CHACHA"_s), jsNumber(0));
 #endif
 #ifdef SSL_OP_TLS_ROLLBACK_BUG
     put(Identifier::fromString(vm, "SSL_OP_TLS_ROLLBACK_BUG"_s),
         jsNumber(SSL_OP_TLS_ROLLBACK_BUG));
 #endif
-#ifndef OPENSSL_NO_ENGINE
-#ifdef ENGINE_METHOD_RSA
-    put(Identifier::fromString(vm, "ENGINE_METHOD_RSA"_s),
-        jsNumber(ENGINE_METHOD_RSA));
-#endif
-#ifdef ENGINE_METHOD_DSA
-    put(Identifier::fromString(vm, "ENGINE_METHOD_DSA"_s),
-        jsNumber(ENGINE_METHOD_DSA));
-#endif
-#ifdef ENGINE_METHOD_DH
-    put(Identifier::fromString(vm, "ENGINE_METHOD_DH"_s),
-        jsNumber(ENGINE_METHOD_DH));
-#endif
-#ifdef ENGINE_METHOD_RAND
-    put(Identifier::fromString(vm, "ENGINE_METHOD_RAND"_s),
-        jsNumber(ENGINE_METHOD_RAND));
-#endif
-#ifdef ENGINE_METHOD_EC
-    put(Identifier::fromString(vm, "ENGINE_METHOD_EC"_s),
-        jsNumber(ENGINE_METHOD_EC));
-#endif
-#ifdef ENGINE_METHOD_CIPHERS
-    put(Identifier::fromString(vm, "ENGINE_METHOD_CIPHERS"_s),
-        jsNumber(ENGINE_METHOD_CIPHERS));
-#endif
-#ifdef ENGINE_METHOD_DIGESTS
-    put(Identifier::fromString(vm, "ENGINE_METHOD_DIGESTS"_s),
-        jsNumber(ENGINE_METHOD_DIGESTS));
-#endif
-#ifdef ENGINE_METHOD_PKEY_METHS
-    put(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_METHS"_s),
-        jsNumber(ENGINE_METHOD_PKEY_METHS));
-#endif
-#ifdef ENGINE_METHOD_PKEY_ASN1_METHS
-    put(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_ASN1_METHS"_s),
-        jsNumber(ENGINE_METHOD_PKEY_ASN1_METHS));
-#endif
-#ifdef ENGINE_METHOD_ALL
-    put(Identifier::fromString(vm, "ENGINE_METHOD_ALL"_s),
-        jsNumber(ENGINE_METHOD_ALL));
-#endif
-#ifdef ENGINE_METHOD_NONE
-    put(Identifier::fromString(vm, "ENGINE_METHOD_NONE"_s),
-        jsNumber(ENGINE_METHOD_NONE));
-#endif
-#endif // !OPENSSL_NO_ENGINE
+    // BoringSSL does not define engine constants in openssl/engine.h.
+    // Values mirror ProcessBindingConstants.cpp (and node).
+    put(Identifier::fromString(vm, "ENGINE_METHOD_RSA"_s), jsNumber(0x0001));
+    put(Identifier::fromString(vm, "ENGINE_METHOD_DSA"_s), jsNumber(0x0002));
+    put(Identifier::fromString(vm, "ENGINE_METHOD_DH"_s), jsNumber(0x0004));
+    put(Identifier::fromString(vm, "ENGINE_METHOD_RAND"_s), jsNumber(0x0008));
+    put(Identifier::fromString(vm, "ENGINE_METHOD_CIPHERS"_s), jsNumber(0x0040));
+    put(Identifier::fromString(vm, "ENGINE_METHOD_DIGESTS"_s), jsNumber(0x0080));
+    put(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_METHS"_s), jsNumber(0x0200));
+    put(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_ASN1_METHS"_s), jsNumber(0x0400));
+    put(Identifier::fromString(vm, "ENGINE_METHOD_EC"_s), jsNumber(0x0800));
+    put(Identifier::fromString(vm, "ENGINE_METHOD_ALL"_s), jsNumber(0xFFFF));
+    put(Identifier::fromString(vm, "ENGINE_METHOD_NONE"_s), jsNumber(0x0000));
 #ifdef DH_CHECK_P_NOT_SAFE_PRIME
     put(Identifier::fromString(vm, "DH_CHECK_P_NOT_SAFE_PRIME"_s),
         jsNumber(DH_CHECK_P_NOT_SAFE_PRIME));
@@ -932,6 +911,8 @@ DEFINE_NATIVE_MODULE(NodeConstants)
 #ifdef RSA_X931_PADDING
     put(Identifier::fromString(vm, "RSA_X931_PADDING"_s),
         jsNumber(RSA_X931_PADDING));
+#else
+    put(Identifier::fromString(vm, "RSA_X931_PADDING"_s), jsNumber(5));
 #endif
 #ifdef RSA_PKCS1_PSS_PADDING
     put(Identifier::fromString(vm, "RSA_PKCS1_PSS_PADDING"_s),
@@ -944,6 +925,8 @@ DEFINE_NATIVE_MODULE(NodeConstants)
 #ifdef RSA_PSS_SALTLEN_MAX_SIGN
     put(Identifier::fromString(vm, "RSA_PSS_SALTLEN_MAX_SIGN"_s),
         jsNumber(RSA_PSS_SALTLEN_MAX_SIGN));
+#else
+    put(Identifier::fromString(vm, "RSA_PSS_SALTLEN_MAX_SIGN"_s), jsNumber(-2));
 #endif
 #ifdef RSA_PSS_SALTLEN_AUTO
     put(Identifier::fromString(vm, "RSA_PSS_SALTLEN_AUTO"_s),
@@ -995,6 +978,33 @@ DEFINE_NATIVE_MODULE(NodeConstants)
         jsNumber(POINT_CONVERSION_UNCOMPRESSED));
     put(Identifier::fromString(vm, "POINT_CONVERSION_HYBRID"_s),
         jsNumber(POINT_CONVERSION_HYBRID));
+
+    // OBSOLETE OPTIONS retained for compatibility (always 0, as in node).
+    put(Identifier::fromString(vm, "SSL_OP_MICROSOFT_SESS_ID_BUG"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_NETSCAPE_CHALLENGE_BUG"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_MSIE_SSLV2_RSA_PADDING"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_SSLEAY_080_CLIENT_DH_BUG"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_TLS_D5_BUG"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_TLS_BLOCK_PADDING_BUG"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_SINGLE_ECDH_USE"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_SINGLE_DH_USE"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_EPHEMERAL_RSA"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_PKCS1_CHECK_1"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_PKCS1_CHECK_2"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_NETSCAPE_CA_DN_BUG"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG"_s), jsNumber(0));
+
+    // fs formats the binding exposes; keep in sync with ProcessBindingConstants.cpp.
+    put(Identifier::fromString(vm, "EXTENSIONLESS_FORMAT_JAVASCRIPT"_s), jsNumber(0));
+    put(Identifier::fromString(vm, "EXTENSIONLESS_FORMAT_WASM"_s), jsNumber(1));
+
+    // node freezes require('constants') (lib/constants.js ObjectFreeze).
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::objectConstructorFreeze(globalObject, defaultObject);
+    RETURN_IF_EXCEPTION(scope, void());
 
     // RETURN_NATIVE_MODULE();
 }

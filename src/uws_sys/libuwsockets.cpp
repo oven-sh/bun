@@ -479,6 +479,31 @@ extern "C"
     }
   }
 
+  void uws_app_listen_fd(int ssl, uws_app_t *app, int32_t fd, int32_t options,
+                         uws_listen_handler handler, void *user_data)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->listen_fd(
+          (LIBUS_SOCKET_DESCRIPTOR)fd, options,
+          [handler, user_data](struct us_listen_socket_t *listen_socket)
+          {
+            handler((struct us_listen_socket_t *)listen_socket, user_data);
+          });
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->listen_fd(
+          (LIBUS_SOCKET_DESCRIPTOR)fd, options,
+          [handler, user_data](struct us_listen_socket_t *listen_socket)
+          {
+            handler((struct us_listen_socket_t *)listen_socket, user_data);
+          });
+    }
+  }
+
   /* callback, path to unix domain socket */
   void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, size_t pathlen, uws_listen_domain_handler handler, void *user_data)
   {
@@ -1837,8 +1862,11 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     us_socket_r s = (us_socket_t *)res;
     if(us_socket_is_closed(s)) return;
     s->flags.last_write_failed = 1;
+    /* Same gate as us_internal_rearm_writable (socket.c): re-adding READABLE
+     * would undo a pause mid-backpressure and re-surface a consumed EOF on a
+     * half-open socket. */
     us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+                   LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
   }
 
   void uws_res_override_write_offset(int ssl, uws_res_r res, uint64_t offset)
@@ -2009,7 +2037,11 @@ __attribute__((callback (corker, ctx)))
   void us_socket_sendfile_needs_more(us_socket_r s) {
     if(us_socket_is_closed(s)) return;
     s->flags.last_write_failed = 1;
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    /* Same gate as us_internal_rearm_writable (socket.c): re-adding READABLE
+     * would undo a pause mid-backpressure and re-surface a consumed EOF on a
+     * half-open socket. */
+    us_poll_change(&s->p, s->group->loop,
+                   LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
   }
 
   LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) {

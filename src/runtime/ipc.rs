@@ -255,7 +255,7 @@ mod advanced {
     const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
     // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
     const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
 
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq)]
@@ -263,6 +263,10 @@ mod advanced {
         Version = 1,
         SerializedMessage = 2,
         SerializedInternalMessage = 3,
+        /// A `[message, buffers]` envelope so the receiver can restore Buffer prototypes (JSC's
+        /// serializer has no host-object hook). Only emitted when Buffers are present, so plain
+        /// messages keep the version-1 wire format.
+        SerializedMessageWithBuffers = 4,
     }
     // SAFETY: `#[repr(u8)]` fieldless enum → size 1, align 1, no padding,
     // `Copy + 'static`; the single byte is always an initialized discriminant.
@@ -274,6 +278,7 @@ mod advanced {
                 1 => "Version",
                 2 => "SerializedMessage",
                 3 => "SerializedInternalMessage",
+                4 => "SerializedMessageWithBuffers",
                 _ => "unknown",
             }
         }
@@ -316,7 +321,8 @@ mod advanced {
                 message: DecodedIPCMessage::Version(message_len),
             }),
             x if x == IPCMessageType::SerializedMessage as u8
-                || x == IPCMessageType::SerializedInternalMessage as u8 =>
+                || x == IPCMessageType::SerializedInternalMessage as u8
+                || x == IPCMessageType::SerializedMessageWithBuffers as u8 =>
             {
                 if message_len > u32::MAX - HEADER_LENGTH_U32 {
                     return Err(IPCDecodeError::InvalidFormat);
@@ -336,7 +342,10 @@ mod advanced {
                 }
 
                 let message = &data[HEADER_LENGTH..][..message_len as usize];
-                let deserialized = JSValue::deserialize(message, global)?;
+                let mut deserialized = JSValue::deserialize(message, global)?;
+                if x == IPCMessageType::SerializedMessageWithBuffers as u8 {
+                    deserialized = ipc_restore_advanced_buffers(global, deserialized)?;
+                }
 
                 Ok(DecodeIPCMessageResult {
                     bytes_consumed: HEADER_LENGTH_U32 + message_len,
@@ -368,6 +377,24 @@ mod advanced {
         value: JSValue,
         is_internal: IsInternal,
     ) -> Result<usize, IPCSerializationError> {
+        // Internal (control) messages never carry user Buffers, and the
+        // hardcoded ack/nack packets depend on their bare wire shape.
+        let (value, message_type) = match is_internal {
+            IsInternal::Internal => (value, IPCMessageType::SerializedInternalMessage),
+            IsInternal::External => {
+                let tagged = ipc_tag_advanced_buffers(global, value).map_err(|e| match e {
+                    JsError::Thrown => IPCSerializationError::JSError,
+                    JsError::Terminated => IPCSerializationError::JSTerminated,
+                    JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
+                })?;
+                if tagged.is_null() {
+                    (value, IPCMessageType::SerializedMessage)
+                } else {
+                    (tagged, IPCMessageType::SerializedMessageWithBuffers)
+                }
+            }
+        };
+
         let serialized = value
             .serialize(
                 global,
@@ -394,10 +421,7 @@ mod advanced {
             .ensure_unused_capacity(payload_length)
             .map_err(|_| IPCSerializationError::OutOfMemory)?;
 
-        writer.write_type_as_bytes_assume_capacity(match is_internal {
-            IsInternal::Internal => IPCMessageType::SerializedInternalMessage,
-            IsInternal::External => IPCMessageType::SerializedMessage,
-        });
+        writer.write_type_as_bytes_assume_capacity(message_type);
         writer.write_type_as_bytes_assume_capacity(size);
         writer.write_assume_capacity(serialized.data());
 
@@ -507,7 +531,7 @@ mod json {
         let deserialized = match parsed {
             Ok(v) => v,
             Err(JsError::Thrown) | Err(JsError::Terminated) => {
-                global_this.clear_exception();
+                global_this.clear_exception_except_termination();
                 return Err(IPCDecodeError::InvalidFormat);
             }
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -780,25 +804,41 @@ impl SendHandle {
     }
 
     /// Call the callback and deinit
-    pub(crate) fn complete(mut self, global: &JSGlobalObject) {
-        if let Some(handle) = &self.handle {
-            if handle.close_on_complete {
-                let js = handle.js.value();
-                if js.is_object() {
-                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
-                }
-            }
-        }
+    pub(crate) fn complete(
+        mut self,
+        global: &JSGlobalObject,
+        close_fn: &JsCell<Option<Protected>>,
+    ) {
+        self.schedule_handle_close(global, close_fn);
         let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
         // self drops here → data/callbacks/handle Drop.
     }
 
-    pub fn abort_unsent(self, global: &JSGlobalObject) {
+    /// Channel closed while parked behind a pending handle ack: close the handle wrap and
+    /// drop callbacks unsettled — node discards `_handleQueue` on abrupt close (v26.3.0).
+    /// https://github.com/nodejs/node/blob/main/lib/internal/child_process.js
+    pub(crate) fn abort_parked(
+        self,
+        global: &JSGlobalObject,
+        close_fn: &JsCell<Option<Protected>>,
+    ) {
+        self.schedule_handle_close(global, close_fn);
+    }
+
+    fn schedule_handle_close(&self, global: &JSGlobalObject, close_fn: &JsCell<Option<Protected>>) {
         if let Some(handle) = &self.handle {
             if handle.close_on_complete {
                 let js = handle.js.value();
                 if js.is_object() {
-                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
+                    let f = close_fn.with_mut(|close_fn| match close_fn {
+                        Some(p) => p.value(),
+                        None => {
+                            let f = close_sent_handle_fn(global);
+                            *close_fn = Some(f.protected());
+                            f
+                        }
+                    });
+                    let _ = JSValue::call_next_tick_1(f, global, js);
                 }
             }
         }
@@ -912,6 +952,11 @@ pub struct SendQueue {
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
     pub close_event_sent: Cell<bool>,
+
+    /// Lazily created, per-channel cache of the `close_sent_handle` JSFunction
+    /// so handle-carrying sends don't allocate a fresh function per message.
+    /// `Protected` unprotects on Drop (JS thread, like the queued callbacks).
+    pub(crate) close_handle_fn: JsCell<Option<Protected>>,
 
     pub windows: JsCell<WindowsState>,
 }
@@ -1031,6 +1076,7 @@ impl SendQueue {
             pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
+            close_handle_fn: JsCell::new(None),
             windows: JsCell::new(WindowsState::default()),
         }));
         // SAFETY: `this` is the fresh, non-null allocation root.
@@ -1169,14 +1215,22 @@ impl SendQueue {
                 log!("SendQueue#_onAfterIPCClosed");
                 if !sq.close_event_sent.replace(true) {
                     let global = sq.get_global_this();
+                    // Node discards _handleQueue on close without firing callbacks; the parked
+                    // window opens when a handle send is *initiated*, so everything after the
+                    // first handle-bearing item is parked. lib/internal/child_process.js (v26.3.0)
+                    let mut parked = sq.waiting_for_ack.get().is_some();
                     if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
-                        item.complete(&global);
+                        item.complete(&global, &sq.close_handle_fn);
                     }
                     for item in sq.queue.with_mut(std::mem::take) {
-                        if item.data.cursor > 0 {
-                            item.complete(&global);
+                        let was_parked = parked;
+                        if item.handle.is_some() {
+                            parked = true;
+                        }
+                        if was_parked {
+                            item.abort_parked(&global, &sq.close_handle_fn);
                         } else {
-                            item.abort_unsent(&global);
+                            item.complete(&global, &sq.close_handle_fn);
                         }
                     }
                     if let Some(owner) = sq.owner.get() {
@@ -1386,7 +1440,7 @@ impl SendQueue {
         // consume the message and continue sending
         if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
             self.retry_count.set(0);
-            item.complete(global); // call the callback & deinit
+            item.complete(global, &self.close_handle_fn); // call the callback & deinit
         }
         log!("IPC call continueSend() from onAckNack success");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
@@ -1469,7 +1523,7 @@ impl SendQueue {
                 self.update_ref(global);
             }
             Next::EmptyItem(itm) => {
-                itm.complete(global); // call the callback & deinit
+                itm.complete(global, &self.close_handle_fn); // call the callback & deinit
                 log!("IPC call continueSend() from empty item");
                 self.continue_send(global, reason);
             }
@@ -1538,7 +1592,7 @@ impl SendQueue {
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
             Done::Completed(item) => {
-                item.complete(&global_this); // call the callback & deinit
+                item.complete(&global_this, &self.close_handle_fn); // call the callback & deinit
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
             Done::Partial | Done::NoProgress => {}
@@ -1635,6 +1689,24 @@ impl SendQueue {
         match *self.socket.get() {
             SocketUnion::Open(s) => Some(s),
             _ => None,
+        }
+    }
+
+    /// Raw descriptor of the live IPC channel (Node `Control#fd`, lib/internal/child_process.js:596).
+    /// `None` once closed; Windows has no raw fd here so callers surface `undefined`.
+    pub fn channel_fd(&self) -> Option<Fd> {
+        #[cfg(not(windows))]
+        {
+            let socket = self.get_socket()?;
+            let raw = socket.socket.get()?;
+            // SAFETY: `get()` is Some only for a live connected socket owned
+            // by this queue; the pointer is valid for the duration of the
+            // synchronous read below.
+            Some(unsafe { (*raw).get_fd() })
+        }
+        #[cfg(windows)]
+        {
+            None
         }
     }
 
@@ -1948,7 +2020,7 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
         Ok(Some(v)) if v.is_string() => v,
         Ok(_) => return None,
         Err(_) => {
-            global.clear_exception();
+            global.clear_exception_except_termination();
             return None;
         }
     };
@@ -2030,7 +2102,7 @@ fn handle_ipc_message(
             if msg_data.is_object() {
                 let cmd = match msg_data.fast_get(global_this, jsc::BuiltinName::cmd) {
                     Err(_) => {
-                        global_this.clear_exception();
+                        global_this.clear_exception_except_termination();
                         break 'handle_message;
                     }
                     Ok(None) => break 'handle_message,
@@ -2175,7 +2247,7 @@ fn handle_ipc_message(
                     }
                     Ok(_) => {}
                     Err(_) => {
-                        global_this.clear_exception();
+                        global_this.clear_exception_except_termination();
                     }
                 }
             }
@@ -2192,7 +2264,7 @@ enum DecodeStep {
     Fail(IPCDecodeError),
 }
 
-fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
+fn finish_decode(send_queue: &SendQueue, step: &DecodeStep, global: &JSGlobalObject) {
     match step {
         DecodeStep::Message(_) => unreachable!("caller dispatches Message"),
         DecodeStep::Wait => {
@@ -2202,7 +2274,13 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
             Output::print_errorln("IPC message is too long.");
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
-        DecodeStep::Fail(_) => {
+        DecodeStep::Fail(e) => {
+            if matches!(e, IPCDecodeError::JSError) {
+                // deserialize/restoreBuffers threw and the exception is still
+                // pending; the event-loop exit drains microtasks right after
+                // this returns, which asserts no-pending-exception.
+                global.clear_exception_except_termination();
+            }
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
     }
@@ -2282,7 +2360,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                     DecodeStep::Message(result) => {
                         handle_ipc_message(send_queue, result.message, &global_this);
                     }
-                    step => return finish_decode(send_queue, &step),
+                    step => return finish_decode(send_queue, &step, &global_this),
                 }
             }
         }
@@ -2317,7 +2395,9 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                             log!("hit NotEnoughBytes");
                             return;
                         }
-                        Err(e) => return finish_decode(send_queue, &DecodeStep::Fail(e)),
+                        Err(e) => {
+                            return finish_decode(send_queue, &DecodeStep::Fail(e), &global_this);
+                        }
                     }
                 }
             }
@@ -2335,7 +2415,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                     DecodeStep::Message(result) => {
                         handle_ipc_message(send_queue, result.message, &global_this);
                     }
-                    step => return finish_decode(send_queue, &step),
+                    step => return finish_decode(send_queue, &step, &global_this),
                 }
             }
         }
@@ -2461,7 +2541,7 @@ pub mod IPCHandlers {
                             DecodeStep::Message(result) => {
                                 handle_ipc_message(send_queue, result.message, &global_this);
                             }
-                            step => return finish_decode(send_queue, &step),
+                            step => return finish_decode(send_queue, &step, &global_this),
                         }
                     }
                 }
@@ -2483,7 +2563,7 @@ pub mod IPCHandlers {
                             DecodeStep::Message(result) => {
                                 handle_ipc_message(send_queue, result.message, &global_this);
                             }
-                            step => return finish_decode(send_queue, &step),
+                            step => return finish_decode(send_queue, &step, &global_this),
                         }
                     }
                 }
@@ -2497,9 +2577,30 @@ pub fn ipc_serialize(
     global_object: &JSGlobalObject,
     message: JSValue,
     handle: JSValue,
+    options: JSValue,
+    target: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`
-    bun_jsc::cpp::IPCSerialize(global_object, message, handle)
+    bun_jsc::cpp::IPCSerialize(global_object, message, handle, options, target)
+}
+
+#[track_caller]
+pub(crate) fn ipc_tag_advanced_buffers(
+    global_object: &JSGlobalObject,
+    message: JSValue,
+) -> JsResult<JSValue> {
+    // `[[ZIG_EXPORT(zero_is_throw)]]`; returns null when the message holds no
+    // Buffers, else the `[message, buffers]` envelope (see Ipc.ts).
+    bun_jsc::cpp::IPCTagAdvancedBuffers(global_object, message)
+}
+
+#[track_caller]
+pub(crate) fn ipc_restore_advanced_buffers(
+    global_object: &JSGlobalObject,
+    envelope: JSValue,
+) -> JsResult<JSValue> {
+    // `[[ZIG_EXPORT(zero_is_throw)]]`
+    bun_jsc::cpp::IPCRestoreAdvancedBuffers(global_object, envelope)
 }
 
 #[track_caller]

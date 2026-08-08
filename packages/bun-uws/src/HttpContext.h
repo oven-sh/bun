@@ -331,7 +331,6 @@ private:
         /* Mark that we are inside the parser now. Save/restore the parsed
          * socket: node:http's read replay can nest a parse inside another
          * socket's dispatch. */
-        httpContextData->flags.isParsingHttp = true;
         struct us_socket_t *prevParsingSocket = httpContextData->parsingSocket;
         httpContextData->parsingSocket = s;
         httpResponseData->isIdle = false;
@@ -584,7 +583,6 @@ private:
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
         /* Mark that we are no longer parsing Http */
-        httpContextData->flags.isParsingHttp = false;
         httpContextData->parsingSocket = prevParsingSocket;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
@@ -701,9 +699,12 @@ private:
             if (asyncSocket->getBufferedAmount() > 0) {
                 /* onEnd deferred close for these bytes; a writable event that
                  * moves nothing (EPIPE) means the peer is gone and this would
-                 * otherwise spin the writable dispatch until idle timeout. */
+                 * otherwise spin the writable dispatch until idle timeout.
+                 * Except on libuv, where a stale SEND completion can move
+                 * nothing on a healthy socket; there the kernel is asked. */
                 if (flushed == 0
-                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)) {
+                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
+                    && us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)) {
                     return asyncSocket->close();
                 }
                 /* Socket buffer is not completely empty yet
@@ -739,11 +740,14 @@ private:
             if constexpr (!IsNodeHttp) {
                 /* Bun.serve: onEnd deferred close for a tryEnd tail (offset < total,
                  * nothing in AsyncSocketData::buffer). A retry that moves zero bytes
-                 * after the peer's FIN is EPIPE; close instead of spinning. */
+                 * after the peer's FIN is EPIPE; close instead of spinning. Except
+                 * on libuv, where the retry can stall while the TLS layer's spill
+                 * is still blocked on a healthy socket; there the kernel is asked. */
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
                     && (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
                     && httpResponseData->offset == offsetBefore
-                    && asyncSocket->hasFullyDrained()) {
+                    && asyncSocket->hasFullyDrained()
+                    && us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)) {
                     return asyncSocket->close();
                 }
             }
@@ -1060,6 +1064,21 @@ public:
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
             us_socket_unref(&socket->s);
+        }
+
+        return socket;
+    }
+
+    /* Adopt an externally bound, already-listening fd using this HttpContext */
+    us_listen_socket_t *listen_fd(struct ssl_ctx_st *sslCtx, LIBUS_SOCKET_DESCRIPTOR fd, int options) {
+        int error = 0;
+        auto* socket = us_socket_group_listen_fd(&group, socketKind(), sslCtx, fd, 512, options | LIBUS_LISTEN_DEFER_ACCEPT, socketExtSize(), &error);
+        // we dont depend on libuv ref for keeping it alive
+        if (socket) {
+            us_socket_unref(&socket->s);
+        } else if (error) {
+            /* Bun.serve's on_listen_failed reads errno, not the out-param. */
+            errno = error;
         }
 
         return socket;

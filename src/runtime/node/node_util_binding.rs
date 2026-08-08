@@ -23,6 +23,24 @@ pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) ->
 }
 
 #[bun_jsc::host_fn]
+pub(crate) fn internal_error_entries(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    // Flat [code, name, code, name, ...] pairs — libuv's full error table for
+    // this target. Consumed by node:util's getSystemErrorMap().
+    let entries = UV_E::ENTRIES;
+    JSValue::create_array_from_iter(global, 0..entries.len() * 2, |i| {
+        let (code, name) = entries[i / 2];
+        if i % 2 == 0 {
+            Ok(JSValue::js_number_from_int32(code))
+        } else {
+            BunString::static_(name).to_js(global)
+        }
+    })
+}
+
+#[bun_jsc::host_fn]
 pub(crate) fn etimedout_error_code(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -41,6 +59,11 @@ pub(crate) fn enobufs_error_code(
 #[bun_jsc::host_fn]
 pub(crate) fn einval_error_code(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::js_number_from_int32(-UV_E::INVAL))
+}
+
+#[bun_jsc::host_fn]
+pub(crate) fn ebadf_error_code(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    Ok(JSValue::js_number_from_int32(-UV_E::BADF))
 }
 
 #[bun_jsc::host_fn]
@@ -178,6 +201,13 @@ impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
     /// Returns a slice of the next field, or null if splitting is complete.
     fn next(&mut self) -> Option<&'a [T]> {
         let start = self.index?;
+
+        // A lookbehind split emits no trailing empty field when the input ends
+        // with '\n' (but "" still splits to [""]).
+        if start == self.buffer.len() && start != 0 {
+            self.index = None;
+            return None;
+        }
 
         if let Some(delim_start) = self.buffer[start..]
             .iter()

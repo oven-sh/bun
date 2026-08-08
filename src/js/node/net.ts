@@ -136,6 +136,7 @@ const kReinitializeHandle = Symbol("kReinitializeHandle");
 
 const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
+const kAdoptedFd = Symbol("kAdoptedFd");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
@@ -1595,6 +1596,7 @@ function Socket(options?) {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
+  let adoptFd = -1;
   if (options?.fd !== undefined) {
     const { fd } = options;
     validateInt32(fd, "fd", 0);
@@ -1635,6 +1637,16 @@ function Socket(options?) {
           this.read(0);
         }
       }
+    } else if (options.readable === undefined && options.writable === undefined && fd > 0) {
+      // Bare `new net.Socket({ fd })`: adopt pipes/sockets like Node's createHandle.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L424-L441
+      let stats;
+      try {
+        stats = require("node:fs").fstatSync(fd);
+      } catch {
+        stats = undefined;
+      }
+      if (stats !== undefined && (stats.isFIFO() || stats.isSocket())) adoptFd = fd;
     }
   }
 
@@ -1765,6 +1777,10 @@ function Socket(options?) {
     }
     this.blockList = optsBlockList;
   }
+
+  if (adoptFd !== -1) {
+    Socket.prototype.connect.$call(this, { fd: adoptFd, pauseOnConnect: this.pauseOnConnect });
+  }
 }
 $toClass(Socket, "Socket", Duplex);
 
@@ -1882,7 +1898,11 @@ Socket.prototype.connect = function connect(...args) {
     if (socket) {
       connection = socket;
     }
-    if (fd) {
+    // A fd already adopted by the constructor is skipped here: createConnection()
+    // constructs the Socket and then calls connect() with the same options, and
+    // attaching the same fd twice would leak the first handle.
+    if (fd && this[kAdoptedFd] !== fd) {
+      this[kAdoptedFd] = fd;
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -1891,6 +1911,7 @@ Socket.prototype.connect = function connect(...args) {
         // Always half-open natively; see kConnect.
         allowHalfOpen: true,
       }).catch(error => {
+        this[kAdoptedFd] = undefined;
         if (!this.destroyed) {
           this.emit("error", error);
           this.emit("close", true);
@@ -2140,6 +2161,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+  this[kAdoptedFd] = undefined;
   // Tear down a wrapped generic duplex with this socket: the native handle's
   // close only flushes close_notify and lets the wrapper drain; without an
   // explicit destroy here a late RST on the underlying transport can surface
@@ -3503,9 +3525,9 @@ function Server(options?, connectionListener?) {
 
   this._handle = null as MaybeListener;
   this._usingWorkers = false;
-  this.workers = [];
+  this._workers = [];
   this._unref = false;
-  this.listeningId = 1;
+  this._listeningId = 1;
 
   this[bunSocketServerOptions] = undefined;
   // Server option coercion matches Node's Server constructor:
@@ -3549,7 +3571,7 @@ Server.prototype.unref = function unref() {
 };
 
 Server.prototype.close = function close(callback) {
-  this[kClusterListeningId] = (this[kClusterListeningId] || 0) + 1;
+  this._listeningId++;
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3569,7 +3591,33 @@ Server.prototype.close = function close(callback) {
     this._handle = null;
   }
 
-  this._emitCloseIfDrained();
+  // Deliberate deviation from Node v26.3.0: node enters this branch on bare
+  // _usingWorkers and latently hangs when _workers already emptied (child
+  // exited), leaving close(cb)/'close' unsettled. Guard on live workers.
+  const liveWorkers = this._workers.length;
+  if (this._usingWorkers && liveWorkers > 0) {
+    // Port of Node v26.3.0 lib/net.js Server.prototype.close (onWorkerClose),
+    // with the closure hoisted to a named function.
+    let left = liveWorkers;
+    const self = this;
+    function onWorkerClose() {
+      if (--left !== 0) return;
+
+      self._connections = 0;
+      self._emitCloseIfDrained();
+    }
+
+    // Increment connections to be sure that, even if all sockets will be closed
+    // during polling of workers, `close` event will be emitted only once.
+    this._connections++;
+
+    // Poll workers
+    for (let n = 0; n < this._workers.length; n++) {
+      this._workers[n].close(onWorkerClose);
+    }
+  } else {
+    this._emitCloseIfDrained();
+  }
 
   return this;
 };
@@ -3613,14 +3661,46 @@ Server.prototype.address = function address() {
 };
 
 Server.prototype.getConnections = function getConnections(callback) {
-  if (typeof callback === "function") {
+  if (typeof callback !== "function") return this;
+  // Both paths settle on nextTick like node's end() helper:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2384-L2398
+  function end(err, connections?) {
+    process.nextTick(callback, err, connections);
+  }
+  if (!this._usingWorkers || this._workers.length === 0) {
     //in Bun case we will never error on getConnections
     //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
     //if disconnected will only pass null as well and 0 connected
-    callback(null, this._handle ? this._connections : 0);
+    end(null, this._handle ? this._connections : 0);
+    return this;
+  }
+  let left = this._workers.length;
+  let total = this._connections;
+  function oncount(err, count) {
+    if (err) {
+      left = -1;
+      return end(err);
+    }
+    total += count;
+    if (--left === 0) return end(null, total);
+  }
+  for (let n = 0; n < this._workers.length; n++) {
+    this._workers[n].getConnections(oncount);
   }
   return this;
 };
+
+// Port of Node v26.3.0 lib/net.js Server.prototype._setupWorker.
+Server.prototype._setupWorker = function _setupWorker(socketList) {
+  this._usingWorkers = true;
+  this._workers.push(socketList);
+  socketList.once("exit", onSocketListExit.bind(this));
+};
+
+function onSocketListExit(socketList) {
+  const index = this._workers.indexOf(socketList);
+  this._workers.splice(index, 1);
+}
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
   const argsLength = arguments.length;
@@ -3780,6 +3860,8 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  this._listeningId++;
+
   if (onListen != null) {
     this.once("listening", onListen);
   }
@@ -3858,6 +3940,7 @@ Server.prototype[kRealListen] = function (
   contexts,
   _onListen,
   fd,
+  nextTickListening,
 ) {
   // NOTE: accepted sockets are always allowHalfOpen:true at the native layer
   // (hardcoded below); the stream layer implements allowHalfOpen=false
@@ -3931,6 +4014,9 @@ Server.prototype[kRealListen] = function (
   if (addr && typeof addr === "object") {
     const familyLast = String(addr.family).slice(-1);
     this._connectionKey = `${familyLast}:${addr.address}:${port}`;
+  } else if (typeof addr === "string") {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2029
+    this._connectionKey = `-1:${addr}:-1`;
   }
 
   if (contexts) {
@@ -3951,7 +4037,11 @@ Server.prototype[kRealListen] = function (
   // That leads to all sorts of confusion.
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this);
+  if (nextTickListening) {
+    process.nextTick(emitListeningNextTick, this);
+  } else {
+    setTimeout(emitListeningNextTick, 1, this);
+  }
 };
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
@@ -4032,10 +4122,10 @@ function listenInCluster(
     port >= 0 &&
     isIP(address) === 0
   ) {
-    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
     // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
+    const lookupListeningId = server._listeningId;
     require("node:dns").lookup(address, (err, ip, family) => {
-      if (lookupListeningId !== server[kClusterListeningId]) return;
+      if (lookupListeningId !== server._listeningId) return;
       if (err) {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
         server.emit("error", err);
@@ -4095,11 +4185,11 @@ function listenInCluster(
     ...options,
     sharedOnly: tls ? true : undefined,
   };
-  const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2080-L2102
+  const listeningId = server._listeningId;
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, _reply) {
-    if (listeningId !== server[kClusterListeningId]) {
-      handle?.close();
+    if (listeningId !== server._listeningId) {
+      handle?.close?.();
       return;
     }
     err = checkBindError(err, port, handle);
@@ -4109,6 +4199,8 @@ function listenInCluster(
       server.emit("error", ex);
       return;
     }
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2029
+    server._connectionKey = `${addressType}:${address}:${port}`;
     const sharedFd = handle?.sharedFd;
     if (handle && typeof sharedFd === "number") {
       server[kClusterHandle] = handle;
@@ -4128,6 +4220,7 @@ function listenInCluster(
           contexts,
           onListen,
           sharedFd,
+          true,
         );
         handle.adopted = true;
       } catch (err) {
@@ -4142,7 +4235,6 @@ function listenInCluster(
   });
 }
 
-const kClusterListeningId = Symbol("kClusterListeningId");
 const kClusterHandle = Symbol("kClusterHandle");
 const kClusterFauxListen = Symbol("kClusterFauxListen");
 const { kClusterOwner } = require("internal/shared");
@@ -4161,7 +4253,7 @@ Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   handle[kClusterOwner] = this;
   handle.listen(backlog || 511);
   if (this._unref) this.unref();
-  setTimeout(emitListeningNextTick, 1, this);
+  process.nextTick(emitListeningNextTick, this);
 };
 
 function onClusterConnection(err, clientHandle) {

@@ -30,9 +30,14 @@ for (let i = 0; i < 1000; i++) {
   ws.send("hello");
 }
 let bytesReceived = 0;
+const { promise: drained, resolve: onDrained } = Promise.withResolvers();
 ws.onmessage = event => {
   bytesReceived += event.data.length;
+  if (bytesReceived >= 5000) onDrained();
 };
+await drained;
+// Let the loop settle before the first sample window opens.
+await Bun.sleep(500);
 
 let previousUsage = process.cpuUsage();
 let previousTime = Date.now();

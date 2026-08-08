@@ -1987,29 +1987,6 @@ impl UDPSocket {
         Ok(JSValue::js_number(f64::from(value)))
     }
 
-    /// Underlying socket descriptor, or `None` once closed. IPC send dups/exports this for a `dgram.Socket` handle.
-    pub(crate) fn native_fd(&self) -> Option<bun_sys::Fd> {
-        if self.closed.get() {
-            return None;
-        }
-        let socket = self.socket.get()?;
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let raw = uws::udp::Socket::opaque_mut(socket).fd();
-        if raw < 0 {
-            return None;
-        }
-        #[cfg(windows)]
-        {
-            Some(bun_sys::Fd::from_system(
-                raw as usize as *mut core::ffi::c_void,
-            ))
-        }
-        #[cfg(not(windows))]
-        {
-            Some(bun_sys::Fd::from_native(raw))
-        }
-    }
-
     /// Underlying socket descriptor as a number, or -1 once closed. Backs
     /// node:dgram's handle.fd.
     // See `js_connect` — codegen `JsClass` derive owns the link name.

@@ -11,6 +11,8 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
+#[cfg(target_os = "macos")]
+use bun_core::{Timespec, TimespecMockMode};
 use bun_io::Closer;
 #[cfg(windows)]
 use bun_io::pipe_reader::WindowsFlags as ReaderFlags;
@@ -22,6 +24,8 @@ use bun_sys::{self as sys, Fd};
 use bun_uws::{AnyResponse, WriteResult};
 
 use crate::server::jsc::{EventLoopHandle, Task, VirtualMachine};
+#[cfg(target_os = "macos")]
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(FileResponseStream, hidden);
 
@@ -50,6 +54,15 @@ pub(crate) struct FileResponseStream {
     sendfile: JsCell<Sendfile>,
 
     state: Cell<State>,
+
+    /// See `arm_fifo_probe`. `JsCell` so the timer heap's interior pointer
+    /// has write provenance through `as_ptr()` under the `&self` discipline.
+    /// `pub(crate)` for the `offset_of!` in the timer dispatch.
+    #[cfg(target_os = "macos")]
+    pub(crate) fifo_probe_timer: JsCell<EventLoopTimer>,
+    /// 0 = never armed; otherwise the current backoff interval in ms.
+    #[cfg(target_os = "macos")]
+    fifo_probe_interval_ms: Cell<u32>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
@@ -105,6 +118,10 @@ pub(crate) struct StartOptions {
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub file_type: FileType,
     pub pollable: bool,
+    /// `fd` is a named FIFO the caller just opened by path, so it may have no
+    /// writer yet. On macOS that makes the kqueue registration unreliable;
+    /// see `arm_fifo_probe`.
+    pub fifo_from_path: bool,
     /// Byte offset into the file to begin reading from.
     pub offset: u64,
     /// Maximum bytes to send; `None` reads to EOF. For regular files this
@@ -149,6 +166,12 @@ impl FileResponseStream {
                 max_size: Cell::new(None),
                 sendfile: JsCell::new(Sendfile::default()),
                 state: Cell::new(State::default()),
+                #[cfg(target_os = "macos")]
+                fifo_probe_timer: JsCell::new(EventLoopTimer::init_paused(
+                    EventLoopTimerTag::FileResponseStreamFifoProbe,
+                )),
+                #[cfg(target_os = "macos")]
+                fifo_probe_interval_ms: Cell::new(0),
             }));
         // SAFETY: `this` is the live allocation above; the guard's ref defers
         // any free until after `this_ref` is dead at the end of this frame.
@@ -241,6 +264,16 @@ impl FileResponseStream {
 
         // hold a ref for the in-flight read; released in on_reader_done/on_reader_error
         this_ref.hold_read_ref();
+        if opts.fifo_from_path {
+            // Must precede the eager read below: without it, the 0-byte read
+            // a writerless FIFO produces on macOS would end the response.
+            #[cfg(target_os = "macos")]
+            this_ref
+                .reader_mut()
+                .flags
+                .insert(ReaderFlags::FIFO_AWAITING_FIRST_WRITER);
+            this_ref.arm_fifo_probe();
+        }
         // SAFETY: `reader` is live for the stream's lifetime; `read` is the
         // raw re-entrancy-safe entry (its dispatch runs user JS).
         unsafe { BufferedReader::read(this_ref.reader.as_ptr()) };
@@ -269,6 +302,9 @@ impl FileResponseStream {
     }
 
     fn on_read_chunk(&self, chunk_: &[u8], state_: ReadState) -> bool {
+        // First bytes arrived: the pipe demonstrably has (or had) a writer, so
+        // poll registrations are reliable from here on.
+        self.cancel_fifo_probe();
         if self.state.get().contains(State::RESPONSE_DONE) {
             return false;
         }
@@ -363,6 +399,136 @@ impl FileResponseStream {
         // SAFETY: `self` is the live intrusive allocation; `READ_REF_HELD`
         // witnesses exactly one outstanding ref taken in `hold_read_ref`.
         Some(unsafe { bun_ptr::ScopedRef::<Self>::adopt(self.as_ptr()) })
+    }
+
+    // ───────────────── macOS FIFO first-writer probe ─────────────────
+    // A path-opened FIFO with no writer yet cannot be waited on through the
+    // descriptor on macOS (see `retry_stalled_fifo_read` and
+    // `FIFO_AWAITING_FIRST_WRITER` in bun_io), so until the first byte we
+    // tick that recovery read on a backoff timer; it stops at the first
+    // chunk/EOF.
+
+    #[cfg(target_os = "macos")]
+    const FIFO_PROBE_MIN_MS: u32 = 2;
+    #[cfg(target_os = "macos")]
+    const FIFO_PROBE_MAX_MS: u32 = 64;
+
+    /// Holds one ref while the timer is armed; released when the probe stops
+    /// (`cancel_fifo_probe`, or `on_fifo_probe` deciding not to re-arm).
+    #[cfg(target_os = "macos")]
+    fn arm_fifo_probe(&self) {
+        let timer_all = crate::jsc_hooks::timer_all();
+        if timer_all.is_null() {
+            return;
+        }
+        self.fifo_probe_interval_ms.set(Self::FIFO_PROBE_MIN_MS);
+        self.ref_();
+        // SAFETY: single-threaded event loop; `timer_all` is the live
+        // per-thread heap, and the timer node lives inside `self`, which the
+        // ref above keeps alive while armed.
+        unsafe {
+            (*timer_all).update(
+                self.fifo_probe_timer.as_ptr(),
+                &Timespec::ms_from_now(
+                    TimespecMockMode::ForceRealTime,
+                    i64::from(Self::FIFO_PROBE_MIN_MS),
+                ),
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[inline]
+    fn arm_fifo_probe(&self) {}
+
+    #[cfg(target_os = "macos")]
+    fn cancel_fifo_probe(&self) {
+        if self.fifo_probe_interval_ms.get() == 0 {
+            return; // never armed
+        }
+        let t = self.fifo_probe_timer.as_ptr();
+        // SAFETY: `t` is the embedded timer node; single-threaded event loop.
+        if unsafe { (*t).state } == EventLoopTimerState::ACTIVE {
+            let timer_all = crate::jsc_hooks::timer_all();
+            if !timer_all.is_null() {
+                // SAFETY: as in `arm_fifo_probe`. `remove` marks it CANCELLED.
+                unsafe { (*timer_all).remove(t) };
+            }
+            // Release the ref held while armed. Every path here (chunk
+            // dispatch, finish entry points) holds its own ref, so this is
+            // never the last one while `self` is still on the stack.
+            // SAFETY: adopting the single outstanding armed ref.
+            drop(unsafe { bun_ptr::ScopedRef::<Self>::adopt(self.as_ptr()) });
+            return;
+        }
+        // Probe is mid-fire (state FIRED): tell it not to re-arm. It owns the
+        // armed ref and releases it when it returns.
+        // SAFETY: as above.
+        unsafe { (*t).state = EventLoopTimerState::CANCELLED };
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[inline]
+    fn cancel_fifo_probe(&self) {}
+
+    /// Timer dispatch target (`EventLoopTimerTag::FileResponseStreamFifoProbe`).
+    ///
+    /// # Safety
+    /// `this` is the live stream recovered from its embedded timer node, on
+    /// the event-loop thread, with the armed ref outstanding.
+    #[cfg(target_os = "macos")]
+    pub(crate) unsafe fn on_fifo_probe(this: *mut Self) {
+        // SAFETY: caller contract — adopt the armed ref so `*this` outlives
+        // the read dispatch below.
+        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+        // SAFETY: `this` is live; standard fired-timer bookkeeping before any
+        // re-arm decision.
+        let timer = unsafe {
+            let t = (*this).fifo_probe_timer.as_ptr();
+            (*t).state = EventLoopTimerState::FIRED;
+            (*t).heap = Default::default();
+            t
+        };
+
+        // SAFETY: `this` is live; `Cell` read.
+        let finished = unsafe {
+            (*this)
+                .state
+                .get()
+                .intersects(State::RESPONSE_DONE | State::FINISHED)
+        };
+        if !finished {
+            // SAFETY: the reader cell is live for the stream's lifetime; the
+            // chunk/done dispatches this reaches re-enter `*this` through the
+            // vtable arms, which take their own refs.
+            unsafe { BufferedReader::retry_stalled_fifo_read((*this).reader.as_ptr()) };
+        }
+
+        // SAFETY: `this` is still live (guard). The read above may have
+        // delivered the first chunk (which marks the timer CANCELLED) or
+        // completed the response; only re-arm if neither happened.
+        unsafe {
+            if (*timer).state == EventLoopTimerState::CANCELLED
+                || (*this)
+                    .state
+                    .get()
+                    .intersects(State::RESPONSE_DONE | State::FINISHED)
+            {
+                return;
+            }
+            let timer_all = crate::jsc_hooks::timer_all();
+            if timer_all.is_null() {
+                return;
+            }
+            let next = ((*this).fifo_probe_interval_ms.get() * 2).min(Self::FIFO_PROBE_MAX_MS);
+            (*this).fifo_probe_interval_ms.set(next);
+            // Still waiting: keep the probe armed with a fresh ref.
+            (*this).ref_();
+            (*timer_all).update(
+                timer,
+                &Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(next)),
+            );
+        }
     }
 
     fn on_writable(&self, _: u64, _: AnyResponse) -> bool {
@@ -550,6 +716,16 @@ impl FileResponseStream {
             "finish (already={})",
             self.state.get().contains(State::FINISHED)
         );
+        self.cancel_fifo_probe();
+        // Abort/timeout can land while the reader is still waiting for its
+        // first byte (e.g. a FIFO with no writer), before any of the
+        // dispatches that normally adopt the in-flight read ref have run.
+        // Release it here or the stream (and its fd) never drops. POSIX only:
+        // on Windows a pending uv read still points at the reader, and its
+        // completion dispatch both needs the stream alive and releases the
+        // ref itself.
+        #[cfg(unix)]
+        drop(self.take_read_ref());
         if self.state.get().contains(State::FINISHED) {
             return;
         }
@@ -622,9 +798,23 @@ bun_io::impl_buffered_reader_parent! {
 impl Drop for FileResponseStream {
     fn drop(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "deinit");
-        // `self.reader` (BufferedReader) is torn down by its own `Drop` as a
-        // field — closes the poll handle. `bun.destroy(this)` is owned by
-        // `heap::take` in `deref`, not here.
+        #[cfg(not(windows))]
+        {
+            // We cleared CLOSE_HANDLE in start(), so the reader's own Drop
+            // will not tear down the FilePoll. Do it explicitly (without
+            // closing the fd — `auto_close` below owns that), while the fd is
+            // still open so the kernel deregistration works: this unregisters
+            // the poll and returns it to the pool, so an event for it that
+            // the loop already fetched is ignored instead of dispatched into
+            // freed memory, and the poll slot is not leaked.
+            let reader = self.reader_mut();
+            if matches!(reader.handle, bun_io::pipes::PollOrFd::Poll(_)) {
+                reader
+                    .handle
+                    .close_impl(None, None::<fn(*mut c_void)>, false);
+            }
+        }
+        // `bun.destroy(this)` is owned by `heap::take` in `deref`, not here.
         if self.auto_close.get() {
             #[cfg(windows)]
             Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());

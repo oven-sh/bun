@@ -7,9 +7,10 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { open as fsPromisesOpen } from "node:fs/promises";
 import { join } from "node:path";
 
 it("TransformStream", async () => {
@@ -425,7 +426,7 @@ it("ReadableStream.prototype.values", async () => {
   expect(chunks.join("")).toBe("helloworld");
 });
 
-it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
+it.todoIf(isWindows)("Bun.file() read text from pipe", async () => {
   const fifoPath = join(tmpdirSync(), "bun-streams-test-fifo");
   try {
     unlinkSync(fifoPath);
@@ -467,6 +468,48 @@ it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
   expect(output).toBe(large + "\n");
   expect(status).toBe(0);
 });
+
+// The writer side of the FIFO opens only after the stream already started
+// reading.
+//
+// Two iterations on purpose, each with a fresh FIFO. On Linux the first FIFO
+// read in a process downgrades the RWF_NOWAIT fast path (named FIFOs return
+// EOPNOTSUPP), and the downgraded fallback used plain read(), which reports
+// EOF on a FIFO that has no writer yet — so the first stream worked and every
+// later one ended empty. On macOS a kqueue EVFILT_READ filter registered on a
+// FIFO with zero writers never fires (even after a writer connects), so both
+// iterations hung without the recovery probe.
+it.skipIf(isWindows)(
+  "Bun.file() FIFO stream delivers bytes from a writer that opens after reading starts",
+  async () => {
+    for (let iteration = 0; iteration < 2; iteration++) {
+      const fifoPath = join(tmpdirSync(), `bun-streams-late-writer-fifo-${iteration}`);
+      try {
+        unlinkSync(fifoPath);
+      } catch {}
+      mkfifo(fifoPath, 0o666);
+
+      const reader = Bun.file(fifoPath).stream().getReader();
+      const firstRead = reader.read();
+      // One event-loop turn so the native reader has opened the FIFO and
+      // registered its poll (the pull above runs it); only then attach a writer.
+      // `open` must be the async form: the sync one would block the event loop
+      // if the ordering ever regressed, deadlocking instead of failing.
+      await Bun.sleep(0);
+      const writer = await fsPromisesOpen(fifoPath, "w");
+      await writer.write("LATEBYTES");
+      await writer.close();
+
+      const { value, done } = await firstRead;
+      expect({ iteration, done, text: value && Buffer.from(value).toString() }).toEqual({
+        iteration,
+        done: false,
+        text: "LATEBYTES",
+      });
+      await reader.cancel();
+    }
+  },
+);
 
 it("exists globally", () => {
   expect(typeof ReadableStream).toBe("function");

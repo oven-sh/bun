@@ -202,6 +202,8 @@ pub enum Tag {
     CronJob,
     GcRepeating,
     QuicEndpoint,
+    FileResponseStreamFifoProbe,
+    FileReaderFifoProbe,
 }
 
 impl Tag {
@@ -214,6 +216,8 @@ impl Tag {
             | Tag::GcRepeating // internal GC pacing
             | Tag::QuicEndpoint
             | Tag::DnsSdConnection // internal lookup pacing
+            | Tag::FileResponseStreamFifoProbe // internal io pacing
+            | Tag::FileReaderFifoProbe // internal io pacing
             => false,
             _ => true,
         }

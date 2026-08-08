@@ -353,6 +353,7 @@ pub fn emit(
 ) -> JsResult<()> {
     let target = console_target(global, stream)?;
     let native = target.is_empty();
+    let colors = console_colors(global, stream, target)?;
     // No lock here: formatting runs user JS (getters, toJSON, inspect.custom)
     // that may log to the *other* stream or exit; each write / spill takes the
     // per-fd lock for itself (`FileSink::write_all_sync`).
@@ -368,7 +369,7 @@ pub fn emit(
             )
         }),
     };
-    let result = match f(&mut writer, console_colors(global, stream, target)?) {
+    let result = match f(&mut writer, colors) {
         Ok(()) => deliver_to(global, stream, target, &buf),
         Err(err) => Err(err),
     };

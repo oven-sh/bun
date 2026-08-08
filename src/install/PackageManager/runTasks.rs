@@ -37,6 +37,21 @@ use super::package_manager_options as Options;
 use super::package_manager_options::{Do, Enable};
 use crate::isolated_install::store as Store;
 
+/// Clear the active progress line (resolve- or install-phase) so `warn!` lands
+/// on its own line; the scope-exit `maybe_refresh()` redraws the existing tree.
+/// Callers format with `warn!` (not `format!`) so `<b>`/`<r>` markup is applied.
+macro_rules! warn_timeout_retry {
+    ($manager:expr, $log_level:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
+        if $log_level != Options::LogLevel::Silent {
+            if $log_level.show_progress() {
+                $manager.progress.clear_line();
+            }
+            bun_core::warn!($fmt $(, $arg)*);
+            Output::flush();
+        }
+    };
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Callbacks trait
 // ──────────────────────────────────────────────────────────────────────────
@@ -392,10 +407,23 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .unwrap_or(crate::Error::HTTPError);
 
                     if task.retried < manager.options.max_retry_count {
+                        let is_idle_timeout = task.response.is_timeout();
                         task.retried += 1;
                         enqueue::enqueue_network_task(manager, task_ptr);
 
-                        if manager.options.log_level.is_verbose() {
+                        // An idle-timeout (default 5 min) is long enough that
+                        // users see the process as hung; surface each retry so
+                        // the 6x wait isn't silent.
+                        if is_idle_timeout {
+                            warn_timeout_retry!(
+                                manager,
+                                log_level,
+                                "Timeout downloading package manifest <b>{}<r>. Retrying {}/{}...",
+                                bstr::BStr::new(name),
+                                task.retried,
+                                manager.options.max_retry_count,
+                            );
+                        } else if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
@@ -661,6 +689,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .unwrap_or(crate::Error::TarballFailedToDownload);
 
                     if task.retried < manager.options.max_retry_count {
+                        // Captured before `reset_streaming_for_retry` clears
+                        // `task.response`.
+                        let is_idle_timeout = task.response.is_timeout();
                         task.retried += 1;
                         // Streaming never committed (asserted above), so
                         // the pre-allocated stream is safe to reuse for
@@ -668,7 +699,20 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         task.reset_streaming_for_retry();
                         enqueue::enqueue_network_task(manager, task_ptr);
 
-                        if manager.options.log_level.is_verbose() {
+                        // See the manifest arm above re: surfacing idle-timeouts.
+                        if is_idle_timeout {
+                            warn_timeout_retry!(
+                                manager,
+                                log_level,
+                                "Timeout downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
+                                bstr::BStr::new(extract.name.slice()),
+                                extract
+                                    .resolution
+                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                                task.retried,
+                                manager.options.max_retry_count,
+                            );
+                        } else if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,

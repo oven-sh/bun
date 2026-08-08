@@ -168,14 +168,18 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     cert: readFileSync(join(tlsFixtures, "agent1-cert.pem"), "utf8"),
   };
 
-  type ClientOptions = { key?: string; cert?: string; session?: Buffer };
-  function request(port: number, servername: string, clientTls: ClientOptions = {}) {
+  type ClientOptions = { key?: string; cert?: string; session?: Buffer; hostHeader?: string };
+  // servername === undefined connects without SNI (the host is an IP literal,
+  // so node sends no server_name extension). hostHeader lets the HTTP Host
+  // disagree with the negotiated SNI.
+  function request(port: number, servername: string | undefined, clientTls: ClientOptions = {}) {
+    const { hostHeader, ...tlsOptions } = clientTls;
     const { promise, resolve } = Promise.withResolvers<{ status: string; session: Buffer | undefined }>();
-    const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false, ...clientTls });
+    const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false, ...tlsOptions });
     let received = "";
     let session: Buffer | undefined;
     socket.on("secureConnect", () => {
-      socket.write(`GET / HTTP/1.1\r\nHost: ${servername}\r\nConnection: close\r\n\r\n`);
+      socket.write(`GET / HTTP/1.1\r\nHost: ${hostHeader ?? servername}\r\nConnection: close\r\n\r\n`);
     });
     socket.on("session", buf => (session ??= buf));
     socket.on("data", chunk => (received += chunk.toString()));
@@ -252,5 +256,93 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       defaultResumed: "HTTP/1.1 200 OK",
       gatedResumed: "connection closed without a response",
     });
+  });
+
+  // A request whose Host names a gated serverName must not be served over a
+  // connection whose handshake never applied that name's client-certificate
+  // policy (no SNI, or an SNI that selected another entry). nginx answers 421
+  // Misdirected Request here; so do we.
+  test("a Host naming a gated serverName gets 421 on a connection that bypassed its policy", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { key: serverKey, cert: serverCert },
+        {
+          serverName: "admin.example.com",
+          key: serverKey,
+          cert: serverCert,
+          ca: clientCa,
+          requestCert: true,
+          rejectUnauthorized: true,
+        },
+        {
+          serverName: "lenient.example.com",
+          key: serverKey,
+          cert: serverCert,
+          ca: clientCa,
+          requestCert: true,
+          rejectUnauthorized: false,
+        },
+      ],
+      fetch: req => new Response(`served ${req.headers.get("host")}`),
+    });
+    const MISDIRECTED = "HTTP/1.1 421 Misdirected Request";
+    const { status: noSni } = await request(server.port, undefined, { hostHeader: "admin.example.com" });
+    const { status: otherSni } = await request(server.port, "localhost", { hostHeader: "admin.example.com" });
+    const { status: withPort } = await request(server.port, undefined, { hostHeader: "admin.example.com:8443" });
+    const { status: upperCase } = await request(server.port, undefined, { hostHeader: "ADMIN.example.com" });
+    const { status: trailingDot } = await request(server.port, undefined, { hostHeader: "admin.example.com." });
+    const { status: lenientNoSni } = await request(server.port, undefined, { hostHeader: "lenient.example.com" });
+    const { status: defaultNoSni } = await request(server.port, undefined, { hostHeader: "localhost" });
+    const { status: gatedWithCert } = await request(server.port, "admin.example.com", trustedClient);
+    expect({ noSni, otherSni, withPort, upperCase, trailingDot, lenientNoSni, defaultNoSni, gatedWithCert }).toEqual({
+      noSni: MISDIRECTED,
+      otherSni: MISDIRECTED,
+      withPort: MISDIRECTED,
+      upperCase: MISDIRECTED,
+      trailingDot: MISDIRECTED,
+      lenientNoSni: MISDIRECTED,
+      defaultNoSni: "HTTP/1.1 200 OK",
+      gatedWithCert: "HTTP/1.1 200 OK",
+    });
+  });
+
+  test("the gated-Host check applies per request on a keep-alive connection", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { key: serverKey, cert: serverCert },
+        {
+          serverName: "admin.example.com",
+          key: serverKey,
+          cert: serverCert,
+          ca: clientCa,
+          requestCert: true,
+          rejectUnauthorized: true,
+        },
+      ],
+      fetch: req => new Response(`served ${req.headers.get("host")}`),
+    });
+    // Handshake without SNI, get an innocent 200, then switch Host on the
+    // same connection.
+    const { promise, resolve } = Promise.withResolvers<string[]>();
+    const socket = tls.connect({ host: "127.0.0.1", port: server.port, rejectUnauthorized: false });
+    let received = "";
+    let sentSecond = false;
+    socket.on("secureConnect", () => {
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    });
+    socket.on("data", chunk => {
+      received += chunk.toString();
+      if (!sentSecond && received.includes("served localhost")) {
+        sentSecond = true;
+        socket.write("GET / HTTP/1.1\r\nHost: admin.example.com\r\nConnection: close\r\n\r\n");
+      }
+    });
+    socket.on("error", () => {});
+    // The first body has no trailing newline, so status lines are not always
+    // at a \r\n boundary in the concatenated stream.
+    socket.on("close", () => resolve(received.match(/HTTP\/1\.1 \d{3} [^\r]+/g) ?? []));
+    expect(await promise).toEqual(["HTTP/1.1 200 OK", "HTTP/1.1 421 Misdirected Request"]);
   });
 });

@@ -649,6 +649,26 @@ impl ValkeyClient {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
 
+        // Worker shutdown's socket-group drain reaches here with the VM
+        // stopped and a TerminationException still pending; every branch below
+        // materialises a coded JS error, which lazily initialises
+        // `nodeErrorCache` under a DeferTermination scope and trips
+        // `ASSERT(vm.hasTerminationRequest())`. Drop the queues without
+        // building errors and release the socket ref.
+        if self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
+            let mut pending =
+                core::mem::replace(&mut self.in_flight, command::promise_pair::Queue::init());
+            let mut entries = core::mem::replace(&mut self.queue, command::entry::Queue::init());
+            while let Some(pair) = pending.read_item() {
+                drop(pair);
+            }
+            while let Some(cmd) = entries.read_item() {
+                drop(cmd);
+            }
+            self.on_valkey_close()?;
+            return Ok(());
+        }
+
         // If manually closing, don't attempt to reconnect
         if self.flags.is_manually_closed {
             debug!("skip reconnecting since the connection is manually closed");

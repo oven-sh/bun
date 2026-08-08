@@ -402,6 +402,92 @@ test.skipIf(!isDebug)(
   120_000,
 );
 
+// Regression: worker shutdown's socket-group drain fires valkey's on_close,
+// which built a coded JS Error for every in-flight command. With a
+// TerminationException still pending and hasTerminationRequest() already
+// cleared for process.on('exit'), the first coded error in that worker
+// lazily initialised nodeErrorCache under a DeferTermination scope and
+// tripped ASSERT(vm.hasTerminationRequest()) in VMTraps::deferTerminationSlow,
+// SIGABRTing the whole process. Release WebKit compiles that ASSERT out.
+test.skipIf(!isDebug)(
+  "terminate() while a worker's Bun.RedisClient has commands in flight does not trip deferTerminationSlow's ASSERT",
+  async () => {
+    // Each worker connects to an inline RESP3 responder in the parent, keeps
+    // 2000 INCRs in flight, and is terminated once it reports hot. The
+    // socket-group drain at shutdown then hits on_close with the in-flight
+    // queue full. Unpatched debug builds abort within the first few iterations.
+    const ITER = 20;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const HELLO = "%3\\r\\n+server\\r\\n+fake\\r\\n+version\\r\\n+7.4.0\\r\\n+proto\\r\\n:3\\r\\n";
+        const server = Bun.listen({
+          hostname: "127.0.0.1", port: 0,
+          socket: {
+            open(s) { s.helloDone = false; },
+            data(s, d) {
+              let out = "";
+              for (const line of d.toString("latin1").split("\\r\\n")) {
+                if (line[0] !== "*") continue;
+                out += s.helloDone ? ":1\\r\\n" : HELLO;
+                s.helloDone = true;
+              }
+              if (out) s.write(out);
+            },
+            close() {}, error() {},
+          },
+        });
+        const url = "redis://127.0.0.1:" + server.port;
+        const src =
+          "const { parentPort, workerData: d } = require('node:worker_threads');" +
+          "const c = new Bun.RedisClient(d.url, { autoReconnect: d.reconnect });" +
+          "await c.connect();" +
+          "parentPort.postMessage('hot');" +
+          "for (;;) {" +
+          "  const ps = [];" +
+          "  for (let i = 0; i < 2000; i++) ps.push(c.incr('k').catch(() => {}));" +
+          "  await Promise.all(ps);" +
+          "}";
+        function ready(w) {
+          return new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", (c) => rej(new Error("worker exited " + c + " before ready")));
+          });
+        }
+        let done = 0;
+        for (let i = 0; i < ${ITER}; i++) {
+          const w = new Worker(src, {
+            eval: true,
+            workerData: { url, reconnect: i % 2 === 0 },
+          });
+          await ready(w);
+          w.on("error", () => {});
+          await Bun.sleep((i * 7) % 60);
+          await w.terminate();
+          done++;
+        }
+        server.stop(true);
+        if (done !== ${ITER}) throw new Error("only " + done + "/${ITER} terminated");
+        console.log("PASS");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);
+
 // Regression: Bun__handleUncaughtException probed process._fatalException (a
 // JS get(), where the worker's termination trap fires) and then called
 // wrapped.emit("uncaughtException") with the sticky TerminationException

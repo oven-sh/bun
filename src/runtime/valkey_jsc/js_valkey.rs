@@ -1391,6 +1391,13 @@ impl JSValkeyClient {
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
         let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
 
+        // Reached from `ValkeyClient::on_close()`'s stopped-VM branch during
+        // worker shutdown; the ref adoption above is the only thing that must
+        // still run.
+        if self.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running {
+            return Ok(());
+        }
+
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
             return Ok(());
         };

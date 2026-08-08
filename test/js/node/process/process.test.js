@@ -2345,6 +2345,9 @@ it("getActiveResourcesInfo reports a listening http.Server like node", async () 
          server.ref();
          out.refed = tcp();
          server.close(() => {
+           // Settle before sampling: node (v26.3.0, the expected transcript)
+           // keeps the closing wrap listed until uv's OnClose, which has no
+           // JS-side signal; only after it does this script print closed:0.
            setTimeout(() => {
              out.closed = tcp();
              out.handleAfterClose = server._handle === null && !process._getActiveHandles().includes(server);

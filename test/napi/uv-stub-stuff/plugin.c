@@ -2040,33 +2040,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_thread_create") == 0) {
-    uv_thread_t *arg0 = {0};
-    uv_thread_cb arg1 = NULL;
-    void *arg2 = {0};
-
-    uv_thread_create(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_thread_create_ex") == 0) {
-    uv_thread_t *arg0 = {0};
-    const uv_thread_options_t *arg1 = {0};
-    uv_thread_cb arg2 = NULL;
-    void *arg3 = {0};
-
-    uv_thread_create_ex(arg0, arg1, arg2, arg3);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_thread_equal") == 0) {
-    const uv_thread_t *arg0 = {0};
-    const uv_thread_t *arg1 = {0};
-
-    uv_thread_equal(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_thread_getaffinity") == 0) {
     uv_thread_t *arg0 = {0};
     char *arg1 = {0};
@@ -2079,19 +2052,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
   if (strcmp(buffer, "uv_thread_getcpu") == 0) {
 
     uv_thread_getcpu();
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_thread_join") == 0) {
-    uv_thread_t *arg0 = {0};
-
-    uv_thread_join(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_thread_self") == 0) {
-
-    uv_thread_self();
     return NULL;
   }
 

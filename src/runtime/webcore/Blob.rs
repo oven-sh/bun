@@ -4954,6 +4954,45 @@ pub(crate) fn write_file_with_source_destination(
 // writeFileInternal / writeFile (Bun.write)
 // ──────────────────────────────────────────────────────────────────────────
 
+fn borrow_array_buffer_for_write(global_this: &JSGlobalObject, data: JSValue) -> Option<Blob> {
+    let buffer = data.as_pinned_arraybuffer(global_this)?;
+    if buffer.byte_len == 0 || buffer.resizable {
+        data.unpin_array_buffer();
+        return None;
+    }
+    data.protect();
+
+    fn free(ptr: *mut c_void, _buf: &mut [u8], _a: bun_alloc::Alignment, _ra: usize) {
+        let value = JSValue::from_encoded(ptr as usize);
+        value.unpin_array_buffer();
+        value.unprotect();
+    }
+    static VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable::free_only(free);
+
+    // SAFETY: `buffer.ptr[..byte_len]` is the pinned+protected ArrayBuffer's
+    // storage, kept valid until `free` above releases both. `free` runs
+    // unprotect/unpin, so the last `StoreRef` drop MUST be on the JS thread;
+    // `WriteFile::then` / `WriteFileWindows::run_from_js_thread` are.
+    let bytes = unsafe {
+        store::Bytes::from_raw_parts(
+            buffer.ptr,
+            buffer.byte_len as SizeType,
+            buffer.byte_len as SizeType,
+            bun_alloc::StdAllocator {
+                ptr: data.0 as *mut c_void,
+                vtable: &VTABLE,
+            },
+        )
+    };
+    let store = StoreRef::from(Store::new(Store {
+        data: store::Data::Bytes(bytes),
+        mime_type: bun_http_types::MimeType::NONE,
+        ref_count: bun_ptr::ThreadSafeRefCount::init(),
+        is_all_ascii: None,
+    }));
+    Some(Blob::init_with_store(store, global_this))
+}
+
 /// ## Errors
 /// - If `path_or_blob` is a detached blob
 /// ## Panics
@@ -5259,6 +5298,13 @@ pub(crate) fn write_file_internal(
         // Check for Archive - allows Bun.write() and S3 writes to accept Archive instances
         if let Some(archive) = data.as_class_ref::<Archive>() {
             break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this);
+        }
+
+        // S3 excluded: its store may outlive the JS-thread drop the borrow needs.
+        if !destination_blob.is_s3() {
+            if let Some(blob) = borrow_array_buffer_for_write(global_this, data) {
+                break 'brk blob;
+            }
         }
 
         break 'brk Blob::get::<false, false>(global_this, data)?;

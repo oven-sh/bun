@@ -264,11 +264,6 @@ void JSX509Certificate::finishCreation(VM& vm)
     m_subjectAltName.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
         init.property.setMayBeNull(init.owner->vm(), init.owner, init.owner->computeSubjectAltName(init.owner->view(), init.owner->globalObject()));
     });
-
-    m_publicKey.initLater([](const JSC::LazyProperty<JSX509Certificate, JSCell>::Initializer& init) {
-        JSValue value = init.owner->computePublicKey(init.owner->view(), init.owner->globalObject());
-        init.property.setMayBeNull(init.owner->vm(), init.owner, !value.isEmpty() && value.isCell() ? value.asCell() : nullptr);
-    });
 }
 
 JSX509Certificate* JSX509Certificate::create(VM& vm, Structure* structure)
@@ -711,7 +706,14 @@ JSString* JSX509Certificate::subjectAltName()
 
 JSValue JSX509Certificate::publicKey()
 {
-    return m_publicKey.get(this);
+    if (JSCell* cached = m_publicKey.get(this))
+        return cached;
+    auto* globalObject = this->globalObject();
+    JSValue value = computePublicKey(view(), globalObject);
+    if (value.isEmpty() || !value.isCell())
+        return {};
+    m_publicKey.set(globalObject->vm(), this, value.asCell());
+    return value;
 }
 
 bool JSX509Certificate::checkPrivateKey(const KeyObject& keyObject)

@@ -445,25 +445,22 @@ describe.concurrent("--cpu-prof", () => {
     expect(mdContent).toContain("# CPU Profile");
   });
 
-  // Smoke test for the raced path behind oven-sh/WebKit#395: the sampling
-  // profiler could segfault when a sample landed inside a VM entry/exit
-  // transition (vm.topEntryFrame null while vm.entryScope is set; a walked
-  // frame whose caller slot read null made the walker dereference
-  // vmEntryRecord(nullptr), crashing at 0xFFFFFFFFFFFFFFC8 in
-  // test-cpu-prof-dir-worker.js on CI). The crash itself needs CI-runner
-  // timing; the deterministic regression test lives in WebKit
-  // (TestWebKitAPI). This workload widens the raced window as far as JS can: a
-  // callback with a huge declared parameter count invoked from native spends
-  // most of its runtime in doVMEntry's argument pad loop, which runs before
-  // topEntryFrame is stored. No process.nextTick leg on purpose: a non-empty
-  // tick queue makes the microtask jobs drain nested inside the tick-drain VM
-  // entry instead of as outermost entries, which is the raced state.
+  // Smoke test for the raced sampler path fixed in oven-sh/WebKit#395 (the
+  // deterministic regression test lives there, in TestWebKitAPI): a sample
+  // landing inside a VM entry/exit transition used to crash the profiler's
+  // stack walker. A callback with a huge declared parameter count invoked
+  // from native spends most of its runtime in doVMEntry's argument pad loop,
+  // which runs before vm.topEntryFrame is stored, so this workload keeps the
+  // sampler crossing that window. No process.nextTick leg on purpose: a
+  // non-empty tick queue drains the microtask jobs nested inside the
+  // tick-drain VM entry instead of as outermost entries, and only outermost
+  // entries hit the raced state.
   //
   // Deadline: the Windows sampler effectively ticks at the ~15.6ms timer
   // quantum (see the header comment), and only samples taken while
-  // vm.entryScope is set are recorded, which is a minority of this churn
-  // loop's wall time. 150ms is ~9 quantum ticks, around one expected recorded
-  // sample, so Windows gets 1.5s to keep the samples assertion reliable.
+  // vm.entryScope is set are recorded, a minority of this loop's wall time;
+  // 150ms is ~9 ticks, about one expected recorded sample, so Windows gets
+  // 1.5s to keep the samples assertion reliable.
   test("sampler survives VM entry churn from callbacks with huge parameter counts", async () => {
     using dir = tempDir("cpu-prof-entry-churn", {
       "churn.js": `

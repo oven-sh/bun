@@ -2025,21 +2025,6 @@ fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
         _ => bun_jsc::CrateError::ParseError,
     }
 }
-/// Shared guard for the two parse-failure exits: register the module with the
-/// Node compile cache (Unknown module type maps to CJS, matching Node).
-fn note_compile_cache_parse_failure(
-    path: &bun_resolver::fs::Path<'_>,
-    loader: Loader,
-    module_type: ModuleType,
-) {
-    if bun_jsc::node_compile_cache::is_enabled() && loader.is_java_script_like() && path.is_file() {
-        bun_jsc::node_compile_cache::note_parse_failure(
-            path.text,
-            !matches!(module_type, ModuleType::Esm),
-        );
-    }
-}
-
 /// `ModuleLoader.transpileSourceCode(...)` — the runtime-transpiler path:
 /// read file → `Transpiler::parse`
 /// → `js_printer::print` → `ResolvedSource`.
@@ -2608,9 +2593,7 @@ fn transpile_source_code_inner(
                         );
                     }
                     arena_guard.2 = false; // give_back_arena = false
-                    // Node compile cache: record the failed module so exit-time
-                    // persist logs the "was not initialized" skip (Node parity).
-                    note_compile_cache_parse_failure(path, loader, module_type);
+                    bun_jsc::node_compile_cache::note_parse_failure_for_module(path, loader, module_type);
                     return Err(crate::Error::ParseError);
                 };
 
@@ -2664,9 +2647,7 @@ fn transpile_source_code_inner(
                 // `transpiler.log` was swapped to non-null `args.log` above.
                 if unsafe { (*(*jsc_vm).transpiler.log).errors > 0 } {
                     arena_guard.2 = false;
-                    // Node compile cache: record the failed module so exit-time
-                    // persist logs the "was not initialized" skip (Node parity).
-                    note_compile_cache_parse_failure(path, loader, module_type);
+                    bun_jsc::node_compile_cache::note_parse_failure_for_module(path, loader, module_type);
                     return Err(crate::Error::ParseError);
                 }
 
@@ -2855,22 +2836,19 @@ fn transpile_source_code_inner(
                         core::ptr::null_mut()
                     };
                     let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
-                    // Node compile cache hook (transpiler-cache-hit path); must
-                    // read `output_code` before it is consumed below. UTF-16
-                    // output would hash differently than the print path — skip.
-                    let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
-                        && source.path.is_file()
-                        && loader.is_java_script_like()
-                        && !matches!(&entry.output_code, OutputCode::String(s) if s.is_utf16())
-                    {
-                        bun_jsc::node_compile_cache::fetch(
-                            source.path.text,
-                            is_commonjs_module,
-                            entry.output_code.byte_slice(),
-                        )
-                    } else {
-                        None
-                    };
+                    // UTF-16 transpiler-cache output cannot byte-match the
+                    // printed form, so it never reaches the compile cache.
+                    let (bytecode_cache, bytecode_cache_size) =
+                        if matches!(&entry.output_code, OutputCode::String(s) if s.is_utf16()) {
+                            (core::ptr::null_mut(), 0)
+                        } else {
+                            bun_jsc::node_compile_cache::fetch_for_transpiled_module(
+                                &source.path,
+                                loader,
+                                is_commonjs_module,
+                                entry.output_code.byte_slice(),
+                            )
+                        };
                     let source_code = match &mut entry.output_code {
                         OutputCode::String(s) => *s,
                         OutputCode::Utf8(utf8) => {
@@ -2929,8 +2907,6 @@ fn transpile_source_code_inner(
                     } else {
                         ResolvedSourceTag::Javascript
                     };
-                    let (bytecode_cache, bytecode_cache_size) =
-                        node_compile_cache_blob.unwrap_or((core::ptr::null_mut(), 0));
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
@@ -3121,14 +3097,13 @@ fn transpile_source_code_inner(
                     let printer: &mut bun_js_printer::BufferPrinter =
                         unsafe { &mut *(*extra).source_code_printer };
                     let written = printer.ctx.get_written();
-                    let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
-                        && path.is_file()
-                        && loader.is_java_script_like()
-                    {
-                        bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
-                    } else {
-                        None
-                    };
+                    let (bytecode_cache, bytecode_cache_size) =
+                        bun_jsc::node_compile_cache::fetch_for_transpiled_module(
+                            path,
+                            loader,
+                            is_commonjs_module,
+                            written,
+                        );
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread
                     // VM; `printer.ctx.get_written()` borrows thread-local data.
                     let mut resolved_source = unsafe {
@@ -3141,10 +3116,8 @@ fn transpile_source_code_inner(
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
-                    if let Some((ptr, size)) = node_compile_cache_blob {
-                        resolved_source.bytecode_cache = ptr;
-                        resolved_source.bytecode_cache_size = size;
-                    }
+                    resolved_source.bytecode_cache = bytecode_cache;
+                    resolved_source.bytecode_cache_size = bytecode_cache_size;
                     return Ok(OwnedResolvedSource::from(resolved_source));
                 }
 
@@ -3205,16 +3178,13 @@ fn transpile_source_code_inner(
                 let printer: &mut bun_js_printer::BufferPrinter =
                     unsafe { &mut *(*extra).source_code_printer };
                 let written = printer.ctx.get_written();
-                // Node compile cache hook (sync transpile path). `fetch` copies
-                // `written`; the printer may be replaced below.
-                let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
-                    && path.is_file()
-                    && loader.is_java_script_like()
-                {
-                    bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
-                } else {
-                    None
-                };
+                let (bytecode_cache, bytecode_cache_size) =
+                    bun_jsc::node_compile_cache::fetch_for_transpiled_module(
+                        path,
+                        loader,
+                        is_commonjs_module,
+                        written,
+                    );
                 // The `Jsc` vtable bridge `put()` does not write
                 // `cache.output_code` (only the `r#impl == None` fallback
                 // does, and `r#impl` is `Some(Jsc)` here), so it is always
@@ -3236,8 +3206,6 @@ fn transpile_source_code_inner(
                 // (fd close handled by `_fd_guard` registered above; spec
                 // :251-256 `defer` fires on every exit path.)
 
-                let (bytecode_cache, bytecode_cache_size) =
-                    node_compile_cache_blob.unwrap_or((core::ptr::null_mut(), 0));
                 return Ok(OwnedResolvedSource::from(ResolvedSource {
                     source_code,
                     specifier: input_specifier.dupe_ref(),
@@ -4344,34 +4312,12 @@ unsafe fn transpile_file(
     }
 
     // ── module_type sniff from extension / package.json ─────────────────────
-    let module_type: ModuleType = 'brk: {
-        let ext = lr.path.name().ext;
-        // regex /\.[cm][jt]s$/
-        if ext.len() == b".cjs".len() {
-            if ext == b".cjs" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mjs" {
-                break 'brk ModuleType::Esm;
-            }
-            if ext == b".cts" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mts" {
-                break 'brk ModuleType::Esm;
-            }
-        }
-        // regex /\.[jt]s$/
-        if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
-            // Use the package.json module type if it exists.
-            break 'brk lr
-                .package_json
-                .map(|pkg| pkg.module_type)
-                .unwrap_or(ModuleType::Unknown);
-        }
-        // For JSX/TSX and other extensions, let the file contents decide.
-        ModuleType::Unknown
-    };
+    let module_type = ModuleType::from_extension(
+        lr.path.name().ext,
+        lr.package_json
+            .map(|pkg| pkg.module_type)
+            .unwrap_or(ModuleType::Unknown),
+    );
     let pkg_name: Option<&[u8]> = lr
         .package_json
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));

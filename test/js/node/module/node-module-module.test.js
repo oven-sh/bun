@@ -122,26 +122,29 @@ describe.concurrent("node-module-module", () => {
       "preload.cjs": `require("node:module").enableCompileCache(__dirname + "/cc-api");`,
     });
     const cacheDir = path.join(String(dir), "cc");
+    const apiCacheDir = path.join(String(dir), "cc-api");
     const run = async (args, env) => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...args],
-        env: { ...bunEnv, ...env },
+        env: { ...bunEnv, NODE_COMPILE_CACHE: undefined, ...env },
         cwd: String(dir),
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("esm,cjs");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
-      return stdout.trim();
     };
-    expect(await run(["main.mjs"], {})).toBe("esm,cjs");
-    expect(await run(["main.mjs"], { NODE_COMPILE_CACHE: cacheDir })).toBe("esm,cjs"); // cold
-    expect(await run(["main.mjs"], { NODE_COMPILE_CACHE: cacheDir })).toBe("esm,cjs"); // warm
-    expect(await run(["--preload", "./preload.cjs", "main.mjs"], {})).toBe("esm,cjs");
+    await run(["main.mjs"], {});
+    await run(["main.mjs"], { NODE_COMPILE_CACHE: cacheDir }); // cold
+    await run(["main.mjs"], { NODE_COMPILE_CACHE: cacheDir }); // warm
+    await run(["--preload", "./preload.cjs", "main.mjs"], {});
     // The cached runs only prove anything if the cache was actually active.
-    const tagged = fs.readdirSync(cacheDir);
-    expect(tagged).toHaveLength(1);
-    expect(fs.readdirSync(path.join(cacheDir, tagged[0])).length).toBeGreaterThanOrEqual(3);
+    for (const dirToCheck of [cacheDir, apiCacheDir]) {
+      const tagged = fs.readdirSync(dirToCheck);
+      expect(tagged).toHaveLength(1);
+      expect(fs.readdirSync(path.join(dirToCheck, tagged[0])).length).toBeGreaterThanOrEqual(3);
+    }
   });
 
   test("compile cache records a parse-failed .mjs as ESM regardless of package type", async () => {
@@ -158,7 +161,8 @@ describe.concurrent("node-module-module", () => {
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toMatch(/skip persisting ESM file:.*broken\.mjs because the cache was not initialized/);
     expect(exitCode).not.toBe(0);
   });

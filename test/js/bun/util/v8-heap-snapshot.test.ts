@@ -1,6 +1,10 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
+
+// Each test boots a fixture that snapshots its whole heap: ~150ms in a release
+// build, but ~4s under debug/ASAN, which leaves no room under the 5s default.
+if (isDebug || isASAN) setDefaultTimeout(60_000);
 
 const fixture = join(import.meta.dir, "v8-heap-snapshot-fixture.ts");
 
@@ -78,8 +82,11 @@ test("v8.getHeapSnapshot()", async () => {
 test("v8.writeHeapSnapshot()", async () => {
   // Without a path the snapshot is written to the cwd, so give it one we own.
   using dir = tempDir("v8-heap-snapshot", {});
-  const { filename, ...rest } = await runFixture("write-default", { cwd: String(dir) });
-  expect(filename).toMatch(/^Heap-\d{8}-\d{6}-\d+-\d+\.heapsnapshot$/);
+  const { filename, dateBefore, dateAfter, ...rest } = await runFixture("write-default", { cwd: String(dir) });
+  const defaultName = /^Heap-(\d{8})-\d{6}-\d+-\d+\.heapsnapshot$/;
+  expect(filename).toMatch(defaultName);
+  // The date is the calendar date the snapshot was taken on, not a 0-based month.
+  expect([dateBefore, dateAfter]).toContain(filename.match(defaultName)?.[1]);
   expect(rest).toEqual(structure);
 });
 

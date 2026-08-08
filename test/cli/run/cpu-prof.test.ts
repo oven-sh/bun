@@ -491,6 +491,14 @@ describe.concurrent("--cpu-prof", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
     expect(stdout).toContain("calls made: true");
+
+    // The profiler must actually have sampled the churn, or the test exercised
+    // nothing.
+    const profileFile = readdirSync(String(dir)).find(file => file.endsWith(".cpuprofile"));
+    expect(profileFile).toBeDefined();
+    const profile = JSON.parse(readFileSync(join(String(dir), profileFile!), "utf-8"));
+    expect(profile.samples.length).toBeGreaterThan(0);
+
     expect(exitCode).toBe(0);
   });
 });

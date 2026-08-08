@@ -342,14 +342,41 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
 
     if (backend == WebViewBackend::Chrome) {
         Bun__Feature__webview_chrome += 1;
+        JSWebView::ChromeCreateFailure failure = JSWebView::ChromeCreateFailure::SpawnFailed;
         JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height,
             persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit, chromeWsUrl,
-            chromeSkipAutoDetect);
+            chromeSkipAutoDetect, &failure);
         if (!view) {
-            return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
-                chromeWsUrl.isEmpty()
-                    ? "Failed to spawn Chrome (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s
-                    : "Failed to connect to Chrome (check backend.url is a valid ws:// debugger endpoint)"_s);
+            // NotImplementedOnWindows is distinct from SpawnFailed: the
+            // POSIX socketpair + --remote-debugging-pipe fd plumbing in
+            // ChromeProcess.zig has no Windows port, so when the call
+            // actually needed the spawn path we surface it as a clean
+            // platform-status error. BUN_CHROME_PATH / backend.path are
+            // inert on that path, so the old "set the path" hint was
+            // actively misleading there (issue #29102). Explicit ws://
+            // connects and auto-detected existing Chrome still work on
+            // Windows — those paths never reach ensureSpawned.
+            switch (failure) {
+            case JSWebView::ChromeCreateFailure::NotImplementedOnWindows:
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
+                    "Bun.WebView chrome backend spawn is not yet implemented on Windows; "
+                    "connect to an already-running Chrome with backend: { type: \"chrome\", url: \"ws://...\" } instead"_s);
+            case JSWebView::ChromeCreateFailure::ConnectFailed:
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                    "Failed to connect to Chrome (check backend.url is a valid ws:// debugger endpoint)"_s);
+            case JSWebView::ChromeCreateFailure::AutoDetectConnectFailed:
+                // Distinct from ConnectFailed: the user never set
+                // backend.url, so the error must not hint at it. The
+                // auto-detected URL came from DevToolsActivePort in
+                // Chrome's profile dir and was malformed enough for
+                // WebCore::WebSocket::create to fail synchronously.
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                    "Failed to connect to auto-detected Chrome (malformed DevToolsActivePort file)"_s);
+            case JSWebView::ChromeCreateFailure::SpawnFailed:
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                    "Failed to spawn Chrome (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s);
+            }
+            RELEASE_ASSERT_NOT_REACHED();
         }
         view->m_consoleIsGlobal = consoleIsGlobal;
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
@@ -357,7 +384,17 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
         return JSValue::encode(view);
     }
 
-#if !OS(DARWIN)
+#if OS(WINDOWS)
+    // Chrome spawn is unavailable on Windows (see the NotImplementedOnWindows
+    // branch above), so pointing users at `backend: "chrome"` as a fallback
+    // here would just lead them to a second ERR_METHOD_NOT_IMPLEMENTED. They
+    // can still connect to a running Chrome via backend.url, so tell them
+    // that instead.
+    return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
+        "Bun.WebView with backend \"webkit\" is only available on macOS; "
+        "on Windows, connect to an already-running Chrome with "
+        "backend: { type: \"chrome\", url: \"ws://...\" }"_s);
+#elif !OS(DARWIN)
     return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
         "Bun.WebView with backend \"webkit\" is only available on macOS; use backend: \"chrome\""_s);
 #else

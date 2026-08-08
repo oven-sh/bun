@@ -1,6 +1,6 @@
 import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 
 // FFI shm access for encoding:"shmem" tests. In real use Kitty (or
 // whoever opens the segment) does this — shm_open + mmap + read + unlink.
@@ -61,15 +61,99 @@ const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 test("backend: 'webkit' throws on non-darwin", () => {
   // Default backend is platform-dependent (WebKit on Darwin, Chrome
   // elsewhere). Explicitly requesting WebKit off-Darwin should throw.
+  // On Windows the message differs (points at the ws:// connect
+  // workaround instead of "use backend: chrome" because chrome's
+  // spawn path is also not implemented there) — that's covered by
+  // the Windows-specific test below. The regex here is narrowed to
+  // require "use backend" so it doesn't incidentally match the
+  // Windows message's `backend: { type: "chrome", url: "ws://..." }`
+  // example text.
   if (isMacOS) {
     const view = new Bun.WebView({ width: 100, height: 100, backend: "webkit" });
     expect(view).toBeInstanceOf(Bun.WebView);
     view.close();
-  } else {
+  } else if (!isWindows) {
     expect(() => new Bun.WebView({ width: 100, height: 100, backend: "webkit" })).toThrow(
-      /only available on macOS.*backend.*chrome/i,
+      /only available on macOS.*use backend.*chrome/i,
     );
   }
+});
+
+// https://github.com/oven-sh/bun/issues/29102 — Chrome backend's spawn
+// path has no Windows implementation yet. Only test shapes that force
+// spawn without consulting Bun__Chrome__autoDetect, so the test is
+// deterministic regardless of whether Chrome is running on the host
+// with --remote-debugging-port. Default `{}` and `backend: "chrome"`
+// go through auto-detect and their spawn-path coverage lives in
+// test/regression/issue/29102.test.ts where LOCALAPPDATA is scrubbed
+// to guarantee the auto-detect branch misses.
+test.skipIf(!isWindows)("backend: 'chrome' spawn throws on Windows", () => {
+  const cases: Array<object> = [
+    // Explicit path forces spawn-mode (skips auto-detect).
+    {
+      backend: {
+        type: "chrome",
+        path: "C:/Program Files/Google/Chrome/Application/chrome.exe",
+      },
+    },
+    // url:false also forces spawn-mode (documented knob).
+    { backend: { type: "chrome", url: false } },
+  ];
+  for (const opts of cases) {
+    let err: any;
+    let view: any;
+    try {
+      view = new (Bun as any).WebView(opts);
+    } catch (e) {
+      err = e;
+    }
+    if (view) {
+      // Unexpected success — close and fail loudly rather than leave
+      // a live view that could hang the suite.
+      try {
+        view.close();
+      } catch {}
+      throw new Error(`UNEXPECTED_SUCCESS for opts=${JSON.stringify(opts)}: expected ERR_METHOD_NOT_IMPLEMENTED`);
+    }
+    expect(err).toBeDefined();
+    expect(err.code).toBe("ERR_METHOD_NOT_IMPLEMENTED");
+    expect(err.message).toMatch(/chrome.*spawn.*not.*yet.*implemented.*windows/i);
+    // Positive: the message must point users at the ws:// connect
+    // workaround. Mirrors the pattern in 29102.test.ts's helpers —
+    // stripping the hint would otherwise pass silently.
+    expect(err.message).toMatch(/ws:\/\//i);
+    // Must not mention BUN_CHROME_PATH / set...backend.path — those
+    // knobs are inert on the Windows spawn path and the old message's
+    // hint at them is exactly what confused the bug reporter.
+    expect(err.message).not.toMatch(/BUN_CHROME_PATH/);
+    expect(err.message).not.toMatch(/set.*backend\.path/);
+  }
+});
+
+// Companion: `backend: 'webkit'` on Windows must not suggest "use
+// backend: chrome" (which is now also spawn-gated on Windows), or the
+// user would hit a second not-implemented error.
+test.skipIf(!isWindows)("backend: 'webkit' on Windows does not point at a broken chrome fallback", () => {
+  let err: any;
+  let view: any;
+  try {
+    view = new (Bun as any).WebView({ width: 100, height: 100, backend: "webkit" });
+  } catch (e) {
+    err = e;
+  }
+  if (view) {
+    try {
+      view.close();
+    } catch {}
+    throw new Error("UNEXPECTED_SUCCESS: webkit should not work on Windows");
+  }
+  expect(err).toBeDefined();
+  expect(err.code).toBe("ERR_METHOD_NOT_IMPLEMENTED");
+  expect(err.message).toMatch(/only available on macOS/i);
+  // The bare "use backend: chrome" hint was misleading on Windows —
+  // chrome's spawn path is also not implemented. If we mention chrome
+  // at all, it must be as the ws:// connect workaround.
+  expect(err.message).toMatch(/ws:\/\//i);
 });
 
 test("calling without new throws", () => {

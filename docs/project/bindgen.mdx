@@ -161,7 +161,9 @@ export const fmtString = fn({
 On the Rust side, the enum is mirrored as a `#[repr(u8)]` enum. Bindgen
 **sorts `t.stringEnum` values alphabetically** before emitting the C++
 `enum class`, so discriminants must match the generated header's order, not
-the `.bind.ts` declaration order:
+the `.bind.ts` declaration order. (The `js_bindings` submodule below is just
+how `fmt_jsc.rs` organizes its binding impls; the Rust module layout is up to
+the implementing file.)
 
 ```rust
 pub mod js_bindings {

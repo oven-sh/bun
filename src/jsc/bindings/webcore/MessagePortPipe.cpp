@@ -99,7 +99,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     RefPtr<MessagePort> port;
     size_t limit;
-    bool ownsDispatching;
+    bool ownsDispatching = false;
     {
         Locker locker { s.lock };
         // This task was posted to `expectedCtx` (and is running there). If

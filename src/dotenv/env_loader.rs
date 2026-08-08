@@ -858,7 +858,7 @@ impl Loader {
             };
 
         match read_env_file_contents(&file)? {
-            ReadEnvFile::Empty => {}
+            ReadEnvFile::Empty | ReadEnvFile::NotRegular => {}
             ReadEnvFile::ReadErr(err) => {
                 if !self.quiet {
                     bun_core::pretty_errorln!(
@@ -906,6 +906,14 @@ impl Loader {
 
         match read_env_file_contents(&file)? {
             ReadEnvFile::Empty => {}
+            ReadEnvFile::NotRegular => {
+                if !self.quiet {
+                    bun_core::pretty_errorln!(
+                        "<yellow>warn<r>: {} is not a regular file; ignoring",
+                        bstr::BStr::new(file_path)
+                    );
+                }
+            }
             ReadEnvFile::ReadErr(err) => {
                 if !self.quiet {
                     bun_core::pretty_errorln!(
@@ -936,6 +944,8 @@ impl Loader {
 enum ReadEnvFile {
     /// Zero-length — caller marks the slot and returns.
     Empty,
+    /// FIFO/socket/device — skipped without reading.
+    NotRegular,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.
     ReadErr(bun_sys::Error),
@@ -944,6 +954,9 @@ enum ReadEnvFile {
 }
 
 fn read_env_file_contents(file: &bun_sys::File) -> crate::Result<ReadEnvFile> {
+    if file.kind()? != bun_sys::FileKind::File {
+        return Ok(ReadEnvFile::NotRegular);
+    }
     match file.read_to_end() {
         Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
         Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),

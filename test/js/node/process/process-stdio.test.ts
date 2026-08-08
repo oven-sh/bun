@@ -357,14 +357,21 @@ const nonblock = fd => fd_is_nonblock(fd) !== 0;
       const after = { file: nonblock(errfd) };
       // A child that inherits fd 1 must find it blocking regardless.
       const child = Bun.spawnSync([process.execPath, "-e", ${JSON.stringify(prelude + `process.stderr.write(String(nonblock(1)))`)}], { stdio: ["ignore", "inherit", "pipe"], env: process.env });
-      console.log(JSON.stringify({ before, after, childSeesNonblock: child.stderr.toString() }));
+      // ...and once handed over blocking it stays that way: a later async
+      // writer must not flip O_NONBLOCK back on under a (possibly still
+      // running) child.
+      await Bun.write(Bun.stdout, "y");
+      Bun.stdout.writer();
+      const stillBlocking = !nonblock(1);
+      console.log(JSON.stringify({ before, after, childSeesNonblock: child.stderr.toString(), stillBlocking }));
     `,
       );
       const line = stdout.toString().trim().split("\n").pop()!;
-      expect(JSON.parse(line.replace(/^x/, ""))).toEqual({
+      expect(JSON.parse(line.replace(/^xy/, ""))).toEqual({
         before: { out: false, file: false },
         after: { file: false },
         childSeesNonblock: "false",
+        stillBlocking: true,
       });
       expect(exitCode).toBe(0);
     },

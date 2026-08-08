@@ -752,6 +752,11 @@ impl FileSink {
         if self.nonblocking.get() || !self.pollable.get() || self.is_socket.get() {
             return;
         }
+        // A spawn handed this description to a child blocking; it stays that
+        // way (see `refresh_stdio_mode`) — don't flip it back under the child.
+        if sys::stdio_made_blocking(self.stdio.get()) {
+            return;
+        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if self.stdio_rwf_nowait.get() {
             return;

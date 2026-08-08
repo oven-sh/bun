@@ -1017,8 +1017,8 @@ void populateESMExports(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* exports = result.getObject()) {
-        bool hasESModuleMarker = false;
-        if (!ignoreESModuleAnnotation) {
+        bool fileHasESModule = false;
+        {
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
             auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
             scope.assertNoException();
@@ -1027,11 +1027,12 @@ void populateESMExports(
                 CLEAR_IF_EXCEPTION(scope);
                 if (!value.isUndefinedOrNull()) {
                     if (value.pureToBoolean() == TriState::True) {
-                        hasESModuleMarker = true;
+                        fileHasESModule = true;
                     }
                 }
             }
         }
+        bool hasESModuleMarker = fileHasESModule && !ignoreESModuleAnnotation;
 
         auto* structure = exports->structure();
 
@@ -1134,6 +1135,13 @@ void populateESMExports(
                 auto has = exports->getPropertySlot(globalObject, property, slot);
                 RETURN_IF_EXCEPTION(scope, );
                 if (!has) continue;
+
+                // Skip JS accessors on plain CJS so importing doesn't run
+                // user side effects. Node's cjs-module-lexer doesn't see
+                // these either. https://github.com/oven-sh/bun/issues/6747
+                if (slot.isAccessor() && !fileHasESModule) {
+                    continue;
+                }
 
                 if (slot.attributes() & PropertyAttribute::DontEnum) {
                     // Allow DontEnum properties which are not getter/setters

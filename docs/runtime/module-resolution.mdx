@@ -332,7 +332,7 @@ Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript 
 
 `module`, `exports`, and `require` are very much like the `module`, `exports`, and `require` in Node.js. These are assigned through a [`with scope`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/with) in C++. An internal `Map` stores the `exports` object to handle cyclical `require` calls before the module is fully loaded.
 
-Once the CommonJS module is successfully evaluated, a Synthetic Module Record is created with the `default` ES Module [export set to `module.exports`](https://github.com/oven-sh/bun/blob/9b6913e1a674ceb7f670f917fc355bb8758c6c72/src/bun.js/bindings/CommonJSModuleRecord.cpp#L212-L213) and keys of the `module.exports` object are re-exported as named exports (if the `module.exports` object is an object).
+Once the CommonJS module is successfully evaluated, a Synthetic Module Record is created with the `default` ES Module [export set to `module.exports`](https://github.com/oven-sh/bun/blob/9b6913e1a674ceb7f670f917fc355bb8758c6c72/src/bun.js/bindings/CommonJSModuleRecord.cpp#L212-L213) and the own data properties of the `module.exports` object are re-exported as named exports (if the `module.exports` object is an object). Own accessor properties (getters/setters) on a module that does not set `__esModule` are not re-exported, matching Node.js; access them through the default export instead.
 
 Bun's bundler works differently: it wraps the CommonJS module in a `require_${moduleName}` function which returns the `module.exports` object.
 

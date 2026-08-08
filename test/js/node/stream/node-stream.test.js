@@ -869,6 +869,50 @@ describe("webstreams adapters (Node v26 sync)", () => {
     expect(writes).toBe(TOTAL);
   });
 
+  // newStreamWritableFromWritableStream's write() decodes string chunks that
+  // reach _write undecoded, using TypedArrayPrototypeGetBuffer/ByteOffset/
+  // ByteLength from internal/primordials. Those three were missing from
+  // Bun's primordials, so this path threw "TypedArrayPrototypeGetBuffer is
+  // not a function" where Node hands the sink a plain Uint8Array.
+  it("Writable.fromWeb _write decodes non-utf8 string chunks like Node", async () => {
+    const chunks = [];
+    const ws = new WritableStream({
+      write(chunk) {
+        chunks.push(chunk);
+      },
+    });
+    const w = Writable.fromWeb(ws);
+    await new Promise((resolve, reject) => {
+      w._write("68656c6c6f", "hex", err => (err ? reject(err) : resolve()));
+    });
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].constructor).toBe(Uint8Array);
+    expect(chunks[0]).toEqual(new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]));
+  });
+
+  it("Duplex.fromWeb _write decodes non-utf8 string chunks like Node", async () => {
+    const chunks = [];
+    const pair = {
+      readable: new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      }),
+      writable: new WritableStream({
+        write(chunk) {
+          chunks.push(chunk);
+        },
+      }),
+    };
+    const d = Duplex.fromWeb(pair);
+    await new Promise((resolve, reject) => {
+      d._write("aGVsbG8=", "base64", err => (err ? reject(err) : resolve()));
+    });
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].constructor).toBe(Uint8Array);
+    expect(chunks[0]).toEqual(new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]));
+  });
+
   // Upstream: v26 newStreamWritableFromWritableStream writev done() shape —
   // a rejected chunk write during a corked writev must error the stream with
   // the original error and must not produce an unhandled rejection.

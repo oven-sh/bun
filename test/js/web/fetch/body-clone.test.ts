@@ -630,18 +630,18 @@ test.each(["Request", "Response"])(
   },
 );
 
-// clone()'s usability check now fires before the stream is teed, so the
-// readableStreamTee C++ bridge's exception propagation (which used to be
-// covered by the test above) is exercised via `new Request(lockedRequest)`,
-// which still tees. It must throw a single catchable TypeError, not also
-// report it as uncaught (exit code 1) or surface a bogus follow-up error.
-test("new Request(request) with a locked stream body throws a catchable TypeError from the tee and does not fail the process", async () => {
+// The usability checks in clone() and in Request(input) fire before the
+// stream is teed, so the readableStreamTee C++ bridge's exception propagation
+// is exercised via a locked Request passed as init (second argument), which
+// still tees. It must throw a single catchable TypeError, not also report it
+// as uncaught (exit code 1) or surface a bogus follow-up error.
+test("new Request(url, lockedRequest) throws a catchable TypeError from the tee and does not fail the process", async () => {
   const script = `
     const stream = new ReadableStream({ start() {} });
     const source = new Request("http://example.com/", { method: "POST", body: stream, duplex: "half" });
     source.body.getReader(); // lock the body stream
     try {
-      new Request(source);
+      new Request("http://other.example/", source);
       console.log("no throw");
     } catch (e) {
       console.log("caught " + e.constructor.name + ": " + e.message);

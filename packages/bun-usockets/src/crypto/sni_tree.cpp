@@ -37,10 +37,30 @@
 /* This cannot be shared */
 thread_local void (*sni_free_cb)(void *);
 
+/* DNS hostnames are case-insensitive (RFC 4343), and so is SNI matching in
+ * Node.js, so labels compare with an ASCII-only case fold (ASCII-only to
+ * avoid locale surprises like the Turkish dotless i). */
+struct sni_label_less {
+    static unsigned char fold(unsigned char c) {
+        return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
+    }
+
+    bool operator()(std::string_view a, std::string_view b) const {
+        size_t n = std::min(a.length(), b.length());
+        for (size_t i = 0; i < n; i++) {
+            unsigned char ca = fold(a[i]), cb = fold(b[i]);
+            if (ca != cb) {
+                return ca < cb;
+            }
+        }
+        return a.length() < b.length();
+    }
+};
+
 struct sni_node {
     /* Empty nodes must always hold null */
     void *user = nullptr;
-    std::map<std::string_view, std::unique_ptr<sni_node>> children;
+    std::map<std::string_view, std::unique_ptr<sni_node>, sni_label_less> children;
 
     ~sni_node() {
         for (auto &p : children) {

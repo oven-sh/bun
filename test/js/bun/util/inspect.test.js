@@ -494,6 +494,115 @@ it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });
 
+describe("customInspect option", () => {
+  const CUSTOM = Symbol.for("nodejs.util.inspect.custom");
+
+  it("Bun.inspect skips the custom inspect hook when customInspect is false", () => {
+    let calls = 0;
+    const o = {
+      plain: 1,
+      [CUSTOM]() {
+        calls++;
+        return "HOOK-OUTPUT";
+      },
+    };
+
+    const out = Bun.inspect(o, { customInspect: false });
+    expect({ calls, out }).toEqual({
+      calls: 0,
+      out: "{\n  plain: 1,\n  [Symbol(nodejs.util.inspect.custom)]: [Function],\n}",
+    });
+
+    // nested hook is also skipped
+    calls = 0;
+    const nested = Bun.inspect({ inner: o }, { customInspect: false });
+    expect(calls).toBe(0);
+    expect(nested).not.toContain("HOOK-OUTPUT");
+
+    // Proxy wrapper must not bypass the flag (top-level and nested)
+    calls = 0;
+    const proxied = Bun.inspect(new Proxy(o, {}), { customInspect: false });
+    expect({ calls, proxied }).toEqual({ calls: 0, proxied: out });
+
+    calls = 0;
+    Bun.inspect({ inner: new Proxy(o, {}) }, { customInspect: false });
+    expect(calls).toBe(0);
+  });
+
+  it("Bun.inspect.table skips the custom inspect hook on cell values when customInspect is false", () => {
+    let calls = 0;
+    const cell = {
+      [CUSTOM]() {
+        calls++;
+        return "HOOK-OUTPUT";
+      },
+    };
+    const out = Bun.inspect.table([{ col: cell }], { customInspect: false });
+    expect(calls).toBe(0);
+    expect(out).not.toContain("HOOK-OUTPUT");
+
+    calls = 0;
+    const on = Bun.inspect.table([{ col: cell }], { customInspect: true });
+    expect(calls).toBe(1);
+    expect(on).toContain("HOOK-OUTPUT");
+  });
+
+  it("Bun.inspect runs the custom inspect hook by default and when customInspect is true", () => {
+    let calls = 0;
+    const o = {
+      plain: 1,
+      [CUSTOM]() {
+        calls++;
+        return "HOOK-OUTPUT";
+      },
+    };
+
+    expect(Bun.inspect(o)).toBe("HOOK-OUTPUT");
+    expect(calls).toBe(1);
+
+    calls = 0;
+    expect(Bun.inspect(o, { customInspect: true })).toBe("HOOK-OUTPUT");
+    expect(calls).toBe(1);
+  });
+
+  it("console.dir defaults customInspect to false and honors the option", async () => {
+    const src = `
+      const CUSTOM = Symbol.for("nodejs.util.inspect.custom");
+      let calls = 0;
+      const o = { plain: 1, [CUSTOM]() { calls++; return "HOOK-OUTPUT"; } };
+
+      calls = 0; console.dir(o);
+      process.stdout.write("calls-default=" + calls + "\\n");
+
+      calls = 0; console.dir(o, { customInspect: false });
+      process.stdout.write("calls-false=" + calls + "\\n");
+
+      calls = 0; console.dir(o, { customInspect: true });
+      process.stdout.write("calls-true=" + calls + "\\n");
+
+      calls = 0; console.dir({ inner: o }, { customInspect: false });
+      process.stdout.write("calls-nested=" + calls + "\\n");
+
+      calls = 0; console.dir(new Proxy(o, {}));
+      process.stdout.write("calls-proxy=" + calls + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout.split("\n").filter(l => l.startsWith("calls-"));
+    expect({ stderr, lines }).toEqual({
+      stderr: "",
+      lines: ["calls-default=0", "calls-false=0", "calls-true=1", "calls-nested=0", "calls-proxy=0"],
+    });
+    expect(stdout.match(/HOOK-OUTPUT/g)?.length).toBe(1);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("Functions with names", () => {
   const closures = [
     () => function f() {},

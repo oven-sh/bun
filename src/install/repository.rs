@@ -722,7 +722,20 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
+                // `clone --bare` sets no fetch refspec, so name heads/tags explicitly.
+                if let Err(err) = exec(
+                    env,
+                    &[
+                        b"git",
+                        b"-C",
+                        path,
+                        b"fetch",
+                        b"--quiet",
+                        b"origin",
+                        b"+refs/heads/*:refs/heads/*",
+                        b"+refs/tags/*:refs/tags/*",
+                    ],
+                ) {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,

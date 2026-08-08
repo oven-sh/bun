@@ -121,7 +121,7 @@ test("dead C++ bindings do not reappear", () => {
     ["src/jsc/bindings/webcore/DOMConstructors.h", /^\s*(Touch|ApplePaySession|GPUDevice|WebKitMediaKeys),$/m],
     ["src/jsc/bindings/webcore/DOMConstructors.h", /numberOfDOMConstructorsBase|bunExtraConstructors/],
     ["src/jsc/bindings/napi.h", /NAPI_PERISH/],
-    ["src/jsc/bindings/dh-primes.h", /OPENSSL_ARRAY_SIZE/],
+    ["src/jsc/bindings/dh-primes.h", /OPENSSL_ARRAY_SIZE|\bTOBN\b/],
     ["src/jsc/bindings/JSDOMWrapper.h", /hasCustomPtrTraits/],
     ["src/jsc/bindings/webcore/JSPerformance.h", /class JSPerformanceObject;/],
     ["src/jsc/bindings/webcore/SerializedScriptValue.h", /class MemoryHandle;|class FragmentedSharedBuffer;/],

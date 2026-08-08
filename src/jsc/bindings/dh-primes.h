@@ -59,14 +59,4 @@
 #include <openssl/err.h>
 #include <openssl/mem.h>
 
-// Backporting primes that may not be supported in earlier boringssl versions.
-// Intentionally keeping the existing C-style formatting.
-
-#if defined(OPENSSL_64_BIT)
-#define TOBN(hi, lo) ((BN_ULONG)(hi) << 32 | (lo))
-#elif defined(OPENSSL_32_BIT)
-#define TOBN(hi, lo) (lo), (hi)
-#else
-#error "Must define either OPENSSL_32_BIT or OPENSSL_64_BIT"
-#endif
 #endif // DEPS_NCRYPTO_DH_PRIMES_H_

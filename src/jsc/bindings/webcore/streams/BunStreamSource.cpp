@@ -423,6 +423,8 @@ static JSC::JSUint8Array* uint8Subarray(JSGlobalObject* globalObject, JSC::JSUin
 static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (adapter->m_sourceOwnsChunks)
+        return nullptr;
     const size_t chunkSize = adapter->m_chunkSize;
     if (JSObject* pending = adapter->pendingView()) {
         auto* view = uncheckedDowncast<JSC::JSUint8Array>(pending);
@@ -484,8 +486,6 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         return jsUndefined();
     }
     if (auto* chunk = dynamicDowncast<JSC::JSArrayBufferView>(result)) {
-        if (!isClosed)
-            nativeAdjustChunkSize(adapter, chunk->byteLength());
         if (chunk->byteLength() > 0) {
             if (adapter->m_textMode) {
                 nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, chunk->span(), /* flush */ false);
@@ -562,7 +562,13 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     auto* adapter = WebCore::JSNativeStreamSourceAdapter::create(vm, runtime->nativeStreamSourceAdapterStructure(domGlobalObject));
     adapter->setHandle(vm, handle);
     adapter->m_textMode = stream->m_nativeTextMode;
-    adapter->m_chunkSize = std::max(static_cast<size_t>(chunkSize), autoAllocateChunkSize);
+    if (chunkSize < 0) {
+        adapter->m_sourceOwnsChunks = true;
+        adapter->m_hasResized = true;
+        adapter->m_chunkSize = 0;
+    } else {
+        adapter->m_chunkSize = std::max(static_cast<size_t>(chunkSize), autoAllocateChunkSize);
+    }
     auto* closer = JSC::constructEmptyArray(globalObject, nullptr, 1);
     RETURN_IF_EXCEPTION(scope, );
     closer->putDirectIndex(globalObject, 0, jsBoolean(false));
@@ -651,7 +657,7 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     MarkedArgumentBuffer pullArgs;
-    pullArgs.append(view);
+    pullArgs.append(view ? JSValue(view) : jsUndefined());
     pullArgs.append(closer);
     ASSERT(!pullArgs.hasOverflowed());
     JSValue result = invokeMethod(vm, globalObject, handle, builtinNames(vm).pullPublicName(), pullArgs);

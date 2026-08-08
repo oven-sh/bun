@@ -449,8 +449,9 @@ export function windowsEnv(
   editWindowsEnvVar: EditWindowsEnvVarCb,
   coerceForWrite,
   resetTZ,
+  inspectCustom,
 ) {
-  (internalEnv as any)[Bun.inspect.custom] = () => {
+  (internalEnv as any)[inspectCustom] = () => {
     let o = {};
     for (let k of envMapList) {
       o[k] = internalEnv[k.toUpperCase()];

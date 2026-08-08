@@ -10,6 +10,7 @@
 #include <JavaScriptCore/JSArrayInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSStringInlines.h>
+#include <JavaScriptCore/Symbol.h>
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/DateInstanceCache.h>
 #include <JavaScriptCore/JSCast.h>
@@ -1114,6 +1115,10 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     args.append(editWindowsEnvVar);
     args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 0, "resetTZ"_s, jsProcessEnvResetTZ, ImplementationVisibility::Private));
+    // Reading Bun.inspect.custom in the builtin would reify a Bun property while
+    // env init may be running inside another Bun property's lazy initializer,
+    // invalidating the structure cached by that lookup's getPropertySlot.
+    args.append(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
     auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
     NakedPtr<JSC::Exception> returnedException = nullptr;

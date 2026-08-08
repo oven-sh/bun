@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => Bun.SHA1.hash(Bun.file(import.meta.path))).toThrow();
@@ -187,6 +187,152 @@ test("Bun.sha reads its buffers only after every argument has been coerced", asy
 });
 
 describe("HMAC", () => {
+  test("constructor coerces the algorithm once and reads the key before any later coercion", async () => {
+    // The algorithm argument must be stringified exactly once, and that one
+    // coercion must happen before the hmac key's bytes are read. A second
+    // toString() after the key slice is captured lets user code free the
+    // backing store, so HMAC::init sees recycled heap instead of the key.
+    const source = /* js */ `
+      import { createHmac, createHash } from "node:crypto";
+      const N = 1 << 20;
+      const hmac = k => createHmac("sha256", k).update("payload").digest("hex");
+      const sha = createHash("sha256").update("payload").digest("hex");
+      const out = { second: [], first: [], gcKey: [], hashGc: [], errorOrder: null };
+      for (let i = 0; i < 5; i++) {
+        const key = new Uint8Array(N).fill(0x41);
+        const orig = key.slice();
+        const spray = [];
+        let calls = 0;
+        const alg = new String("sha256");
+        alg.toString = () => {
+          if (++calls > 1) {
+            key.buffer.transfer(0);
+            for (let j = 0; j < 8; j++) spray.push(new Uint8Array(N).fill(0x5a));
+          }
+          return "sha256";
+        };
+        const got = new Bun.CryptoHasher(alg, key).update("payload").digest("hex");
+        out.second.push({ calls, ok: got === hmac(orig) });
+      }
+      // Detaching during the single toString() must yield HMAC(empty key):
+      // the algorithm is coerced before the key is captured, so the key
+      // capture sees the already-detached buffer as zero-length.
+      for (let i = 0; i < 3; i++) {
+        const key = new Uint8Array(N).fill(0x41);
+        const spray = [];
+        let calls = 0;
+        const alg = new String("sha256");
+        alg.toString = () => {
+          if (++calls === 1) {
+            key.buffer.transfer(0);
+            for (let j = 0; j < 8; j++) spray.push(new Uint8Array(N).fill(0x5a));
+          }
+          return "sha256";
+        };
+        const got = new Bun.CryptoHasher(alg, key).update("payload").digest("hex");
+        out.first.push({ calls, detached: key.byteLength === 0, ok: got === hmac(new Uint8Array(0)) });
+      }
+      // A String-object key coerces via its own toString(), which runs after
+      // the algorithm string was coerced. GC pressure in that window must not
+      // invalidate the algorithm: the digest must use sha256 and the real key.
+      for (let i = 0; i < 3; i++) {
+        let calls = 0;
+        const alg = new String("sha256");
+        // Build a fresh, non-atomized string each call so nothing roots it.
+        alg.toString = () => {
+          calls++;
+          return ("sha256" + i).slice(0, 6);
+        };
+        const spray = [];
+        const key = new String("secret-key");
+        key.toString = () => {
+          Bun.gc(true);
+          for (let j = 0; j < 8; j++) spray.push(new Uint8Array(N).fill(0x5a));
+          return "secret-key";
+        };
+        const got = new Bun.CryptoHasher(alg, key).update("payload").digest("hex");
+        out.gcKey.push({ calls, ok: got === hmac("secret-key") });
+      }
+      // Static hash() has the same shape: the output-encoding coercion runs
+      // after the algorithm string was coerced, and GC pressure there must
+      // not invalidate the algorithm.
+      for (let i = 0; i < 3; i++) {
+        let calls = 0;
+        const alg = new String("sha256");
+        // Build a fresh, non-atomized string each call so nothing roots it.
+        alg.toString = () => {
+          calls++;
+          return ("sha256" + i).slice(0, 6);
+        };
+        const spray = [];
+        const enc = new String("hex");
+        enc.toString = () => {
+          Bun.gc(true);
+          for (let j = 0; j < 8; j++) spray.push(new Uint8Array(N).fill(0x5a));
+          return "hex";
+        };
+        const got = Bun.CryptoHasher.hash(alg, "payload", enc);
+        out.hashGc.push({ calls, ok: got === sha });
+      }
+      // Error ordering: the key is coerced before the algorithm is validated,
+      // so a throwing key toString() wins over an unsupported algorithm.
+      {
+        const key = new String("secret-key");
+        key.toString = () => {
+          throw new Error("key conversion failed");
+        };
+        try {
+          new Bun.CryptoHasher("unsupported-algorithm", key);
+          out.errorOrder = "no throw";
+        } catch (e) {
+          out.errorOrder = e.message;
+        }
+      }
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      second: [
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+      ],
+      first: [
+        { calls: 1, detached: true, ok: true },
+        { calls: 1, detached: true, ok: true },
+        { calls: 1, detached: true, ok: true },
+      ],
+      gcKey: [
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+      ],
+      hashGc: [
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+      ],
+      errorOrder: "key conversion failed",
+    });
+    expect(exitCode).toBe(0);
+
+    // The non-hostile case: a primitive-string algorithm + buffer key must
+    // produce the same digest as node:crypto's createHmac.
+    const keyBuf = Buffer.alloc(64, 0x41);
+    expect(new Bun.CryptoHasher("sha256", keyBuf).update("payload").digest("hex")).toBe(
+      createHmac("sha256", keyBuf).update("payload").digest("hex"),
+    );
+  });
+
   const hashes = {
     "sha1": "e2e1f7f597941d9b0021978618218a9e08731426",
     "sha256": "c7a7c96c73af32ea6e5b1ca6768b1d822249eb88f85160433d7b09bb2b21e170",

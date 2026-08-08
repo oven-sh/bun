@@ -135,6 +135,114 @@ test("blob: URL has Content-Type", async () => {
   }).toThrow();
 });
 
+// https://fetch.spec.whatwg.org/#concept-scheme-fetch "blob"
+describe("blob: URL scheme fetch", () => {
+  function blobURL(parts: BlobPart[], options?: BlobPropertyBag) {
+    const url = URL.createObjectURL(new Blob(parts, options));
+    return {
+      url,
+      [Symbol.dispose]: () => URL.revokeObjectURL(url),
+    };
+  }
+
+  test.each(["POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])(
+    "rejects method %s as a network error",
+    async method => {
+      using u = blobURL(["hi"]);
+      const body = method === "HEAD" ? undefined : "x";
+      await expect(fetch(u.url, { method, body })).rejects.toThrow(TypeError);
+      // and via a Request object
+      await expect(fetch(new Request(u.url, { method, body }))).rejects.toThrow(TypeError);
+    },
+  );
+
+  test("sets Content-Length from the blob size", async () => {
+    using u = blobURL(["12345"], { type: "text/plain" });
+    const res = await fetch(u.url);
+    expect({
+      status: res.status,
+      statusText: res.statusText,
+      contentLength: res.headers.get("Content-Length"),
+      body: await res.text(),
+    }).toEqual({
+      status: 200,
+      statusText: "OK",
+      contentLength: "5",
+      body: "12345",
+    });
+    expect(res.headers.get("Content-Type")).toStartWith("text/plain");
+  });
+
+  test("sets Content-Length: 0 for an empty blob", async () => {
+    using u = blobURL([]);
+    const res = await fetch(u.url);
+    expect(res.headers.get("Content-Length")).toBe("0");
+    expect(await res.arrayBuffer()).toHaveLength(0);
+  });
+
+  test("honours a Range request with 206 + Content-Range", async () => {
+    using u = blobURL(["0123456789"], { type: "text/plain" });
+    const res = await fetch(u.url, { headers: { Range: "bytes=2-4" } });
+    expect({
+      status: res.status,
+      statusText: res.statusText,
+      contentLength: res.headers.get("Content-Length"),
+      contentRange: res.headers.get("Content-Range"),
+      body: await res.text(),
+    }).toEqual({
+      status: 206,
+      statusText: "Partial Content",
+      contentLength: "3",
+      contentRange: "bytes 2-4/10",
+      body: "234",
+    });
+    expect(res.headers.get("Content-Type")).toStartWith("text/plain");
+  });
+
+  test.each([
+    ["bytes=-3", "789", "bytes 7-9/10"],
+    ["bytes=7-", "789", "bytes 7-9/10"],
+    ["bytes=0-0", "0", "bytes 0-0/10"],
+    ["bytes=2-100", "23456789", "bytes 2-9/10"],
+    ["bytes=-100", "0123456789", "bytes 0-9/10"],
+  ])("Range %s -> 206 %j", async (range, body, contentRange) => {
+    using u = blobURL(["0123456789"]);
+    const res = await fetch(u.url, { headers: { Range: range } });
+    expect({
+      status: res.status,
+      contentLength: res.headers.get("Content-Length"),
+      contentRange: res.headers.get("Content-Range"),
+      body: await res.text(),
+    }).toEqual({
+      status: 206,
+      contentLength: String(body.length),
+      contentRange,
+      body,
+    });
+  });
+
+  test.each([
+    "bytes=20-30", // start >= size
+    "bytes=5-2", // end < start
+    "bytes=-0", // zero-length suffix
+    "bytes=", // both missing
+    "not-a-range", // wrong unit
+    "bytes=0-1,3-4", // multi-range
+  ])("Range %j is a network error", async range => {
+    using u = blobURL(["0123456789"]);
+    await expect(fetch(u.url, { headers: { Range: range } })).rejects.toThrow(TypeError);
+  });
+
+  test("Range on a Request object", async () => {
+    using u = blobURL(["0123456789"]);
+    const req = new Request(u.url, { headers: { Range: "bytes=1-3" } });
+    const res = await fetch(req);
+    expect(res.status).toBe(206);
+    expect(await res.text()).toBe("123");
+    expect(res.headers.get("Content-Range")).toBe("bytes 1-3/10");
+  });
+});
+
 test("blob: can be imported", async () => {
   const blob = new Blob(
     [

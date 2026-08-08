@@ -2395,7 +2395,9 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                             log!("hit NotEnoughBytes");
                             return;
                         }
-                        Err(e) => return finish_decode(send_queue, &DecodeStep::Fail(e), &global_this),
+                        Err(e) => {
+                            return finish_decode(send_queue, &DecodeStep::Fail(e), &global_this);
+                        }
                     }
                 }
             }

@@ -200,8 +200,11 @@ Measured with the tooling build (`-DBUN_HEAPIMAGE_TOOLING=1`, `BUN_MEMDEBUG` + `
 Refuted tonight, with data: keeping code in the image (`BUN_IMAGE_DELETE_CODE=linked` / `=0`) dirties **more** (48 / 69 MB vs
 39 MB) — retained code is written heavily when it runs again, so deleting it at snapshot stays the default; and moving JIT
 compilation to the main thread does not shrink the arena residue (100 vs 95 MB), so it is not unswept JIT-thread pages.
-Idle footprint is bimodal run to run (~125–135 vs ~180–200 MB, and 0.7 vs 1.2 s CPU) — something conditional in CC's
-post-mount work costs ~60 MB; not yet identified. In this repo's cwd the file index adds another ~30–40 MB.
+Idle footprint is bimodal run to run (~125–135 vs ~180–200 MB, 0.7 vs 1.2 s CPU): the first launch of a newly built binary
+skips the claude.ai MCP connectors; every later launch fetches the directory (120 servers on this account), connects ~10 of
+them and lists ~300 tools (114k vs 184k new cells; +50–60 MB). That is CC's MCP footprint on this account, identical on
+plain boots — a CC diet item (schemas of deferred tools kept compact), not a runtime one. Diff the two launches'
+`CLAUDE_CODE_DEBUG_LOGS_DIR` logs to see it. In this repo's cwd the file index adds another ~30–40 MB.
 
 ## Perf when the feature is compiled in but unused (merge bar: zero cost)
 

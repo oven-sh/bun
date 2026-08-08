@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { once } from "node:events";
 import * as net from "node:net";
+import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/9180
 test("weird headers", async () => {
@@ -158,5 +160,61 @@ describe("response Connection: close closes the socket", () => {
     } finally {
       socket.destroy();
     }
+  });
+});
+
+// RFC 6266 §4.1: content-disposition = disposition-type *( ";" disposition-parm )
+// The disposition-type token is mandatory; a bare `filename="..."` is invalid and
+// UAs / strict parsers handle it inconsistently.
+describe("auto Content-Disposition for Bun.file() responses", () => {
+  test("includes a disposition-type", async () => {
+    using dir = tempDir("cd-serve", {
+      "asset.bin": "0123456789",
+      "report.pdf": "0123456789",
+      "bundle.zip": "0123456789",
+      "page.html": "0123456789",
+      "data.json": "0123456789",
+      "photo.png": "0123456789",
+    });
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        const name = new URL(req.url).pathname.slice(1);
+        return new Response(Bun.file(join(String(dir), name)));
+      },
+    });
+
+    const seen: Record<string, string | null> = {};
+    for (const name of ["asset.bin", "report.pdf", "bundle.zip", "page.html", "data.json", "photo.png"]) {
+      const res = await fetch(new URL(name, server.url));
+      await res.arrayBuffer();
+      seen[name] = res.headers.get("content-disposition");
+    }
+    expect(seen).toEqual({
+      "asset.bin": 'attachment; filename="asset.bin"',
+      "report.pdf": 'attachment; filename="report.pdf"',
+      "bundle.zip": 'attachment; filename="bundle.zip"',
+      // inline-rendered categories must not get the header at all
+      "page.html": null,
+      "data.json": null,
+      "photo.png": null,
+    });
+  });
+
+  test("user-set header is not overridden", async () => {
+    using dir = tempDir("cd-serve-user", { "asset.bin": "x" });
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        return new Response(Bun.file(join(String(dir), "asset.bin")), {
+          headers: { "content-disposition": "inline" },
+        });
+      },
+    });
+    const res = await fetch(server.url);
+    await res.arrayBuffer();
+    expect(res.headers.get("content-disposition")).toBe("inline");
   });
 });

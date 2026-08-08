@@ -1617,11 +1617,9 @@ impl Run {
                         1,
                     )
                 };
-                // A throw raised while formatting the result (a custom
-                // inspect, getter, or Proxy trap) is an uncaughtException in
-                // node's `-p`: report it so it prints and sets a non-zero
-                // exit code instead of being swallowed. The fall-through
-                // shutdown below picks up the exit code.
+                // node's `-p` reports a formatter throw as an
+                // uncaughtException; the shutdown below picks up the exit
+                // code it sets.
                 printed.report_unhandled(vm.global());
             }
 

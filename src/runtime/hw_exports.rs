@@ -320,9 +320,8 @@ pub fn on_resolve_entry_point_result(
             1,
         )
     };
-    // A throw raised while formatting the `--print` result (a custom inspect,
-    // getter, or Proxy trap) is an uncaughtException in node: report it so it
-    // prints and sets a non-zero exit code instead of being swallowed.
+    // node's `-p` reports a formatter throw as an uncaughtException;
+    // `exit_handler.exit_code` reflects it in the exit below.
     printed.report_unhandled(global);
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
@@ -344,8 +343,7 @@ pub fn on_reject_entry_point_result(
             1,
         )
     };
-    // See on_resolve_entry_point_result: a formatter throw must be reported,
-    // not swallowed.
+    // Same as on_resolve_entry_point_result: report a formatter throw.
     printed.report_unhandled(global);
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));

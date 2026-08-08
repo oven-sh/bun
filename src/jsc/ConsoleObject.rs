@@ -371,9 +371,8 @@ pub extern "C" fn message_with_type_and_level(
 }
 
 /// Fallible form of [`message_with_type_and_level`] for callers that must
-/// observe a throw raised while formatting (a custom `inspect`, getter, or
-/// Proxy trap). On `Err(Thrown)` the exception is pending on the VM;
-/// `Err(OutOfMemory)` has nothing pending yet (`take_exception` throws it).
+/// observe a formatter throw. On `Err(Thrown)` the exception is pending on
+/// the VM; on `Err(OutOfMemory)` nothing is pending yet.
 ///
 /// # Safety
 /// `vals` must point to `len` readable `JSValue`s that outlive the call.

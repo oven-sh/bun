@@ -92,7 +92,24 @@ declare module "bun:test" {
     function clearAllMocks(): void;
     function resetAllMocks(): void;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
-    function setSystemTime(now?: number | Date): void;
+    function setSystemTime(now?: number | Date): typeof jest;
+    /**
+     * Returns the current clock time in milliseconds since the Unix epoch.
+     * When the clock has been overridden (via {@link setSystemTime} or {@link useFakeTimers}),
+     * this returns the mocked time; otherwise it returns the real `Date.now()`.
+     *
+     * @example
+     * ```ts
+     * import { jest } from "bun:test";
+     *
+     * jest.setSystemTime(new Date("2020-01-01"));
+     * console.log(jest.now()); // 1577836800000
+     *
+     * jest.useRealTimers();
+     * console.log(jest.now()); // current real timestamp
+     * ```
+     */
+    function now(): number;
     function setTimeout(milliseconds: number): void;
     function useFakeTimers(options?: { now?: number | Date } | "modern" | "legacy"): typeof vi;
     function useRealTimers(): typeof vi;
@@ -1815,6 +1832,12 @@ declare module "bun:test" {
     toHaveReturned(): void;
 
     /**
+     * Ensures that a mock function has returned successfully at least once.
+     * @alias toHaveReturned
+     */
+    toReturn(): void;
+
+    /**
      * Ensures that a mock function has returned successfully `times` times.
      *
      * An unfulfilled promise counts as a failure, as does a thrown error.
@@ -1834,12 +1857,28 @@ declare module "bun:test" {
     toHaveLastReturnedWith(expected: unknown): void;
 
     /**
+     * Ensures that a mock function has returned a specific value on its last invocation.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     * @alias toHaveLastReturnedWith
+     */
+    lastReturnedWith(expected: unknown): void;
+
+    /**
      * Ensures that a mock function has returned a specific value on the nth invocation.
      * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
      * @param n The 1-based index of the function call
      * @param expected The expected return value
      */
     toHaveNthReturnedWith(n: number, expected: unknown): void;
+
+    /**
+     * Ensures that a mock function has returned a specific value on the nth invocation.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     * @param n The 1-based index of the function call
+     * @param expected The expected return value
+     * @alias toHaveNthReturnedWith
+     */
+    nthReturnedWith(n: number, expected: unknown): void;
 
     /**
      * Ensures that a mock function is called.
@@ -1862,6 +1901,11 @@ declare module "bun:test" {
      * @alias toHaveBeenCalledTimes
      */
     toBeCalledTimes(expected: number): void;
+
+    /**
+     * Ensures that a mock function is called exactly once.
+     */
+    toHaveBeenCalledOnce(): void;
 
     /**
      * Ensure that a mock function is called with specific arguments.

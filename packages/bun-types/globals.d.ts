@@ -1068,7 +1068,7 @@ interface ArrayBuffer {
   /**
    * Resize an ArrayBuffer in-place.
    */
-  resize(byteLength: number): ArrayBuffer;
+  resize(byteLength: number): void;
 
   /**
    * Returns a section of an ArrayBuffer.
@@ -1080,7 +1080,7 @@ interface SharedArrayBuffer {
   /**
    * Grow the SharedArrayBuffer in-place.
    */
-  grow(size: number): SharedArrayBuffer;
+  grow(size: number): void;
 }
 
 interface ArrayConstructor {
@@ -1693,8 +1693,9 @@ interface FormData {
   set(name: string, blobValue: Blob, filename?: string): void;
   forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
   keys(): IterableIterator<string>;
-  values(): IterableIterator<string>;
-  entries(): IterableIterator<[string, string]>;
+  values(): IterableIterator<Bun.FormDataEntryValue>;
+  entries(): IterableIterator<[string, Bun.FormDataEntryValue]>;
+  [Symbol.iterator](): IterableIterator<[string, Bun.FormDataEntryValue]>;
 }
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 

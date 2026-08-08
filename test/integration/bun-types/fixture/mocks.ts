@@ -1,4 +1,4 @@
-import { jest, mock } from "bun:test";
+import { expect, jest, mock } from "bun:test";
 import { expectType } from "./utilities";
 
 const mock1 = mock((arg: string) => {
@@ -29,3 +29,12 @@ jest.fn<() => string>().mockResolvedValue("24");
 jest.fn().mockClear();
 jest.fn().mockReset();
 jest.fn().mockRejectedValueOnce(new Error());
+
+expectType(jest.now()).is<number>();
+expectType(jest.setSystemTime()).is<typeof jest>();
+jest.setSystemTime(new Date("2020-01-01")).useRealTimers();
+
+expect(jest.fn()).toHaveBeenCalledOnce();
+expect(jest.fn()).toReturn();
+expect(jest.fn()).lastReturnedWith(1);
+expect(jest.fn()).nthReturnedWith(1, 1);

@@ -970,6 +970,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
             bool result = true;
             bool sameStructure = o2Structure->id() == o1Structure->id();
+            // Recursing into Bun__deepEquals can run user code (getters on
+            // nested objects) that adds properties to o1/o2; that rehashes the
+            // PropertyTable forEachProperty is walking and frees its backing
+            // vector mid-iteration. Collect the value pairs with no side
+            // effects first, then compare them after the walk.
+            MarkedArgumentBuffer pairs;
             if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
@@ -990,18 +996,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return false;
                     }
 
-                    if (left == right) return true;
-                    auto same = JSC::sameValue(globalObject, left, right);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (same) return true;
-
-                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (!eql) {
-                        result = false;
-                        return false;
-                    }
-
+                    pairs.appendWithCrashOnOverflow(left);
+                    pairs.appendWithCrashOnOverflow(right);
                     return true;
                 });
             } else {
@@ -1039,18 +1035,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return false;
                     }
 
-                    if (left == right) return true;
-                    auto same = JSC::sameValue(globalObject, left, right);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (same) return true;
-
-                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (!eql) {
-                        result = false;
-                        return false;
-                    }
-
+                    pairs.appendWithCrashOnOverflow(left);
+                    pairs.appendWithCrashOnOverflow(right);
                     return true;
                 });
 
@@ -1068,9 +1054,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         }
 
                         // Try to get the right value from the left. We don't need to check if they're equal
-                        // because the above loop has already iterated each property in the left. If we've
-                        // seen this property before, it was already `deepEquals`ed. If it doesn't exist,
-                        // the objects are not equal.
+                        // because the above loop collected every left property into `pairs`, which are
+                        // compared below. If it doesn't exist, the objects are not equal.
                         if (o1->getDirectOffset(vm, JSC::PropertyName(entry.key())) == invalidOffset) {
                             result = false;
                             return false;
@@ -1087,7 +1072,27 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            return result;
+            if (!result) {
+                return false;
+            }
+
+            for (size_t i = 0; i < pairs.size(); i += 2) {
+                JSValue left = pairs.at(i);
+                JSValue right = pairs.at(i + 1);
+
+                if (left == right) continue;
+                auto same = JSC::sameValue(globalObject, left, right);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (same) continue;
+
+                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!eql) {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 

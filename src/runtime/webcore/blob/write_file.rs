@@ -1334,6 +1334,7 @@ pub struct WriteFileWaitFromLockedValueTask {
     pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) mkdirp_if_not_exists: bool,
+    pub(crate) mode: Option<bun_sys::Mode>,
 }
 
 impl WriteFileWaitFromLockedValueTask {
@@ -1389,6 +1390,7 @@ impl WriteFileWaitFromLockedValueTask {
                     &mut file_blob,
                     &blob::WriteFileOptions {
                         mkdirp_if_not_exists: Some(this.mkdirp_if_not_exists),
+                        mode: this.mode,
                         ..Default::default()
                     },
                 ) {

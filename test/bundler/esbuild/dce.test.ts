@@ -1,5 +1,4 @@
 import { describe, expect } from "bun:test";
-import { isWindows } from "harness";
 import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -341,7 +340,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeep", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -478,7 +476,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseModule", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -506,7 +503,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseMain", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -534,7 +530,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitModule", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"

@@ -752,6 +752,10 @@ impl FileSink {
         if self.nonblocking.get() || !self.pollable.get() || self.is_socket.get() {
             return;
         }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if self.stdio_rwf_nowait.get() {
+            return;
+        }
         let fd = self.writer.get().get_fd();
         if fd == Fd::INVALID {
             return;

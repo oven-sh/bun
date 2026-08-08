@@ -461,7 +461,7 @@ function _write(stream, chunk, encoding, cb?) {
       chunk = Stream._uint8ArrayToBuffer(chunk);
       encoding = "buffer";
     } else if (
-      (chunk instanceof ArrayBuffer || chunk instanceof SharedArrayBuffer) &&
+      Stream._isAnyArrayBuffer(chunk) &&
       (stream._isStdio === true || stream[require("internal/fs/streams").kWriteStreamFastPath])
     ) {
       // Bun's FileSink-backed streams (process.stdout/stderr, child.stdin,

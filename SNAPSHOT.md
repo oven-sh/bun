@@ -191,6 +191,17 @@ Harness: `misctools/run-jetstream.js` (JetStream2 shell-runner shim for bun) + `
 
 Ship order (Jarred): validate impact in CC → meet the merge bar (no perf/memory/stability/CPU% hit, enabled or not) → ship mimalloc, then Bun, then the WebKit fork → then CC.
 
+
+Aug 8, feature compiled in and unused, all binaries built locally with identical flags (the earlier −1.6% against the
+*prebuilt* WebKit artifact was build configuration: the artifact scores ~3% above a local build of the same commit —
+compare local against local only). Startup `bun -e` 8.8 → 8.9 ms (40 paired runs), idle footprint 5.2 → 5.3 MB, binary
+55.7 → 55.2 MB. JetStream2, main+local stock WebKit vs branch, 3 pairs: 431.0/433.0, 436.3/426.4, 436.4/435.5 — mixed
+signs, mean −0.7%, i.e. inside this machine's noise; a longer series on an idle machine is queued. Remaining fast-path
+delta in JSC is one `[[unlikely]]` test of a header byte in `areMarksStale` (the `testAndSetMarked` one was redundant and
+is gone: a live image cell's frozen bit makes `concurrentTestAndSet` return without writing, and dead image cells only
+arrive through conservative scanning, which asks `isMarked` first). It cannot be removed without writing into image block
+headers every full GC — and the header lives inside the 16 KB block, so that would dirty every image block.
+
 ## Statics, once-tokens and CPU dispatch across a restore
 
 One process-wide restore epoch: the exported, unmangled `bun_image_epoch` (`u32`, defined in `bun_core::image`, bumped by the C++ restore sequence before any handler runs; `bun_core::image::epoch()` / `ImageOnce` on the Rust side, `VM::imageEpoch()` in JSC, plain `extern uint32_t bun_image_epoch` from vendored C). Rule for any lazily-initialised static that caches *process, OS or CPU* state (fds, ports, thread handles, env snapshots, page size/CPU count probes, SIMD dispatch): key the once-token on the epoch — `if (token != bun_image_epoch + 1) { init(); token = bun_image_epoch + 1; }` — instead of a bool. Statics that cache pure computation need nothing.

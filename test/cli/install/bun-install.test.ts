@@ -6714,6 +6714,79 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/19088
+  it.each(["devDependencies", "optionalDependencies"])(
+    "should handle --frozen-lockfile with a workspace listing the same dep in dependencies and %s",
+    async otherGroup => {
+      await withContext(defaultOpts, async ctx => {
+        let urls: string[] = [];
+        setContextHandler(
+          ctx,
+          dummyRegistryForContext(ctx, urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }),
+        );
+
+        await writeFile(
+          join(ctx.package_dir, "bunfig.toml"),
+          `[install]\ncache = false\nregistry = "${ctx.registry_url}"\nlinker = "hoisted"\n`,
+        );
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "root",
+            private: true,
+            workspaces: ["packages/*"],
+          }),
+        );
+        await mkdir(join(ctx.package_dir, "packages", "pkg-a"), { recursive: true });
+        await writeFile(
+          join(ctx.package_dir, "packages", "pkg-a", "package.json"),
+          JSON.stringify({
+            name: "pkg-a",
+            version: "1.0.0",
+            [otherGroup]: { baz: "0.0.3" },
+            dependencies: { baz: "0.0.5" },
+          }),
+        );
+
+        async function install(args: string[] = []) {
+          const proc = spawn({
+            cmd: [bunExe(), "install", ...args],
+            cwd: ctx.package_dir,
+            stdout: "ignore",
+            stdin: "ignore",
+            stderr: "pipe",
+            env,
+          });
+          const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          return { err, exitCode };
+        }
+
+        let { err, exitCode } = await install();
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+
+        const lockfile = await file(join(ctx.package_dir, "bun.lock")).text();
+
+        ({ err, exitCode } = await install(["--frozen-lockfile"]));
+        expect(err).not.toContain("lockfile had changes");
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        expect(await file(join(ctx.package_dir, "bun.lock")).text()).toBe(lockfile);
+
+        ({ err, exitCode } = await install());
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+
+        expect(await file(join(ctx.package_dir, "bun.lock")).text()).toBe(lockfile);
+        expect(lockfile).not.toContain("pkg-a/baz");
+        expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+          name: "baz",
+          version: "0.0.3",
+        });
+      });
+    },
+  );
+
   it("should handle --frozen-lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
       let urls: string[] = [];

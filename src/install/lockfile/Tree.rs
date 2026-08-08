@@ -818,6 +818,7 @@ impl Tree {
                             hoist_root_id,
                             pkg_id,
                             dep_id,
+                            resolution_list,
                             builder,
                         )?;
                     }
@@ -838,6 +839,7 @@ impl Tree {
                     hoist_root_id,
                     pkg_id,
                     dep_id,
+                    resolution_list,
                     builder,
                 )?
             };
@@ -972,6 +974,7 @@ impl Tree {
         hoist_root_id: Id,
         package_id: PackageID,
         input_dep_id: DependencyID,
+        input_dep_range: DependencyIDSlice,
         builder: &mut Builder<'_, METHOD>,
     ) -> Result<HoistDependencyResult, SubtreeError> {
         // Copy the slice ref out of `builder` so subsequent `&mut builder` does not conflict.
@@ -1033,13 +1036,12 @@ impl Tree {
                 return Ok(HoistDependencyResult::Hoisted); // 1
             }
 
-            if AS_DEFINED {
-                if dep.behavior.is_dev() != dependency.behavior.is_dev() {
-                    // will only happen in workspaces and root package because
-                    // dev dependencies won't be included in other types of
-                    // dependencies
-                    return Ok(HoistDependencyResult::Hoisted); // 1
-                }
+            let from_same_source_package = AS_DEFINED || input_dep_range.contains(dep_id);
+            let different_group = dep.behavior.is_dev() != dependency.behavior.is_dev()
+                || dep.behavior.is_optional() != dependency.behavior.is_optional();
+            if from_same_source_package && different_group {
+                // same name listed in two dependency groups: merge
+                return Ok(HoistDependencyResult::Hoisted); // 1
             }
 
             // now we either keep the dependency at this place in the tree,
@@ -1102,6 +1104,7 @@ impl Tree {
                 hoist_root_id,
                 package_id,
                 input_dep_id,
+                input_dep_range,
                 builder,
             ) {
                 Ok(id) => id,

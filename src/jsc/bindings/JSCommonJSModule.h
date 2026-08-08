@@ -24,6 +24,7 @@ using namespace JSC;
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
+JSC_DECLARE_CUSTOM_GETTER(getterIsPreloading);
 
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,

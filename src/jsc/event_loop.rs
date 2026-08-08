@@ -1002,7 +1002,9 @@ impl EventLoop {
     /// freshly-allocated or struct-embedded task — never null.
     pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTaskItem>) {
         if cfg!(debug_assertions) {
-            if self.vm_ref().has_terminated {
+            let vm = self.vm_ref();
+            // Main-thread VM box is never dealloc'd; only a worker push is UAF-adjacent.
+            if vm.has_terminated && !vm.is_main_thread() {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
         }

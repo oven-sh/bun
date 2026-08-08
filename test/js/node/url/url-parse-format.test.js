@@ -925,25 +925,25 @@ describe("url.parse then url.format", () => {
     //   href: "javascript:alert(1);a='@white-listed.com'",
     // },
 
-    // "ws://www.example.com": {
-    //   protocol: "ws:",
-    //   slashes: true,
-    //   hostname: "www.example.com",
-    //   host: "www.example.com",
-    //   pathname: "/",
-    //   path: "/",
-    //   href: "ws://www.example.com/",
-    // },
+    "ws://www.example.com": {
+      protocol: "ws:",
+      slashes: true,
+      hostname: "www.example.com",
+      host: "www.example.com",
+      pathname: "/",
+      path: "/",
+      href: "ws://www.example.com/",
+    },
 
-    // "wss://www.example.com": {
-    //   protocol: "wss:",
-    //   slashes: true,
-    //   hostname: "www.example.com",
-    //   host: "www.example.com",
-    //   pathname: "/",
-    //   path: "/",
-    //   href: "wss://www.example.com/",
-    // },
+    "wss://www.example.com": {
+      protocol: "wss:",
+      slashes: true,
+      hostname: "www.example.com",
+      host: "www.example.com",
+      pathname: "/",
+      path: "/",
+      href: "wss://www.example.com/",
+    },
 
     // "//fhqwhgads@example.com/everybody-to-the-limit": {
     //   protocol: null,

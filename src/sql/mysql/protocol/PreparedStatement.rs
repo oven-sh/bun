@@ -89,7 +89,7 @@ impl<'a> Execute<'a> {
                         <&'static str>::from(param_type.r#type),
                         unsigned
                     );
-                    writer.int1(param_type.r#type as u8)?;
+                    writer.int1(param_type.r#type.to_param_bind_type() as u8)?;
                     writer.int1(if unsigned { 0x80 } else { 0 })?;
                 }
             }

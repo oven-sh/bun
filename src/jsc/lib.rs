@@ -178,7 +178,7 @@ pub mod weak;
 pub mod zig_string;
 
 pub use self::js_value::{
-    CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
+    CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue, PropertyKeyKind,
     Protected as ProtectedJSValue, ProxyField, SerializedFlags, SerializedScriptValue,
 };
 

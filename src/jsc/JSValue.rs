@@ -2182,6 +2182,16 @@ struct SerializedScriptValueExternal {
 pub type ForEachCallback =
     extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: *mut c_void, next: JSValue);
 
+/// Kind of property key observed by [`ForEachPropertyCallback`]. Discriminants
+/// must match `PropertyKeyKind` in `headers-handwritten.h`.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropertyKeyKind {
+    String = 0,
+    Symbol = 1,
+    PrivateSymbol = 2,
+}
+
 /// Callback signature for [`JSValue::for_each_property`] /
 /// [`JSValue::for_each_property_non_indexed`].
 pub(crate) type ForEachPropertyCallback = extern "C" fn(
@@ -2189,8 +2199,7 @@ pub(crate) type ForEachPropertyCallback = extern "C" fn(
     ctx: *mut c_void,
     key: *mut bun_core::ZigString,
     value: JSValue,
-    is_symbol: bool,
-    is_private_symbol: bool,
+    key_kind: PropertyKeyKind,
 );
 
 /// `JSValue.StringFormatter` — `Display` adapter that
@@ -2438,7 +2447,7 @@ impl JSValue {
         self.for_each(global, ctx, callback)
     }
     /// `JSValue.forEachProperty` — enumerate own props,
-    /// invoking `callback` per (key, value, is_symbol, is_private_symbol).
+    /// invoking `callback` per (key, value, key_kind).
     ///
     /// Seats the exception scope and calls the FFI directly so the deep
     /// `print_as` recursion does not pay an extra closure frame per object level.

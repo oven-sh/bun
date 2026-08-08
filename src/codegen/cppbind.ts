@@ -470,6 +470,7 @@ const rustSharedTypes: Record<string, string> = {
   "WTF::StringImpl": "core::ffi::c_void",
   "WebCore::DOMURL": "crate::DOMURL",
   "WebCore::EventLoopTask": "crate::cpp_task::CppTask",
+  "PropertyKeyKind": "crate::PropertyKeyKind",
   // HTTPServerAgent / inspector types only show up in `nothrow` exports;
   // emit as opaque so the raw extern still type-checks.
   "Inspector::InspectorHTTPServerAgent": "core::ffi::c_void",

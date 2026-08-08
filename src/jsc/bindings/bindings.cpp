@@ -5428,8 +5428,15 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
+static ALWAYS_INLINE PropertyKeyKind propertyKeyKind(bool isSymbol, bool isPrivate)
+{
+    if (!isSymbol)
+        return PropertyKeyKind::String;
+    return isPrivate ? PropertyKeyKind::PrivateSymbol : PropertyKeyKind::Symbol;
+}
+
 template<bool nonIndexedOnly>
-static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, PropertyKeyKind keyKind))
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -5543,7 +5550,7 @@ restart:
             if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
                 continue;
 
-            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol(), isPrivate);
+            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), propertyKeyKind(prop->isSymbol(), isPrivate));
             // Propagate exceptions from callbacks.
             RETURN_IF_EXCEPTION(scope, );
         }
@@ -5656,7 +5663,7 @@ restart:
                 if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
                     continue;
 
-                iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);
+                iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), propertyKeyKind(property.isSymbol(), isPrivate));
 
                 // Propagate exceptions from callbacks.
                 RETURN_IF_EXCEPTION(scope, void());
@@ -5683,12 +5690,12 @@ restart:
     }
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, PropertyKeyKind keyKind))
 {
     JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter);
 }
 
-extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, PropertyKeyKind keyKind))
 {
     JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter);
 }
@@ -5721,8 +5728,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
-
+[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, PropertyKeyKind keyKind))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -5800,7 +5806,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
 
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
         // TODO: properly propagate exception upwards
-        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName());
+        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), propertyKeyKind(property.isSymbol(), property.isPrivateName()));
     }
     properties.releaseData();
 }

@@ -9,16 +9,18 @@ async function runRepl(
   input: string | string[],
   options: {
     env?: Record<string, string>;
+    cwd?: string;
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
-  const { env = {} } = options;
+  const { env = {}, cwd } = options;
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "repl"],
     stdin: Buffer.from(inputStr),
     stdout: "pipe",
     stderr: "pipe",
+    cwd,
     env: {
       ...bunEnv,
       TERM: "dumb",
@@ -749,6 +751,40 @@ describe.concurrent("Bun REPL", () => {
         ".exit",
       ]);
       expect(stripAnsi(stdout)).toContain("test");
+      expect(exitCode).toBe(0);
+    });
+
+    test("auto-accessor fields are lowered", async () => {
+      using dir = tempDir("repl-accessor", {});
+      const { stdout, exitCode } = await runRepl(
+        ["class Counter { accessor count = 7 }", "console.log('count is ' + new Counter().count)", ".exit"],
+        { cwd: String(dir) },
+      );
+      // The REPL echoes typed input back, so assert on a string only evaluation can produce.
+      const out = stripAnsi(stdout);
+      expect(out).toContain("count is 7");
+      expect(out).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("tsconfig selects the legacy decorator grammar and metadata", async () => {
+      using dir = tempDir("repl-legacy-decorators", {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
+        }),
+      });
+      const { stdout, exitCode } = await runRepl(
+        [
+          "Reflect.metadata = (k, v) => t => { console.log('got ' + k); return t }",
+          "function dec(t) { return t }",
+          "class Legacy { @dec foo(a: string) {} }",
+          ".exit",
+        ],
+        { cwd: String(dir) },
+      );
+      // Only the legacy decorator lowering emits design-time metadata, so this also
+      // proves the REPL did not blanket-enable standard decorators.
+      expect(stripAnsi(stdout)).toContain("got design:type");
       expect(exitCode).toBe(0);
     });
   });

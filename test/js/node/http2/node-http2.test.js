@@ -3896,6 +3896,70 @@ it("http2 allowHTTP1 fallback writes a close-delimited body raw and ends the con
   }
 });
 
+it("http2 allowHTTP1 fallback serves pipelined requests in order", async () => {
+  // Both requests arrive in one TLS record, so the second one's headers
+  // complete while the first response is still assigned: it must queue (an
+  // unconditional assignSocket throws ERR_HTTP_SOCKET_ASSIGNED and kills the
+  // connection) and its output must follow the first response.
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    setImmediate(() => res.end("ok:" + req.url));
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("GET /a HTTP/1.1\r\nHost: localhost\r\n\r\nGET /b HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    let buf = "";
+    socket.on("error", reject);
+    socket.on("data", chunk => {
+      buf += chunk;
+      if (buf.includes("ok:/a") && buf.includes("ok:/b")) resolve(buf);
+    });
+    socket.on("close", () => reject(new Error("closed before both responses: " + buf)));
+    const raw = await promise;
+    expect(raw.indexOf("ok:/a")).toBeLessThan(raw.indexOf("ok:/b"));
+    expect(raw.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+    socket.destroy();
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback aborts a queued pipelined response when the connection dies", async () => {
+  const closedEvents = [];
+  const { promise: aborted, resolve: onAborted, reject: onSocketError } = Promise.withResolvers();
+  let closesPending = 2;
+  const onQueuedClose = tag => {
+    closedEvents.push(tag);
+    if (--closesPending === 0) onAborted();
+  };
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    // /a never responds, so its response keeps the socket and /b stays queued.
+    if (req.url !== "/b") return;
+    req.on("close", () => onQueuedClose("reqB"));
+    res.on("close", () => onQueuedClose("resB"));
+    // Kill the connection while /b is queued behind /a.
+    socket.destroy();
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const socket = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    () => socket.write("GET /a HTTP/1.1\r\nHost: localhost\r\n\r\nGET /b HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+  );
+  // The server handler destroys this socket without an error, so any 'error'
+  // here is a real failure (e.g. the TLS handshake), not the expected close.
+  socket.on("error", onSocketError);
+  try {
+    await aborted;
+    expect(closedEvents.sort()).toEqual(["reqB", "resB"]);
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
 it("http2 allowHTTP1 fallback writes no terminating chunk after a keep-alive HEAD with a user-set Transfer-Encoding: chunked", async () => {
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
     if (req.method === "HEAD") {

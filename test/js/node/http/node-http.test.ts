@@ -4139,3 +4139,240 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+it("connectionListener queues pipelined responses like Node", async () => {
+  // Both requests parse in one socket 'data' event, so the second one's
+  // headers complete while the first response is still assigned (its 'finish'
+  // detach is deferred a tick). The second response must be queued, not
+  // assigned - assignSocket throws ERR_HTTP_SOCKET_ASSIGNED - and its output
+  // must be held back until the first response completes.
+  async function exchange(handler: (req: any, res: any) => void, requestBytes: string, done: (buf: string) => boolean) {
+    const server = createServer(handler);
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        let buf = "";
+        clientSide.on("data", d => {
+          buf += d;
+          if (done(buf)) resolve(buf);
+        });
+        clientSide.on("error", reject);
+        clientSide.on("close", () => reject(new Error("closed before expected output: " + buf)));
+        clientSide.write(requestBytes);
+      });
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  }
+
+  // Handler finishes after the current tick: the second request is dispatched
+  // while the first response is still in flight.
+  {
+    const out = await exchange(
+      (req, res) => setImmediate(() => res.end("ok:" + req.url)),
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n",
+      buf => buf.includes("ok:/a") && buf.includes("ok:/b"),
+    );
+    expect(out.indexOf("ok:/a")).toBeLessThan(out.indexOf("ok:/b"));
+    expect(out.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+  }
+
+  // The queued response is written (write + end, chunked) before the first
+  // one finishes: its bytes must still go out second, after the first body.
+  {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>(resolve => (releaseFirst = resolve));
+    const out = await exchange(
+      (req, res) => {
+        if (req.url === "/a") {
+          firstGate.then(() => res.end("first"));
+        } else {
+          res.write("second-part1");
+          res.end("second-part2");
+          releaseFirst();
+        }
+      },
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n",
+      buf => buf.includes("second-part2") && buf.endsWith("0\r\n\r\n"),
+    );
+    expect(out.indexOf("first")).toBeLessThan(out.indexOf("second-part1"));
+    expect(out.indexOf("second-part1")).toBeLessThan(out.indexOf("second-part2"));
+    const second = out.slice(out.indexOf("HTTP/1.1 200", 1));
+    expect(second).toContain("Transfer-Encoding: chunked");
+  }
+
+  // Three pipelined requests answered synchronously: each finish hands the
+  // socket to the next queued response.
+  {
+    const out = await exchange(
+      (req, res) => res.end("r:" + req.url + ";"),
+      "GET /1 HTTP/1.1\r\nHost: x\r\n\r\nGET /2 HTTP/1.1\r\nHost: x\r\n\r\nGET /3 HTTP/1.1\r\nHost: x\r\n\r\n",
+      buf => buf.includes("r:/3;"),
+    );
+    expect(out.indexOf("r:/1;")).toBeGreaterThanOrEqual(0);
+    expect(out.indexOf("r:/1;")).toBeLessThan(out.indexOf("r:/2;"));
+    expect(out.indexOf("r:/2;")).toBeLessThan(out.indexOf("r:/3;"));
+    expect(out.match(/HTTP\/1\.1 200/g)).toHaveLength(3);
+  }
+});
+
+it("connectionListener aborts queued pipelined responses when the connection dies", async () => {
+  // Like Node's socketOnClose (abortIncoming) and the native socket's close
+  // path: the in-flight request and a response still queued behind it (with
+  // its request) are destroyed when the socket closes, so they emit 'close'
+  // instead of hanging forever.
+  const closedEvents: string[] = [];
+  const { promise: aborted, resolve: onAborted } = Promise.withResolvers<void>();
+  let closesPending = 3;
+  const onQueuedClose = (tag: string) => {
+    closedEvents.push(tag);
+    if (--closesPending === 0) onAborted();
+  };
+  const server = createServer((req, res) => {
+    if (req.url === "/a") {
+      // /a never responds, so its response keeps the socket and /b stays queued.
+      req.on("close", () => onQueuedClose("reqA"));
+      return;
+    }
+    req.on("close", () => onQueuedClose("reqB"));
+    res.on("close", () => onQueuedClose("resB"));
+    // Kill the connection while /b is queued behind /a.
+    serverSide.destroy();
+  });
+  const [clientSide, serverSide] = duplexPair();
+  server.emit("connection", serverSide);
+  clientSide.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+  await aborted;
+  expect(closedEvents.sort()).toEqual(["reqA", "reqB", "resB"]);
+  clientSide.destroy();
+});
+
+it("connectionListener ends the connection after a Connection: close response instead of advancing", async () => {
+  // Node's resOnFinish _last branch: a response that advertised Connection:
+  // close must be the connection's final response (RFC 9112 9.6); the queued
+  // pipelined response behind it is aborted by the close path, never sent.
+  const closedEvents: string[] = [];
+  const { promise: done, resolve: onDone } = Promise.withResolvers<void>();
+  let pending = 3;
+  const tick = (tag: string) => {
+    closedEvents.push(tag);
+    if (--pending === 0) onDone();
+  };
+  const server = createServer((req, res) => {
+    if (req.url === "/a") {
+      res.setHeader("Connection", "close");
+      res.end("closing");
+      return;
+    }
+    req.on("close", () => tick("reqB"));
+    res.on("close", () => tick("resB"));
+    res.end("should-never-be-sent");
+  });
+  const [clientSide, serverSide] = duplexPair();
+  server.emit("connection", serverSide);
+  let received = "";
+  clientSide.on("data", d => (received += d));
+  clientSide.on("end", () => {
+    tick("clientEnd");
+    // A well-behaved client answers the FIN, fully closing the connection.
+    clientSide.end();
+  });
+  clientSide.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+  await done;
+  expect(received).toContain("Connection: close");
+  expect(received).toContain("closing");
+  expect(received).not.toContain("should-never-be-sent");
+  expect(closedEvents.sort()).toEqual(["clientEnd", "reqB", "resB"]);
+  clientSide.destroy();
+  serverSide.destroy();
+});
+
+it("connectionListener resets the connection when a queued pipelined response is destroyed", async () => {
+  // Deliberate divergence from Node v26, which assigns the destroyed message
+  // and wedges the connection until requestTimeout: an HTTP/1.1 connection
+  // cannot skip a response slot, so Bun resets it (same as the native path),
+  // aborting the requests queued behind the destroyed slot.
+  const closedEvents: string[] = [];
+  const { promise: cAborted, resolve: onCAborted } = Promise.withResolvers<void>();
+  let cClosesPending = 2;
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>(resolve => (releaseFirst = resolve));
+  const server = createServer((req, res) => {
+    if (req.url === "/a") {
+      firstGate.then(() => res.end("first"));
+    } else if (req.url === "/b") {
+      // Queued behind /a: like Node, a queued response has no socket yet.
+      expect(res.socket).toBe(null);
+      res.destroy();
+      releaseFirst();
+    } else {
+      req.on("close", () => {
+        closedEvents.push("reqC");
+        if (--cClosesPending === 0) onCAborted();
+      });
+      res.on("close", () => {
+        closedEvents.push("resC");
+        if (--cClosesPending === 0) onCAborted();
+      });
+    }
+  });
+  const [clientSide, serverSide] = duplexPair();
+  server.emit("connection", serverSide);
+  let received = "";
+  clientSide.on("data", d => (received += d));
+  clientSide.write(
+    "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\nGET /c HTTP/1.1\r\nHost: x\r\n\r\n",
+  );
+  await cAborted;
+  expect(closedEvents.sort()).toEqual(["reqC", "resC"]);
+  // The in-flight response still reached the client before the reset.
+  expect(received).toContain("first");
+  expect(serverSide.destroyed).toBe(true);
+  clientSide.destroy();
+});
+
+it("connectionListener pauses reads when queued pipelined responses back up", async () => {
+  // Node's parserOnIncoming read gate: once the bytes buffered on queued
+  // responses pass the socket's high water mark, stop reading so a pipelining
+  // client cannot flood the connection, and resume as the pipeline drains.
+  const [clientSide, serverSide] = duplexPair();
+  const big = Buffer.alloc(Math.ceil(serverSide.writableHighWaterMark / 2), "x").toString();
+  const N = 10;
+  let dispatched = 0;
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>(resolve => (releaseFirst = resolve));
+  const server = createServer((req, res) => {
+    dispatched++;
+    if (req.url === "/0") {
+      firstGate.then(() => res.end("first"));
+    } else {
+      res.end(big);
+    }
+  });
+  server.emit("connection", serverSide);
+  const { promise: allServed, resolve: onAllServed, reject: onClientFailure } = Promise.withResolvers<void>();
+  let received = "";
+  clientSide.on("data", d => {
+    received += d;
+    if ((received.match(/HTTP\/1\.1 200 /g) || []).length >= N) onAllServed();
+  });
+  clientSide.on("error", onClientFailure);
+  clientSide.on("close", () => onClientFailure(new Error("closed before all responses: " + received)));
+  // One write per request so the gate (checked per headers-complete) takes
+  // effect between data events.
+  for (let i = 0; i < N; i++) {
+    clientSide.write(`GET /${i} HTTP/1.1\r\nHost: x\r\n\r\n`);
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  // Reads paused with requests still unparsed.
+  expect(serverSide.isPaused()).toBe(true);
+  expect(dispatched).toBeLessThan(N);
+  // Draining the pipeline releases the gate and everything is served.
+  releaseFirst();
+  await allServed;
+  expect(dispatched).toBe(N);
+  clientSide.destroy();
+  serverSide.destroy();
+});

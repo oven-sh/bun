@@ -47,8 +47,6 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       "private": true,
       "devDependencies": {
         "@types/bun": "latest",
-      },
-      "peerDependencies": {
         "typescript": "^6",
       },
     });
@@ -222,12 +220,10 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     {
       "devDependencies": {
         "@types/bun": "latest",
+        "typescript": "^6",
       },
       "module": "index.ts",
       "name": "my edited package.json",
-      "peerDependencies": {
-        "typescript": "^6",
-      },
       "private": true,
       "type": "module",
     }
@@ -254,7 +250,8 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(pkg).toHaveProperty("dependencies.react-dom");
     expect(pkg).toHaveProperty("devDependencies.@types/react");
     expect(pkg).toHaveProperty("devDependencies.@types/react-dom");
-    expect(pkg.peerDependencies).toEqual({ typescript: "^6" });
+    expect(pkg).toHaveProperty("devDependencies.typescript", "^6");
+    expect(pkg.peerDependencies).toBeUndefined();
 
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
@@ -279,7 +276,8 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(pkg).toHaveProperty("devDependencies.@types/react");
     expect(pkg).toHaveProperty("devDependencies.@types/react-dom");
     expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
-    expect(pkg.peerDependencies).toEqual({ typescript: "^6" });
+    expect(pkg).toHaveProperty("devDependencies.typescript", "^6");
+    expect(pkg.peerDependencies).toBeUndefined();
 
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
@@ -304,7 +302,8 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(pkg).toHaveProperty("dependencies.class-variance-authority");
     expect(pkg).toHaveProperty("dependencies.clsx");
     expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
-    expect(pkg.peerDependencies).toEqual({ typescript: "^6" });
+    expect(pkg).toHaveProperty("devDependencies.typescript", "^6");
+    expect(pkg.peerDependencies).toBeUndefined();
 
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);

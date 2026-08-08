@@ -771,15 +771,15 @@ impl InitCommand {
             }
 
             if needs_typescript_dependency {
-                let mut peer_dependencies = object.get(b"peerDependencies").unwrap_or_else(|| {
+                let mut dev_dependencies = object.get(b"devDependencies").unwrap_or_else(|| {
                     bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
                 });
-                peer_dependencies.data.e_object_mut().unwrap().put_string(
+                dev_dependencies.data.e_object_mut().unwrap().put_string(
                     &bump,
                     b"typescript",
                     b"^6",
                 )?;
-                object.put(&bump, b"peerDependencies", peer_dependencies)?;
+                object.put(&bump, b"devDependencies", dev_dependencies)?;
             }
         }
 

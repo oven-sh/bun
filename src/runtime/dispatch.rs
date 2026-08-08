@@ -410,6 +410,11 @@ pub(crate) fn run_task(
         task_tag::FetchTasklet => {
             cast!(FetchTasklet).on_progress_update()?;
         }
+        // Last-ref handoff from the HTTP thread; frees the tasklet, so no
+        // `&mut` at this boundary.
+        task_tag::FetchTaskletDeinit => {
+            FetchTasklet::deinit_queued(cast_ptr!(FetchTasklet));
+        }
         // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
         // is the sole owner here.
         task_tag::S3HttpSimpleTask => {
@@ -698,7 +703,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 112,
+    task_tag::COUNT == 113,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1281,6 +1286,16 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             // SAFETY: `task.ptr` is the live heap `FetchTasklet`; HTTP daemon is
             // already parked so we hold the sole reference.
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
+            true
+        }
+        // `deref_from_thread` handed the tasklet's final ref to this entry;
+        // the loop will never dispatch it, so reclaim now — same
+        // JS-thread-before-`destructOnExit` window the parked
+        // `dealloc_for_shutdown` reclaim uses. Leaving it to `EventLoop::deinit`
+        // would drop the queued box without running it and orphan the
+        // tasklet ⇄ `Box<AsyncHTTP>` cycle.
+        task_tag::FetchTaskletDeinit => {
+            FetchTasklet::deinit_queued(task.ptr.cast::<FetchTasklet>());
             true
         }
         task_tag::SendQueueDeferred => {

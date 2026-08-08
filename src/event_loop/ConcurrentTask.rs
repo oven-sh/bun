@@ -88,6 +88,7 @@ pub mod task_tag {
         FChown,
         Fdatasync,
         FetchTasklet,
+        FetchTaskletDeinit,       // last-ref handoff from the HTTP thread (deref_from_thread)
         FetchTaskletPromiseSettle,
         FileResponseStreamEof,
         Fstat,

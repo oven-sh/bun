@@ -406,22 +406,36 @@ impl FetchTasklet {
             unsafe { FetchTasklet::dealloc_for_shutdown(this) };
             return;
         }
-        // this is really unlikely to happen, but can happen
-        // lets make sure that we always call deinit from main thread
-        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`; the queue
-        // takes ownership of it.
+        // The HTTP thread dropped the last ref while the VM is still running
+        // (it lost the `callback()` unlock handoff to the JS thread's final
+        // `on_progress_update` deref). Hand the reclaim to the JS thread under
+        // its own tag — NOT `ConcurrentTask::from_callback` (a `ManagedTask`):
+        // if the event loop never ticks again (the script just finished),
+        // `release_queued_tasks_for_shutdown` re-queues ManagedTasks unrun and
+        // `EventLoop::deinit` drops the box without its callback, orphaning
+        // the tasklet ⇄ `Box<AsyncHTTP>` ⇄ native `Response` cycle (LSan
+        // reports it at exit). The `FetchTaskletDeinit` shutdown-release arm
+        // runs `deinit_queued` before `destructOnExit` instead.
         Self::enqueue_concurrent(
             self_.javascript_vm,
-            ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
+            ConcurrentTask::create(Task::new(
+                bun_event_loop::task_tag::FetchTaskletDeinit,
+                this.cast(),
+            )),
         );
     }
 
-    // ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
-    // (cycle-broken erased error).
-    fn deinit_callback(this: *mut FetchTasklet) -> ElJsResult<()> {
-        // SAFETY: enqueued with last ref; exclusive access on main thread
+    /// Reclaim a tasklet whose last ref was handed off by [`Self::deref_from_thread`]
+    /// (`task_tag::FetchTaskletDeinit`). Runs on the JS thread: normal dispatch,
+    /// or `release_queued_tasks_for_shutdown` when the loop will never tick
+    /// again (both precede `destructOnExit`, so dropping the JSC handles in
+    /// `deinit` is still safe).
+    // Signature stays `*mut`: this frees the allocation.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn deinit_queued(this: *mut FetchTasklet) {
+        // SAFETY: enqueued by `deref_from_thread` on the 1→0 transition — the
+        // queued task is the sole owner of a live heap allocation from `get()`.
         unsafe { FetchTasklet::deinit(this) };
-        Ok(())
     }
 
     fn clear_sink(&mut self) {

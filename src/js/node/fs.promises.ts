@@ -10,6 +10,7 @@ const {
   validateAbortSignal,
   validateEncoding,
 } = require("internal/validators");
+const { guardCallback } = require("internal/shared");
 
 const constants = $processBindingConstants.fs;
 
@@ -97,23 +98,27 @@ function watch(
     };
   }
 
-  const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
-    if (
-      eventType !== "close" &&
-      eventType !== "error" &&
-      eventType !== "abort" &&
-      filename != null &&
-      ignoreMatcher?.(filename)
-    ) {
-      return;
-    }
-    queue.push({ __proto__: null, eventType, filename });
-    if (nextEventResolve) {
-      const resolve = nextEventResolve;
-      nextEventResolve = null;
-      resolve();
-    }
-  });
+  const watcher = fs.watch(
+    filename,
+    options || {},
+    guardCallback((eventType: string, filename: string | Buffer | undefined) => {
+      if (
+        eventType !== "close" &&
+        eventType !== "error" &&
+        eventType !== "abort" &&
+        filename != null &&
+        ignoreMatcher?.(filename)
+      ) {
+        return;
+      }
+      queue.push({ __proto__: null, eventType, filename });
+      if (nextEventResolve) {
+        const resolve = nextEventResolve;
+        nextEventResolve = null;
+        resolve();
+      }
+    }),
+  );
 
   function onAbort() {
     watcher.close();

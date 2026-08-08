@@ -1647,6 +1647,31 @@ test("fs.watch callback throw is a fatal uncaught exception", async () => {
   });
 }, 15_000);
 
+test("fs.promises.watch throwing ignore matcher is a fatal uncaught exception", async () => {
+  using dir = tempDir("pwatch-throw", {});
+  const fixture = `
+    const fs = require("node:fs");
+    const dir = ${JSON.stringify(String(dir))};
+    (async () => {
+      for await (const e of fs.promises.watch(dir, { ignore: () => { throw new Error("ignore-boom"); } })) {
+      }
+    })();
+    setInterval(() => fs.writeFileSync(dir + "/x", String(Date.now())), 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: expect.stringContaining("ignore-boom"),
+    exitCode: 1,
+  });
+}, 15_000);
+
 test("fs.watch callback throw reaches an uncaughtException handler", async () => {
   using dir = tempDir("watch-caught", {});
   const fixture = `

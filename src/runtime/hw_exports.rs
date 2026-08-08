@@ -23,7 +23,7 @@
 use core::ffi::c_void;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
+use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, JsResultExt, ZigStackFrame};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
 //
@@ -310,19 +310,19 @@ pub fn on_resolve_entry_point_result(
     callframe: &CallFrame,
 ) -> bun_jsc::JsResult<JSValue> {
     let result = callframe.argument(0);
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
+    // SAFETY: `vals[..len]` is the single stack `result`.
+    let printed = unsafe {
+        bun_jsc::ConsoleObject::try_message_with_type_and_level(
             bun_jsc::ConsoleObject::MessageType::Log,
             bun_jsc::ConsoleObject::MessageLevel::Log,
             global,
             &raw const result,
             1,
-        );
-    }
+        )
+    };
+    // node's `-p` reports a formatter throw as an uncaughtException;
+    // `exit_handler.exit_code` reflects it in the exit below.
+    printed.report_unhandled(global);
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
@@ -333,19 +333,18 @@ pub fn on_reject_entry_point_result(
     callframe: &CallFrame,
 ) -> bun_jsc::JsResult<JSValue> {
     let result = callframe.argument(0);
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
+    // SAFETY: `vals[..len]` is the single stack `result`.
+    let printed = unsafe {
+        bun_jsc::ConsoleObject::try_message_with_type_and_level(
             bun_jsc::ConsoleObject::MessageType::Log,
             bun_jsc::ConsoleObject::MessageLevel::Log,
             global,
             &raw const result,
             1,
-        );
-    }
+        )
+    };
+    // Same as on_resolve_entry_point_result: report a formatter throw.
+    printed.report_unhandled(global);
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }

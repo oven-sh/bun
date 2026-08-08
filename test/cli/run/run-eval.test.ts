@@ -175,6 +175,56 @@ describe("--print for cjs/esm", () => {
   });
 });
 
+describe.concurrent("--print reports a throw raised while formatting the result", () => {
+  const throwingInspect = '({ [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("inspect failed"); } })';
+
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--print", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("sync result", async () => {
+    const { stdout, stderr, exitCode } = await run(throwingInspect);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("inspect failed");
+    expect(exitCode).toBe(1);
+  });
+
+  test("awaited result", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `await new Promise(resolve => setTimeout(() => resolve(${throwingInspect}), 1))`,
+    );
+    expect(stdout).toBe("");
+    expect(stderr).toContain("inspect failed");
+    expect(exitCode).toBe(1);
+  });
+
+  test("result settled after the event loop drains", async () => {
+    // An unref'd timer made overdue by a sync sleep: the event loop drains
+    // with the entry promise still pending, so this prints via the
+    // entry-point promise reactions instead of the settled-result path.
+    const { stdout, stderr, exitCode } = await run(
+      `await new Promise(resolve => { setTimeout(() => resolve(${throwingInspect}), 1).unref(); Bun.sleepSync(50); })`,
+    );
+    expect(stdout).toBe("");
+    expect(stderr).toContain("inspect failed");
+    expect(exitCode).toBe(1);
+  });
+
+  test("an uncaughtException handler observes the throw", async () => {
+    const { stderr, exitCode } = await run(
+      `process.on("uncaughtException", err => console.error("caught:", err.message)); ${throwingInspect}`,
+    );
+    expect(stderr).toContain("caught: inspect failed");
+    expect(exitCode).toBe(0);
+  });
+});
+
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
   test("it works", async () => {
     const { stdout } = run('console.log("hello world")');

@@ -37,6 +37,7 @@
 #include <wtf/MemoryFootprint.h>
 #include <wtf/text/WTFString.h>
 
+#include "BunCPUProfiler.h"
 #include "BunProcess.h"
 #include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/SourceProviderCache.h>
@@ -701,13 +702,17 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
     JSC::JSFunction* function = uncheckedDowncast<JSC::JSFunction>(callbackValue);
 
-    if (sampleValue.isNumber()) {
-        unsigned sampleInterval = sampleValue.toUInt32(globalObject);
-        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
-    } else {
-        // Reset to default interval (1000 microseconds) to ensure each profile()
-        // call is independent of previous calls
-        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(1000));
+    // --cpu-prof / node:inspector share this VM's single SamplingProfiler via
+    // Bun::startCPUProfiler; when one of those owns it, don't stomp its state.
+    if (!Bun::isCPUProfilerRunning()) {
+        if (sampleValue.isNumber()) {
+            unsigned sampleInterval = sampleValue.toUInt32(globalObject);
+            samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
+        } else {
+            // Reset to default interval (1000 microseconds) to ensure each profile()
+            // call is independent of previous calls
+            samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(1000));
+        }
     }
 
     const auto report = [](JSC::VM& vm,
@@ -721,15 +726,24 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         StringPrintStream byteCodes;
         samplingProfiler.reportTopBytecodes(byteCodes);
 
-        JSValue stackTraces = JSONParse(globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
+        JSValue stackTraces;
+        // Re-read (not captured): a Profiler.start inside the callback can
+        // flip this after entry. stackTracesAsJSON() ends with clearData(), so
+        // skip it (and pause/clearData below) when another consumer owns the
+        // sampler; the two report* calls above are read-only.
+        if (Bun::isCPUProfilerRunning()) {
+            stackTraces = jsNull();
+        } else {
+            stackTraces = JSONParse(globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
 
-        // Use pause() instead of shutdown() to allow the profiler to be restarted
-        // shutdown() sets m_isShutDown=true which is never reset, making the profiler unusable
-        {
-            auto& lock = samplingProfiler.getLock();
-            WTF::Locker locker { lock };
-            samplingProfiler.pause();
-            samplingProfiler.clearData();
+            // Use pause() instead of shutdown() to allow the profiler to be restarted
+            // shutdown() sets m_isShutDown=true which is never reset, making the profiler unusable
+            {
+                auto& lock = samplingProfiler.getLock();
+                WTF::Locker locker { lock };
+                samplingProfiler.pause();
+                samplingProfiler.clearData();
+            }
         }
         RETURN_IF_EXCEPTION(throwScope, {});
 
@@ -741,11 +755,13 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         return result;
     };
     const auto reportFailure = [](JSC::VM& vm) -> JSC::JSValue {
-        if (auto* samplingProfiler = vm.samplingProfiler()) {
-            auto& lock = samplingProfiler->getLock();
-            WTF::Locker locker { lock };
-            samplingProfiler->pause();
-            samplingProfiler->clearData();
+        if (!Bun::isCPUProfilerRunning()) {
+            if (auto* samplingProfiler = vm.samplingProfiler()) {
+                auto& lock = samplingProfiler->getLock();
+                WTF::Locker locker { lock };
+                samplingProfiler->pause();
+                samplingProfiler->clearData();
+            }
         }
 
         return {};

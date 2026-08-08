@@ -444,4 +444,132 @@ describe.concurrent("--cpu-prof", () => {
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
   });
+
+  // bun:jsc's profile() drives the same per-VM JSC::SamplingProfiler that
+  // --cpu-prof uses. It used to unconditionally pause()+clearData() (and
+  // stackTracesAsJSON() itself clears), which wiped --cpu-prof's accumulated
+  // samples and left the sampler paused, so the written .cpuprofile was empty.
+  test("bun:jsc profile() does not wipe --cpu-prof's samples", async () => {
+    using dir = tempDir("cpu-prof-bunjsc-profile", {
+      "test.mjs": `
+import { profile } from "bun:jsc";
+function phase1() { const t = performance.now(); while (performance.now() - t < 100); }
+function phase2() { const t = performance.now(); while (performance.now() - t < 100); }
+phase1();
+const r = profile(() => { const t = performance.now(); while (performance.now() - t < 10); }, 50);
+phase2();
+console.log(JSON.stringify({
+  stackTraces: r.stackTraces,
+  rate: r.functions.match(/Sampling rate: [0-9.]+/)?.[0] ?? "",
+}));
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-interval", "5000", "--cpu-prof-dir", String(dir), "test.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+
+    const file = readdirSync(String(dir)).find(f => f.endsWith(".cpuprofile"));
+    expect(file).toBeDefined();
+    const prof = JSON.parse(readFileSync(join(String(dir), file!), "utf8"));
+    const names: string[] = prof.nodes.map((n: any) => n.callFrame.functionName);
+    // --cpu-prof spans the whole run, so both phases must be present. Before
+    // the fix, profile() paused+cleared the shared SamplingProfiler and the
+    // file had a single (root) node with zero samples.
+    expect(prof.samples.length).toBeGreaterThan(0);
+    expect(names).toContain("phase1");
+    expect(names).toContain("phase2");
+
+    // profile()'s own stackTraces is null because
+    // JSC::SamplingProfiler::stackTracesAsJSON() is destructive (it ends with
+    // clearData()) and is skipped when --cpu-prof owns the sampler. The
+    // sampling rate reported by reportTopFunctions (which prints
+    // m_timingInterval directly) must still be --cpu-prof-interval's 5000us,
+    // not profile()'s sampleInterval argument (50) or its 1000us default:
+    // profile() must not setTimingInterval() when it doesn't own the sampler.
+    expect(JSON.parse(stdout.trim())).toEqual({ stackTraces: null, rate: "Sampling rate: 5000.000000" });
+    expect(exitCode).toBe(0);
+  });
+
+  // Same ownership hazard on the failure path: when the callback throws,
+  // profile()'s catch path paused+cleared the shared profiler too.
+  test("bun:jsc profile() with a throwing callback does not wipe --cpu-prof's samples", async () => {
+    using dir = tempDir("cpu-prof-bunjsc-profile-throw", {
+      "test.mjs": `
+import { profile } from "bun:jsc";
+function phase1() { const t = performance.now(); while (performance.now() - t < 100); }
+function phase2() { const t = performance.now(); while (performance.now() - t < 100); }
+phase1();
+try { profile(() => { throw new Error("boom"); }); } catch {}
+phase2();
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", String(dir), "test.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+
+    const file = readdirSync(String(dir)).find(f => f.endsWith(".cpuprofile"));
+    expect(file).toBeDefined();
+    const prof = JSON.parse(readFileSync(join(String(dir), file!), "utf8"));
+    const names: string[] = prof.nodes.map((n: any) => n.callFrame.functionName);
+    expect(prof.samples.length).toBeGreaterThan(0);
+    expect(names).toContain("phase1");
+    expect(names).toContain("phase2");
+    expect(exitCode).toBe(0);
+  });
+
+  // The ownership check must be re-evaluated at report time, not captured at
+  // profile() entry: a node:inspector Profiler.start issued inside the callback
+  // flips Bun::isCPUProfilerRunning() after entry. No --cpu-prof here; the
+  // inspector session is the other consumer.
+  test("bun:jsc profile() does not wipe a node:inspector profile started inside its callback", async () => {
+    using dir = tempDir("cpu-prof-bunjsc-profile-inspector", {
+      "test.mjs": `
+import { profile } from "bun:jsc";
+import { Session } from "node:inspector/promises";
+const s = new Session();
+s.connect();
+await s.post("Profiler.enable");
+function duringProfile() { const t = performance.now(); while (performance.now() - t < 100); }
+profile(() => {
+  s.post("Profiler.start");
+  duringProfile();
+});
+const { profile: p } = await s.post("Profiler.stop");
+s.disconnect();
+console.log(JSON.stringify({
+  samples: p.samples.length,
+  names: p.nodes.map(n => n.callFrame.functionName),
+}));
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    // Before the fix, profile()'s report path ran
+    // stackTracesAsJSON()+pause()+clearData() on return because no consumer was
+    // active at entry, so the inspector session's Profiler.stop got an empty
+    // profile.
+    expect(out.samples).toBeGreaterThan(0);
+    expect(out.names).toContain("duringProfile");
+    expect(exitCode).toBe(0);
+  });
 });

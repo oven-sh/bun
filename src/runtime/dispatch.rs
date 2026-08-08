@@ -414,6 +414,10 @@ pub(crate) fn run_task(
         task_tag::FetchTaskletDeinit => {
             FetchTasklet::deinit_queued(cast_ptr!(FetchTasklet));
         }
+        // May drop the queued entry's ref, so no `&mut` at this boundary.
+        task_tag::FetchTaskletResumeRequestStream => {
+            FetchTasklet::resume_request_data_stream(cast_ptr!(FetchTasklet));
+        }
         // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
         // is the sole owner here.
         task_tag::S3HttpSimpleTask => {
@@ -702,7 +706,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 113,
+    task_tag::COUNT == 114,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1290,6 +1294,14 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         // A handoff the loop never dispatched; deinit before `destructOnExit`.
         task_tag::FetchTaskletDeinit => {
             FetchTasklet::deinit_queued(task.ptr.cast::<FetchTasklet>());
+            true
+        }
+        // Drop the queued drain hop's ref without running `sink.on_drain`
+        // (the loop is past its last tick; there is nothing left to resume).
+        task_tag::FetchTaskletResumeRequestStream => {
+            // SAFETY: `task.ptr` is the live heap `FetchTasklet`; the queued
+            // entry owns the `on_write_request_data_drain` ref released here.
+            FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
             true
         }
         task_tag::SendQueueDeferred => {

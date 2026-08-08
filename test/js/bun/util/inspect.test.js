@@ -819,11 +819,11 @@ it.concurrent("console.log(Bun) survives a lazy property initializer throwing", 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Enumeration must make it past the throwing initializers to the end of the table.
   expect(stdout).toContain("zstdDecompress");
   expect(stdout).toContain("after-inspect");
-  expect(exitCode).toBe(0);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
 it.concurrent("console.log survives a throwing getPrototypeOf trap in the prototype chain", async () => {
@@ -840,10 +840,10 @@ it.concurrent("console.log survives a throwing getPrototypeOf trap in the protot
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("y: 2");
   expect(stdout).toContain("after-inspect");
-  expect(exitCode).toBe(0);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
 describe.skipIf(!isASAN)("object mutated while being formatted", () => {

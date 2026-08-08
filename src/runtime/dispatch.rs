@@ -1287,8 +1287,7 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
             true
         }
-        // A last-ref handoff the loop never dispatched; deinit here (still
-        // before `destructOnExit`) or the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks.
+        // A handoff the loop never dispatched; deinit before `destructOnExit`.
         task_tag::FetchTaskletDeinit => {
             FetchTasklet::deinit_queued(task.ptr.cast::<FetchTasklet>());
             true

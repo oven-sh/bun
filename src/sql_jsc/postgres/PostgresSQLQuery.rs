@@ -96,6 +96,8 @@ pub struct Flags {
     /// `finish_request` consumes that contribution. Makes the decrement
     /// idempotent across the three `finish_request` call sites.
     pub(crate) counted: bool,
+    /// Set after one transparent re-prepare on 26000/0A000; caps retries at 1.
+    pub(crate) reprepared: bool,
     pub(crate) result_mode: PostgresSQLQueryResultMode,
 }
 
@@ -108,6 +110,7 @@ impl Default for Flags {
             simple: false,
             pipelined: false,
             counted: false,
+            reprepared: false,
             result_mode: PostgresSQLQueryResultMode::Objects,
         }
     }

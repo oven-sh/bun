@@ -124,6 +124,10 @@ pub struct PostgresSQLConnection {
     // so `vm_mut()`'s `&mut *as_ptr()` is sound.
     pub(crate) vm: BackRef<VirtualMachine>,
     pub(crate) statements: JsCell<PreparedStatementsMap>,
+    /// Transaction status byte from the last ReadyForQuery; gates the
+    /// re-prepare retry (a retry inside a transaction block masks 0A000/26000
+    /// with 25P02).
+    pub(crate) tx_status: Cell<protocol::TransactionStatusIndicator>,
     pub(crate) prepared_statement_id: Cell<u64>,
     pub(crate) pending_activity_count: AtomicU32,
     // Self-wrapper back-ref (the JS object that owns this payload). Stored as a
@@ -1176,6 +1180,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
             ),
             statements: JsCell::new(PreparedStatementsMap::default()),
+            tx_status: Cell::new(protocol::TransactionStatusIndicator::I),
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
@@ -2489,7 +2494,8 @@ impl PostgresSQLConnection {
                 // parameter_status dropped at scope end
             }
             MessageType::ReadyForQuery => {
-                let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+                let ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+                self.tx_status.set(ready_for_query.status);
 
                 if self.status.get() != Status::Connected
                     && !matches!(self.authentication_state.get(), AuthenticationState::Ok)
@@ -2965,6 +2971,7 @@ impl PostgresSQLConnection {
                     debug!("ErrorResponse: {}", err);
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
+                let invalidates = err.invalidates_prepared_statement();
                 // Convert to JS while we still own `err` — materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
                 let js_err =
@@ -2984,6 +2991,59 @@ impl PostgresSQLConnection {
                             // request still holds its own ref so this cannot drop to 0.
                             unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
                         }
+                    } else if stmt.status == StatementStatus::Prepared
+                        && invalidates
+                        && !stmt.signature.prepared_statement_name.is_empty()
+                    {
+                        // Server-side named statement gone or stale: evict so
+                        // later queries with this signature re-prepare.
+                        if let Some(removed) = self
+                            .statements
+                            .with_mut(|m| m.remove(&stmt.signature.name[..]))
+                        {
+                            // SAFETY: releases exactly the map's ref. `removed`
+                            // may differ from `stmt` if user JS inserted a new
+                            // entry between pipelined siblings' ErrorResponses.
+                            unsafe { PostgresSQLStatement::deref(removed) };
+                        }
+                        // Retry only when no other Bind/Execute responses are
+                        // already on the wire and the session is idle (inside a
+                        // transaction the retry Parse would be rejected 25P02).
+                        if !request.flags.get().reprepared
+                            && self.tx_status.get() == protocol::TransactionStatusIndicator::I
+                            && self.pipelined_requests.get() <= 1
+                            && self.nonpipelinable_requests.get() == 0
+                        {
+                            debug!("re-preparing invalidated statement (SQLSTATE {})", err);
+                            self.finish_request(&request);
+                            let id = self.prepared_statement_id.get();
+                            self.prepared_statement_id.set(id + 1);
+                            stmt.reset_for_reprepare(id);
+                            let slot = self.statements.with_mut(|m| {
+                                m.get_or_put(&stmt.signature.name).map(|e| {
+                                    debug_assert!(!e.found_existing);
+                                    core::ptr::from_mut::<*mut PostgresSQLStatement>(e.value_ptr)
+                                })
+                            });
+                            if let Ok(slot) = slot {
+                                stmt.ref_();
+                                // SAFETY: map not mutated since `get_or_put`;
+                                // store the root pointer (same provenance as
+                                // `do_run`), not a `&mut`-derived one.
+                                unsafe { *slot = request.statement.get().expect("statement set") };
+                            }
+                            request.status.set(QueryStatus::Pending);
+                            request.update_flags(|f| {
+                                f.reprepared = true;
+                                f.pipelined = false;
+                                f.binary = false;
+                            });
+                            self.note_request_pending();
+                            self.update_ref();
+                            return Ok(());
+                        }
+                        // Leave the statement Prepared so the last pipelined
+                        // sibling's ErrorResponse can still re-prepare it.
                     }
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.

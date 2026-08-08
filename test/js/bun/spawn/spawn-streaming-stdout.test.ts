@@ -52,14 +52,16 @@ test("spawn can read from stdout multiple chunks", async () => {
       }
     }
   }
-  // Same race for the last batch's closes; wait for the fd count to return to
-  // the baseline before asserting.
+  // Same race for the last batch's closes; wait for the fd count to drop back
+  // to the baseline before asserting. The settled baseline can still come out
+  // slightly high (it has no pre-spawn ground truth; #6724 moved it after the
+  // first batch on purpose), so ending below it is fine; only above is a leak.
   let newMaxFD = getMaxFD();
-  for (let i = 0; i < 100 && newMaxFD !== maxFD; i++) {
+  for (let i = 0; i < 100 && newMaxFD > maxFD; i++) {
     await Bun.sleep(10);
     newMaxFD = getMaxFD();
   }
-  expect(newMaxFD).toBe(maxFD);
+  expect(newMaxFD).toBeLessThanOrEqual(maxFD);
   clearInterval(interval);
   await expectMaxObjectTypeCount(expect, "ReadableStream", 10);
   await expectMaxObjectTypeCount(expect, "ReadableStreamDefaultReader", 10);

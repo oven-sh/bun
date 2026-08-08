@@ -971,17 +971,17 @@ impl TranspilerJob {
             let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
             // UTF-16 transpiler-cache output cannot byte-match the printed
             // form, so it never reaches the compile cache.
-            let (bytecode_cache, bytecode_cache_size) =
-                if matches!(&entry.output_code, OutputCode::String(s) if s.is_utf16()) {
-                    (ptr::null_mut(), 0)
-                } else {
-                    crate::node_compile_cache::fetch_for_transpiled_module(
-                        &path,
-                        loader,
-                        is_commonjs_module,
-                        entry.output_code.byte_slice(),
-                    )
-                };
+            let (bytecode_cache, bytecode_cache_size) = if matches!(&entry.output_code, OutputCode::String(s) if s.is_utf16())
+            {
+                (ptr::null_mut(), 0)
+            } else {
+                crate::node_compile_cache::fetch_for_transpiled_module(
+                    &path,
+                    loader,
+                    is_commonjs_module,
+                    entry.output_code.byte_slice(),
+                )
+            };
 
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: match &mut entry.output_code {

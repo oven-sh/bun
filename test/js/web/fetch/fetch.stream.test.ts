@@ -1449,17 +1449,20 @@ test.concurrent("aborting streaming fetches with parked body consumers settles t
 // signals), so the fixture installs a bun:internal-for-testing producer whose
 // drain signal re-enters on_cancel, consuming the parked body.text() buffer
 // action from inside on_data(Err) exactly where the wild crash did.
-test.concurrent("buffer action consumed re-entrantly during on_data(Err) settles text() instead of crashing", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "bytestream-cancel-on-drain-fixture.ts")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+test.concurrent(
+  "buffer action consumed re-entrantly during on_data(Err) settles text() instead of crashing",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "bytestream-cancel-on-drain-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toBe("rejected:TypeError\n");
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(stdout).toBe("rejected:TypeError\n");
+    expect(exitCode).toBe(0);
+  },
+);

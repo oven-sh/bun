@@ -566,7 +566,10 @@ impl ExitHandler {
     /// `bun:main` wrapper when the entry is transpiled through it, else the
     /// entry path itself (see `reload_entry_point`). Borrowed.
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__VM__entryRootKey(vm: &VirtualMachine, out: &mut bun_core::String) {
+    pub(crate) extern "C" fn Bun__VM__entryRootKey(
+        vm: &VirtualMachine,
+        out: &mut bun_core::String,
+    ) {
         *out = if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
             bun_core::String::static_(MAIN_FILE_NAME)
         } else {

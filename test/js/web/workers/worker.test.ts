@@ -468,7 +468,10 @@ describe("web worker", () => {
         "side.js": `globalThis.sideRan = true;`,
         "preload.js": `import("./side.js");`,
         // big enough that the entry graph is still transpiling when side.js evaluates
-        "big.js": Array.from({ length: 4000 }, (_, i) => `export function f${i}(x) { return x * ${i} + ${i % 7}; }`).join("\n"),
+        "big.js": Array.from(
+          { length: 4000 },
+          (_, i) => `export function f${i}(x) { return x * ${i} + ${i % 7}; }`,
+        ).join("\n"),
         "worker.js": `import "./big.js";
           const got = [];
           self.onmessage = e => { got.push(e.data); if (e.data === "last") postMessage(got); };`,

@@ -2350,9 +2350,11 @@ void GlobalObject::finishCreation(VM& vm)
                 if (returnedException) [[unlikely]] {
                     throwException(init.owner, scope, returnedException.get());
                 }
-                if (!scope.exception() && result) [[likely]] {
-                    init.set(uncheckedDowncast<JSFunction>(result));
-                    return;
+                if (!scope.exception()) [[likely]] {
+                    if (auto* stylizeFunction = dynamicDowncast<JSFunction>(result)) [[likely]] {
+                        init.set(stylizeFunction);
+                        return;
+                    }
                 }
             }
             // LazyProperty initializers must always set a value; leave the exception pending for the caller.

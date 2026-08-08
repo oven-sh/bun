@@ -4278,6 +4278,28 @@ describe("expect()", () => {
         expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" }));
     });
 
+    // Jest 30 rejects an array received value before the "not" flag is applied, so an
+    // array satisfies neither objectContaining nor not.objectContaining. Vitest has not
+    // adopted this yet. https://github.com/jestjs/jest/pull/15463
+    test_skipIf(isVitest)("ObjectContaining never matches an array received value", () => {
+      expect([1, 2]).not.toEqual(expect.objectContaining({ 0: 1 }));
+      expect([1, 2]).not.toEqual(expect.not.objectContaining({ 0: 1 }));
+      expect([1, 2]).not.toEqual(expect.not.objectContaining({ foo: "bar" }));
+      expect(expect.objectContaining({ 0: 1 })).not.toEqual([1, 2]);
+      expect(expect.objectContaining({ length: 2 })).not.toEqual([1, 2]);
+      expect(expect.objectContaining({})).not.toEqual([1, 2]);
+      expect(expect.not.objectContaining({ 0: 1 })).not.toEqual([1, 2]);
+      expect(expect.not.objectContaining({ foo: "bar" })).not.toEqual([1, 2]);
+      expect({ data: [1, 2] }).not.toEqual({ data: expect.objectContaining({ 0: 1 }) });
+      class ArraySubclass extends Array {}
+      expect(expect.objectContaining({ 0: 1 })).not.toEqual(ArraySubclass.from([1, 2]));
+      expect(expect.objectContaining({ 0: 1 })).not.toEqual(new Proxy([1, 2], {}));
+
+      // array-like objects that are not arrays still qualify as received values
+      expect(expect.objectContaining({ 0: 1, length: 2 })).toEqual({ 0: 1, 1: 2, length: 2 });
+      expect(expect.objectContaining({ 0: 1 })).toEqual(new Uint8Array([1, 2]));
+    });
+
     test("ObjectContaining matches defined properties", () => {
       const definedPropertyObject = {};
       Object.defineProperty(definedPropertyObject, "foo", { get: () => "bar" });

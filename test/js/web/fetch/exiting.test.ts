@@ -50,7 +50,23 @@ test.skipIf(!isASAN || isWindows)(
             "/": home,
             "/about": about,
           },
+          fetch: async req => new Response(String((await req.bytes()).length)),
         });
+
+        // A streaming upload first, so the request-body drain hop runs under
+        // this test's leak-checked exit regime. The two GETs stay last: the
+        // leak race is between the final response and process exit.
+        const chunk = new Uint8Array(65536);
+        const echoRes = await fetch(server.url + "echo", {
+          method: "POST",
+          body: new ReadableStream({
+            pull(controller) {
+              controller.enqueue(chunk);
+              if ((this.sent = (this.sent ?? 0) + 1) >= 8) controller.close();
+            },
+          }),
+        });
+        console.log("Echo bytes:", await echoRes.text());
 
         const homeRes = await fetch(server.url);
         console.log("Home status:", homeRes.status);
@@ -89,26 +105,36 @@ test.skipIf(!isASAN || isWindows)(
       ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "abort_on_error=1"].filter(Boolean).join(":"),
       LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
     };
-    const expectedStdout = "Home status: 200\nHome has content: true\nAbout status: 200\nAbout has content: true\n";
+    const expectedStdout =
+      "Echo bytes: 524288\nHome status: 200\nHome has content: true\nAbout status: 200\nAbout has content: true\n";
 
-    for (let round = 0; round < 24; round++) {
-      const procs = Array.from({ length: 8 }, () =>
-        Bun.spawn({
-          cmd: [join(String(dir), "server")],
-          env,
-          stdout: "pipe",
-          stderr: "pipe",
-        }),
-      );
-      const results = await Promise.all(
-        procs.map(async proc => {
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          return { stdout, stderr, exitCode };
-        }),
-      );
-      for (const result of results) {
-        expect(result).toEqual({ stdout: expectedStdout, stderr: "", exitCode: 0 });
+    const procs: Bun.Subprocess<"ignore", "pipe", "pipe">[] = [];
+    try {
+      for (let round = 0; round < 24; round++) {
+        procs.length = 0;
+        for (let i = 0; i < 8; i++) {
+          procs.push(
+            Bun.spawn({
+              cmd: [join(String(dir), "server")],
+              env,
+              stdout: "pipe",
+              stderr: "pipe",
+            }),
+          );
+        }
+        const results = await Promise.all(
+          procs.map(async proc => {
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            return { stdout, stderr, exitCode };
+          }),
+        );
+        for (const result of results) {
+          expect(result).toEqual({ stdout: expectedStdout, stderr: "", exitCode: 0 });
+        }
       }
+    } finally {
+      // On a mid-batch spawn failure or assertion, don't orphan the rest.
+      for (const proc of procs) proc.kill();
     }
   },
   // 192 compiled-binary runs; LSan symbolizes through llvm-symbolizer on

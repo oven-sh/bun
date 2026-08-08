@@ -818,7 +818,7 @@ impl LoopHandle {
     }
     /// An erased poster for this loop, for code that cannot name `bun_jsc`.
     pub fn to_js_poster(&self) -> bun_event_loop::JsPoster {
-        self.vm.to_js_poster(self.kind.clone())
+        self.vm.to_js_poster(self.kind)
     }
 }
 

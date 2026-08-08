@@ -1122,8 +1122,8 @@ pub trait BaseWindowsPipeWriter: Sized {
     fn close_without_reporting(&mut self) {
         if self.source().is_some() {
             self.set_closed_without_reporting(true);
+            // Last: `close()` may drop the parent's final ref and free `self`.
             self.close();
-            self.set_closed_without_reporting(false);
         }
     }
 

@@ -947,6 +947,23 @@ test("MessagePort.hasRef() reports actual loop-ref state", () => {
   port1.close();
 });
 
+// node's setupPortReferencing tracks 'message' listeners only: a 'messageerror'
+// handler alone neither starts the port nor keeps the loop alive.
+test("onmessageerror alone does not ref the port", () => {
+  const { port1 } = new MessageChannel();
+  port1.onmessageerror = () => {};
+  const errorOnly = port1.hasRef();
+  port1.onmessage = () => {};
+  const withMessage = port1.hasRef();
+  port1.onmessage = null;
+  expect({ errorOnly, withMessage, afterClearingMessage: port1.hasRef() }).toEqual({
+    errorOnly: false,
+    withMessage: true,
+    afterClearingMessage: false,
+  });
+  port1.close();
+});
+
 // Collecting the unreferenced peer must not look like a peer close: node never
 // closes a channel because a port was garbage-collected, so ref() still works.
 test("hasRef() survives collection of the unreferenced peer", () => {

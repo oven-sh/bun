@@ -237,8 +237,8 @@ static inline bool setJSMessagePort_onmessageerrorSetter(JSGlobalObject& lexical
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
-
+    // node: only a 'message' handler starts the port and keeps the loop alive (setupPortReferencing);
+    // a 'messageerror' handler alone does neither.
     return true;
 }
 

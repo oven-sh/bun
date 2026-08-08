@@ -40,13 +40,14 @@ public:
     /// The rules for this function's input is a bit weird. `specifier` is an import path specifier aka a file path.
     ///
     /// - Should be an absolute path or name of a plugin module
-    /// - A '?' is handled not as a literal '?' in a file, but rather as the query string
+    /// - On POSIX, a '?' is treated as the query separator only when the prefix before it
+    ///   names a file on disk; otherwise the '?' is part of the literal filesystem path and
+    ///   is percent-encoded into the URL path. On Windows '?' is always the query separator
+    ///   since it cannot appear in NTFS filenames.
     /// - The string is not URL encoded, despite having a query string.
     ///
-    /// caveat: It is impossible to have a module with a `?` in it's file name.
-    ///
-    /// Fixing this means adjusting a lot of how the module resolver works to operate and handle URL
-    /// escaping, see https://github.com/oven-sh/bun/issues/8640 for more details.
+    /// Fixing this properly means adjusting a lot of how the module resolver works to operate and
+    /// handle URL escaping, see https://github.com/oven-sh/bun/issues/8640 for more details.
     ///
     /// The above rules get a best estimate bandage to solve the problems
     /// stated in https://github.com/oven-sh/bun/pull/9399

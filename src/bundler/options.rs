@@ -449,8 +449,13 @@ pub(crate) fn normalize_specifier<'a>(
 
     if let Some(i) = strings::index_of_char(slice, b'?') {
         let i = i as usize;
-        query = &slice[i..];
-        slice = &slice[..i];
+        let stripped = &slice[..i];
+        // `?` starts a query only when the stripped prefix is itself a file;
+        // `?` is not a valid NTFS filename character, so always split on Windows.
+        if cfg!(windows) || !bun_paths::is_absolute(stripped) || bun_sys::exists_as_file(stripped) {
+            query = &slice[i..];
+            slice = stripped;
+        }
     }
 
     (slice, specifier, query)

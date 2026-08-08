@@ -9162,6 +9162,28 @@ pub fn exists(path: &[u8]) -> bool {
     let z = ZStr::from_buf(&buf.0[..], path.len());
     exists_z(z)
 }
+/// [`exists`] restricted to non-directories. `false` for directories,
+/// ENOENT, and any other stat error.
+pub fn exists_as_file(path: &[u8]) -> bool {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if path.len() >= buf.0.len() {
+        return false;
+    }
+    buf.0[..path.len()].copy_from_slice(path);
+    buf.0[path.len()] = 0;
+    // SAFETY: NUL-terminated above.
+    let z = ZStr::from_buf(&buf.0[..], path.len());
+    matches!(exists_at_type(Fd::cwd(), z), Ok(ExistsAtType::File))
+}
+/// Exported for `ImportMetaObject.cpp` — see [`exists_as_file`].
+///
+/// # Safety
+/// `ptr[0..len]` must be a valid UTF-8 path slice for the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__existsAsFile(ptr: *const u8, len: usize) -> bool {
+    // SAFETY: per fn contract.
+    exists_as_file(unsafe { core::slice::from_raw_parts(ptr, len) })
+}
 /// `moveFileZ`. Routes through
 /// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
 /// delete-tree + rename); on EISDIR removes the dest dir and

@@ -406,16 +406,9 @@ impl FetchTasklet {
             unsafe { FetchTasklet::dealloc_for_shutdown(this) };
             return;
         }
-        // The HTTP thread dropped the last ref while the VM is still running
-        // (it lost the `callback()` unlock handoff to the JS thread's final
-        // `on_progress_update` deref). Hand the reclaim to the JS thread under
-        // its own tag — NOT `ConcurrentTask::from_callback` (a `ManagedTask`):
-        // if the event loop never ticks again (the script just finished),
-        // `release_queued_tasks_for_shutdown` re-queues ManagedTasks unrun and
-        // `EventLoop::deinit` drops the box without its callback, orphaning
-        // the tasklet ⇄ `Box<AsyncHTTP>` ⇄ native `Response` cycle (LSan
-        // reports it at exit). The `FetchTaskletDeinit` shutdown-release arm
-        // runs `deinit_queued` before `destructOnExit` instead.
+        // Dedicated tag, not `from_callback`: a queued `ManagedTask` the loop
+        // never dispatches is freed unrun at shutdown, leaking the tasklet ⇄
+        // `Box<AsyncHTTP>` cycle. The `FetchTaskletDeinit` shutdown arm reclaims it.
         Self::enqueue_concurrent(
             self_.javascript_vm,
             ConcurrentTask::create(Task::new(
@@ -425,11 +418,9 @@ impl FetchTasklet {
         );
     }
 
-    /// Reclaim a tasklet whose last ref was handed off by [`Self::deref_from_thread`]
-    /// (`task_tag::FetchTaskletDeinit`). Runs on the JS thread: normal dispatch,
-    /// or `release_queued_tasks_for_shutdown` when the loop will never tick
-    /// again (both precede `destructOnExit`, so dropping the JSC handles in
-    /// `deinit` is still safe).
+    /// Reclaim a tasklet queued by [`Self::deref_from_thread`]'s last-ref
+    /// handoff. JS thread only; both callers (dispatch, shutdown release)
+    /// precede `destructOnExit`, so `deinit` may still drop JSC handles.
     // Signature stays `*mut`: this frees the allocation.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn deinit_queued(this: *mut FetchTasklet) {

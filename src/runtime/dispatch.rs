@@ -410,8 +410,7 @@ pub(crate) fn run_task(
         task_tag::FetchTasklet => {
             cast!(FetchTasklet).on_progress_update()?;
         }
-        // Last-ref handoff from the HTTP thread; frees the tasklet, so no
-        // `&mut` at this boundary.
+        // Frees the tasklet, so no `&mut` at this boundary.
         task_tag::FetchTaskletDeinit => {
             FetchTasklet::deinit_queued(cast_ptr!(FetchTasklet));
         }
@@ -1288,12 +1287,8 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
             true
         }
-        // `deref_from_thread` handed the tasklet's final ref to this entry;
-        // the loop will never dispatch it, so reclaim now — same
-        // JS-thread-before-`destructOnExit` window the parked
-        // `dealloc_for_shutdown` reclaim uses. Leaving it to `EventLoop::deinit`
-        // would drop the queued box without running it and orphan the
-        // tasklet ⇄ `Box<AsyncHTTP>` cycle.
+        // A last-ref handoff the loop never dispatched; deinit here (still
+        // before `destructOnExit`) or the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks.
         task_tag::FetchTaskletDeinit => {
             FetchTasklet::deinit_queued(task.ptr.cast::<FetchTasklet>());
             true

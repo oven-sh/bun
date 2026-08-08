@@ -164,6 +164,9 @@ it.concurrent("console.log(Bun) survives lazy properties whose initializer throw
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  // Properties after the throwing $ must still render; the leaked exception
+  // used to make the rest of the walk report not found.
+  expect(stdout).toContain("Archive");
   expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
     stdout: expect.stringContaining("alive"),
     stderr: "",

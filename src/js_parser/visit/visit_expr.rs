@@ -696,6 +696,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(e_.tag.as_mut().unwrap());
         }
 
+        // Determine whether the tag resolves to a macro before visiting the
+        // interpolation values so the parts loop can force constant folding
+        // (matching `.e_call`, which sets these flags before visiting its
+        // arguments on the macro path).
+        let macro_ref: Option<(bun_ast::Ref, crate::MacroRefData)> = match e_.tag {
+            Some(tag) if Self::ALLOW_MACROS && !p.options.features.is_macro_runtime => {
+                let ref_ = match &tag.data {
+                    Data::EImportIdentifier(ident) => Some(ident.ref_),
+                    Data::EDot(dot) => match &dot.target.data {
+                        Data::EIdentifier(id) => Some(id.ref_),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                ref_.and_then(|r| p.macro_.refs.get(&r).copied().map(|d| (r, d)))
+            }
+            _ => None,
+        };
+
         // Visit the interpolation values before the macro dispatch below: its
         // early-return paths (dead code, macros disabled, node_modules, macro
         // failure) replace the whole expression without visiting the parts,
@@ -704,25 +723,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // while visiting" on the next scope push. Mirrors e_call, which visits
         // its arguments before macro handling.
         // `Template.parts` is arena-owned.
-        for part in e_.parts_mut().iter_mut() {
-            p.visit_expr(&mut part.value);
+        {
+            let old_ce = p.options.ignore_dce_annotations;
+            let old_fold = p.should_fold_typescript_constant_expressions;
+            if macro_ref.is_some() {
+                p.options.ignore_dce_annotations = true;
+                p.should_fold_typescript_constant_expressions = true;
+            }
+
+            for part in e_.parts_mut().iter_mut() {
+                p.visit_expr(&mut part.value);
+            }
+
+            p.options.ignore_dce_annotations = old_ce;
+            p.should_fold_typescript_constant_expressions = old_fold;
         }
 
         if let Some(tag) = e_.tag {
             if Self::ALLOW_MACROS {
-                let ref_ = match &e_.tag.unwrap().data {
-                    Data::EImportIdentifier(ident) => Some(ident.ref_),
-                    Data::EDot(dot) => match &dot.target.data {
-                        Data::EIdentifier(id) => Some(id.ref_),
-                        _ => None,
-                    },
-                    _ => None,
-                };
-
-                if let Some(ref_) = ref_
-                    && !p.options.features.is_macro_runtime
-                {
-                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied() {
+                if let Some((ref_, macro_ref_data)) = macro_ref {
+                    {
                         p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
@@ -762,13 +782,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 &p.import_records.items()[macro_ref_data.import_record_id as usize];
                             (record.path.text, record.range)
                         };
+                        let start_error_count = p.log().msgs.len();
                         // We must visit it to convert inline_identifiers and record usage
                         // Reborrow via the field-disjoint `Lexer::log()` accessor
                         // so `&p.lexer` and `&mut p.options` split cleanly under
                         // borrowck.
                         let log = p.lexer.log();
                         let source = p.source;
-                        let Ok(macro_result) = p
+                        let macro_result = match p
                             .options
                             .macro_context
                             .as_deref_mut()
@@ -781,9 +802,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 record_range,
                                 expr,
                                 name,
-                            )
-                        else {
-                            return;
+                            ) {
+                            Ok(r) => r,
+                            Err(err) => {
+                                if err == bun_core::err!("MacroFailed") {
+                                    if p.log().msgs.len() == start_error_count {
+                                        p.log().add_error(
+                                            Some(p.source),
+                                            expr.loc,
+                                            b"macro threw exception",
+                                        );
+                                    }
+                                } else {
+                                    p.log().add_error_fmt(
+                                        Some(p.source),
+                                        expr.loc,
+                                        format_args!("\"{}\" error in macro", err.name()),
+                                    );
+                                }
+                                return;
+                            }
                         };
 
                         if !matches!(macro_result.data, Data::ETemplate(..)) {
@@ -791,6 +829,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.visit_expr(e);
                             return;
                         }
+
+                        // The macro returned the original tagged template (e.g. because
+                        // it threw). `E.Template.fold` is a no-op when `tag != null`.
+                        return;
                     }
                 }
             }

@@ -451,6 +451,12 @@ impl Default for EditorContext {
 }
 
 impl EditorContext {
+    /// `detect_editor` records `Editor::None` when nothing was found so the
+    /// search is not repeated; to callers that means "no editor".
+    pub(crate) fn found(&self) -> Option<Editor> {
+        self.editor.filter(|e| *e != Editor::None)
+    }
+
     pub(crate) fn auto_detect_editor(&mut self, env: &mut dot_env::Loader) {
         if self.editor.is_none() {
             self.detect_editor(env);

@@ -6,6 +6,23 @@ import path, { join } from "node:path";
 describe.concurrent(
   "bun build",
   () => {
+    // https://github.com/oven-sh/bun/issues/11652
+    test("--help describes --public-path by what it prefixes", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--help"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const help = stdout + stderr;
+      const line = help.split("\n").find(l => l.includes("--public-path")) ?? "";
+      expect(line).toMatch(/asset/i);
+      expect(line).toMatch(/chunk/i);
+      expect(line).toMatch(/source[- ]?map/i);
+      expect(exitCode).toBe(0);
+    });
+
     test("warnings dont return exit code 1", async () => {
       const { stderr, exited } = Bun.spawn({
         cmd: [bunExe(), "build", path.join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],

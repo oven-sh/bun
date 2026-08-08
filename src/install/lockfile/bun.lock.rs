@@ -930,14 +930,29 @@ impl Stringifier {
                             // bind the union read to a local instead of slicing a temporary.
                             let url = res.npm().url;
                             let url_slice = url.slice(buf);
+                            // `omit-lockfile-registry-resolved` also collapses URLs under
+                            // the configured registry. Only with integrity: otherwise a
+                            // reader without this registry configured would silently
+                            // resolve from the default one instead of failing the hash.
+                            let omit_configured_registry = options.omit_lockfile_registry_resolved
+                                && pkg_meta.integrity.tag.is_supported()
+                                && url_is_under_registry(
+                                    url_slice,
+                                    options
+                                        .scope_for_package_name(pkg_name.slice(buf))
+                                        .url
+                                        .href(),
+                                );
                             write!(
                                 writer,
                                 "\"{}\", ",
                                 bun_core::fmt::format_json_string_utf8(
-                                    if url_is_under_registry(
-                                        url_slice,
-                                        Npm::Registry::DEFAULT_URL.as_bytes(),
-                                    ) {
+                                    if omit_configured_registry
+                                        || url_is_under_registry(
+                                            url_slice,
+                                            Npm::Registry::DEFAULT_URL.as_bytes(),
+                                        )
+                                    {
                                         b"" as &[u8]
                                     } else {
                                         url_slice

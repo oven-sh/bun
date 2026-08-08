@@ -1404,6 +1404,12 @@ mod draft {
             }
         }
 
+        if let Some(omit_registry_resolved) = out.get(b"omit-lockfile-registry-resolved") {
+            if let Some(omit) = omit_registry_resolved.as_bool() {
+                install.omit_lockfile_registry_resolved = Some(omit);
+            }
+        }
+
         if let Some(install_strategy_expr) = out.get(b"install-strategy") {
             if let Some(install_strategy_str) = install_strategy_expr.as_string(bump) {
                 if install_strategy_str == b"hoisted" {

@@ -801,8 +801,8 @@ impl FSWatcher {
                         err
                     },
                 ];
-                if listener.call_with_global_this(&global_this, &args).is_err() {
-                    global_this.clear_exception();
+                if let Err(e) = listener.call_with_global_this(&global_this, &args) {
+                    global_this.report_active_exception_as_unhandled(e);
                 }
             }
         }

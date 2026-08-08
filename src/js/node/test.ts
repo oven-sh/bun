@@ -3007,7 +3007,8 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
 function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo: boolean): Promise<undefined> {
   async function run() {
-    if (child.options.skip) {
+    // Presence-based like the constructor: {skip: ''} is a directive too.
+    if (child.skipped) {
       child.finished = true;
       child.passed = true;
       return;
@@ -3660,7 +3661,7 @@ function addTest(
       // Subtest of a running test (or of an inline suite created inside one).
       const child = new TestNode(name, runningNode, options, false, true);
       child.ownTags = ownTags;
-      if (mode === "skip" || options.skip) {
+      if (mode === "skip" || child.skipped) {
         const chained = (runningNode.subtestChain = runningNode.subtestChain.then(
           reportDirectiveOnlyNode.bind(undefined, child, "skip"),
         ));
@@ -3679,7 +3680,9 @@ function addTest(
   if (mode === "only") node.onlyFlag = true;
 
   // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/test.js
-  const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
+  // node.skipped is presence-based ({skip: ''} is a directive), so gate on it
+  // rather than re-deriving truthily from options.skip.
+  const effectiveMode = mode === "skip" || node.skipped ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
   if (inStandaloneMode()) {
     noteRunChildRegistered(parent);
@@ -3766,7 +3769,7 @@ function addSuite(
   if (runningNode !== undefined && runningNode.isRunning()) {
     const suite = new TestNode(name, runningNode, options, true, true);
     suite.ownTags = ownTags;
-    if (mode === "skip" || options.skip) {
+    if (mode === "skip" || suite.skipped) {
       const chained = (runningNode.subtestChain = runningNode.subtestChain.then(
         reportDirectiveOnlyNode.bind(undefined, suite, "skip"),
       ));
@@ -3810,7 +3813,9 @@ function addSuite(
   noteRunChildRegistered(parent);
 
   // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/test.js
-  const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
+  // Presence-based like addTest: {skip: ''} means the callback never runs.
+  const effectiveMode =
+    mode === "skip" || suiteNode.skipped ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
   if (inStandaloneMode()) {
     if (effectiveMode === "skip") {

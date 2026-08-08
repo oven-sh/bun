@@ -299,6 +299,7 @@ type HttpEventV1 = {
     readonly domainName: string;
     readonly httpMethod: string;
     readonly path: string;
+    readonly authorizer?: Record<string, unknown>;
   };
   readonly headers: Record<string, string>;
   readonly multiValueHeaders?: Record<string, string[]>;
@@ -329,6 +330,7 @@ function formatHttpEventV1(event: HttpEventV1): Request {
       url.searchParams.append(name, value);
     }
   }
+
   return new Request(url.toString(), {
     method: request.httpMethod,
     headers,
@@ -345,6 +347,7 @@ type HttpEventV2 = {
       readonly method: string;
       readonly path: string;
     };
+    readonly authorizer?: Record<string, unknown>;
   };
   readonly headers: Record<string, string>;
   readonly queryStringParameters?: Record<string, string>;
@@ -375,6 +378,7 @@ function formatHttpEventV2(event: HttpEventV2): Request {
   for (const [name, values] of Object.entries(event.queryStringParameters ?? {})) {
     url.searchParams.append(name, values);
   }
+
   return new Request(url.toString(), {
     method: request.http.method,
     headers,
@@ -472,6 +476,11 @@ function formatRequest(input: LambdaRequest): Request | undefined {
   request.headers.set("x-amzn-function-arn", functionArn);
   if (deadlineMs !== null) {
     request.headers.set("x-amzn-deadline-ms", `${deadlineMs}`);
+  }
+  // Include API Gateway Authorizer context for HTTP events
+  const rc = (event as any)?.requestContext;
+  if (rc?.authorizer != null) {
+    request.headers.set("x-amzn-authorizer", JSON.stringify(rc.authorizer));
   }
   // @ts-ignore: Attach the original event to the Request
   request.aws = event;

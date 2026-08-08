@@ -115,8 +115,7 @@ extern "C" void mi_arenas_print(void) noexcept;
 extern "C" void mi_collect(bool force) noexcept;
 extern "C" size_t mi_usable_size(const void*) noexcept;
 extern "C" int mi_heap_snapshot_to_file(const char* path, unsigned flags) noexcept;
-typedef bool(mi_free_filter_fun)(void* p);
-extern "C" void mi_free_set_filter(mi_free_filter_fun* filter) noexcept;
+extern "C" void mi_arenas_freeze_pages() noexcept;
 extern "C" void mi_prof_visit_live(bool (*cb)(uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg), void* arg) noexcept;
 #include <mimalloc.h>
 #include "ZigGlobalObject.h"
@@ -152,16 +151,6 @@ static bool recordUsedBlock(const mi_heap_t*, const mi_heap_area_t*, void* block
     return true;
 }
 static bool pageIn(const std::vector<uintptr_t>& v, uintptr_t a) { return std::binary_search(v.begin(), v.end(), a); }
-static std::atomic<size_t> s_filteredFrees { 0 };
-static bool frozenFreeFilter(void* p)
-{
-    uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    auto it = std::upper_bound(s_frozenRanges.begin(), s_frozenRanges.end(), std::make_pair(a, UINTPTR_MAX));
-    if (it == s_frozenRanges.begin()) return false;
-    --it;
-    if (a >= it->first && a < it->second) { s_filteredFrees.fetch_add(1, std::memory_order_relaxed); return true; }
-    return false;
-}
 
 static std::atomic<int> s_requested { 0 };
 static const char* s_dir = nullptr;
@@ -796,7 +785,7 @@ static void fileSnapshotHeap(JSC::VM& vm)
     }
     if (freeze && !getenv("BUN_FILESNAP_NOMI")) {
         std::sort(s_frozenRanges.begin(), s_frozenRanges.end());
-        mi_free_set_filter(frozenFreeFilter);
+        mi_arenas_freeze_pages();
         mi_theap_set_default(mi_heap_theap(mi_heap_new())); // main thread allocates from fresh pages from now on
         size_t inFrozen = 0;
         for (int k = 0; k < 64; k++) { void* probe = mi_malloc(48 + k * 16); uintptr_t a = (uintptr_t)probe; auto it = std::upper_bound(s_frozenRanges.begin(), s_frozenRanges.end(), std::make_pair(a, UINTPTR_MAX)); if (it != s_frozenRanges.begin() && a < std::prev(it)->second) inFrozen++; }
@@ -1334,7 +1323,14 @@ static size_t platformLinkerOwnedRanges(uint64_t (*out)[2], size_t cap)
     close(fd); return n;
 }
 #else
-static size_t platformLinkerOwnedRanges(uint64_t (*)[2], size_t) { return 0; }
+extern "C" __attribute__((weak)) size_t mi_malloc_zone_process_owned_ranges(uintptr_t (*out)[2], size_t cap); // absent when mimalloc is built without the zone override
+static size_t platformLinkerOwnedRanges(uint64_t (*out)[2], size_t cap) // Darwin: the malloc zone libsystem registered for this process (see alloc-override-zone.c)
+{
+    if (!mi_malloc_zone_process_owned_ranges) return 0;
+    uintptr_t tmp[8][2]; size_t n = mi_malloc_zone_process_owned_ranges(tmp, std::min<size_t>(cap, 8));
+    for (size_t i = 0; i < n; i++) { out[i][0] = tmp[i][0]; out[i][1] = tmp[i][1]; }
+    return n;
+}
 #endif
 // ===== v0 heap image experiment (macOS, no-ASLR, JIT off): dump all mimalloc/JSC memory + __DATA at idle; a fresh process maps it back and runs JS on the image VM.
 
@@ -1776,12 +1772,7 @@ static void imageDump(JSC::VM& vm, const char* path)
     size_t tableOff = sizeof(ImageHeader); size_t dataOff = (tableOff + out.size() * sizeof(ImageRegion) + pg - 1) & ~(pg - 1);
     size_t fileOff = dataOff, total = 0;
     for (auto& r : out) { size_t used = ((r.kind & 0xff) == 3 || (r.kind & 0xff) == 4) ? 0 : r.len; r.fileOff = fileOff; fileOff += used; }
-    for (auto& r : out) {
-        // write region contents; non-resident anon pages read as zero which is what a fresh mapping would give anyway
-        size_t used = ((r.kind & 0xff) == 3 || (r.kind & 0xff) == 4) ? 0 : r.len;
-        if (pwrite(fd, (void*)r.addr, used, r.fileOff) != (ssize_t)used) { fprintf(stderr, "[image] pwrite failed for %llx+%llx errno %d\n", r.addr, (unsigned long long)used, errno); }
-        total += used;
-    }
+    mi_arenas_freeze_pages(); // from here on nothing frees into a page that is going into the image (this process's remaining frees are dropped too)
     { // extern-library fixups: words in the image that point into a loaded system library get rebased at restore (lets libraries slide)
         std::vector<PlatformLib> libs = platformSystemLibs();
         std::vector<ImageFixup> fixups;
@@ -1803,6 +1794,12 @@ static void imageDump(JSC::VM& vm, const char* path)
         size_t fixOff = (fileOff + 4095) & ~4095ull; hdr.spare[1] = fixOff;
         pwrite(fd, &fh, sizeof fh, fixOff); pwrite(fd, libs.data(), libs.size() * sizeof(PlatformLib), fixOff + sizeof fh); pwrite(fd, fixups.data(), fixups.size() * sizeof(ImageFixup), fixOff + sizeof fh + libs.size() * sizeof(PlatformLib));
         if (getenv("BUN_IMAGE_VERBOSE") || !fixups.empty()) { size_t pages = 0; uint64_t last = ~0ull; for (auto& f : fixups) { uint64_t pg = f.addr >> 14; if (pg != last) { pages++; last = pg; } } fprintf(stderr, "[image] %zu extern-library fixups across %zu library segments, touching %zu 16K pages (%.1f MB dirtied at restore if libraries slid)\n", fixups.size(), libs.size(), pages, pages * 16384.0 / 1048576.0); }
+    }
+    for (auto& r : out) {
+        // write region contents; non-resident anon pages read as zero which is what a fresh mapping would give anyway
+        size_t used = ((r.kind & 0xff) == 3 || (r.kind & 0xff) == 4) ? 0 : r.len;
+        if (pwrite(fd, (void*)r.addr, used, r.fileOff) != (ssize_t)used) { fprintf(stderr, "[image] pwrite failed for %llx+%llx errno %d\n", r.addr, (unsigned long long)used, errno); }
+        total += used;
     }
     pwrite(fd, &hdr, sizeof hdr, 0);
     pwrite(fd, out.data(), out.size() * sizeof(ImageRegion), tableOff);
@@ -1831,6 +1828,7 @@ static void imageRestoreAndRun(const char* path)
     if (hdr.textBase != platformTextBase()) { fprintf(stderr, "[image] ASLR slide differs (image text %llx vs ours %llx); booting normally\n", (unsigned long long)hdr.textBase, (unsigned long long)platformTextBase()); close(fd); return; }
     if (false) { fprintf(stderr, "[image] %s was produced by a different build of this executable; booting normally\n", path); close(fd); return; }
     // Extern-library fixup table. Storage is anonymous mmap, not heap: the allocator's memory is about to be overlaid by the image.
+    constexpr size_t kMaxPendingLibs = 64; const char* pendingLibs[kMaxPendingLibs]; size_t nPendingLibs = 0;
     bool haveFixups = false; int64_t* libDelta = nullptr; size_t nLibDelta = 0; ImageFixup* fixups = nullptr; size_t nFixups = 0;
     if (hdr.spare[1]) {
         ImageFixupHeader fh; if (ipread(fd, &fh, sizeof fh, hdr.spare[1]) == (ssize_t)sizeof fh && !memcmp(fh.magic, "BUNFIX3", 8) && fh.nlibs < 4096 && fh.nfixups < (1u << 24)) {
@@ -1840,19 +1838,23 @@ static void imageRestoreAndRun(const char* path)
             ipread(fd, recorded, fh.nlibs * sizeof(PlatformLib), hdr.spare[1] + sizeof fh);
             ipread(fd, fixups, fh.nfixups * sizeof(ImageFixup), hdr.spare[1] + sizeof fh + fh.nlibs * sizeof(PlatformLib));
             std::vector<PlatformLib> now = platformSystemLibs(); // heap use is fine up to here (before the overlay)
-            { // Libraries the builder had loaded (dlopen'd during its run) that this process has not loaded yet: load them now, exactly as the builder did, so their segments have addresses to rebase to.
-                bool opened = false;
-                for (size_t i = 0; i < fh.nlibs; i++) {
-                    recorded[i].path[sizeof recorded[i].path - 1] = 0; recorded[i].seg[sizeof recorded[i].seg - 1] = 0;
-                    bool present = false; for (auto& l : now) if (l.nameHash == recorded[i].nameHash) { present = true; break; }
-                    if (present || !recorded[i].path[0] || (recorded[i].flags & 1)) continue; // shared-cache libraries are rebased by the cache delta below whether or not this process has loaded them
+            // Libraries the builder loaded during its run (dlopen: CoreFoundation/CoreServices for fs.watch, libsqlite3, …) whose
+            // initializers therefore never ran in this process. Their code is mapped either way (shared cache) and the image's
+            // pointers into them are rebased below, but they must be dlopen'd here too — after the overlay, in the same
+            // position in process history the builder loaded them — so their per-process state (CF allocators, ObjC classes)
+            // exists when imaged code calls into them. Paths are collected now (heap is still ours), opened after the overlay.
+            for (size_t i = 0; i < fh.nlibs && nPendingLibs < kMaxPendingLibs; i++) {
+                recorded[i].path[sizeof recorded[i].path - 1] = 0;
+                if (!recorded[i].path[0]) continue;
+                bool present = false; for (auto& l : now) if (l.nameHash == recorded[i].nameHash) { present = true; break; }
+                if (present) continue;
+                if (!(recorded[i].flags & 1)) { // not part of the shared cache: load it now so its segments have addresses to match against below (its initializers run here, before the overlay, exactly as they would have if it were linked)
                     bool used = false; for (size_t k = 0; k < fh.nfixups; k++) if (fixups[k].lib == i) { used = true; break; }
-                    if (!used) continue;
-                    bool triedAlready = false; for (size_t j = 0; j < i; j++) if (!strcmp(recorded[j].path, recorded[i].path)) { triedAlready = true; break; }
-                    if (triedAlready) continue;
-                    if (dlopen(recorded[i].path, RTLD_NOW | RTLD_GLOBAL)) { opened = true; if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] loaded %s (the image points into it)\n", recorded[i].path); }
+                    if (used && dlopen(recorded[i].path, RTLD_NOW | RTLD_GLOBAL)) { now = platformSystemLibs(); }
+                    continue;
                 }
-                if (opened) now = platformSystemLibs();
+                bool dup = false; for (size_t j = 0; j < nPendingLibs; j++) if (!strcmp(pendingLibs[j], recorded[i].path)) { dup = true; break; }
+                if (!dup) pendingLibs[nPendingLibs++] = recorded[i].path; // points into `buf`, which stays mapped through the restore
             }
             haveFixups = true;
             for (size_t i = 0; i < fh.nlibs; i++) {
@@ -1882,7 +1884,8 @@ static void imageRestoreAndRun(const char* path)
     size_t mapped = 0, copied = 0;
     struct DataSeg { uint64_t* dst; const uint64_t* src; size_t words; }; DataSeg dataSegs[16]; size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
     bool useLibFixups = fixupsWanted;
-    uint64_t linkerRanges[8][2]; size_t nLinkerRanges = useLibFixups ? platformLinkerOwnedRanges(linkerRanges, 8) : 0;
+    uint64_t linkerRanges[8][2]; size_t nLinkerRanges = platformLinkerOwnedRanges(linkerRanges, 8);
+    const bool deferDataCopy = useLibFixups || nLinkerRanges > 0; // words this process owns inside our data segments are skipped by the deferred copy
     bool verbose = !!getenv("BUN_IMAGE_VERBOSE");
     for (auto& r : regions) {
         if (verbose) { fprintf(stderr, "[image] restoring %llx+%llx kind=%llu tag=%llu\n", r.addr, r.len, r.kind & 0xff, r.kind >> 8); }
@@ -1909,7 +1912,7 @@ static void imageRestoreAndRun(const char* path)
             // Data segments of the running binary are copied last (below): once they are overwritten our GOT/stdio state is the builder's,
             // so nothing may call into libc between that copy and the extern-library fixups.
             if (mprotect((void*)r.addr, r.len, PROT_READ | PROT_WRITE)) { fprintf(stderr, "[image] mprotect __DATA %llx failed errno %d\n", r.addr, errno); _exit(3); }
-            if (!useLibFixups) { // default: copy in place now (system libraries are at the recorded addresses thanks to the re-exec)
+            if (!deferDataCopy) { // copy in place now (nothing to skip or rebase)
                 if (ipread(fd, (void*)r.addr, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread __DATA failed errno %d\n", errno); _exit(3); }
                 s_imageBaseOff = imageBaseOff; // just overwritten along with the rest of our __DATA
                 mi_os_hint_floor((void*)hintFloorAfterOverlay); // the builder's allocator hint pointer just arrived with __DATA; keep fresh OS memory above the image
@@ -1944,7 +1947,7 @@ static void imageRestoreAndRun(const char* path)
             }
         }
         if (useLibFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; bool linkerOwned = false; for (size_t q = 0; q < nLinkerRanges; q++) if (f.addr >= linkerRanges[q][0] && f.addr < linkerRanges[q][1]) { linkerOwned = true; break; } if (!linkerOwned && f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
-        if (useLibFixups) *environSlot = savedEnviron;
+        if (deferDataCopy) *environSlot = savedEnviron;
         *(volatile off_t*)&s_imageBaseOff = imageBaseOff;
         mi_os_hint_floor((void*)hintFloorAfterOverlay);
     }
@@ -1976,7 +1979,6 @@ static void imageRestoreAndRun(const char* path)
         std::sort(s_frozenRanges.begin(), s_frozenRanges.end());
         std::sort(s_runs.begin(), s_runs.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
         s_snapFd = fd; // keep the image open so dirtymap/celldiff can diff against it
-        mi_free_set_filter(frozenFreeFilter);
         { // rule 3: refcounted objects inside the imaged mimalloc arenas are immortal (no ++/-- COWing clean pages)
             uintptr_t lo = UINTPTR_MAX, hi = 0;
             for (auto& r : regions) if ((r.kind & 0xff) == 0 && (r.kind >> 8) == 240) { lo = std::min<uintptr_t>(lo, r.addr); hi = std::max<uintptr_t>(hi, r.addr + r.len); }
@@ -2008,6 +2010,10 @@ static void imageRestoreAndRun(const char* path)
 #endif
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
     if (hdr.reserved[1]) { for (int i = 0; i < 1024; i++) { pthread_key_t k = 0; if (pthread_key_create(&k, nullptr)) break; if ((uint64_t)k + 1 >= hdr.reserved[1]) break; } }
+    for (size_t i = 0; i < nPendingLibs; i++) { // see the note where these were collected
+        if (!dlopen(pendingLibs[i], RTLD_NOW | RTLD_GLOBAL)) fprintf(stderr, "[image] warning: could not load %s, which the image uses: %s\n", pendingLibs[i], dlerror());
+        else if (verbose) fprintf(stderr, "[image] loaded %s (the builder had it loaded)\n", pendingLibs[i]);
+    }
     if (useLibFixups && (verbose || nFixups)) fprintf(stderr, "[image] rebased %zu extern-library pointers\n", nFixups);
     fprintf(stderr, "[image] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);
     // From here on all globals/heap are the build process's. Adopt the image's main Thread object for this OS thread.
@@ -2182,7 +2188,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
             fclose(f);
         }
     }
-    fprintf(stderr, "[memdebug] wrote %s.* (filteredFrees=%zu)\n", base.c_str(), s_filteredFrees.load());
+    fprintf(stderr, "[memdebug] wrote %s.*\n", base.c_str());
 #if OS(DARWIN)
     if (const char* adv = getenv("BUN_MEMDEBUG_MADV")) {
         uint64_t* lenPtr = Bun__getStandaloneModuleGraphMachoLength();

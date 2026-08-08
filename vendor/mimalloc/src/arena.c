@@ -1471,6 +1471,31 @@ void mi_arenas_seal_existing(void) mi_attr_noexcept {
   }
 }
 
+static bool mi_arena_page_freeze(size_t slice_index, size_t slice_count, mi_arena_t* arena, void* arg) {
+  MI_UNUSED(slice_count); MI_UNUSED(arg);
+  mi_page_t* page = mi_arena_page_at_slice(arena, slice_index);
+  mi_atomic_store_release(&page->xthread_id, (mi_threadid_t)MI_THREADID_FROZEN);
+  return true;
+}
+
+// Heap image build: every page that exists right now is about to be written into the image. Owned by MI_THREADID_FROZEN,
+// frees of their blocks in the restored process (or in what is left of this one) take the cross-thread path and are dropped
+// there, so image pages are never dirtied by the allocator. Done here, in the builder, so the restore writes nothing.
+void mi_arenas_freeze_pages(void) mi_attr_noexcept {
+  mi_subproc_t* subproc = _mi_subproc_main();
+  const size_t n = mi_arenas_get_count(subproc);
+  mi_lock(&subproc->heaps_lock) {
+    for (mi_heap_t* heap = subproc->heaps; heap != NULL; heap = heap->next) {   // page bitmaps are kept per heap
+      for (size_t i = 0; i < n; i++) {
+        mi_arena_t* arena = mi_arena_from_index(subproc, i);
+        if (arena == NULL) continue;
+        mi_arena_pages_t* arena_pages = mi_heap_arena_pages(heap, arena);
+        if (arena_pages != NULL) { (void)_mi_bitmap_forall_set(arena_pages->pages, &mi_arena_page_freeze, arena, NULL); }
+      }
+    }
+  }
+}
+
 // Visit every maximal run of free slices (belonging to no page) across all arenas of `heap`'s subproc.
 void mi_arenas_visit_free_ranges(mi_heap_t* heap, void (*visit)(void* start, size_t size, void* arg), void* arg) mi_attr_noexcept {
   if (heap == NULL || visit == NULL) return;

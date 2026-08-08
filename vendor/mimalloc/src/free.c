@@ -62,6 +62,9 @@ static void mi_decl_noinline mi_free_try_collect_mt(mi_page_t* page, mi_block_t*
 static inline void mi_free_block_mt(mi_page_t* page, mi_block_t* block, bool was_guarded, bool allow_collect) mi_attr_noexcept
 {
   MI_UNUSED(was_guarded); 
+  // A page frozen into a heap image (thread id MI_THREADID_FROZEN, so every free of its blocks lands here) is never written
+  // again: dropping the block keeps the page clean and file-backed. Costs one compare on a path that is already the slow one.
+  if mi_unlikely(mi_page_thread_id(page) == MI_THREADID_FROZEN) return;
   // adjust stats (after padding check and potentially recursive `mi_free` above)
   mi_stat_free(page, block);    // stat_free may access the padding
   mi_track_free_size(block, mi_page_usable_size_of(page, block, was_guarded));
@@ -201,18 +204,9 @@ static inline mi_page_t* mi_validate_ptr_page(const void* p, const char* msg)
 
 // Free a block
 // Fast path written carefully to prevent register spilling on the stack
-// Experimental: a process-wide free filter (frozen image ranges are never freed into).
-typedef bool (mi_cdecl mi_free_filter_fun)(void* p);
-static mi_free_filter_fun* volatile mi_free_filter = NULL;
-#ifdef __cplusplus
-extern "C"
-#endif
-mi_decl_export void mi_free_set_filter(mi_free_filter_fun* filter) { mi_free_filter = filter; }
-
 static mi_decl_forceinline void mi_free_ex(void* p, size_t* usable, mi_page_t* page, bool allow_collect)  
 {
   if mi_unlikely(page==NULL) return;  // page will be NULL if p==NULL
-  if mi_unlikely(mi_free_filter != NULL) { if (usable!=NULL) { *usable = mi_page_usable_block_size(page); } if (mi_free_filter(p)) return; }
   mi_assert_internal(p!=NULL && page!=NULL);
   if (usable!=NULL) { *usable = mi_page_usable_block_size(page); }
 

@@ -94,8 +94,19 @@ const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
 
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-static FSEVENTS_DEFAULT_LOOP: std::sync::OnceLock<&'static FSEventsLoop> =
-    std::sync::OnceLock::new();
+/// The process's FSEvents loop, or one left behind by a heap-image builder (its `epoch` then differs from the current one:
+/// the CF thread it names never existed in this process, so `watch()` makes a fresh loop and the old one is left inert).
+static FSEVENTS_DEFAULT_LOOP: AtomicPtr<FSEventsLoop> = AtomicPtr::new(ptr::null_mut());
+
+fn current_default_loop() -> Option<&'static FSEventsLoop> {
+    let p = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
+    if p.is_null() {
+        return None;
+    }
+    // SAFETY: only ever set to a leaked `&'static FSEventsLoop`.
+    let l: &'static FSEventsLoop = unsafe { &*p };
+    (l.epoch == bun_core::image::epoch()).then_some(l)
+}
 
 #[cfg(unix)]
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
@@ -275,6 +286,8 @@ fn init_core_services() -> CoreServices {
 }
 
 pub struct FSEventsLoop {
+    /// `bun_core::image::epoch()` when this loop (and its CF thread) was created.
+    epoch: u32,
     signal_source: AtomicPtr<c_void>,
     loop_: AtomicPtr<c_void>,
     mutex: Mutex,
@@ -418,6 +431,7 @@ impl FSEventsLoop {
         // Owning raw pointer first, shared view second: the error paths below reclaim
         // through `this_ptr`, which must not be derived from a shared reference.
         let this_ptr: *mut FSEventsLoop = bun_core::heap::into_raw(Box::new(FSEventsLoop {
+            epoch: bun_core::image::epoch(),
             signal_source: AtomicPtr::new(ptr::null_mut()),
             loop_: AtomicPtr::new(ptr::null_mut()),
             mutex: Mutex::new(),
@@ -489,9 +503,9 @@ impl FSEventsLoop {
     }
 
     fn enqueue_task_concurrent(&self, task: Task) {
-        if bun_core::image::restored() {
-            return;
-        } // CF run loop thread did not survive the image
+        if self.epoch != bun_core::image::epoch() {
+            return; // this loop's CF thread belonged to the process that built the image
+        }
         let cf = CoreFoundation::get();
         let concurrent = bun_core::heap::into_raw(Box::new(ConcurrentTask {
             task: Task {
@@ -921,17 +935,20 @@ pub(crate) fn watch(
     update_end: UpdateEndCallback,
     ctx: *mut c_void,
 ) -> crate::Result<Box<FSEventsWatcher>> {
-    if let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() {
+    if let Some(loop_) = current_default_loop() {
         return Ok(FSEventsWatcher::init(
             loop_, path, recursive, callback, update_end, ctx,
         ));
     }
     let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
-    let loop_: &'static FSEventsLoop = match FSEVENTS_DEFAULT_LOOP.get() {
-        Some(&l) => l,
+    let loop_: &'static FSEventsLoop = match current_default_loop() {
+        Some(l) => l,
         None => {
             let l = FSEventsLoop::init()?;
-            let _ = FSEVENTS_DEFAULT_LOOP.set(l);
+            FSEVENTS_DEFAULT_LOOP.store(
+                core::ptr::from_ref::<FSEventsLoop>(l).cast_mut(),
+                Ordering::Release,
+            );
             bun_core::Global::add_pre_exit_callback(close_and_wait_on_exit);
             l
         }
@@ -941,16 +958,19 @@ pub(crate) fn watch(
     ))
 }
 
+/// Heap-image build: join the CF thread before memory is frozen; the restored process makes a new loop on its first `watch()`.
+#[cfg(target_os = "macos")]
+pub(crate) fn shutdown_for_snapshot() {
+    close_and_wait();
+}
+
 extern "C" fn close_and_wait_on_exit() {
     close_and_wait()
 }
 
 fn close_and_wait() {
-    if bun_core::image::restored() {
-        return;
-    } // the CF thread belongs to the build process
     #[cfg(target_os = "macos")]
-    if let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() {
+    if let Some(loop_) = current_default_loop() {
         let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
         loop_.shutdown();
     }

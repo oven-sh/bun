@@ -365,6 +365,7 @@ typedef bool (mi_cdecl mi_block_visit_fun)(const mi_heap_t* heap, const mi_heap_
 mi_decl_export bool   mi_heap_visit_blocks(mi_heap_t* heap, bool visit_blocks, mi_block_visit_fun* visitor, void* arg);
 mi_decl_export void mi_os_hint_floor(void* floor) mi_attr_noexcept;
 mi_decl_export void mi_arenas_seal_existing(void) mi_attr_noexcept; // image restore: no new allocations inside pre-existing (image) arenas
+mi_decl_export void mi_arenas_freeze_pages(void) mi_attr_noexcept;   // image build: pages written into the image are never freed into again
 mi_decl_export void mi_arenas_visit_free_ranges(mi_heap_t* heap, void (*visit)(void* start, size_t size, void* arg), void* arg) mi_attr_noexcept;  // visit maximal runs of arena slices that belong to no page
 mi_decl_export bool   mi_heap_visit_abandoned_blocks(mi_heap_t* heap, bool visit_blocks, mi_block_visit_fun* visitor, void* arg);
 

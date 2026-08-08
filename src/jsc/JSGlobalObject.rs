@@ -317,6 +317,16 @@ impl JSGlobalObject {
         if !bun_core::image::building() {
             return Ok(());
         }
+        // An app imaging its fully booted state legitimately reads its own files, runs helpers and binds local sockets
+        // (which it re-binds after restore); what must never happen is talking to the network, whose answers would be
+        // frozen into the image. BUN_IMAGE_ALLOW_LOCAL_IO permits the former and keeps the latter fatal.
+        if matches!(what, "node:fs" | "Bun.spawn" | "Bun.listen")
+            && bun_core::env_var::BUN_IMAGE_ALLOW_LOCAL_IO
+                .get()
+                .unwrap_or(false)
+        {
+            return Ok(());
+        }
         if bun_core::env_var::BUN_IMAGE_IO_WARN.get().unwrap_or(false) {
             let err = self
                 .create_error_instance(format_args!("[image] {what} while building a snapshot"));

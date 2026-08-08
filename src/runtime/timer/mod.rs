@@ -662,21 +662,6 @@ impl All {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn insert(&mut self, timer: *mut EventLoopTimer) {
         self.assert_js_thread();
-        if bun_core::image::restored()
-            && bun_core::env_var::BUN_IMAGE_VERBOSE.get().unwrap_or(false)
-        {
-            // SAFETY: timer live per contract.
-            let n = unsafe { &(*timer).next };
-            let msg = format!(
-                "[image] insert all={:p} deadline={}.{:09} fake={}\n",
-                self as *const Self,
-                n.sec,
-                n.nsec,
-                self.fake_timers.is_active()
-            );
-            // SAFETY: fd write.
-            unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
-        }
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         let tag = unsafe { (*timer).tag };
         debug_assert!(tag != EventLoopTimerTag::WTFTimer, "use wtf_arm");
@@ -1039,16 +1024,6 @@ impl All {
         }
         // SAFETY: peek returns a live heap node
         let next = unsafe { &(*timer).next };
-        if bun_core::image::restored()
-            && bun_core::env_var::BUN_IMAGE_VERBOSE.get().unwrap_or(false)
-        {
-            let msg = format!(
-                "[image] timer next={}.{:09} now={}.{:09} all={:p}\n",
-                next.sec, next.nsec, now.sec, now.nsec, self as *const Self
-            );
-            // SAFETY: fd write.
-            unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
-        }
         if (Timespec {
             sec: next.sec,
             nsec: next.nsec,

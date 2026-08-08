@@ -488,27 +488,6 @@ impl TimerObjectInternals {
             // SAFETY: `vm` live per hook contract.
             || s.generation != unsafe { (*vm).test_isolation_generation };
 
-        if bun_core::image::restored()
-            && bun_core::env_var::BUN_IMAGE_VERBOSE.get().unwrap_or(false)
-        {
-            let msg = format!(
-                "[image] fire id={} cancelled={} cleared_flag={} status_running={} gen={}/{} has_this={} ref_kind={}\n",
-                id,
-                s.event_loop_timer_state() == EventLoopTimerState::CANCELLED,
-                s.flags.get().has_cleared_timer(),
-                unsafe { (*vm).script_execution_status() } == ScriptExecutionStatus::Running,
-                s.generation,
-                unsafe { (*vm).test_isolation_generation },
-                s.this_value.get().try_get().is_some(),
-                match s.this_value.get() {
-                    JsRef::Weak(_) => "weak",
-                    JsRef::Strong(_) => "strong",
-                    JsRef::Finalized => "finalized",
-                }
-            );
-            // SAFETY: fd 2 write.
-            unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
-        }
         s.set_event_loop_timer_state(EventLoopTimerState::FIRED);
 
         // SAFETY: `vm` is live; `global` is the per-VM JSGlobalObject pointer.

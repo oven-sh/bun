@@ -92,6 +92,7 @@ new!(pub BUN_GC_TIMER_DEBUG: boolean, "BUN_GC_TIMER_DEBUG", {});
 new!(pub BUN_GC_STARTUP_FULLS: unsigned, "BUN_GC_STARTUP_FULLS", {});
 new!(pub BUN_IMAGE_VERBOSE: boolean, "BUN_IMAGE_VERBOSE", {});
 new!(pub BUN_IMAGE_IO_WARN: boolean, "BUN_IMAGE_IO_WARN", {});
+new!(pub BUN_IMAGE_ALLOW_LOCAL_IO: boolean, "BUN_IMAGE_ALLOW_LOCAL_IO", {});
 new!(pub BUN_SNAPSHOT_QUIET_TIMEOUT: unsigned, "BUN_SNAPSHOT_QUIET_TIMEOUT", {});
 new!(pub BUN_SNAPSHOT_CANCEL_TIMERS: boolean, "BUN_SNAPSHOT_CANCEL_TIMERS", {});
 new!(pub BUN_GC_IDLE_SHRINK_TICKS: unsigned, "BUN_GC_IDLE_SHRINK_TICKS", {});

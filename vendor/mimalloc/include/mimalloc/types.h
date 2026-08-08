@@ -355,6 +355,9 @@ typedef size_t mi_page_flags_t;
 // Abandoning partially used pages allows for sharing of this memory between threads (in particular if threads are blocked)
 #define MI_THREADID_ABANDONED           MI_ZU(0)
 #define MI_THREADID_ABANDONED_MAPPED    (MI_PAGE_FLAG_MASK + 1)
+// Heap image: pages captured in an image are owned by nobody and never change again; frees of their blocks are dropped
+// (see mi_free_block_mt) and no thread id can ever equal this value.
+#define MI_THREADID_FROZEN              (~MI_ZU(0) & ~MI_PAGE_FLAG_MASK)
 
 // Thread free list.
 // Points to a list of blocks that are freed by other threads.

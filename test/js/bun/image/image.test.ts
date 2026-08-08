@@ -368,3 +368,19 @@ test.skipIf(process.platform !== "darwin")(
   },
   60000,
 );
+
+test.skipIf(process.platform !== "darwin")("fs.watch works in a restored process even though the builder had an FSEvents loop", async () => {
+  using dir = tempDir("bun-image-fswatch", { a: { ".keep": "" }, b: { ".keep": "" } });
+  const img = join(String(dir), "w.img");
+  const fixture = join(import.meta.dir, "fswatch-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img, BUN_IMAGE_IO_WARN: "1", WATCH_DIR: join(String(dir), "a") }, stdout: "pipe", stderr: "pipe" });
+    await p.exited;
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img, WATCH_DIR2: join(String(dir), "b") }, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  const m = out.match(/\[js\] (.*)/);
+  expect(m, err.slice(-600)).not.toBeNull();
+  expect(JSON.parse(m![1]).some((e: string) => e.endsWith(":touched.txt"))).toBe(true);
+  expect(code).toBe(0);
+}, 60000);

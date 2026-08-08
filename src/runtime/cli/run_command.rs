@@ -1722,6 +1722,8 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
     // Quiet is not enough: no other thread of ours may be mid-anything (e.g. inside free() holding an allocator lock) when memory is frozen.
     #[cfg(target_os = "macos")]
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate(); // the mDNSResponder connection is per-process; a fresh one is opened on the first lookup after restore
+    #[cfg(target_os = "macos")]
+    crate::node::fs_events::shutdown_for_snapshot();
     bun_threading::work_pool::WorkPool::stop_all_threads_for_snapshot();
     {
         let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);

@@ -457,6 +457,11 @@ struct us_listen_socket_t {
   unsigned char accept_kind;
   /* Set when TCP_DEFER_ACCEPT/SO_ACCEPTFILTER was successfully applied. */
   unsigned char deferred_accept;
+  /* Set once any SNI tree entry carries a client-certificate policy
+   * (us_ssl_ctx_set_sni_policy with requestCert), so the per-request
+   * Host-vs-negotiated-SNI check can skip servers without one. Never
+   * cleared: stale-true only costs the lookup. */
+  unsigned char sni_has_cert_policy;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);

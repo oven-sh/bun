@@ -269,6 +269,11 @@ pub struct ValkeyClient {
 
     pub(crate) flags: ConnectionFlags,
 
+    /// First failure recorded via `fail()`. `on_valkey_close()` uses this so
+    /// the `connect()` promise rejects with the real cause (HELLO auth error
+    /// text, connection timeout, …) instead of a generic "Connection closed".
+    pub close_reason: Option<(Box<[u8]>, RedisError)>,
+
     // Auto-pipelining
     pub(crate) auto_flusher: AutoFlusher,
 
@@ -565,6 +570,10 @@ impl ValkeyClient {
         debug!("failed: {}: {:?}", bstr::BStr::new(message), err);
         if self.flags.failed {
             return Ok(());
+        }
+
+        if self.close_reason.is_none() {
+            self.close_reason = Some((Box::<[u8]>::from(message), err));
         }
 
         if self.flags.finalized {
@@ -1293,6 +1302,7 @@ impl ValkeyClient {
         self.flags.failed = false;
         self.flags.is_authenticated = false;
         self.flags.is_selecting_db_internal = false;
+        self.close_reason = None;
         if matches!(self.socket, AnySocket::SocketTcp(_)) {
             // if is tcp, we need to start the connection process
             // if is tls, we need to wait for the handshake to complete

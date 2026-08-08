@@ -51,6 +51,76 @@ describe("UTF-8 BOM should be ignored", () => {
     });
   });
 
+  describe.each([
+    ["Response", (body: string, type: string) => new Response(body, { headers: { "content-type": type } })],
+    [
+      "Request",
+      (body: string, type: string) =>
+        new Request("https://example.com", { method: "POST", body, headers: { "content-type": type } }),
+    ],
+  ] as const)("%s (string body)", (_, make) => {
+    it("in text()", async () => {
+      expect(await make("\uFEFFHello, World!", "text/plain").text()).toBe("Hello, World!");
+    });
+
+    it("in text() with emoji", async () => {
+      expect(await make("\uFEFFHello, World! 🌎", "text/plain").text()).toBe("Hello, World! 🌎");
+    });
+
+    it("in text() with only a BOM", async () => {
+      expect(await make("\uFEFF", "text/plain").text()).toBe("");
+    });
+
+    it("in text() only strips one leading BOM", async () => {
+      expect(await make("\uFEFF\uFEFFHello", "text/plain").text()).toBe("\uFEFFHello");
+    });
+
+    it("in text() leaves an interior BOM", async () => {
+      expect(await make("Hello\uFEFFWorld", "text/plain").text()).toBe("Hello\uFEFFWorld");
+    });
+
+    it("in json()", async () => {
+      expect(await make('\uFEFF{"hello":"World"}', "application/json").json()).toEqual({ "hello": "World" } as any);
+    });
+
+    it("in json() with emoji", async () => {
+      expect(await make('\uFEFF{"hello":"World 🌎"}', "application/json").json()).toEqual({
+        "hello": "World 🌎",
+      } as any);
+    });
+
+    it("replaces lone surrogates with U+FFFD in text()", async () => {
+      expect(await make("a\uD800b", "text/plain").text()).toBe("a\uFFFDb");
+      expect(await make("a\uDC00b", "text/plain").text()).toBe("a\uFFFDb");
+    });
+
+    it("replaces lone surrogates with U+FFFD in json()", async () => {
+      expect(await make('{"a":"\uD800"}', "application/json").json()).toEqual({ a: "\uFFFD" } as any);
+    });
+
+    // Fetch body mixin: text() is "UTF-8 decode" of the body's bytes, and a
+    // string body's bytes are its UTF-8 encoding, so text() must equal
+    // TextDecoder().decode(arrayBuffer()) for every string body.
+    it.each([
+      "hello",
+      "Hello, World! 🌎",
+      "\uFEFF",
+      "\uFEFFHello",
+      "\uFEFF\uFEFF",
+      "a\uFEFFb",
+      "\uD800",
+      "a\uD800b",
+      "\uDC00abc",
+      "\uD83C\uDF0E",
+      "日本語",
+      "\uFEFF\uD800🌎",
+    ])("text() matches TextDecoder().decode(arrayBuffer()) for %j", async body => {
+      const text = await make(body, "text/plain").text();
+      const bytes = await make(body, "text/plain").arrayBuffer();
+      expect(text).toBe(new TextDecoder().decode(bytes));
+    });
+  });
+
   describe("Response", () => {
     it("in text()", async () => {
       const response = new Response(Buffer.from("\uFEFFHello, World!"), { headers: { "content-type": "text/plain" } });

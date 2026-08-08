@@ -92,6 +92,8 @@ test("every automatic retry rule in the generated pipeline is scoped by signal_r
   expect(unscoped).toEqual([]);
 
   // Retries hold an agent for up to the full step timeout; keep them bounded.
-  const unbounded = rules.filter(rule => typeof rule.limit !== "number" || rule.limit < 1 || rule.limit > 2);
+  const unbounded = rules.filter(
+    rule => typeof rule.limit !== "number" || !Number.isInteger(rule.limit) || rule.limit < 1 || rule.limit > 2,
+  );
   expect(unbounded).toEqual([]);
 });

@@ -1,5 +1,6 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
 
@@ -343,6 +344,198 @@ describe("TracingChannel", () => {
   // Port tests from:
   // https://github.com/search?q=repo%3Anodejs%2Fnode+test-diagnostics-channel+AND+%2Ftracing%2F&type=code
   test.todo("TODO");
+});
+
+// Node.js documents built-in console.{log,info,debug,warn,error} channels that
+// receive the argument array on every corresponding console.* call. These run
+// in a subprocess so the test runner's own console output is not polluted.
+describe.concurrent("built-in console.* channels", () => {
+  test("global console methods publish their arguments", async () => {
+    const script = `
+      const dc = require("node:diagnostics_channel");
+      const NAMES = ["console.log", "console.info", "console.debug", "console.warn", "console.error"];
+      const received = {};
+      const held = [];
+      for (const n of NAMES) {
+        received[n] = [];
+        const ch = dc.channel(n);
+        const f = (args, name) => received[name].push(args);
+        ch.subscribe(f);
+        held.push([ch, f]);
+      }
+      const obj = { x: 2 };
+      console.log("a", 1);
+      console.info("i");
+      console.debug("d", obj);
+      console.warn("w");
+      console.error("e", 3, 4);
+      console.log();
+      void held.length;
+      if (received["console.debug"][0][1] !== obj) throw new Error("object identity not preserved");
+      process.stdout.write("RESULT " + JSON.stringify(received) + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const line = stdout.split("\n").find(l => l.startsWith("RESULT "));
+    expect(line).toBeDefined();
+    const received = JSON.parse(line!.slice("RESULT ".length));
+
+    expect(received).toEqual({
+      "console.log": [["a", 1], []],
+      "console.info": [["i"]],
+      "console.debug": [["d", { x: 2 }]],
+      "console.warn": [["w"]],
+      "console.error": [["e", 3, 4]],
+    });
+    expect(stderr).toContain("w\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("global console stays native until a console channel has a subscriber", async () => {
+    // Wrapping happens at subscribe time, so neither requiring the module nor
+    // materializing the channel (nor reading console.Console, which does both
+    // internally) may replace the native global console methods.
+    const script = `
+      const origLog = console.log;
+      console.log("before-1");
+      console.error("before-2");
+      const dc = require("node:diagnostics_channel");
+      if (console.log !== origLog) throw new Error("mutated by require");
+      dc.channel("console.log");
+      if (console.log !== origLog) throw new Error("mutated by channel()");
+      void console.Console;
+      if (console.log !== origLog) throw new Error("mutated by console.Console");
+      let count = 0;
+      dc.subscribe("console.log", () => count++);
+      console.log("after");
+      process.stdout.write("RESULT " + count + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("before-1\n");
+    expect(stdout).toContain("RESULT 1\n");
+    expect(stderr).toContain("before-2\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Console constructor instances publish to the same channels", async () => {
+    const script = `
+      const dc = require("node:diagnostics_channel");
+      const { Writable } = require("node:stream");
+      const received = {};
+      for (const n of ["console.log", "console.info", "console.debug", "console.warn", "console.error"]) {
+        received[n] = 0;
+        dc.subscribe(n, () => received[n]++);
+      }
+      const sink = new Writable({ write(chunk, enc, cb) { cb(); } });
+      const c = new console.Console(sink, sink);
+      c.log("a");
+      c.info("b");
+      c.debug("c");
+      c.warn("d");
+      c.error("e");
+      process.stdout.write("RESULT " + JSON.stringify(received) + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const line = stdout.split("\n").find(l => l.startsWith("RESULT "));
+    expect(line).toBeDefined();
+    expect(JSON.parse(line!.slice("RESULT ".length))).toEqual({
+      "console.log": 1,
+      "console.info": 1,
+      "console.debug": 1,
+      "console.warn": 1,
+      "console.error": 1,
+    });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("replacing globalThis.console with a Console instance before subscribing publishes once", async () => {
+    const script = `
+      globalThis.console = new console.Console(process.stdout, process.stderr);
+      const dc = require("node:diagnostics_channel");
+      let n = 0;
+      dc.subscribe("console.log", () => n++);
+      console.log("x");
+      process.stdout.write("RESULT " + n + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("RESULT 1\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("subscribe on a console channel does not throw when console is frozen", async () => {
+    const script = `
+      Object.freeze(console);
+      const dc = require("node:diagnostics_channel");
+      let n = 0;
+      dc.subscribe("console.log", () => n++);
+      dc.subscribe("console.log", () => {});
+      console.log("x");
+      if (!dc.hasSubscribers("console.log")) throw new Error("not subscribed");
+      process.stdout.write("RESULT " + n + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain("RESULT 0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("materializing the console.log channel does not affect other console methods", async () => {
+    const script = `
+      const dc = require("node:diagnostics_channel");
+      let logCount = 0;
+      dc.subscribe("console.log", () => logCount++);
+      console.dir({ a: 1 });
+      console.trace("t");
+      console.assert(false, "ok");
+      process.stdout.write("RESULT " + logCount + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("RESULT 0\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 const mocks = new Map();

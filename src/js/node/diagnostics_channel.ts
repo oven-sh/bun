@@ -62,6 +62,9 @@ function markActive(channel) {
   ObjectSetPrototypeOf.$call(null, channel, ActiveChannel.prototype);
   channel._subscribers = [];
   channel._stores = new SafeMap();
+
+  const consoleMethod = typeof channel.name === "string" ? consoleChannelMethods[channel.name] : undefined;
+  if (consoleMethod !== undefined) wrapConsoleMethodForChannel(channel, consoleMethod);
 }
 
 function maybeMarkInactive(channel) {
@@ -213,6 +216,38 @@ class Channel {
 }
 
 const channels = new WeakRefMap();
+
+// Bun's global console methods are native; wrap one to publish the first time its
+// channel becomes active. The closure pins the Channel, so later channel(name)
+// lookups return the same instance and we never re-wrap.
+const consoleChannelMethods = {
+  __proto__: null,
+  "console.log": "log",
+  "console.info": "info",
+  "console.debug": "debug",
+  "console.warn": "warn",
+  "console.error": "error",
+};
+const wrappedConsoleMethods = { __proto__: null };
+const nativeConsole = globalThis.console;
+
+function wrapConsoleMethodForChannel(ch, method) {
+  if (wrappedConsoleMethods[method]) return;
+  const orig = nativeConsole[method];
+  if (typeof orig !== "function") return;
+  try {
+    // Shorthand method: non-constructible and .name === method, like the native fn.
+    nativeConsole[method] = {
+      [method](...args) {
+        if (ch.hasSubscribers) ch.publish(args);
+        return orig.$apply(this, args);
+      },
+    }[method];
+    wrappedConsoleMethods[method] = true;
+  } catch {
+    // Frozen / non-writable console: leave subscribe() infallible.
+  }
+}
 
 function channel(name) {
   const channel = channels.get(name);

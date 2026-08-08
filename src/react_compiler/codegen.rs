@@ -1247,6 +1247,7 @@ fn codegen_for_of(
             ),
             value: right,
             body: body_stmt(body, stmt_loc),
+            await_range: bun_ast::Range::NONE,
         },
         stmt_loc,
     )))

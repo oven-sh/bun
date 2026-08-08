@@ -35,7 +35,7 @@
 
 namespace WebCore {
 
-class JSEventListener : public EventListener, public JSEventListenerVMLink {
+class JSEventListener : public EventListener, public JSVMClientDataClient {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSEventListener); // both bases declare allocators
 public:
     WEBCORE_EXPORT static Ref<JSEventListener> create(JSC::JSObject& listener, JSC::JSObject& wrapper, bool isAttribute, DOMWrapperWorld&);
@@ -82,7 +82,7 @@ protected:
     void handleEvent(ScriptExecutionContext&, Event&) override;
     void setWrapperWhenInitializingJSFunction(JSC::VM&, JSC::JSObject* wrapper) const { m_wrapper = JSC::Weak<JSC::JSObject>(wrapper); }
 
-    // JSEventListenerVMLink
+    // JSVMClientDataClient
     void willDestroyVM() final;
 
 private:

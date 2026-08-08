@@ -105,14 +105,16 @@ private:
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 
-// A JS event listener holds JSC::Weak<> handles that must be cleared before the
-// heap they point into dies, and its C++ EventTarget can outlive the VM (an
-// AbortSignal an in-flight request holds, a MessagePort in transit). Each one
-// links itself here for its lifetime — two pointer stores, no allocation — and
-// ~JSVMClientData invalidates whichever are still alive.
-class JSEventListenerVMLink : public BasicRawSentinelNode<JSEventListenerVMLink> {
+// WebCore's JSVMClientDataClient: something holding JSC::Weak<> handles into a VM whose C++ owner
+// can outlive that VM (a JSEventListener on an AbortSignal an in-flight request holds, or on a
+// MessagePort in transit) registers here so ~JSVMClientData can tell it to let go first
+// (willDestroyVM). As upstream, only worker VMs' clients register — the main VM lives for the
+// process. Unlike upstream (WeakHashSet), Bun links clients intrusively: two pointer stores to
+// register, and the client unlinks itself in its destructor (VM thread, which the Weak<> handles
+// already require).
+class JSVMClientDataClient : public BasicRawSentinelNode<JSVMClientDataClient> {
 public:
-    virtual ~JSEventListenerVMLink() = default;
+    virtual ~JSVMClientDataClient() = default;
     virtual void willDestroyVM() = 0;
 };
 
@@ -125,7 +127,7 @@ public:
 
     virtual ~JSVMClientData();
 
-    static void create(JSC::VM*, void*);
+    static void create(JSC::VM*, void* bunVM, bool isWorkerVM);
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
@@ -210,11 +212,14 @@ private:
 
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
 
-    SentinelLinkedList<JSEventListenerVMLink, BasicRawSentinelNode<JSEventListenerVMLink>> m_eventListeners;
+    SentinelLinkedList<JSVMClientDataClient, BasicRawSentinelNode<JSVMClientDataClient>> m_clients;
+    bool m_isWorkerVM { false };
 
 public:
-    // VM thread. Unlinking is the listener's own (`remove()` in its destructor).
-    void linkEventListener(JSEventListenerVMLink& listener) { m_eventListeners.append(&listener); }
+    // upstream's `&vm != commonVMOrNull()`
+    bool isWorkerVM() const { return m_isWorkerVM; }
+    // VM thread. Unlinking is the client's own (`remove()` in its destructor).
+    void addClient(JSVMClientDataClient& client) { m_clients.append(&client); }
 };
 
 } // namespace WebCore

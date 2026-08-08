@@ -56,7 +56,9 @@ JSEventListener::JSEventListener(JSObject* function, JSObject* wrapper, bool isA
         m_jsFunction = JSC::Weak<JSC::JSObject>(function);
         m_isInitialized = true;
     }
-    WebCore::clientData(isolatedWorld.vm())->linkEventListener(*this);
+    auto* clientData = WebCore::clientData(isolatedWorld.vm());
+    if (clientData->isWorkerVM())
+        clientData->addClient(*this);
 }
 
 JSEventListener::~JSEventListener()

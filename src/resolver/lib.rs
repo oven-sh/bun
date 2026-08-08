@@ -1112,12 +1112,14 @@ pub mod fs {
 
         /// Cache (or threadlocal-
         /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
+        /// `refreshing_in_place` skips the cache write so the slot's live `DirEntry` stays reachable.
         fn read_directory_error(
             &mut self,
             dir: &[u8],
             err: crate::Error,
+            refreshing_in_place: bool,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
-            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
+            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE && !refreshing_in_place {
                 let mut get_or_put_result = self.entries.get_or_put(dir)?;
                 if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                     self.entries.mark_not_found(get_or_put_result);
@@ -1223,7 +1225,7 @@ pub mod fs {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
+                    Err(err) => return self.read_directory_error(dir, err, in_place.is_some()),
                 },
             };
 
@@ -1260,13 +1262,7 @@ pub mod fs {
             let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
             {
                 Ok(e) => e,
-                Err(err) => {
-                    if let Some(existing) = in_place {
-                        // SAFETY: see above.
-                        unsafe { (*existing).data.clear() };
-                    }
-                    return self.read_directory_error(dir, err);
-                }
+                Err(err) => return self.read_directory_error(dir, err, in_place.is_some()),
             };
 
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
@@ -1587,11 +1583,7 @@ pub mod fs {
                     // the two diverge: `O_DIRECTORY` only vs `O_RDONLY|O_DIRECTORY`.
                     let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir) {
                         Ok(h) => h,
-                        Err(err) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into()).ok();
-                        }
+                        Err(err) => return self.read_directory_error(dir, err.into(), true).ok(),
                     };
                     let _close_guard = scopeguard::guard(handle, |h| {
                         let _ = bun_sys::close(h);
@@ -1605,11 +1597,7 @@ pub mod fs {
                             // SAFETY: see above — slot is exclusively owned here.
                             unsafe { *e_ptr = new_entry };
                         }
-                        Err(err) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err).ok();
-                        }
+                        Err(err) => return self.read_directory_error(dir, err, true).ok(),
                     }
                 }
             }

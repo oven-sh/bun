@@ -756,9 +756,11 @@ test("should not leak using readable stream", async () => {
       // ~32 MiB over the 250 sampled iterations; RSS of a non-leaking run still
       // drifts over that window (allocator high-water, lazily freed pages):
       // a few MiB on Linux, up to 14 observed on Windows lanes. The allowance
-      // sits between that drift and the 32 MiB signal. ASAN's quarantine
-      // retains freed allocations so RSS stays elevated under bun-asan.
-      MAX_MEMORY_INCREASE: isASAN ? "64" : "20", // in MB
+      // sits between that drift and the 32 MiB signal. Under bun-asan the
+      // capped quarantine (below) saturates before the sample point: clean
+      // runs measure 1-3 MiB, a simulated regression ~76, so 24 keeps this
+      // bound below the signal there too.
+      MAX_MEMORY_INCREASE: isASAN ? "24" : "20", // in MB
       // The fixture asserts RSS stabilizes after iteration 250, but with the
       // default 256 MB quarantine the freed 128 KB bodies are never reused and
       // RSS keeps climbing through all 500 iterations (~97 MB past the sample

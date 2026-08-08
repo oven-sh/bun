@@ -790,9 +790,8 @@ impl VirtualMachine {
         unsafe { &*self.event_loop }
     }
 
-    /// Close both loops' [`crate::event_loop::ConcurrentPosterGate`]s (macro mode can have
-    /// pointed tasks at either loop) ahead of the final queue drain: no work-pool completion can
-    /// post after this returns. See the gate type for why this never waits on a blocked syscall.
+    /// Refuse all future work-pool completion posts (see `ConcurrentPosterGate`). Both loops:
+    /// macro mode can have pointed tasks at either.
     pub fn close_concurrent_posters(&mut self) {
         self.regular_event_loop.close_concurrent_posters();
         self.macro_event_loop.close_concurrent_posters();
@@ -1647,9 +1646,7 @@ impl VirtualMachine {
 
             // Release tasks the HTTP daemon posted before observing `is_shutting_down` (else the
             // tasklet ⇄ `Box<AsyncHTTP>` cycle leaks); must precede `destructOnExit`. Close the
-            // poster gates first so no work-pool fs completion can post after the drain; a
-            // completion still blocked in its syscall is refused at its gate later and frees
-            // itself without touching the VM.
+            // poster gates first so no work-pool fs completion can post after the drain.
             self.close_concurrent_posters();
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 

@@ -1016,9 +1016,8 @@ mod _async_tasks {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in create()).
             let mut task = unsafe { bun_core::heap::take(this) };
-            // On the normal path `run_from_js_thread` already swapped `result` for the sentinel
-            // error; on the shutdown-drain path the real result is still here and the payloads
-            // `to_js` would have transferred (a readFile Buffer's bytes) have no other owner.
+            // `run_from_js_thread` leaves the sentinel error here; only the shutdown-drain path
+            // still holds a real result, whose payloads only `fs_to_js` would otherwise free.
             if let Ok(result) = task.result.as_mut() {
                 result.fs_discard();
             }
@@ -1166,10 +1165,8 @@ mod _async_tasks {
     pub trait FsReturn {
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
 
-        /// Release payloads whose ownership [`Self::fs_to_js`] would have transferred to JS,
-        /// for a result that will never reach the JS thread (shutdown drain, or a completion
-        /// post refused by the loop's `ConcurrentPosterGate`). Types whose `Drop` already
-        /// frees everything keep the default no-op.
+        /// Release payloads only [`Self::fs_to_js`] would free, for a result that will never
+        /// reach the JS thread. Types whose `Drop` already frees everything keep the no-op.
         fn fs_discard(&mut self) {}
     }
     impl FsReturn for JSValue {
@@ -1214,8 +1211,7 @@ mod _async_tasks {
             self.to_js(global)
         }
         fn fs_discard(&mut self) {
-            // `Drop for StringOrBuffer` derefs the string variants but deliberately skips
-            // `Buffer` — its bytes normally transfer to a JSC finalizer in `to_js`.
+            // `Drop for StringOrBuffer` deliberately skips `Buffer` (bytes transfer in `to_js`).
             if let StringOrBuffer::Buffer(buffer) = self {
                 buffer.destroy();
             }
@@ -1261,8 +1257,7 @@ mod _async_tasks {
             owned.to_js(global)
         }
         fn fs_discard(&mut self) {
-            // Mirrors `ResultListEntryValue::deinit`: entries hold WTF string refs /
-            // owned byte slices that `to_js` would have transferred; no `Drop` releases them.
+            // Mirrors `ResultListEntryValue::deinit`; no `Drop` releases the entries.
             match self {
                 ret::Readdir::WithFileTypes(items) => {
                     for item in items.iter() {
@@ -1315,8 +1310,8 @@ mod _async_tasks {
         pub(crate) result: Maybe<R>,
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
-        /// Keeps the loop's [`ConcurrentPosterGate`] reachable from the work-pool thread even
-        /// after the VM is torn down (the blocking syscall can outlive it; see the gate type).
+        /// Keeps the loop's [`ConcurrentPosterGate`] readable after the VM is torn down (the
+        /// blocking syscall can outlive it).
         pub(crate) gate: Arc<ConcurrentPosterGate>,
     }
 
@@ -1387,8 +1382,8 @@ mod _async_tasks {
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
-            // Clone (not borrow) the gate: after a successful enqueue the JS thread may free
-            // `this` — and with it the task's own `Arc` — before `end_post` runs.
+            // Clone, not borrow: the JS thread may free `this` (and its `Arc`) right after the
+            // enqueue, before `end_post`.
             // SAFETY: `this` is still exclusively owned here (see above).
             let gate = unsafe { (*this).gate.clone() };
             if gate.begin_post() {
@@ -1480,8 +1475,7 @@ mod _async_tasks {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in create()).
             let mut task = unsafe { bun_core::heap::take(this) };
-            // Same as `UVFSRequest::destroy`: only the shutdown-drain path still holds a real
-            // result here, and its `to_js`-transferred payloads have no other owner.
+            // Same as `UVFSRequest::destroy`: only the shutdown-drain path holds a real result.
             if let Ok(result) = task.result.as_mut() {
                 result.fs_discard();
             }
@@ -1535,8 +1529,7 @@ mod _async_tasks {
         /// outlives this task; `ParentRef` gives a safe `&ShellCpTask` projection
         /// for `cp_on_copy` and round-trips the `*mut` for `cp_on_finish`.
         pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
-        /// `Some` iff `evtloop` is the JS loop (see [`AsyncFSTask::gate`]); the mini loop's
-        /// completion path has no VM to outlive.
+        /// `Some` iff `evtloop` is the JS loop (see [`AsyncFSTask::gate`]).
         pub(crate) gate: Option<Arc<ConcurrentPosterGate>>,
     }
 
@@ -1816,16 +1809,15 @@ mod _async_tasks {
             // provenance from `Box::leak`, so the enqueued callback may safely
             // form `&mut *this` on the JS thread.
             if let EventLoopHandle::Js { .. } = this_ref.evtloop {
-                // Clone (not borrow) the gate: after a successful enqueue the JS thread may
-                // free the task — and its `Arc` — before `end_post` runs.
+                // Clone, not borrow: the JS thread may free the task (and its `Arc`) right
+                // after the enqueue, before `end_post`.
                 let gate = this_ref
                     .gate
                     .clone()
                     .expect("JS-loop cp task always carries the poster gate");
                 if gate.begin_post() {
-                    // SAFETY (`evtloop` deref): `begin_post()` returned true, so the VM and its
-                    // event loop stay live until the matching `end_post()`; ownership of `this`
-                    // transfers to the JS thread at the enqueue.
+                    // SAFETY (`evtloop` deref): `begin_post()` pins the VM and its event loop
+                    // live until `end_post()`; ownership of `this` transfers at the enqueue.
                     this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                         js: ConcurrentTask::from_callback(this, |p| {
                             // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
@@ -2697,8 +2689,8 @@ mod _async_tasks {
                 }
             }
 
-            // Clone (not borrow) the gate: after a successful enqueue the JS thread may free
-            // `self` — and with it the task's own `Arc` — before `end_post` runs.
+            // Clone, not borrow: the JS thread may free `self` (and its `Arc`) right after the
+            // enqueue, before `end_post`.
             let gate = self.gate.clone();
             let this = std::ptr::from_mut::<Self>(self);
             if gate.begin_post() {

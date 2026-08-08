@@ -1309,9 +1309,7 @@ impl WebWorker {
             Bun__JSCTaskScheduler__markShuttingDown(vm.global());
             // Reclaim queued CppTasks while JSC is still live (after teardownJSCVM the worker VM is
             // dealloc'd-without-Drop so anything still in self.tasks leaks). Close the poster gates
-            // first so the drain below sees every work-pool fs completion that will ever land; a
-            // completion whose syscall is still blocked (pipe/FIFO with no writer) is refused at
-            // its gate later and frees itself without touching this VM.
+            // first so the drain below sees every work-pool fs completion that will ever land.
             vm.close_concurrent_posters();
             vm.event_loop_mut().release_queued_tasks_for_shutdown();
             if let Some(rare) = vm.rare_data.as_deref_mut() {

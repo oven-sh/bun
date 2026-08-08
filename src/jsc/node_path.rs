@@ -53,11 +53,8 @@ impl<T: Unprotect> ThreadSafe<T> {
     }
 
     /// Drop the inner `T` (freeing its owned Rust payloads) WITHOUT running
-    /// [`Unprotect::unprotect`]. Only for teardown paths where the VM that
-    /// held the protect counts is already gone — the GC roots died with the
-    /// heap, and touching them would be a use-after-free. `to_thread_safe()`
-    /// already converted any thread-affine strings, so the inner drop is safe
-    /// off the JS thread.
+    /// [`Unprotect::unprotect`]: for teardown paths where the VM that held
+    /// the protect counts is already freed, so touching them would be a UAF.
     pub fn dispose_skip_unprotect(self) {
         let this = core::mem::ManuallyDrop::new(self);
         // SAFETY: `this` is `ManuallyDrop`, so `ThreadSafe::drop` (the

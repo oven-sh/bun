@@ -444,4 +444,53 @@ describe.concurrent("--cpu-prof", () => {
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
   });
+
+  // The sampling profiler could segfault when a sample landed inside a VM
+  // entry/exit transition: vm.topEntryFrame is null there while vm.entryScope
+  // is already set, and a walked frame whose caller slot read null made the
+  // stack walker dereference vmEntryRecord(nullptr) (oven-sh/WebKit#395, seen
+  // as a crash at 0xFFFFFFFFFFFFFFC8 in test-cpu-prof-dir-worker.js on CI).
+  // The workload widens that window as far as JS can: a callback with a huge
+  // declared parameter count invoked from native spends most of its runtime in
+  // doVMEntry's argument pad loop, which runs before topEntryFrame is stored.
+  test("sampler survives VM entry churn from callbacks with huge parameter counts", async () => {
+    using dir = tempDir("cpu-prof-entry-churn", {
+      "churn.js": `
+        const params = Array.from({ length: 2000 }, (_, i) => "p" + i).join(",");
+        const f = new Function(params, "c.n++;");
+        globalThis.c = { n: 0 };
+        const { port1, port2 } = new MessageChannel();
+        port1.onmessage = f;
+        const deadline = performance.now() + 150;
+        function loop() {
+          if (performance.now() >= deadline) {
+            console.log("calls made:", c.n > 0);
+            port1.close();
+            port2.close();
+            return;
+          }
+          setImmediate(f);
+          Promise.resolve().then(f);
+          queueMicrotask(f);
+          process.nextTick(f);
+          port2.postMessage(1);
+          setImmediate(loop);
+        }
+        loop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-interval=50", "churn.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toContain("calls made: true");
+    expect(exitCode).toBe(0);
+  });
 });

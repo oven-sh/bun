@@ -483,7 +483,7 @@ _bun_run_completion() {
         '--watch[Automatically restart bun'"'"'s JavaScript runtime on file change]' \
         '--no-install[Disable auto install in bun'"'"'s JavaScript runtime]' \
         '--install[Install dependencies automatically when no node_modules are present, default: "auto". "force" to ignore node_modules, fallback to install any missing]: :->install_' \
-        '-i[Automatically install dependencies and use global cache in bun'"'"'s runtime, equivalent to --install=fallback'] \
+        '-i[Automatically install dependencies and use global cache in bun'"'"'s runtime, equivalent to --install=fallback]' \
         '--prefer-offline[Skip staleness checks for packages in bun'"'"'s JavaScript runtime and resolve from disk]' \
         '--prefer-latest[Use the latest matching versions of packages in bun'"'"'s JavaScript runtime, always checking npm]' \
         '--silent[Don'"'"'t repeat the command for bun run]' \

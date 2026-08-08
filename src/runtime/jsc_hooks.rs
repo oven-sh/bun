@@ -116,6 +116,9 @@ pub(crate) enum ActiveHandle {
     StatWatcher(ptr::NonNull<crate::node::node_fs_stat_watcher::StatWatcher>),
     Server(crate::server::AnyServer),
     Listener(ptr::NonNull<crate::socket::Listener>),
+    /// A `Bun.udpSocket` / node:dgram socket: not in any uSockets group; on
+    /// Windows its armed receive is a request only closing the handle ends.
+    UdpSocket(ptr::NonNull<crate::socket::udp_socket::UDPSocket>),
     /// TLS over a JS duplex (`tls.connect({ socket })`, `new TLSSocket(duplex)`):
     /// not in any uSockets group, so closed through its owner.
     DuplexUpgrade(ptr::NonNull<crate::socket::DuplexUpgradeContext>),
@@ -1794,6 +1797,10 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             ActiveHandle::Listener(l) => {
                 // SAFETY: live until it unregisters in `do_stop`/`finalize`.
                 crate::socket::Listener::stop_for_vm_teardown(unsafe { l.as_ref() })
+            }
+            ActiveHandle::UdpSocket(u) => {
+                // SAFETY: live until it unregisters in `on_close`.
+                crate::socket::udp_socket::UDPSocket::stop_for_vm_teardown(unsafe { u.as_ref() })
             }
             // SAFETY: live until it unregisters in `deinit`.
             ActiveHandle::DuplexUpgrade(c) => unsafe {

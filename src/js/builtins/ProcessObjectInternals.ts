@@ -138,25 +138,30 @@ export function getStdioWriteStream(
     pendingWrite = pending;
     updateObserved(this);
   };
-  const { cork, uncork, end, destroy } = stream;
-  stream.cork = function () {
-    cork.$call(this);
-    updateObserved(this);
-  };
-  stream.uncork = function () {
-    uncork.$call(this);
-    updateObserved(this);
-  };
-  stream.end = function (...args) {
-    const ret = end.$apply(this, args);
-    updateObserved(this);
-    return ret;
-  };
-  stream.destroy = stream.destroySoon = function (...args) {
-    const ret = destroy.$apply(this, args);
-    updateObserved(this);
-    return ret;
-  };
+  const { cork: baseCork, uncork: baseUncork, end: baseEnd, destroy: baseDestroy } = stream;
+  // Same shape a user sees on any Writable: named, non-enumerable methods.
+  const hidden = (value: Function) => ({ value, writable: true, configurable: true, enumerable: false });
+  Object.defineProperties(stream, {
+    cork: hidden(function cork(this: any) {
+      baseCork.$call(this);
+      updateObserved(this);
+    }),
+    uncork: hidden(function uncork(this: any) {
+      baseUncork.$call(this);
+      updateObserved(this);
+    }),
+    end: hidden(function end(this: any, ...args) {
+      const ret = baseEnd.$apply(this, args);
+      updateObserved(this);
+      return ret;
+    }),
+    destroy: hidden(function destroy(this: any, ...args) {
+      const ret = baseDestroy.$apply(this, args);
+      updateObserved(this);
+      return ret;
+    }),
+  });
+  stream.destroySoon = stream.destroy;
 
   stream._isStdio = true;
   stream.fd = fd;

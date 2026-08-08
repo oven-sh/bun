@@ -678,6 +678,12 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.parent
     }
 
+    /// [`parent`](Self::parent), for the poll dispatcher.
+    #[inline]
+    pub fn parent_ptr(&self) -> *mut Parent {
+        self.parent()
+    }
+
     /// Single nonnull-asref dispatch for the set-once `parent` backref.
     ///
     /// Type invariant (encapsulated `unsafe`): `self.parent` is populated by

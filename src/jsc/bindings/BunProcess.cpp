@@ -3057,6 +3057,16 @@ JSValue Process::consoleStreamForGetter(JSC::JSGlobalObject* globalObject, int f
 // Empty: use the native sink. Otherwise the stream to `write()` to. `*threw`
 // is set (and empty returned) if user code made `process.stdout` a throwing
 // getter and this was the console's first use.
+// Whether the console's stream for `fd` is a *foreign* object (worker port
+// stream, `console._stdout = x`, a replaced `process.stdout`) rather than Bun's
+// own stdio stream in an observed state. Never runs user code.
+extern "C" bool Bun__Process__consoleStreamIsCustom(Zig::GlobalObject* globalObject, int32_t fd)
+{
+    if (!globalObject->hasProcessObject()) [[unlikely]]
+        return false;
+    return globalObject->processObject()->consoleStreamIsCustom(fd);
+}
+
 extern "C" JSC::EncodedJSValue Bun__Process__consoleStream(Zig::GlobalObject* globalObject, int32_t fd, bool* threw)
 {
     if (!globalObject->hasProcessObject()) [[unlikely]]

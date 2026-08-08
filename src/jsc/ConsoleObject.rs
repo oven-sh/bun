@@ -163,9 +163,9 @@ unsafe extern "Rust" {
         fd: bun_sys::Fd,
         bytes: &[u8],
     ) -> Result<(), bun_sys::Error>;
-    /// `bun_runtime::webcore::file_sink::__bun_stdio_sink_drain` — flush both
-    /// stdio sinks' queues now (no-op if they don't exist).
-    fn __bun_stdio_sink_drain(vm: *mut VirtualMachine);
+    /// `bun_runtime::webcore::file_sink::__bun_stdio_sink_drain_fd` — flush
+    /// this fd's stdio sink queue now (no-op if it doesn't exist).
+    fn __bun_stdio_sink_drain_fd(vm: *mut VirtualMachine, fd: bun_sys::Fd);
 }
 
 unsafe extern "C" {
@@ -180,6 +180,9 @@ unsafe extern "C" {
     /// (custom binding or Bun's materialised stream), else empty. For
     /// `console.clear()`'s `isTTY` check. Same throw contract as
     /// `Bun__Process__consoleStream`.
+    /// `BunProcess.cpp` — the console's stream for `fd` is a foreign object
+    /// (not Bun's own stdio stream). Never runs user code.
+    safe fn Bun__Process__consoleStreamIsCustom(global: &JSGlobalObject, fd: i32) -> bool;
     fn Bun__Process__consoleStreamObject(
         global: &JSGlobalObject,
         fd: i32,
@@ -249,6 +252,29 @@ fn console_target(global: &JSGlobalObject, stream: ConsoleStream) -> JsResult<JS
     }
 }
 
+/// Whether to colour a message bound for `target`: Bun's own fd 1/2 (native
+/// or observed) → the usual per-fd answer; a foreign stream (worker port,
+/// `console._stdout = x`) → `FORCE_COLOR`/`NO_COLOR`, else its own `isTTY`,
+/// as Node's `Console` does for `colorMode: 'auto'`.
+fn console_colors(
+    global: &JSGlobalObject,
+    stream: ConsoleStream,
+    target: JSValue,
+) -> JsResult<bool> {
+    if target.is_empty() || !Bun__Process__consoleStreamIsCustom(global, stream.number()) {
+        return Ok(stream.colors());
+    }
+    if let Some(forced) = Output::env_color_override() {
+        return Ok(forced);
+    }
+    if !target.is_object() {
+        return Ok(false);
+    }
+    Ok(target
+        .get(global, b"isTTY")?
+        .is_some_and(|v| v.to_boolean()))
+}
+
 /// Deliver one whole formatted message to `target` (see [`console_target`]).
 /// Errors reaching the fd (EPIPE, ...) are the sink's to surface on
 /// `process.stdout`/`stderr`; the console itself never throws for them
@@ -264,15 +290,14 @@ fn deliver_to(
     }
     let vm: *mut VirtualMachine = global.bun_vm().as_mut();
     if target.is_empty() {
-        // Callers hold `StdioLock` for `stream` on this path (`emit`/`deliver`).
         // SAFETY: `vm` is the live per-thread VM that owns `global`.
         let _ = unsafe { __bun_stdio_sink_write(vm, stream.fd(), bytes) };
         return Ok(());
     }
     // Switching to JS delivery: whatever the native side still has queued for
-    // either fd must land first or it would come out after this message.
+    // this fd must land first or it would come out after this message.
     // SAFETY: as above.
-    unsafe { __bun_stdio_sink_drain(vm) };
+    unsafe { __bun_stdio_sink_drain_fd(vm, stream.fd()) };
     let chunk = bun_core::String::borrow_utf8(bytes).to_js(global)?;
     crate::from_js_host_call_generic(global, || {
         // SAFETY: plain FFI; both values are live on this stack.
@@ -282,9 +307,6 @@ fn deliver_to(
 
 pub fn deliver(global: &JSGlobalObject, stream: ConsoleStream, bytes: &[u8]) -> JsResult<()> {
     let target = console_target(global, stream)?;
-    let _lock = target
-        .is_empty()
-        .then(|| bun_io::StdioLock::acquire(stream.fd()));
     deliver_to(global, stream, target, bytes)
 }
 
@@ -327,13 +349,13 @@ impl bun_io::Write for ConsoleWriter<'_> {
 pub fn emit(
     global: &JSGlobalObject,
     stream: ConsoleStream,
-    f: impl FnOnce(&mut ConsoleWriter<'_>) -> JsResult<()>,
+    f: impl FnOnce(&mut ConsoleWriter<'_>, bool) -> JsResult<()>,
 ) -> JsResult<()> {
     let target = console_target(global, stream)?;
     let native = target.is_empty();
-    // Held across formatting on the native path so spilled chunks of one
-    // message can't interleave with another thread's console output.
-    let _lock = native.then(|| bun_io::StdioLock::acquire(stream.fd()));
+    // No lock here: formatting runs user JS (getters, toJSON, inspect.custom)
+    // that may log to the *other* stream or exit; each write / spill takes the
+    // per-fd lock for itself (`FileSink::write_all_sync`).
 
     let console = vm_console(global);
     let mut buf = ConsoleObject::take_scratch(console);
@@ -346,7 +368,7 @@ pub fn emit(
             )
         }),
     };
-    let result = match f(&mut writer) {
+    let result = match f(&mut writer, console_colors(global, stream, target)?) {
         Ok(()) => deliver_to(global, stream, target, &buf),
         Err(err) => Err(err),
     };
@@ -568,8 +590,6 @@ fn message_with_type_and_level_(
 
     // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
     let default_indent = unsafe { (*console).default_indent };
-    let enable_colors = stream.colors();
-
     // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
     // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
     // high-tier hook checks `Jest.runner` and calls `onBeforePrint()`; no-op
@@ -581,7 +601,7 @@ fn message_with_type_and_level_(
     // SAFETY: caller (JSC C++) guarantees `vals` points to `len` JSValues.
     let vals_slice = unsafe { bun_core::ffi::slice(vals, len) };
 
-    emit(global, stream, |writer| {
+    emit(global, stream, |writer, enable_colors| {
         if message_type == MessageType::Assert {
             // Node prefixes the first argument and forwards to `warn`, so the
             // prefix takes part in the same `%s` substitution pass:
@@ -5936,8 +5956,8 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
         current
     };
 
-    let _ = emit(global_this, ConsoleStream::Stdout, |writer| {
-        if ConsoleStream::Stdout.colors() {
+    let _ = emit(global_this, ConsoleStream::Stdout, |writer, colors| {
+        if colors {
             let _ = writeln!(
                 writer,
                 "{}{}{}: {}{}{}",
@@ -6128,7 +6148,7 @@ fn time_log_impl(
     };
     let ms = timer.read() as f64 / bun_core::time::NS_PER_MS as f64;
 
-    let _ = emit(global, ConsoleStream::Stdout, |writer| {
+    let _ = emit(global, ConsoleStream::Stdout, |writer, colors| {
         let _ = writer.write_all(label);
         let _ = writer.write_all(b": ");
         write_elapsed(writer, ms);
@@ -6145,7 +6165,7 @@ fn time_log_impl(
             for &arg in args {
                 let tag = formatter::Tag::get(arg, global)?;
                 let _ = writer.write_all(b" ");
-                if ConsoleStream::Stdout.colors() {
+                if colors {
                     fmt.format::<true>(tag, writer, arg, global)?;
                 } else {
                     fmt.format::<false>(tag, writer, arg, global)?;

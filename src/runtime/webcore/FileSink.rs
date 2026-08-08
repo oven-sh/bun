@@ -67,6 +67,14 @@ pub struct FileSink {
     /// how Node's stdio streams behave (each write() re-fails) and what lets
     /// `'error'` fire per call instead of the sink going quietly inert.
     pub(crate) stdio_error: JsCell<Option<sys::Error>>,
+    /// `Bun.write(Bun.stdout, x)` calls waiting for the queue to drain, each
+    /// with the byte count it is to resolve with (the shared `pending` slot's
+    /// count belongs to whoever awaits the JS wrapper's promise).
+    pub(crate) stdio_waiters: JsCell<Vec<(bun_jsc::js_promise::Strong, f64)>>,
+    /// This stdio sink is relying on `pwritev2(RWF_NOWAIT)` (Linux ≥ 6.4
+    /// pipes) instead of `O_NONBLOCK`; see `refresh_stdio_mode`.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
+    pub(crate) stdio_rwf_nowait: Cell<bool>,
 
     pub(crate) auto_flusher: JsCell<AutoFlusher>,
     pub(crate) run_pending_later: FlushPendingTask,
@@ -316,10 +324,15 @@ impl FileSink {
             (*this).run_pending_later.has.set(false);
 
             let _entered = (*this).event_loop().entered();
+            let failure = match (*this).pending.get().result {
+                streams::Writable::Err(ref err) => Some(err.clone()),
+                _ => (*this).stdio_error(),
+            };
             // SAFETY(JsCell): `WritablePending::run` resolves a JSPromise which may
             // re-enter JS, but no other path holds a borrow of `self.pending` for
             // the duration (host-fns gate on `pending.state != Pending` first).
             (*this).pending.get_mut().run();
+            FileSink::settle_stdio_waiters(this, failure.as_ref());
 
             // Release the JS wrapper reference now that the pending operation is complete.
             // This was held to prevent GC from collecting the wrapper while the async
@@ -367,18 +380,20 @@ impl FileSink {
                 }
             }
 
-            // Bytes still queued (backed up, or a small write coalesced behind an
-            // earlier remainder): whoever is waiting on the pending promise keeps
-            // waiting until they are actually out, so `'drain'` can't fire early.
-            // (Windows reports per completed `uv_write`; its queue drains through
-            // further `on_write`s, see the TODO above.)
-            #[cfg(not(windows))]
-            if has_pending_data && status != WriteStatus::EndOfFile {
+            // Backed up: whoever is waiting on the pending promise keeps waiting.
+            // A stdio sink also waits out a small write coalesced behind an
+            // earlier remainder (its poll / autoflush is guaranteed to drain it),
+            // so process.stdout's `'drain'` can't fire early.
+            if has_pending_data
+                && (status == WriteStatus::Pending
+                    || (cfg!(not(windows))
+                        && (*this).is_stdio()
+                        && status != WriteStatus::EndOfFile))
+            {
                 return;
             }
-            #[cfg(windows)]
-            if status == WriteStatus::Pending && has_pending_data {
-                return;
+            if !has_pending_data {
+                FileSink::settle_stdio_waiters(this, None);
             }
 
             let was_pending = (*this).pending.get().state == streams::PendingState::Pending;
@@ -606,6 +621,9 @@ impl FileSink {
         if self.stdio_error.get().is_none() {
             self.stdio_error.with_mut(|e| *e = Some(err.clone()));
         }
+        // SAFETY: `self` is the canonical RareData-held stdio sink; settling
+        // only rejects promises (reactions run later as microtasks).
+        unsafe { FileSink::settle_stdio_waiters(core::ptr::from_ref(self).cast_mut(), Some(&err)) };
         err
     }
 
@@ -651,6 +669,52 @@ impl FileSink {
     /// `stdio_js` makes a new one in the then-current global).
     pub fn release_stdio_js(&self) {
         self.stdio_js.with_mut(|s| s.deinit());
+        self.stdio_waiters.with_mut(|w| w.clear());
+    }
+
+    /// `Bun.write(Bun.stdout|stderr, x)` whose bytes had to queue: a promise
+    /// resolved with `count` once the queue has drained (or rejected with the
+    /// error that stopped it).
+    pub fn add_stdio_waiter(&self, global: &JSGlobalObject, count: f64) -> JSValue {
+        let strong = bun_jsc::js_promise::Strong::init(global);
+        let value = strong.value();
+        self.stdio_waiters.with_mut(|w| w.push((strong, count)));
+        value
+    }
+
+    /// # Safety
+    /// `this` is the canonical live pointer; resolves promises (re-enters JS).
+    unsafe fn settle_stdio_waiters(this: *mut FileSink, failure: Option<&sys::Error>) {
+        // SAFETY: caller contract; the Vec is moved out before any JS runs.
+        let waiters = unsafe { (*this).stdio_waiters.replace(Vec::new()) };
+        if waiters.is_empty() {
+            return;
+        }
+        // SAFETY: as above.
+        let Some(vm) = (unsafe { (*this).js_vm() }) else {
+            return;
+        };
+        let global = vm.global();
+        for (mut promise, count) in waiters {
+            let _ = match failure {
+                None => promise.resolve(global, JSValue::js_number(count)),
+                Some(err) => {
+                    use bun_sys_jsc::ErrorJsc as _;
+                    promise.reject(global, err.clone().to_js(global))
+                }
+            };
+        }
+    }
+
+    /// Poll dispatch is about to run the writable callback for this sink.
+    ///
+    /// # Safety
+    /// `this` is the live FileSink owning the poll.
+    #[cfg(not(windows))]
+    #[inline]
+    pub unsafe fn before_writable(this: *mut FileSink) {
+        // SAFETY: caller contract; field reads/`Cell` writes only.
+        unsafe { (*this).refresh_stdio_mode() };
     }
 
     /// Something (spawn with inherited stdio) put our description back into
@@ -660,6 +724,16 @@ impl FileSink {
     /// was expected to return early. One relaxed load when nothing happened.
     #[inline]
     fn refresh_stdio_mode(&self) {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if self.stdio_rwf_nowait.get() && !sys::linux::RWFFlagSupport::is_maybe_supported() {
+            // The RWF_NOWAIT route was refused at runtime; take the portable one
+            // (unless a spawn has since asked for blocking stdio anyway).
+            self.stdio_rwf_nowait.set(false);
+            if !sys::stdio_made_blocking(self.stdio.get()) {
+                self.stdio_set_o_nonblock(self.writer.get().get_fd());
+            }
+            return;
+        }
         #[cfg(not(windows))]
         if self.nonblocking.get() && self.is_stdio() && sys::stdio_made_blocking(self.stdio.get()) {
             self.nonblocking.set(false);
@@ -674,7 +748,7 @@ impl FileSink {
     /// description (torvalds/linux@afed6271f5b0, "pipe: set FMODE_NOWAIT on
     /// pipes"), and ttys / files stay blocking as in Node.
     #[cfg(not(windows))]
-    fn stdio_go_nonblocking(&self) {
+    pub(crate) fn stdio_go_nonblocking(&self) {
         if self.nonblocking.get() || !self.pollable.get() || self.is_socket.get() {
             return;
         }
@@ -689,9 +763,18 @@ impl FileSink {
                 && sys::linux::RWFFlagSupport::is_maybe_supported()
                 && sys::is_on_pipefs(fd)
             {
+                // `pwritev2(RWF_NOWAIT)` on a blocking description. Should the
+                // kernel turn out to refuse it after all (seccomp, gVisor, ...),
+                // `refresh_stdio_mode` falls back to O_NONBLOCK.
+                self.stdio_rwf_nowait.set(true);
                 return;
             }
         }
+        self.stdio_set_o_nonblock(fd);
+    }
+
+    #[cfg(not(windows))]
+    fn stdio_set_o_nonblock(&self, fd: Fd) {
         let already = sys::get_fcntl_flags(fd)
             .map(|f| f as i32 & sys::O::NONBLOCK != 0)
             .unwrap_or(false);
@@ -732,9 +815,14 @@ impl FileSink {
             (*this).stdio.set(stdio_fd);
             (*this).pollable.set(pollable);
             (*this).is_socket.set(is_socket);
-            (*this).force_sync.set(!pollable);
+            // As for any FileSink: only a TTY writes through immediately;
+            // files / pipes / sockets coalesce `Bun.stdout.writer().write()`s
+            // until `flush()` / end of tick. (The console and process.stdout
+            // paths don't go through the coalescing entry point.)
+            let force_sync = !pollable && sys::isatty(fd);
+            (*this).force_sync.set(force_sync);
             (*this).writer.with_mut(|w| {
-                w.force_sync = !pollable;
+                w.force_sync = force_sync;
                 // Idle stdio sinks keep no poll registered; `AutoFlusher`
                 // flushes coalesced `Bun.stdout.writer()` writes at end of tick.
                 w.poll_flushes_buffer = false;
@@ -862,6 +950,9 @@ impl FileSink {
             if result.is_ok() && (*this).pending.get().state == streams::PendingState::Pending {
                 (*this).run_pending_later();
             }
+            if result.is_ok() {
+                FileSink::settle_stdio_waiters(this, None);
+            }
             if (*this).source_pending_pull.replace(false) {
                 let mut src = *(*this).source.get();
                 src.ready(None, None);
@@ -879,14 +970,16 @@ impl FileSink {
     /// The console path: one fully formatted message (or a spilled part of
     /// one), delivered before this returns. Anything already queued goes out
     /// first (ordering), then `bytes` are written straight from the caller's
-    /// buffer. The caller holds [`bun_io::StdioLock`] for this fd for the whole
-    /// message.
+    /// buffer. Holds [`bun_io::StdioLock`] for exactly this write — never while
+    /// formatting or any other JS runs — so no thread can hold one stdio lock
+    /// while waiting on the other.
     ///
     /// # Safety
     /// Same contract as [`drain_sync`](Self::drain_sync).
     pub unsafe fn write_all_sync(this: *mut FileSink, bytes: &[u8]) -> sys::Result<()> {
         // SAFETY: caller contract.
         unsafe {
+            let _lock = bun_io::StdioLock::acquire((*this).stdio.get());
             if (*this).writer.get().has_pending_data() {
                 FileSink::drain_sync(this)?;
             }
@@ -899,6 +992,14 @@ impl FileSink {
                 // `SyncFile` writes are already a blocking loop.
                 match (*this).writer.with_mut(|w| w.write(bytes)) {
                     WriteResult::Err(err) => Err((*this).stdio_latch_error(err)),
+                    WriteResult::Done(n) if n < bytes.len() => {
+                        // The handle went away part-way: say so rather than
+                        // report the tail as written.
+                        Err((*this).stdio_latch_error(sys::Error::from_code(
+                            sys::E::EPIPE,
+                            sys::Tag::write,
+                        )))
+                    }
                     _ => {
                         (*this).written.set((*this).written.get() + bytes.len());
                         Ok(())
@@ -942,15 +1043,6 @@ impl FileSink {
                 Ok(())
             }
         }
-    }
-
-    /// A caller that got `Writable::Pending` back but settles the operation
-    /// itself (synchronously, via `drain_sync`) instead of taking the pending
-    /// promise gives its byte credit back, so the next real waiter's count is
-    /// its own.
-    pub fn uncredit_pending(&self, accepted: u64) {
-        self.pending
-            .with_mut(|p| p.consumed = p.consumed.saturating_sub(accepted));
     }
 
     /// `write()` for a JS `data` value that is a string / ArrayBuffer(View);
@@ -1913,6 +2005,8 @@ impl FileSink {
             stdio: Cell::new(Fd::INVALID),
             stdio_js: JsCell::new(bun_jsc::strong::Optional::empty()),
             stdio_error: JsCell::new(None),
+            stdio_waiters: JsCell::new(Vec::new()),
+            stdio_rwf_nowait: Cell::new(false),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             run_pending_later: FlushPendingTask::default(),
             readable_stream: JsCell::new(readable_stream::Strong::default()),
@@ -2233,7 +2327,7 @@ unsafe fn __bun_stdio_sink_deinit(ptr: *mut ()) {
     // wrapper root here is sound (the wrapper's own +1 is released by its
     // finalizer).
     unsafe {
-        (*this).stdio_js.with_mut(|s| s.deinit());
+        (*this).release_stdio_js();
         // A stdio sink never reaches EOF/close, so a backpressure episode's
         // keep-alive ref (`to_result` → `must_be_kept_alive_until_eof`) is
         // still held; drop it with RareData's.
@@ -2288,7 +2382,7 @@ pub fn stdio_sink_js(global: &JSGlobalObject, fd: Fd) -> Option<JSValue> {
 
 /// `bun_jsc::console_object::__bun_stdio_sink_write` body — the console fast
 /// path. Delivers `bytes` to fd `fd` through this VM's stdio sink before
-/// returning (see [`FileSink::write_all_sync`]). Caller holds `StdioLock(fd)`.
+/// returning (see [`FileSink::write_all_sync`]).
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
@@ -2304,6 +2398,7 @@ unsafe fn __bun_stdio_sink_write(
         // SAFETY: `sink` is the canonical live pointer held by RareData.
         Some(sink) => match unsafe { FileSink::write_all_sync(sink, bytes) } {
             Ok(()) => Ok(()),
+            // (The lock is released by now: reporting may print to the other fd.)
             Err(err) => {
                 // Node: a console write that fails surfaces as 'error' on
                 // process.stdout/stderr *if someone is listening* (the console
@@ -2315,6 +2410,7 @@ unsafe fn __bun_stdio_sink_write(
         None => {
             // No sink (fd 1/2 could not be dup'd): best effort straight to the
             // fd; there is no stream to report a failure on.
+            let _lock = bun_io::StdioLock::acquire(fd);
             let _ = sys::write_all_retrying(fd, bytes);
             Ok(())
         }
@@ -2343,6 +2439,12 @@ fn report_stdio_error(global: &JSGlobalObject, fd: Fd, err: &sys::Error) {
 /// `init_runtime_state`. Runs on whatever thread `Output` is writing from, so
 /// it only ever looks at *that* thread's VM.
 pub fn before_output_write(fd: Fd) {
+    // The crash reporter / a panic prints through `Output` too; it must not
+    // take the stdio lock or wait on a reader (or touch a writer that may be
+    // mid-flush on this very stack).
+    if bun_core::is_panicking() {
+        return;
+    }
     let Some(vm) = bun_jsc::VirtualMachineRef::get_or_null() else {
         return;
     };
@@ -2364,6 +2466,20 @@ pub fn before_output_write(fd: Fd) {
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
+/// See [`__bun_stdio_sink_drain`]; one fd.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+#[unsafe(no_mangle)]
+unsafe fn __bun_stdio_sink_drain_fd(vm: *mut bun_jsc::VirtualMachineRef, fd: Fd) {
+    // SAFETY: caller contract.
+    let vm = unsafe { &mut *vm };
+    if let Some(sink) = existing_stdio_sink(vm, fd) {
+        // SAFETY: canonical live pointer held by RareData.
+        let _ = unsafe { FileSink::drain_sync(sink) };
+    }
+}
+
 #[unsafe(no_mangle)]
 unsafe fn __bun_stdio_sink_drain(vm: *mut bun_jsc::VirtualMachineRef) {
     // SAFETY: caller contract.

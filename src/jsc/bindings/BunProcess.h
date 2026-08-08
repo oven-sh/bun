@@ -80,6 +80,7 @@ public:
     // once resolved; the first (Unresolved) call may run — and throw from — a
     // user getter installed on `process.stdout`/`stderr`.
     JSValue consoleStream(JSC::JSGlobalObject*, int fd);
+    bool consoleStreamIsCustom(int fd) { return m_consoleStreamState[fd - 1] == ConsoleStreamState::Custom; }
     bool consoleStreamIsResolved(int fd) const { return m_consoleStreamState[fd - 1] != ConsoleStreamState::Unresolved; }
     // What `console._stdout` / `console._stderr` evaluate to (may materialise
     // process.stdout; can throw).

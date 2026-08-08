@@ -5086,35 +5086,34 @@ pub(crate) fn write_file_internal(
                 // SAFETY: bun_vm() is the live VM owning `global_this`.
                 let vm = global_this.bun_vm().as_mut();
                 if let Some(sink) = webcore::file_sink::stdio_sink_for(vm, stdio_fd) {
+                    // An async JS writer, like process.stdout: a pipe may queue
+                    // and resolve later rather than stall the loop.
                     // SAFETY: canonical live pointer held by RareData.
+                    #[cfg(not(windows))]
+                    unsafe {
+                        (*sink).stdio_go_nonblocking()
+                    };
+                    // SAFETY: as above.
                     let wrote = unsafe { (*sink).write_js_value(global_this, data, true, true)? };
                     if let Some((result, accepted)) = wrote {
-                        // `Bun.write` resolves once the bytes are written, with
-                        // *this* call's byte count — not whenever (and with
-                        // whatever total) the shared sink's queue drains.
-                        let written = match result {
-                            streams::Writable::Err(err) => Err(err),
-                            other => {
-                                if matches!(other, streams::Writable::Pending(_)) {
-                                    // Settled right here, not through the pending promise.
-                                    // SAFETY: as above.
-                                    unsafe { (*sink).uncredit_pending(accepted) };
-                                }
-                                // SAFETY: as above.
-                                unsafe { webcore::FileSink::drain_sync(sink) }.map(|()| accepted)
-                            }
-                        };
-                        return Ok(match written {
-                            Ok(n) => JSPromise::resolved_promise_value(
-                                global_this,
-                                JSValue::js_number(n as f64),
-                            ),
-                            Err(err) => {
+                        // Resolves with *this* call's byte count: right away if
+                        // the fd took it, otherwise once the sink's queue has
+                        // drained (the loop keeps running meanwhile).
+                        return Ok(match result {
+                            streams::Writable::Err(err) => {
                                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                     global_this,
                                     err.to_js(global_this),
                                 )
                             }
+                            // SAFETY: as above.
+                            streams::Writable::Pending(_) => unsafe {
+                                (*sink).add_stdio_waiter(global_this, accepted as f64)
+                            },
+                            _ => JSPromise::resolved_promise_value(
+                                global_this,
+                                JSValue::js_number(accepted as f64),
+                            ),
                         });
                     }
                     // A Blob / stream source takes the general path below; at

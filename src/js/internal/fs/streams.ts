@@ -601,9 +601,10 @@ writeStreamPrototype._write = _write;
 // hears about a write going async and settling (process.stdout uses it to
 // keep console.* from overtaking chunks queued behind that write).
 const kOnPendingWrite = Symbol("kOnPendingWrite");
-// `FileSink.prototype.write` coalesces small chunks until end of tick (right
-// for a batching `Bun.file(fd).writer()`); a stream's `_write` wants the
-// syscall now, with the same return contract.
+// `FileSink.prototype.write` coalesces small chunks until end of tick — right
+// for a batching `Bun.file(fd).writer()` and kept for `child.stdin` /
+// `tty.WriteStream(fd)` (chatty pipe protocols); process.stdout/stderr's
+// `_write` wants the syscall now like Node's, with the same return contract.
 const fileSinkWriteNow = $newRustFunction("runtime/webcore/FileSink.rs", "writeNow", 2);
 function underscoreWriteFast(this: FSStream, chunk: any, encoding: any, cb: any) {
   let fileSink = this[kWriteStreamFastPath];
@@ -627,7 +628,7 @@ function underscoreWriteFast(this: FSStream, chunk: any, encoding: any, cb: any)
       chunk = Buffer.from(chunk, encoding);
     }
 
-    maybePromise = fileSinkWriteNow(fileSink, chunk);
+    maybePromise = this._isStdio === true ? fileSinkWriteNow(fileSink, chunk) : fileSink.write(chunk);
   } catch (e) {
     cb(e);
     return;

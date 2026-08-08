@@ -384,6 +384,8 @@ unsafe extern "C" {
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn Bun__JSCTaskScheduler__markShuttingDown(global: &JSGlobalObject);
+    /// `c-bindings.cpp`: every catchable signal back to `SIG_DFL` (no-op on Windows).
+    safe fn bun_reset_signal_handlers_for_exit();
 }
 
 pub const HOT_RELOAD_HOT: u8 = 1;
@@ -1512,6 +1514,23 @@ impl VirtualMachine {
         }
     }
 
+    /// The exit-time drain. JS will not run again, so its signal handlers
+    /// can't either: hand SIGINT/SIGTERM/... back to their defaults first (as
+    /// Node's `ResetSignalHandlers` does at teardown) so that waiting on a
+    /// reader that never reads stays killable the ordinary way.
+    fn drain_stdio_for_exit(&mut self) {
+        if self
+            .rare_data
+            .as_ref()
+            .is_some_and(|r| r.stdio_sinks.iter().any(Option::is_some))
+        {
+            if self.is_main_thread() {
+                bun_reset_signal_handlers_for_exit();
+            }
+            self.drain_stdio();
+        }
+    }
+
     pub fn on_exit(&mut self) {
         // Write CPU profile if profiling was enabled - do this FIRST before any
         // shutdown begins. Grab the config and null it out to make this
@@ -1545,7 +1564,7 @@ impl VirtualMachine {
         // Whatever process.stdout/stderr still had queued behind a slow reader
         // is written now (blocking), like console.log always has been: an exit
         // must not silently truncate output that was accepted before it.
-        self.drain_stdio();
+        self.drain_stdio_for_exit();
 
         self.is_shutting_down = true;
 
@@ -1580,7 +1599,7 @@ impl VirtualMachine {
         debug_assert!(self.is_shutting_down());
         // Paths that get here without `on_exit()` (early CLI/test-runner
         // exits) still owe the fd whatever process.stdout/stderr queued.
-        self.drain_stdio();
+        self.drain_stdio_for_exit();
         // FIXME: we should be doing this, but we're not, but unfortunately
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();

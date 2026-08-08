@@ -33,6 +33,10 @@ pub enum Error {
     AbortedBeforeConnecting,
     #[error("InvalidURL")]
     InvalidURL,
+    #[error("InvalidPort")]
+    InvalidPort,
+    #[error("InvalidProxyPort")]
+    InvalidProxyPort,
     #[error("ERR_TLS_CERT_ALTNAME_INVALID")]
     ERR_TLS_CERT_ALTNAME_INVALID,
     #[error("ClientAborted")]
@@ -276,6 +280,8 @@ impl Error {
             Self::Timeout => "Timeout",
             Self::AbortedBeforeConnecting => "AbortedBeforeConnecting",
             Self::InvalidURL => "InvalidURL",
+            Self::InvalidPort => "InvalidPort",
+            Self::InvalidProxyPort => "InvalidProxyPort",
             Self::ERR_TLS_CERT_ALTNAME_INVALID => "ERR_TLS_CERT_ALTNAME_INVALID",
             Self::ClientAborted => "ClientAborted",
             Self::HTTP2Unsupported => "HTTP2Unsupported",

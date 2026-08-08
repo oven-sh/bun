@@ -2320,3 +2320,47 @@ describe("http_proxy env var scheme is case-insensitive", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// An env proxy whose `:port` text does not parse as a u16 (overflow like
+// 107688 or 4295009448, out of range 99999, trailing garbage 9000abc) used to
+// collapse into the scheme default via get_port_auto(): every proxied request
+// was silently sent to port 80/443 of the proxy host. It must be rejected
+// before any connection is attempted; curl and Node (ERR_PROXY_INVALID_CONFIG)
+// both error on these.
+describe("env proxy with unparseable port is rejected", () => {
+  const cases = [
+    ["HTTP_PROXY", "107688", "http"], // 42152 + 2^16
+    ["HTTP_PROXY", "4295009448", "http"], // 42152 + 2^32
+    ["http_proxy", "99999", "http"],
+    ["HTTP_PROXY", "9000abc", "http"],
+    ["HTTPS_PROXY", "107688", "https"],
+  ] as const;
+
+  test.concurrent.each(cases)("%s=http://127.0.0.1:%s", async (envKey, badPort, targetScheme) => {
+    // Target is port 1 on loopback: the fetch must fail on the proxy URL
+    // before any connection is attempted, so nothing ever dials the target.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { await fetch(${JSON.stringify(`${targetScheme}://127.0.0.1:1/x`)}); console.log("OK"); } catch (e) { console.log("ERR", e?.code ?? e?.name); }`,
+      ],
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+        [envKey]: `http://127.0.0.1:${badPort}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ERR InvalidProxyPort");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -1386,6 +1386,12 @@ impl FetchTasklet {
             http::Error::RedirectURLInvalid => {
                 BunString::static_("Redirect URL in Location header is invalid.")
             }
+            http::Error::InvalidPort => BunString::static_(
+                "Invalid port number in URL. Ports must be a number between 0 and 65535.",
+            ),
+            http::Error::InvalidProxyPort => BunString::static_(
+                "Invalid port number in proxy URL. Ports must be a number between 0 and 65535.",
+            ),
 
             http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT) => {
                 BunString::static_("unable to get issuer certificate")

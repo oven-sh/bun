@@ -117,6 +117,20 @@ pub(crate) fn get_credentials_with_options(
                             let utf8 = str.to_utf8();
                             let endpoint = utf8.slice();
                             let url = URL::parse(endpoint);
+                            // `get_port_auto()` would silently turn an
+                            // unparseable port into 80/443 and send signed
+                            // requests there; reject it up front.
+                            if url.has_invalid_port() {
+                                str.deref();
+                                return Err(global_object
+                                    .err(
+                                        bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                                        format_args!(
+                                            "endpoint port must be a number between 0 and 65535"
+                                        ),
+                                    )
+                                    .throw());
+                            }
                             let normalized_endpoint = url.host_with_path();
                             if !normalized_endpoint.is_empty() {
                                 new_credentials.credentials.endpoint =

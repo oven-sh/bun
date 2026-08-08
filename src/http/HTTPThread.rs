@@ -494,6 +494,20 @@ impl HttpThread {
                 .connect_socket(client, unix_path.slice());
         }
 
+        // A `:port` that fails to parse must not collapse into the scheme
+        // default via `get_port_auto()` below, or the request is silently
+        // sent to port 80/443 of that host. The WHATWG parser never produces
+        // these, but env-proxy values (`HTTP_PROXY=http://host:107688`) and
+        // S3/registry endpoints reach here unvalidated.
+        if client.url.has_invalid_port() {
+            return Err(crate::Error::InvalidPort);
+        }
+        if let Some(proxy) = &client.http_proxy {
+            if proxy.has_invalid_port() {
+                return Err(crate::Error::InvalidProxyPort);
+            }
+        }
+
         if IS_SSL {
             'custom_ctx: {
                 let Some(tls) = client.tls_props.clone() else {

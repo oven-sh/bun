@@ -1786,7 +1786,9 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The fixture's S3 endpoint is a loopback server; ambient proxy env
+      // (set in some CI/dev containers) must not intercept it.
+      env: { ...bunEnv, HTTP_PROXY: undefined, http_proxy: undefined, HTTPS_PROXY: undefined, https_proxy: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1844,7 +1846,9 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The fixture's S3 endpoint is a loopback server; ambient proxy env
+      // (set in some CI/dev containers) must not intercept it.
+      env: { ...bunEnv, HTTP_PROXY: undefined, http_proxy: undefined, HTTPS_PROXY: undefined, https_proxy: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1904,7 +1908,9 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The fixture's S3 endpoint is a loopback server; ambient proxy env
+      // (set in some CI/dev containers) must not intercept it.
+      env: { ...bunEnv, HTTP_PROXY: undefined, http_proxy: undefined, HTTPS_PROXY: undefined, https_proxy: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1984,7 +1990,9 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The fixture's S3 endpoint is a loopback server; ambient proxy env
+      // (set in some CI/dev containers) must not intercept it.
+      env: { ...bunEnv, HTTP_PROXY: undefined, http_proxy: undefined, HTTPS_PROXY: undefined, https_proxy: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -2041,5 +2049,64 @@ describe("presigned url signature", () => {
       const { signature, expected } = verifyPresignedUrl(presigned, credentials);
       expect(signature).toBe(expected);
     }
+  });
+});
+
+// An endpoint whose `:port` text does not parse as a u16 used to collapse
+// into the scheme default via get_port_auto(): the SigV4-signed request was
+// silently sent to port 80/443 of the endpoint host, and presign() emitted a
+// URL carrying the bogus port verbatim.
+describe.concurrent("s3 endpoint with unparseable port", () => {
+  const base = { accessKeyId: "a", secretAccessKey: "b", bucket: "bk" };
+  const badPorts = ["107688", "4295009448", "99999", "9000abc"];
+
+  it("S3Client constructor rejects it", () => {
+    for (const port of badPorts) {
+      try {
+        new Bun.S3Client({ ...base, endpoint: `http://127.0.0.1:${port}` });
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e?.code).toBe("ERR_INVALID_ARG_VALUE");
+        expect(e?.message).toContain("endpoint port");
+      }
+    }
+  });
+
+  it("per-file endpoint option rejects it", () => {
+    try {
+      Bun.s3.file("key", { ...base, endpoint: "http://127.0.0.1:107688" });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e?.code).toBe("ERR_INVALID_ARG_VALUE");
+    }
+  });
+
+  it("valid ports still work", () => {
+    expect(() => new Bun.S3Client({ ...base, endpoint: "http://127.0.0.1" })).not.toThrow();
+    const presigned = new Bun.S3Client({ ...base, endpoint: "http://127.0.0.1:9000" }).presign("k");
+    expect(new URL(presigned).port).toBe("9000");
+  });
+
+  it("S3_ENDPOINT env var: presign errors instead of emitting the URL", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { console.log("URL", Bun.s3.presign("k")); } catch (e) { console.log("ERR", e?.code); }`,
+      ],
+      env: {
+        ...bunEnv,
+        S3_ENDPOINT: "http://127.0.0.1:107688",
+        S3_BUCKET: "bk",
+        S3_ACCESS_KEY_ID: "a",
+        S3_SECRET_ACCESS_KEY: "b",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ERR ERR_S3_INVALID_ENDPOINT");
+    expect(exitCode).toBe(0);
   });
 });

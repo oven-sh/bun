@@ -25,6 +25,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <JavaScriptCore/DateInstance.h>
+#include <wtf/DateMath.h>
 #include "HTTPParsers.h"
 namespace WebCore {
 
@@ -48,7 +49,7 @@ static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
 
     if (auto* dateInstance = dynamicDowncast<JSC::DateInstance>(expiresValue)) {
         double date = dateInstance->internalNumber();
-        if (std::isnan(date) || std::isinf(date)) [[unlikely]] {
+        if (!std::isfinite(date) || std::abs(date) > WTF::maxECMAScriptTime) [[unlikely]] {
             throwScope.throwException(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "expires must be a valid Date (or Number)"_s));
             return Cookie::emptyExpiresAtValue;
         }
@@ -57,29 +58,30 @@ static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
 
     if (expiresValue.isNumber()) {
         double expires = expiresValue.asNumber();
-        if (std::isnan(expires) || !std::isfinite(expires)) [[unlikely]] {
+        if (!std::isfinite(expires)) [[unlikely]] {
             throwScope.throwException(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "expires must be a valid Number (or Date)"_s));
             return Cookie::emptyExpiresAtValue;
         }
 
         // expires can be a negative number. This is allowed because people do that to force cookie expiration.
-        return static_cast<int64_t>(expires * 1000);
+        double expiresMs = expires * 1000.0;
+        if (std::abs(expiresMs) > WTF::maxECMAScriptTime) [[unlikely]] {
+            throwScope.throwException(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "expires must be a Number within the range of a valid Date"_s));
+            return Cookie::emptyExpiresAtValue;
+        }
+        return static_cast<int64_t>(expiresMs);
     }
 
     if (expiresValue.isString()) {
         auto expiresStr = convert<IDLUSVString>(*lexicalGlobalObject, expiresValue);
         RETURN_IF_EXCEPTION(throwScope, Cookie::emptyExpiresAtValue);
         auto nullTerminatedSpan = expiresStr.utf8();
-        if (auto parsed = WTF::parseDate(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nullTerminatedSpan.data()), nullTerminatedSpan.length()))) {
-            if (std::isnan(parsed)) {
-                throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Invalid cookie expiration date"_s));
-                return Cookie::emptyExpiresAtValue;
-            }
-            return static_cast<int64_t>(parsed);
-        } else {
+        double parsed = WTF::parseDate(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nullTerminatedSpan.data()), nullTerminatedSpan.length()));
+        if (!std::isfinite(parsed) || std::abs(parsed) > WTF::maxECMAScriptTime) {
             throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Invalid cookie expiration date"_s));
             return Cookie::emptyExpiresAtValue;
         }
+        return static_cast<int64_t>(parsed);
     }
 
     return Bun::ERR::INVALID_ARG_VALUE(throwScope, lexicalGlobalObject, "expires"_s, expiresValue, "Invalid expires value. Must be a Date or a number"_s);
@@ -727,7 +729,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_expires, (JSGlobalObject * lexi
     if (impl.hasExpiry()) {
         if (thisObject->m_expires) {
             auto* dateInstance = thisObject->m_expires.get();
-            if (static_cast<int64_t>(dateInstance->internalNumber()) == impl.expires()) {
+            if (dateInstance->internalNumber() == static_cast<double>(impl.expires())) {
                 return JSValue::encode(dateInstance);
             }
         }

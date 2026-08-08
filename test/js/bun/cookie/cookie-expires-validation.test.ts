@@ -57,6 +57,48 @@ describe("Bun.Cookie expires validation", () => {
         new Bun.Cookie("name", "value", { expires: -Infinity });
       }).toThrow("expires must be a valid Number");
     });
+
+    test("accepts Number at max Date boundary (seconds)", () => {
+      const seconds = 8640000000000;
+      const cookie = new Bun.Cookie("name", "value", { expires: seconds });
+      expect(cookie.expires).toEqual(new Date(seconds * 1000));
+    });
+
+    test("accepts Number at min Date boundary (seconds)", () => {
+      const seconds = -8640000000000;
+      const cookie = new Bun.Cookie("name", "value", { expires: seconds });
+      expect(cookie.expires).toEqual(new Date(seconds * 1000));
+    });
+
+    test.each([
+      1e16,
+      -1e16,
+      8640000000001,
+      -8640000000001,
+      Number.MAX_VALUE,
+      -Number.MAX_VALUE,
+      Number.MAX_SAFE_INTEGER,
+    ])("throws RangeError for out-of-range Number %p", value => {
+      expect(() => {
+        new Bun.Cookie("name", "value", { expires: value });
+      }).toThrow(RangeError);
+      expect(() => {
+        new Bun.Cookie("name", "value", { expires: value });
+      }).toThrow("expires must be a Number within the range of a valid Date");
+    });
+
+    test("throws RangeError for out-of-range Number via setter", () => {
+      const cookie = new Bun.Cookie("name", "value");
+      expect(() => {
+        cookie.expires = 1e16;
+      }).toThrow(RangeError);
+    });
+
+    test("throws RangeError for out-of-range Number via Cookie.from", () => {
+      expect(() => {
+        Bun.Cookie.from("name", "value", { expires: 1e16 });
+      }).toThrow(RangeError);
+    });
   });
 
   describe("Special values", () => {
@@ -80,6 +122,24 @@ describe("Bun.Cookie expires validation", () => {
       expect(() => {
         new Bun.Cookie("name", "value", { expires: "tomorrow" });
       }).toThrowErrorMatchingInlineSnapshot(`"Invalid cookie expiration date"`);
+    });
+
+    test("accepts string that parses to epoch (0 ms)", () => {
+      const cookie = new Bun.Cookie("name", "value", { expires: "Thu, 01 Jan 1970 00:00:00 GMT" });
+      expect(cookie.expires).toEqual(new Date(0));
+    });
+
+    test("throws for string with out-of-range year", () => {
+      expect(() => {
+        new Bun.Cookie("name", "value", { expires: "Wed, 01 Jan 300000000 00:00:00 GMT" });
+      }).toThrow("Invalid cookie expiration date");
+    });
+
+    test("Cookie.parse ignores Expires attribute with out-of-range year", () => {
+      const cookie = Bun.Cookie.parse("a=b; Expires=Wed, 01 Jan 300000000 00:00:00 GMT");
+      expect(cookie.name).toBe("a");
+      expect(cookie.value).toBe("b");
+      expect(cookie.expires).toBeUndefined();
     });
 
     test("throws for arrays", () => {
@@ -144,6 +204,16 @@ describe("Bun.Cookie expires validation", () => {
       // Should be converted to seconds but still positive because getTime() is still positive
       const cookie = new Bun.Cookie("name", "value", { expires: beforeEpoch });
       expect(cookie.expires).toEqual(beforeEpoch);
+    });
+
+    test("getter returns a fresh Date when the cached one was mutated to NaN", () => {
+      const cookie = new Bun.Cookie("name", "value", { expires: 1000 });
+      const first = cookie.expires;
+      expect(first.getTime()).toBe(1000 * 1000);
+      first.setTime(NaN);
+      const second = cookie.expires;
+      expect(second.getTime()).toBe(1000 * 1000);
+      expect(second).not.toBe(first);
     });
   });
 

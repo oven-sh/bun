@@ -7,6 +7,7 @@
 #include <wtf/text/StringToIntegerConversion.h>
 #include <JavaScriptCore/DateConversion.h>
 #include <JavaScriptCore/DateInstance.h>
+#include <wtf/DateMath.h>
 #include "HTTPParsers.h"
 namespace WebCore {
 
@@ -136,13 +137,13 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
                 if (!attributeValue.is8Bit()) [[unlikely]] {
                     auto asLatin1 = attributeValue.latin1();
                     double parsed = WTF::parseDate({ reinterpret_cast<const Latin1Character*>(asLatin1.data()), asLatin1.length() });
-                    if (std::isfinite(parsed)) {
+                    if (std::isfinite(parsed) && std::abs(parsed) <= WTF::maxECMAScriptTime) {
                         expires = static_cast<int64_t>(parsed);
                     }
                 } else {
                     auto nullTerminated = attributeValue.utf8();
                     double parsed = WTF::parseDate(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nullTerminated.data()), nullTerminated.length()));
-                    if (std::isfinite(parsed)) {
+                    if (std::isfinite(parsed) && std::abs(parsed) <= WTF::maxECMAScriptTime) {
                         expires = static_cast<int64_t>(parsed);
                     }
                 }

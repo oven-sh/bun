@@ -991,6 +991,8 @@ pub enum BuiltinName {
     type_,
     signal,
     cmd,
+    toPrimitive,
+    constructor,
 }
 
 #[allow(non_upper_case_globals)]
@@ -1042,6 +1044,8 @@ bun_core::comptime_string_map! {
         b"type" => BuiltinName::type_,
         b"signal" => BuiltinName::signal,
         b"cmd" => BuiltinName::cmd,
+        b"toPrimitive" => BuiltinName::toPrimitive,
+        b"constructor" => BuiltinName::constructor,
     };
 }
 

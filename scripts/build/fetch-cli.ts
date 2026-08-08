@@ -24,7 +24,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -242,13 +242,32 @@ function normalizeLf(s: string): string {
  * so a CRLF-mangled checkout still applies cleanly. --no-index: dest/ is
  * not a git repo. --ignore-whitespace / --ignore-space-change: patches are
  * authored against upstream which may have different trailing whitespace.
+ *
+ * GIT_CEILING_DIRECTORIES stops git from discovering the enclosing bun
+ * repo. Without it, `--no-index` still runs setup_git_directory(), finds
+ * the bun repo, and for a patch with a `diff --git a/... b/...` header
+ * treats its paths as TOPLEVEL-relative ("When running from a subdirectory
+ * in a repository, patched paths outside the directory are ignored" —
+ * git-apply(1)): `src/foo.c` is outside the `vendor/<dep>/` prefix, so git
+ * reports `Skipped patch '...'` (only under -v) and exits 0 having changed
+ * nothing — the .ref stamp then certifies an unpatched tree. Plain unified
+ * diffs (`--- a/X` / `+++ b/X` with no header) are resolved cwd-relative
+ * instead, which is why most of patches/ went unaffected.
+ *
+ * The skip check below is belt-and-suspenders against any remaining
+ * exit-0-but-skipped case. It needs -v (git only prints the skip message
+ * above normal verbosity) and LC_ALL=C (the message goes through gettext).
  */
-function applyPatch(dest: string, patchPath: string, patchBody: string): void {
-  const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
+export function applyPatch(dest: string, patchPath: string, patchBody: string): void {
+  // Inherited GIT_DIR/GIT_WORK_TREE (git hooks, some CI wrappers) bypass
+  // ceiling-based discovery entirely and reintroduce the skip.
+  const { GIT_DIR: _d, GIT_WORK_TREE: _w, ...env } = process.env;
+  const result = spawnSync("git", ["apply", "-v", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
     cwd: dest,
     input: normalizeLf(patchBody),
     stdio: ["pipe", "ignore", "pipe"],
     encoding: "utf8",
+    env: { ...env, GIT_CEILING_DIRECTORIES: dirname(dest), LC_ALL: "C" },
   });
 
   if (result.error) {
@@ -262,6 +281,16 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
     throw new BuildError(`Patch failed: ${result.stderr}`, {
       file: patchPath,
       hint: "The patch may be out of date with the pinned commit",
+    });
+  }
+
+  // Defense-in-depth: a file git decides is outside the worktree is
+  // skipped with exit 0. Nothing under patches/ is ever meant to be
+  // skipped — if it fires, GIT_CEILING_DIRECTORIES above didn't take.
+  if (result.stderr.includes("Skipped patch")) {
+    throw new BuildError(`git apply silently skipped a file:\n${result.stderr.trim()}`, {
+      file: patchPath,
+      hint: "The patch path resolved outside the dep source dir; see applyPatch() in fetch-cli.ts",
     });
   }
 }

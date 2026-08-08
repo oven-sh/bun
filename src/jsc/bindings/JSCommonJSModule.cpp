@@ -1584,13 +1584,10 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 JSValue entry = globalObject->requireMap()->get(globalObject, keyValue);
                 RETURN_IF_EXCEPTION(scope, {});
 
-                // JSMap::get returns undefined (a truthy JSValue) for a
-                // missing key. An entry that vanished between
-                // createCommonJSModule() and this makeModule step means an
-                // earlier evaluation attempt failed and was evicted (below);
-                // producing an empty module here would silently skip the
-                // module's side effects and swallow that error. Rethrow the
-                // original error when the registry kept it.
+                // JSMap::get returns undefined, which is truthy as a JSValue,
+                // for a missing key. A vanished entry means an evaluation
+                // attempt failed and was evicted (below); an empty module here
+                // would silently drop the module's side effects and its error.
                 if (entry.isUndefinedOrNull()) [[unlikely]] {
                     if (auto* registryEntry = globalObject->moduleLoader()->registryEntry(moduleKey)) {
                         JSValue error = registryEntry->error(globalObject);
@@ -1622,10 +1619,9 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                             globalObject->requireMap()->remove(globalObject, moduleObject->filename());
                             RETURN_IF_EXCEPTION(scope, {});
 
-                            // The rejection this throw feeds can be dropped when
-                            // its reaction is stranded on an outer synchronous
-                            // module queue; keep the error reachable for a
-                            // replayed makeModule of this same module (above).
+                            // Keep the error reachable for a replayed makeModule
+                            // (above); this throw's rejection can strand on an
+                            // outer synchronous module queue and get dropped.
                             if (auto* registryEntry = globalObject->moduleLoader()->registryEntry(moduleKey))
                                 registryEntry->setEvaluationError(globalObject, exception->value());
 

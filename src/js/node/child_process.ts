@@ -1820,10 +1820,30 @@ function abortChildProcess(child, killSignal, reason) {
   }
 }
 
+// On the parent side there is no separate IPC-channel poll to toggle: the
+// subprocess handle's own poll keeps the event loop alive until the child
+// exits. These track reference state (and emit "unref") for Node parity
+// without unref'ing the whole subprocess out from under the caller.
 class Control extends EventEmitter {
+  #refs = 0;
+
   constructor() {
     super();
   }
+
+  refCounted() {
+    ++this.#refs;
+  }
+
+  unrefCounted() {
+    if (--this.#refs === 0) {
+      this.emit("unref");
+    }
+  }
+
+  ref() {}
+
+  unref() {}
 }
 
 //------------------------------------------------------------------------------

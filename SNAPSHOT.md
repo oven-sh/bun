@@ -239,6 +239,19 @@ is gone: a live image cell's frozen bit makes `concurrentTestAndSet` return with
 arrive through conservative scanning, which asks `isMarked` first). It cannot be removed without writing into image block
 headers every full GC — and the header lives inside the 16 KB block, so that would dirty every image block.
 
+
+Aug 8, late — the matched comparison: main built against its CI WebKit artifact vs this branch built against the CI
+artifact of oven-sh/WebKit#397 (same compiler pipeline, external mimalloc on both sides; nothing earlier had that).
+JetStream2, 5 alternating pairs on an idle machine: main 452.8 / 440.6 / 448.1 / 437.9 / 446.8 (mean 445.2), branch
+444.9 / 445.0 / 443.9 / 432.7 / 447.1 (mean 442.7): per pair −1.7 / +1.0 / −0.9 / −1.2 / +0.1 %, mean −0.6 %, inside
+main's own 3.4 % spread but leaning low. That artifact still carried one known hot-path item — `ThreadSafeRefCounted`
+ref/deref/hasOneRef/refCount each tested a mode global left over from the immortal-refcount experiment (mode always 0)
+— which is now removed along with the experiment's knobs; the number to quote is a rerun against the next artifact.
+Also removed tonight from the product path: `BUN_IMAGE_{NOFREEZE,NOFRESHHEAP,FRESHARENA,FIXUPS_DATAONLY,NO_CPU_REPROBE,
+ZSTD,EVAL,EVAL_CONTINUE,TRACE_EXIT,IMMORTAL_MODE,IMMORTAL_RANGE,NO_IMMORTAL_REFCOUNTS}` and four dead
+`BUN_GC_*` declarations. One deliberate residual cost outside JSC: cached env-var reads compare a restore epoch (one
+relaxed load) so a restored process re-reads its environment; env reads are not on hot paths.
+
 ## Statics, once-tokens and CPU dispatch across a restore
 
 One process-wide restore epoch: the exported, unmangled `bun_image_epoch` (`u32`, defined in `bun_core::image`, bumped by the C++ restore sequence before any handler runs; `bun_core::image::epoch()` / `ImageOnce` on the Rust side, `VM::imageEpoch()` in JSC, plain `extern uint32_t bun_image_epoch` from vendored C). Rule for any lazily-initialised static that caches *process, OS or CPU* state (fds, ports, thread handles, env snapshots, page size/CPU count probes, SIMD dispatch): key the once-token on the epoch — `if (token != bun_image_epoch + 1) { init(); token = bun_image_epoch + 1; }` — instead of a bool. Statics that cache pure computation need nothing.

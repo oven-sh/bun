@@ -87,15 +87,13 @@ new!(pub BUN_FEATURE_FLAG_DUMP_CODE: string, "BUN_FEATURE_FLAG_DUMP_CODE", {});
 new!(pub BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: unsigned, "BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS", {});
 new!(pub BUN_GC_TIMER_DISABLE: boolean, "BUN_GC_TIMER_DISABLE", {});
 new!(pub BUN_GC_TIMER_INTERVAL: unsigned, "BUN_GC_TIMER_INTERVAL", {});
-new!(pub BUN_GC_IDLE_SHRINK_DISABLE: boolean, "BUN_GC_IDLE_SHRINK_DISABLE", {});
-new!(pub BUN_GC_TIMER_DEBUG: boolean, "BUN_GC_TIMER_DEBUG", {});
-new!(pub BUN_GC_STARTUP_FULLS: unsigned, "BUN_GC_STARTUP_FULLS", {});
 new!(pub BUN_IMAGE_VERBOSE: boolean, "BUN_IMAGE_VERBOSE", {});
 new!(pub BUN_IMAGE_IO_WARN: boolean, "BUN_IMAGE_IO_WARN", {});
 new!(pub BUN_IMAGE_ALLOW_LOCAL_IO: boolean, "BUN_IMAGE_ALLOW_LOCAL_IO", {});
+new!(pub BUN_IMAGE_EMBED_RAW: boolean, "BUN_IMAGE_EMBED_RAW", {});
+new!(pub BUN_IMAGE_KEEP_SIDECAR: boolean, "BUN_IMAGE_KEEP_SIDECAR", {});
 new!(pub BUN_SNAPSHOT_QUIET_TIMEOUT: unsigned, "BUN_SNAPSHOT_QUIET_TIMEOUT", {});
 new!(pub BUN_SNAPSHOT_CANCEL_TIMERS: boolean, "BUN_SNAPSHOT_CANCEL_TIMERS", {});
-new!(pub BUN_GC_IDLE_SHRINK_TICKS: unsigned, "BUN_GC_IDLE_SHRINK_TICKS", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 // so we'll keep it for now.
 new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });

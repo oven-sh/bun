@@ -954,7 +954,9 @@ impl BuildCommand {
                     // What ships is the zstd frame the snapshot also wrote (~6x smaller); the executable inflates it into the
                     // user's image cache on first launch. BUN_IMAGE_EMBED_RAW embeds the raw image instead, which restores by
                     // mapping the executable itself and so needs no writable cache directory.
-                    let embed_raw = std::env::var_os("BUN_IMAGE_EMBED_RAW").is_some();
+                    let embed_raw = bun_core::env_var::BUN_IMAGE_EMBED_RAW
+                        .get()
+                        .unwrap_or(false);
                     let embed_path = if embed_raw {
                         img_path.clone()
                     } else {
@@ -996,7 +998,11 @@ impl BuildCommand {
                                 img.len() as f64 / 1048576.0,
                                 if embed_raw { "raw" } else { "compressed" }
                             ));
-                            if std::env::var_os("BUN_IMAGE_KEEP_SIDECAR").is_none() {
+                            // Development: keeping <exe>.img next to the executable lets a rebuilt image be dropped in without re-embedding.
+                            if !bun_core::env_var::BUN_IMAGE_KEEP_SIDECAR
+                                .get()
+                                .unwrap_or(false)
+                            {
                                 let _ = std::fs::remove_file(&img_path);
                                 let _ = std::fs::remove_file(format!("{img_path}.zst"));
                             }

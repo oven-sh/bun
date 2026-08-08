@@ -1197,10 +1197,7 @@ static void imageDump(JSC::VM& vm, const char* path)
         else
             vm.deleteAllCode(JSC::DeleteAllCodeIfNotCollecting);
     }
-    if (getenv("BUN_IMAGE_NOFREEZE"))
-        vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-    else
-        vm.heap.freezeCurrentHeapAsImmortalImage(); // GC never writes image blocks again (frozen marks = liveness, side remembered set)
+    vm.heap.freezeCurrentHeapAsImmortalImage(); // GC never writes image blocks again (frozen marks = liveness, side remembered set)
     mi_option_set(mi_option_purge_delay, 0);
     mi_collect(true); // free spans get decommitted so "resident" below means "image payload"
     size_t pg = getpagesize();
@@ -1342,7 +1339,6 @@ static void imageDump(JSC::VM& vm, const char* path)
             for (auto& r : out) {
                 unsigned k = r.kind & 0xff;
                 if (k == 2 || k == 3 || k == 4) continue;
-                if (k == 0 && getenv("BUN_IMAGE_FIXUPS_DATAONLY")) continue; // experiment: only rebase words in our own data segments
                 const uint64_t* w = (const uint64_t*)r.addr;
                 size_t n = r.len / 8;
                 for (size_t i = 0; i < n; i++) {
@@ -1409,8 +1405,7 @@ static void imageDump(JSC::VM& vm, const char* path)
     pwrite(fd, &hdr, sizeof hdr, 0);
     pwrite(fd, out.data(), out.size() * sizeof(ImageRegion), tableOff);
     close(fd);
-    if (const char* z = getenv("BUN_IMAGE_ZSTD"); !z || strcmp(z, "0"))
-        imageWriteZstd(path);
+    imageWriteZstd(path);
     fprintf(stderr, "[image] wrote %s: %zu regions, %.1fMB (vm=%p global=%p thread=%p text=%p)\n", path, out.size(), total / 1048576.0, (void*)hdr.vm, (void*)hdr.globalObject, (void*)hdr.mainThread, (void*)hdr.textBase);
 #endif
 }
@@ -1779,8 +1774,7 @@ static void imageRestoreAndRun(const char* path)
     }
     setvbuf(stderr, nullptr, _IONBF, 0);
     setvbuf(stdout, nullptr, _IOLBF, 0); // stdio buffering mode was decided in the builder (whose fds may have been files)
-    if (!getenv("BUN_IMAGE_NOFRESHHEAP")) {
-        // Image payload pages are immortal: never free into them (that would dirty a clean file-backed page for allocator metadata) and allocate from fresh pages.
+    { // Image payload pages are immortal: never free into them (that would dirty a clean file-backed page for allocator metadata); allocate from fresh pages.
         frozenRanges.clear();
         imageRuns.clear();
         for (auto& r : regions)
@@ -1790,50 +1784,31 @@ static void imageRestoreAndRun(const char* path)
             }
         std::sort(frozenRanges.begin(), frozenRanges.end());
         std::sort(imageRuns.begin(), imageRuns.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
-        imageFd = fd; // keep the image open so dirtymap/celldiff can diff against it
-        { // rule 3: refcounted objects inside the imaged mimalloc arenas are immortal (no ++/-- COWing clean pages)
+        imageFd = fd; // stays open: reclean remaps pristine pages from it (and the tooling diffs against it)
+        { // Watchpoint.cpp asks whether an object is imaged; the imaged allocator arenas are one contiguous span
             uintptr_t lo = UINTPTR_MAX, hi = 0;
             for (auto& r : regions)
                 if ((r.kind & 0xff) == 0 && (r.kind >> 8) == 240) {
                     lo = std::min<uintptr_t>(lo, r.addr);
                     hi = std::max<uintptr_t>(hi, r.addr + r.len);
                 }
-            if (const char* m = getenv("BUN_IMAGE_IMMORTAL_MODE")) WTF::g_imageImmortalMode = atoi(m);
-            if (const char* r = getenv("BUN_IMAGE_IMMORTAL_RANGE")) {
-                unsigned long long a = 0, b = 0;
-                if (sscanf(r, "%llx-%llx", &a, &b) == 2) {
-                    lo = a;
-                    hi = b;
-                }
-            } // bisect aid
-            if (hi > lo && !getenv("BUN_IMAGE_NO_IMMORTAL_REFCOUNTS")) {
+            if (hi > lo) {
                 WTF::g_imageImmortalRangeLo = lo;
                 WTF::g_imageImmortalRangeSpan = hi - lo;
-                if (verbose) fprintf(stderr, "[image] immortal refcount range %lx..%lx\n", (unsigned long)lo, (unsigned long)hi);
             }
         }
         if (hdr.reserved[0]) mi_theap_freeze((mi_theap_t*)hdr.reserved[0]);
         mi_arenas_seal_existing(); // every arena that exists now is image memory: nobody (any thread) allocates into its free space again
-        {
-            uint64_t top = 0;
-            for (auto& r : regions)
-                if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len);
-            if (top) mi_os_hint_floor((void*)(top + (1ull << 30)));
-        } // the overlay brought the builder's hint pointer (or none): fresh OS memory goes above everything imaged, never kernel-placed
-        {
-            uint64_t top = 0;
-            for (auto& r : regions)
-                if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len);
-            if (top) mi_os_hint_floor((void*)(top + (1ull << 30)));
-        } // the overlay brought the builder's hint pointer; make sure fresh memory goes above everything imaged
-        mi_arena_id_t freshArena = 0;
+        uint64_t imagedTop = 0; // the overlay brought the builder's hint pointer (or none): fresh OS memory goes above everything imaged
+        for (auto& r : regions)
+            if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) imagedTop = std::max<uint64_t>(imagedTop, r.addr + r.len);
+        if (imagedTop) mi_os_hint_floor((void*)(imagedTop + (1ull << 30)));
         mi_heap_t* fresh = nullptr;
-        if (getenv("BUN_IMAGE_FRESHARENA") ? strcmp(getenv("BUN_IMAGE_FRESHARENA"), "0") != 0 : (bool)OS_DARWIN_ONLY(1)) { // dedicated post-restore arena (default on macOS; on Linux the general path — sealed image arenas + hint floor — is used until the exclusive-arena binding is sorted)
-            // Explicit placement (no dependence on the allocator's hint state, which the overlay just replaced): 1GiB right above everything imaged.
-            uint64_t top = 0;
-            for (auto& r : regions)
-                if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len);
-            void* want = (void*)((top + (1ull << 30)) & ~((1ull << 30) - 1));
+#if OS(DARWIN)
+        { // This process's allocations get their own arena, placed explicitly 1GiB above the image rather than wherever the allocator's
+          // (just overlaid) hint state would put them. Linux relies on the sealed arenas + hint floor until exclusive-arena binding is sorted out.
+            mi_arena_id_t freshArena = 0;
+            void* want = (void*)((imagedTop + (1ull << 30)) & ~((1ull << 30) - 1));
             size_t sz = 1ull << 30;
             void* got = mmap(want, sz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
             if (got != MAP_FAILED && got != want) {
@@ -1844,14 +1819,15 @@ static void imageRestoreAndRun(const char* path)
                 fresh = mi_heap_new_in_arena(freshArena);
             else if (mi_reserve_os_memory_ex(sz, false, false, true, &freshArena) == 0)
                 fresh = mi_heap_new_in_arena(freshArena);
-            mi_os_hint_floor((void*)((uintptr_t)want + 2 * sz)); // and anything beyond that arena keeps going up from there
+            mi_os_hint_floor((void*)((uintptr_t)want + 2 * sz));
         }
+#endif
         mi_theap_set_default(mi_heap_theap(fresh ? fresh : mi_heap_new()));
         {
             void* probe = mi_malloc(64);
-            if (verbose) fprintf(stderr, "[image] fresh heap: arena reserved=%d probe=%p\n", (int)(fresh != nullptr), probe);
-            if (WTF::isInImageImmortalRange(probe)) {
-                fprintf(stderr, "[image] fresh heap overlaps the immortal-refcount range; disabling it\n");
+            if (verbose) fprintf(stderr, "[image] fresh heap: own arena=%d probe=%p\n", (int)(fresh != nullptr), probe);
+            if (WTF::isInImageImmortalRange(probe)) { // cannot happen with the floor above; if it ever does, misclassifying new objects as imaged would be worse than the rule it serves
+                fprintf(stderr, "[image] fresh heap overlaps the image span; not tracking image objects\n");
                 WTF::g_imageImmortalRangeSpan = 0;
             }
             mi_free(probe);
@@ -1884,7 +1860,7 @@ static void imageRestoreAndRun(const char* path)
     uws_adopt_loop_for_current_thread((struct us_loop_t*)hdr.reserved[8 - 1]); // main thread's uWS::Loop TLS -> the image's loop object (else uws_get_loop() would make a second loop)
     us_loop_reinit_for_image(uws_get_loop());
     __atomic_add_fetch(&bun_image_epoch, 1, __ATOMIC_ACQ_REL);
-    if (!getenv("BUN_IMAGE_NO_CPU_REPROBE")) imageReprobeCPUDispatch();
+    imageReprobeCPUDispatch();
     Bun__imageAdoptMainThreadVM();
     JSC::JSLockHolder restoreLock(*vm); // held until 'restore' has been emitted: releasing a JSLock drains microtasks, and imaged continuations must not run before the app hears about the restore
     vm->refreshStackBoundsAfterImageRestore(); // before any JSLock/sanitizeStack: the VM still holds the builder's stack addresses (asserts once the stack lands elsewhere, i.e. with ASLR)
@@ -1899,36 +1875,18 @@ static void imageRestoreAndRun(const char* path)
                 scope.clearException();
             }
             vm->traps().clearTrap(JSC::VMTraps::NeedTermination);
-            fprintf(stderr, "[image] cleared stale termination state\n");
+            if (verbose) fprintf(stderr, "[image] cleared stale termination state\n");
         }
     }
 
-    if (!getenv("BUN_IMAGE_EVAL") || getenv("BUN_IMAGE_EVAL_CONTINUE")) {
-        {
-            JSC::JSLockHolder lock(*vm);
-            NakedPtr<JSC::Exception> exception;
-            if (const char* pre = getenv("BUN_IMAGE_EVAL")) { // injected startup code, then continue as normal
-                JSC::evaluate(globalObject, JSC::makeSource(WTF::String::fromUTF8(pre), JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
-                if (exception) fprintf(stderr, "[image] eval threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
-                exception = nullptr;
-            }
-            globalObject->weakRandom().setSeed(WTF::cryptographicallyRandomNumber<unsigned>()); // Math.random stream came from the builder
-            JSC::evaluate(globalObject, JSC::makeSource("globalThis.__bunImageRestored = true; try { process.chdir('.'); } catch {} process.emit('restore'); setTimeout(() => Bun.unsafe.recleanImagePages(), 2000).unref(); if (process.env.BUN_IMAGE_TRACE_EXIT) { const oe = process.exit; process.exit = function(c) { require('fs').writeSync(2, '[image] process.exit(' + c + ') from:\\n' + new Error().stack + '\\n'); return oe.call(this, c); }; process.on('exit', c => require('fs').writeSync(2, '[image] exit event ' + c + '\\n')); } if (typeof __onImageRestored === 'function') __onImageRestored();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
-            if (exception) fprintf(stderr, "[image] __onImageRestored threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
-        }
-        Bun__imageContinueEventLoop(); // never returns
-    }
     {
         JSC::JSLockHolder lock(*vm);
-        const char* src = getenv("BUN_IMAGE_EVAL") ? getenv("BUN_IMAGE_EVAL") : "typeof __onRestore === 'function' ? String(__onRestore()) : 'no __onRestore; keys=' + Object.keys(globalThis).length";
         NakedPtr<JSC::Exception> exception;
-        JSC::JSValue result = JSC::evaluate(globalObject, JSC::makeSource(WTF::String::fromUTF8(src), JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
-        if (exception) {
-            fprintf(stderr, "[image] eval threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
-        } else {
-            fprintf(stderr, "[image] eval => %s\n", result.toWTFString(globalObject).utf8().data());
-        }
+        globalObject->weakRandom().setSeed(WTF::cryptographicallyRandomNumber<unsigned>()); // Math.random's stream came from the builder
+        // chdir('.') refreshes libc's idea of the cwd for code that cached it; the reclean runs once startup work has settled.
+        JSC::evaluate(globalObject, JSC::makeSource("try { process.chdir('.'); } catch {} process.emit('restore'); setTimeout(() => Bun.unsafe.recleanImagePages(), 2000).unref();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
+        if (exception) fprintf(stderr, "[image] a 'restore' listener threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
     }
-    _exit(0);
+    Bun__imageContinueEventLoop(); // never returns
 #endif
 }

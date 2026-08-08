@@ -203,6 +203,8 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     /// Implementations store a `BackRef<JSGlobalObject>`; the single unsafe
     /// deref lives in `BackRef::get`, so callers and impls are safe.
     fn global_this(&self) -> &JSGlobalObject;
+    /// How the pool thread reaches the VM (captured at construction).
+    fn loop_handle(&self) -> &bun_jsc::LoopHandle;
     fn stream(&self) -> &JsCell<Self::Stream>;
 
     /// Write `(avail_out, avail_in)` into the JS-owned 2-element `Uint32Array`
@@ -464,6 +466,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             callback: Self::async_job_run_task,
         });
         this.poll_ref().with_mut(|p| p.ref_(vm));
+        // The task is a field of this JS-owned stream: counted, so the VM waits
+        // for it (see `VmHandle::embedded_work_scheduled`).
+        this.loop_handle().embedded_work_scheduled();
         WorkPool::schedule(this.task().as_ptr());
 
         Ok(JSValue::UNDEFINED)
@@ -487,25 +492,51 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `ref_()` in `write()`); bodies use the `&self` accessor surface
         // (R-2). `ParentRef` Deref collapses the per-site raw deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("async_job_run: this"));
-        let global_this: &JSGlobalObject = this_ref.global_this();
-        // `bun_vm_concurrently()` is the thread-safe accessor (skips the
-        // JS-thread debug assert; same backing pointer as `bun_vm()`).
-        // BACKREF — `bun_vm_concurrently()` never returns null for a Bun-owned
-        // global; wrap once so the `event_loop()` read below is safe Deref.
-        let vm = ParentRef::from(
-            NonNull::new(global_this.bun_vm_concurrently()).expect("bun_vm_concurrently"),
-        );
 
-        this_ref.stream().with_mut(|s| s.do_work());
-
-        // SAFETY: `event_loop()` is a self-pointer into a live VM; the
-        // `enqueue_task_concurrent` body only touches the lock-free
-        // `concurrent_tasks` queue (thread-safe). `this` is the heap-allocated
-        // `m_ctx` payload — the matching `ref()` in `write()` keeps it alive
-        // until `run_from_js_thread` runs and calls `deref()`.
-        unsafe {
-            (*vm.event_loop()).enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
+        // The stream reads and writes JS ArrayBuffer backing stores: only while
+        // the VM is running, under a borrow. Either way the completion goes
+        // back to the JS thread, which finishes or releases the write there —
+        // the VM waits for this (embedded work) before its handle closes.
+        let loop_handle = this_ref.loop_handle().clone();
+        if let Some(_vm) = loop_handle.borrow_if_running() {
+            this_ref.stream().with_mut(|s| s.do_work());
         }
+        let ct = ConcurrentTask::create(Task::init(this));
+        let bun_jsc::vm_handle::Posted::Queued = loop_handle.post_task(ct) else {
+            unreachable!("VM handle closed with an embedded zlib write outstanding");
+        };
+        // `this` may already be freed by the JS thread; the handle is ours.
+        loop_handle.embedded_work_finished();
+    }
+
+    /// VM teardown, JS thread, heap alive: a completion that was queued but
+    /// will not run. The cleanup half of `run_from_js_thread`, no callbacks.
+    ///
+    /// # Safety
+    /// As [`run_from_js_thread`](Self::run_from_js_thread).
+    pub(crate) unsafe fn release_unrun(this_ptr: *mut T) {
+        let this = ParentRef::from(NonNull::new(this_ptr).expect("release_unrun: this"));
+        let global: &JSGlobalObject = this.global_this();
+        let vm = global.bun_vm();
+        this.write_in_progress().set(false);
+        if let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) {
+            for pinned in [
+                T::pending_input_get_cached(this_value),
+                T::pending_output_get_cached(this_value),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if pinned.is_cell() {
+                    if let Some(buf) = pinned.as_array_buffer(global) {
+                        buf.unpin();
+                    }
+                }
+            }
+        }
+        this.poll_ref().with_mut(|p| p.unref(vm));
+        // SAFETY: fn contract — the write's ref.
+        unsafe { T::deref(this_ptr) };
     }
 
     /// Dispatched from `dispatch.rs` when the worker-thread `do_work()` posts
@@ -987,9 +1018,14 @@ pub(crate) fn native_zstd(global: &JSGlobalObject) -> JSValue {
 #[doc(hidden)]
 macro_rules! __impl_compression_stream {
     ($native:ident, $ctx:ty, $type_name:literal) => {
-        // Tag for the event-loop dispatcher (bun_runtime::dispatch::run_task).
         impl ::bun_event_loop::Taskable for $native {
             const TAG: ::bun_event_loop::TaskTag = ::bun_event_loop::task_tag::$native;
+            /// An async write whose completion will not run: unpin, unref, drop
+            /// the write's ref — no callbacks.
+            unsafe fn release_unrun(this: *mut Self) {
+                // SAFETY: fn contract — the stream the pool posted (write's ref held).
+                unsafe { $crate::node::node_zlib_binding::CompressionStream::<$native>::release_unrun(this) }
+            }
         }
 
         /// `T.js.*` — cached-property accessors emitted by
@@ -1014,6 +1050,7 @@ macro_rules! __impl_compression_stream {
             type Stream = $ctx;
 
             #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
+            #[inline] fn loop_handle(&self) -> &::bun_jsc::LoopHandle { &self.loop_handle }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }

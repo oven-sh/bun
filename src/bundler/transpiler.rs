@@ -459,6 +459,14 @@ impl<'a> Transpiler<'a> {
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         match self._resolve_entry_point(entry_point) {
             Ok(r) => Ok(r),
+            // Nothing that long names a directory whose cache could be stale
+            // (and the join below has a PathBuffer to fit `top_level_dir/entry/..` in).
+            Err(err)
+                if self.fs().top_level_dir.len() + entry_point.len() + 4
+                    > bun_paths::MAX_PATH_BYTES =>
+            {
+                Err(err)
+            }
             Err(err) => {
                 let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
 

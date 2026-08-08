@@ -112,7 +112,7 @@ extern "C" fn select_alpn_callback(
     {
         let handlers = this.get_handlers();
         let callback = handlers.on_alpn_callback();
-        if !callback.is_empty() && !handlers.vm.is_shutting_down() && !in_.is_null() && inlen > 0 {
+        if !callback.is_empty() && !in_.is_null() && inlen > 0 {
             let scope = handlers.enter();
             let global = handlers.global_object;
             let this_value = this.get_this_value(&global);
@@ -338,9 +338,7 @@ impl<const SSL: bool> Drop for CloseTeardown<SSL> {
             // Reconnected: `connect_finish` re-armed `this_value`/`poll_ref`, so
             // skip the idle teardown and only release what we took.
             this.update_flags(|f| f.remove(Flags::IS_ACTIVE));
-            if !VirtualMachine::get().is_shutting_down() {
-                self.entered.mark_inactive();
-            }
+            self.entered.mark_inactive();
         }
         // Last: this can be the final ref, freeing the socket read above.
         this.get().deref();
@@ -848,10 +846,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn handle_error(&self, err_value: JSValue) {
         log!("handleError");
         let handlers = self.get_handlers();
-        let vm = handlers.vm;
-        if vm.is_shutting_down() {
-            return;
-        }
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         let scope = handlers.enter();
@@ -889,10 +883,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
 
-        let vm = handlers.vm;
-        if vm.is_shutting_down() {
-            return;
-        }
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
         // and the drain callback can both re-enter JS and close it.
         let _keepalive = this.ref_guard();
@@ -994,9 +984,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         let callback = handlers.on_timeout();
         if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
-            return;
-        }
-        if handlers.vm.is_shutting_down() {
             return;
         }
 
@@ -1506,19 +1493,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let handlers = this.get_handlers();
+        let global = handlers.global_object;
+        // The socket is live whether or not script may run: give it its owner
+        // (the wrapper adopts the creation reference; its finalizer releases
+        // it) and account for it now, so one that opens under a stop already
+        // requested is closed by the sweep and freed like any other instead of
+        // keeping a reference nobody holds.
+        let this_value = this.get_this_value(&global);
+        this.mark_active();
         // Multiple JS entries below; a worker terminate() raised in one trips
-        // assertNoException() in the next, and is_shutting_down() is still
-        // false at that point.
+        // assertNoException() in the next.
         if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             return;
         }
         let callback = handlers.on_open();
         let handshake_callback = handlers.on_handshake();
 
-        let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
-
-        this.mark_active();
         if let Err(e) = handlers.resolve_promise(this_value) {
             // Event-loop dispatch: returning with the exception still pending
             // would leak it into the next native JSC call in this tick.
@@ -1673,8 +1663,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let _keepalive = this.ref_guard();
 
         let callback = handlers.on_end();
-        let vm = handlers.vm;
-        if callback.is_empty() || vm.is_shutting_down() {
+        if callback.is_empty() {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
             // If you don't handle TCP fin, we assume you're done.
@@ -1705,8 +1694,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
-        // is nothing to dispatch to.
-        if !this.has_handlers() {
+        // is nothing to dispatch to. Nor from the GC finalizer's own close
+        // (an SSL shutdown reports the never-finished handshake): a finalizer
+        // dispatches nothing and may not inspect other cells mid-sweep.
+        if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {
             return;
         }
         this.update_flags(|f| f.insert(Flags::HANDSHAKE_COMPLETE));
@@ -2115,17 +2106,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
 
-        let vm = handlers.vm;
         this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
         let callback = handlers.on_close();
 
         if callback.is_empty() {
-            drop(cleanup);
-            return;
-        }
-
-        if vm.is_shutting_down() {
             drop(cleanup);
             return;
         }
@@ -2198,9 +2183,6 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let callback = handlers.on_data();
         if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
-            return;
-        }
-        if handlers.vm.is_shutting_down() {
             return;
         }
 
@@ -3324,6 +3306,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this_ref.update_flags(|f| f.insert(Flags::FINALIZING));
         this_ref.this_value.with_mut(|r| r.finalize());
         if !this_ref.socket.get().is_closed() {
+            this_ref.socket.get().prepare_for_finalize();
             this_ref.close_and_detach(uws::CloseCode::Failure);
         } else {
             this_ref.detach_native_callback();
@@ -4250,6 +4233,23 @@ impl SocketMode {
 
 impl bun_event_loop::Taskable for DuplexUpgradeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DuplexUpgradeContext;
+    /// The context's one queued hop will not run, and nothing else frees the
+    /// context. If the TLSSocket is still attached (a `StartTLS` that never
+    /// ran: no wrapper was created, so no close ever detached it), route it
+    /// through its close first — that consumes our +1 and detaches it from the
+    /// duplex, so its finalizer during ~VM finds nothing to reach into — then
+    /// free the context.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; the single queue entry for `this`.
+        unsafe {
+            (*this).queued = false;
+            if let Some(tls) = (*this).tls.take() {
+                let socket = Self::duplex_socket(this);
+                TLSSocket::on_close(tls.into_this_ptr(), socket, 0, None);
+            }
+            Self::deinit(this);
+        }
+    }
 }
 
 pub(crate) struct DuplexUpgradeContext {
@@ -4262,6 +4262,11 @@ pub(crate) struct DuplexUpgradeContext {
     /// through the safe `event_loop_mut()` accessor instead of a raw deref.
     pub vm: &'static VirtualMachine,
     pub(in crate::socket) task_event: EventState,
+    /// A `task_event` hop is in the VM's queue. The context is enqueued by
+    /// pointer, so at most one entry may exist: a second request while queued
+    /// (the stop phase closing a duplex whose StartTLS has not run) only
+    /// updates `task_event`, which the pending entry reads when it runs.
+    queued: bool,
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
     /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
     pub ssl_config: Option<SSLConfig>,
@@ -4459,6 +4464,8 @@ impl DuplexUpgradeContext {
     /// callers must not hold a `&`/`&mut Self` across the call — pass the raw
     /// pointer directly so no Stacked Borrows protector spans the dealloc.
     pub(crate) unsafe fn run_event(this: *mut Self) {
+        // SAFETY: `this` is live; disjoint field write.
+        unsafe { (*this).queued = false };
         // SAFETY: `this` is live; copy of a `Copy` field.
         match unsafe { (*this).task_event } {
             EventState::StartTLS => {
@@ -4562,6 +4569,10 @@ impl DuplexUpgradeContext {
     unsafe fn enqueue_self_task(this: *mut Self) {
         // SAFETY: fn contract; `vm` is process-lifetime, borrow ends at `;`.
         unsafe {
+            if core::mem::replace(&mut (*this).queued, true) {
+                // Already in the queue: that entry runs the updated `task_event`.
+                return;
+            }
             (*this)
                 .vm
                 .event_loop_mut()
@@ -4587,6 +4598,17 @@ impl DuplexUpgradeContext {
         unsafe { Self::enqueue_self_task(this) };
     }
 
+    /// VM stop phase: close the upgraded duplex natively, so the TLS wrapper's
+    /// GC finalizer finds a closed socket and dispatches nothing.
+    ///
+    /// # Safety
+    /// `this` is a registered live context (see `js_upgrade_duplex_to_tls`).
+    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
+        // SAFETY: fn contract; `close` may re-enter and free `this` through
+        // the normal on_close → deinit path, so nothing is touched afterwards.
+        unsafe { (*this).upgrade.close() };
+    }
+
     /// # Safety
     /// `this` must be the unique live pointer to the heap allocation produced
     /// in `js_upgrade_duplex_to_tls`. Frees the allocation; callers must not
@@ -4594,6 +4616,11 @@ impl DuplexUpgradeContext {
     /// be a Stacked Borrows protector violation when the backing `Box` is
     /// reclaimed below).
     unsafe fn deinit(this: *mut Self) {
+        // SAFETY: fn contract — the live allocation registered in `js_upgrade_duplex_to_tls`.
+        crate::jsc_hooks::ActiveHandle::DuplexUpgrade(unsafe {
+            core::ptr::NonNull::new_unchecked(this)
+        })
+        .unregister();
         {
             // SAFETY: `this` is live; each field access is scoped to its own
             // statement, so nothing spans the `heap::take` free below.
@@ -4814,6 +4841,7 @@ pub fn js_upgrade_duplex_to_tls(
         ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls.as_ptr())));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
         ptr::addr_of_mut!((*duplex_context).task_event).write(EventState::StartTLS);
+        ptr::addr_of_mut!((*duplex_context).queued).write(false);
         // When `owned_ctx` is set, `runEvent` builds from it and ignores
         // `ssl_config` for SSL_CTX construction; servername/ALPN already
         // copied onto `tls` above so the config's only remaining use is the
@@ -4902,6 +4930,14 @@ pub fn js_upgrade_duplex_to_tls(
     // dangling still exits. If the underlying stream is a real socket, that
     // socket's own handle keeps the loop alive.
 
+    // A TLS socket over a JS duplex is in no uSockets group, so the VM's stop
+    // phase closes it through this owner (see `stop_for_vm_teardown`) rather
+    // than leaving it to a GC finalizer.
+    // SAFETY: non-null, fully initialised; unregistered again in `deinit`.
+    crate::jsc_hooks::ActiveHandle::DuplexUpgrade(unsafe {
+        core::ptr::NonNull::new_unchecked(duplex_context)
+    })
+    .register();
     // SAFETY: `duplex_context` is the freshly built live allocation.
     unsafe { DuplexUpgradeContext::start_tls(duplex_context) };
 

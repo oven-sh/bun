@@ -212,12 +212,8 @@ impl UpgradedDuplex {
     }
 
     fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
-        // `vm` is always set via `from()`; `None` only in the zeroed placeholder
-        // state, which never reaches here.
-        let Some(vm) = self.vm else { return };
-        if vm.is_shutting_down() {
-            return;
-        }
+        // No JS duplex to talk to: the zeroed placeholder, or the owning
+        // socket's finalizer abandoned it (`abandon_js_side`).
         let duplex = self.origin.get();
         if duplex.is_empty() {
             return;
@@ -527,6 +523,15 @@ impl UpgradedDuplex {
     pub(crate) fn raw_write(&self, encoded_data: &[u8]) -> i32 {
         self.write_encrypted(encoded_data);
         i32::try_from(encoded_data.len()).expect("int cast")
+    }
+
+    /// The owning socket wrapper is being finalized: the JS duplex may be dead
+    /// too and a finalizer dispatches nothing, so the SSL shutdown that
+    /// follows writes no close_notify and ends nothing — it only unwinds the
+    /// native side.
+    #[uws_callback(export = "UpgradedDuplex__abandon_js_side", no_catch)]
+    pub(crate) fn abandon_js_side(&self) {
+        self.origin.set(JSValue::ZERO);
     }
 
     #[uws_callback(export = "UpgradedDuplex__close")]

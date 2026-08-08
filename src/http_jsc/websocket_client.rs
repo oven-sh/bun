@@ -1750,6 +1750,30 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    /// The owning C++ WebSocket's context is being torn down: forget it (nothing
+    /// here may call back into it or into script) and drop the connection now —
+    /// a raw close on TLS too, since no loop remains to finish a graceful one.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) extern "C" fn drop_connection_without_callback(this_ptr: *mut Self) {
+        log!("dropConnectionWithoutCallback");
+        // SAFETY: called from C++ with a valid `heap::alloc` pointer; the guard
+        // keeps the allocation alive across clear_data()/close re-entry.
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        // SAFETY: as above.
+        let this = unsafe { &*this_ptr };
+
+        let had_cpp = this.outgoing_websocket.take().is_some();
+        this.clear_data();
+        if !this.tcp.get().is_closed() {
+            this.tcp.get().close(uws::CloseKind::Failure);
+        }
+        if had_cpp {
+            // The ref held on behalf of the C++ object.
+            // SAFETY: allocation kept live by the local guard above.
+            unsafe { Self::deref(this_ptr) };
+        }
+    }
+
     // `deinit` is the IntrusiveRc destructor callback; not `impl Drop` because
     // self is heap-allocated via heap::alloc and crosses FFI as *mut c_void.
     unsafe fn deinit(this: *mut Self) {
@@ -1825,6 +1849,7 @@ macro_rules! export_websocket_client {
         cancel = $cancel:ident,
         close = $close:ident,
         finalize = $finalize:ident,
+        drop_connection_without_callback = $drop_connection_without_callback:ident,
         init = $init:ident,
         init_with_tunnel = $init_with_tunnel:ident,
         memory_cost = $memory_cost:ident,
@@ -1843,6 +1868,10 @@ macro_rules! export_websocket_client {
         #[unsafe(no_mangle)]
         pub extern "C" fn $finalize(this: *mut WebSocket<$ssl>) {
             WebSocket::<$ssl>::finalize(this)
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $drop_connection_without_callback(this: *mut WebSocket<$ssl>) {
+            WebSocket::<$ssl>::drop_connection_without_callback(this)
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn $init(
@@ -1915,6 +1944,7 @@ export_websocket_client!(
     cancel = Bun__WebSocketClient__cancel,
     close = Bun__WebSocketClient__close,
     finalize = Bun__WebSocketClient__finalize,
+    drop_connection_without_callback = Bun__WebSocketClient__dropConnectionWithoutCallback,
     init = Bun__WebSocketClient__init,
     init_with_tunnel = Bun__WebSocketClient__initWithTunnel,
     memory_cost = Bun__WebSocketClient__memoryCost,
@@ -1927,6 +1957,7 @@ export_websocket_client!(
     cancel = Bun__WebSocketClientTLS__cancel,
     close = Bun__WebSocketClientTLS__close,
     finalize = Bun__WebSocketClientTLS__finalize,
+    drop_connection_without_callback = Bun__WebSocketClientTLS__dropConnectionWithoutCallback,
     init = Bun__WebSocketClientTLS__init,
     init_with_tunnel = Bun__WebSocketClientTLS__initWithTunnel,
     memory_cost = Bun__WebSocketClientTLS__memoryCost,

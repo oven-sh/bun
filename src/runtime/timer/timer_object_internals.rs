@@ -366,7 +366,10 @@ impl TimerObjectInternals {
         // `s.deref()` below; `*this` may be freed only after that point.
         let s = unsafe { &*this };
         let cleared = s.flags.get().has_cleared_timer()
+            // The VM's stop was requested: nothing more enters script (as `fire`).
             // SAFETY: `vm` is the live per-thread VM (hook contract).
+            || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
+            // SAFETY: as above.
             || s.generation != unsafe { (*vm).test_isolation_generation }
             // unref'd setImmediate callbacks should only run if there are things
             // keeping the event loop alive other than setImmediates

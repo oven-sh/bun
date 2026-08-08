@@ -4,7 +4,7 @@ use super::any_mysql_error::Error as AnyMySQLError;
 use super::character_set::CharacterSet;
 use super::encode_int::encode_length_int;
 use super::new_writer::NewWriter;
-use crate::mysql::capabilities::Capabilities;
+use crate::mysql::capabilities::{Capabilities, MariaDBCapabilities};
 use crate::shared::data::Data;
 use bun_collections::StringHashMap;
 
@@ -12,6 +12,7 @@ bun_core::declare_scope!(MySQLConnection, hidden);
 
 pub struct HandshakeResponse41 {
     pub capability_flags: Capabilities,
+    pub mariadb_capability_flags: MariaDBCapabilities,
     pub max_packet_size: u32,        // default: 0xFFFFFF (16MB)
     pub character_set: CharacterSet, // default: CharacterSet::default()
     pub username: Data,
@@ -48,8 +49,11 @@ impl HandshakeResponse41 {
         // Write character set (1 byte)
         writer.int1(self.character_set.to_int())?;
 
-        // Write 23 bytes of padding
-        writer.write(&[0u8; 23])?;
+        // 23 bytes of padding; the last 4 carry the MariaDB extended client
+        // capabilities (zero for MySQL servers, identical to plain filler).
+        // https://mariadb.com/kb/en/connection/#handshake-response-packet
+        writer.write(&[0u8; 19])?;
+        writer.int4(self.mariadb_capability_flags.to_int())?;
 
         // Write username (null terminated)
         writer.write_z(self.username.slice())?;

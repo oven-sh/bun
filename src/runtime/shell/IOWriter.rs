@@ -180,21 +180,6 @@ pub(crate) fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
     writer.on_poll(size_hint, hup);
 }
 
-impl IOWriter {
-    /// Tears down the underlying `WriterImpl` and drops the last strong ref.
-    ///
-    /// # Safety
-    /// `this` must be the `Arc::as_ptr` of a live `Arc<IOWriter>` whose strong
-    /// count is held by the async-deinit task; this call drops that ref.
-    // Forwards `this` to `Arc::decrement_strong_count` without dereferencing it
-    // here; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn deinit_on_main_thread(this: *mut IOWriter) {
-        // SAFETY: caller contract above.
-        unsafe { std::sync::Arc::decrement_strong_count(this) };
-    }
-}
-
 /// Mutable state. Wrapped in `UnsafeCell` so `Arc<IOWriter>`-shared callers can
 /// mutate via `&self` (single-threaded shell).
 struct State {

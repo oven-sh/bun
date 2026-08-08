@@ -4048,10 +4048,6 @@ impl H2FrameParser {
 
         let mut offset: usize = 0;
         let global_object = self.handlers.get().global();
-        if self.handlers.get().vm.is_shutting_down() {
-            return Ok(None);
-        }
-
         let stream_id = stream.id;
         let headers = JSValue::create_empty_array(&global_object, 0)?;
         headers.ensure_still_alive();

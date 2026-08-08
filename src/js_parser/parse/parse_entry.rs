@@ -93,6 +93,8 @@ pub struct Options<'a> {
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
+    /// Rewrite `import.meta.require` (a Bun extension) to the `__require` polyfill.
+    pub lower_import_meta_require: bool,
 
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
@@ -133,6 +135,7 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            lower_import_meta_require: false,
             framework: None,
             repl_mode: false,
         }
@@ -216,6 +219,7 @@ impl<'a> Options<'a> {
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
+            lower_import_meta_require: self.lower_import_meta_require,
             framework: self.framework,
             repl_mode: self.repl_mode,
         }
@@ -287,6 +291,7 @@ impl<'a> Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            lower_import_meta_require: false,
             framework: None,
             repl_mode: false,
         };

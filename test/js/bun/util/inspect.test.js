@@ -844,6 +844,58 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         console.log("custom delete:", s.includes("z: 1"));
       }
       {
+        // Mutating a sibling that has not been formatted yet: only the key
+        // list is snapshotted, values resolve live. An overwrite shows the
+        // new value, a delete is omitted, and an accessor redefinition shows
+        // [Getter] (matches Node and the slow path).
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) p.z = 777; return "a"; } };
+        p.z = 1;
+        console.log("overwrite later:", Bun.inspect(p).includes("z: 777"));
+      }
+      {
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) delete p.z; return "a"; } };
+        p.z = 1;
+        console.log("delete later:", !Bun.inspect(p).includes("z:"));
+      }
+      {
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) { delete p.z; p.z = 999; } return "a"; } };
+        p.z = 1;
+        console.log("delete+readd later:", Bun.inspect(p).includes("z: 999"));
+      }
+      {
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) Object.defineProperty(p, "z", { get() { return 5; }, enumerable: true, configurable: true }); return "a"; } };
+        p.z = 1;
+        console.log("redefine later:", Bun.inspect(p).includes("z: [Getter]"));
+      }
+      {
+        // Deleting an own key that shadows an inherited one: the value is
+        // re-resolved through the prototype chain.
+        const p = Object.create({ z: "inherited" });
+        for (let i = 0; i < 8; i++) p["k" + i] = i;
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) delete p.z; return "a"; } };
+        p.z = 1;
+        console.log("shadowed delete:", Bun.inspect(p).includes('z: "inherited"'));
+      }
+      {
+        // Deleting an own key that shadows an inherited getter must show the
+        // accessor, not invoke it.
+        const p = Object.create({ get z() { throw new Error("must not invoke"); } });
+        for (let i = 0; i < 8; i++) p["k" + i] = i;
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) delete p.z; return "a"; } };
+        Object.defineProperty(p, "z", { value: 1, enumerable: true, configurable: true, writable: true });
+        console.log("shadowed getter delete:", Bun.inspect(p).includes("z: [Getter]"));
+      }
+      {
         // A getter on a built-in subclass (Map.size) is another way the
         // formatter runs user code for a nested value.
         const p = makeParent();
@@ -866,7 +918,8 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
       }
       {
         // Allocation churn + GC inside the hook, with object-valued siblings
-        // formatted afterwards: catches a snapshot that is invisible to GC.
+        // formatted afterwards: the snapshotted keys and the values resolved
+        // after the walk must survive the collection.
         const p = makeParent();
         let fired = 0;
         p.a = { [custom]() {
@@ -904,7 +957,7 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         "custom add: true",
         // console.log dump of the mutated parent: properties added by the
         // inspect.custom hook mid-format are not shown (the walk snapshots
-        // the properties up front, like Node).
+        // the key list up front, like Node).
         "{",
         "  k0: 0,",
         "  k1: 1,",
@@ -918,6 +971,12 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         "  z: 1,",
         "}",
         "custom delete: true",
+        "overwrite later: true",
+        "delete later: true",
+        "delete+readd later: true",
+        "redefine later: true",
+        "shadowed delete: true",
+        "shadowed getter delete: true",
         "map size getter: true true",
         "prototype walk: true true",
         "gc churn: true",
@@ -926,5 +985,66 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     );
     expect(stderr).not.toContain("AddressSanitizer");
     expect(exitCode).toBe(0);
+  });
+});
+
+// Mutating a not-yet-formatted sibling from an inspect.custom hook must
+// produce the same output on every formatter path: the fast structure walk, the
+// slow path (forced by a getter on the parent), and the sorted/ordered walk.
+describe("mid-format sibling mutation agrees across formatter paths", () => {
+  const custom = Symbol.for("nodejs.util.inspect.custom");
+
+  function make(mutate, { slow = false, proto = null } = {}) {
+    const p = proto ? Object.create(proto) : {};
+    for (let i = 0; i < 8; i++) p["k" + i] = i;
+    if (slow)
+      Object.defineProperty(p, "g", {
+        get() {
+          return 0;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    let fired = 0;
+    p.a = {
+      [custom]() {
+        if (!fired++) mutate(p);
+        return "a";
+      },
+    };
+    // defineProperty, not `p.z = 1`: a getter-only inherited z would reject the assignment.
+    Object.defineProperty(p, "z", { value: 1, enumerable: true, configurable: true, writable: true });
+    return p;
+  }
+
+  const zLine = s => s.match(/z: [^,}\n]*/)?.[0] ?? "omitted";
+
+  it.each([
+    ["overwrite", p => void (p.z = 777), null, "z: 777"],
+    ["delete", p => void delete p.z, null, "omitted"],
+    ["delete and re-add", p => void (delete p.z, (p.z = 999)), null, "z: 999"],
+    [
+      "redefine as getter",
+      p => void Object.defineProperty(p, "z", { get: () => 5, enumerable: true, configurable: true }),
+      null,
+      "z: [Getter]",
+    ],
+    ["delete a shadowing key", p => void delete p.z, { z: "inherited" }, 'z: "inherited"'],
+    [
+      "delete a key shadowing an inherited getter",
+      p => void delete p.z,
+      {
+        get z() {
+          throw new Error("inspect must not invoke the inherited getter");
+        },
+      },
+      "z: [Getter]",
+    ],
+  ])("%s", (_name, mutate, proto, expected) => {
+    expect({
+      fast: zLine(Bun.inspect(make(mutate, { proto }))),
+      slow: zLine(Bun.inspect(make(mutate, { proto, slow: true }))),
+      sorted: zLine(Bun.inspect(make(mutate, { proto }), { sorted: true })),
+    }).toEqual({ fast: expected, slow: expected, sorted: expected });
   });
 });

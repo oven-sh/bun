@@ -2,6 +2,7 @@
 #define _GNU_SOURCE 1 // dl_iterate_phdr / dl_phdr_info (Linux)
 #endif
 #include "root.h"
+#include <wtf/CryptographicallyRandomNumber.h>
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/ExecutableAllocator.h>
@@ -1977,7 +1978,8 @@ static void imageRestoreAndRun(const char* path)
                 if (exception) fprintf(stderr, "[image] eval threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
                 exception = nullptr;
             }
-            JSC::evaluate(globalObject, JSC::makeSource("globalThis.__bunImageRestored = true; process.emit('restore'); setTimeout(() => Bun.unsafe.recleanImagePages(), 2000).unref(); if (process.env.BUN_IMAGE_TRACE_EXIT) { const oe = process.exit; process.exit = function(c) { require('fs').writeSync(2, '[image] process.exit(' + c + ') from:\\n' + new Error().stack + '\\n'); return oe.call(this, c); }; process.on('exit', c => require('fs').writeSync(2, '[image] exit event ' + c + '\\n')); } if (typeof __onImageRestored === 'function') __onImageRestored();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
+            globalObject->weakRandom().setSeed(WTF::cryptographicallyRandomNumber<unsigned>()); // Math.random stream came from the builder
+            JSC::evaluate(globalObject, JSC::makeSource("globalThis.__bunImageRestored = true; try { process.chdir(process.env.PWD && require('fs').realpathSync(process.env.PWD) === require('fs').realpathSync('.') ? process.env.PWD : require('fs').realpathSync('.')); } catch {} for (const s of [process.stdout, process.stderr]) { try { if (s.isTTY && typeof s._refreshSize === 'function') s._refreshSize(); } catch {} } process.emit('restore'); setTimeout(() => Bun.unsafe.recleanImagePages(), 2000).unref(); if (process.env.BUN_IMAGE_TRACE_EXIT) { const oe = process.exit; process.exit = function(c) { require('fs').writeSync(2, '[image] process.exit(' + c + ') from:\\n' + new Error().stack + '\\n'); return oe.call(this, c); }; process.on('exit', c => require('fs').writeSync(2, '[image] exit event ' + c + '\\n')); } if (typeof __onImageRestored === 'function') __onImageRestored();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
             if (exception) fprintf(stderr, "[image] __onImageRestored threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
         }
         Bun__imageContinueEventLoop(); // never returns

@@ -277,7 +277,7 @@ pub struct VirtualMachine {
     pub argv: Vec<Box<[u8]>>,
 
     pub origin_timer: std::time::Instant,
-    pub(crate) origin_timestamp: u64,
+    pub origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
     pub(crate) macro_event_loop: EventLoop,
@@ -2040,7 +2040,7 @@ unsafe extern "C" {
     ) -> *mut JSInternalPromise;
 }
 
-fn get_origin_timestamp() -> u64 {
+pub fn get_origin_timestamp() -> u64 {
     // Subtract the Y2K epoch so the timestamp fits in a u64 (nanoseconds).
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

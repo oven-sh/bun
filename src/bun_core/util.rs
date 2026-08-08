@@ -3544,7 +3544,12 @@ pub fn fast_random() -> u64 {
     use core::cell::Cell;
     use core::sync::atomic::{AtomicU64, Ordering as O};
     static SEED: AtomicU64 = AtomicU64::new(0);
+    static SEED_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     fn random_seed() -> u64 {
+        let epoch = crate::image::epoch();
+        if SEED_EPOCH.swap(epoch, O::Relaxed) != epoch {
+            SEED.store(0, O::Relaxed); // seed cached by the image builder: draw a fresh one here
+        }
         let mut v = SEED.load(O::Relaxed);
         while v == 0 {
             // Should also apply to canary builds, but bun_core has no `canary`
@@ -3564,14 +3569,16 @@ pub fn fast_random() -> u64 {
         v
     }
     thread_local! {
-        static PRNG: Cell<Option<rand::DefaultPrng>> = const { Cell::new(None) };
+        static PRNG: Cell<Option<(u32, rand::DefaultPrng)>> = const { Cell::new(None) };
     }
     PRNG.with(|p| {
-        let mut prng = p
-            .take()
-            .unwrap_or_else(|| rand::DefaultPrng::init(random_seed()));
+        let epoch = crate::image::epoch();
+        let mut prng = match p.take() {
+            Some((e, prng)) if e == epoch => prng,
+            _ => rand::DefaultPrng::init(random_seed()), // first use, or first use since a heap-image restore (the imaged stream is the builder's)
+        };
         let v = prng.next_u64();
-        p.set(Some(prng));
+        p.set(Some((epoch, prng)));
         v
     })
 }

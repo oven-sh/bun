@@ -1860,12 +1860,24 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
         // SAFETY: writing a byte buffer to fd 2.
         unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
     }
+    {
+        // SAFETY: main-thread VM; single-threaded at this point of restore.
+        let vm = unsafe { &mut *vm_ptr };
+        vm.origin_timer = std::time::Instant::now(); // performance.now()/process.uptime()/hrtime count from this launch, not the builder's
+        vm.origin_timestamp = bun_jsc::virtual_machine::get_origin_timestamp();
+    }
     crate::jsc_hooks::adopt_main_thread_runtime_state();
     // SAFETY: main-thread VM adopted; single-threaded at this point of restore.
     unsafe {
         (*vm_ptr)
             .rare_data()
             .forget_spawn_sync_event_loop_for_image_restore()
+    };
+    // SAFETY: as above.
+    unsafe {
+        (*vm_ptr)
+            .rare_data()
+            .forget_entropy_cache_for_image_restore()
     };
     #[cfg(target_os = "macos")]
     {

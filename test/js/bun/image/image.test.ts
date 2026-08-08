@@ -135,3 +135,30 @@ test("spawnSync used before the snapshot still works after restore (isolated spa
   }
   expect(code).toBe(0);
 }, 60000);
+
+test("random sources and time bases are fresh in every process restored from the same image", async () => {
+  using dir = tempDir("bun-image-rng", {});
+  const img = join(String(dir), "rng.img");
+  const fixture = join(import.meta.dir, "rng-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    await p.exited;
+  }
+  const runs: any[] = [];
+  for (let i = 0; i < 2; i++) {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img }, stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    const line = out.split("\n").find(l => l.startsWith("[js] "));
+    expect(line, err.slice(-600)).toBeDefined();
+    runs.push(JSON.parse(line!.slice(5)));
+    expect(code).toBe(0);
+  }
+  const [a, b] = runs;
+  expect(a.math).not.toEqual(b.math); // Math.random (JSGlobalObject WeakRandom)
+  expect(a.webcrypto).not.toBe(b.webcrypto); // crypto.getRandomValues (entropy cache)
+  expect(a.uuid).not.toBe(b.uuid); // crypto.randomUUID
+  expect(a.randomBytes).not.toBe(b.randomBytes); // BoringSSL RAND_bytes
+  expect(Number(a.uptime)).toBeLessThan(5); // counts from this launch, not the builder's
+  expect(a.now).toBeLessThan(5000);
+  expect(b.timeOrigin).toBeGreaterThanOrEqual(a.timeOrigin);
+}, 60000);

@@ -1269,14 +1269,18 @@ class ChildProcess extends EventEmitter {
       default:
         switch (io) {
           case "pipe":
-          case "socket-fd":
+          case "socket-fd": {
             if (!NetModule) NetModule = require("node:net");
             // #spawn mapped "pipe" at i>=3 to "socket-fd", so the parent-end
             // fd in handle.stdio[i] is UnownedFd: we own it and
             // net.connect({fd}) -> usockets will close it on socket close.
             const fd = handle && handle.stdio[i];
             if (fd == null) return null;
-            return NetModule.connect({ fd });
+            const socket = NetModule.connect({ fd });
+            this.#closesNeeded++;
+            socket.once("close", () => this.#maybeClose());
+            return socket;
+          }
         }
         return null;
     }

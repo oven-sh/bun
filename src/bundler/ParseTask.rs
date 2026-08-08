@@ -2662,6 +2662,17 @@ pub mod parse_worker {
         };
 
         ast.target = target;
+        // Construction sites that bypass the resolver leave module_type Unknown; fall back to extension.
+        let module_type_for_print = if task.module_type == options::ModuleType::Unknown {
+            _resolver::module_type_from_ext(task.path.name().ext)
+                .unwrap_or(options::ModuleType::Unknown)
+        } else {
+            task.module_type
+        };
+        if module_type_for_print == options::ModuleType::Esm {
+            ast.flags
+                .insert(crate::bundled_ast::Flags::MODULE_TYPE_WAS_ESM);
+        }
         if ast.parts.len() <= 1
             && ast.css.is_none()
             && (task.loader.is_none() || task.loader.unwrap() != Loader::Html)

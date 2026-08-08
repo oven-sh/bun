@@ -145,7 +145,9 @@ bitflags::bitflags! {
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
         const HAS_EXPLICIT_USE_STRICT_DIRECTIVE = 1 << 7;
         const HAS_IMPORT_META = 1 << 8;
-        // _padding: u7 fills the rest
+        // Node.js would load this file as ESM (.mjs/.mts or nearest package.json has "type": "module"); controls __toESM isNodeMode.
+        const MODULE_TYPE_WAS_ESM = 1 << 9;
+        // _padding: u6 fills the rest
     }
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1774,3 +1774,113 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
 });
+
+// A pending node:fs thread-pool operation that can never complete (here: a
+// FIFO whose open-for-read blocks until a writer appears) must not block
+// worker/VM teardown: the completion is instead refused at the event loop's
+// poster gate and freed on the pool thread. The fs ops below block forever by
+// design, so these tests hang (and time out) if shutdown ever waits on them.
+test.concurrent.skipIf(isWindows)(
+  "terminate() settles while the worker has an fs read blocked on a FIFO",
+  async () => {
+    using dir = tempDir("worker-terminate-blocked-read", {
+      "main.cjs": `
+        const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
+        if (isMainThread) {
+          const w = new Worker(__filename, { workerData: process.argv[2] });
+          w.on("exit", () => console.log("exit event"));
+          w.on("message", () => {
+            w.terminate().then(() => {
+              console.log("terminate resolved");
+              process.exit(0);
+            });
+          });
+        } else {
+          // Blocks a thread-pool worker forever: a FIFO with no writer.
+          require("fs").readFile(workerData, () => {});
+          parentPort.postMessage("pending");
+        }
+      `,
+    });
+    const fifo = join(String(dir), "pipe.fifo");
+    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs", fifo],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("exit event\nterminate resolved\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.skipIf(isWindows)(
+  "process.exit() with a blocked fs read pending completes under BUN_DESTRUCT_VM_ON_EXIT",
+  async () => {
+    using dir = tempDir("exit-blocked-read", {
+      "main.cjs": `require("fs").readFile(process.argv[2], () => {}); process.exit(0);`,
+    });
+    const fifo = join(String(dir), "pipe.fifo");
+    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs", fifo],
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.skipIf(isWindows)(
+  "fs op completing after terminate() is discarded without touching the dead worker VM",
+  async () => {
+    using dir = tempDir("worker-terminate-late-completion", {
+      "main.cjs": `
+        const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
+        const fs = require("fs");
+        if (isMainThread) {
+          const fifo = process.argv[2];
+          const w = new Worker(__filename, { workerData: fifo });
+          w.on("message", () => {
+            w.terminate().then(() => {
+              console.log("terminate resolved");
+              // Unblock the stranded read now that the worker VM is gone; its
+              // completion must be refused at the gate and freed off-thread.
+              fs.open(fifo, "w", (err, fd) => {
+                if (err) throw err;
+                fs.write(fd, "x", () => {
+                  fs.close(fd, () => {
+                    // Slack for the detached pool thread to finish the refused
+                    // completion under ASAN; the assertions do not depend on it.
+                    setTimeout(() => {
+                      console.log("done");
+                      process.exit(0);
+                    }, 250);
+                  });
+                });
+              });
+            });
+          });
+        } else {
+          fs.readFile(workerData, () => {});
+          parentPort.postMessage("pending");
+        }
+      `,
+    });
+    const fifo = join(String(dir), "pipe.fifo");
+    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs", fifo],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("terminate resolved\ndone\n");
+    expect(exitCode).toBe(0);
+  },
+);

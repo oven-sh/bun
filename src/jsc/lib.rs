@@ -1359,10 +1359,11 @@ pub use self::event_loop as EventLoop;
 pub mod any_task_job;
 pub use self::any_task_job::{AnyTaskJob, AnyTaskJobCtx};
 pub use self::event_loop::{
-    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentPromiseTask,
-    ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
-    GarbageCollectionController, JsTerminated, JsTerminatedResult, ManagedTask, MiniEventLoop,
-    PosixSignalHandle, PosixSignalTask, Task, WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,
+    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentPosterGate,
+    ConcurrentPromiseTask, ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle,
+    EventLoopTask, EventLoopTaskPtr, GarbageCollectionController, JsTerminated,
+    JsTerminatedResult, ManagedTask, MiniEventLoop, PosixSignalHandle, PosixSignalTask, Task,
+    WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,
 };
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;

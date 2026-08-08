@@ -88,10 +88,12 @@ pub struct EventLoop {
 
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
-    /// Work-pool tasks that will post to `concurrent_tasks` when they finish (counted on the JS
-    /// thread before hand-off, decremented on the pool thread after the post). Shutdown waits for
-    /// zero before the final queue drain so a completion can't land after it and leak.
-    pub concurrent_posters: AtomicU32,
+    /// Gate shared (via `Arc` clones) with every scheduled work-pool task whose completion posts
+    /// back through [`Self::enqueue_task_concurrent`]. Shutdown closes it before the final queue
+    /// drain so a completion can't land after the drain; a poster that arrives later observes the
+    /// closed gate and frees its task without touching this (possibly already freed) loop. `None`
+    /// only after [`Self::deinit`].
+    pub concurrent_poster_gate: Option<std::sync::Arc<ConcurrentPosterGate>>,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
     /// Note (§Dispatch): payload is `*mut ()` — the real
@@ -132,12 +134,75 @@ impl Default for EventLoop {
             uws_loop: (),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
-            concurrent_posters: AtomicU32::new(0),
+            concurrent_poster_gate: Some(std::sync::Arc::new(ConcurrentPosterGate::default())),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
             signal_handler: None,
             #[cfg(not(unix))]
             signal_handler: (),
+        }
+    }
+}
+
+/// Gate between work-pool completion posts and event-loop teardown.
+///
+/// A scheduled fs operation can block indefinitely (a `read()` from a FIFO or pipe with no
+/// writer), so shutdown must not wait for it — the old whole-operation poster count turned
+/// `worker.terminate()` into an unbounded spin. Instead, each poster wraps ONLY its completion
+/// post in [`Self::begin_post`]/[`Self::end_post`], and [`Self::close`] refuses everything that
+/// comes later. The gate is `Arc`-shared with every in-flight task precisely so a poster that
+/// outlives the VM can still load the closed state from live memory.
+///
+/// Protocol guarantees, in terms of the single `state` word's modification order:
+/// - `begin_post() == true` ⇒ the increment preceded `close()`'s closed-bit store, so `close()`
+///   cannot return before the matching [`Self::end_post`] — the event loop and its VM stay live
+///   for the whole post.
+/// - `begin_post() == false` ⇒ the loop may already be freed; the caller still owns its task and
+///   must dispose of it without touching the VM or the JS heap (`dispose_without_post` in
+///   `node_fs.rs`).
+#[derive(Default)]
+pub struct ConcurrentPosterGate {
+    /// Bit 31: closed. Bits 0..31: posters currently between `begin_post` and `end_post`.
+    state: AtomicU32,
+}
+
+impl ConcurrentPosterGate {
+    const CLOSED: u32 = 1 << 31;
+
+    /// Work-pool thread: begin a completion post. On `true`, the loop is guaranteed live until
+    /// the matching [`Self::end_post`].
+    #[must_use]
+    pub fn begin_post(&self) -> bool {
+        let mut state = self.state.load(Ordering::Relaxed);
+        loop {
+            if state & Self::CLOSED != 0 {
+                return false;
+            }
+            match self.state.compare_exchange_weak(
+                state,
+                state + 1,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => state = actual,
+            }
+        }
+    }
+
+    /// Work-pool thread: the post finished. Last touch of the event loop; after this the JS
+    /// thread may drain the queue and tear the VM down.
+    pub fn end_post(&self) {
+        let prev = self.state.fetch_sub(1, Ordering::Release);
+        debug_assert!(prev & !Self::CLOSED > 0);
+    }
+
+    /// JS thread, shutdown: no post begun after this returns can succeed, and every post that
+    /// already began has finished. Bounded by an enqueue, not by the underlying fs operation.
+    pub fn close(&self) {
+        self.state.fetch_or(Self::CLOSED, Ordering::AcqRel);
+        while self.state.load(Ordering::Acquire) & !Self::CLOSED != 0 {
+            std::thread::yield_now();
         }
     }
 }
@@ -770,6 +835,11 @@ impl EventLoop {
     }
 
     pub fn deinit(&mut self) {
+        // Drop this loop's ref to the poster gate (closed by now on every path that deinits a
+        // loop with posters). The VM box is raw-dealloc'd without field `Drop`s, so the `Arc`
+        // must be released here; stranded posters hold their own clones and free the allocation
+        // when the last one finishes.
+        drop(self.concurrent_poster_gate.take());
         // Free (don't run — running could re-enter the dying VM) queued
         // ManagedTask boxes. Other tags are left in place: they were re-queued
         // by `release_queued_tasks_for_shutdown` because their callback can't
@@ -1010,26 +1080,23 @@ impl EventLoop {
         self.wakeup();
     }
 
-    /// See `concurrent_posters`. Call on the JS thread before scheduling a
-    /// work-pool task whose completion posts via `enqueue_task_concurrent`.
-    pub fn concurrent_poster_begin(&self) {
-        let _ = self.concurrent_posters.fetch_add(1, Ordering::SeqCst);
+    /// Clone of [`Self::concurrent_poster_gate`] for a work-pool task scheduled on the JS
+    /// thread. Panics after [`Self::deinit`] — tasks are only created while the VM is live.
+    pub fn poster_gate(&self) -> std::sync::Arc<ConcurrentPosterGate> {
+        self.concurrent_poster_gate
+            .as_ref()
+            .expect("poster_gate() after EventLoop::deinit()")
+            .clone()
     }
 
-    /// Pool-thread pair of [`Self::concurrent_poster_begin`]. Must be the
-    /// poster's last touch of this event loop: once the count hits zero the
-    /// shutdown thread may drain the queue and tear the VM down.
-    pub fn concurrent_poster_end(&self) {
-        let prev = self.concurrent_posters.fetch_sub(1, Ordering::Release);
-        debug_assert!(prev > 0);
-    }
-
-    /// Spin until every counted poster has finished its post. Called on the JS thread during
-    /// shutdown, after the last JS has run and before the final queue drain. Each pending fs
-    /// operation is finite, so the wait is bounded by syscall latency.
-    pub fn wait_for_concurrent_posters(&self) {
-        while self.concurrent_posters.load(Ordering::Acquire) > 0 {
-            std::thread::yield_now();
+    /// Close [`Self::concurrent_poster_gate`]: refuse all future work-pool completion posts and
+    /// wait out the ones already mid-enqueue. Called on the JS thread during shutdown, after the
+    /// last JS has run and before the final queue drain, so the drain sees every post that will
+    /// ever land. Unlike the fs operations themselves (which can block forever on a pipe/FIFO),
+    /// the wait here is bounded by an enqueue + wakeup.
+    pub fn close_concurrent_posters(&self) {
+        if let Some(gate) = self.concurrent_poster_gate.as_ref() {
+            gate.close();
         }
     }
 
@@ -1343,7 +1410,6 @@ bun_event_loop::link_impl_JsEventLoop! {
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
         enqueue_task_concurrent(task) => (*this).enqueue_task_concurrent(task),
-        concurrent_poster_end() => (*this).concurrent_poster_end(),
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
         create_null_delimited_env_map() =>

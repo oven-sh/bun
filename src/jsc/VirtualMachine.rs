@@ -790,6 +790,14 @@ impl VirtualMachine {
         unsafe { &*self.event_loop }
     }
 
+    /// Close both loops' [`crate::event_loop::ConcurrentPosterGate`]s (macro mode can have
+    /// pointed tasks at either loop) ahead of the final queue drain: no work-pool completion can
+    /// post after this returns. See the gate type for why this never waits on a blocked syscall.
+    pub fn close_concurrent_posters(&mut self) {
+        self.regular_event_loop.close_concurrent_posters();
+        self.macro_event_loop.close_concurrent_posters();
+    }
+
     /// Alias for [`Self::event_loop_mut`]. Kept for callers migrated on the
     /// `runtime-hostfn-safe` branch; both names funnel into the single audited
     /// `unsafe` deref above.
@@ -1638,10 +1646,11 @@ impl VirtualMachine {
             bun_http::shutdown_for_exit();
 
             // Release tasks the HTTP daemon posted before observing `is_shutting_down` (else the
-            // tasklet ⇄ `Box<AsyncHTTP>` cycle leaks); must precede `destructOnExit`. Wait for
-            // work-pool fs completions first — they post without a shutdown check, so a post
-            // landing after the drain leaks.
-            self.event_loop_mut().wait_for_concurrent_posters();
+            // tasklet ⇄ `Box<AsyncHTTP>` cycle leaks); must precede `destructOnExit`. Close the
+            // poster gates first so no work-pool fs completion can post after the drain; a
+            // completion still blocked in its syscall is refused at its gate later and frees
+            // itself without touching the VM.
+            self.close_concurrent_posters();
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
             if let Some(rare) = self.rare_data.as_deref_mut() {

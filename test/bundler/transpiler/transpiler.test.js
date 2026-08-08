@@ -2839,6 +2839,45 @@ console.log(<div {...obj} key="after" />);`),
       expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800" + "\\uDF34")');
     });
 
+    it("raw unpaired surrogates in string source", async () => {
+      // A JS string passed to transformSync can contain unpaired surrogate code
+      // units. The lexer reads WTF-8, so the string-to-bytes conversion must
+      // preserve them instead of substituting U+FFFD.
+      const t = new Bun.Transpiler({ loader: "js" });
+      const evalT = src => (0, eval)("(function(){" + src + " return t})()");
+      const cases = [
+        { unit: 0xd800, lit: c => `const t = "a${c}b";` },
+        { unit: 0xdc00, lit: c => `const t = "a${c}b";` },
+        { unit: 0xdbff, lit: c => `const t = "a${c}b";` },
+        { unit: 0xd800, lit: c => "const t = `a" + c + "b`;" },
+      ];
+      for (const { unit, lit } of cases) {
+        const src = lit(String.fromCharCode(unit));
+        const out = t.transformSync(src);
+        expect(out).not.toContain("\uFFFD");
+        expect(evalT(out).charCodeAt(1)).toBe(unit);
+        expect(evalT(out)).toBe(evalT(src));
+
+        // String input and buffer (WTF-8) input must agree.
+        const wtf8 = Buffer.concat([
+          Buffer.from(lit("").slice(0, lit("").indexOf("ab"))),
+          Buffer.from("a"),
+          Buffer.from([0xe0 | (unit >> 12), 0x80 | ((unit >> 6) & 0x3f), 0x80 | (unit & 0x3f)]),
+          Buffer.from("b"),
+          Buffer.from(lit("").slice(lit("").indexOf("ab") + 2)),
+        ]);
+        expect(out).toBe(t.transformSync(wtf8));
+      }
+
+      // A well-formed pair embedded as raw code units must still combine.
+      const pairSrc = `const t = "a${String.fromCharCode(0xd800, 0xdf34)}b";`;
+      expect(evalT(t.transformSync(pairSrc)).codePointAt(1)).toBe(0x10334);
+
+      // Async transform goes through the same encoder.
+      const asyncOut = await t.transform(cases[0].lit(String.fromCharCode(0xd800)));
+      expect(evalT(asyncOut).charCodeAt(1)).toBe(0xd800);
+    });
+
     it("fold string addition", () => {
       expectPrinted_(
         `

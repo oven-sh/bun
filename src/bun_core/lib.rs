@@ -1637,6 +1637,44 @@ pub(crate) mod strings_impl {
         convert_utf16_to_utf8(Vec::new(), utf16)
     }
 
+    /// [`to_utf8_alloc`] but unpaired surrogates are kept as WTF-8, not replaced with U+FFFD.
+    pub fn to_wtf8_alloc(utf16: &[u16]) -> Vec<u8> {
+        // 3 bytes per unpaired surrogate == WTF-8 width, so `need` is exact.
+        let need = simdutf::length::utf8::from::utf16::le_with_replacement(utf16);
+        let mut list = Vec::with_capacity(need + 16);
+        // SAFETY: same contract as `convert_utf16_to_utf8_append` — simdutf
+        // writes only initialized bytes into the spare slice and reports the
+        // count; on SURROGATE we commit 0 and fall back to the scalar loop.
+        let r = unsafe {
+            crate::vec::fill_spare(&mut list, 0, |spare| {
+                let r = simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
+                    utf16.as_ptr(),
+                    utf16.len(),
+                    spare.as_mut_ptr(),
+                );
+                (
+                    if r.status == simdutf::Status::SURROGATE {
+                        0
+                    } else {
+                        r.count
+                    },
+                    r,
+                )
+            })
+        };
+        if r.status == simdutf::Status::SURROGATE {
+            let mut i = 0usize;
+            let mut buf = [0u8; 4];
+            while i < utf16.len() {
+                let (cp, adv) = decode_wtf16_raw(&utf16[i..]);
+                i += adv as usize;
+                let n = encode_wtf8_rune(&mut buf, cp);
+                list.extend_from_slice(&buf[..n]);
+            }
+        }
+        list
+    }
+
     /// Transcode raw UTF-16-LE *bytes* (no alignment requirement) to a fresh
     /// UTF-8 `Vec`.
     ///

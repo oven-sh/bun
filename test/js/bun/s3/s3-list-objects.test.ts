@@ -1046,7 +1046,9 @@ describe.concurrent("S3 - List Objects", () => {
   it("Should reject a listing whose <Contents> has no <Key>", async () => {
     using server = createBunServer(
       async () =>
-        new Response(`<ListBucketResult><Name>b</Name><Contents><Key>a</Key></Contents><Contents><Size>1</Size></Contents></ListBucketResult>`),
+        new Response(
+          `<ListBucketResult><Name>b</Name><Contents><Key>a</Key></Contents><Contents><Size>1</Size></Contents></ListBucketResult>`,
+        ),
     );
     const client = new S3Client({ ...options, endpoint: server.url.href });
     const error = await client.list().then(

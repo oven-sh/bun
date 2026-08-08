@@ -1,6 +1,5 @@
-//! Per-worker JUnit XML and LCOV coverage fragment merging. Workers write
-//! their own fragments to a shared temp dir; the coordinator stitches them
-//! into a single document/report after `drive()` completes.
+//! Merges the JUnit and LCOV chunks workers stream over IPC into the
+//! single report the coordinator writes after `drive()` completes.
 
 use std::io::Write as _;
 
@@ -33,68 +32,57 @@ fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     strings::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
 }
 
+#[derive(Default)]
+pub struct JunitTotals {
+    pub tests: u32,
+    pub failures: u32,
+    pub skipped: u32,
+}
+
+pub(crate) fn add_junit_chunk_totals(totals: &mut JunitTotals, chunk: &[u8]) {
+    let Some(open) = strings::index_of(chunk, b"<testsuite ") else {
+        return;
+    };
+    let Some(gt) = strings::index_of_char(&chunk[open..], b'>') else {
+        return;
+    };
+    let head = &chunk[open..open + gt as usize];
+    totals.tests += attr_value(head, b"tests");
+    totals.failures += attr_value(head, b"failures");
+    totals.skipped += attr_value(head, b"skipped");
+}
+
 pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
+    let mut totals = core::mem::take(&mut coord.junit_totals);
+    let chunks = core::mem::take(&mut coord.junit_chunks);
+    let crashed = core::mem::take(&mut coord.crashed_files);
     let mut body: Vec<u8> = Vec::new();
-    // Crashed workers never reach workerFlushAggregates, so any files they ran
-    // (including earlier passing ones) have no fragment. Compute the outer
-    // <testsuites> totals from what we actually emit so they always equal the
-    // sum of inner <testsuite> elements; CI tools schema-validate this.
-    #[derive(Default)]
-    struct Totals {
-        tests: u32,
-        failures: u32,
-        skipped: u32,
-    }
-    let mut totals = Totals::default();
-
-    for path in &coord.junit_fragments {
-        let file = match File::read_from(Fd::cwd(), path) {
-            bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(_) => continue,
-        };
-        // Each fragment is a full <testsuites> document; extract its header
-        // attributes for the merged totals and its body for the inner suites.
-        let Some(open_start) = strings::index_of(&file, b"<testsuites") else {
-            continue;
-        };
-        let Some(gt) = strings::index_of_char(&file[open_start..], b'>') else {
-            continue;
-        };
-        let head_end = open_start + gt as usize;
-        let head = &file[open_start..head_end];
-        totals.tests += attr_value(head, b"tests");
-        totals.failures += attr_value(head, b"failures");
-        totals.skipped += attr_value(head, b"skipped");
-        let body_start = head_end + 1;
-        let Some(body_end) = strings::last_index_of(&file, b"</testsuites>") else {
-            continue;
-        };
-        if body_start >= body_end {
-            continue;
+    for (idx, slot) in chunks.into_iter().enumerate() {
+        if let Some(chunk) = slot {
+            body.extend_from_slice(&chunk);
+            if !strings::ends_with_char(&chunk, b'\n') {
+                body.push(b'\n');
+            }
         }
-        let inner = strings::trim(&file[body_start..body_end], b"\n");
-        if inner.is_empty() {
-            continue;
+        if crashed.contains(&(idx as u32)) {
+            let rel = coord.rel_path(idx as u32);
+            body.extend_from_slice(b"  <testsuite name=\"");
+            let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
+            body.extend_from_slice(b"\" file=\"");
+            let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
+            body.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
+            let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
+            body.extend_from_slice(
+                b"\">\n\
+                  \x20     <failure message=\"worker process crashed before reporting results\"></failure>\n\
+                  \x20   </testcase>\n\
+                  \x20 </testsuite>\n",
+            );
+            totals.tests += 1;
+            totals.failures += 1;
         }
-        body.extend_from_slice(inner);
-        body.push(b'\n');
     }
-
-    for &idx in &coord.crashed_files {
-        let rel = coord.rel_path(idx);
-        body.extend_from_slice(b"  <testsuite name=\"");
-        let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
-        body.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
-        let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
-        body.extend_from_slice(
-            b"\">\n\
-              \x20     <failure message=\"worker process crashed before reporting results\"></failure>\n\
-              \x20   </testcase>\n\
-              \x20 </testsuite>\n",
-        );
-        totals.tests += 1;
-        totals.failures += 1;
-    }
+    coord.crashed_files = crashed;
 
     let mut contents: Vec<u8> = Vec::new();
     let elapsed_time =
@@ -151,19 +139,15 @@ impl FileCoverage {
 /// can't be unioned; this under-reports % Funcs when workers cover different
 /// functions of the same file. The non-parallel path has the same FN/FNDA gap.
 pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
-    paths: &[&[u8]],
+    chunks: &[&[u8]],
     opts: &mut CodeCoverageOptions,
 ) {
     let mut by_file: StringArrayHashMap<FileCoverage> = StringArrayHashMap::default();
 
-    for &path in paths {
-        let data = match File::read_from(Fd::cwd(), path) {
-            bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(_) => continue,
-        };
+    for &data in chunks {
         let mut cur: Option<usize> = None; // index into by_file; raw &mut would alias across getOrPut
         // reshaped for borrowck — store index instead of *mut FileCoverage
-        for raw in data.split(|b| *b == b'\n') {
+        for raw in strings::split(data, b"\n") {
             let line = strings::trim_right(raw, b"\r");
             if line.starts_with(b"SF:") {
                 let name = &line[3..];
@@ -182,7 +166,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             } else if let Some(i) = cur {
                 let fc = &mut by_file.values_mut()[i];
                 if line.starts_with(b"DA:") {
-                    let mut parts = line[3..].split(|b| *b == b',');
+                    let mut parts = strings::split(&line[3..], b",");
                     let Some(ln_s) = parts.next() else { continue };
                     let Ok(ln) = strings::parse_int::<u32>(ln_s, 10) else {
                         continue;

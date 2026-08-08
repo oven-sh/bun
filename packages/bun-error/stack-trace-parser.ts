@@ -1,5 +1,5 @@
 const UNKNOWN_FUNCTION = "<unknown>";
-import type { StackFrame } from "../../src/api/schema";
+import type { StackFrame } from "./schema";
 
 /**
  * This parses the different stack traces and puts them into one format

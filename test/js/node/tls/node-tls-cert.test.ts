@@ -138,8 +138,7 @@ it("complete cert chains sent to peer, but without requesting client's cert.", a
   });
 });
 
-// TODO: this requires maxVersion/minVersion
-it.todo("Request cert from TLS1.2 client that doesn't have one.", async () => {
+it("Request cert from TLS1.2 client that doesn't have one.", async () => {
   try {
     await connect({
       client: {
@@ -156,7 +155,7 @@ it.todo("Request cert from TLS1.2 client that doesn't have one.", async () => {
     });
     expect.unreachable();
   } catch (err: any) {
-    expect(err.code).toBe("ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE");
+    expect(err.code).toBe("ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE");
   }
 });
 

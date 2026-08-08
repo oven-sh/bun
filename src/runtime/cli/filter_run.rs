@@ -52,7 +52,7 @@ struct ProcessInfo {
 // self-referential; kept as raw pointers per LIFETIMES.tsv (BACKREF).
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
-    state: bun_ptr::BackRef<State<'a>>,
+    state: bun_ptr::BackRef<State<'a>, bun_ptr::Mut>,
 
     stdout: BufferedReader,
     stderr: BufferedReader,
@@ -66,8 +66,14 @@ pub(crate) struct ProcessHandle<'a> {
 
     remaining_dependencies: usize,
     dependents: Vec<*mut ProcessHandle<'a>>,
-    visited: bool,
-    visiting: bool,
+    visit_state: VisitState,
+}
+
+#[derive(Clone, Copy)]
+enum VisitState {
+    Unvisited,
+    Visiting,
+    Visited,
 }
 
 impl<'a> ProcessHandle<'a> {
@@ -133,7 +139,7 @@ impl<'a> ProcessHandle<'a> {
         let mut spawned = spawned;
         #[cfg(windows)]
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
-        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
+        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop));
 
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
         handle.stdout.set_parent(handle_ptr);
@@ -195,7 +201,7 @@ impl<'a> ProcessHandle<'a> {
         Ok(())
     }
 
-    pub(crate) fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
         let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
@@ -204,9 +210,9 @@ impl<'a> ProcessHandle<'a> {
         true
     }
 
-    pub(crate) fn on_reader_done(&mut self) {}
+    fn on_reader_done(&mut self) {}
 
-    pub(crate) fn on_reader_error(&mut self, err: &sys::Error) {
+    fn on_reader_error(&mut self, err: &sys::Error) {
         let _ = err;
     }
 }
@@ -219,7 +225,7 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl<'a> ProcessHandle<'a> {
-    pub(crate) fn on_process_exit(&mut self, proc: &mut Process, status: Status, _: &Rusage) {
+    fn on_process_exit(&mut self, proc: &mut Process, status: Status, _: &Rusage) {
         self.process.as_mut().unwrap().status = status;
         self.end_time = Some(Instant::now());
         // We just leak the process because we're going to exit anyway after all processes are done
@@ -230,7 +236,7 @@ impl<'a> ProcessHandle<'a> {
         let _ = state.process_exit(self);
     }
 
-    pub(crate) fn loop_(&self) -> *mut bun_io::Loop {
+    fn loop_(&self) -> *mut bun_io::Loop {
         // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
         bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
     }
@@ -260,7 +266,7 @@ struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
     // Raw `*mut` — `init_global` returns the
     // thread-local singleton pointer; aliasing &mut would be UB.
-    event_loop: *mut MiniEventLoop<'static>,
+    event_loop: *mut MiniEventLoop,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -275,7 +281,7 @@ struct State<'a> {
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
     // shared borrow won't do, and `&'a mut` would conflict with the Transpiler's
     // own raw-ptr field. Reborrow `&mut *env` at use sites.
-    env: *mut bun_dotenv::Loader<'static>,
+    env: *mut bun_dotenv::Loader,
 }
 
 struct ElideResult<'b> {
@@ -284,7 +290,7 @@ struct ElideResult<'b> {
 }
 
 impl<'a> State<'a> {
-    pub(crate) fn is_done(&self) -> bool {
+    fn is_done(&self) -> bool {
         self.remaining_scripts == 0
     }
 
@@ -570,7 +576,7 @@ impl<'a> State<'a> {
         let _ = bun_sys::File::stdout().write_all(&self.draw_buf);
     }
 
-    pub(crate) fn abort(&mut self) {
+    fn abort(&mut self) {
         // we perform an abort by sending SIGINT to all processes
         self.aborted = true;
         for handle in self.handles.iter_mut() {
@@ -583,7 +589,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub(crate) fn finalize(&mut self) -> u8 {
+    fn finalize(&mut self) -> u8 {
         if self.aborted {
             let _ = self.redraw(true);
         }
@@ -634,7 +640,7 @@ impl AbortHandler {
         bun_sys::windows::FALSE
     }
 
-    pub(crate) fn install() {
+    fn install() {
         #[cfg(unix)]
         {
             // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
@@ -661,12 +667,16 @@ impl AbortHandler {
         }
     }
 
-    pub(crate) fn uninstall() {
+    fn uninstall() {
         // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
         #[cfg(windows)]
         {
-            // restores default Ctrl+C behavior
-            let _ = bun_sys::c::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);
+            // (None, FALSE) clears the ignore attribute; it does NOT unregister
+            // a handler routine — pass the address.
+            let _ = bun_sys::c::SetConsoleCtrlHandler(
+                Some(Self::windows_ctrl_handler),
+                bun_sys::windows::FALSE,
+            );
         }
     }
 }
@@ -866,12 +876,15 @@ pub(crate) fn run_scripts_with_filter(
     }
 
     // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.
-    let env_ptr: *mut bun_dotenv::Loader<'static> = this_transpiler.env;
+    let env_ptr: *mut bun_dotenv::Loader = this_transpiler.env;
     let event_loop = MiniEventLoopMod::init_global(
         // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
         Some(unsafe { &mut *env_ptr }),
         None,
     );
+    // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
+    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
@@ -930,8 +943,8 @@ pub(crate) fn run_scripts_with_filter(
     // Borrows; `state` is not moved after this point.
     let mut handles_vec: Vec<ProcessHandle> = Vec::with_capacity(scripts.len());
     // SAFETY: `state` is not moved after this point; outlives every `ProcessHandle`.
-    let state_ptr: bun_ptr::BackRef<State> =
-        unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(state)) };
+    let state_ptr: bun_ptr::BackRef<State, bun_ptr::Mut> =
+        unsafe { bun_ptr::BackRef::from_raw_mut(core::ptr::addr_of_mut!(state)) };
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
     for script in scripts.iter() {
         handles_vec.push(ProcessHandle {
@@ -971,8 +984,7 @@ pub(crate) fn run_scripts_with_filter(
             end_time: None,
             remaining_dependencies: 0,
             dependents: Vec::new(),
-            visited: false,
-            visiting: false,
+            visit_state: VisitState::Unvisited,
         });
     }
     state.handles = handles_vec.into_boxed_slice();
@@ -1061,19 +1073,20 @@ pub(crate) fn run_scripts_with_filter(
 }
 
 fn has_cycle(current: &mut ProcessHandle) -> bool {
-    current.visited = true;
-    current.visiting = true;
+    current.visit_state = VisitState::Visiting;
     for &dep in &current.dependents {
         // SAFETY: dep points into state.handles, valid for the run loop lifetime.
         let dep = unsafe { &mut *dep };
-        if dep.visiting {
-            return true;
-        } else if !dep.visited {
-            if has_cycle(dep) {
-                return true;
+        match dep.visit_state {
+            VisitState::Visiting => return true,
+            VisitState::Unvisited => {
+                if has_cycle(dep) {
+                    return true;
+                }
             }
+            VisitState::Visited => {}
         }
     }
-    current.visiting = false;
+    current.visit_state = VisitState::Visited;
     false
 }

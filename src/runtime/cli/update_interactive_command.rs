@@ -44,7 +44,7 @@ pub(crate) struct TerminalHyperlink<'a> {
 }
 
 impl<'a> TerminalHyperlink<'a> {
-    pub(crate) fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
+    fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
         TerminalHyperlink {
             link,
             text,
@@ -110,7 +110,7 @@ struct PackageUpdate {
     workspace_path: Box<[u8]>,
 }
 
-pub(crate) struct CatalogUpdateRequest {
+struct CatalogUpdateRequest {
     // Owned copies keep the type lifetime-free (a few small allocations in
     // an interactive UI).
     package_name: Box<[u8]>,
@@ -294,8 +294,29 @@ match manager.workspace_package_json_cache.get_with_path(
         );
         Output::flush();
 
+        // The multi-select reads single keystrokes from raw-mode stdin. On a
+        // pipe (CI, spawn with stdio:'pipe') that either blocks forever or
+        // silently selects nothing on EOF while spraying cursor-control
+        // escapes into a non-TTY log. Refuse early, before resolving
+        // manifests. Tests that drive the UI via piped keystrokes set
+        // BUN_INTERNAL_INTERACTIVE_ASSUME_TTY=1 to bypass this.
+        if !Output::is_stdin_tty()
+            && !bun_core::env_var::feature_flag::BUN_INTERNAL_INTERACTIVE_ASSUME_TTY
+                .get()
+                .unwrap_or(false)
+        {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: <b>bun update --interactive<r> requires an interactive terminal."
+            );
+            bun_core::note!(
+                "Use <cyan>bun update<r> to update non-interactively, or <cyan>bun outdated<r> to list available updates."
+            );
+            Output::flush();
+            Global::exit(1);
+        }
+
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
-        let silent = cli.silent;
+        let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Update)
         {
@@ -1367,11 +1388,7 @@ match manager.workspace_package_json_cache.get_with_path(
         } else if state.cursor >= state.viewport_start + state.viewport_height {
             // Cursor is below viewport - put it at the end of viewport
             if !state.packages.is_empty() {
-                let max_cursor = if state.packages.len() > 1 {
-                    state.packages.len() - 1
-                } else {
-                    0
-                };
+                let max_cursor = state.packages.len() - 1;
                 let viewport_end = state.viewport_start + state.viewport_height;
                 state.cursor = (viewport_end - 1).min(max_cursor);
             }
@@ -1424,11 +1441,7 @@ match manager.workspace_package_json_cache.get_with_path(
             } else {
                 0
             };
-            let desired_start = if state.viewport_height > context_below {
-                state.cursor - (state.viewport_height - context_below)
-            } else {
-                state.cursor
-            };
+            let desired_start = state.cursor - (state.viewport_height - context_below);
             state.viewport_start = desired_start.min(max_start);
         }
         // If cursor is near top of viewport, adjust to maintain context
@@ -1527,7 +1540,9 @@ match manager.workspace_package_json_cache.get_with_path(
                 let help_text: &[u8] = b"Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest";
                 let elipsised_help_text = Self::truncate_with_ellipsis(
                     help_text,
-                    current_size.width - b"? Select packages to update - ".len(),
+                    current_size
+                        .width
+                        .saturating_sub(b"? Select packages to update - ".len()),
                     true,
                 );
                 bun_core::prettyln!(
@@ -2211,9 +2226,8 @@ match manager.workspace_package_json_cache.get_with_path(
                                     if c == b'M' || c == b'm' {
                                         // Parse SGR mouse event: ESC[<button;col;row(M or m)
                                         // button: 64 = scroll up, 65 = scroll down
-                                        let mut parts = buffer[0..buf_idx]
-                                            .split(|b| *b == b';')
-                                            .filter(|s| !s.is_empty());
+                                        let mut parts =
+                                            strings::tokenize(&buffer[0..buf_idx], b";");
                                         if let Some(button_str) = parts.next() {
                                             let button: u32 =
                                                 strings::parse_int(button_str, 10).unwrap_or(0);
@@ -2284,7 +2298,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 // No `manager` parameter: a local `Bump` is used instead
 // (`E::Object::put` ignores its allocator arg), which keeps
 // `update_catalog_definitions` borrowck-clean.
-pub(crate) fn edit_catalog_definitions(
+fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> crate::Result<()> {

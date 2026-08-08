@@ -87,16 +87,6 @@ impl List {
         Ok(())
     }
 
-    /// Can only be called on the bundler thread.
-    pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
-        self.map.get_index_adapted(
-            &real_source_index,
-            &Adapter {
-                source_indices: self.list.items::<"source_index", IndexInt>(),
-            },
-        )
-    }
-
     /// Use this to improve speed of accessing fields at the cost of
     /// storing more pointers. Invalidated when input is mutated.
     pub fn slice(&self) -> Slice<'_> {

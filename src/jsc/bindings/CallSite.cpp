@@ -58,6 +58,7 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
 
     m_functionName.set(vm, this, stackFrame.functionName());
     m_sourceURL.set(vm, this, stackFrame.sourceURL());
+    m_sourceID = stackFrame.sourceID();
 
     const auto* sourcePositions = stackFrame.getSourcePositions();
     if (sourcePositions) {

@@ -72,7 +72,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "bun:jsc"_s,
     "bun:sqlite"_s,
     "bun:test"_s,
-    "bun:wrap"_s,
     "bun"_s,
     "child_process"_s,
     "cluster"_s,
@@ -94,6 +93,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "inspector/promises"_s,
     "module"_s,
     "net"_s,
+    "node:sqlite"_s,
     "os"_s,
     "path"_s,
     "path/posix"_s,
@@ -356,7 +356,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         // Handle options.paths if provided
         JSC::JSValue pathsValue = JSC::jsUndefined();
         if (optionsValue.isObject()) {
-            pathsValue = optionsValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s));
+            pathsValue = optionsValue.getObject()->get(globalObject, JSC::Identifier::fromString(vm, "paths"_s));
             RETURN_IF_EXCEPTION(scope, {});
         }
 
@@ -531,7 +531,9 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
             auto len = parent.paths->length();
             for (size_t i = 0; i < len; i++) {
                 auto path = parent.paths->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
                 array->push(globalObject, path);
+                RETURN_IF_EXCEPTION(scope, {});
             }
             RELEASE_AND_RETURN(scope, array);
         } else if (parent.pathsArrayLazy && parent.filename) {
@@ -865,17 +867,82 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRegister, (JSGlobalObject * globalObject, JSC
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" int32_t Bun__NodeCompileCache__enable(const BunString* dir, int32_t portable, BunString* outDirectory, BunString* outMessage);
+extern "C" BunString Bun__NodeCompileCache__getDir();
+extern "C" void Bun__NodeCompileCache__flush();
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Accepts `undefined`, a string, or `{ directory?, portable? }`.
+    JSValue options = callFrame->argument(0);
+    JSValue directoryValue = options;
+    int32_t portable = -1; // -1 = unspecified, Rust falls back to the env var
+    if (options.isObject() && !options.isCallable()) {
+        auto* optionsObject = options.getObject();
+        directoryValue = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "directory"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue portableValue = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "portable"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!portableValue.isUndefined()) {
+            portable = portableValue.toBoolean(globalObject) ? 1 : 0;
+        }
+    }
+
+    WTF::String directory;
+    if (!directoryValue.isUndefined()) {
+        if (!directoryValue.isString()) {
+            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "cacheDir should be a string"_s);
+            return {};
+        }
+        directory = directoryValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    BunString directoryStr = Bun::toString(directory);
+    BunString outDirectory = { BunStringTag::Empty, {} };
+    BunString outMessage = { BunStringTag::Empty, {} };
+    int32_t status = Bun__NodeCompileCache__enable(
+        directory.isNull() ? nullptr : &directoryStr, portable, &outDirectory, &outMessage);
+
+    auto* result = JSC::constructEmptyObject(globalObject);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "status"_s), JSC::jsNumber(status));
+    if (!outMessage.isEmpty()) {
+        JSValue message = outMessage.transferToJS(globalObject);
+        if (scope.exception()) [[unlikely]] {
+            outDirectory.deref();
+            return {};
+        }
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), message);
+    }
+    if (!outDirectory.isEmpty()) {
+        JSValue dir = outDirectory.transferToJS(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "directory"_s), dir);
+    }
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionGetCompileCacheDir,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
+    BunString dir = Bun__NodeCompileCache__getDir();
+    if (dir.isEmpty()) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    return JSC::JSValue::encode(dir.transferToJS(globalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFlushCompileCache,
+    (JSGlobalObject * globalObject,
+        JSC::CallFrame* callFrame))
+{
+    Bun__NodeCompileCache__flush();
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -901,8 +968,9 @@ _stat                   &Generated::NodeModuleModule::js_stat Function 1
 builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
-enableCompileCache      jsFunctionEnableCompileCache      Function 0
+enableCompileCache      jsFunctionEnableCompileCache      Function 1
 findSourceMap           Bun__JSSourceMap__find           Function 1
+flushCompileCache       jsFunctionFlushCompileCache       Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1

@@ -98,40 +98,10 @@ pub fn enqueue_dependency_list(
     this.task_queue
         .ensure_unused_capacity(dependencies_list.len as usize)
         .expect("unreachable");
-    let lockfile = &mut *this.lockfile;
 
     // Step 1. Go through main dependencies
-    let mut begin = dependencies_list.off;
     let end = dependencies_list.off.saturating_add(dependencies_list.len);
-
-    // if dependency is peer and is going to be installed
-    // through "dependencies", skip it
-    if end - begin > 1 && lockfile.buffers.dependencies[0].behavior.is_peer() {
-        let mut peer_i: usize = 0;
-        // reshaped for borrowck — index into the slice instead of holding &mut across loop
-        while lockfile.buffers.dependencies[peer_i].behavior.is_peer() {
-            let mut dep_i: usize = (end - 1) as usize;
-            let mut dep = lockfile.buffers.dependencies[dep_i].clone();
-            while !dep.behavior.is_peer() {
-                if !dep.behavior.is_dev() {
-                    if lockfile.buffers.dependencies[peer_i].name_hash == dep.name_hash {
-                        lockfile.buffers.dependencies[peer_i] =
-                            lockfile.buffers.dependencies[begin as usize].clone();
-                        begin += 1;
-                        break;
-                    }
-                }
-                dep_i -= 1;
-                dep = lockfile.buffers.dependencies[dep_i].clone();
-            }
-            peer_i += 1;
-            if peer_i == end as usize {
-                break;
-            }
-        }
-    }
-
-    let mut i = begin;
+    let mut i = dependencies_list.off;
 
     // we have to be very careful with pointers here
     while i < end {
@@ -486,9 +456,7 @@ pub fn enqueue_dependency_to_root(
         let index = lf.dependencies.len();
         lf.dependencies.push(dep);
         lf.resolutions.push(invalid_package_id);
-        if cfg!(debug_assertions) {
-            debug_assert!(lf.dependencies.len() == lf.resolutions.len());
-        }
+        debug_assert!(lf.dependencies.len() == lf.resolutions.len());
         break 'brk index;
     } as DependencyID;
 
@@ -598,7 +566,7 @@ pub fn enqueue_dependency_to_root(
 /// All-void callback set used by `enqueueDependencyToRoot` and `runAndWaitFn`:
 /// `Ctx = ()`, no callbacks, so the `HAS_*` const-gates compile out the
 /// callback paths.
-pub(crate) struct VoidRunTasksCallbacks;
+struct VoidRunTasksCallbacks;
 impl run_tasks::RunTasksCallbacks for VoidRunTasksCallbacks {
     type Ctx = ();
 }
@@ -687,7 +655,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     };
 
     let version: dependency::Version = 'version: {
-        if dependency.version.tag == dependency::version::Tag::Npm {
+        // An `npm:` alias names its registry target explicitly, so only plain
+        // dependencies may be redirected to a same-named alias elsewhere in the tree.
+        if dependency.version.tag == dependency::version::Tag::Npm
+            && !dependency.version.npm().is_alias
+        {
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
@@ -1011,9 +983,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         let name_str: Vec<u8> = this.lockfile.str(&name).to_vec();
                         let task_id = Task::Id::for_manifest(&name_str);
 
-                        if cfg!(debug_assertions) {
-                            debug_assert!(task_id.get() != 0);
-                        }
+                        debug_assert!(task_id.get() != 0);
 
                         if cfg!(debug_assertions) {
                             bun_output::scoped_log!(
@@ -1432,9 +1402,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
 
                 // should not trigger a network call
-                if cfg!(debug_assertions) {
-                    debug_assert!(result.task.is_none());
-                }
+                debug_assert!(result.task.is_none());
 
                 if cfg!(debug_assertions) {
                     bun_output::scoped_log!(
@@ -1716,11 +1684,7 @@ fn enqueue_git_clone(
     let value = Task::Task {
         // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
-        // Safe `From<NonNull>` construction preserves the `&mut`-derived write
-        // provenance for `assume_mut()` in `Task::callback`.
-        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
-            &mut *this,
-        ))),
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::GitClone,
         request: crate::package_manager_task::Request {
@@ -1900,11 +1864,7 @@ fn enqueue_local_tarball(
     let value = Task::Task {
         // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
-        // Safe `From<NonNull>` construction preserves the `&mut`-derived write
-        // provenance for `assume_mut()` in `Task::callback`.
-        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
-            &mut *this,
-        ))),
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::LocalTarball,
         request: crate::package_manager_task::Request {
@@ -2012,9 +1972,10 @@ fn get_or_put_resolved_package_with_find_result(
         // `manager.workspace_package_json_cache` only — disjoint from
         // `manager.lockfile`.
         this.to_update
-            // If updating, only update packages in the current workspace
-            && unsafe { &*(*this_ptr).lockfile }
-                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+            // Update direct deps of the current workspace; catalogs are root-scoped.
+            && (dependency.version.tag == dependency::version::Tag::Catalog
+                || unsafe { &*(*this_ptr).lockfile }
+                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id))
             // no need to do a look up if update requests are empty (`bun update` with no args)
             && (this.update_requests.is_empty()
                 || this.updating_packages.contains(
@@ -2079,9 +2040,7 @@ fn get_or_put_resolved_package_with_find_result(
         Features::NPM,
     )?)?;
 
-    if cfg!(debug_assertions) {
-        debug_assert!(package.meta.id != invalid_package_id);
-    }
+    debug_assert!(package.meta.id != invalid_package_id);
     // Record exact-version pins so `Lockfile::get_package_id`'s
     // order-independence guard can tell them apart from range-resolved
     // entries (which it treats as network-order artefacts).
@@ -2782,46 +2741,12 @@ fn resolution_satisfies_dependency(
 
 impl PackageManager {
     #[inline]
-    pub fn enqueue_dependency_with_main(
-        &mut self,
-        id: DependencyID,
-        dependency: &Dependency,
-        resolution: PackageID,
-        install_peer: bool,
-    ) -> crate::Result<()> {
-        enqueue_dependency_with_main(self, id, dependency, resolution, install_peer)
-    }
-
-    #[inline]
-    pub fn enqueue_dependency_with_main_and_success_fn(
-        &mut self,
-        id: DependencyID,
-        dependency: &Dependency,
-        resolution: PackageID,
-        install_peer: bool,
-        success_fn: SuccessFn,
-        fail_fn: Option<FailFn>,
-        is_root: bool,
-    ) -> crate::Result<()> {
-        enqueue_dependency_with_main_and_success_fn(
-            self,
-            id,
-            dependency,
-            resolution,
-            install_peer,
-            success_fn,
-            fail_fn,
-            is_root,
-        )
-    }
-
-    #[inline]
     pub fn enqueue_dependency_list(&mut self, dependencies_list: Lockfile::DependencySlice) {
         enqueue_dependency_list(self, dependencies_list)
     }
 
     #[inline]
-    pub fn enqueue_tarball_for_download(
+    pub(crate) fn enqueue_tarball_for_download(
         &mut self,
         dependency_id: DependencyID,
         package_id: PackageID,
@@ -2840,7 +2765,7 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_tarball_for_reading(
+    pub(crate) fn enqueue_tarball_for_reading(
         &mut self,
         dependency_id: DependencyID,
         package_id: PackageID,
@@ -2859,7 +2784,7 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_git_for_checkout(
+    pub(crate) fn enqueue_git_for_checkout(
         &mut self,
         dependency_id: DependencyID,
         alias: &[u8],
@@ -2878,7 +2803,7 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_package_for_download(
+    pub(crate) fn enqueue_package_for_download(
         &mut self,
         name: &[u8],
         dependency_id: DependencyID,
@@ -2896,92 +2821,6 @@ impl PackageManager {
             version,
             url,
             task_context,
-            patch_name_and_version_hash,
-        )
-    }
-
-    #[inline]
-    pub fn enqueue_dependency_to_root(
-        &mut self,
-        name: &[u8],
-        version: &dependency::Version,
-        version_buf: &[u8],
-        behavior: Behavior,
-    ) -> DependencyToEnqueue {
-        enqueue_dependency_to_root(self, name, version, version_buf, behavior)
-    }
-
-    #[inline]
-    pub fn enqueue_network_task(&mut self, task: *mut NetworkTask) {
-        enqueue_network_task(self, task)
-    }
-
-    #[inline]
-    /// # Safety
-    /// See [`enqueue_patch_task`].
-    pub unsafe fn enqueue_patch_task(&mut self, task: *mut PatchTask) {
-        // SAFETY: forwarded — caller upholds `task` validity.
-        unsafe { enqueue_patch_task(self, task) }
-    }
-
-    #[inline]
-    /// # Safety
-    /// See [`enqueue_patch_task_pre`].
-    pub unsafe fn enqueue_patch_task_pre(&mut self, task: *mut PatchTask) {
-        // SAFETY: forwarded — caller upholds `task` validity.
-        unsafe { enqueue_patch_task_pre(self, task) }
-    }
-
-    #[inline]
-    /// # Safety
-    /// See [`enqueue_parse_npm_package`].
-    pub unsafe fn enqueue_parse_npm_package(
-        &mut self,
-        task_id: Task::Id,
-        name: StringOrTinyString,
-        network_task: *mut NetworkTask,
-    ) -> *mut ThreadPool::Task {
-        // SAFETY: forwarded — caller upholds `network_task` validity.
-        unsafe { enqueue_parse_npm_package(self, task_id, name, network_task) }
-    }
-
-    #[inline]
-    pub fn enqueue_extract_npm_package(
-        &mut self,
-        tarball: &ExtractTarball,
-        network_task: *mut NetworkTask,
-    ) -> *mut ThreadPool::Task {
-        enqueue_extract_npm_package(self, tarball, network_task)
-    }
-
-    #[inline]
-    pub fn create_extract_task_for_streaming(
-        &mut self,
-        tarball: &ExtractTarball,
-        network_task: *mut NetworkTask,
-    ) -> *mut Task::Task<'static> {
-        create_extract_task_for_streaming(self, tarball, network_task)
-    }
-
-    #[inline]
-    pub fn enqueue_git_checkout(
-        &mut self,
-        task_id: Task::Id,
-        dir: Fd,
-        dependency_id: DependencyID,
-        name: &[u8],
-        resolution: &Resolution,
-        resolved: &[u8],
-        patch_name_and_version_hash: Option<u64>,
-    ) -> *mut ThreadPool::Task {
-        enqueue_git_checkout(
-            self,
-            task_id,
-            dir,
-            dependency_id,
-            name,
-            resolution,
-            resolved,
             patch_name_and_version_hash,
         )
     }

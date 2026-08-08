@@ -1,5 +1,7 @@
 import { expect, it } from "bun:test";
 import { readFileSync } from "fs";
+import { once } from "node:events";
+import tls from "node:tls";
 import { join } from "path";
 
 const client = {
@@ -346,4 +348,50 @@ it('Confirm server support for "BEGIN X509 CERTIFICATE".', async () => {
       requestCert: true,
     },
   });
+});
+
+it("reports an invalid `tls.crl` with its own error code", async () => {
+  using bunServer = Bun.serve({
+    port: 0,
+    tls: { key: server.key, cert: server.cert },
+    fetch: () => new Response("ok"),
+  });
+  const error: any = await fetch(`https://localhost:${bunServer.port}/`, {
+    tls: { ca: server.ca, crl: "this is not a CRL", rejectUnauthorized: false },
+  }).then(
+    () => null,
+    e => e,
+  );
+  expect(error?.code).toBe("InvalidCRL");
+});
+
+it("fetch applies tls.sigalgs even when it is the only TLS option", async () => {
+  // `sigalgs` alone must still force a per-request SSL_CTX; without that the
+  // fetch reuses the shared default context and silently drops the option.
+  // The client only offers ECDSA while the server key is RSA, so honoring the
+  // option must fail the handshake; the (much larger) default offer succeeds.
+  const clientError = Promise.withResolvers<Error & { code?: string }>();
+  const tlsServer = tls.createServer({ key: server.key, cert: server.cert }, socket => socket.end());
+  tlsServer.on("tlsClientError", clientError.resolve);
+  tlsServer.listen(0);
+  await once(tlsServer, "listening");
+  try {
+    const port = (tlsServer.address() as any).port;
+    // The fetch promise joins the race so an early client-side failure fails
+    // the test immediately instead of timing out.
+    const request = fetch(`https://127.0.0.1:${port}/`, {
+      tls: { rejectUnauthorized: false, sigalgs: "ecdsa_secp256r1_sha256" },
+    }).then(
+      () => "fetch-resolved",
+      (error: Error & { code?: string }) => `fetch-rejected:${error.code ?? error.name}`,
+    );
+    const outcome = await Promise.race([
+      once(tlsServer, "secureConnection").then(() => "handshake-completed"),
+      clientError.promise.then(error => `rejected:${error.code}`),
+      request.then(r => (r === "fetch-resolved" ? "handshake-completed" : r)),
+    ]);
+    expect(outcome).toBe("rejected:ERR_SSL_NO_COMMON_SIGNATURE_ALGORITHMS");
+  } finally {
+    tlsServer.close();
+  }
 });

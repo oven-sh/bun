@@ -44,6 +44,7 @@ import { writeIfChanged } from "./fs.ts";
 import { generateJsonByteClass } from "./jsonByteClass.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
+import { generateXmlByteClass } from "./xmlByteClass.ts";
 
 // The individual emit functions take these four params. Bundled to keep
 // signatures short.
@@ -230,6 +231,15 @@ export interface CodegenOutputs {
   bindgenV2Cpp: string[];
 
   /**
+   * The InternalModuleRegistryConstants.S path — compiled via cc() in bun.ts
+   * and linked alongside the C++ objects. Carries the concatenated JS module
+   * sources as a `.incbin` of the sibling `.bin`.
+   */
+  internalModulesAsm: string;
+  /** The `.incbin`'d blob — implicit input to the `.S` compile edge. */
+  internalModulesBin: string;
+
+  /**
    * Stamp output from `bun install` at repo root.
    * The esbuild tool and the cppbind lezer parser live here. Any
    * step that uses esbuild (or imports node_modules deps at configure
@@ -261,6 +271,8 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
     cppHeaders: [],
     cppAll: [],
     bindgenV2Cpp: [],
+    internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),
+    internalModulesBin: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.bin"),
     rootInstall,
   };
 
@@ -279,10 +291,13 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   o.all.push(jsonByteClass.h, jsonByteClass.rs);
   o.rustInputs.push(jsonByteClass.rs);
   o.cppHeaders.push(jsonByteClass.h);
+  const xmlByteClass = generateXmlByteClass(cfg);
+  o.all.push(xmlByteClass.h, xmlByteClass.rs);
+  o.rustInputs.push(xmlByteClass.rs);
+  o.cppHeaders.push(xmlByteClass.h);
 
   emitBunError(ctx);
   emitStringMaps(ctx);
-  emitFallbackDecoder(ctx);
   emitRuntimeJs(ctx);
   emitNodeFallbacks(ctx);
   emitErrorCode(ctx);
@@ -404,35 +419,6 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(...outputs);
   o.rustInputs.push(...outputs);
-}
-
-function emitFallbackDecoder({ n, cfg, o, dirStamp }: Ctx): void {
-  const src = resolve(cfg.cwd, "src", "fallback.ts");
-  const out = resolve(cfg.codegenDir, "fallback-decoder.js");
-
-  n.build({
-    outputs: [out],
-    rule: "esbuild",
-    inputs: [src],
-    implicitInputs: [o.rootInstall],
-    orderOnlyInputs: [dirStamp],
-    vars: {
-      cwd: cfg.cwd,
-      desc: "fallback-decoder.js",
-      args: shJoin(cfg, [
-        src,
-        `--outfile=${out}`,
-        "--target=esnext",
-        "--bundle",
-        "--format=iife",
-        "--platform=browser",
-        "--minify",
-      ]),
-    },
-  });
-
-  o.all.push(out);
-  o.rustInputs.push(out);
 }
 
 function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
@@ -745,6 +731,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
     // reason as generated_js2native.rs.
     resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
+    o.internalModulesAsm,
+    o.internalModulesBin,
   ];
 
   n.build({

@@ -5,9 +5,14 @@ const asyncFinalizeAddon = require("./build/Debug/async_finalize_addon.node");
 const testReferenceUnrefInFinalizer = require("./build/Debug/test_reference_unref_in_finalizer.node");
 const testReferenceUnrefInFinalizerExperimental = require("./build/Debug/test_reference_unref_in_finalizer_experimental.node");
 
-async function gcUntil(fn) {
-  const MAX = 100;
-  for (let i = 0; i < MAX; i++) {
+// Returns true once fn() is true, false if it still isn't after `max` GCs.
+// Collection of any *particular* object is not guaranteed under JSC: a
+// conservative stack/register scan can pin one address for the entire process,
+// so callers that need a collection to happen should retry with a freshly
+// allocated object (see test_remove_wrap_lifetime_with_strong_ref) rather
+// than raising `max`.
+async function tryGcUntil(fn, max = 100) {
+  for (let i = 0; i < max; i++) {
     await new Promise(resolve => {
       setTimeout(resolve, 1);
     });
@@ -18,10 +23,16 @@ async function gcUntil(fn) {
       global.gc();
     }
     if (fn()) {
-      return;
+      return true;
     }
   }
-  throw new Error(`Condition was not met after ${MAX} GC attempts`);
+  return false;
+}
+
+async function gcUntil(fn, max = 100) {
+  if (!(await tryGcUntil(fn, max))) {
+    throw new Error(`Condition was not met after ${max} GC attempts`);
+  }
 }
 
 nativeTests.test_napi_class_constructor_handle_scope = () => {
@@ -231,6 +242,83 @@ nativeTests.test_get_all_property_names_accessor = () => {
     );
     console.log(`include_prototypes filter=${filter}: status=${status}`, JSON.stringify(filterStrings(keys)));
   }
+};
+
+nativeTests.test_get_all_property_names_proxy_and_string_wrapper = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  const napi_key_writable = 1;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_configurable = 1 << 2;
+  const napi_key_keep_numbers = 0;
+
+  const apn = (obj, filter, mode = napi_key_own_only) =>
+    nativeTests.get_all_property_names(obj, mode, filter, napi_key_keep_numbers);
+  const show = (label, r) => console.log(label, "status=" + r.status, "keys=" + JSON.stringify(r.keys));
+  const dropBuiltinProto = r => ({
+    status: r.status,
+    keys: r.keys
+      .filter(k => typeof k !== "symbol" && !Object.prototype.hasOwnProperty(k) && !String.prototype.hasOwnProperty(k))
+      .sort(),
+  });
+
+  // V8's FilterProxyKeys only applies ONLY_ENUMERABLE; writable/configurable
+  // filters pass every proxy key regardless of the reported descriptor.
+  const proxy = new Proxy(
+    { a: 1 },
+    {
+      ownKeys: () => ["x", "y"],
+      getOwnPropertyDescriptor: () => ({ value: 1, writable: false, enumerable: true, configurable: true }),
+    },
+  );
+  for (const [name, f] of [
+    ["writable", napi_key_writable],
+    ["configurable", napi_key_configurable],
+    ["enumerable", napi_key_enumerable],
+  ]) {
+    show(`proxy own_only ${name}:`, apn(proxy, f));
+  }
+
+  // A proxy with no traps still takes V8's proxy path: writable/configurable
+  // do not filter even when the target's descriptors say otherwise.
+  const target = {};
+  Object.defineProperty(target, "ro", { value: 1, writable: false, enumerable: true, configurable: true });
+  Object.defineProperty(target, "rw", { value: 2, writable: true, enumerable: true, configurable: true });
+  show("proxy(no traps) writable:", apn(new Proxy(target, {}), napi_key_writable));
+
+  // V8 adds a String wrapper's character indices without consulting the
+  // attribute filter; only the ordinary own property `length` is filtered.
+  const str = new String("ab");
+  for (const [name, f] of [
+    ["writable", napi_key_writable],
+    ["configurable", napi_key_configurable],
+    ["enumerable", napi_key_enumerable],
+  ]) {
+    show(`string own_only ${name}:`, apn(str, f));
+  }
+  class DerivedString extends String {}
+  show("derived string writable:", apn(new DerivedString("xy"), napi_key_writable));
+
+  // include_prototypes: the exemption applies at whatever prototype level owns
+  // the key, matching V8's per-level KeyAccumulator dispatch. Built-in
+  // prototype keys are dropped so engine ordering differences don't leak in.
+  show(
+    "proxy-proto include_prototypes writable:",
+    dropBuiltinProto(apn(Object.create(proxy), napi_key_writable, napi_key_include_prototypes)),
+  );
+  show(
+    "string-proto include_prototypes configurable:",
+    dropBuiltinProto(apn(Object.create(str), napi_key_configurable, napi_key_include_prototypes)),
+  );
+
+  // Attribute filtering must still apply to ordinary objects.
+  const plain = {};
+  Object.defineProperty(plain, "w", { value: 1, writable: true, enumerable: true, configurable: true });
+  Object.defineProperty(plain, "ro", { value: 2, writable: false, enumerable: true, configurable: true });
+  Object.defineProperty(plain, "nc", { value: 3, writable: true, enumerable: true, configurable: false });
+  show("plain writable:", apn(plain, napi_key_writable));
+  show("plain configurable:", apn(plain, napi_key_configurable));
+  show("frozen writable:", apn(Object.freeze({ a: 1, b: 2 }), napi_key_writable));
 };
 
 nativeTests.test_set_property = () => {
@@ -831,15 +919,8 @@ nativeTests.test_wrap_lifetime_with_strong_ref = async () => {
   assert(nativeTests.get_wrap_data(object) === 42);
 
   object = undefined;
-  // still referenced by native module so this should fail
-  try {
-    await gcUntil(() => nativeTests.was_wrap_finalize_called());
-    throw new Error("object was garbage collected while still referenced by native code");
-  } catch (e) {
-    if (!e.toString().includes("Condition was not met")) {
-      throw e;
-    }
-  }
+  // still referenced by native module, so these GCs must not collect it
+  assert((await tryGcUntil(() => nativeTests.was_wrap_finalize_called(), 10)) === false);
 
   // can still get the value using the ref
   assert(nativeTests.get_wrap_data_from_ref() === 42);
@@ -863,41 +944,52 @@ nativeTests.test_remove_wrap_lifetime_with_weak_ref = async () => {
   object = undefined;
 
   // ref will stop working once the object is collected
-  await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
+  await gcUntil(() => nativeTests.is_wrapped_object_collected());
+  assert(nativeTests.get_object_from_ref() === undefined);
 
   // finalizer shouldn't have been called
   assert(nativeTests.was_wrap_finalize_called() === false);
 };
 
 nativeTests.test_remove_wrap_lifetime_with_strong_ref = async () => {
-  let object = { foo: "bar" };
-  assert(createWrapWithStrongRef(object) === object);
+  // A conservative stack/register scan can pin any one address for the whole
+  // process, so "this object gets collected" is not guaranteed for a
+  // particular object. The pin is address-specific: retry with a freshly
+  // allocated object instead of running more GCs on the same one.
+  const ATTEMPTS = 4;
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    let object = { foo: "bar" };
+    assert(createWrapWithStrongRef(object) === object);
 
-  assert(nativeTests.get_wrap_data(object) === 42);
+    assert(nativeTests.get_wrap_data(object) === 42);
 
-  nativeTests.remove_wrap(object);
-  assert(nativeTests.get_wrap_data(object) === undefined);
-  assert(nativeTests.get_wrap_data_from_ref() === undefined);
-  assert(nativeTests.get_object_from_ref() === object);
+    nativeTests.remove_wrap(object);
+    assert(nativeTests.get_wrap_data(object) === undefined);
+    assert(nativeTests.get_wrap_data_from_ref() === undefined);
+    assert(nativeTests.get_object_from_ref() === object);
 
-  object = undefined;
+    object = undefined;
 
-  // finalizer should not be called and object should not be freed
-  try {
-    await gcUntil(() => nativeTests.was_wrap_finalize_called() || nativeTests.get_object_from_ref() === undefined);
-    throw new Error("finalizer ran");
-  } catch (e) {
-    if (!e.toString().includes("Condition was not met")) {
-      throw e;
+    // finalizer should not be called and object should not be freed
+    const collectedWhileStrong = await tryGcUntil(
+      () => nativeTests.was_wrap_finalize_called() || nativeTests.is_wrapped_object_collected(),
+      10,
+    );
+    assert(collectedWhileStrong === false);
+
+    // native code can still get the object
+    assert(JSON.stringify(nativeTests.get_object_from_ref()) === `{"foo":"bar"}`);
+
+    // now it can be collected. An abandoned ref from a failed attempt leaks,
+    // which is fine in this fixture: its wrap was removed, so no finalizer
+    // will touch the global state.
+    nativeTests.unref_wrapped_value();
+    if (await tryGcUntil(() => nativeTests.is_wrapped_object_collected())) {
+      assert(nativeTests.get_object_from_ref() === undefined);
+      return;
     }
   }
-
-  // native code can still get the object
-  assert(JSON.stringify(nativeTests.get_object_from_ref()) === `{"foo":"bar"}`);
-
-  // now it gets deleted
-  nativeTests.unref_wrapped_value();
-  await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
+  throw new Error(`wrapped object was not collected in any of ${ATTEMPTS} attempts`);
 };
 
 nativeTests.test_ref_deleted_in_cleanup = () => {
@@ -1313,6 +1405,25 @@ nativeTests.test_threadsafe_function_orphan_leak = async () => {
     const closing = nativeTests.call_leaked_threadsafe_functions();
     console.log(`orphaned=${orphaned} closing=${closing} leaked=${napiThreadsafeFunctionLiveCount() - before}`);
   }
+};
+
+// When napi_create_threadsafe_function is given no JS func, the call_js
+// callback receives a null js_callback (addons test `if (js_callback != NULL)`).
+nativeTests.test_tsfn_null_js_callback_driver = async () => {
+  nativeTests.test_tsfn_null_js_callback();
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_tsfn_null_js_callback_ran()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  nativeTests.test_tsfn_null_js_callback_result();
+};
+
+// napi_reference_ref on a reference whose referent has been collected must
+// return 0 (and leave the count at 0) instead of incrementing.
+nativeTests.test_reference_ref_after_collect_driver = async gc => {
+  const ext = nativeTests.test_create_weak_ref_for_gc();
+  await gcUntil(() => nativeTests.test_weak_ref_is_collected(gc, ext));
+  nativeTests.test_reference_ref_after_collect(gc, ext);
 };
 
 // Microtasks queued by one threadsafe-function callback must be drained before

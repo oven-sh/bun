@@ -1,4 +1,5 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -21,6 +22,10 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// Worker startup under debug/ASAN is slow enough that several tests here cannot
+// finish inside the 5s default.
+setDefaultTimeout(isDebug ? 90_000 : 10_000);
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -421,6 +426,54 @@ describe("captured stdio backpressure", () => {
     for await (const data of worker.stdout) received += data.length;
     expect(received).toBe(128 * 8 * 1024);
     await worker.terminate();
+  });
+
+  // An unconsumed captured stream must not keep the worker (or parent) alive on its
+  // own. Regression: the lazy message listener meant the worker's writev ack never
+  // arrived, so its stdio port stayed ref'd and neither side could exit.
+  test("captured stdio that is never consumed does not prevent exit", async () => {
+    // One worker writing to both captured streams is enough to trip the hang.
+    const script = `
+      const { Worker } = require("node:worker_threads");
+      const { once } = require("node:events");
+      const src = [
+        'process.stdout.write("o", () => require("node:worker_threads").parentPort.postMessage("cb"));',
+        'process.stderr.write("e");',
+      ].join("");
+      const w = new Worker(src, { eval: true, stdout: true, stderr: true });
+      // Touching the getter must not matter either.
+      void w.stderr;
+      void w.stdout;
+      let cb = false;
+      w.on("message", () => (cb = true));
+      // The condition under test is "process exits on its own"; the watchdog turns
+      // a hang into a fast, distinguishable failure instead of the suite timeout.
+      w.on("online", () => setTimeout(() => process.exit(42), ${isDebug ? 20_000 : 5_000}).unref());
+      const [code] = await once(w, "exit");
+      // Data was pushed into the Readable buffer even though nothing consumed it,
+      // and stays readable after the worker has exited.
+      const out = w.stdout.read()?.toString() ?? null;
+      const err = w.stderr.read()?.toString() ?? null;
+      console.log(JSON.stringify({ code, cb, out, err }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: stdout.trim(),
+      stderr: exitCode === 0 ? "" : stderr,
+      exitCode,
+      signalCode: proc.signalCode,
+    }).toEqual({
+      stdout: JSON.stringify({ code: 0, cb: true, out: "o", err: "e" }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });
 
@@ -1406,37 +1459,55 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     });
   });
 
-  // An accessor installed via defineProperty lands on the base object, but reads hit
-  // the store first — so the store entry must go, or the getter is shadowed. (Node
-  // rejects accessors on process.env entirely; bun allows them on the regular map,
-  // so the shared map matches the regular one rather than diverging from it.)
-  it("does not let the store shadow an accessor defined on process.env", async () => {
+  // Node's EnvDefiner rejects an accessor descriptor on process.env for every env
+  // store, so the SHARE_ENV map must answer exactly like the regular one. An
+  // accessor is also unrepresentable here: it would land on the base object while
+  // reads hit the store first, so the getter would be silently shadowed.
+  it("rejects an accessor defined on process.env, on both the regular and shared map", async () => {
     const proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `const { Worker, SHARE_ENV } = require("worker_threads");
          const probe = \`process.env.FOO = "old";
-           Object.defineProperty(process.env, "FOO", { get: () => "new", configurable: true });
-           const count = Object.keys(process.env).filter(k => k === "FOO").length;
-           const read = process.env.FOO;
-           delete process.env.FOO;
-           ({ read, count, afterDelete: process.env.FOO ?? null })\`;
+           let err = null;
+           try {
+             Object.defineProperty(process.env, "FOO", { get: () => "new", configurable: true });
+           } catch (e) {
+             err = { code: e.code, name: e.constructor.name, message: e.message };
+           }
+           ({ err, read: process.env.FOO })\`;
          const regular = eval(probe);
          const w = new Worker(
            'const { parentPort } = require("worker_threads"); parentPort.postMessage(eval(' + JSON.stringify(probe) + '));',
            { eval: true, env: SHARE_ENV },
          );
-         w.on("message", shared => console.log(JSON.stringify({ regular, shared })));`,
+         w.on("message", shared => console.log(JSON.stringify({ regular, shared })));
+         // Surface a worker that dies before posting, instead of exiting 0 with
+         // no output and reporting as an unrelated JSON parse error.
+         w.on("error", e => { console.error("worker error: " + (e && e.stack || e)); process.exit(1); });
+         w.on("exit", code => { if (code !== 0) { console.error("worker exited " + code); process.exit(1); } });`,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // count === 1: defineProperty on an existing enumerable key keeps it enumerable.
-    const want = { read: "new", count: 1, afterDelete: null };
-    expect(JSON.parse(stdout)).toEqual({ regular: want, shared: want });
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Same code/class/message node v26.3.0 throws; the assignment stands unchanged.
+    const want = {
+      err: {
+        code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+        name: "TypeError",
+        message: "'process.env' does not accept an accessor(getter/setter) descriptor",
+      },
+      read: "old",
+    };
+    // One combined object so a dead child shows its stderr and exit code rather
+    // than surfacing as a parse error on empty stdout.
+    expect({ parsed: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+      parsed: { regular: want, shared: want },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // node roots a main-founded SHARE_ENV tree at its RealEnvStore, so a worker writing

@@ -1867,7 +1867,8 @@ describe("s3 upload stream body error", () => {
         port: 0,
         async fetch(req) {
           if (req.method === "PUT") {
-            putBytes += (await req.arrayBuffer()).byteLength;
+            const body = await req.arrayBuffer();
+            putBytes += body.byteLength;
           }
           return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
         },
@@ -1953,7 +1954,10 @@ describe("s3 upload stream body error", () => {
             );
           }
           if (req.method === "PUT") {
-            received += (await req.arrayBuffer()).byteLength;
+            // Both parts arrive concurrently; "received += (await ...)" would read
+            // received before the await and lose one part's count.
+            const body = await req.arrayBuffer();
+            received += body.byteLength;
             return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
           }
           if (req.method === "POST" && url.search.includes("uploadId")) {

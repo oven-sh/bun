@@ -454,6 +454,17 @@ bool Bun__deepMatch(
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
+ALWAYS_INLINE void Bun__remapParseErrorFrame(void* bunVM, ZigStackFrame* frame, unsigned line, unsigned column)
+{
+    frame->position.line_zero_based = static_cast<int32_t>(line) - 1;
+    bool columnKnown = column > 0;
+    // addErrorInfo() column is 0; a lookup there lands on the previous line's tail, so query past end-of-line.
+    frame->position.column_zero_based = columnKnown ? static_cast<int32_t>(column) - 1 : INT32_MAX;
+    Bun__remapStackFramePositions(bunVM, frame, 1);
+    if (!columnKnown)
+        frame->position.column_zero_based = 0;
+}
+
 namespace Inspector {
 class ScriptArguments;
 }

@@ -279,6 +279,7 @@
     "js/bun/util/error-gc-test.test.js",
     "js/bun/util/filesink.test.ts",
     "js/bun/util/filesystem_router.test.ts",
+    "js/bun/util/inspect-error-leak.test.js",
     "js/bun/util/password.test.ts",
     "js/bun/webview/webview-chrome.test.ts",
     "js/node/cluster.test.ts",

@@ -48,6 +48,9 @@ test("detect module type", async () => {
       if (exitCode !== 0) {
         throw new Error(`Failed to run ${packageType}/${file}: ${stderr.trim()}`);
       }
+      if (stderr !== "") {
+        throw new Error(`Unexpected stderr from ${packageType}/${file}: ${stderr.trim()}`);
+      }
       const out = stdout.trim();
       const detected =
         out === "true" ? "module" : out === "false" ? "commonjs" : `unexpected output ${JSON.stringify(out)}`;

@@ -230,10 +230,67 @@ fn with_text_format_source<R>(
     reject_nullish: bool,
     f: impl FnOnce(&bun_alloc::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
 ) -> bun_jsc::JsResult<R> {
+    with_text_format_source_encoded(
+        global,
+        frame,
+        path,
+        accept_blob_or_buffer,
+        reject_nullish,
+        false,
+        |arena, log, source, _| f(arena, log, source),
+    )
+}
+
+/// How the bytes handed to the closure of
+/// [`with_text_format_source_encoded`] are encoded.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceEncoding {
+    /// A `Buffer` / typed array / `Blob`: bytes as given (UTF-8 expected).
+    Bytes,
+    /// A JS string, re-encoded as UTF-8.
+    Utf8Text,
+    /// A Latin-1 JS string, borrowed as is (only when `string_passthrough`).
+    Latin1Text,
+    /// A UTF-16 JS string, borrowed as is: the bytes are its code units
+    /// (only when `string_passthrough`).
+    Utf16Text,
+}
+
+fn with_text_format_source_encoded<R>(
+    global: &bun_jsc::JSGlobalObject,
+    frame: &bun_jsc::CallFrame,
+    path: &'static [u8],
+    accept_blob_or_buffer: bool,
+    reject_nullish: bool,
+    string_passthrough: bool,
+    f: impl FnOnce(
+        &bun_alloc::Arena,
+        &mut bun_ast::Log,
+        &bun_ast::Source,
+        SourceEncoding,
+    ) -> bun_jsc::JsResult<R>,
+) -> bun_jsc::JsResult<R> {
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-    let arena = bun_alloc::Arena::new();
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    // A private mi_heap costs microseconds to create, more than parsing a
+    // small document: keep one per thread and recycle it between calls.
+    // `#[thread_local]` rather than `thread_local!` so there is no
+    // destructor racing mimalloc's own thread teardown (as in
+    // `ast_memory_allocator.rs`); a parked heap is reclaimed with the thread.
+    #[thread_local]
+    static ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = core::cell::Cell::new(None);
+    struct Recycle(Option<bun_alloc::Arena>);
+    impl Drop for Recycle {
+        fn drop(&mut self) {
+            if let Some(mut arena) = self.0.take() {
+                arena.reset_retain_with_limit(2 * 1024 * 1024);
+                ARENA.set(Some(arena));
+            }
+        }
+    }
+    let recycle = Recycle(Some(ARENA.take().unwrap_or_default()));
+    let arena = recycle.0.as_ref().expect("set above");
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
 
     let input_value = frame.argument(0);
@@ -241,23 +298,35 @@ fn with_text_format_source<R>(
         return Err(global.throw_invalid_arguments(format_args!("Expected a string to parse")));
     }
 
-    // Hold whichever input storage applies; both expose `.slice() -> &[u8]`.
+    // Hold whichever input storage applies; all expose the bytes.
     // Conditional-init + drop-flag — only the taken branch's holder is live.
     let _blob_hold: BlobOrStringOrBuffer;
-    let _str_hold;
-    let bytes: &[u8] = if accept_blob_or_buffer {
-        _blob_hold = match BlobOrStringOrBuffer::from_js(global, input_value)? {
-            Some(v) => v,
-            None => {
-                // `to_slice` moves the +1 ref into the returned slice's
-                // `.underlying`, so the temporary `BunString` drop is a no-op.
-                let mut s = input_value.to_bun_string(global)?;
-                BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(s.to_slice()))
+    // `SliceWithUnderlyingString` has no `Drop`; `StringOrBuffer`'s releases
+    // the string's ref.
+    let _str_hold: StringOrBuffer;
+    let _latin1_hold: bun_core::OwnedString;
+    let mut encoding = SourceEncoding::Utf8Text;
+    let bytes: &[u8] = 'bytes: {
+        if accept_blob_or_buffer && !input_value.is_string() {
+            if let Some(v) = BlobOrStringOrBuffer::from_js(global, input_value)? {
+                _blob_hold = v;
+                encoding = SourceEncoding::Bytes;
+                break 'bytes _blob_hold.slice();
             }
-        };
-        _blob_hold.slice()
-    } else {
-        _str_hold = input_value.to_slice(global)?;
+        }
+        let mut s = input_value.to_bun_string(global)?;
+        if string_passthrough {
+            _latin1_hold = bun_core::OwnedString::new(s);
+            if _latin1_hold.is_8bit() {
+                encoding = SourceEncoding::Latin1Text;
+                break 'bytes _latin1_hold.latin1();
+            }
+            encoding = SourceEncoding::Utf16Text;
+            break 'bytes bytemuck::cast_slice(_latin1_hold.utf16());
+        }
+        // `to_slice` moves the +1 ref into the returned slice's
+        // `.underlying`, so the temporary `BunString` drop is a no-op.
+        _str_hold = StringOrBuffer::String(s.to_slice());
         _str_hold.slice()
     };
 
@@ -279,7 +348,7 @@ fn with_text_format_source<R>(
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string(path, bytes);
 
-    f(&arena, &mut log, &source)
+    f(arena, &mut log, &source, encoding)
 }
 
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────

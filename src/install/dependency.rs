@@ -409,6 +409,58 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
     false
 }
 
+/// Inverse of the `ssh://` prefix `repository::Formatter` adds when writing
+/// an scp-form repo (`git@host:path`): git task ids, package dedupe, and
+/// store paths key on the exact repo bytes, so a reloaded resolution must
+/// byte-match the parsed dependency. `None` when `repo` is a real URL that
+/// keeps its prefix (no scp `:` separator before the path, or a numeric
+/// `host:port`).
+pub(crate) fn scp_path_without_ssh_prefix(repo: &[u8]) -> Option<&[u8]> {
+    let rest = strings::without_prefix_if_possible_comptime(repo, b"ssh://")?;
+    if !is_scp_like_path(rest) {
+        return None;
+    }
+    // the scp separator is the first `:` after the userinfo `@` and outside a
+    // bracketed IPv6 host; `is_scp_like_path` alone also matches
+    // `user@host/path` and `user@[::1]/path`, which are not scp forms
+    let host_start = match strings::index_of_char_usize(rest, b'@') {
+        Some(at) => {
+            let before = &rest[..at];
+            if strings::contains_char(before, b'/') {
+                // the authority ended before the `@`: it is path content
+                // ("host:libs/@scope/pkg.git"), not userinfo
+                0
+            } else if strings::contains_char(before, b':') {
+                // `user:password@` userinfo, never scp form
+                return None;
+            } else {
+                at + 1
+            }
+        }
+        None => 0,
+    };
+    let mut search_from = host_start;
+    if rest[search_from..].starts_with(b"[") {
+        let close = strings::index_of_char_usize(&rest[search_from..], b']')?;
+        search_from += close + 1;
+    }
+    let host_end = &rest[search_from..];
+    let colon = strings::index_of_char_usize(host_end, b':')?;
+    if strings::index_of_char_usize(host_end, b'/').is_some_and(|slash| slash < colon) {
+        return None;
+    }
+    let after_colon = &host_end[colon + 1..];
+    let port_end = strings::index_of_char_usize(after_colon, b'/').unwrap_or(after_colon.len());
+    let port = &after_colon[..port_end];
+    if !port.is_empty() && port.iter().all(u8::is_ascii_digit) {
+        // also matches an scp path whose first segment is numeric
+        // ("git@host:2048/x"): the encoding collapses the two spellings, and
+        // reload has always taken the port reading
+        return None;
+    }
+    Some(rest)
+}
+
 /// Github allows for the following format of URL:
 /// https://github.com/<org>/<repo>/tarball/<ref>
 /// This is a legacy (but still supported) method of retrieving a tarball of an
@@ -1335,19 +1387,21 @@ pub(crate) fn parse_with_tag(
                 input = &input[b"git+".len()..];
             }
             let hash_index = strings::last_index_of_char(input, b'#');
+            let mut repo = if let Some(index) = hash_index {
+                &input[0..index]
+            } else {
+                input
+            };
+            if let Some(scp) = scp_path_without_ssh_prefix(repo) {
+                repo = scp;
+            }
 
             Some(Version {
                 literal: sliced.value(),
                 value: Value {
                     git: ManuallyDrop::new(Repository {
                         owner: String::from(b""),
-                        repo: sliced
-                            .sub(if let Some(index) = hash_index {
-                                &input[0..index]
-                            } else {
-                                input
-                            })
-                            .value(),
+                        repo: sliced.sub(repo).value(),
                         committish: if let Some(index) = hash_index {
                             sliced.sub(&input[index + 1..]).value()
                         } else {

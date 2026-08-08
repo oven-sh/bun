@@ -427,17 +427,19 @@ impl RepositoryExt for Repository {
         if remain.starts_with(b"git+") {
             remain = &remain[b"git+".len()..];
         }
-        if let Some(hash) = strings::last_index_of_char(remain, b'#') {
-            return Ok(Repository {
-                repo: buf.append(&remain[..hash])?,
-                committish: buf.append(&remain[hash + 1..])?,
-                ..Default::default()
-            });
-        }
-        Ok(Repository {
-            repo: buf.append(remain)?,
+        let (repo, committish) = match strings::last_index_of_char(remain, b'#') {
+            Some(hash) => (&remain[..hash], Some(&remain[hash + 1..])),
+            None => (remain, None),
+        };
+        let repo = Dependency::scp_path_without_ssh_prefix(repo).unwrap_or(repo);
+        let mut result = Repository {
+            repo: buf.append(repo)?,
             ..Default::default()
-        })
+        };
+        if let Some(committish) = committish {
+            result.committish = buf.append(committish)?;
+        }
+        Ok(result)
     }
 
     fn parse_append_github(
@@ -587,14 +589,41 @@ impl RepositoryExt for Repository {
         }
 
         if Dependency::is_scp_like_path(url) {
+            let colon_index = strings::index_of_char(url, b':');
+
+            // `user@host:path` already carries its user (the `git@` form took
+            // the early return above); prepend only the scheme and turn the
+            // scp separator into the path slash
+            if let Some(at) = strings::index_of_char_usize(url, b'@')
+                && colon_index.is_none_or(|colon| at < colon as usize)
+            {
+                const SCHEME: &[u8] = b"ssh://";
+                if SCHEME.len() + url.len() > ssh_path_buf.len() {
+                    return None;
+                }
+                ssh_path_buf[..SCHEME.len()].copy_from_slice(SCHEME);
+                let rest = &mut ssh_path_buf[SCHEME.len()..];
+                rest[..url.len()].copy_from_slice(url);
+                // the separator sits after any bracketed IPv6 host, as in
+                // scp_path_without_ssh_prefix
+                let mut sep_from = at + 1;
+                if url[sep_from..].starts_with(b"[")
+                    && let Some(close) = strings::index_of_char_usize(&url[sep_from..], b']')
+                {
+                    sep_from += close + 1;
+                }
+                if let Some(sep) = strings::index_of_char_usize(&url[sep_from..], b':') {
+                    rest[sep_from + sep] = b'/';
+                }
+                return Some(&ssh_path_buf[..SCHEME.len() + url.len()]);
+            }
+
             const PREFIX: &[u8] = b"ssh://git@";
             if PREFIX.len() + url.len() > ssh_path_buf.len() {
                 return None;
             }
             ssh_path_buf[..PREFIX.len()].copy_from_slice(PREFIX);
             let rest = &mut ssh_path_buf[PREFIX.len()..];
-
-            let colon_index = strings::index_of_char(url, b':');
 
             if let Some(colon) = colon_index {
                 let colon = colon as usize;

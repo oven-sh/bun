@@ -3828,14 +3828,17 @@ impl<'a> Resolver<'a> {
 
                 let absolute_out_path: &[u8] = {
                     if entry_query.entry().abs_path.is_empty() {
-                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                        // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *entry_query.entry }.abs_path = Interned::from_static(
+                        let dir_with_sep = &abs_esm_path[..abs_esm_path.len() - base.len()];
+                        let parts: [&[u8]; 2] = [dir_with_sep, entry_query.entry().base()];
+                        let new_abs = Interned::from_static(
                             self.fs_ref()
                                 .dirname_store
-                                .append_slice(abs_esm_path)
+                                .append_parts(&parts)
                                 .expect("unreachable"),
                         );
+                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
+                        // evaluated before LHS `&mut Entry` is materialized.
+                        unsafe { &mut *entry_query.entry }.abs_path = new_abs;
                     }
                     entry_query.entry().abs_path.as_bytes()
                 };
@@ -5235,13 +5238,20 @@ impl<'a> Resolver<'a> {
 
         if let Some(entries) = dir_info.get_entries_ref(self.generation) {
             if let Some(lookup) = entries.get(&base[..]) {
+                if lookup.diff_case.is_some() {
+                    let parts = [dir_info.abs_path, &base[..]];
+                    let queried = self.fs_ref().abs_buf(&parts, bufs!(index));
+                    if !bun_sys::exists(queried) {
+                        return MatchStatus::NotFound;
+                    }
+                }
                 // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
                 if unsafe { lookup.entry().kind(rfs, self.store_fd) }
                     == Fs::file_system::EntryKind::File
                 {
                     let out_buf: &[u8] = {
                         if lookup.entry().abs_path.is_empty() {
-                            let parts = [dir_info.abs_path, &base[..]];
+                            let parts = [dir_info.abs_path, lookup.entry().base()];
                             let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
                             // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                             // evaluated before LHS `&mut Entry` is materialized.
@@ -5815,8 +5825,8 @@ impl<'a> Resolver<'a> {
                         || !strings::path_contains_node_modules_folder(path)))
             {
                 let segment = &base[0..last_dot];
-                let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];
-                tail[..segment.len()].copy_from_slice(segment);
+                let seg_start = path.len() - base.len();
+                bufs!(load_as_file)[seg_start..seg_start + segment.len()].copy_from_slice(segment);
 
                 let exts: &[&[u8]] = if ext == b".mjs" {
                     &[b".mts"]
@@ -5825,10 +5835,15 @@ impl<'a> Resolver<'a> {
                 };
 
                 for ext_to_replace in exts {
-                    let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
-                    buffer[segment.len()..].copy_from_slice(ext_to_replace);
+                    let full_len = seg_start + segment.len() + ext_to_replace.len();
+                    let buffer = &mut bufs!(load_as_file)[0..full_len];
+                    buffer[seg_start + segment.len()..].copy_from_slice(ext_to_replace);
+                    let file_name = &buffer[seg_start..];
 
-                    if let Some(query) = entries!().get(&buffer[..]) {
+                    if let Some(query) = entries!().get(file_name) {
+                        if query.diff_case.is_some() && !bun_sys::exists(&buffer[..]) {
+                            continue;
+                        }
                         // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
                         if unsafe { query.entry().kind(rfs, self.store_fd) }
                             == Fs::file_system::EntryKind::File
@@ -5836,38 +5851,21 @@ impl<'a> Resolver<'a> {
                             if let Some(debug) = self.debug_logs.as_mut() {
                                 debug.add_note_fmt(format_args!(
                                     "Rewrote to \"{}\" ",
-                                    bstr::BStr::new(&buffer[..])
+                                    bstr::BStr::new(file_name)
                                 ));
                             }
 
                             dec_ret!(Some(LoadResult {
                                 path: {
                                     if query.entry().abs_path.is_empty() {
-                                        // SAFETY: `dir` is `&'static [u8]` (DirnameStore-interned),
-                                        // copied out so no `&Entry` borrow survives into the
-                                        // `&mut Entry` write below.
-                                        let entry_dir = query.entry().dir;
-                                        let new_abs = if !entry_dir.is_empty()
-                                            && entry_dir[entry_dir.len() - 1] == SEP
-                                        {
-                                            let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
-                                            Interned::from_static(
-                                                self.fs_ref()
-                                                    .filename_store
-                                                    .append_parts(&parts)
-                                                    .expect("unreachable"),
-                                            )
-                                            // the trailing path CAN be missing here
-                                        } else {
-                                            let parts: [&[u8]; 3] =
-                                                [entry_dir, SEP_STR.as_bytes(), &buffer[..]];
-                                            Interned::from_static(
-                                                self.fs_ref()
-                                                    .filename_store
-                                                    .append_parts(&parts)
-                                                    .expect("unreachable"),
-                                            )
-                                        };
+                                        let parts: [&[u8]; 2] =
+                                            [&buffer[0..seg_start], query.entry().base()];
+                                        let new_abs = Interned::from_static(
+                                            self.fs_ref()
+                                                .filename_store
+                                                .append_parts(&parts)
+                                                .expect("unreachable"),
+                                        );
                                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS
                                         // fully evaluated above — sole `&mut Entry` for this write.
                                         unsafe { &mut *query.entry }.abs_path = new_abs;
@@ -5934,6 +5932,11 @@ impl<'a> Resolver<'a> {
         }
 
         if let Some(query) = entries.get().get(file_name) {
+            // Reject a case-insensitive hit whose probed spelling does not open on
+            // this filesystem, so it cannot shadow a later exact match (#22686).
+            if query.diff_case.is_some() && !bun_sys::exists(&buffer[..]) {
+                return None;
+            }
             // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
             if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
             {
@@ -5947,20 +5950,20 @@ impl<'a> Resolver<'a> {
                 // now that we've found it, we allocate it.
                 return Some(LoadResult {
                     path: {
-                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS is fully
-                        // evaluated (shared reads) before the LHS `&mut Entry` is
-                        // materialized for the write — no overlapping unique borrow.
-                        unsafe { &mut *query.entry }.abs_path = if query.entry().abs_path.is_empty()
-                        {
-                            Interned::from_static(
+                        if query.entry().abs_path.is_empty() {
+                            let dir_with_sep = &buffer[0..path.len() - base.len()];
+                            let parts: [&[u8]; 2] = [dir_with_sep, query.entry().base()];
+                            let new_abs = Interned::from_static(
                                 self.fs_ref()
                                     .dirname_store
-                                    .append_slice(&buffer[..])
+                                    .append_parts(&parts)
                                     .expect("unreachable"),
-                            )
-                        } else {
-                            query.entry().abs_path
-                        };
+                            );
+                            // SAFETY: EntryStore-owned slot; resolver mutex held. RHS is fully
+                            // evaluated (shared reads) before the LHS `&mut Entry` is
+                            // materialized for the write — no overlapping unique borrow.
+                            unsafe { &mut *query.entry }.abs_path = new_abs;
+                        }
                         query.entry().abs_path.as_bytes()
                     },
                     dirname_fd: entries.fd,

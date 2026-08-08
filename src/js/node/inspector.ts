@@ -183,7 +183,12 @@ function deliverBackendMessages(messages: string[]) {
 
 function drainInProcessBackend() {
   drainScheduled = false;
-  if (inProcessAdapters.size === 0) return;
+  if (inProcessAdapters.size === 0) {
+    // No one to deliver to, but take the batch anyway so an orphaned channel's
+    // C++ buffer cannot grow while a deferred detach waits on a remote frontend.
+    drainInProcessInspectorMessages();
+    return;
+  }
   const messages = drainInProcessInspectorMessages();
   if (messages.length) deliverBackendMessages(messages);
 }
@@ -279,14 +284,7 @@ function emitConsoleAPICalled(type: string, args: unknown[], stackTrace?: object
         session.emit("Runtime.consoleAPICalled", message);
         session.emit("inspectorNotification", message);
       } catch (e) {
-        let warning: Error;
-        // `instanceof`/String(e) can themselves throw on hostile values (revoked Proxy).
-        try {
-          warning = e instanceof Error ? e : new Error(String(e));
-        } catch {
-          warning = new Error("Runtime.consoleAPICalled handler threw a value that could not be stringified");
-        }
-        process.emitWarning(warning);
+        process.emitWarning(toWarning(e));
       }
     }
   } finally {
@@ -300,6 +298,11 @@ function returnCallSites(_error, sites) {
 }
 
 function dispatchInProcessBackendMessage(backendMessage: string) {
+  // An adapter can disconnect between two backend commands of one client
+  // command; its remaining posts must not reach C++, where the dispatch
+  // re-arms the channel and would cancel a deferred detach. A live session's
+  // adapter is always added to the set before its first post.
+  if (inProcessAdapters.size === 0) return;
   deliverBackendMessages(dispatchInProcessInspectorMessage(backendMessage, drainInProcessBackend));
   scheduleBackendDrain();
 }

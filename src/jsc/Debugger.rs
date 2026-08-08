@@ -183,6 +183,9 @@ static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 /// A single slot suffices because only one context can wait today (workers
 /// publish no CDP target); with two simultaneous waiters the second store
 /// would win.
+/// Relaxed suffices: a single word with no dependent data, and the observable
+/// `NodeRuntime.waitingForDebugger` event also travels via `postTaskConcurrently`
+/// (whose lock fences), so a stale read can only delay it by one task, not drop it.
 static WAITING_FOR_DEBUGGER_CONTEXT: AtomicU32 = AtomicU32::new(0);
 
 impl Debugger {

@@ -66,6 +66,7 @@
 #include <pthread.h>
 #include <mach/mach_vm.h>
 #include <mach-o/dyld.h>
+#include <uuid/uuid.h>
 #include <mach-o/loader.h>
 #include <mach-o/getsect.h>
 #include <pthread.h>
@@ -270,6 +271,7 @@ static void reexecWithoutASLRIfSlid()
 // `<executable>.img` next to the binary is used automatically (BUN_IMAGE=0 opts out; BUN_IMAGE_IN overrides).
 static bool imageInflateZstd(const char* zpath, const char* outPath);
 static uint64_t platformLibsBase();
+static uint64_t platformSystemLibsId();
 static uint64_t platformBuildId();
 static bool findSiblingImage(char* out, size_t cap)
 {
@@ -294,11 +296,7 @@ static bool findSiblingImage(char* out, size_t cap)
     else if (home) snprintf(dir, sizeof dir, "%s/.cache/bun/images", home);
     else return false;
     { char partial[4200]; snprintf(partial, sizeof partial, "%s", dir); for (char* q = partial + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(partial, 0755); *q = '/'; } mkdir(partial, 0755); }
-#if OS(LINUX)
-    uint64_t keyExtra = platformBuildId(); // system libraries may slide on Linux (extern-library fixups), so their base is not part of the identity
-#else
-    uint64_t keyExtra = platformLibsBase() ^ platformBuildId();
-#endif
+    uint64_t keyExtra = platformSystemLibsId() ^ platformBuildId(); // libraries may slide (extern-library fixups); their contents are part of the identity
     snprintf(out, cap, "%s/%llx-%llx-%llx-%llx-%llx.img", dir, (unsigned long long)est.st_size, (unsigned long long)est.st_mtime, (unsigned long long)zst.st_size, (unsigned long long)zst.st_mtime, (unsigned long long)keyExtra);
     if (access(out, R_OK) == 0)
         return true;
@@ -1362,8 +1360,10 @@ static void platformWriteJIT(void* dst, const void* src, size_t len)
 static bool platformIsJITRegion(const PlatformRegion& r) { return r.tag == 64 && r.executable && r.anon; }
 static uint64_t platformTextBase() { return (uint64_t)&_mh_execute_header; }
 extern "C" const void* _dyld_get_shared_cache_range(size_t* length);
+extern "C" bool _dyld_get_shared_cache_uuid(uuid_t uuid);
 // System libraries' load address: image words that point into them (ICU vtables, pthread main-thread handle, ...) are only valid while this matches.
 static uint64_t platformLibsBase() { size_t len = 0; return (uint64_t)_dyld_get_shared_cache_range(&len); }
+static uint64_t platformSystemLibsId() { uuid_t u; if (!_dyld_get_shared_cache_uuid(u)) return 0; uint64_t h = 1469598103934665603ull; for (size_t i = 0; i < sizeof u; i++) { h ^= u[i]; h *= 1099511628211ull; } return h ? h : 1; } // identity of the OS's dyld shared cache: same across reboots (it only slides), different after an OS update
 // Identity of this exact executable (an image is only valid for the binary that produced it): LC_UUID folded to 64 bits.
 static uint64_t platformBuildId()
 {
@@ -1404,6 +1404,7 @@ static void platformWriteJIT(void* dst, const void* src, size_t len) { memcpy(ds
 static bool platformIsJITRegion(const PlatformRegion& r) { return r.executable && r.anon && r.addr >= 0x3c0000000ull && r.addr < 0x400000000ull; } // BUN_IMAGE_JIT_ADDR window
 static uint64_t platformTextBase() { return (uint64_t)__executable_start; }
 static uint64_t platformLibsBase() { return (uint64_t)dlsym(RTLD_DEFAULT, "getpid"); } // libc's slide stands in for all system libs
+static uint64_t platformSystemLibsId() { return 0; } // Linux: per-library name+size matching in the fixup table is the identity
 extern "C" char __etext[] __attribute__((weak)); extern "C" char etext[];
 static uint64_t platformBuildId() // the ELF NT_GNU_BUILD_ID note (identity of this exact link), folded to 64 bits; falls back to the text extent
 {
@@ -1429,7 +1430,8 @@ static uint64_t platformBuildId() // the ELF NT_GNU_BUILD_ID note (identity of t
 
 
 // Loaded system libraries as (base, end, nameHash): image words pointing into them are recorded at dump and rebased at restore.
-struct PlatformLib { uint64_t base, end, nameHash; };
+struct PlatformLib { uint64_t base, end, nameHash; uint64_t flags; char path[232]; char seg[16]; }; // flags bit 0: lives in the dyld shared cache (slides with it as a unit; needs no dlopen to know where it went) // path: what to dlopen when the restoring process has not loaded the library yet (apps dlopen e.g. libsqlite3 lazily); matching uses nameHash + size
+static void platformLibSetName(PlatformLib& l, const char* path, const char* seg) { snprintf(l.path, sizeof l.path, "%s", path ? path : ""); snprintf(l.seg, sizeof l.seg, "%s", seg ? seg : ""); }
 static uint64_t fnv1a(const char* p) { uint64_t h = 1469598103934665603ull; for (; *p; p++) { h ^= (uint8_t)*p; h *= 1099511628211ull; } return h; }
 #if OS(LINUX)
 static std::vector<PlatformLib> platformSystemLibs()
@@ -1440,13 +1442,37 @@ static std::vector<PlatformLib> platformSystemLibs()
         const char* name = info->dlpi_name; if (!name || !*name) return 0; // main executable: fixed (non-PIE)
         uint64_t lo = UINT64_MAX, hi = 0;
         for (int i = 0; i < info->dlpi_phnum; i++) if (info->dlpi_phdr[i].p_type == PT_LOAD) { uint64_t a = info->dlpi_addr + info->dlpi_phdr[i].p_vaddr; lo = std::min(lo, a); hi = std::max(hi, a + info->dlpi_phdr[i].p_memsz); }
-        if (hi > lo) { const char* slash = strrchr(name, '/'); libs->push_back({ lo, hi, fnv1a(slash ? slash + 1 : name) }); }
+        if (hi > lo) { const char* slash = strrchr(name, '/'); const char* bn = slash ? slash + 1 : name; PlatformLib l { lo, hi, fnv1a(bn), 0, {}, {} }; platformLibSetName(l, name, nullptr); libs->push_back(l); }
         return 0;
     }, &libs);
     return libs;
 }
 #else
-static std::vector<PlatformLib> platformSystemLibs() { return { }; } // Darwin: dyld shared cache handled by the libsBase guard for now
+static std::vector<PlatformLib> platformSystemLibs() // Darwin: every segment of every loaded dylib (they all live in the dyld shared cache, which slides as a unit per boot; per-segment ranges keep the pointer scan tight)
+{
+    std::vector<PlatformLib> libs;
+    for (uint32_t i = 0, n = _dyld_image_count(); i < n; i++) {
+        const struct mach_header_64* mh = (const struct mach_header_64*)_dyld_get_image_header(i);
+        if (!mh || mh == &_mh_execute_header) continue;
+        intptr_t slide = _dyld_get_image_vmaddr_slide(i);
+        const char* name = _dyld_get_image_name(i); const char* slash = name ? strrchr(name, '/') : nullptr; uint64_t nameHash = fnv1a(slash ? slash + 1 : (name ? name : "?"));
+        bool inCache = (mh->flags & MH_DYLIB_IN_CACHE) != 0;
+        const uint8_t* lc = (const uint8_t*)(mh + 1);
+        for (uint32_t j = 0; j < mh->ncmds; j++) {
+            const struct load_command* c = (const struct load_command*)lc;
+            if (c->cmd == LC_SEGMENT_64) {
+                const struct segment_command_64* sc = (const struct segment_command_64*)c;
+                if (sc->vmsize && strcmp(sc->segname, "__PAGEZERO")) {
+                    uint64_t base = sc->vmaddr + (uint64_t)slide, end = base + sc->vmsize; bool dup = false;
+                    for (auto& l : libs) if (l.base == base && l.end == end) { dup = true; break; }
+                    if (!dup) { PlatformLib l { base, end, nameHash ^ fnv1a(sc->segname), inCache ? 1ull : 0ull, {}, {} }; platformLibSetName(l, name, sc->segname); libs.push_back(l); }
+                }
+            }
+            lc += c->cmdsize;
+        }
+    }
+    return libs;
+}
 #endif
 struct ImageFixup { uint64_t addr; uint64_t lib; };
 struct ImageFixupHeader { char magic[8]; uint64_t nlibs; uint64_t nfixups; }; // then PlatformLib[nlibs] (base/end/nameHash as recorded), ImageFixup[nfixups]
@@ -1709,7 +1735,7 @@ static void imageDump(JSC::VM& vm, const char* path)
     int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) { fprintf(stderr, "[image] open %s failed\n", path); return; }
     ImageHeader hdr {}; memcpy(hdr.magic, "BUNIMG2", 8);
-    hdr.textBase = platformTextBase(); hdr.libsBase = platformLibsBase(); hdr.spare[0] = platformBuildId(); hdr.spare[2] = platformCpuFeatures(); hdr.spare[3] = imageArgvKey(); hdr.vm = (uint64_t)&vm;
+    hdr.textBase = platformTextBase(); hdr.libsBase = platformLibsBase(); hdr.spare[0] = platformBuildId(); hdr.spare[2] = platformCpuFeatures(); hdr.spare[3] = imageArgvKey(); hdr.spare[4] = platformSystemLibsId(); hdr.vm = (uint64_t)&vm;
     hdr.globalObject = (uint64_t)defaultGlobalObject();
     hdr.mainThread = (uint64_t)&WTF::Thread::currentSingleton();
     hdr.reserved[0] = (uint64_t)mi_theap_get_default(); // main thread's mimalloc theap (TLS-referenced, lives in the heap)
@@ -1749,10 +1775,15 @@ static void imageDump(JSC::VM& vm, const char* path)
                 for (size_t i = 0; i < n; i++) { uint64_t v = w[i]; if (v < minB || v >= maxE) continue; for (size_t li = 0; li < libs.size(); li++) if (v >= libs[li].base && v < libs[li].end) { fixups.push_back({ r.addr + i * 8, li }); break; } }
             }
         }
-        ImageFixupHeader fh {}; memcpy(fh.magic, "BUNFIX0", 8); fh.nlibs = libs.size(); fh.nfixups = fixups.size();
+        { // Keep only the segments something actually points into (a process has ~1.7K loaded segments; an image references a few dozen).
+            std::vector<uint64_t> newIndex(libs.size(), UINT64_MAX); std::vector<PlatformLib> used;
+            for (auto& f : fixups) { if (newIndex[f.lib] == UINT64_MAX) { newIndex[f.lib] = used.size(); used.push_back(libs[f.lib]); } f.lib = newIndex[f.lib]; }
+            libs.swap(used);
+        }
+        ImageFixupHeader fh {}; memcpy(fh.magic, "BUNFIX3", 8); fh.nlibs = libs.size(); fh.nfixups = fixups.size();
         size_t fixOff = (fileOff + 4095) & ~4095ull; hdr.spare[1] = fixOff;
         pwrite(fd, &fh, sizeof fh, fixOff); pwrite(fd, libs.data(), libs.size() * sizeof(PlatformLib), fixOff + sizeof fh); pwrite(fd, fixups.data(), fixups.size() * sizeof(ImageFixup), fixOff + sizeof fh + libs.size() * sizeof(PlatformLib));
-        if (getenv("BUN_IMAGE_VERBOSE") || !fixups.empty()) fprintf(stderr, "[image] %zu extern-library fixups across %zu libraries\n", fixups.size(), libs.size());
+        if (getenv("BUN_IMAGE_VERBOSE") || !fixups.empty()) { size_t pages = 0; uint64_t last = ~0ull; for (auto& f : fixups) { uint64_t pg = f.addr >> 14; if (pg != last) { pages++; last = pg; } } fprintf(stderr, "[image] %zu extern-library fixups across %zu library segments, touching %zu 16K pages (%.1f MB dirtied at restore if libraries slid)\n", fixups.size(), libs.size(), pages, pages * 16384.0 / 1048576.0); }
     }
     pwrite(fd, &hdr, sizeof hdr, 0);
     pwrite(fd, out.data(), out.size() * sizeof(ImageRegion), tableOff);
@@ -1782,26 +1813,38 @@ static void imageRestoreAndRun(const char* path)
     // Extern-library fixup table. Storage is anonymous mmap, not heap: the allocator's memory is about to be overlaid by the image.
     bool haveFixups = false; int64_t* libDelta = nullptr; size_t nLibDelta = 0; ImageFixup* fixups = nullptr; size_t nFixups = 0;
     if (hdr.spare[1]) {
-        ImageFixupHeader fh; if (ipread(fd, &fh, sizeof fh, hdr.spare[1]) == (ssize_t)sizeof fh && !memcmp(fh.magic, "BUNFIX0", 8) && fh.nlibs < 4096 && fh.nfixups < (1u << 24)) {
+        ImageFixupHeader fh; if (ipread(fd, &fh, sizeof fh, hdr.spare[1]) == (ssize_t)sizeof fh && !memcmp(fh.magic, "BUNFIX3", 8) && fh.nlibs < 4096 && fh.nfixups < (1u << 24)) {
             size_t bytes = (fh.nlibs * (sizeof(PlatformLib) + sizeof(int64_t)) + fh.nfixups * sizeof(ImageFixup) + 16383) & ~16383ull;
             uint8_t* buf = (uint8_t*)mmap(nullptr, bytes ? bytes : 16384, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
             PlatformLib* recorded = (PlatformLib*)buf; libDelta = (int64_t*)(recorded + fh.nlibs); fixups = (ImageFixup*)(libDelta + fh.nlibs); nLibDelta = fh.nlibs; nFixups = fh.nfixups;
             ipread(fd, recorded, fh.nlibs * sizeof(PlatformLib), hdr.spare[1] + sizeof fh);
             ipread(fd, fixups, fh.nfixups * sizeof(ImageFixup), hdr.spare[1] + sizeof fh + fh.nlibs * sizeof(PlatformLib));
             std::vector<PlatformLib> now = platformSystemLibs(); // heap use is fine up to here (before the overlay)
+            { // Libraries the builder had loaded (dlopen'd during its run) that this process has not loaded yet: load them now, exactly as the builder did, so their segments have addresses to rebase to.
+                bool opened = false;
+                for (size_t i = 0; i < fh.nlibs; i++) {
+                    recorded[i].path[sizeof recorded[i].path - 1] = 0; recorded[i].seg[sizeof recorded[i].seg - 1] = 0;
+                    bool present = false; for (auto& l : now) if (l.nameHash == recorded[i].nameHash) { present = true; break; }
+                    if (present || !recorded[i].path[0] || (recorded[i].flags & 1)) continue; // shared-cache libraries are rebased by the cache delta below whether or not this process has loaded them
+                    bool used = false; for (size_t k = 0; k < fh.nfixups; k++) if (fixups[k].lib == i) { used = true; break; }
+                    if (!used) continue;
+                    bool triedAlready = false; for (size_t j = 0; j < i; j++) if (!strcmp(recorded[j].path, recorded[i].path)) { triedAlready = true; break; }
+                    if (triedAlready) continue;
+                    if (dlopen(recorded[i].path, RTLD_NOW | RTLD_GLOBAL)) { opened = true; if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] loaded %s (the image points into it)\n", recorded[i].path); }
+                }
+                if (opened) now = platformSystemLibs();
+            }
             haveFixups = true;
             for (size_t i = 0; i < fh.nlibs; i++) {
                 libDelta[i] = 0; bool found = false;
                 for (auto& l : now) if (l.nameHash == recorded[i].nameHash && (l.end - l.base) == (recorded[i].end - recorded[i].base)) { libDelta[i] = (int64_t)l.base - (int64_t)recorded[i].base; found = true; break; }
-                if (!found) { bool used = false; for (size_t k = 0; k < nFixups; k++) if (fixups[k].lib == i) { used = true; break; } if (used) { fprintf(stderr, "[image] a system library the image points into changed (size/name); booting normally\n"); close(fd); return; } }
+                if (!found && (recorded[i].flags & 1) && hdr.libsBase) { libDelta[i] = (int64_t)platformLibsBase() - (int64_t)hdr.libsBase; found = true; } // not loaded here (the builder dlopen'd it); it is mapped with the cache regardless, at the cache's current slide
+                if (!found) { bool used = false; for (size_t k = 0; k < nFixups; k++) if (fixups[k].lib == i) { used = true; break; } if (used) { bool present = false; for (auto& l : now) if (l.nameHash == recorded[i].nameHash) { present = true; break; } fprintf(stderr, "[image] system library %s (%s) the image points into %s; booting normally\n", recorded[i].path, recorded[i].seg, present ? "changed size" : "could not be loaded"); close(fd); return; } }
             }
         }
     }
-#if OS(LINUX)
-    bool fixupsWanted = haveFixups && !(getenv("BUN_IMAGE_LIB_FIXUPS") && !strcmp(getenv("BUN_IMAGE_LIB_FIXUPS"), "0"));
-#else
-    bool fixupsWanted = haveFixups && getenv("BUN_IMAGE_LIB_FIXUPS");
-#endif
+    bool fixupsWanted = haveFixups && !(getenv("BUN_IMAGE_LIB_FIXUPS") && !strcmp(getenv("BUN_IMAGE_LIB_FIXUPS"), "0")); // system libraries may slide between boots (Darwin: the dyld shared cache; Linux: ASLR per exec)
+    if (fixupsWanted && hdr.spare[4] && hdr.spare[4] != platformSystemLibsId()) { fprintf(stderr, "[image] %s was built against a different OS build (system library contents changed); booting normally\n", path); close(fd); return; }
     if (!fixupsWanted && hdr.libsBase && hdr.libsBase != platformLibsBase()) { fprintf(stderr, "[image] %s was built against system libraries at %llx, now at %llx (reboot / OS update); booting normally\n", path, (unsigned long long)hdr.libsBase, (unsigned long long)platformLibsBase()); close(fd); return; }
     mi_scavenger_stop(); // this process's scavenger thread must not touch allocator state while/after we overlay it
     // No heap use from here until the overlay is done: with malloc routed to mimalloc, this process's heap sits at the same VA as the image's.
@@ -1818,11 +1861,7 @@ static void imageRestoreAndRun(const char* path)
     uint64_t hintFloorAfterOverlay = 0; { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); hintFloorAfterOverlay = (top ? top : 0x20000000000ull) + (1ull << 30); }
     size_t mapped = 0, copied = 0;
     struct DataSeg { uint64_t* dst; const uint64_t* src; size_t words; }; DataSeg dataSegs[16]; size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
-#if OS(LINUX)
-    bool useLibFixups = haveFixups && !(getenv("BUN_IMAGE_LIB_FIXUPS") && !strcmp(getenv("BUN_IMAGE_LIB_FIXUPS"), "0")); // Linux default: system libraries may slide (see SNAPSHOT.md 'ASLR')
-#else
-    bool useLibFixups = haveFixups && getenv("BUN_IMAGE_LIB_FIXUPS");
-#endif
+    bool useLibFixups = fixupsWanted;
     uint64_t linkerRanges[8][2]; size_t nLinkerRanges = useLibFixups ? platformLinkerOwnedRanges(linkerRanges, 8) : 0;
     bool verbose = !!getenv("BUN_IMAGE_VERBOSE");
     for (auto& r : regions) {

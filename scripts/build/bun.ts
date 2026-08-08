@@ -317,6 +317,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // file"). It only includes highway + libc headers anyway.
   if (cfg.debug) {
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_json.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_xml.cpp"));
   }
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).

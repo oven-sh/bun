@@ -9869,10 +9869,17 @@ fn dt_delete_file(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
             if matches!(errno, E::EPERM | E::EACCES) {
                 // No-follow stat — don't follow symlinks, to match unlinkat.
                 // `z` (a `&ZStr`, `Copy`) is still valid — `unlinkat` only borrowed it.
-                if let Ok(st) = Syscall::lstatat(parent.fd, z) {
-                    if sys::S::ISDIR(st.st_mode as u32) {
-                        return Err(E::EISDIR);
-                    }
+                //
+                // Concurrent `fs.rm({ recursive, force })` races hit this path:
+                // unlinkat returns EPERM because the target is a directory, then
+                // another caller removes it before our lstat. Propagating the
+                // original EPERM (or mapping it through the narrow EFAULT
+                // fallthrough) is wrong — the path is gone, which is ENOENT and
+                // is what `force: true` is documented to ignore (#36984).
+                match Syscall::lstatat(parent.fd, z) {
+                    Ok(st) if sys::S::ISDIR(st.st_mode as u32) => return Err(E::EISDIR),
+                    Err(stat_err) if stat_err.get_errno() == E::ENOENT => return Err(E::ENOENT),
+                    _ => {}
                 }
             }
             Err(errno)
@@ -9976,6 +9983,10 @@ pub(crate) fn zig_delete_tree(
                                 treat_as_dir = false;
                                 continue 'handle_entry;
                             }
+                            // Concurrent removers can unlink a child between
+                            // readdir and open; keep going (matches min-stack
+                            // and sys::Dir::delete_tree).
+                            Err(E::ENOENT) => break 'handle_entry,
                             #[cfg(target_os = "macos")]
                             Err(e @ (E::EACCES | E::EPERM)) => {
                                 // Same as the pop-delete site below: node's rimraf
@@ -10013,6 +10024,8 @@ pub(crate) fn zig_delete_tree(
                     let top_fd = stack[top_idx].iter.iter.dir;
                     match dt_delete_file(sys::Dir::borrow(&top_fd), &entry_name) {
                         Ok(()) => break 'handle_entry,
+                        // Child already gone (concurrent rm) — continue.
+                        Err(E::ENOENT) => break 'handle_entry,
                         Err(E::EISDIR) => {
                             treat_as_dir = true;
                             continue 'handle_entry;

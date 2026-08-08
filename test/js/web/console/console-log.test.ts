@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
@@ -141,6 +141,62 @@ NamedError: console.error a named error
 
   Error log"
 `);
+});
+
+it("console.log(Bun) prints remaining properties when a lazy property fails to initialize", async () => {
+  // With globalThis.Symbol clobbered, lazy Bun properties whose initializers
+  // call Symbol() (like Bun.$) throw while being reified during enumeration.
+  // The pending exception must be cleared so later properties still print.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "globalThis.Symbol = NaN; console.log(Bun)"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("Archive:");
+  expect(stdout).toContain("CryptoHasher:");
+  expect(stdout).toContain("semver:");
+  expect(stdout).toContain("zstdDecompress:");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+describe.each([
+  ["replaced with a non-function", `require("node:util").inspect = 42;`],
+  [
+    "a throwing getter",
+    `Object.defineProperty(require("node:util"), "inspect", { get() { throw new Error("boom"); } });`,
+  ],
+])("console.log with node:util inspect %s", (_label, sabotage) => {
+  it.concurrent("degrades gracefully instead of crashing", async () => {
+    // util.inspect is cached lazily when a custom inspect runs; with a tampered
+    // export the custom inspect still runs, and only calling the unavailable
+    // inspect argument throws.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${sabotage}
+console.log({ [Bun.inspect.custom]() { return "custom"; } });
+console.log(Bun.inspect({ [Bun.inspect.custom](d, o) { return o.stylize("styled", "string"); } }, { colors: true }));
+try { console.log({ [Bun.inspect.custom](d, o, inspect) { return inspect(1); } }) } catch (e) { console.log("caught " + e.constructor.name) }
+console.log("ok")`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("custom");
+    expect(stdout).toContain("styled");
+    expect(stdout).toContain("caught TypeError");
+    expect(stdout).toContain("ok");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("console.log with SharedArrayBuffer", () => {

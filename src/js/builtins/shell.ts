@@ -249,13 +249,14 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
   }
 
-  var defaultEnv = process.env || {};
-  const originalDefaultEnv = defaultEnv;
-  var defaultCwd: string | undefined = undefined;
-
+  // Symbols first: if Symbol is clobbered, throw before process.env materializes.
   const cwdSymbol = Symbol("cwd");
   const envSymbol = Symbol("env");
   const throwsSymbol = Symbol("throws");
+
+  var defaultEnv = process.env || {};
+  const originalDefaultEnv = defaultEnv;
+  var defaultCwd: string | undefined = undefined;
 
   class ShellPrototype {
     [cwdSymbol]: string | undefined;

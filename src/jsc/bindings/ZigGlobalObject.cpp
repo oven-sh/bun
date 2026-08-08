@@ -1338,6 +1338,14 @@ JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionUtilInspectUnavailable,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return throwVMTypeError(globalObject, scope, "util.inspect is not available"_s);
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -2305,14 +2313,23 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_utilInspectFunction.initLater(
         [](const Initializer<JSFunction>& init) {
-            auto scope = DECLARE_THROW_SCOPE(init.vm);
+            // init.set must run on every path; node:util's inspect export is user-mutable.
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
+            JSC::JSFunction* inspect = nullptr;
             JSValue nodeUtilValue = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-            RETURN_IF_EXCEPTION(scope, );
-            RELEASE_ASSERT(nodeUtilValue.isObject());
-            auto prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
-            RETURN_IF_EXCEPTION(scope, );
-            ASSERT(prop);
-            init.set(uncheckedDowncast<JSFunction>(prop));
+            if (!scope.exception() && nodeUtilValue.isObject()) {
+                JSValue prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
+                if (!scope.exception() && prop)
+                    inspect = dynamicDowncast<JSFunction>(prop);
+            }
+            (void)scope.tryClearException();
+            if (!inspect) [[unlikely]] {
+                inspect = JSC::JSFunction::create(init.vm, init.owner, 2, "inspect"_s, functionUtilInspectUnavailable, ImplementationVisibility::Public);
+                // Empty styles/colors make getStylizeWithColor's stylize an identity function.
+                inspect->putDirect(init.vm, Identifier::fromString(init.vm, "styles"_s), JSC::constructEmptyObject(init.owner), 0);
+                inspect->putDirect(init.vm, Identifier::fromString(init.vm, "colors"_s), JSC::constructEmptyObject(init.owner), 0);
+            }
+            init.set(inspect);
         });
 
     m_utilInspectOptionsStructure.initLater(
@@ -2331,23 +2348,23 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_utilInspectStylizeColorFunction.initLater(
         [](const Initializer<JSFunction>& init) {
-            auto scope = DECLARE_THROW_SCOPE(init.vm);
-            JSC::MarkedArgumentBuffer args;
-            args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
-            RETURN_IF_EXCEPTION(scope, );
+            // LazyProperty initializers must call init.set, so degrade to no-color on failure.
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
+            auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(init.owner);
 
-            JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
-            RETURN_IF_EXCEPTION(scope, );
-
-            JSC::CallData callData = JSC::getCallData(getStylize);
-            NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
-            RETURN_IF_EXCEPTION(scope, );
-
-            if (returnedException) {
-                throwException(init.owner, scope, returnedException.get());
+            JSC::JSValue result;
+            if (JSC::JSFunction* inspect = globalObject->utilInspectFunction()) {
+                JSC::MarkedArgumentBuffer args;
+                args.append(inspect);
+                JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
+                result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, JSC::getCallData(getStylize), jsNull(), args);
             }
-            RETURN_IF_EXCEPTION(scope, );
+
+            if (scope.exception() || !result || !result.isCallable()) [[unlikely]] {
+                (void)scope.tryClearException();
+                init.set(globalObject->utilInspectStylizeNoColorFunction());
+                return;
+            }
             init.set(uncheckedDowncast<JSFunction>(result));
         });
 

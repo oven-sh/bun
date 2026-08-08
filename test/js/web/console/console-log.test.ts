@@ -151,7 +151,7 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
 
-it("console.log(Bun) survives lazy properties whose initializer throws", async () => {
+it.concurrent("console.log(Bun) survives lazy properties whose initializer throws", async () => {
   // With the Symbol global clobbered, initializing lazy properties like Bun.$
   // throws. The property walk must skip them without leaving the exception
   // pending for the next property's initializer (used to abort debug builds).
@@ -162,13 +162,16 @@ it("console.log(Bun) survives lazy properties whose initializer throws", async (
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toContain("alive");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: expect.stringContaining("alive"),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
-it("console.log stops the prototype walk when a getPrototypeOf trap throws", async () => {
+it.concurrent("console.log stops the prototype walk when a getPrototypeOf trap throws", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -183,8 +186,11 @@ it("console.log stops the prototype walk when a getPrototypeOf trap throws", asy
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toContain("alive");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: expect.stringContaining("alive"),
+    stderr: "",
+    exitCode: 0,
+  });
 });

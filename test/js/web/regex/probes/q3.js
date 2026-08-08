@@ -1,0 +1,13 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const t = (label, src, str) => { const m = new RegExp(src).exec(str); out(label.padEnd(28) + s(m && [...m])); };
+const S = "prefix yyyy9 suffix";
+t("A (y{1,3}\\w){2,}?\\w", "(y{1,3}\\w){2,}?\\w", S);
+t("B greedy {2,}", "(y{1,3}\\w){2,}\\w", S);
+t("C {2,}? simple body", "(y\\w){2,}?\\w", S);
+t("D {2,3}? bounded", "(y{1,3}\\w){2,3}?\\w", S);
+t("E +? min1", "(y{1,3}\\w)+?\\w", S);
+t("F {1,}?", "(y{1,3}\\w){1,}?\\w", S);
+t("G {2,}? (yy)9", "(yy){2,}?9", S);
+t("H (y{1,3}\\w){2,}?\\w noprefix", "(y{1,3}\\w){2,}?\\w", "yyyy9");
+t("I on 'xyyyy9'", "(y{1,3}\\w){2,}?\\w", "xyyyy9");
+t("J on ' yyyy9'", "(y{1,3}\\w){2,}?\\w", " yyyy9");

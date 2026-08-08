@@ -1,0 +1,13 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const G="\u{1F600}"; const S=G+G;
+const g = (label, src, fl) => { try { const re = new RegExp(src, fl); const r=[]; let m,k=0; while ((m = re.exec(S)) !== null && k++ < 10) { r.push(m.index); if (m[0]==="") re.lastIndex++; } out(label.padEnd(34) + s(r)); } catch (e) { out(label.padEnd(34) + "THREW"); } };
+g("A (?![\\w9A-Z]+|.q?)", "(?![\\w9A-Z]+|.[0xb]?)|c[[9]&&[\\d]]", "vg");
+g("B (?!\\w+|.q?)", "(?!\\w+|.q?)", "vg");
+g("C (?!\\w+|.)", "(?!\\w+|.)", "vg");
+g("D (?!.q?)", "(?!.q?)", "vg");
+g("E (?!.)", "(?!.)", "vg");
+g("F (?!\\w+)", "(?!\\w+)", "vg");
+g("G (?!.q?)|x", "(?!.q?)|x", "vg");
+g("H (?!.)|c", "(?!.)|c", "vg");
+g("I (?!.[q]?)", "(?!.[q]?)", "vg");
+g("J (?!.) /vug diff", "(?!.)", "gu");

@@ -1493,6 +1493,47 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     }
   });
 
+  // Same guarantee as above but for a pre-created terminal that the subprocess
+  // does not own: on_process_exit must still drain buffered PTY output before
+  // resolving `proc.exited`, even though it leaves slave_fd open for reuse.
+  // POSIX only: the drain is a `reader.read()` call; ConPTY's EOF remains
+  // asynchronous.
+  test.skipIf(isWindows)(
+    "pre-created terminal: child's final output is delivered before proc.exited resolves",
+    async () => {
+      let output = "";
+      let sawPrompt = false;
+      await using terminal = new Bun.Terminal({
+        cols: 80,
+        rows: 24,
+        data(_t, chunk) {
+          output += Buffer.from(chunk).toString();
+          if (!sawPrompt && output.includes("PROMPT>")) {
+            sawPrompt = true;
+            terminal.write("go\n");
+          }
+        },
+      });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.stdout.write("PROMPT>");
+           process.stdin.setEncoding("utf8");
+           process.stdin.once("data", () => {
+             process.stdout.write("FINAL-LINE\\n");
+             process.exit(0);
+           });`,
+        ],
+        env: bunEnv,
+        terminal,
+      });
+      const exitCode = await proc.exited;
+      expect(output).toContain("FINAL-LINE");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // Cross-platform loop-exit check: after an inline terminal's child exits,
   // nothing else in the inner script refs the event loop. POSIX drains to EOF
   // synchronously; on Windows the reader stays ref'd only until conhost

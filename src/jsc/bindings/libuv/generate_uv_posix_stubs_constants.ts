@@ -14,8 +14,9 @@ export const test_skipped = [
 
 export const symbols = [
   "uv_accept",
-  "uv_async_init",
-  "uv_async_send",
+  // Defined in uv-posix-polyfills.c
+  // "uv_async_init",
+  // "uv_async_send",
   "uv_available_parallelism",
   "uv_backend_fd",
   "uv_backend_timeout",
@@ -29,7 +30,8 @@ export const symbols = [
   "uv_check_start",
   "uv_check_stop",
   "uv_clock_gettime",
-  "uv_close",
+  // Defined in uv-posix-polyfills.c
+  // "uv_close",
   "uv_cond_broadcast",
   "uv_cond_destroy",
   "uv_cond_init",
@@ -39,7 +41,8 @@ export const symbols = [
   "uv_cpu_info",
   "uv_cpumask_size",
   "uv_cwd",
-  "uv_default_loop",
+  // Defined in uv-posix-polyfills.c
+  // "uv_default_loop",
   "uv_disable_stdio_inheritance",
   "uv_dlclose",
   "uv_dlerror",
@@ -116,13 +119,15 @@ export const symbols = [
   "uv_getrusage_thread",
   "uv_gettimeofday",
   "uv_guess_handle",
-  "uv_handle_get_data",
-  "uv_handle_get_loop",
-  "uv_handle_get_type",
-  "uv_handle_set_data",
+  // Defined in uv-posix-polyfills.c
+  // "uv_handle_get_data",
+  // "uv_handle_get_loop",
+  // "uv_handle_get_type",
+  // "uv_handle_set_data",
   "uv_handle_size",
   "uv_handle_type_name",
-  "uv_has_ref",
+  // Defined in uv-posix-polyfills.c
+  // "uv_has_ref",
   // Defined in uv-posix-polyfills.cpp
   // "uv_hrtime",
   "uv_idle_init",
@@ -138,8 +143,9 @@ export const symbols = [
   "uv_ip6_addr",
   "uv_ip6_name",
   "uv_ip_name",
-  "uv_is_active",
-  "uv_is_closing",
+  // Defined in uv-posix-polyfills.c
+  // "uv_is_active",
+  // "uv_is_closing",
   "uv_is_readable",
   "uv_is_writable",
   "uv_key_create",
@@ -222,7 +228,8 @@ export const symbols = [
   "uv_read_start",
   "uv_read_stop",
   "uv_recv_buffer_size",
-  "uv_ref",
+  // Defined in uv-posix-polyfills.c
+  // "uv_ref",
   "uv_replace_allocator",
   "uv_req_get_data",
   "uv_req_get_type",
@@ -323,7 +330,8 @@ export const symbols = [
   "uv_udp_try_send",
   "uv_udp_try_send2",
   "uv_udp_using_recvmmsg",
-  "uv_unref",
+  // Defined in uv-posix-polyfills.c
+  // "uv_unref",
   "uv_update_time",
   "uv_uptime",
   "uv_utf16_length_as_wtf8",

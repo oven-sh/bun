@@ -1271,7 +1271,10 @@ fn on_unhandled_rejection(
     // `return self.shutdown()` directly — same observable ordering.
     // `vm.jsc_vm` is the worker's live `JSC::VM*` (we just used it via
     // `global_object`); `request_termination` is documented thread-safe
-    // (VMTraps).
+    // (VMTraps). The gate closes with it, as for exit()/terminate(): the
+    // native→JS entries still reached this tick refuse rather than run into
+    // the pending termination.
+    vm.handle().stop();
     vm.jsc_vm().notify_need_termination();
 }
 

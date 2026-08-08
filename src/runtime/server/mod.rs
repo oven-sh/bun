@@ -1362,6 +1362,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     needs_to_drain = false;
                     // SAFETY: `vm` is the process-static VirtualMachine.
                     unsafe { (*vm).drain_microtasks() };
+                    // The drain ran script: an exception it left (a termination
+                    // request landing in it) ends this dispatch like a throw
+                    // from the handler; nothing below may enter script over it.
+                    if global.has_exception() {
+                        break 'brk HttpResult::Exception(global.take_error(bun_jsc::JsError::Thrown));
+                    }
                     status = promise.status();
                 }
 

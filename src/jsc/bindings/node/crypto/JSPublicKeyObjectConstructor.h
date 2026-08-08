@@ -41,7 +41,7 @@ private:
 
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
     {
-        Base::finishCreation(vm, 2, "PublicKeyObject"_s);
+        Base::finishCreation(vm, 1, "PublicKeyObject"_s);
         putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     }
 };

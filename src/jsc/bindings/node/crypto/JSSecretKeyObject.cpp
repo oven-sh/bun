@@ -7,7 +7,6 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/ObjectPrototype.h>
 
 namespace Bun {
@@ -36,7 +35,8 @@ void setupSecretKeyObjectClassStructure(JSC::LazyClassStructure::Initializer& in
     auto* prototypeStructure = JSSecretKeyObjectPrototype::createStructure(init.vm, init.global, globalObject->KeyObjectPrototype());
     auto* prototype = JSSecretKeyObjectPrototype::create(init.vm, init.global, prototypeStructure);
 
-    auto* constructorStructure = JSSecretKeyObjectConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
+    // Parented on KeyObject so statics (KeyObject.from) inherit, as in Node.
+    auto* constructorStructure = JSSecretKeyObjectConstructor::createStructure(init.vm, init.global, globalObject->KeyObject());
     auto* constructor = JSSecretKeyObjectConstructor::create(init.vm, constructorStructure, prototype);
 
     auto* structure = JSSecretKeyObject::createStructure(init.vm, init.global, prototype);

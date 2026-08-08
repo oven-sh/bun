@@ -223,7 +223,7 @@ struct SecretsJobOptions {
         }
         }
 
-        scope.assertNoException();
+        RETURN_IF_EXCEPTION(scope, nullptr);
 
         if (service.isEmpty() || name.isEmpty()) {
             Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "Expected service and name to not be empty"_s);

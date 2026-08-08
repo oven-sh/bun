@@ -3138,6 +3138,15 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
 
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 
+    // The native→JS boundary for the Rust side (Node: InternalMakeCallback's can_call_into_js;
+    // WebCore: JSEventListener's isJSExecutionForbidden): once the VM's stop was requested or
+    // teardown has forbidden script, a callback from any event source is a silent no-op rather
+    // than each source checking.
+    if (vm.executionForbidden() || !WebCore::clientData(vm)->scriptAllowed()) [[unlikely]] {
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
+    }
+
     JSC::JSValue jsObject = JSValue::decode(object);
     ASSERT_WITH_MESSAGE(jsObject, "Cannot call function with JSValue zero.");
 
@@ -5151,11 +5160,6 @@ bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
 }
 
 [[ZIG_EXPORT(nothrow)]]
-void JSC__VM__clearHasTerminationRequest(JSC::VM* vm)
-{
-    vm->clearHasTerminationRequest();
-}
-[[ZIG_EXPORT(nothrow)]]
 bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
 {
     return vm->hasTerminationRequest();
@@ -5164,6 +5168,23 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
 void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
 {
     (*arg0).setExecutionForbidden();
+}
+
+// JS thread. Make the VM's stop concrete on this thread: after this a TerminationException is
+// pending (unless termination is currently deferred), whether or not the NeedTermination trap the
+// requester fired had been serviced yet. What RETURN_IF_EXCEPTION would have done at the next check.
+[[ZIG_EXPORT(nothrow)]]
+void JSC__VM__ensureTerminationExceptionPending(JSC::VM* arg0)
+{
+    JSC::VM& vm = *arg0;
+    if (vm.hasPendingTerminationException())
+        return;
+    if (!vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
+        vm.notifyNeedTermination();
+    if (vm.hasTerminationRequest())
+        vm.throwTerminationException();
+    else
+        vm.traps().handleTraps(JSC::VMTraps::NeedTermination);
 }
 
 // These may be called concurrently from another thread.
@@ -6285,13 +6306,12 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, J
     return map->size();
 }
 
-CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)
+// Enable only: compiled instrumented code holds raw pointers into the profiler,
+// so it lives as long as the VM (see JSInspectorProfiler.cpp).
+CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* vm)
 {
-    if (isEnabled) {
+    if (!vm->controlFlowProfiler())
         vm->enableControlFlowProfiler();
-    } else {
-        vm->disableControlFlowProfiler();
-    }
 }
 
 CPP_DECL void JSC__VM__performOpportunisticallyScheduledTasks(JSC::VM* vm, double until)

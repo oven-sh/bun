@@ -148,10 +148,10 @@ impl<'a> ProcessHandle<'a> {
         #[cfg(windows)]
         {
             if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                handle.stdout.source = Some(bun_io::Source::Pipe(pipe));
+                handle.stdout.set_source(bun_io::Source::Pipe(pipe));
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                handle.stderr.source = Some(bun_io::Source::Pipe(pipe));
+                handle.stderr.set_source(bun_io::Source::Pipe(pipe));
             }
         }
 

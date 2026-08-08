@@ -12,15 +12,15 @@
 
 namespace WebCore {
 
-class WorkerGlobalScope : public RefCounted<WorkerGlobalScope>, public EventTargetWithInlineData {
-    WTF_MAKE_TZONE_ALLOCATED(WorkerGlobalScope);
+class GlobalEventScope : public RefCounted<GlobalEventScope>, public EventTargetWithInlineData {
+    WTF_MAKE_TZONE_ALLOCATED(GlobalEventScope);
 
     uint32_t m_messageEventCount { 0 };
 
     static void onDidChangeListenerImpl(EventTarget&, const AtomString&, OnDidChangeListenerKind);
 
 public:
-    WorkerGlobalScope(ScriptExecutionContext* context)
+    GlobalEventScope(ScriptExecutionContext* context)
         : EventTargetWithInlineData()
         , m_context(context)
     {
@@ -30,12 +30,12 @@ public:
     using RefCounted::deref;
     using RefCounted::ref;
 
-    static Ref<WorkerGlobalScope> create(ScriptExecutionContext* context)
+    static Ref<GlobalEventScope> create(ScriptExecutionContext* context)
     {
-        return adoptRef(*new WorkerGlobalScope(context));
+        return adoptRef(*new GlobalEventScope(context));
     }
 
-    ~WorkerGlobalScope() = default;
+    ~GlobalEventScope() = default;
 
     EventTargetInterface eventTargetInterface() const final { return EventTargetInterface::DOMWindowEventTargetInterfaceType; }
     ScriptExecutionContext* scriptExecutionContext() const final { return m_context; }

@@ -88,13 +88,15 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     // drain task processes the whole inbox in a loop, draining microtasks
     // between each delivery so queueMicrotask/Promise callbacks observe
     // messages one at a time, but without a separate posted task per
-    // message. The per-invocation limit is max(initial queue size, 1000)
-    // — enough to amortize the uv_async-style reschedule cost, capped so a
-    // fast sender can't starve the event loop indefinitely.
+    // message. The per-invocation limit is a fixed count (not "whatever was
+    // queued when the drain began", which a sender on another thread can make
+    // arbitrarily large); the rest continues after the loop has polled.
     //
-    // Messages are popped one at a time under the lock, so if the handler
-    // transfers this port (pipe->detach clears `s.port`/`Attached`) the
-    // remaining inbox stays buffered for the new owner.
+    // Messages move inbox -> `draining` a small batch per lock acquisition and are
+    // popped from `draining` one at a time (still under the lock, but without a
+    // sender contending for it per message). If the handler transfers this port
+    // (pipe->detach clears `s.port`/`Attached`), detach() splices `draining` back
+    // in front of the inbox so everything stays buffered, in order, for the new owner.
     auto& s = m_sides[side];
 
     RefPtr<MessagePort> port;
@@ -110,11 +112,11 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             return;
         port = s.port.get();
         uint64_t st = s.state.load(std::memory_order_relaxed);
-        if (!port || s.inbox.isEmpty()) {
+        if (!port || (s.draining.isEmpty() && s.inbox.isEmpty())) {
             s.state.store(st & ~DrainScheduled, std::memory_order_release);
             return;
         }
-        limit = std::max<size_t>(s.inbox.size(), 1000);
+        limit = 1024;
     }
 
     // All 'message' listeners removed: the port is paused. Leave the inbox buffered
@@ -133,6 +135,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     }
     auto* globalObject = defaultGlobalObject(context->globalObject());
 
+    static constexpr size_t takeAtOnce = 64;
     ScriptExecutionContextIdentifier rescheduleCtx = 0;
     while (true) {
         std::optional<MessageWithMessagePorts> message;
@@ -143,22 +146,30 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             // detach+re-attach restores ctxId but installs a different
             // MessagePort, so compare port identity too — dispatching to
             // the stale (now m_isDetached) `port` would silently drop.
-            // The new owner's attach() scheduled its own drain; leave the
-            // inbox for that.
+            // The new owner's attach() scheduled its own drain, and detach()
+            // already returned anything we had taken to the inbox.
             if (s.ctxId != expectedCtx || s.port.get() != port)
                 break;
             uint64_t st = s.state.load(std::memory_order_relaxed);
-            if (!(st & Attached) || s.inbox.isEmpty()) {
+            if (!(st & Attached) || (s.draining.isEmpty() && s.inbox.isEmpty())) {
                 s.state.store(st & ~DrainScheduled, std::memory_order_release);
                 break;
             }
-            if (limit-- == 0) {
-                // Yield to the rest of the event loop; DrainScheduled stays
-                // set so concurrent sends don't double-schedule.
-                rescheduleCtx = s.ctxId;
-                break;
+            if (s.draining.isEmpty()) {
+                if (!limit) {
+                    // Yield to the rest of the event loop; DrainScheduled stays
+                    // set so concurrent sends don't double-schedule.
+                    rescheduleCtx = s.ctxId;
+                    break;
+                }
+                // Refill: this is the only acquisition that contends with senders
+                // for more than one message's worth of work.
+                size_t n = std::min({ takeAtOnce, limit, static_cast<size_t>(s.inbox.size()) });
+                for (size_t i = 0; i < n; ++i)
+                    s.draining.append(s.inbox.takeFirst());
+                limit -= n;
             }
-            message = s.inbox.takeFirst();
+            message = s.draining.takeFirst();
             s.state.store(st - QueuedOne, std::memory_order_release);
         }
 
@@ -174,13 +185,20 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         // pre-loop check instead of dispatching the rest to zero listeners.
         if (!port->hasMessageEventListener()) {
             Locker locker { s.lock };
+            while (!s.draining.isEmpty())
+                s.inbox.prepend(s.draining.takeLast());
             s.state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
             break;
         }
     }
 
-    if (rescheduleCtx)
-        scheduleDrain(side, rescheduleCtx);
+    // Budget spent with messages left. We are on `context`'s thread: continue on
+    // its next loop iteration (after I/O and timers), not in this drain.
+    if (rescheduleCtx) {
+        context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx](ScriptExecutionContext&) {
+            pipe->drainAndDispatch(side, rescheduleCtx);
+        });
+    }
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)
@@ -188,10 +206,13 @@ std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)
     ASSERT(side < 2);
     auto& s = m_sides[side];
     Locker locker { s.lock };
-    if (s.inbox.isEmpty())
+    // From inside a handler (receiveMessageOnPort), the next message in order may
+    // already sit in the drain's batch.
+    auto& queue = s.draining.isEmpty() ? s.inbox : s.draining;
+    if (queue.isEmpty())
         return std::nullopt;
     s.state.fetch_sub(QueuedOne, std::memory_order_acq_rel);
-    return s.inbox.takeFirst();
+    return queue.takeFirst();
 }
 
 void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxId, ThreadSafeWeakPtr<MessagePort> port)
@@ -245,6 +266,9 @@ void MessagePortPipe::detach(uint8_t side)
     ASSERT(side < 2);
     auto& s = m_sides[side];
     Locker locker { s.lock };
+    // Taken for dispatch by the owner that is letting go: back in front, in order.
+    while (!s.draining.isEmpty())
+        s.inbox.prepend(s.draining.takeLast());
     s.ctxId = 0;
     s.port = nullptr;
     // Drop Attached and DrainScheduled. A drain task already in flight on
@@ -280,6 +304,8 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
             // Closed is terminal; queued messages are dropped.
             s.state.store(sdKind == CloseKind::Explicit ? (Closed | ClosedByRequest) : Closed, std::memory_order_release);
             dropped = std::exchange(s.inbox, {});
+            while (!s.draining.isEmpty())
+                dropped.prepend(s.draining.takeLast());
         }
 
         // Harvest transferred pipes before `dropped` destructs so their

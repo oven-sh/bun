@@ -610,6 +610,24 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("worker exited with 0\nfinalized=2 call=16 release=0");
     });
 
+    // A finalizer running while a worker's env drains its finalizers can
+    // register another (here: an external buffer with a finalize_cb). Bun runs
+    // that one in the same cleanup rather than leaving it behind the walk. Bun-
+    // only rather than same-output: node hands an external buffer's finalizer to
+    // the BackingStore deleter, not to the env's tracked references, so a buffer
+    // created during teardown dies with the isolate and node prints late=0.
+    it("runs a finalizer that another finalizer registered during env cleanup", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_finalizer_registered_during_env_cleanup", "[]"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toContain("worker exited with 0\nlate=1");
+      expect(exitCode).toBe(0);
+    });
+
     // A call that reports napi_closing consumes the calling thread's reference
     // (node's ThreadSafeFunction::Push), so on an orphaned threadsafe function
     // it can drop the last one -- and then it must free it, or every worker that

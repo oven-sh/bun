@@ -661,4 +661,9 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
 
 impl bun_event_loop::Taskable for FileResponseStream {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FileResponseStreamEof;
+    /// `on_read_chunk` took a ref for the queued EOF hop; drop it.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; adopts the ref the enqueue took.
+        drop(unsafe { bun_ptr::ScopedRef::<FileResponseStream>::adopt(this) });
+    }
 }

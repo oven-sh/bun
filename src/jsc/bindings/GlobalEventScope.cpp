@@ -1,16 +1,19 @@
 #include "config.h"
 
-#include "BunWorkerGlobalScope.h"
+#include "GlobalEventScope.h"
+#include "MessagePort.h"
+#include "ScriptExecutionContext.h"
+#include "ZigGlobalObject.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerGlobalScope);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(GlobalEventScope);
 
-void WorkerGlobalScope::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
+void GlobalEventScope::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
 {
     if (eventType == eventNames().messageEvent) {
-        auto& global = static_cast<WorkerGlobalScope&>(self);
+        auto& global = static_cast<GlobalEventScope&>(self);
         switch (kind) {
         case Add:
             if (global.m_messageEventCount == 0) {

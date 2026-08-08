@@ -1,4 +1,4 @@
-import { bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import * as path from "path";
 
 const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "yaml", "text", "sqlite", "file"];
@@ -341,6 +341,108 @@ describe("other loaders do not crash", () => {
       await compileAndTest(`export const a = "demo";`);
     });
   }
+});
+
+describe("base64 / dataurl", () => {
+  async function run(cmd: string[], dir: string) {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd: dir, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const cases = [
+    { type: "base64", file: "text.foo", contents: "ABC", expected: "QUJD" },
+    { type: "base64", file: "png.png", contents: Buffer.from("89504e470d0a1a0a", "hex"), expected: "iVBORw0KGgo=" },
+    { type: "base64", file: "bin.foo", contents: Buffer.from([0x00, 0xff, 0x80, 0x7f]), expected: "AP+Afw==" },
+    { type: "base64", file: "empty.foo", contents: "", expected: "" },
+    { type: "base64", file: "u16.foo", contents: Buffer.from([0xff, 0xfe, 0x41, 0x00]), expected: "//5BAA==" },
+    { type: "base64", file: "u8.foo", contents: Buffer.from([0xef, 0xbb, 0xbf, 0x41]), expected: "77u/QQ==" },
+    { type: "dataurl", file: "style.css", contents: "ABC", expected: "data:text/css;charset=utf-8,ABC" },
+    {
+      type: "dataurl",
+      file: "IMG.PNG",
+      contents: Buffer.from("89504e470d0a1a0a", "hex"),
+      expected: "data:image/png;base64,iVBORw0KGgo=",
+    },
+    { type: "dataurl", file: "text.foo", contents: "ABC", expected: "data:text/plain;charset=utf-8,ABC" },
+    {
+      type: "dataurl",
+      file: "png.png",
+      contents: Buffer.from("89504e470d0a1a0a", "hex"),
+      expected: "data:image/png;base64,iVBORw0KGgo=",
+    },
+    {
+      type: "dataurl",
+      file: "bin.foo",
+      contents: Buffer.from([0x00, 0xff, 0x80, 0x7f]),
+      expected: "data:application/octet-stream;base64,AP+Afw==",
+    },
+    { type: "dataurl", file: "empty.foo", contents: "", expected: "data:text/plain;charset=utf-8," },
+  ] as const;
+
+  for (const form of ["static", "dynamic"] as const) {
+    test.concurrent(`runtime import attribute (${form})`, async () => {
+      // One file per (type, payload) pair: the runtime module cache is keyed by
+      // resolved path, so importing the same file with two different `type`
+      // attributes returns the first-loaded module for both.
+      const files: Record<string, string | Buffer> = {};
+      const stmts: string[] = [];
+      const wants: Record<string, string> = {};
+      for (const [i, c] of cases.entries()) {
+        files[`${i}-${c.file}`] = c.contents;
+        stmts.push(
+          form === "static"
+            ? `import v${i} from "./${i}-${c.file}" with { type: "${c.type}" };`
+            : `const v${i} = (await import("./${i}-${c.file}", { with: { type: "${c.type}" } })).default;`,
+        );
+        wants[`v${i}`] = c.expected;
+      }
+      files["entry.ts"] =
+        stmts.join("\n") + `\nconsole.log(JSON.stringify({ ${cases.map((_, i) => `v${i}`).join(", ")} }));`;
+
+      using dir = tempDir("import-attributes-b64", files);
+      const { stdout, stderr, exitCode } = await run([bunExe(), "entry.ts"], String(dir));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(wants);
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  for (const [loader, contents, expected] of [
+    ["base64", "ABC", `export default "QUJD";`],
+    ["base64", Buffer.from([0xff, 0xfe, 0x41, 0x00]), `export default "//5BAA==";`],
+    ["dataurl", Buffer.from("89504e470d0a1a0a", "hex"), `export default "data:image/png;base64,iVBORw0KGgo=";`],
+  ] as const) {
+    test.concurrent(`bun build --no-bundle --loader .png:${loader} (${expected})`, async () => {
+      using dir = tempDir("no-bundle-b64", { "entry.png": contents });
+      const { stdout, stderr, exitCode } = await run(
+        [bunExe(), "build", "--no-bundle", "--loader", `.png:${loader}`, "entry.png"],
+        String(dir),
+      );
+      expect(stderr).toBe("");
+      expect(stdout).toContain(expected);
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test.concurrent("data: URL specifier preserves its declared MIME", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      [
+        bunExe(),
+        "-e",
+        `import png from "data:image/png;base64,iVBORw0KGgo=" with { type: "dataurl" };
+         import b64 from "data:application/json,ABC" with { type: "base64" };
+         console.log(JSON.stringify({ png, b64 }));`,
+      ],
+      process.cwd(),
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      png: "data:image/png;base64,iVBORw0KGgo=",
+      b64: "QUJD",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("?raw", () => {

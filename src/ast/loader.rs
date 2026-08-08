@@ -127,7 +127,10 @@ impl Loader {
     }
 
     pub fn handles_empty_file(self) -> bool {
-        matches!(self, Loader::Wasm | Loader::File | Loader::Text)
+        matches!(
+            self,
+            Loader::Wasm | Loader::File | Loader::Text | Loader::Base64 | Loader::Dataurl
+        )
     }
 
     // `to_mime_type` / `from_mime_type` stay in bun_http_types as extension
@@ -235,6 +238,8 @@ impl Loader {
     pub fn side_effects(self) -> SideEffects {
         match self {
             Loader::Text
+            | Loader::Base64
+            | Loader::Dataurl
             | Loader::Json
             | Loader::Jsonc
             | Loader::Toml

@@ -138,6 +138,7 @@ export default function (
       switch (parsed?.type) {
         case "close":
           try {
+            sessionAdapter?.dispose?.();
             sessionBackend?.close();
             sessionBackend = undefined;
             sessionAdapter = undefined;
@@ -160,6 +161,7 @@ export default function (
           // outlive it. Refcounted so one Session can't tear down another's.
           if (--sessionRefs > 0) return;
           sessionRefs = 0;
+          sessionAdapter?.dispose?.();
           sessionBackend?.close();
           sessionBackend = undefined;
           sessionAdapter = undefined;
@@ -599,15 +601,21 @@ class Debugger {
 
   #close(connection: ConnectionOwner): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, adapter } = data;
+    adapter?.dispose?.();
     backend?.close();
+    data.adapter = undefined;
+    data.backend = undefined;
   }
 
   #error(connection: ConnectionOwner, error: Error): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, adapter } = data;
     console.error(error);
+    adapter?.dispose?.();
     backend?.close();
+    data.adapter = undefined;
+    data.backend = undefined;
   }
 }
 

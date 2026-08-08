@@ -1070,6 +1070,24 @@ describe("spyOn", () => {
       expect(arr[0]).toBe(original);
     });
 
+    test("spyOn on a missing indexed property doesn't corrupt the object", () => {
+      const obj = {};
+      const fn = spyOn(obj, 9);
+      const fn2 = spyOn(obj, 9);
+      expect(fn2).toBe(fn);
+      expect(obj[9]).toBe(fn);
+      obj[9] = 5;
+      expect(obj[9]).toBe(5);
+    });
+
+    test("spyOn on a non-callable indexed property can be restored", () => {
+      const arr = [1, 2, 3];
+      const fn = spyOn(arr, 1);
+      expect(arr[1]).toBe(fn);
+      fn.mockRestore();
+      expect(arr[1]).toBe(2);
+    });
+
     test("spyOn works with indexed properties using BigInt keys", () => {
       function original() {
         return 456;

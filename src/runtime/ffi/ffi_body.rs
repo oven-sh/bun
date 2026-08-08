@@ -1270,7 +1270,10 @@ impl FFI {
         Ok(js_object)
     }
 
-    pub fn close_jsc_callback(_global_this: &JSGlobalObject, callback: JSValue) -> JsResult<JSValue> {
+    pub fn close_jsc_callback(
+        _global_this: &JSGlobalObject,
+        callback: JSValue,
+    ) -> JsResult<JSValue> {
         unsafe extern "C" {
             fn Bun__JSCFFICallbackClose(callback: JSValue);
         }
@@ -1333,7 +1336,9 @@ impl FFI {
             if global_this.has_exception() {
                 return Err(JsError::Thrown);
             }
-            return Ok(ZigString::init(b"Failed to create FFI callback").to_error_instance(global_this));
+            return Ok(
+                ZigString::init(b"Failed to create FFI callback").to_error_instance(global_this)
+            );
         }
         Ok(cb)
     }
@@ -1617,7 +1622,10 @@ impl FFI {
         JSValue::UNDEFINED
     }
 
-    pub(crate) fn link_symbols(global: &JSGlobalObject, object_value: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn link_symbols(
+        global: &JSGlobalObject,
+        object_value: JSValue,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         if object_value.is_empty_or_undefined_or_null() {

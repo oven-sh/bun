@@ -1268,9 +1268,10 @@ pub mod bv2_impl {
                             bv2.wake_own_loop();
                             return;
                         }
-                        let concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                            bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
-                        );
+                        let concurrent_task =
+                            bun_event_loop::ConcurrentTask::ConcurrentTask::create(
+                                bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
+                            );
                         bv2.enqueue_on_js_loop_for_plugins(concurrent_task);
                     }
                 }

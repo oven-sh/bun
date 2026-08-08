@@ -272,7 +272,8 @@ void WorkerMessagingProxy::rejectAllCrossVMRequests()
 // wait behind it. `UntilEmpty` is for the sender having exited: the queue is finite and everything
 // in it precedes 'close'. Worker inboxes never change owner, so the batch is swapped out under the
 // lock and dispatched uncontended.
-enum class DrainBudget { Bounded, UntilEmpty };
+enum class DrainBudget { Bounded,
+    UntilEmpty };
 static constexpr size_t drainBatchLimit = 1024;
 
 template<typename Dispatch>

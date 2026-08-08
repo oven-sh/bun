@@ -709,6 +709,16 @@ impl Cmd {
                 let jsval = interp.jsobjs[idx];
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
+                    if flags.append() && !flags.stdin() {
+                        return Ok(Some(Builtin::cmd_write_failing_error(
+                            interp,
+                            this,
+                            format_args!(
+                                "bun: can't append (>>) output to a Buffer or ArrayBuffer; \
+                                 use > to overwrite, or redirect to a file\n"
+                            ),
+                        )));
+                    }
                     let mk_out = || {
                         let pinned = jsval.as_pinned_arraybuffer(global);
                         Stdio::ArrayBuffer(crate::jsc::array_buffer::ArrayBufferStrong {

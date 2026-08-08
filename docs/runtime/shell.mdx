@@ -158,6 +158,8 @@ You can redirect output to these JavaScript objects:
 - `Buffer`, `Uint8Array`, `Uint16Array`, `Uint32Array`, `Int8Array`, `Int16Array`, `Int32Array`, `Float32Array`, `Float64Array`, `ArrayBuffer`, `SharedArrayBuffer` (writes to the underlying buffer)
 - `Bun.file(path)`, `Bun.file(fd)` (writes to the file)
 
+The append operators (`>>`, `2>>`, `&>>`) are only supported for file destinations (a path string or `Bun.file(path)`). Appending to any of the fixed-size buffer targets above (`Buffer`, typed arrays, `ArrayBuffer`, `SharedArrayBuffer`) fails with an error because a fixed-size buffer has no write cursor to append after; use `>` to write from the start of the buffer instead.
+
 ### Example: Redirect input from JavaScript objects (`<`)
 
 To use a JavaScript object as stdin, use the `<` operator:

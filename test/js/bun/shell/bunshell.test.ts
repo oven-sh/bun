@@ -1547,6 +1547,89 @@ describe("deno_task", () => {
       .fileEquals("test.txt", "1\n2\n")
       .runAsTest("appending");
 
+    describe(">> to a Buffer/ArrayBuffer is rejected (no silent overwrite)", () => {
+      // A fixed-size buffer has no write cursor, so `>>` cannot append. Before
+      // this was rejected, `>>` silently overwrote from offset 0 (identical to
+      // `>`), losing data without warning.
+      const msg =
+        "bun: can't append (>>) output to a Buffer or ArrayBuffer; use > to overwrite, or redirect to a file\n";
+      const targets: Array<[string, () => ArrayBufferLike | ArrayBufferView]> = [
+        ["Buffer", () => Buffer.alloc(16, ".")],
+        ["ArrayBuffer", () => new ArrayBuffer(16)],
+        ["Uint8Array", () => new Uint8Array(16)],
+      ];
+      const bytes = (b: ArrayBufferLike | ArrayBufferView) =>
+        b instanceof ArrayBuffer || b instanceof SharedArrayBuffer ? new Uint8Array(b) : new Uint8Array(b.buffer);
+      const expectRejected = (
+        buf: ArrayBufferLike | ArrayBufferView,
+        before: Uint8Array,
+        result: Bun.$.ShellOutput,
+      ) => {
+        expect({ stderr: result.stderr.toString(), bytes: bytes(buf), exitCode: result.exitCode }).toEqual({
+          stderr: msg,
+          bytes: before,
+          exitCode: 1,
+        });
+      };
+
+      describe.each(targets)("builtin -> %s", (_name, make) => {
+        test(">>", async () => {
+          const buf = make();
+          const before = bytes(buf).slice();
+          expectRejected(buf, before, await $`echo AAAA >> ${buf}`.quiet());
+        });
+        test("2>>", async () => {
+          const buf = make();
+          const before = bytes(buf).slice();
+          expectRejected(buf, before, await $`echo AAAA 2>> ${buf}`.quiet());
+        });
+        test("&>>", async () => {
+          const buf = make();
+          const before = bytes(buf).slice();
+          expectRejected(buf, before, await $`echo AAAA &>> ${buf}`.quiet());
+        });
+      });
+
+      describe.each(targets)("external -> %s", (_name, make) => {
+        test.concurrent(">>", async () => {
+          const buf = make();
+          const before = bytes(buf).slice();
+          expectRejected(buf, before, await $`${BUN} -e 'console.log("AAAA")' >> ${buf}`.env(bunEnv).quiet());
+        });
+        test.concurrent("2>>", async () => {
+          const buf = make();
+          const before = bytes(buf).slice();
+          expectRejected(buf, before, await $`${BUN} -e 'console.error("AAAA")' 2>> ${buf}`.env(bunEnv).quiet());
+        });
+        test.concurrent("&>>", async () => {
+          const buf = make();
+          const before = bytes(buf).slice();
+          expectRejected(buf, before, await $`${BUN} -e 'console.log("AAAA")' &>> ${buf}`.env(bunEnv).quiet());
+        });
+      });
+
+      test("> Buffer still overwrites from offset 0", async () => {
+        const buf = Buffer.alloc(16, ".");
+        const { stderr, exitCode } = await $`echo AAAA > ${buf}`.quiet();
+        expect({ stderr: stderr.toString(), head: buf.subarray(0, 5).toString(), exitCode }).toEqual({
+          stderr: "",
+          head: "AAAA\n",
+          exitCode: 0,
+        });
+      });
+
+      test(">> Bun.file(path) still appends", async () => {
+        using dir = tempDir("shell-append-bunfile", { "out.txt": "AAAA\n" });
+        const p = join(String(dir), "out.txt");
+        const { stderr, exitCode } = await $`echo BB >> ${Bun.file(p)}`.quiet();
+        expect({ stderr: stderr.toString(), text: await Bun.file(p).text(), exitCode }).toEqual({
+          stderr: "",
+          text: "AAAA\nBB\n",
+          exitCode: 0,
+        });
+      });
+    });
+
     // &> and &>> redirect
     await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); setTimeout(() => console.error(23), 10)' &> file.txt && BUN_TEST_VAR=1 ${BUN} -e 'console.log(456); setTimeout(() => console.error(789), 10)' &>> file.txt`
       .fileEquals("file.txt", "1\n23\n456\n789\n")

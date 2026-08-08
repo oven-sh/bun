@@ -721,6 +721,16 @@ impl Builtin {
                 let jsval = interp.jsobjs[idx];
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
+                    if redirect.append() && !redirect.stdin() {
+                        return Some(Self::cmd_write_failing_error(
+                            interp,
+                            cmd,
+                            format_args!(
+                                "bun: can't append (>>) output to a Buffer or ArrayBuffer; \
+                                 use > to overwrite, or redirect to a file\n"
+                            ),
+                        ));
+                    }
                     // Each slot gets its own Strong (sharing one would
                     // double-free on Drop).
                     let mk = || {

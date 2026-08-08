@@ -508,7 +508,9 @@ impl hostent_with_ttls {
             .iter()
             .enumerate()
         {
-            with_ttls.ttls[i] = ttl.ttl;
+            // RFC 2181 §8: a wire TTL with the high bit set MUST be treated as 0.
+            // c-ares stores the u32 wire value in a signed int, so it arrives negative.
+            with_ttls.ttls[i] = ttl.ttl.max(0);
         }
         Ok(with_ttls)
     }
@@ -537,7 +539,9 @@ impl hostent_with_ttls {
             .iter()
             .enumerate()
         {
-            with_ttls.ttls[i] = ttl.ttl;
+            // RFC 2181 §8: a wire TTL with the high bit set MUST be treated as 0.
+            // c-ares stores the u32 wire value in a signed int, so it arrives negative.
+            with_ttls.ttls[i] = ttl.ttl.max(0);
         }
         Ok(with_ttls)
     }

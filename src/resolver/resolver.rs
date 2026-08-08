@@ -486,6 +486,7 @@ pub struct Resolver<'a> {
     /// Read the "browser" field in package.json files?
     /// For Bun's runtime, we don't.
     pub(crate) care_about_browser_field: bool,
+    pub(crate) browser_remap_depth: u8,
 
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
@@ -624,6 +625,7 @@ impl<'a> Resolver<'a> {
             care_about_bin_folder: from.care_about_bin_folder,
             care_about_scripts: from.care_about_scripts,
             care_about_browser_field: from.care_about_browser_field,
+            browser_remap_depth: 0,
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
             elapsed: 0,
@@ -923,6 +925,7 @@ impl<'a> Resolver<'a> {
             log,
             extension_order: options::ExtOrder::DefaultDefault,
             care_about_browser_field,
+            browser_remap_depth: 0,
             care_about_bin_folder: false,
             care_about_scripts: false,
             debug_logs: None,
@@ -2648,7 +2651,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
+        let mut esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
 
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
@@ -2665,7 +2668,7 @@ impl<'a> Resolver<'a> {
                         break 'node_modules;
                     }
                     any_node_modules_folder = true;
-                    let abs_path: &[u8] = if is_self_reference {
+                    let mut abs_path: &[u8] = if is_self_reference {
                         dir_info.abs_path
                     } else {
                         match self.fs_ref().abs_buf_checked(
@@ -2686,7 +2689,7 @@ impl<'a> Resolver<'a> {
                     let prev_extension_order = self.extension_order;
                     // NOTE: defer restore reshaped — restored at end of block
 
-                    if let Some(ref esm) = esm_ {
+                    if let Some(esm) = esm_ {
                         let abs_package_path: &[u8] = if is_self_reference {
                             dir_info.abs_path
                         } else {
@@ -2854,6 +2857,91 @@ impl<'a> Resolver<'a> {
                                         d.decrease_indent();
                                     }
                                     return MatchStatus::NotFound;
+                                }
+                            }
+
+                            // Check the "browser" map
+                            if self.care_about_browser_field && self.browser_remap_depth < 32 {
+                                if let Some(browser_scope) =
+                                    pkg_dir_info.get_enclosing_browser_scope()
+                                {
+                                    if let Some(remap) = self
+                                        .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
+                                            &browser_scope,
+                                            abs_path,
+                                        )
+                                    {
+                                        if remap.is_empty() {
+                                            let mut _path = Path::init(
+                                                self.fs_ref()
+                                                    .dirname_store
+                                                    .append_slice(abs_path)
+                                                    .expect("oom"),
+                                            );
+                                            _path.is_disabled = true;
+                                            *out = MatchResult {
+                                                path_pair: PathPair {
+                                                    primary: _path,
+                                                    secondary: None,
+                                                },
+                                                is_node_module: true,
+                                                package_json: browser_scope
+                                                    .package_json()
+                                                    .map(std::ptr::from_ref),
+                                                ..Default::default()
+                                            };
+                                            self.extension_order = prev_extension_order;
+                                            if let Some(d) = self.debug_logs.as_mut() {
+                                                d.decrease_indent();
+                                            }
+                                            return MatchStatus::Success;
+                                        }
+
+                                        let remap_is_package_path = is_package_path(remap);
+                                        self.browser_remap_depth += 1;
+                                        let remap_resolved = self
+                                            .resolve_without_remapping(
+                                                browser_scope,
+                                                remap,
+                                                kind,
+                                                global_cache,
+                                                out,
+                                            )
+                                            .is_success();
+                                        self.browser_remap_depth -= 1;
+                                        if remap_resolved {
+                                            out.is_node_module = true;
+                                            self.extension_order = prev_extension_order;
+                                            if let Some(d) = self.debug_logs.as_mut() {
+                                                d.decrease_indent();
+                                            }
+                                            return MatchStatus::Success;
+                                        }
+
+                                        if remap_is_package_path {
+                                            // recursion above clobbered these bufs! slots
+                                            if !is_self_reference {
+                                                abs_path = match self.fs_ref().abs_buf_checked(
+                                                    &[
+                                                        dir_info.abs_path,
+                                                        b"node_modules",
+                                                        import_path,
+                                                    ],
+                                                    bufs!(node_modules_check),
+                                                ) {
+                                                    Some(p) => p,
+                                                    None => {
+                                                        self.extension_order = prev_extension_order;
+                                                        break 'node_modules;
+                                                    }
+                                                };
+                                            }
+                                            esm_ = crate::package_json::Package::parse(
+                                                import_path,
+                                                bufs!(esm_subpath),
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         }

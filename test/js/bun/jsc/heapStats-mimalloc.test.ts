@@ -91,3 +91,55 @@ describe("heapStats() mimalloc integration", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("heapStats() exception safety", () => {
+  // heapStats() JSON-parses mimalloc stats and reads the dump option off its
+  // argument; each of those can throw. BUN_JSC_validateExceptionChecks=1 makes
+  // a debug build abort if one of those throws could go unchecked (release
+  // builds ignore the option and just exercise the paths). The getter/Proxy
+  // cases pin that a user exception from the dump lookup propagates instead of
+  // taking the dump with an exception pending.
+  test("dump option reads and JSON parses keep no pending exception", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const jsc = require("bun:jsc");
+         jsc.heapStats();
+         jsc.heapStats({ dump: true });
+
+         // A rope string reaches the rope-resolving path of the dump mode read.
+         let suffix = "cks";
+         const mode = "blo" + suffix;
+         if (!jsc.isRope(mode)) throw new Error("expected a rope string");
+         const blocks = jsc.heapStats({ dump: mode });
+         if (!Array.isArray(blocks.mimallocDump.heaps)) throw new Error("expected heaps in blocks dump");
+
+         let caught;
+         try {
+           jsc.heapStats({ get dump() { throw new Error("boom"); } });
+         } catch (e) { caught = e.message; }
+         if (caught !== "boom") throw new Error("dump getter error did not propagate: " + caught);
+
+         let trapCaught;
+         try {
+           jsc.heapStats(new Proxy({}, { get() { throw new Error("trap"); } }));
+         } catch (e) { trapCaught = e.message; }
+         if (trapCaught !== "trap") throw new Error("proxy trap error did not propagate: " + trapCaught);
+
+         const after = jsc.heapStats({ dump: true });
+         if (!after.mimallocDump) throw new Error("heapStats broken after thrown dump read");
+         console.log("OK");`,
+      ],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const uncheckedScopes = stderr
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+    expect({ stdout, uncheckedScopes, exitCode }).toEqual({ stdout: "OK\n", uncheckedScopes: [], exitCode: 0 });
+  });
+});

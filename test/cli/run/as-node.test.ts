@@ -87,6 +87,46 @@ describe("fake node cli", () => {
     expect(fakeNodeRun(temp, ["-e", "console.log('pass')"]).stdout).toBe("pass");
   });
 
+  describe("-v / --version", () => {
+    // Engine-version preflights (node-gyp, prepare/postinstall scripts) run
+    // `node --version` through the bun-node shim; it must behave like Node.js
+    // and print `v<process.version>` with exit 0.
+    test.each(["-v", "--version"])("node %s prints process.version", flag => {
+      const temp = tempDirWithFiles("fake-node", {});
+      const result = Bun.spawnSync([bunExe(), "--bun", "node", flag], {
+        cwd: temp,
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdin: Buffer.alloc(0),
+      });
+      expect(result.stderr.toString()).toBe("");
+      expect(result.stdout.toString()).toBe(process.version + "\n");
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("node --version matches node -e 'console.log(process.version)'", () => {
+      const temp = tempDirWithFiles("fake-node", {});
+      const evaled = fakeNodeRun(temp, ["-e", "console.log(process.version)"]).stdout;
+      expect(fakeNodeRun(temp, ["--version"]).stdout).toBe(evaled);
+      expect(fakeNodeRun(temp, ["-v"]).stdout).toBe(evaled);
+    });
+
+    test("node script.js --version passes the flag through to the script", () => {
+      const temp = tempDirWithFiles("fake-node", {
+        "index.js": "console.log(JSON.stringify(process.argv.slice(2)))",
+      });
+      expect(fakeNodeRun(temp, ["index.js", "--version"]).stdout).toBe(JSON.stringify(["--version"]));
+      expect(fakeNodeRun(temp, ["index.js", "-v"]).stdout).toBe(JSON.stringify(["-v"]));
+    });
+
+    test("node -- index.js --version passes the flag through to the script", () => {
+      const temp = tempDirWithFiles("fake-node", {
+        "index.js": "console.log(JSON.stringify(process.argv.slice(2)))",
+      });
+      expect(fakeNodeRun(temp, ["--", "index.js", "--version"]).stdout).toBe(JSON.stringify(["--version"]));
+      expect(fakeNodeRun(temp, ["--", "index.js", "-v"]).stdout).toBe(JSON.stringify(["-v"]));
+    });
+  });
+
   test("process args work", () => {
     using temp = tempDir("fake-node", {
       "index.js": "console.log(JSON.stringify(process.argv.slice(1)))",

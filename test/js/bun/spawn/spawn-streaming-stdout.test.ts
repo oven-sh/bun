@@ -40,10 +40,25 @@ test("spawn can read from stdout multiple chunks", async () => {
     await Promise.all(promises);
     i += concurrency;
     if (maxFD === -1) {
+      // Pipe fds are closed on a background thread after their streams finish,
+      // so the first batch's closes may still be in flight here; poll until the
+      // count settles so the baseline isn't inflated.
       maxFD = getMaxFD();
+      for (let j = 0; j < 100; j++) {
+        await Bun.sleep(10);
+        const settled = getMaxFD();
+        if (settled === maxFD) break;
+        maxFD = settled;
+      }
     }
   }
-  const newMaxFD = getMaxFD();
+  // Same race for the last batch's closes; wait for the fd count to return to
+  // the baseline before asserting.
+  let newMaxFD = getMaxFD();
+  for (let i = 0; i < 100 && newMaxFD !== maxFD; i++) {
+    await Bun.sleep(10);
+    newMaxFD = getMaxFD();
+  }
   expect(newMaxFD).toBe(maxFD);
   clearInterval(interval);
   await expectMaxObjectTypeCount(expect, "ReadableStream", 10);

@@ -5458,9 +5458,10 @@ restart:
         // mid-walk (use-after-free). Same for getters resolved through
         // getIfPropertyExists. Collect the keys with no side effects first, then
         // resolve the values and run the callbacks on the snapshot. Values are
-        // looked up by name on the live structure so a property the callback
-        // deletes is omitted and one it overwrites reports the current value,
-        // like the slow path below and Node.
+        // looked up by name on the live object so a property the callback
+        // overwrites reports its current value and a deleted one is re-resolved
+        // through the prototype chain (the shadowed inherited value if there is
+        // one, otherwise omitted), like the slow path below.
         WTF::Vector<Identifier, 16> snapshot;
 
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
@@ -5494,8 +5495,6 @@ restart:
             unsigned attributes = 0;
             if (objectToUse == object) {
                 propertyValue = objectToUse->getDirect(vm, property, attributes);
-                if (!propertyValue)
-                    continue;
             }
 
             if (!propertyValue || propertyValue.isGetterSetter() && !((attributes & PropertyAttribute::Accessor) != 0)) {

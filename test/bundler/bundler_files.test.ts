@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -581,5 +581,67 @@ describe("bundler files option", () => {
 
     const output = await result.outputs[0].text();
     expect(output).toContain("injected by plugin");
+  });
+
+  // FileMap keys are user-supplied identities and may be relative; run in a
+  // subprocess so an assertion panic fails the test instead of killing the runner.
+  test.concurrent.each(["./e.js", "e.js", "./src/e.js"])(
+    "relative key %j as entry point does not trip the absolute-path assertion",
+    async key => {
+      const script = `
+        const r = await Bun.build({
+          entrypoints: [${JSON.stringify(key)}],
+          files: { ${JSON.stringify(key)}: 'console.log("from relative key")' },
+          target: "bun",
+          throw: false,
+        });
+        if (!r.success) {
+          for (const l of r.logs) console.error(l.message ?? l);
+          process.exit(1);
+        }
+        const out = await r.outputs[0].text();
+        if (!out.includes("from relative key")) {
+          console.error("missing content:", out);
+          process.exit(1);
+        }
+        console.log("ok");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "ok",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.concurrent("relative key as entry point surfaces parse errors without crashing", async () => {
+    const script = `
+      const r = await Bun.build({
+        entrypoints: ["./e.js"],
+        files: { "./e.js": ")" },
+        target: "bun",
+        throw: false,
+      });
+      console.log(JSON.stringify({ success: r.success, logs: r.logs.length }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ success: false, logs: 1 }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

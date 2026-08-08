@@ -14,7 +14,9 @@
 #include "ScriptExecutionContext.h"
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
+#include <JavaScriptCore/InspectorFrontendRouter.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include <JavaScriptCore/JSLock.h>
 #include <wtf/JSONValues.h>
 
 #include "InspectorLifecycleAgent.h"
@@ -208,7 +210,32 @@ public:
 
             // Do not call .disconnect() if we never actually connected.
             if (connection->hasEverConnected) {
-                connection->inspector().disconnect(connection.get());
+                bool hasOtherConnectedFrontends = false;
+                {
+                    Locker<Lock> locker(inspectorConnectionsLock);
+                    if (inspectorConnections) {
+                        auto it = inspectorConnections->find(connection->scriptExecutionContextIdentifier);
+                        if (it != inspectorConnections->end()) {
+                            for (auto& other : it->value) {
+                                if (other.get() != connection.ptr() && other->status == ConnectionStatus::Connected) {
+                                    hasOtherConnectedFrontends = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (hasOtherConnectedFrontends) {
+                    // The controller's disconnectFrontend disables every agent before
+                    // its last-frontend check; remove only this channel while others remain.
+                    auto* globalObject = context.jsGlobalObject();
+                    JSC::JSLockHolder locker(globalObject->vm());
+                    auto& router = const_cast<Inspector::FrontendRouter&>(globalObject->inspectorController().frontendRouter());
+                    router.disconnectFrontend(connection.get());
+                } else {
+                    connection->inspector().disconnect(connection.get());
+                }
             }
 
             if (connection->unrefOnDisconnect) {

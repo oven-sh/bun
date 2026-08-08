@@ -4,6 +4,7 @@ import fs from "fs";
 import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
+import { constants as osConstants } from "node:os";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -1144,4 +1145,38 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     ac.abort();
     expect(errors.map(e => e.code)).toEqual(["ENOENT"]);
   });
+});
+
+it.if(!isWindows)("execFile timeout invokes ChildProcess.kill once", async () => {
+  const child = execFile("sleep", ["10"], { timeout: 300, killSignal: "SIGCONT" }, () => {});
+  const closed = once(child, "close");
+  const originalKill = child.kill.bind(child);
+  const timeoutKillCalls: unknown[] = [];
+  const { promise: timeoutKill, resolve: resolveTimeoutKill } = Promise.withResolvers<void>();
+
+  child.kill = signal => {
+    timeoutKillCalls.push(signal);
+    resolveTimeoutKill();
+    return originalKill(signal);
+  };
+
+  try {
+    await Promise.race([
+      timeoutKill,
+      closed.then(() => {
+        throw new Error("Child closed before execFile timeout kill");
+      }),
+    ]);
+
+    const deadline = Date.now() + 100;
+    while (timeoutKillCalls.length === 1 && Date.now() < deadline) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+
+    expect(timeoutKillCalls).toEqual([osConstants.signals.SIGCONT]);
+    expect(child.exitCode).toBeNull();
+  } finally {
+    originalKill("SIGKILL");
+    await closed;
+  }
 });

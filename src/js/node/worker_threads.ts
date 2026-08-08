@@ -4,8 +4,9 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
 const Readable = require("internal/streams/readable");
+const { internalEventLoopUtilization } = require("internal/perf/event_loop_utilization");
 const Writable = require("internal/streams/writable");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { throwNotImplemented } = require("internal/shared");
 const {
   validateString,
   validateObject,
@@ -98,6 +99,8 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
+const workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
+const { tickInitHooks, newAsyncId } = require("internal/async_hooks_tick");
 
 function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
@@ -128,7 +131,7 @@ function injectFakeEmitter(Class) {
 
   function wrapped(run, listener) {
     return function (event) {
-      return listener(run(event));
+      return listener.$call(this, run(event));
     };
   }
 
@@ -195,7 +198,7 @@ function injectFakeEmitter(Class) {
     // a listener that already fired.
     function onceWrapper(ev) {
       registryFor(target, false)?.get(event)?.delete(listener);
-      return wrapper(ev);
+      return wrapper.$call(target, ev);
     }
     register(this, event, listener, onceWrapper, { once: true });
     return this;
@@ -933,6 +936,7 @@ class Worker extends EventEmitter {
   #stdin;
   #stdout;
   #stderr;
+  #hasRef: boolean | undefined = true;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -947,6 +951,8 @@ class Worker extends EventEmitter {
     // The `= {}` default only covers undefined; normalize null too so the
     // option accesses below don't throw on `new Worker(file, null)`.
     options ??= {};
+
+    if ((options as any).ref === false) this.#hasRef = false;
 
     this.#name = normalizeWorkerName(options.name);
 
@@ -1090,6 +1096,36 @@ class Worker extends EventEmitter {
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
+    this.#emitAsyncHooksInit();
+    if (workerThreadsChannel.hasSubscribers) {
+      workerThreadsChannel.publish({ worker: this });
+    }
+  }
+
+  #emitAsyncHooksInit() {
+    const count = tickInitHooks.length;
+    if (count === 0) return;
+    const worker = this;
+    const resource = {
+      hasRef() {
+        return worker.#hasRef;
+      },
+    };
+    const asyncId = newAsyncId();
+    // Snapshot: enable()/disable() from inside a hook must not affect the
+    // in-flight dispatch (node stages such mutations in tmp_array).
+    const snapshot = $newArrayWithSize<Function>(count);
+    for (let i = 0; i < count; i++) snapshot[i] = tickInitHooks[i];
+    for (let i = 0; i < count; i++) {
+      try {
+        snapshot[i](asyncId, "WORKER", 0, resource);
+      } catch (err) {
+        try {
+          console.error(typeof err?.stack === "string" ? err.stack : err);
+        } catch {}
+        process.exit(1);
+      }
+    }
   }
 
   get threadId() {
@@ -1104,10 +1140,12 @@ class Worker extends EventEmitter {
     // stdio ports are not touched here (node's ref()/unref() only touch the
     // handle and the public port); their ref state tracks in-flight I/O.
     this.#worker.ref();
+    if (!this.#exited) this.#hasRef = true;
   }
 
   unref() {
     this.#worker.unref();
+    if (!this.#exited) this.#hasRef = false;
   }
 
   get stdin() {
@@ -1131,15 +1169,12 @@ class Worker extends EventEmitter {
 
   get performance() {
     return (this.#performance ??= {
-      eventLoopUtilization() {
-        warnNotImplementedOnce("worker_threads.Worker.performance");
-        return {
-          idle: 0,
-          active: 0,
-          utilization: 0,
-        };
-      },
+      eventLoopUtilization: this.#eventLoopUtilization.bind(this),
     });
+  }
+
+  #eventLoopUtilization(utilization1, utilization2) {
+    return internalEventLoopUtilization(this.#worker.eventLoopUtilizationInternal(), utilization1, utilization2);
   }
 
   terminate(callback: unknown) {
@@ -1289,6 +1324,7 @@ class Worker extends EventEmitter {
     this.#stdinPort?.close();
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
+    this.#hasRef = undefined;
   }
 
   #onError(event: ErrorEvent) {
@@ -1297,7 +1333,9 @@ class Worker extends EventEmitter {
     // if not the message is the actual error
     const message = event.message;
     if (message !== "") {
+      const code = error?.code;
       error = new Error(message, { cause: event });
+      if (typeof code === "string") error.code = code;
       const stack = event?.stack;
       if (stack) {
         error.stack = stack;

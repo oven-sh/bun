@@ -125,6 +125,32 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--cpu-prof-name is inherited by workers, as node does", async () => {
+    using dir = tempDir("cpu-prof-name-worker", {
+      "test.js": `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(\`const end = Date.now() + 100; while (Date.now() < end) {}\`, { eval: true });
+        const end = Date.now() + 100;
+        while (Date.now() < end) {}
+        await new Promise(r => w.on("exit", r));
+      `,
+    });
+
+    const customName = "main.cpuprofile";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-name", customName, "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+
+    const profiles = readdirSync(String(dir)).filter(f => f.endsWith(".cpuprofile"));
+    expect(profiles).toEqual([customName]);
+    expect(exitCode).toBe(0);
+  });
+
   // On Windows the path buffer is ~98 KB and the CreateProcess command-line
   // limit is ~32 KB, so an overflowing CLI argument cannot be delivered. On
   // POSIX 5000 bytes exceeds the fixed path buffer (Linux 4096, macOS 1024);

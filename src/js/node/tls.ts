@@ -1683,8 +1683,8 @@ function cacheDefaultCACertificates() {
     ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
   }
 
-  // Include system certificates when --use-system-ca is set or NODE_USE_SYSTEM_CA=1
-  if (getUseSystemCA() || process.env.NODE_USE_SYSTEM_CA === "1") {
+  const useSystemCA = getUseSystemCA();
+  if (useSystemCA === true || (useSystemCA === undefined && process.env.NODE_USE_SYSTEM_CA === "1")) {
     const system = cacheSystemCACertificates();
     for (let i = 0; i < system.length; ++i) {
       ArrayPrototypePush.$call(defaultCACertificates, system[i]);

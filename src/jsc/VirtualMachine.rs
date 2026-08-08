@@ -83,6 +83,8 @@ pub struct InitOptions {
     /// The CLI's `api.TransformOptions`. Consumed by `RuntimeHooks::init_runtime_state`
     /// → `Transpiler::init(.., configureTransformOptionsForBunVM(args), ..)`.
     pub transform_options: bun_options_types::schema::api::TransformOptions,
+    /// Explicit CA intent for this VM; `None` lets NODE_USE_SYSTEM_CA decide.
+    pub use_system_ca: Option<bool>,
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
     pub debugger: bun_options_types::context::Debugger,
     /// When `Some`, [`init`] adopts
@@ -125,6 +127,7 @@ impl Default for InitOptions {
             store_fd: false,
             smol: false,
             eval_mode: false,
+            use_system_ca: None,
             is_main_thread: false,
             worker_ptr: core::ptr::null_mut(),
             context_id: None,
@@ -224,6 +227,10 @@ pub struct VirtualMachine {
     /// only leak the hook's `ctx` allocation.
     pub(crate) has_run_cleanup_hooks: bool,
     pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
+    /// Explicit `--use-system-ca` / `--no-use-system-ca` for THIS thread, or
+    /// `None` when neither was given and NODE_USE_SYSTEM_CA decides. Node makes
+    /// this an Environment option, so a Worker's execArgv can differ.
+    pub use_system_ca: Option<bool>,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -277,6 +284,8 @@ pub struct VirtualMachine {
     pub argv: Vec<Box<[u8]>>,
 
     pub origin_timer: std::time::Instant,
+    /// When THIS thread's loop started, for performance.eventLoopUtilization().
+    pub loop_start: std::time::Instant,
     pub(crate) origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
@@ -1518,6 +1527,8 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
+        self.global().clear_termination_exception();
+
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
             self.is_inside_deferred_task_queue.set(true);
@@ -1683,6 +1694,16 @@ extern crate alloc;
 /// casts back on the other side of each hook.
 pub type RuntimeState = *mut c_void;
 
+/// The subset of a Worker's `execArgv` that bun acts on. Flags whose value must
+/// outlive the parse (--cpu-prof-dir/-name) are absent; nothing needs them yet.
+#[derive(Default, Clone, Copy)]
+pub struct WorkerExecArgv {
+    pub allow_addons: Option<bool>,
+    pub use_system_ca: Option<bool>,
+    pub cpu_prof: bool,
+    pub cpu_prof_interval: Option<u32>,
+}
+
 pub struct RuntimeHooks {
     /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
     /// `configureDebugger()` — everything `init()` does that names a
@@ -1804,16 +1825,9 @@ pub struct RuntimeHooks {
         transpiler: *mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
-    /// Parse `execArgv` against the `RunCommand`
-    /// param table and return the resulting `allow_addons` value
-    /// (`!args.flag("--no-addons")`), or `None` if parsing failed.
-    /// The param table lives in
-    /// `bun_runtime::cli` (forward-dep). Only `--no-addons` is honoured;
-    /// the caller writes the returned bool back into
-    /// `transform_options.allow_addons` so the override semantics
-    /// ("override the existing even if it was set") match.
-    pub parse_worker_exec_argv_allow_addons:
-        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<bool>,
+    /// Parse `execArgv` against the `RunCommand` param table (lives in `bun_runtime::cli`, forward-dep).
+    /// Caller writes `allow_addons` back into `transform_options` and applies `cpu_prof` to the worker VM.
+    pub parse_worker_exec_argv: unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> WorkerExecArgv,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub cron_clear_all_teardown: fn(vm: &mut VirtualMachine),
@@ -2032,6 +2046,11 @@ fn get_origin_timestamp() -> u64 {
     (now - ORIGIN_RELATIVE_EPOCH).max(0) as u64
 }
 
+fn process_origin() -> (std::time::Instant, u64) {
+    static ORIGIN: std::sync::OnceLock<(std::time::Instant, u64)> = std::sync::OnceLock::new();
+    *ORIGIN.get_or_init(|| (std::time::Instant::now(), get_origin_timestamp()))
+}
+
 impl VirtualMachine {
     /// `VirtualMachine.init(opts)` — allocate + wire the per-thread VM.
     ///
@@ -2114,6 +2133,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::empty());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
+            addr_of_mut!((*vm).use_system_ca).write(opts.use_system_ca);
             // Left at the
             // zeroed default this aliases `hot_reload_counter`'s initial 0, so a
             // watcher event that races the very first entry-point load makes
@@ -2123,8 +2143,10 @@ impl VirtualMachine {
             addr_of_mut!((*vm).pending_internal_promise_reported_at).write(u32::MAX);
             addr_of_mut!((*vm).on_unhandled_rejection)
                 .write(VirtualMachine::default_on_unhandled_rejection);
-            addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
-            addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
+            addr_of_mut!((*vm).loop_start).write(std::time::Instant::now());
+            let (origin_timer, origin_timestamp) = process_origin();
+            addr_of_mut!((*vm).origin_timer).write(origin_timer);
+            addr_of_mut!((*vm).origin_timestamp).write(origin_timestamp);
             addr_of_mut!((*vm).smol).write(opts.smol);
             // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
             // payload contains a `bool`, and rustc picks that field's invalid
@@ -2827,6 +2849,8 @@ pub struct Options {
     // configuration is plumbed through `RuntimeHooks::ensure_debugger` (the
     // CLI option struct lives in `bun_cli`, a forward dep). See
     // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
+    /// Explicit CA intent; `None` lets NODE_USE_SYSTEM_CA decide.
+    pub use_system_ca: Option<bool>,
     pub is_main_thread: bool,
 }
 
@@ -3606,6 +3630,7 @@ impl VirtualMachine {
             mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
+            use_system_ca: opts.use_system_ca,
             ..Default::default()
         };
         let vm = Self::init(init_opts)?;
@@ -3636,6 +3661,7 @@ impl VirtualMachine {
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
+            use_system_ca: opts.use_system_ca,
             // The global is created
             // with `worker.cpp_worker`, `worker.execution_context_id`,
             // and `worker.mini` so the C++ ZigGlobalObject is born with its
@@ -3682,6 +3708,7 @@ impl VirtualMachine {
             mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
+            use_system_ca: opts.use_system_ca,
             ..Default::default()
         };
         // Note: shares the console / log / event-loop wiring with `init`;

@@ -61,17 +61,39 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 
-/// Lives here (not in `src/bun.rs`)
-/// because the flag it reads — `cli::Arguments::Bun__Node__UseSystemCA` — is
-/// owned by `bun_runtime`; placing the body in a lower crate would invert the
-/// dependency edge.
+/// `undefined` ⇒ neither flag given, NODE_USE_SYSTEM_CA decides; only `--no-use-system-ca` beats the env var.
 pub(crate) fn bun_get_use_system_ca(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let v =
-        crate::cli::Arguments::Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed);
-    Ok(JSValue::js_boolean(v))
+    Ok(
+        match bun_jsc::virtual_machine::VirtualMachine::get().use_system_ca {
+            Some(v) => JSValue::js_boolean(v),
+            None => JSValue::UNDEFINED,
+        },
+    )
+}
+
+/// `[elapsedSinceLoopStartMs, idleMs]` for THIS thread's loop — the two numbers
+/// performance.eventLoopUtilization() is defined in terms of (node derives
+/// active as now - loopStart - idle).
+pub(crate) fn bun_get_loop_elu(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+    // SAFETY: the VM owns this loop and this runs on its thread. Raw *mut, no
+    // &Loop — a &mut PosixLoop is live above us via tick_with_timeout for the
+    // whole tick (see the re-export comment in Loop.rs).
+    let loop_ptr = unsafe { (*vm.event_loop).usockets_loop() };
+    if loop_ptr.is_null() {
+        return Ok(JSValue::NULL);
+    }
+    // SAFETY: `loop_ptr` was just null-checked and stays valid for this tick
+    // under the same ownership argument as above.
+    let idle_ms = unsafe { bun_uws::us_loop_idle_ns(loop_ptr) } as f64 / 1_000_000.0;
+    let elapsed_ms = vm.loop_start.elapsed().as_secs_f64() * 1000.0;
+    let arr = JSValue::create_empty_array(global, 2)?;
+    arr.put_index(global, 0, JSValue::js_number(elapsed_ms))?;
+    arr.put_index(global, 1, JSValue::js_number(idle_ms))?;
+    Ok(arr)
 }
 
 mod css {

@@ -75,6 +75,7 @@ impl ReplCommand {
         // not take a caller-provided allocator in the Rust port; `vm.arena` is
         // set below).
         let vm: *mut VirtualMachine = VirtualMachine::init(jsc::VirtualMachineInitOptions {
+            use_system_ca: crate::cli::Arguments::main_use_system_ca(),
             transform_options: core::mem::take(&mut ctx.args),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
             log: core::ptr::NonNull::new(ctx.log),

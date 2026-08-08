@@ -16,6 +16,7 @@ pub(crate) enum ProfilerError {
     FilenameTooLong,
 }
 
+#[derive(Clone, Copy)]
 pub struct CPUProfilerConfig {
     // CLI-arg-backed and
     // process-lifetime, so `&'static` is sound (no struct lifetime params).
@@ -24,6 +25,9 @@ pub struct CPUProfilerConfig {
     pub md_format: bool,
     pub json_format: bool,
     pub interval: u32,
+    /// 0 for the main thread; a worker's execution context id otherwise. Only
+    /// used to keep concurrently-written default filenames distinct.
+    pub thread_id: u32,
 }
 
 impl Default for CPUProfilerConfig {
@@ -34,6 +38,7 @@ impl Default for CPUProfilerConfig {
             md_format: false,
             json_format: false,
             interval: 1000,
+            thread_id: 0,
         }
     }
 }
@@ -177,7 +182,7 @@ fn build_output_path(
             }
         }
     } else {
-        generate_default_filename(&mut filename_buf, is_md_format)?
+        generate_default_filename(&mut filename_buf, is_md_format, config.thread_id)?
     };
 
     if !config.dir.is_empty() {
@@ -195,10 +200,11 @@ fn build_output_path(
 fn generate_default_filename(
     buf: &mut PathBuffer,
     md_format: bool,
+    thread_id: u32,
 ) -> Result<&[u8], ProfilerError> {
     let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
-    write_diagnostic_filename(&mut cursor, "CPU", extension)
+    write_diagnostic_filename(&mut cursor, "CPU", extension, thread_id)
         .map_err(|_| ProfilerError::FilenameTooLong)?;
     let len = usize::try_from(cursor.position()).expect("int cast");
     Ok(&buf[..len])
@@ -210,6 +216,7 @@ pub(crate) fn write_diagnostic_filename(
     cursor: &mut dyn std::io::Write,
     prefix: &str,
     extension: &str,
+    tid: u32,
 ) -> std::io::Result<()> {
     #[cfg(windows)]
     let pid = bun_sys::windows::GetCurrentProcessId();
@@ -224,7 +231,7 @@ pub(crate) fn write_diagnostic_filename(
 
     write!(
         cursor,
-        "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.0.{seq:03}{extension}"
+        "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.{tid}.{seq:03}{extension}"
     )
 }
 

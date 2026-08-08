@@ -1135,16 +1135,38 @@ pub enum URLProto {
 
 impl Display for URLFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}://",
-            match self.proto {
-                URLProto::Http => "http",
-                URLProto::Https => "https",
-                URLProto::Unix => "unix",
-                URLProto::Abstract => "abstract",
+        if matches!(self.proto, URLProto::Unix | URLProto::Abstract) {
+            f.write_str(if self.proto == URLProto::Unix {
+                "unix://"
+            } else {
+                "abstract://"
+            })?;
+            let is_abstract = self.proto == URLProto::Abstract;
+            for &b in self.hostname.unwrap_or(b"") {
+                // RFC 3986 unreserved set, plus '/' for unix paths.
+                if b.is_ascii_alphanumeric()
+                    || matches!(b, b'-' | b'.' | b'_' | b'~')
+                    || (b == b'/' && !is_abstract)
+                {
+                    f.write_char(b as char)?;
+                } else {
+                    let h = hex_byte_upper(b);
+                    f.write_char('%')?;
+                    f.write_char(h[0] as char)?;
+                    f.write_char(h[1] as char)?;
+                }
             }
-        )?;
+            if is_abstract {
+                f.write_char('/')?;
+            }
+            return Ok(());
+        }
+
+        f.write_str(if self.proto == URLProto::Https {
+            "https://"
+        } else {
+            "http://"
+        })?;
 
         if let Some(hostname) = self.hostname {
             let needs_brackets =
@@ -1156,10 +1178,6 @@ impl Display for URLFormatter<'_> {
             }
         } else {
             f.write_str("localhost")?;
-        }
-
-        if self.proto == URLProto::Unix {
-            return Ok(());
         }
 
         let is_port_optional = self.port.is_none()

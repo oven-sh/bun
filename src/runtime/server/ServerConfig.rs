@@ -1239,16 +1239,30 @@ impl ServerConfig {
             return Err(JsError::Thrown);
         }
 
-        if let Some(unix) = arg.get_stringish(global, "unix")? {
-            let unix_str = unix.to_utf8();
-            if !unix_str.slice().is_empty() {
+        if let Some(unix) = arg.get(global, "unix")? {
+            if !unix.is_undefined_or_null() {
+                let path = if unix.is_string() {
+                    let s = unix.to_slice(global)?;
+                    bun_core::ZBox::from_bytes(s.slice())
+                } else if unix.is_cell() && unix.js_type() == bun_jsc::JSType::Uint8Array {
+                    match unix.as_array_buffer(global) {
+                        Some(ab) => bun_core::ZBox::from_bytes(ab.byte_slice()),
+                        None => bun_core::ZBox::from_bytes(b""),
+                    }
+                } else {
+                    return Err(global.throw_invalid_property_type(b"unix", "string", unix));
+                };
+                if path.as_bytes().is_empty() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Expected \"unix\" to be a non-empty string for a Unix domain socket path",
+                    )));
+                }
                 if has_hostname {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Cannot specify both hostname and unix",
                     )));
                 }
-
-                args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
+                args.address = Address::Unix(path);
             }
         }
         if global.has_exception() {

@@ -1,6 +1,6 @@
 import { file, serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, tmpdirSync } from "harness";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -112,17 +112,18 @@ describe.each([
     options: {
       unix: unix,
     },
-    url: isWindows
-      ? {
-          protocol: "unix:",
-          pathname: unix.substring(unix.indexOf(":") + 1),
-          hostname: unix.substring(0, unix.indexOf(":")),
-          port: "",
-        }
-      : {
-          protocol: "unix:",
-          pathname: unix,
-        },
+    url: (() => {
+      const encoded = unix.replace(/[^A-Za-z0-9\-._~/]/g, c =>
+        Array.from(new TextEncoder().encode(c), b => "%" + b.toString(16).toUpperCase().padStart(2, "0")).join(""),
+      );
+      const u = new URL("unix://" + encoded);
+      return {
+        protocol: "unix:",
+        hostname: u.hostname,
+        pathname: u.pathname,
+        port: "",
+      };
+    })(),
   },
 ])("Bun.serve()", ({ if: enabled = true, options, hostname, url }) => {
   const title = Bun.inspect(options).replaceAll("\n", " ");

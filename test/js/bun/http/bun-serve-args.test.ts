@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "../../../harness";
+import { isWindows, tempDir, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -84,22 +84,12 @@ describe("hostname and port works", () => {
     {
       port: 0,
       hostname: undefined,
-      unix: "",
+      unix: undefined,
     },
     {
       port: 0,
       hostname: null,
-      unix: "",
-    },
-    {
-      port: 0,
-      hostname: null,
-      unix: Buffer.from(""),
-    },
-    {
-      port: 0,
-      hostname: Buffer.from(defaultHostname),
-      unix: Buffer.from(""),
+      unix: null,
     },
     {
       port: 0,
@@ -125,6 +115,99 @@ describe("hostname and port works", () => {
       server.stop();
     });
   }
+});
+
+describe("unix option validation", () => {
+  test("empty string throws instead of silently binding TCP", () => {
+    expect(() =>
+      serve({
+        // @ts-expect-error
+        unix: "",
+        fetch: () => new Response("ok"),
+      }),
+    ).toThrow(/non-empty string/);
+  });
+
+  test("empty Buffer throws", () => {
+    expect(() =>
+      serve({
+        // @ts-expect-error
+        unix: Buffer.from(""),
+        fetch: () => new Response("ok"),
+      }),
+    ).toThrow(/non-empty string/);
+  });
+
+  test.each([
+    [42],
+    [{}],
+    [true],
+    [["sock"]],
+    [() => {}],
+    [{ toString: () => "coerced.sock" }],
+    [new ArrayBuffer(8)],
+    [new DataView(new ArrayBuffer(4))],
+    [new Float32Array([1.5])],
+    [new Uint16Array([1, 2])],
+  ])("non-string %p throws TypeError", value => {
+    expect(() =>
+      serve({
+        // @ts-expect-error
+        unix: value,
+        fetch: () => new Response("ok"),
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
+  test("Uint8Array is read as raw path bytes", () => {
+    using dir = tempDir("unix-opt-u8a", {});
+    const p = String(dir) + "/u8a.sock";
+    using server = serve({
+      // @ts-expect-error
+      unix: new Uint8Array(Buffer.from(p)),
+      fetch: () => new Response("ok"),
+    });
+    // @ts-expect-error
+    expect(server.address + "").toBe(p);
+  });
+
+  test.each([undefined, null])("%p is treated as absent (TCP)", value => {
+    using server = serve({
+      port: 0,
+      // @ts-expect-error
+      unix: value,
+      fetch: () => new Response("ok"),
+    });
+    expect(server.port).toBeGreaterThan(0);
+    expect(server.url.protocol).toBe("http:");
+  });
+
+  test.skipIf(isWindows)("server.url never throws for unix paths with special characters", () => {
+    using dir = tempDir("unix-opt-special", {});
+    for (const name of ["my app.sock", "a#b.sock", "a?b.sock", "a@b.sock"]) {
+      const p = String(dir) + "/" + name;
+      using server = serve({ unix: p, fetch: () => new Response("ok") });
+      const url = server.url;
+      expect(url).toBeInstanceOf(URL);
+      expect(url.protocol).toBe("unix:");
+      expect(decodeURIComponent(url.pathname)).toBe(p);
+    }
+  });
+
+  test.skipIf(isWindows)("server.url never throws for a relative unix path with a space", () => {
+    using dir = tempDir("unix-opt-rel", {});
+    const cwd = process.cwd();
+    process.chdir(String(dir));
+    try {
+      using server = serve({ unix: "my app.sock", fetch: () => new Response("ok") });
+      const url = server.url;
+      expect(url).toBeInstanceOf(URL);
+      expect(url.protocol).toBe("unix:");
+      expect(decodeURIComponent(url.hostname)).toBe("my app.sock");
+    } finally {
+      process.chdir(cwd);
+    }
+  });
 });
 
 describe("Bun.serve error handling", () => {
@@ -698,32 +781,31 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 
-  test("unix socket path coercion", () => {
-    // Number should coerce to string
-    using server = serve({
-      // @ts-expect-error - Testing runtime coercion
-      unix: Math.ceil(Math.random() * 100000000),
-      fetch() {
-        return new Response("ok");
-      },
-    });
-    server.stop();
+  test("unix socket path coercion is rejected", () => {
+    expect(() =>
+      serve({
+        // @ts-expect-error - Testing runtime coercion
+        unix: Math.ceil(Math.random() * 100000000),
+        fetch() {
+          return new Response("ok");
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
 
-    // Object with toString()
     const pathObj = {
       toString() {
         return Math.random().toString(32).slice(2, 15) + ".sock";
       },
     };
-
-    using server2 = serve({
-      // @ts-expect-error - Testing runtime coercion
-      unix: pathObj,
-      fetch() {
-        return new Response("ok");
-      },
-    });
-    server2.stop();
+    expect(() =>
+      serve({
+        // @ts-expect-error - Testing runtime coercion
+        unix: pathObj,
+        fetch() {
+          return new Response("ok");
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
   });
 
   test("invalid unix socket path coercion should throw", () => {

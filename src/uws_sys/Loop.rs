@@ -328,19 +328,6 @@ impl PosixLoop {
         Handler { loop_: this }
     }
 
-    /// # Safety
-    /// `this` must be the live C-allocated loop pointer returned by
-    /// `us_create_loop`/`uws_get_loop` (not derived from a `&mut` reborrow).
-    pub unsafe fn add_pre_handler(
-        this: *mut Self,
-        ctx: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler {
-        // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
-        unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
-        Handler { loop_: this }
-    }
-
     pub fn run(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_run(self) };
@@ -571,19 +558,6 @@ impl WindowsLoop {
         unsafe { c::uws_loop_addPostHandler(this, ctx, callback) };
         Handler { loop_: this }
     }
-
-    /// # Safety
-    /// `this` must be the live C-allocated loop pointer returned by
-    /// `us_create_loop`/`uws_get_loop_with_native` (not derived from a `&mut` reborrow).
-    pub unsafe fn add_pre_handler(
-        this: *mut Self,
-        ctx: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler {
-        // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
-        unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
-        Handler { loop_: this }
-    }
 }
 
 // ───────────────────────────── Loop alias ─────────────────────────────
@@ -625,7 +599,6 @@ mod c {
         pub(super) fn us_loop_pump(loop_: *mut Loop);
         pub fn us_wakeup_loop(loop_: *mut Loop);
         pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         #[cfg(not(windows))]
         pub(super) fn us_loop_run_bun_tick(
             loop_: *mut Loop,

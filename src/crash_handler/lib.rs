@@ -87,7 +87,6 @@ pub mod debug {
         bun_core::capture_stack_trace(begin, addrs)
     }
 
-    pub(crate) const HAVE_ERROR_RETURN_TRACING: bool = false;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub(crate) const STRIP_DEBUG_INFO: bool = !cfg!(debug_assertions);
 
@@ -1248,10 +1247,7 @@ mod draft {
     /// This is called when `main` returns an error.
     /// We don't want to treat it as a crash under certain error codes.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn handle_root_error(
-        err: impl bun_core::output::ErrName,
-        error_return_trace: Option<&StackTrace>,
-    ) -> ! {
+    pub fn handle_root_error(err: impl bun_core::output::ErrName) -> ! {
         use bun_core::{err_generic, pretty_error};
 
         /// bun_sys::posix has no rlimit yet —
@@ -1268,7 +1264,7 @@ mod draft {
             }
         }
 
-        let mut show_trace = Environment::SHOW_CRASH_TRACE;
+        let show_trace = Environment::SHOW_CRASH_TRACE;
         let name: &[u8] = err.name();
 
         if name == b"OutOfMemory" {
@@ -1409,7 +1405,6 @@ mod draft {
                         "An unknown error occurred <d>(<red>{}<r><d>)<r>",
                         bstr::BStr::new(name),
                     );
-                    show_trace = true;
                 }
             }
             #[cfg(not(unix))]
@@ -1418,7 +1413,6 @@ mod draft {
                     "An unknown error occurred <d>(<red>{}<r><d>)<r>",
                     bstr::BStr::new(name),
                 );
-                show_trace = true;
             }
         } else if matches!(name, b"ENOENT" | b"FileNotFound") {
             Output::err(
@@ -1440,12 +1434,6 @@ mod draft {
                     bstr::BStr::new(name)
                 );
             }
-            show_trace = true;
-        }
-
-        if show_trace {
-            VERBOSE_ERROR_TRACE.store(show_trace, Ordering::Relaxed);
-            handle_error_return_trace_extra::<true>(name, error_return_trace);
         }
 
         Global::exit(1);
@@ -2573,26 +2561,6 @@ mod draft {
         }
     }
 
-    impl fmt::Display for StackLine {
-        fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let addr_display: u64 = if cfg!(target_os = "macos") {
-                self.address as u64 + 0x100000000
-            } else {
-                self.address as u64
-            };
-            write!(
-                writer,
-                "0x{:x}{}{}",
-                addr_display,
-                if self.object.is_some() { " @ " } else { "" },
-                self.object
-                    .as_deref()
-                    .map(bstr::BStr::new)
-                    .unwrap_or_default(),
-            )
-        }
-    }
-
     struct TraceString<'a> {
         trace: &'a StackTrace<'a>,
         reason: CrashReason,
@@ -3026,85 +2994,6 @@ mod draft {
             // Do NOT call MSVCRT `libc::abort()` here — that raises SIGABRT, may print
             // the CRT `abort() has been called` message, and can invoke WER.
             abort()
-        }
-    }
-
-    pub static VERBOSE_ERROR_TRACE: AtomicBool = AtomicBool::new(false);
-
-    #[cold]
-    #[inline(never)]
-    fn cold_handle_error_return_trace<const IS_ROOT: bool>(err_name: &[u8], trace: &StackTrace) {
-        // The format of the panic trace is slightly different in debug
-        // builds Mainly, we demangle the backtrace immediately instead
-        // of using a trace string.
-        //
-        // To make the release-mode behavior easier to demo, debug mode
-        // checks for this CLI flag.
-        let is_debug = cfg!(debug_assertions)
-            && 'check_flag: {
-                for arg in Output::argv() {
-                    if arg == b"--debug-crash-handler-use-trace-string" {
-                        break 'check_flag false;
-                    }
-                }
-                true
-            };
-
-        if is_debug {
-            if IS_ROOT {
-                // SAFETY: read-only access
-                if VERBOSE_ERROR_TRACE.load(Ordering::Relaxed) {
-                    bun_core::note!("Release build will not have this trace by default:");
-                }
-            } else {
-                bun_core::pretty_errorln!(
-                    "<blue>note<r><d>:<r> caught error.{}:",
-                    bstr::BStr::new(err_name)
-                );
-            }
-            Output::flush();
-            dump_stack_trace(trace, WriteStackTraceLimits::default());
-        } else {
-            // SAFETY: `err_name` outlives the local `TraceString` it is formatted through.
-            let reason =
-                CrashReason::ZigError(unsafe { bun_collections::detach_lifetime(err_name) });
-            let ts = TraceString {
-                trace,
-                reason,
-                action: TraceStringAction::ViewTrace,
-            };
-            if IS_ROOT {
-                bun_core::pretty_errorln!(
-                    "\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n <cyan>{}<r>\n",
-                    ts,
-                );
-            } else {
-                bun_core::pretty_errorln!(
-                    "<cyan>trace<r>: error.{}: <d>{}<r>",
-                    bstr::BStr::new(err_name),
-                    ts,
-                );
-            }
-        }
-    }
-
-    #[inline]
-    fn handle_error_return_trace_extra<const IS_ROOT: bool>(
-        err_name: &[u8],
-        maybe_trace: Option<&StackTrace>,
-    ) {
-        // Rust has no error-return tracing; `HAVE_ERROR_RETURN_TRACING` is const
-        // false, so this path is currently dead.
-        if !debug::HAVE_ERROR_RETURN_TRACING {
-            return;
-        }
-        // SAFETY: read-only access
-        if !VERBOSE_ERROR_TRACE.load(Ordering::Relaxed) && !IS_ROOT {
-            return;
-        }
-
-        if let Some(trace) = maybe_trace {
-            cold_handle_error_return_trace::<IS_ROOT>(err_name, trace);
         }
     }
 

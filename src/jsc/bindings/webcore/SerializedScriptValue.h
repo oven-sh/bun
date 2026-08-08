@@ -43,7 +43,6 @@
 namespace JSC {
 namespace Wasm {
 class Module;
-class MemoryHandle;
 }
 }
 #endif
@@ -81,7 +80,6 @@ enum class FastPath : uint8_t {
 
 class MessagePort;
 class CloneSerializer;
-class FragmentedSharedBuffer;
 enum class SerializationReturnCode;
 
 enum class SerializationErrorMode { NonThrowing,

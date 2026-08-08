@@ -156,13 +156,6 @@ static bool equal(napi_async_cleanup_hook_handle one, napi_async_cleanup_hook_ha
         Bun__crashHandler(message "", sizeof(message "") - 1); \
     } while (0)
 
-#define NAPI_PERISH(...)                                                      \
-    do {                                                                      \
-        WTFReportError(__FILE__, __LINE__, __PRETTY_FUNCTION__, __VA_ARGS__); \
-        WTFReportBacktrace();                                                 \
-        NAPI_ABORT("Aborted");                                                \
-    } while (0)
-
 #define NAPI_RELEASE_ASSERT(assertion, ...)                                                                         \
     do {                                                                                                            \
         if (!(assertion)) [[unlikely]] {                                                                            \

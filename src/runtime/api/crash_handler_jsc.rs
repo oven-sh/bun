@@ -199,7 +199,7 @@ pub(crate) mod js_bindings {
 
     #[bun_jsc::host_fn]
     fn js_root_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        crash_handler::handle_root_error("Unexpected", None);
+        crash_handler::handle_root_error("Unexpected");
     }
 
     #[bun_jsc::host_fn]

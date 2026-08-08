@@ -753,6 +753,7 @@ pub(crate) fn run_scripts_with_filter(
 
     // Get list of packages that match the configuration
     let mut scripts: Vec<ScriptConfig> = Vec::new();
+    let mut matched_packages: usize = 0;
     // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
     while let Some(package_json_path) = package_json_iter.next()? {
         let dirpath =
@@ -795,6 +796,7 @@ pub(crate) fn run_scripts_with_filter(
             run_in_bun,
         )?;
 
+        let before = scripts.len();
         for (i, name) in [&pre_script_name[..], script_name, &post_script_name[..]]
             .iter()
             .enumerate()
@@ -856,6 +858,9 @@ pub(crate) fn run_scripts_with_filter(
                 PATH: Box::<[u8]>::from(&path_var[..]),
                 elide_count: ctx.bundler_options.elide_lines,
             });
+        }
+        if scripts.len() > before {
+            matched_packages += 1;
         }
     }
 
@@ -946,6 +951,9 @@ pub(crate) fn run_scripts_with_filter(
     let state_ptr: bun_ptr::BackRef<State, bun_ptr::Mut> =
         unsafe { bun_ptr::BackRef::from_raw_mut(core::ptr::addr_of_mut!(state)) };
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
+    // Inherit stdin only when one package matched (its pre/main/post run
+    // sequentially); multiple packages run concurrently and would race on fd 0.
+    let single_package = matched_packages == 1;
     for script in scripts.iter() {
         handles_vec.push(ProcessHandle {
             state: state_ptr,
@@ -955,7 +963,11 @@ pub(crate) fn run_scripts_with_filter(
             buffer: Vec::new(),
             process: None,
             options: SpawnOptions {
-                stdin: spawn::Stdio::Ignore,
+                stdin: if single_package {
+                    spawn::Stdio::Inherit
+                } else {
+                    spawn::Stdio::Ignore
+                },
                 #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]

@@ -633,6 +633,117 @@ describe("bun", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/10647
+  describe("stdin", () => {
+    const readJs = `
+      let data = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", chunk => data += chunk);
+      process.stdin.on("end", () => console.log("STDIN=[" + data.trim() + "]"));
+    `;
+
+    test("is inherited when a single script matches the filter", async () => {
+      const dir = tempDirWithFiles("filter-stdin-one", {
+        packages: {
+          pkga: {
+            "read.js": readJs,
+            "package.json": JSON.stringify({
+              name: "pkga",
+              scripts: { readstdin: `${bunExe()} run read.js` },
+            }),
+          },
+        },
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--filter", "pkga", "readstdin"],
+        cwd: dir,
+        env: bunEnv,
+        stdin: new Blob(["hello-from-parent\n"]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({
+        stdout: expect.stringContaining("STDIN=[hello-from-parent]"),
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("is inherited for a single package even with pre/post hooks", async () => {
+      const dir = tempDirWithFiles("filter-stdin-hooks", {
+        packages: {
+          pkga: {
+            "read.js": readJs,
+            "package.json": JSON.stringify({
+              name: "pkga",
+              scripts: {
+                prereadstdin: "echo pre",
+                readstdin: `${bunExe()} run read.js`,
+                postreadstdin: "echo post",
+              },
+            }),
+          },
+        },
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--filter", "pkga", "readstdin"],
+        cwd: dir,
+        env: bunEnv,
+        stdin: new Blob(["hello-from-parent\n"]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("STDIN=[hello-from-parent]");
+      expect(exitCode).toBe(0);
+    });
+
+    test("is ignored (EOF) when multiple scripts match the filter", async () => {
+      const dir = tempDirWithFiles("filter-stdin-many", {
+        packages: {
+          pkga: {
+            "read.js": readJs,
+            "package.json": JSON.stringify({
+              name: "pkga",
+              scripts: { readstdin: `${bunExe()} run read.js` },
+            }),
+          },
+          pkgb: {
+            "read.js": readJs,
+            "package.json": JSON.stringify({
+              name: "pkgb",
+              scripts: { readstdin: `${bunExe()} run read.js` },
+            }),
+          },
+        },
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--filter", "*", "readstdin"],
+        cwd: dir,
+        env: bunEnv,
+        stdin: new Blob(["hello-from-parent\n"]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Both children run concurrently; neither should see the parent's stdin
+      // (it goes to /dev/null so each sees immediate EOF).
+      expect(stderr).toBe("");
+      expect(stdout).toContain("pkga readstdin: STDIN=[]");
+      expect(stdout).toContain("pkgb readstdin: STDIN=[]");
+      expect(stdout).not.toContain("hello-from-parent");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("warning names which package.json failed to parse", async () => {
     await using dir = tempDir("filter-bad-pkgjson", {
       packages: {

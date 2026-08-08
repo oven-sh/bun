@@ -1011,10 +1011,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
 
             const auto identifier = Identifier::fromString(vm, str);
             PropertySlot slot(target, PropertySlot::InternalMethodType::GetOwnProperty);
-            // Re-read the Structure on every lookup: a getter for an earlier
-            // parameter can add/delete properties, and the old Structure's
-            // offsets would then point at a different property's value (or an
-            // empty slot).
+            // Getters for earlier parameters can mutate the object, so the Structure must be re-read per lookup.
             if (!target->getOwnNonIndexPropertySlot(vm, target->structure(), identifier, slot)) {
                 return {};
             }
@@ -1086,13 +1083,8 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             JSValue value;
             bool hasProperty = false;
 
-            // Re-read the Structure on every iteration, and re-decide whether
-            // the getter-free fast path applies: a getter for an earlier
-            // parameter (including an index getter reached through
-            // getDirectIndex) can add/delete properties, transitioning the
-            // Structure. A lookup through the old Structure reads whatever now
-            // lives at the stale offset: a different property's value, or an
-            // empty slot.
+            // Getters for earlier parameters can mutate the object, so the
+            // Structure and the fast-path check must be re-done per parameter.
             Structure* structure = target->structure();
             if (property.isEmpty()) {
                 value = target->getDirectIndex(globalObject, i);

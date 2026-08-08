@@ -11,10 +11,13 @@ Bun relies on pre-existing configuration files like `package.json` and `tsconfig
 
 Put `bunfig.toml` in your project root, alongside your `package.json`.
 
-To configure Bun globally, you can also create a `.bunfig.toml` file at one of the following paths:
+To configure Bun globally, you can also create a `bunfig.toml` file at one of the following paths. Bun first resolves the XDG config base (per the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/)) — `$XDG_CONFIG_HOME` when set and non-empty, else the default `$HOME/.config` — then checks in order:
 
-- `$HOME/.bunfig.toml`
-- `$XDG_CONFIG_HOME/.bunfig.toml`
+- `<xdg-base>/bun/bunfig.toml` — recommended
+- `<xdg-base>/.bunfig.toml` — legacy, retained for back-compat
+- `$HOME/.bunfig.toml` — original home dotfile
+
+So with `$XDG_CONFIG_HOME` unset the XDG candidates resolve to `$HOME/.config/bun/bunfig.toml` and `$HOME/.config/.bunfig.toml`. With `$XDG_CONFIG_HOME` set to something other than `$HOME/.config`, the `$HOME/.config` locations are **not** searched — that path is only consulted as the spec default.
 
 If Bun finds both a global and a local `bunfig`, it shallow-merges them, with local overriding global. CLI flags override `bunfig` settings where applicable.
 

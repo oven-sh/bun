@@ -234,13 +234,6 @@ pub mod prompt {
         let output = Output::writer();
         let has_message = !arguments.is_empty();
         let has_default = arguments.len() >= 2;
-        // 4. Set default to the result of optionally truncating default.
-        // *  We don't really need to do this.
-        let default = if has_default {
-            arguments[1]
-        } else {
-            JSValue::NULL
-        };
 
         if has_message {
             // 2. Set message to the result of normalizing newlines given message.
@@ -274,20 +267,27 @@ pub mod prompt {
             return Ok(JSValue::FALSE);
         }
 
-        if has_default {
-            let default_string = arguments[1].to_slice(global)?;
+        // The IDL parameter is `optional DOMString default = ""`, so the value we
+        // return on an empty line must be the string conversion of the argument,
+        // not the raw JSValue.
+        let default = if has_default {
+            let default_string = arguments[1].to_js_string(global)?.to_js();
+            let default_slice = default_string.to_slice(global)?;
 
             if output
                 .print(format_args!(
                     "[{}] ",
-                    bstr::BStr::new(default_string.slice())
+                    bstr::BStr::new(default_slice.slice())
                 ))
                 .is_err()
             {
                 // 1. If we cannot show simple dialogs for this, then return false.
                 return Ok(JSValue::FALSE);
             }
-        }
+            default_string
+        } else {
+            JSValue::NULL
+        };
 
         // 6. Invoke WebDriver BiDi user prompt opened with this, "prompt" and message.
         // *  Not relevant in a server context.

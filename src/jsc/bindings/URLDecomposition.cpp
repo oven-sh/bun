@@ -125,8 +125,7 @@ void URLDecomposition::setHost(StringView value)
         auto hostSpan = hostEnd == notFound ? value : value.left(hostEnd);
         if (Bun::containsUnicode16IDNADeltaSource(hostSpan)) {
             auto mappedHost = Bun::applyUnicode16IDNADelta(hostSpan.toString());
-            // A non-empty host span mapping to empty is domain-to-ASCII failure
-            // (setter no-ops, even for file: where a literal "" is assignable).
+            // A host mapping to empty is a failed host parse, not an assignable literal "".
             if (mappedHost.isEmpty())
                 return;
             mappedValue = hostEnd == notFound ? mappedHost : makeString(mappedHost, value.substring(hostEnd));

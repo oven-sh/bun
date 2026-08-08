@@ -340,12 +340,17 @@ const validateObject = (value, name, allowArray = false) => {
 
 const SymbolToPrimitive = Symbol.toPrimitive;
 
-const builtInObjects = new SafeSet(
-  ArrayPrototypeFilter(
-    ObjectGetOwnPropertyNames(globalThis),
-    e => RegExpPrototypeExec(/^[A-Z][a-zA-Z0-9]+$/, e) !== null,
-  ),
-);
+// prettier-ignore
+const builtInObjects = new SafeSet([
+  "AggregateError", "Array", "ArrayBuffer", "Atomics", "BigInt", "BigInt64Array",
+  "BigUint64Array", "Boolean", "DataView", "Date", "Error", "EvalError",
+  "FinalizationRegistry", "Float32Array", "Float64Array", "Function", "Infinity",
+  "Int16Array", "Int32Array", "Int8Array", "Intl", "Iterator", "JSON", "Map",
+  "Math", "NaN", "Number", "Object", "Promise", "Proxy", "RangeError",
+  "ReferenceError", "Reflect", "RegExp", "Set", "String", "Symbol", "SyntaxError",
+  "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array",
+  "Uint8ClampedArray", "WeakMap", "WeakRef", "WeakSet",
+]);
 
 // https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot
 const isUndetectableObject = v => typeof v === "undefined" && v !== undefined;
@@ -2770,6 +2775,24 @@ function formatBigIntNoColor(bigint, options) {
   return formatBigInt(stylizeNoColor, bigint, options?.numericSeparator ?? inspectDefaultOptions.numericSeparator);
 }
 
+function formatPercentS(inspectOptions, arg) {
+  if (typeof arg === "number") {
+    return formatNumberNoColor(arg, inspectOptions);
+  }
+  if (typeof arg === "bigint") {
+    return formatBigIntNoColor(arg, inspectOptions);
+  }
+  if (typeof arg !== "object" || arg === null || !hasBuiltInToString(arg)) {
+    return String(arg);
+  }
+  return inspect(arg, {
+    ...inspectOptions,
+    compact: 3,
+    colors: false,
+    depth: 0,
+  });
+}
+
 function formatWithOptionsInternal(inspectOptions, args) {
   const first = args[0];
   let a = 0;
@@ -2789,25 +2812,9 @@ function formatWithOptionsInternal(inspectOptions, args) {
         const nextChar = StringPrototypeCharCodeAt(first, ++i);
         if (a + 1 !== args.length) {
           switch (nextChar) {
-            case 115: {
-              // 's'
-              const tempArg = args[++a];
-              if (typeof tempArg === "number") {
-                tempStr = formatNumberNoColor(tempArg, inspectOptions);
-              } else if (typeof tempArg === "bigint") {
-                tempStr = formatBigIntNoColor(tempArg, inspectOptions);
-              } else if (typeof tempArg !== "object" || tempArg === null || !hasBuiltInToString(tempArg)) {
-                tempStr = String(tempArg);
-              } else {
-                tempStr = inspect(tempArg, {
-                  ...inspectOptions,
-                  compact: 3,
-                  colors: false,
-                  depth: 0,
-                });
-              }
+            case 115: // 's'
+              tempStr = formatPercentS(inspectOptions, args[++a]);
               break;
-            }
             case 106: // 'j'
               tempStr = tryStringify(args[++a]);
               break;
@@ -3006,6 +3013,7 @@ export default {
   inspect,
   format,
   formatWithOptions,
+  formatPercentS,
   getStringWidth,
   stripVTControlCharacters,
 };

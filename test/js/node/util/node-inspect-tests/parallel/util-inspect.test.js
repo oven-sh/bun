@@ -237,8 +237,10 @@ test("inspect from a different context", () => {
 });
 
 test("no assertion failures 2", () => {
+  // Float16Array is intentionally absent: it is not in Node's bootstrap-time
+  // `builtInObjects`, so showHidden inspects its prototype getters and the
+  // output diverges from the other typed arrays in Node as well.
   [
-    Float16Array,
     Float32Array,
     Float64Array,
     Int16Array,
@@ -267,10 +269,10 @@ test("no assertion failures 2", () => {
     );
     assert.strictEqual(util.inspect(array, false), `${constructor.name}(${length}) [ 65, 97 ]`);
   });
+  assert.ok(util.inspect(new Float16Array(1), { showHidden: true }).includes("[buffer]: [Getter]"));
 
   // Now check that declaring a TypedArray in a different context works the same.
   [
-    Float16Array,
     Float32Array,
     Float64Array,
     Int16Array,

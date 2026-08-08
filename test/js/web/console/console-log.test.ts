@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 it("should log to console correctly", async () => {
@@ -141,6 +141,145 @@ NamedError: console.error a named error
 
   Error log"
 `);
+});
+
+it("console.log %s matches util.format and Console instances (Node's rule)", async () => {
+  // The three `%s` implementations (util.format, the native global console, and
+  // JS `Console` instances) historically disagreed: the native console forced
+  // engine ToString, while util.format ported Node's decision tree. All three
+  // now route through a single `formatPercentS` in internal/util/inspect.
+  using dir = tempDir("console-percent-s", {
+    "run.mjs": `
+      import util from "node:util";
+      import { Console } from "node:console";
+      import { Writable } from "node:stream";
+      import fs from "node:fs";
+
+      let captured = "";
+      const jsConsole = new Console(new Writable({
+        write(chunk, enc, cb) { captured += chunk; cb(); },
+      }));
+
+      const cases = [
+        ["string",          "hi"],
+        ["number",          3.5],
+        ["-0",              -0],
+        ["NaN",             NaN],
+        ["Infinity",        Infinity],
+        ["42n",             42n],
+        ["true",            true],
+        ["null",            null],
+        ["undefined",       undefined],
+        ["Symbol(q)",       Symbol("q")],
+        ["Symbol()",        Symbol()],
+        ["[1,2]",           [1, 2]],
+        ["{a:1}",           { a: 1 }],
+        ["arrow",           () => 1],
+        ["Map",             new Map([["k", "v"]])],
+        ["Set",             new Set([1, 2])],
+        ["Date(0)",         new Date(0)],
+        ["Buffer",          Buffer.from("ab")],
+        ["URL",             new URL("http://a/b")],
+        ["URLSearchParams", new URLSearchParams("a=1&b=2")],
+        ["Uint8Array",      new Uint8Array([65])],
+        ["Number(5)",       new Number(5)],
+        ["String(x)",       new String("x")],
+        ["ArrayBuffer",     new ArrayBuffer(4)],
+        ["null-proto",      Object.create(null)],
+        ["toString-null",   { toString: null }],
+        ["[Symbol]",        [Symbol("a")]],
+        ["revoked-proxy",   (() => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); return proxy; })()],
+        ["RegExp",          /re/g],
+        ["own-toString",    { toString() { return "own"; } }],
+        ["own-toPrim",      { [Symbol.toPrimitive]() { return "prim"; } }],
+        ["class-toString",  new (class C { toString() { return "C!"; } })()],
+        ["nested",          { a: { b: 1 } }],
+      ];
+
+      const marker = String.fromCharCode(30);
+      const rows = [];
+      for (const [label, v] of cases) {
+        const uf = util.format("%s", v);
+        captured = "";
+        jsConsole.log("%s", v);
+        const jc = captured.endsWith("\\n") ? captured.slice(0, -1) : captured;
+        process.stdout.write(marker);
+        try {
+          console.log("%s", v);
+        } catch (e) {
+          process.stdout.write("THREW:" + e.constructor.name + "\\n");
+        }
+        rows.push({ label, uf, jc });
+      }
+      // The global console writes synchronously to this process's stdout, so
+      // flush the metadata to a side file we read back in the parent.
+      fs.writeFileSync("rows.json", JSON.stringify(rows));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.mjs"],
+    env: { ...bunEnv, TZ: "UTC", NO_COLOR: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toBe("");
+
+  const rows: { label: string; uf: string; jc: string }[] = JSON.parse(
+    await Bun.file(join(String(dir), "rows.json")).text(),
+  );
+  const gc = out
+    .replaceAll("\r\n", "\n")
+    .split(String.fromCharCode(30))
+    .slice(1)
+    .map(s => (s.endsWith("\n") ? s.slice(0, -1) : s));
+  expect(gc.length).toBe(rows.length);
+
+  // (1) all three paths must produce identical text for every value
+  const actual = rows.map((r, i) => ({ label: r.label, uf: r.uf, gc: gc[i], jc: r.jc }));
+  const expected = rows.map(r => ({ label: r.label, uf: r.uf, gc: r.uf, jc: r.uf }));
+  expect(actual).toEqual(expected);
+
+  // (2) and the shared value is Node's `%s` rule
+  const byLabel = Object.fromEntries(rows.map(r => [r.label, r.uf]));
+  expect(byLabel).toMatchObject({
+    "string": "hi",
+    "number": "3.5",
+    "-0": "-0",
+    "NaN": "NaN",
+    "Infinity": "Infinity",
+    "42n": "42n",
+    "true": "true",
+    "null": "null",
+    "undefined": "undefined",
+    "Symbol(q)": "Symbol(q)",
+    "Symbol()": "Symbol()",
+    "[1,2]": "[ 1, 2 ]",
+    "{a:1}": "{ a: 1 }",
+    "arrow": "() => 1",
+    "Map": "Map(1) { 'k' => 'v' }",
+    "Set": "Set(2) { 1, 2 }",
+    "Date(0)": "1970-01-01T00:00:00.000Z",
+    "Buffer": "ab",
+    "URL": "http://a/b",
+    "URLSearchParams": "a=1&b=2",
+    "Uint8Array": "65",
+    "Number(5)": "[Number: 5]",
+    "String(x)": "[String: 'x']",
+    "null-proto": "[Object: null prototype] {}",
+    "toString-null": "{ toString: null }",
+    "[Symbol]": "[ Symbol(a) ]",
+    "revoked-proxy": "<Revoked Proxy>",
+    "RegExp": "/re/g",
+    "own-toString": "own",
+    "own-toPrim": "prim",
+    "class-toString": "C!",
+    "nested": "{ a: [Object] }",
+  });
+
+  expect(exitCode).toBe(0);
 });
 
 it("console.log with SharedArrayBuffer", () => {

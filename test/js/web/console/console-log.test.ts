@@ -150,3 +150,41 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
+
+it("console.log(Bun) survives lazy properties whose initializer throws", async () => {
+  // With the Symbol global clobbered, initializing lazy properties like Bun.$
+  // throws. The property walk must skip them without leaving the exception
+  // pending for the next property's initializer (used to abort debug builds).
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `globalThis.Symbol = NaN; console.log(Bun); console.log("alive");`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toContain("alive");
+  expect(exitCode).toBe(0);
+});
+
+it("console.log stops the prototype walk when a getPrototypeOf trap throws", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const proto = new Proxy({}, { getPrototypeOf() { throw new Error("nope"); } });
+       console.log(Object.assign(Object.create(proto), { x: 1 }));
+       console.log(new Proxy({ y: 2 }, { getPrototypeOf() { throw new Error("nope"); } }));
+       console.log("alive");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toContain("alive");
+  expect(exitCode).toBe(0);
+});

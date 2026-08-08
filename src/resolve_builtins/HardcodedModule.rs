@@ -129,6 +129,8 @@ pub enum HardcodedModule {
     NodeFetch,
     #[strum(serialize = "@vercel/fetch")]
     VercelFetch,
+    #[strum(serialize = "better-sqlite3")]
+    BetterSqlite3,
     #[strum(serialize = "utf-8-validate")]
     Utf8Validate,
     #[strum(serialize = "node:v8")]
@@ -297,6 +299,7 @@ bun_core::comptime_string_map! {
         b"undici" => HardcodedModule::Undici,
         b"ws" => HardcodedModule::Ws,
         b"@vercel/fetch" => HardcodedModule::VercelFetch,
+        b"better-sqlite3" => HardcodedModule::BetterSqlite3,
         b"utf-8-validate" => HardcodedModule::Utf8Validate,
         b"abort-controller" => HardcodedModule::AbortController,
     };
@@ -744,6 +747,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     //
     // Thirdparty packages we override
     entry!("@vercel/fetch"),
+    entry!("better-sqlite3"),
     entry!("isomorphic-fetch"),
     entry!("node-fetch"),
     entry!("undici"),

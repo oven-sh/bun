@@ -15,7 +15,7 @@ export function createInternalModuleRegistry(basedir: string) {
   for (let i = 0; i < moduleList.length; i++) {
     const prefix = moduleList[i].startsWith("node/")
       ? "node:"
-      : moduleList[i].startsWith("bun:")
+      : moduleList[i].startsWith("bun/")
         ? "bun:"
         : moduleList[i].startsWith("internal/")
           ? "internal/"
@@ -64,7 +64,7 @@ export function createInternalModuleRegistry(basedir: string) {
 
   const requireTransformer = (specifier: string, from: string) => {
     const directMatch = internalRegistry.get(specifier);
-    if (directMatch) return codegenRequireId(`${directMatch}/*${specifier}*/`);
+    if (directMatch !== undefined) return codegenRequireId(`${directMatch}/*${specifier}*/`);
 
     const relativeMatch =
       resolveSyncOrNull(specifier, path.join(basedir, path.dirname(from))) ?? resolveSyncOrNull(specifier, basedir);

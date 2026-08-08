@@ -114,7 +114,6 @@ azure-functions-core-tools
 azure-streamanalytics-cicd
 backport
 bcrypt
-better-sqlite3
 bigint-buffer
 blake-hash
 bs-platform

@@ -300,7 +300,7 @@ public:
         if (auto* fn = dynamicDowncast<JSFunction>(value)) {
             nameToUse = fn->name(vm);
             JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
-            if (lengthJSValue.isNumber()) {
+            if (!catcher.exception() && lengthJSValue.isNumber()) {
                 this->putDirect(vm, vm.propertyNames->length, (lengthJSValue), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
             }
         } else if (auto* fn = dynamicDowncast<JSMockFunction>(value)) {
@@ -643,6 +643,15 @@ extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
 {
     forEachMockInSet(globalObject->mockModule.activeSpies, [](JSMockFunction* spy) { spy->clearSpy(); });
     globalObject->mockModule.activeSpies.clear();
+}
+
+JSC::JSValue unwrapSpyOriginal(JSC::JSValue value)
+{
+    if (auto* spy = dynamicDowncast<JSMockFunction>(value)) {
+        if (JSValue original = spy->spyOriginal.get())
+            return original;
+    }
+    return value;
 }
 
 extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
@@ -1467,7 +1476,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    JSMock__resetSpies(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    JSMock__resetSpies(zigGlobalObject);
+    zigGlobalObject->onLoadPlugins.restoreModuleMocks(zigGlobalObject);
     return JSValue::encode(jsUndefined());
 }
 
@@ -1528,6 +1539,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             } else {
                 value = slot.getValue(globalObject, propertyKey);
             }
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (dynamicDowncast<JSMockFunction>(value)) {
                 return JSValue::encode(value);

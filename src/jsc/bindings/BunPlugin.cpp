@@ -35,6 +35,12 @@
 #include "AsyncContextFrame.h"
 #include "ImportMetaObject.h"
 
+namespace Bun {
+JSC::JSValue unwrapSpyOriginal(JSC::JSValue);
+}
+
+extern "C" bool Bun__VirtualMachine__isInPreload(void*);
+
 namespace Zig {
 
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
@@ -415,6 +421,19 @@ public:
     mutable WriteBarrier<JSObject> callbackFunctionOrCachedResult;
     bool hasCalledModuleMock = false;
 
+    // Snapshot of pre-mock values so mock.restore() can reverse in-place patches.
+    WriteBarrier<JSObject> esmNamespace;
+    WriteBarrier<JSObject> esmOriginalExports;
+    WriteBarrier<JSObject> cjsModule;
+    WriteBarrier<Unknown> cjsOriginalExports;
+    // virtualModules entry this mock overwrote (Bun.plugin or preload mock); reinstated on restore.
+    WriteBarrier<JSObject> priorVirtualModuleEntry;
+    // That cache's entry came from a mock factory, not the real source: evict on restore.
+    bool mustEvictEsm = false;
+    bool mustEvictCjs = false;
+    // Preload mocks survive mock.restore() so afterEach(mock.restore) keeps global setup.
+    bool installedDuringPreload = false;
+
     static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
@@ -598,6 +617,34 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     JSC::JSObject* callback = callbackValue.getObject();
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback);
+    mock->installedDuringPreload = Bun__VirtualMachine__isInPreload(globalObject->bunVM());
+
+    // Preserve true originals across repeat mock.module() calls for the same specifier.
+    if (globalObject->onLoadPlugins.virtualModules) {
+        if (auto prior = globalObject->onLoadPlugins.virtualModules->get(specifier)) {
+            auto* priorMock = dynamicDowncast<JSModuleMock>(prior.get());
+            if (priorMock && priorMock->installedDuringPreload && !mock->installedDuringPreload) {
+                // Shadowing a preload mock: snapshot current (preload) values below; stash for reinstatement.
+                mock->priorVirtualModuleEntry.set(vm, mock, priorMock);
+            } else if (priorMock) {
+                if (priorMock->esmNamespace)
+                    mock->esmNamespace.set(vm, mock, priorMock->esmNamespace.get());
+                if (priorMock->esmOriginalExports)
+                    mock->esmOriginalExports.set(vm, mock, priorMock->esmOriginalExports.get());
+                if (priorMock->cjsModule)
+                    mock->cjsModule.set(vm, mock, priorMock->cjsModule.get());
+                if (priorMock->cjsOriginalExports)
+                    mock->cjsOriginalExports.set(vm, mock, priorMock->cjsOriginalExports.get());
+                if (priorMock->priorVirtualModuleEntry)
+                    mock->priorVirtualModuleEntry.set(vm, mock, priorMock->priorVirtualModuleEntry.get());
+                // Prior mock had no snapshot for a cache: that cache's entry came from its factory.
+                mock->mustEvictEsm = priorMock->mustEvictEsm || !priorMock->esmNamespace;
+                mock->mustEvictCjs = priorMock->mustEvictCjs || !priorMock->cjsModule;
+            } else {
+                mock->priorVirtualModuleEntry.set(vm, mock, prior.get());
+            }
+        }
+    }
 
     auto getJSValue = [&]() -> JSValue {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -654,6 +701,29 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                         auto* object = exportsValue.getObject();
                         removeFromESM = false;
 
+                        JSObject* esmOriginals = nullptr;
+                        if (!mock->mustEvictEsm) {
+                            if (!mock->esmNamespace)
+                                mock->esmNamespace.set(vm, mock, moduleNamespaceObject);
+                            esmOriginals = mock->esmOriginalExports.get();
+                            if (!esmOriginals) {
+                                esmOriginals = constructEmptyObject(globalObject);
+                                mock->esmOriginalExports.set(vm, mock, esmOriginals);
+                            }
+                        }
+
+                        auto snapshotBeforeOverride = [&](const PropertyName& name) -> void {
+                            if (!esmOriginals || esmOriginals->getDirect(vm, name))
+                                return;
+                            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                            JSValue original = moduleNamespaceObject->get(globalObject, name);
+                            if (topExceptionScope.exception()) [[unlikely]] {
+                                (void)topExceptionScope.tryClearException();
+                                return;
+                            }
+                            esmOriginals->putDirect(vm, name, Bun::unwrapSpyOriginal(original));
+                        };
+
                         if (object) {
                             JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
@@ -667,12 +737,14 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                     (void)scope.tryClearException();
                                     value = jsUndefined();
                                 }
+                                snapshotBeforeOverride(name);
                                 moduleNamespaceObject->overrideExportValue(globalObject, name, value);
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
 
                         } else {
                             // if it's not an object, I guess we just set the default export?
+                            snapshotBeforeOverride(vm.propertyNames->defaultKeyword);
                             moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
                             RETURN_IF_EXCEPTION(scope, {});
                         }
@@ -691,6 +763,13 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     if (entryValue) {
         removeFromCJS = true;
         if (auto* moduleObject = entryValue ? dynamicDowncast<Bun::JSCommonJSModule>(entryValue) : nullptr) {
+            if (!mock->cjsModule && !mock->mustEvictCjs) {
+                JSValue priorExports = moduleObject->getIfPropertyExists(globalObject, Bun::builtinNames(vm).exportsPublicName());
+                RETURN_IF_EXCEPTION(scope, {});
+                mock->cjsModule.set(vm, mock, moduleObject);
+                mock->cjsOriginalExports.set(vm, mock, priorExports ? priorExports : jsUndefined());
+            }
+
             JSValue exportsValue = getJSValue();
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -724,9 +803,77 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(mock, visitor);
 
     visitor.append(mock->callbackFunctionOrCachedResult);
+    visitor.append(mock->esmNamespace);
+    visitor.append(mock->esmOriginalExports);
+    visitor.append(mock->cjsModule);
+    visitor.append(mock->cjsOriginalExports);
+    visitor.append(mock->priorVirtualModuleEntry);
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleMock);
+
+void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
+{
+    if (!virtualModules)
+        return;
+
+    auto& vm = globalObject->vm();
+
+    Vector<std::pair<String, JSC::Strong<JSC::JSObject>>, 8> toReplace;
+
+    for (auto& entry : *virtualModules) {
+        auto* moduleMock = dynamicDowncast<JSModuleMock>(entry.value.get());
+        if (!moduleMock || moduleMock->installedDuringPreload)
+            continue;
+
+        toReplace.append({ entry.key, JSC::Strong<JSC::JSObject> { vm, moduleMock->priorVirtualModuleEntry.get() } });
+
+        auto* ns = moduleMock->mustEvictEsm ? nullptr : dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleMock->esmNamespace.get());
+        if (ns) {
+            if (auto* originals = moduleMock->esmOriginalExports.get()) {
+                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                JSObject::getOwnPropertyNames(originals, globalObject, names, DontEnumPropertiesMode::Exclude);
+                if (!topExceptionScope.exception()) [[likely]] {
+                    for (auto& name : names) {
+                        JSValue originalValue = originals->getDirect(vm, name);
+                        if (!originalValue)
+                            continue;
+                        ns->overrideExportValue(globalObject, name, originalValue);
+                        if (topExceptionScope.exception()) [[unlikely]]
+                            (void)topExceptionScope.tryClearException();
+                    }
+                } else {
+                    (void)topExceptionScope.tryClearException();
+                }
+            }
+        } else {
+            // No ESM snapshot: evict so the next import re-loads the real source.
+            auto specifierIdent = JSC::Identifier::fromString(vm, entry.key);
+            auto* moduleLoader = globalObject->moduleLoader();
+            WTF::Locker locker { moduleLoader->cellLock() };
+            moduleLoader->removeEntry(specifierIdent);
+        }
+
+        auto* cjs = moduleMock->mustEvictCjs ? nullptr : dynamicDowncast<Bun::JSCommonJSModule>(moduleMock->cjsModule.get());
+        if (cjs) {
+            JSValue original = moduleMock->cjsOriginalExports.get();
+            cjs->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), original ? original : jsUndefined(), 0);
+        } else {
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            globalObject->requireMap()->remove(globalObject, jsString(vm, entry.key));
+            if (topExceptionScope.exception()) [[unlikely]]
+                (void)topExceptionScope.tryClearException();
+        }
+    }
+
+    for (auto& [key, prior] : toReplace) {
+        if (prior)
+            virtualModules->set(key, std::move(prior));
+        else
+            virtualModules->remove(key);
+    }
+}
 
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path)
 {

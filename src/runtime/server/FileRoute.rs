@@ -120,10 +120,12 @@ impl FileRoute {
         bun_core::heap::into_raw(Box::new(FileRoute {
             ref_count: Cell::new(1),
             server: Cell::new(opts.server),
-            has_last_modified_header: headers.get(b"last-modified").is_some(),
-            has_content_length_header: headers.get(b"content-length").is_some(),
-            has_content_range_header: headers.get(b"content-range").is_some(),
-            has_date_header: headers.get(b"date").is_some(),
+            has_last_modified_header: headers.get(b"last-modified").is_some_and(|v| !v.is_empty()),
+            has_content_length_header: headers
+                .get(b"content-length")
+                .is_some_and(|v| !v.is_empty()),
+            has_content_range_header: headers.get(b"content-range").is_some_and(|v| !v.is_empty()),
+            has_date_header: headers.get(b"date").is_some_and(|v| !v.is_empty()),
             blob,
             headers,
             status_code: opts.status_code,
@@ -180,10 +182,16 @@ impl FileRoute {
                 return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
                     ref_count: Cell::new(1),
                     server: Cell::new(None),
-                    has_last_modified_header: headers.get(b"last-modified").is_some(),
-                    has_content_length_header: headers.get(b"content-length").is_some(),
-                    has_content_range_header: headers.get(b"content-range").is_some(),
-                    has_date_header: headers.get(b"date").is_some(),
+                    has_last_modified_header: headers
+                        .get(b"last-modified")
+                        .is_some_and(|v| !v.is_empty()),
+                    has_content_length_header: headers
+                        .get(b"content-length")
+                        .is_some_and(|v| !v.is_empty()),
+                    has_content_range_header: headers
+                        .get(b"content-range")
+                        .is_some_and(|v| !v.is_empty()),
+                    has_date_header: headers.get(b"date").is_some_and(|v| !v.is_empty()),
                     blob,
                     headers,
                     status_code,
@@ -230,6 +238,9 @@ impl FileRoute {
             AnyResponse::SSL(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
+                    if value.length == 0 {
+                        continue;
+                    }
                     s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
                 if let Some(srv) = self.server.get() {
@@ -241,6 +252,9 @@ impl FileRoute {
             AnyResponse::TCP(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
+                    if value.length == 0 {
+                        continue;
+                    }
                     s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
                 if let Some(srv) = self.server.get() {
@@ -252,6 +266,9 @@ impl FileRoute {
             AnyResponse::H3(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
+                    if value.length == 0 {
+                        continue;
+                    }
                     s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
                 // tag == .H3 → no alt-svc header

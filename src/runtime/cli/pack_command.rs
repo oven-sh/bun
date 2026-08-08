@@ -197,6 +197,33 @@ pub struct BundledDep {
 // exec
 // ───────────────────────────────────────────────────────────────────────────
 
+pub(crate) fn warn_lockfile_unreadable(
+    cause: &bun_install::lockfile::LoadResultErr,
+    log: &mut bun_ast::Log,
+    log_level: LogLevel,
+) {
+    use bun_install::lockfile::LoadStep;
+    if log_level != LogLevel::Silent {
+        let step = match cause.step {
+            LoadStep::OpenFile => "open",
+            LoadStep::ParseFile => "parse",
+            LoadStep::ReadFile => "read",
+            LoadStep::Migrating => "migrate",
+        };
+        bun_core::warn!(
+            "failed to {} {}: {}, continuing without it",
+            step,
+            bstr::BStr::new(cause.lockfile_path.as_bytes()),
+            cause.value.name(),
+        );
+        if log.has_errors() {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        }
+        Output::flush();
+    }
+    log.reset();
+}
+
 impl PackCommand {
     pub(crate) fn exec_with_manager(
         ctx: Command::Context<'_>,
@@ -204,9 +231,8 @@ impl PackCommand {
     ) -> crate::Result<()> {
         use bun_install::lockfile::{LoadResult, LoadStep};
 
-        if manager.options.log_level != LogLevel::Silent
-            && manager.options.log_level != LogLevel::Quiet
-        {
+        let log_level = manager.options.log_level;
+        if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
             bun_core::prettyln!(
                 "<r><b>bun pack <r><d>v{}<r>",
                 Global::package_json_version_with_sha,
@@ -227,39 +253,13 @@ impl PackCommand {
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
             LoadResult::Err(cause) => 'err: {
-                match cause.step {
-                    LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            break 'err None;
-                        }
-                        Output::err_generic(
-                            "failed to open lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::ParseFile => {
-                        Output::err_generic(
-                            "failed to parse lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::ReadFile => {
-                        Output::err_generic(
-                            "failed to read lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::Migrating => {
-                        Output::err_generic(
-                            "failed to migrate lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
+                if matches!(cause.step, LoadStep::OpenFile)
+                    && cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                {
+                    break 'err None;
                 }
-                if pm_log(manager_ptr).has_errors() {
-                    let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
-                }
-                Global::crash();
+                warn_lockfile_unreadable(&cause, pm_log(manager_ptr), log_level);
+                None
             }
             LoadResult::NotFound => None,
         };

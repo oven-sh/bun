@@ -51,6 +51,138 @@ test("basic", async () => {
   expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
 });
 
+describe("unreadable lockfile", () => {
+  const mergeConflict = `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "pack-bad-lockfile",
+<<<<<<< HEAD
+      "dependencies": {},
+=======
+      "devDependencies": {},
+>>>>>>> feature
+    },
+  },
+  "packages": {},
+}
+`;
+
+  for (const { label, file, contents, diagnostic } of [
+    { label: "empty bun.lock", file: "bun.lock", contents: "", diagnostic: "Missing lockfile version" },
+    {
+      label: "bun.lock with git conflict markers",
+      file: "bun.lock",
+      contents: mergeConflict,
+      diagnostic: `Expected string but found "<<<<<<<"`,
+    },
+    { label: "corrupt bun.lockb", file: "bun.lockb", contents: "not a lockfile" },
+  ]) {
+    test(`packs with ${label}`, async () => {
+      await Promise.all([
+        write(join(packageDir, "package.json"), JSON.stringify({ name: "pack-bad-lockfile", version: "1.0.0" })),
+        write(join(packageDir, "index.js"), "module.exports = 1"),
+        write(join(packageDir, file), contents),
+      ]);
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "pm", "pack"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env: bunEnv,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+      expect(err).toContain("warn:");
+      expect(err).toContain(`failed to parse ${file}`);
+      expect(err).toContain("continuing without it");
+      if (diagnostic) expect(err).toContain(diagnostic);
+      expect(out).toContain("Total files: 2");
+      expect(exitCode).toBe(0);
+
+      const tarball = readTarball(join(packageDir, "pack-bad-lockfile-1.0.0.tgz"));
+      expect(tarball.entries).toMatchObject([
+        { "pathname": "package/package.json" },
+        { "pathname": "package/index.js" },
+      ]);
+    });
+  }
+
+  test("--silent suppresses the warning", async () => {
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "pack-bad-lockfile-silent", version: "1.0.0" })),
+      write(join(packageDir, "index.js"), "module.exports = 1"),
+      write(join(packageDir, "bun.lock"), ""),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "pack", "--silent"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+    expect(err).toBe("");
+    expect(out).toContain("pack-bad-lockfile-silent-1.0.0.tgz");
+    expect(exitCode).toBe(0);
+    expect(await exists(join(packageDir, "pack-bad-lockfile-silent-1.0.0.tgz"))).toBeTrue();
+  });
+
+  test("still errors when a workspace version must be resolved", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bad-lockfile-workspace",
+          version: "1.0.0",
+          workspaces: ["pkgs/*"],
+          dependencies: { pkg1: "workspace:*" },
+        }),
+      ),
+      write(join(packageDir, "root.js"), "console.log('root')"),
+      write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
+      write(join(packageDir, "bun.lock"), ""),
+    ]);
+
+    const { err } = await packExpectError(packageDir, bunEnv);
+    expect(err).toContain("warn:");
+    expect(err).toContain("failed to parse bun.lock");
+    expect(err).toContain(
+      'error: Failed to resolve workspace version for "pkg1" in `dependencies`. Run `bun install` and try again.',
+    );
+    expect(await exists(join(packageDir, "pack-bad-lockfile-workspace-1.0.0.tgz"))).toBeFalse();
+  });
+
+  test("bun publish --dry-run packs with corrupt lockfile", async () => {
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "publish-bad-lockfile", version: "1.0.0" })),
+      write(join(packageDir, "index.js"), "module.exports = 1"),
+      write(join(packageDir, "bun.lock"), ""),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "publish", "--dry-run"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [out, err] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+    expect(err).toContain("warn:");
+    expect(err).toContain("failed to parse bun.lock");
+    expect(err).toContain("continuing without it");
+    // Packing completed (auth may still fail afterwards, but packing is the behavior under test).
+    expect(out).toContain("Total files: 2");
+  });
+});
+
 test("in subdirectory", async () => {
   await Promise.all([
     write(

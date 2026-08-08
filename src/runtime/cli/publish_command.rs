@@ -461,6 +461,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         manager: &'a mut PackageManager,
     ) -> Result<Context<'static, true>, FromWorkspaceError> {
         let mut lockfile = Lockfile::default();
+        let log_level = manager.options.log_level;
         let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
         // SAFETY: `manager_ptr` was just derived from `manager: &'a mut PackageManager`;
@@ -473,32 +474,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
             LoadResult::NotFound => None,
             LoadResult::Err(cause) => 'err: {
-                match cause.step {
-                    LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            break 'err None;
-                        }
-                        Output::err_generic("failed to open lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::ParseFile => {
-                        Output::err_generic("failed to parse lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::ReadFile => {
-                        Output::err_generic("failed to read lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::Migrating => {
-                        Output::err_generic(
-                            "failed to migrate lockfile: {}",
-                            (cause.value.name(),),
-                        );
-                    }
+                if matches!(cause.step, LoadStep::OpenFile)
+                    && cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                {
+                    break 'err None;
                 }
-
-                if log.has_errors() {
-                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                }
-
-                Global::crash();
+                pack::warn_lockfile_unreadable(&cause, log, log_level);
+                None
             }
         };
 

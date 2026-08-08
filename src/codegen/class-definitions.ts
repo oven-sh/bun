@@ -242,7 +242,6 @@ export class ClassDefinition {
    */
   memoryCost?: boolean;
   hasPendingActivity?: boolean;
-  isEventEmitter?: boolean;
   supportsObjectCreate?: boolean;
 
   custom?: Record<string, CustomField>;

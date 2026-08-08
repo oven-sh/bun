@@ -1720,6 +1720,8 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
         vm.auto_tick();
     }
     // Quiet is not enough: no other thread of ours may be mid-anything (e.g. inside free() holding an allocator lock) when memory is frozen.
+    #[cfg(target_os = "macos")]
+    crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate(); // the mDNSResponder connection is per-process; a fresh one is opened on the first lookup after restore
     bun_threading::work_pool::WorkPool::stop_all_threads_for_snapshot();
     {
         let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
@@ -1902,6 +1904,15 @@ pub extern "C" fn Bun__imageContinueEventLoop() -> ! {
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
     // SAFETY: `vm_ptr` is the image's main-thread VM, now installed for this thread.
     let vm = unsafe { &mut *vm_ptr };
+    #[cfg(target_os = "macos")]
+    if let Some(store) = vm.rare_data().file_polls.as_deref_mut() {
+        let n = store.dispatch_image_hangups();
+        if n > 0 {
+            bun_core::Output::debug_warn(format_args!(
+                "[image] delivered {n} hangups for fds that did not survive the restore"
+            ));
+        }
+    }
     // The 'restore' listeners just ran synchronously; continuations of anything that awaited them are microtasks and
     // may be the only pending work (a skeleton image parks on such an await with every timer cancelled). Run one
     // tick unconditionally so they execute and get the chance to make the loop alive again.

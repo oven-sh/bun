@@ -1319,6 +1319,10 @@ pub struct Store {
     hive: FilePollHive,
     pending_free_head: *mut FilePoll,
     pending_free_tail: *mut FilePoll,
+    /// Polls whose fd did not survive a heap-image restore; their hangups are delivered from the event loop once the
+    /// process is fully adopted and the app has heard 'restore', not from inside the restore itself.
+    #[cfg(target_os = "macos")]
+    image_hangups: Vec<*mut FilePoll>,
 }
 
 #[cfg(not(windows))]
@@ -1351,10 +1355,11 @@ impl Store {
             } else {
                 None
             };
-            // Only fds we recreated (the controlling TTY) mean the same thing in this process; any other number is stale or reused.
+            // Only fds the restore re-seated mean the same thing in this process: stdio (dup'd from the launcher onto the builder's
+            // numbers) and the controlling tty. Every other number is stale or parked on /dev/null.
             // SAFETY: probing an integer fd.
-            let exists = unsafe { libc::isatty(poll.fd.native()) } == 1;
-            match (want, exists) {
+            let reseated = poll.fd.native() <= 2 || unsafe { libc::isatty(poll.fd.native()) } == 1;
+            match (want, reseated) {
                 (Some(flag), true) => {
                     let one_shot = poll.flags.contains(Flags::OneShot)
                         || poll.flags.contains(Flags::NeedsRearm);
@@ -1373,13 +1378,17 @@ impl Store {
                         .is_ok()
                     {
                         rearmed += 1;
+                    } else {
+                        poll.flags.insert(Flags::Hup);
+                        self.image_hangups.push(p);
+                        hung_up += 1;
                     }
                 }
                 (Some(_), false) => {
                     poll.flags
                         .remove_all(Flags::PollReadable | Flags::PollWritable | Flags::PollProcess);
                     poll.flags.insert(Flags::Hup);
-                    poll.on_update(0);
+                    self.image_hangups.push(p);
                     hung_up += 1;
                 }
                 _ => {}
@@ -1388,11 +1397,33 @@ impl Store {
         (rearmed, hung_up)
     }
 
+    /// Deliver the hangups collected by `rearm_for_image`. Owners closed by the app's own 'restore' handling in the meantime are skipped.
+    #[cfg(target_os = "macos")]
+    pub fn dispatch_image_hangups(&mut self) -> usize {
+        let pending = core::mem::take(&mut self.image_hangups);
+        let mut delivered = 0usize;
+        for p in pending {
+            // SAFETY: collected from used hive slots during restore; a slot is only recycled through the deferred-free list, which has not run yet.
+            let poll = unsafe { &mut *p };
+            if poll.fd == INVALID_FD
+                || poll.flags.contains(Flags::Closed)
+                || !poll.flags.contains(Flags::Hup)
+            {
+                continue;
+            }
+            poll.on_update(0);
+            delivered += 1;
+        }
+        delivered
+    }
+
     pub fn init() -> Store {
         Store {
             hive: FilePollHive::init(),
             pending_free_head: ptr::null_mut(),
             pending_free_tail: ptr::null_mut(),
+            #[cfg(target_os = "macos")]
+            image_hangups: Vec::new(),
         }
     }
 

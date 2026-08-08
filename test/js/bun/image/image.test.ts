@@ -184,3 +184,24 @@ test("DNS answers cached by the builder are not served after restore; keep-alive
   expect(r.body).toBe("ok2");
   expect(code).toBe(0);
 }, 60000);
+
+test.skipIf(process.platform !== "darwin")("restore: 'restore' precedes any poll delivery; a stdio poll follows the re-seated fd; dns works again", async () => {
+  using dir = tempDir("bun-image-polls", {});
+  const img = join(String(dir), "polls.img");
+  const fixture = join(import.meta.dir, "polls-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img, BUN_IMAGE_IO_WARN: "1" }, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    await p.exited; // stdin pipe deliberately left open and unread-to-EOF
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img }, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  p.stdin.write("hello\n");
+  await p.stdin.flush();
+  const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  const m = out.match(/\[js\] (.*)/);
+  expect(m, err.slice(-800)).not.toBeNull();
+  const events = JSON.parse(m![1]) as string[];
+  expect(events[0]).toBe("restore");
+  expect(events).toContain("dns-ok");
+  expect(events).toContain("stdin:hello"); // the builder's fd-0 poll was re-armed on this process's stdin
+  expect(code).toBe(0);
+}, 60000);

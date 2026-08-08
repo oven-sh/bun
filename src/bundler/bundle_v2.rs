@@ -5773,6 +5773,54 @@ pub mod bv2_impl {
         }
     }
 
+    /// Probe the `bindings` npm package's default search paths for `addon_name`.
+    fn resolve_native_bindings(
+        resolver: &mut _resolver::Resolver,
+        source_dir: &[u8],
+        addon_name: &[u8],
+    ) -> Option<Vec<u8>> {
+        const PREFIXES: &[&[u8]] = &[
+            b"build",
+            b"build/Debug",
+            b"build/Release",
+            b"out/Debug",
+            b"Debug",
+            b"out/Release",
+            b"Release",
+            b"build/default",
+            b"addon-build/release/install-root",
+            b"addon-build/debug/install-root",
+            b"addon-build/default/install-root",
+        ];
+
+        let dir_info = resolver.read_dir_info_ignore_error(source_dir)?;
+        let pkg = dir_info
+            .package_json()
+            .or(dir_info.enclosing_package_json)?;
+        let module_root = pkg.source.path.name().dir;
+
+        let mut name_buf;
+        let name: &[u8] = if strings::has_suffix_comptime(addon_name, b".node") {
+            addon_name
+        } else {
+            name_buf = Vec::with_capacity(addon_name.len() + 5);
+            name_buf.extend_from_slice(addon_name);
+            name_buf.extend_from_slice(b".node");
+            &name_buf
+        };
+
+        let mut buf = bun_paths::path_buffer_pool::get();
+        for prefix in PREFIXES {
+            let joined = bun_paths::resolve_path::join_string_buf::<
+                bun_paths::resolve_path::platform::Auto,
+            >(&mut buf.0[..], &[module_root, prefix, name]);
+            if bun_sys::exists(joined) {
+                return Some(joined.to_vec());
+            }
+        }
+        None
+    }
+
     pub(crate) struct ResolveImportRecordCtx<'a> {
         pub(crate) import_records: &'a mut [ImportRecord],
         pub(crate) source: &'a bun_ast::Source,
@@ -5887,7 +5935,9 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                if ctx.target.is_bun() {
+                if ctx.target.is_bun()
+                    && import_record.tag != bun_ast::ImportRecordTag::NativeBindings
+                {
                     if let Some(replacement) = bun_resolve_builtins::HardcodedModule::Alias::get(
                         import_record.path.text,
                         Target::Bun,
@@ -5941,13 +5991,15 @@ pub mod bv2_impl {
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                 }
 
-                if self.enqueue_on_resolve_plugin_if_needed(
-                    source.index.0,
-                    import_record,
-                    source.path.text,
-                    i as u32,
-                    ctx.target,
-                ) {
+                if import_record.tag != bun_ast::ImportRecordTag::NativeBindings
+                    && self.enqueue_on_resolve_plugin_if_needed(
+                        source.index.0,
+                        import_record,
+                        source.path.text,
+                        i as u32,
+                        ctx.target,
+                    )
+                {
                     continue;
                 }
 
@@ -6004,6 +6056,62 @@ pub mod bv2_impl {
                 };
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
+
+                if import_record.tag == bun_ast::ImportRecordTag::NativeBindings {
+                    // SAFETY: see `interned_slice` — arena outlives the bundle pass.
+                    let resolved = resolve_native_bindings(
+                        &mut transpiler.resolver,
+                        source_dir,
+                        import_record.path.text,
+                    )
+                    .map(|abs| unsafe { interned_slice(self.arena().alloc_slice_copy(&abs)) });
+                    match resolved {
+                        Some(abs) => {
+                            import_record.path = Fs::Path::init(abs);
+                            import_record.tag = bun_ast::ImportRecordTag::None;
+                        }
+                        None => {
+                            import_record.path.is_disabled = true;
+                            let bindings_is_external =
+                                transpiler.resolver.is_external_pattern(b"bindings")
+                                    || transpiler
+                                        .resolver
+                                        .opts
+                                        .external
+                                        .node_modules
+                                        .contains(b"bindings");
+                            if !bindings_is_external
+                                && !import_record
+                                    .flags
+                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                                && !self.transpiler.options.ignore_module_resolution_errors
+                            {
+                                // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
+                                let log: &mut bun_ast::Log = unsafe {
+                                    &mut *std::ptr::from_mut::<bun_ast::Log>(
+                                        self.log_for_resolution_failures(
+                                            source.path.text,
+                                            bake_graph,
+                                        ),
+                                    )
+                                };
+                                last_error = Some(_resolver::Error::ModuleNotFound.into());
+                                bun_ast::Log::add_resolve_error_with_text_dupe(
+                                    log,
+                                    Some(source),
+                                    import_record.range,
+                                    format_args!(
+                                        "Could not locate native addon \"{}\" for the \"bindings\" package. Run \"bun install\" to build it, or pass --external for the package that loads it.",
+                                        bstr::BStr::new(&import_record.path.text),
+                                    ),
+                                    import_record.path.text,
+                                    import_record.kind,
+                                );
+                            }
+                            continue 'outer;
+                        }
+                    }
+                }
 
                 // Check the FileMap first for in-memory files
                 if let Some(file_map) = self.file_map {

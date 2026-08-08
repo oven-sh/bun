@@ -389,9 +389,8 @@ impl FetchTasklet {
     // stay `*mut` because the call may drop the last ref and free the allocation.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn deref_from_thread(this: *mut FetchTasklet) {
-        // Test-only fault injection (exiting.test.ts): hold the HTTP thread so
-        // the JS thread wins the final-deref race and the handoff below lands
-        // in the exit window.
+        // Test-only fault injection (exiting.test.ts): lets the JS thread win
+        // the final-deref race so the handoff below lands in the exit window.
         if bun_core::env_var::feature_flag::BUN_INTERNAL_FETCH_DELAY_DEREF_FROM_THREAD.get()
             == Some(true)
         {

@@ -68,7 +68,14 @@ impl core::fmt::Debug for LoopKind {
 /// Kept on its own cache line: the counters below are RMW'd by pool / HTTP
 /// threads on every completion, and sharing a line with them made each of the
 /// JS thread's reads a miss whenever another thread had just posted.
-#[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "powerpc64"), repr(align(64)))]
+#[cfg_attr(
+    any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64"
+    ),
+    repr(align(64))
+)]
 #[cfg_attr(target_arch = "s390x", repr(align(128)))]
 struct ReadMostly {
     state: AtomicU8,
@@ -77,7 +84,14 @@ struct ReadMostly {
     vm: core::cell::UnsafeCell<*mut VirtualMachine>,
 }
 
-#[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "powerpc64"), repr(align(64)))]
+#[cfg_attr(
+    any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64"
+    ),
+    repr(align(64))
+)]
 #[cfg_attr(target_arch = "s390x", repr(align(128)))]
 pub struct Inner {
     hot: ReadMostly,
@@ -363,7 +377,10 @@ impl VmHandle {
     /// release.
     pub(crate) fn close(&self) {
         self.assert_js_thread();
-        self.0.hot.state.store(State::Closed as u8, Ordering::SeqCst);
+        self.0
+            .hot
+            .state
+            .store(State::Closed as u8, Ordering::SeqCst);
         if self.0.active.load(Ordering::SeqCst) != 0 {
             self.0.drained.0.lock();
             while self.0.active.load(Ordering::SeqCst) != 0 {

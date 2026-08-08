@@ -427,13 +427,15 @@ bool MessagePort::hasPendingActivity() const
 
     // Keep alive while a drain task is pending or mid-dispatch. drainAndDispatch
     // pops each message (queued -> 0) before invoking listeners, so the in-hand
-    // message is invisible to the queued count; without this bit a concurrent GC
+    // message is invisible to the queued count; without these bits a concurrent GC
     // running inside that window (queue empty, peer already closed) severs the
     // wrapper weak and the dispatch hits a dead JSEventListener wrapper (debug
-    // ASSERT m_wrapper). DrainScheduled is set from schedule until the inbox is
-    // observed empty, covering every dispatch.
+    // ASSERT m_wrapper). DrainScheduled covers schedule until the drain starts;
+    // Dispatching covers the dispatch loop itself (drainAndDispatch trades one
+    // for the other before running user JS so a racing send can post a fresh
+    // wakeup — see #37189).
     uint64_t s = m_pipe->state(m_side);
-    if (s & MessagePortPipe::DrainScheduled)
+    if (s & (MessagePortPipe::DrainScheduled | MessagePortPipe::Dispatching))
         return true;
 
     // Keep alive if the peer is still open and could send more, or messages are

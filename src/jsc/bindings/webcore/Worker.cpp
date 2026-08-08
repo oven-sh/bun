@@ -273,60 +273,54 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 // queueMicrotask/Promise callbacks observe messages one at a time, then
 // yields and reschedules if more remain.
 //
-// Unlike MessagePortPipe, Worker sides never transfer, so we don't need to
-// re-check port identity each iteration — which lets us swap the whole inbox
-// into a local deque under the lock and dispatch without contending with the
-// sender. A sustained producer (e.g. a tight postMessage loop) would otherwise
-// make every per-message pop a contended acquire.
+// drainScheduled is cleared before the first dispatch, so it is only set
+// while a posted drain task has not yet started draining. A handler (or a
+// promise continuation its microtask drain unblocks) can park this loop in a
+// nested event-loop wait (e.g. bun:test's expect().rejects); a send arriving
+// then must post a fresh wakeup task or that wait never wakes (#37189).
+// Messages are popped one at a time under the lock so such a nested drain
+// observes the shared queue and delivery stays FIFO.
 template<typename Dispatch>
 static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
 {
     size_t limit;
-    Deque<MessageWithMessagePorts> batch;
     {
         Locker locker { inbox.lock };
-        if (inbox.queue.isEmpty()) {
-            inbox.drainScheduled.store(false, std::memory_order_relaxed);
+        inbox.drainScheduled.store(false, std::memory_order_relaxed);
+        if (inbox.queue.isEmpty())
             return false;
-        }
         limit = std::max<size_t>(inbox.queue.size(), 1000);
-        batch = std::exchange(inbox.queue, {});
     }
 
     while (true) {
-        while (!batch.isEmpty()) {
+        std::optional<MessageWithMessagePorts> message;
+        {
+            Locker locker { inbox.lock };
+            if (inbox.queue.isEmpty())
+                return false;
             if (limit-- == 0) {
-                // Yield to the rest of the event loop. Return the undrained
-                // tail to the front of the inbox so it stays ahead of
-                // anything enqueued concurrently; caller reschedules.
-                Locker locker { inbox.lock };
-                while (!batch.isEmpty())
-                    inbox.queue.prepend(batch.takeLast());
+                // Budget spent; yield to the rest of the event loop. If a
+                // racing send already posted a wakeup, let that task drain
+                // the rest; otherwise claim the flag and have the caller
+                // reschedule.
+                if (inbox.drainScheduled.load(std::memory_order_relaxed))
+                    return false;
+                inbox.drainScheduled.store(true, std::memory_order_relaxed);
                 return true;
             }
-            auto message = batch.takeFirst();
-
-            auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
-            auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), nullptr, WTF::move(ports));
-            dispatch(event.event);
-
-            if (globalObject->drainMicrotasks()) {
-                // Termination pending. Drop the rest — dispatch is a no-op
-                // once m_terminateRequested is set (drainToParent), and the
-                // worker thread is tearing down (drainToWorker).
-                return false;
-            }
+            message = inbox.queue.takeFirst();
         }
 
-        // Batch exhausted — see if more arrived while we were dispatching.
-        Locker locker { inbox.lock };
-        if (inbox.queue.isEmpty()) {
-            inbox.drainScheduled.store(false, std::memory_order_relaxed);
+        auto ports = MessagePort::entanglePorts(context, WTF::move(message->transferredPorts));
+        auto event = MessageEvent::create(*context.jsGlobalObject(), message->message.releaseNonNull(), nullptr, WTF::move(ports));
+        dispatch(event.event);
+
+        if (globalObject->drainMicrotasks()) {
+            // Termination pending. Drop the rest — dispatch is a no-op
+            // once m_terminateRequested is set (drainToParent), and the
+            // worker thread is tearing down (drainToWorker).
             return false;
         }
-        if (limit == 0)
-            return true; // budget spent; caller reschedules
-        batch = std::exchange(inbox.queue, {});
     }
 }
 

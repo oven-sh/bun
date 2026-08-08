@@ -336,9 +336,8 @@ impl String {
         s
     }
 
-    /// Max `WTF::StringImpl` length (in characters, not bytes): the
-    /// process-wide [`STRING_ALLOCATION_LIMIT`] test knob clamped to
-    /// [`WTF_STRING_MAX_LENGTH`].
+    /// Max `WTF::StringImpl` length (in characters, not bytes):
+    /// [`STRING_ALLOCATION_LIMIT`] clamped to [`WTF_STRING_MAX_LENGTH`].
     #[inline]
     pub fn max_length() -> usize {
         STRING_ALLOCATION_LIMIT
@@ -2104,12 +2103,8 @@ pub mod lexer_tables {
 #[unsafe(export_name = "Bun__stringSyntheticAllocationLimit")]
 pub static STRING_ALLOCATION_LIMIT: AtomicUsize = AtomicUsize::new(u32::MAX as usize);
 
-/// Mirror of `WTF::StringImpl::MaxLength` (`INT32_MAX`): the hard cap on WTF
-/// string character count, enforced by `RELEASE_ASSERT` in the
-/// `StringImplShape` constructors. [`STRING_ALLOCATION_LIMIT`] alone defaults
-/// to `u32::MAX`, so guards that only consult it let lengths in
-/// `2^31..2^32` through to an uncatchable abort; [`String::max_length`]
-/// clamps to this.
+/// Mirror of `WTF::StringImpl::MaxLength` (`INT32_MAX`), which C++ enforces
+/// with `RELEASE_ASSERT` in the `StringImplShape` constructors.
 pub const WTF_STRING_MAX_LENGTH: usize = i32::MAX as usize;
 
 // ──────────────────────────────────────────────────────────────────────────

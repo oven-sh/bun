@@ -928,3 +928,33 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+it("keeps walking properties when a lazy property initializer throws", async () => {
+  // Clobbering Symbol makes the module evaluation behind lazy Bun properties
+  // (Bun.$, Bun.sql) throw while inspect materializes them. The walk has to
+  // clear that exception and continue instead of silently dropping every
+  // later property (and tripping an exception-scope assert in debug builds).
+  const fixture = `
+    globalThis.Symbol = NaN;
+    const out = Bun.inspect(Bun);
+    console.log("archive:", out.includes("Archive"));
+    console.log("zstd:", out.includes("zstdCompress"));
+    try {
+      Bun.sql;
+      console.log("sql: no throw");
+    } catch (e) {
+      console.log("sql:", e.constructor.name);
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe(["archive: true", "zstd: true", "sql: TypeError", ""].join("\n"));
+  expect(exitCode).toBe(0);
+});

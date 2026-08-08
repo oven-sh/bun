@@ -683,6 +683,19 @@ impl Value {
             _ => false,
         }
     }
+
+    /// `Content-Type` the fetch spec's "extract a body" assigns to this body.
+    pub fn content_type(&self) -> Option<&[u8]> {
+        match self {
+            Value::Blob(blob) => {
+                let ct = blob.content_type_slice();
+                (!ct.is_empty()).then_some(ct)
+            }
+            Value::WTFStringImpl(_) => Some(b"text/plain;charset=utf-8"),
+            Value::InternalBlob(ib) if ib.was_string => Some(ib.content_type()),
+            _ => None,
+        }
+    }
 }
 
 impl Value {
@@ -1602,6 +1615,13 @@ impl Value {
         self.to_blob_if_possible();
 
         if let Value::InternalBlob(internal_blob) = self {
+            // Keep `was_string` on both sides so `content_type()` still resolves.
+            if internal_blob.was_string {
+                return Ok(Value::InternalBlob(InternalBlob {
+                    bytes: internal_blob.bytes.clone(),
+                    was_string: true,
+                }));
+            }
             let owned = internal_blob.to_owned_slice();
             *self = Value::Blob(Blob::init(owned, global_this));
         }

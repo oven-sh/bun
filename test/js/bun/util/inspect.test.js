@@ -125,7 +125,9 @@ it("Blob inspect", () => {
   url: "",
   status: 200,
   statusText: "",
-  headers: Headers {},
+  headers: Headers {
+    "content-type": "text/plain;charset=utf-8",
+  },
   redirected: false,
   bodyUsed: false,
   Blob (5 bytes)

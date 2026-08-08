@@ -662,6 +662,7 @@ impl PostgresSQLQuery {
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
                                 // bindAndExecute will bind + execute, it will change to running after binding is complete
+                                let mark = connection.write_buffer_mark();
                                 if let Err(err) = PostgresRequest::bind_and_execute(
                                     global_object,
                                     stmt,
@@ -669,6 +670,7 @@ impl PostgresSQLQuery {
                                     columns_value,
                                     writer,
                                 ) {
+                                    connection.rollback_write_buffer(mark);
                                     release_query_ref();
                                     return Err(throw_write_error(
                                         b"failed to bind and execute query",
@@ -723,6 +725,7 @@ impl PostgresSQLQuery {
                 if !has_params {
                     bun_core::scoped_log!(Postgres, "prepareAndQueryWithSignature");
                     // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
+                    let mark = connection.write_buffer_mark();
                     if let Err(err) = PostgresRequest::prepare_and_query_with_signature(
                         global_object,
                         query_str.slice(),
@@ -730,6 +733,7 @@ impl PostgresSQLQuery {
                         writer,
                         &mut signature,
                     ) {
+                        connection.rollback_write_buffer(mark);
                         if connection_entry_value.is_some() {
                             let _ = connection
                                 .statements

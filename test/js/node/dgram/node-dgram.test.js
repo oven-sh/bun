@@ -125,7 +125,10 @@ test("node:dgram 'message' listener throw is a fatal uncaught exception", async 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("dgram-boom");
-  expect(exitCode).toBe(1);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: expect.stringContaining("dgram-boom"),
+    exitCode: 1,
+  });
 }, 15_000);

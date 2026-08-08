@@ -42,7 +42,10 @@ test("a throwing 'message' listener is a fatal uncaught exception", async () => 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("cp-message-boom");
-  expect(exitCode).toBe(1);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: expect.stringContaining("cp-message-boom"),
+    exitCode: 1,
+  });
 });

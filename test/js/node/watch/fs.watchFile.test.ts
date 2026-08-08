@@ -498,12 +498,10 @@ describe("fs.watchFile", () => {
 });
 
 test("fs.watchFile listener throw is a fatal uncaught exception", async () => {
+  using dir = tempDir("watchfile-throw", { "target.txt": "0" });
   const fixture = `
     const fs = require("node:fs");
-    const path = require("node:path");
-    const dir = fs.mkdtempSync(require("node:os").tmpdir() + "/watchfile-throw-");
-    const file = path.join(dir, "target.txt");
-    fs.writeFileSync(file, "0");
+    const file = ${JSON.stringify(path.join(String(dir), "target.txt"))};
     fs.watchFile(file, { interval: 20 }, () => {
       throw new Error("watchfile-boom");
     });
@@ -516,7 +514,10 @@ test("fs.watchFile listener throw is a fatal uncaught exception", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("watchfile-boom");
-  expect(exitCode).toBe(1);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: expect.stringContaining("watchfile-boom"),
+    exitCode: 1,
+  });
 }, 15_000);

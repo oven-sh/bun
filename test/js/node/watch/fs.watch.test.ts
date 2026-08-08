@@ -1623,9 +1623,10 @@ test("fs.watch wrapper reference survives GC across event, abort and close paths
 }, 30_000);
 
 test("fs.watch callback throw is a fatal uncaught exception", async () => {
+  using dir = tempDir("watch-throw", {});
   const fixture = `
     const fs = require("node:fs");
-    const dir = fs.mkdtempSync(require("node:os").tmpdir() + "/watch-throw-");
+    const dir = ${JSON.stringify(String(dir))};
     fs.watch(dir, () => {
       throw new Error("watch-boom");
     });
@@ -1638,15 +1639,19 @@ test("fs.watch callback throw is a fatal uncaught exception", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("watch-boom");
-  expect(exitCode).toBe(1);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: expect.stringContaining("watch-boom"),
+    exitCode: 1,
+  });
 }, 15_000);
 
 test("fs.watch callback throw reaches an uncaughtException handler", async () => {
+  using dir = tempDir("watch-caught", {});
   const fixture = `
     const fs = require("node:fs");
-    const dir = fs.mkdtempSync(require("node:os").tmpdir() + "/watch-caught-");
+    const dir = ${JSON.stringify(String(dir))};
     process.on("uncaughtException", err => {
       console.log("CAUGHT:" + err.message);
       watcher.close();
@@ -1663,7 +1668,10 @@ test("fs.watch callback throw reaches an uncaughtException handler", async () =>
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toContain("CAUGHT:watch-boom");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: expect.stringContaining("CAUGHT:watch-boom"),
+    stderr: "",
+    exitCode: 0,
+  });
 }, 15_000);

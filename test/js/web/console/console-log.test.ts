@@ -150,3 +150,61 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
+
+// https://console.spec.whatwg.org/#formatter
+// Only the first argument is a format string, and only when it is a primitive
+// string. Later arguments are data: a "%s"/"%d"/"%%" inside them prints
+// verbatim and must not consume the arguments that follow it.
+const formatterCases: [args: string, expected: string][] = [
+  [`"a", "100%foo", 42`, `a 100%foo 42`],
+  [`"q", "/p?x=%ff", 8`, `q /p?x=%ff 8`],
+  [`"l", "%d %s", 1, "t"`, `l %d %s 1 t`],
+  [`"x", "%%", 1`, `x %% 1`],
+  [`"x", "%c", "color:red", "y"`, `x %c color:red y`],
+  [`"%s %s", "a", "b", "%s", "c"`, `a b %s c`],
+  [`1, "%d", 2`, `1 %d 2`],
+  [`/%d/, 1`, `/%d/ 1`],
+  // Still substituted: a primitive string in first position.
+  [`"%d/%s", 7, "k"`, `7/k`],
+  [`"%%d", 1`, `%d 1`],
+];
+
+// The per-argument loop is written twice, once per color mode. Exercise both.
+for (const enableColors of [false, true]) {
+  it(`console.log substitutes format specifiers in the first argument only (colors: ${enableColors})`, async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", formatterCases.map(([args]) => `console.log(${args});`).join("\n")],
+      env: enableColors ? { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" } : bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      lines: Bun.stripANSI(stdout).split("\n").slice(0, -1),
+      // Guards against the colored branch silently not being taken.
+      colored: stdout.includes("\x1b["),
+      exitCode,
+    }).toEqual({
+      lines: formatterCases.map(([, expected]) => expected),
+      colored: enableColors,
+      exitCode: 0,
+    });
+    expect(stderr).not.toContain("error:");
+  });
+}
+
+it("console.log does not treat a String object as a format string", async () => {
+  // typeof new String("%d") is "object", so node's formatter (and ours) skips it.
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", `console.log(new String("%d"), 1); console.log("a", new String("%d"), 1);`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // node prints [String: '%d']; bun's inspect quotes with " instead of '.
+  expect({ stdout, exitCode }).toEqual({ stdout: `[String: "%d"] 1\na [String: "%d"] 1\n`, exitCode: 0 });
+  expect(stderr).not.toContain("error:");
+});

@@ -2311,8 +2311,11 @@ void GlobalObject::finishCreation(VM& vm)
                 RELEASE_ASSERT(nodeUtilValue.isObject());
                 auto prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
                 if (!scope.exception() && prop) [[likely]] {
-                    init.set(uncheckedDowncast<JSFunction>(prop));
-                    return;
+                    // User code can replace util.inspect with a non-function.
+                    if (auto* inspectFunction = dynamicDowncast<JSFunction>(prop)) [[likely]] {
+                        init.set(inspectFunction);
+                        return;
+                    }
                 }
             }
             // LazyProperty initializers must always set a value; leave the exception pending for the caller.

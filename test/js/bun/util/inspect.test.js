@@ -970,6 +970,27 @@ it("keeps walking properties when a lazy property initializer throws", async () 
   expect(exitCode).toBe(0);
 });
 
+it("tolerates util.inspect being replaced with a non-function", async () => {
+  const fixture = `
+    require("node:util").inspect = 42;
+    const custom = Symbol.for("nodejs.util.inspect.custom");
+    const obj = { [custom]() { return "custom!"; } };
+    console.log(Bun.inspect(obj));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("custom!\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it("throws instead of crashing when util.inspect cannot load for a custom inspect hook", async () => {
   // The util.inspect lazy property is initialized on first use; if node:util
   // fails to evaluate (clobbered Symbol), the initializer still has to set a

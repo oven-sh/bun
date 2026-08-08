@@ -208,13 +208,9 @@ export default function BlogPost(req, meta) {
     expect(json2.meta.file).toBe("[...slug].ts");
     expect(json2.meta.path).toContain(platformPath("routes/blog/[...slug].ts"));
 
-    // Test empty slug (just /blog/)
-    const post3 = await dev.fetch("/blog/");
-    const json3 = await post3.json();
-
-    expect(json3.slug).toEqual([]);
-    expect(json3.title).toBe("");
-    expect(json3.content).toBe("This is a blog post at: ");
+    // A required catch-all does not match zero segments
+    await dev.fetch("/blog").expect404();
+    await dev.fetch("/blog/").expect404();
   },
 });
 

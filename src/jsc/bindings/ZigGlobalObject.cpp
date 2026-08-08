@@ -2349,15 +2349,18 @@ void GlobalObject::finishCreation(VM& vm)
             auto scope = DECLARE_THROW_SCOPE(init.vm);
             JSC::MarkedArgumentBuffer args;
             args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
-            // Its initializer clears its own exceptions and always sets.
-            scope.assertNoException();
+            // Its initializer always sets and clears non-termination exceptions.
+            scope.assertNoExceptionExceptTermination();
 
-            JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
+            JSC::JSFunction* stylize = nullptr;
+            if (!scope.exception()) [[likely]] {
+                JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
 
-            JSC::CallData callData = JSC::getCallData(getStylize);
-            NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
-            JSC::JSFunction* stylize = scope.exception() || returnedException ? nullptr : dynamicDowncast<JSC::JSFunction>(result);
+                JSC::CallData callData = JSC::getCallData(getStylize);
+                NakedPtr<JSC::Exception> returnedException = nullptr;
+                auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
+                stylize = scope.exception() || returnedException ? nullptr : dynamicDowncast<JSC::JSFunction>(result);
+            }
             if (stylize) [[likely]] {
                 init.set(stylize);
                 return;

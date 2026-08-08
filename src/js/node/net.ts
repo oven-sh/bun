@@ -156,6 +156,8 @@ const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
 const kerrorEmitted = Symbol("kerrorEmitted");
 const kUserUnrefed = Symbol("kUserUnrefed");
+const kPendingDeferredUnref = Symbol("kPendingDeferredUnref");
+const kPendingDeferredRef = Symbol("kPendingDeferredRef");
 // Set when pause() dropped the handle's hold on the loop, so the read paths
 // only restore a hold they actually removed - re-refing a handle that never
 // held the loop (a wrapped duplex with no fd) would pin the process.
@@ -2502,7 +2504,10 @@ Socket.prototype.ref = function ref() {
   this[kUserUnrefed] = false;
   const socket = this._handle;
   if (!socket) {
-    this.once("connect", this.ref);
+    if (!this[kPendingDeferredRef]) {
+      this[kPendingDeferredRef] = true;
+      this.once("connect", applyDeferredRef);
+    }
     return this;
   }
   socket.ref();
@@ -2695,13 +2700,30 @@ Socket.prototype._unrefTimer = function _unrefTimer() {
 Socket.prototype.unref = function unref() {
   this[kUserUnrefed] = true;
   const socket = this._handle;
-  if (!socket) {
-    this.once("connect", this.unref);
+  if (!socket || this.connecting) {
+    // Node's pending uv_connect_t keeps the loop alive even when the handle is
+    // unref'd; our handle has no request concept, so apply the unref once
+    // "connect" fires (this also covers autoSelectFamily retry handles). The
+    // listener re-checks kUserUnrefed, so one suffices and a later ref() wins.
+    if (!this[kPendingDeferredUnref]) {
+      this[kPendingDeferredUnref] = true;
+      this.once("connect", applyDeferredUnref);
+    }
     return this;
   }
   socket.unref();
   return this;
 };
+
+function applyDeferredUnref(this: any) {
+  this[kPendingDeferredUnref] = false;
+  if (this[kUserUnrefed]) this.unref();
+}
+
+function applyDeferredRef(this: any) {
+  this[kPendingDeferredRef] = false;
+  if (!this[kUserUnrefed]) this.ref();
+}
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L785
 Socket.prototype.destroySoon = function destroySoon() {
@@ -4089,8 +4111,6 @@ function initSocketHandle(self) {
   const handle = self._handle;
   if (handle) {
     handle[owner_symbol] = self;
-    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref().
-    if (self[kUserUnrefed]) handle.unref?.();
   }
 }
 

@@ -38,6 +38,11 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         auto callData = JSC::getCallData(callbackValue);
         if (callData.type == CallData::Type::None) {
             Bun__reportUnhandledError(globalObject, JSValue::encode(createNotAFunctionError(globalObject, callbackValue)));
+            // Restore before the early return, or the wrapper's context stays installed
+            // for everything the event loop runs next.
+            if (asyncContextData) {
+                asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+            }
             return true;
         }
 

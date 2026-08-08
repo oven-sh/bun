@@ -2,6 +2,7 @@
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/JSPromise.h>
 
 #if ASSERT_ENABLED
 #include <JavaScriptCore/IntegrityInlines.h>
@@ -94,6 +95,24 @@ void auditEverything(JSGlobalObject* globalObject, JSValue value, JSValue thisVa
 extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlobalObject* globalObject, JSC::EncodedJSValue callback)
 {
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
+}
+
+// Discards any previously captured frame and snapshots the async context that
+// is active right now. Used by `Timeout.prototype.refresh()` when it
+// reactivates an already-fired timer, matching Node's `initAsyncResource`.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__recaptureAsyncContextIfNeeded(JSGlobalObject* globalObject, JSC::EncodedJSValue callbackValue)
+{
+    JSValue callback = JSValue::decode(callbackValue);
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(callback)) {
+        callback = wrapper->callback.get();
+    }
+    // `timeout._onTimeout = <any value>` writes this slot directly. Only re-wrap what the
+    // timer can invoke: wrapping anything else would turn the falsy values the timer
+    // treats as cleared into a truthy object.
+    if (!callback.isCallable() && !dynamicDowncast<JSPromise>(callback)) {
+        return callbackValue;
+    }
+    return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, callback));
 }
 
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                            \

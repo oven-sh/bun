@@ -104,8 +104,9 @@ pub struct Inner {
     /// Pool work scheduled with storage inside a JS-owned object (see
     /// [`VmHandle::embedded_work_scheduled`]); teardown waits for zero.
     embedded: AtomicU32,
-    #[cfg(debug_assertions)]
     js_thread: std::thread::ThreadId,
+    /// Test suite only — see [`VmHandle::park_posts_until_closed`].
+    park_posts: core::sync::atomic::AtomicBool,
 }
 
 // SAFETY: `vm` is only dereferenced under the gate described in the module doc;
@@ -120,6 +121,8 @@ unsafe impl Sync for Inner {}
 #[repr(transparent)]
 pub struct VmHandle(Arc<Inner>);
 
+
+bun_core::define_scoped_log!(log, vm_handle, hidden);
 pub use bun_event_loop::Posted;
 
 /// RAII: one unit of `active`. While held, `close()` cannot complete.
@@ -156,9 +159,38 @@ impl VmHandle {
             active: AtomicU32::new(0),
             drained: (Mutex::new(), Condvar::new()),
             embedded: AtomicU32::new(0),
-            #[cfg(debug_assertions)]
             js_thread: std::thread::current().id(),
+            park_posts: core::sync::atomic::AtomicBool::new(false),
         }))
+    }
+
+    /// Test suite only (`BUN_TEST_WORKER_REFUSAL_GATE`, worker VMs). From now
+    /// a post from another thread — unless counted work is outstanding, whose
+    /// producer must post before its count can return — waits until this
+    /// handle is closed and only then proceeds, so it is refused with the real
+    /// preconditions (the JS side already released, the handle really closed)
+    /// and the producer's own release path runs every time rather than only
+    /// when it happens to lose the race with teardown.
+    pub(crate) fn park_posts_until_closed(&self) {
+        self.0
+            .park_posts
+            .store(true, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    #[cold]
+    fn maybe_park(&self) {
+        if !self.0.park_posts.load(core::sync::atomic::Ordering::Relaxed)
+            || std::thread::current().id() == self.0.js_thread
+            || self.0.embedded.load(Ordering::SeqCst) != 0
+        {
+            return;
+        }
+        // Not holding `active` here: close() waits for that to drain.
+        self.0.drained.0.lock();
+        while self.0.hot.state.load(Ordering::SeqCst) != State::Closed as u8 {
+            self.0.drained.1.wait(&self.0.drained.0);
+        }
+        self.0.drained.0.unlock();
     }
 
     #[inline]
@@ -203,7 +235,12 @@ impl VmHandle {
         if let LoopKind::Isolated(p) = kind {
             return p.post(task);
         }
+        if self.0.park_posts.load(core::sync::atomic::Ordering::Relaxed) {
+            self.maybe_park();
+        }
         let Some(_a) = self.enter() else {
+            // SAFETY: handed to us by the caller and not yet queued anywhere.
+            log!("refused post: {}", unsafe { task.as_ref() }.task.tag.name());
             return Posted::Refused(task);
         };
         // SAFETY: inside the gate.
@@ -381,6 +418,12 @@ impl VmHandle {
             .hot
             .state
             .store(State::Closed as u8, Ordering::SeqCst);
+        if self.0.park_posts.load(core::sync::atomic::Ordering::Relaxed) {
+            // Posts parked by the test gate go now (and are refused).
+            self.0.drained.0.lock();
+            self.0.drained.1.notify_all();
+            self.0.drained.0.unlock();
+        }
         if self.0.active.load(Ordering::SeqCst) != 0 {
             self.0.drained.0.lock();
             while self.0.active.load(Ordering::SeqCst) != 0 {
@@ -421,6 +464,32 @@ pub extern "C" fn Bun__VmHandle__clone(handle: &VmHandle) -> *mut VmHandle {
 pub unsafe extern "C" fn Bun__VmHandle__release(handle: *mut VmHandle) {
     // SAFETY: fn contract.
     drop(unsafe { bun_core::heap::take(handle) });
+}
+
+/// Any thread: keep `handle`'s VM reachable past the point where whatever
+/// owned `handle` may go away (e.g. a context looked up under a lock that is
+/// about to be released), without allocating: one strong count. Consumed by
+/// exactly one [`Bun__VmHandle__postRetainedCppTask`].
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VmHandle__retain(handle: &VmHandle) -> *const Inner {
+    Arc::into_raw(handle.0.clone())
+}
+
+/// Any thread: post a C++ task through a count taken by `Bun__VmHandle__retain`
+/// (queued, or deleted unrun if the VM is gone) and drop that count.
+///
+/// # Safety
+/// `retained` came from `Bun__VmHandle__retain` and is not used afterwards;
+/// `task` is a live heap `WebCore::EventLoopTask` handed over.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__VmHandle__postRetainedCppTask(
+    retained: *const Inner,
+    task: *mut crate::cpp_task::CppTask,
+) {
+    // SAFETY: fn contract — the count `retain` leaked is ours to reclaim.
+    let handle = VmHandle(unsafe { Arc::from_raw(retained) });
+    // SAFETY: fn contract.
+    unsafe { handle.post_cpp_task(task) };
 }
 
 /// JS thread: adjust this VM's keep-alive directly (balanced pairs from
@@ -656,6 +725,7 @@ pub unsafe fn post_job<T: Postable>(job: *mut T) {
     // SAFETY: fn contract.
     let task = unsafe { T::concurrent_task(job) };
     if let Posted::Refused(task) = handle.post_task(task) {
+        log!("refused job: {}", core::any::type_name::<T>());
         // SAFETY: handed back unqueued; `job` per fn contract.
         unsafe {
             ConcurrentTaskItem::release_refused(task);

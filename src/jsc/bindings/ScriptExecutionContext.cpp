@@ -180,20 +180,21 @@ void ScriptExecutionContext::willDestroyActiveDOMObject(ActiveDOMObject& activeD
 
 bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
 {
-    Locker locker { allScriptExecutionContextsMapLock };
-    auto* context = allScriptExecutionContextsMap().get(identifier);
-
-    if (!context)
-        return false;
-
-    // A permanently-terminating context never drains its concurrent queue, so a task
-    // enqueued during teardown would leak its captured refs (e.g. notifyPeerClosed
-    // pinning the MessagePortPipe) — drop it. Gate on the worker-teardown flag, not
-    // VM::hasTerminationRequest(), which node:vm {timeout}/{breakOnSigint} sets transiently.
-    if (context->isTerminating())
-        return false;
-
-    context->postTaskConcurrently(WTF::move(task));
+    // The map lock covers the lookup only. The context may be destroyed the moment the
+    // lock is released, so nothing of it is used afterwards except a count taken on its
+    // VM handle, and the post goes through that: queued while the VM accepts posts,
+    // deleted unrun once it does not (and anything queued during its teardown is
+    // released unrun by that teardown). Posting inside the critical section would make
+    // every other context's lookup wait on this VM's queue.
+    const BunVmHandleInner* retained = nullptr;
+    {
+        Locker locker { allScriptExecutionContextsMapLock };
+        auto* context = allScriptExecutionContextsMap().get(identifier);
+        if (!context || context->isTerminating())
+            return false;
+        retained = Bun__VmHandle__retain(context->m_vmHandle);
+    }
+    Bun__VmHandle__postRetainedCppTask(retained, new EventLoopTask(WTF::move(task)));
     return true;
 }
 
@@ -256,19 +257,21 @@ bool ScriptExecutionContext::isContextThread()
 bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
 {
     ScriptExecutionContext* context = nullptr;
+    const BunVmHandleInner* retained = nullptr;
     {
         Locker locker { allScriptExecutionContextsMapLock };
         context = allScriptExecutionContextsMap().get(identifier);
-
         if (!context)
             return false;
-
-        if (!context->isContextThread()) {
-            context->postTaskConcurrently(WTF::move(task));
-            return true;
-        }
+        if (!context->isContextThread())
+            retained = Bun__VmHandle__retain(context->m_vmHandle);
     }
-
+    if (retained) {
+        // Off its thread: as postTaskTo(), through the handle, outside the lock.
+        Bun__VmHandle__postRetainedCppTask(retained, new EventLoopTask(WTF::move(task)));
+        return true;
+    }
+    // On its own thread the context cannot be destroyed under us.
     task(*context);
     return true;
 }
@@ -334,13 +337,10 @@ void ScriptExecutionContext::removeFromContextsMap()
 
 void ScriptExecutionContext::markTerminating()
 {
-    // postTaskTo() holds this lock across its isTerminating() check and
-    // postTaskConcurrently() enqueue. Taking it here establishes an ordering
-    // with every concurrent poster: either its whole critical section ran
-    // before ours (task enqueued, and the caller's subsequent concurrent-queue
-    // drain will see it), or ours ran first (poster observes true and drops
-    // the task instead of enqueueing onto a queue that will never drain).
-    Locker locker { allScriptExecutionContextsMapLock };
+    // An early-out for postTaskTo(): from here posts to this context are pointless. Not
+    // a fence — a poster that looked us up just before this still posts, and the VM
+    // handle deals with it (queued and released unrun by the teardown, or refused and
+    // deleted once the handle is closed).
     m_isTerminating.store(true, std::memory_order_release);
 }
 

@@ -50,6 +50,8 @@ pub mod task_tag {
             /// Number of task tags. `bun_runtime::dispatch::run_task` asserts
             /// exhaustiveness against this.
             pub const COUNT: u8 = tags!(@count 0u8, $($name,)*);
+            /// For diagnostics.
+            pub const NAMES: [&str; COUNT as usize] = [$(stringify!($name)),*];
         };
         (@ $n:expr, $head:ident, $($rest:ident,)*) => {
             pub const $head: TaskTag = TaskTag($n);
@@ -152,6 +154,13 @@ pub trait Taskable {
     /// The tag constant from [`task_tag`] for this type. Both this and the
     /// `bun_runtime::dispatch::run_task` match arm MUST agree.
     const TAG: TaskTag;
+}
+
+impl TaskTag {
+    /// The tag's identifier, for diagnostics.
+    pub fn name(self) -> &'static str {
+        task_tag::NAMES.get(self.0 as usize).copied().unwrap_or("?")
+    }
 }
 
 impl Task {

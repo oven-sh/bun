@@ -4254,10 +4254,9 @@ void GlobalObject::prepareForDestruction()
     if (auto* nextTickQueue = m_nextTickQueue.get())
         nextTickQueue->discard(vm);
 
-    // Refuse cross-thread posts first: markTerminating() serializes with postTaskTo() on the
-    // contexts-map lock, so anything another thread enqueues after this is visible to the caller's
-    // drain and nothing later can land. DeferredWorkTimer gets the same fence because finalizers
-    // during the final collection and ~VM both reach scheduleWorkSoon().
+    // Tell cross-thread posters not to bother from here (what still lands is queued and released
+    // unrun by the teardown, or refused once the VM handle closes). DeferredWorkTimer is fenced
+    // separately because finalizers during the final collection and ~VM both reach scheduleWorkSoon().
     context->markTerminating();
     WebCore::clientData(vm)->deferredWorkTimer.markShuttingDown();
 

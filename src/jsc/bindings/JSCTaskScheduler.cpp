@@ -65,23 +65,24 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
 void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, Task&& task)
 {
     auto& scheduler = clientData->deferredWorkTimer;
-    Locker<Lock> holder { scheduler.m_lock };
-    // The event loop is past its last tick; a JSCDeferredWorkTask enqueued now
-    // would never run and its ConcurrentTask wrapper would leak once the Bun
-    // VirtualMachine box is dealloc'd. Reached from ~VM -> WaiterListManager::
-    // unregister -> Waiter::cancelAndClear for every outstanding
-    // Atomics.waitAsync on a terminating worker, and from collectNow ->
-    // JSFinalizationRegistry::finalizeUnconditionally. Balance onAddPendingWork
-    // so the ticket-set entry and event-loop ref are released. The lock is held
-    // across the check and the enqueue so the transition in markShuttingDown
-    // cannot race a cross-thread Atomics.notify.
-    if (scheduler.m_isShuttingDown) [[unlikely]] {
-        bool wasKeepingAlive = dropPendingTicketLocked(scheduler, ticket.ptr());
-        holder.unlockEarly();
-        if (wasKeepingAlive)
-            Bun__VmHandle__refKeepAlive(clientData->vmHandle, -1);
-        return;
+    {
+        Locker<Lock> holder { scheduler.m_lock };
+        // The event loop is past its last tick: don't bother posting. Reached from
+        // ~VM -> WaiterListManager::unregister -> Waiter::cancelAndClear for every
+        // outstanding Atomics.waitAsync on a terminating worker, and from
+        // collectNow -> JSFinalizationRegistry::finalizeUnconditionally. Balance
+        // onAddPendingWork so the ticket-set entry and event-loop ref are released.
+        if (scheduler.m_isShuttingDown) [[unlikely]] {
+            bool wasKeepingAlive = dropPendingTicketLocked(scheduler, ticket.ptr());
+            holder.unlockEarly();
+            if (wasKeepingAlive)
+                Bun__VmHandle__refKeepAlive(clientData->vmHandle, -1);
+            return;
+        }
     }
+    // Outside m_lock (markShuttingDown, on the VM's thread, needs it): a post that
+    // still races the shutdown lands on the VM handle, which either queues it for
+    // the teardown to release unrun or refuses it and runs the job's release path.
     auto* job = new JSCDeferredWorkTask(WTF::move(ticket), WTF::move(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->vmHandle, job);
 }

@@ -898,22 +898,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
         // node util.isError relies on toString
         // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/doc/api/util.md#L2923
         // util.isError is deprecated and removed in node 23
-        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        bool has = object->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot);
-        scope.assertNoException();
-        if (has) {
-            if (slot.isValue()) {
-                JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
-                if (value.isString()) {
-                    String tag = asString(value)->value(globalObject);
-                    CLEAR_IF_EXCEPTION(scope);
-                    if (tag == "Error"_s)
-                        return JSValue::encode(jsBoolean(true));
+        {
+            // Scoped: a live VMInquiry slot forbids VM entry, and getPrototype
+            // below can enter JS through a "getPrototypeOf" proxy trap.
+            PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool has = object->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot);
+            scope.assertNoException();
+            if (has) {
+                if (slot.isValue()) {
+                    JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
+                    if (value.isString()) {
+                        String tag = asString(value)->value(globalObject);
+                        CLEAR_IF_EXCEPTION(scope);
+                        if (tag == "Error"_s)
+                            return JSValue::encode(jsBoolean(true));
+                    }
                 }
             }
         }
 
         JSValue proto = object->getPrototype(globalObject);
+        // A throwing "getPrototypeOf" proxy trap leaves proto empty, and isCell()
+        // is true for the empty value, so the checks below would deref null.
+        RETURN_IF_EXCEPTION(scope, {});
         if (proto.isCell() && (proto.inherits<JSC::ErrorInstance>() || proto.asCell()->type() == ErrorInstanceType || proto.inherits<JSC::ErrorPrototype>()))
             return JSValue::encode(jsBoolean(true));
     }

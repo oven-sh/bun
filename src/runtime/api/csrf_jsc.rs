@@ -21,33 +21,6 @@ fn algorithm_from_js_case_insensitive(
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
-/// Validates an optional integer property in `[0, MAX_SAFE_INTEGER]`.
-/// Differs from `JSValue::get_optional_int::<u64>` in rejecting NaN and in
-/// the error message wording expected by existing tests.
-fn get_optional_int_u64(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &'static str,
-) -> JsResult<Option<u64>> {
-    let Some(value) = target.get(global, property)? else {
-        return Ok(None);
-    };
-    if value.is_undefined() || value.is_empty() {
-        return Ok(Some(0));
-    }
-    if !value.is_number() {
-        return Err(global.throw_invalid_argument_type_value(property, "number", value));
-    }
-    let num: f64 = value.as_number();
-    const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
-    if num.fract() != 0.0 || num < 0.0 || num > MAX_SAFE_INTEGER {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "{property} must be an integer between 0 and {MAX_SAFE_INTEGER}"
-        )));
-    }
-    Ok(Some(num as u64))
-}
-
 /// JS binding function for generating CSRF tokens
 /// First argument is secret (required), second is options (optional)
 #[bun_jsc::host_fn]
@@ -81,7 +54,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         let options_value = args[1];
 
         // Extract expiresIn (optional)
-        if let Some(expires_in_js) = get_optional_int_u64(options_value, global, "expiresIn")? {
+        if let Some(expires_in_js) = options_value.get_optional_int::<u64>(global, "expiresIn")? {
             expires_in = expires_in_js;
         }
 
@@ -246,7 +219,7 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         }
 
         // Extract maxAge (optional)
-        if let Some(max_age_js) = get_optional_int_u64(options_value, global, "maxAge")? {
+        if let Some(max_age_js) = options_value.get_optional_int::<u64>(global, "maxAge")? {
             max_age = max_age_js;
         }
 

@@ -445,14 +445,25 @@ describe.concurrent("--cpu-prof", () => {
     expect(mdContent).toContain("# CPU Profile");
   });
 
-  // The sampling profiler could segfault when a sample landed inside a VM
-  // entry/exit transition: vm.topEntryFrame is null there while vm.entryScope
-  // is already set, and a walked frame whose caller slot read null made the
-  // stack walker dereference vmEntryRecord(nullptr) (oven-sh/WebKit#395, seen
-  // as a crash at 0xFFFFFFFFFFFFFFC8 in test-cpu-prof-dir-worker.js on CI).
-  // The workload widens that window as far as JS can: a callback with a huge
-  // declared parameter count invoked from native spends most of its runtime in
-  // doVMEntry's argument pad loop, which runs before topEntryFrame is stored.
+  // Smoke test for the raced path behind oven-sh/WebKit#395: the sampling
+  // profiler could segfault when a sample landed inside a VM entry/exit
+  // transition (vm.topEntryFrame null while vm.entryScope is set; a walked
+  // frame whose caller slot read null made the walker dereference
+  // vmEntryRecord(nullptr), crashing at 0xFFFFFFFFFFFFFFC8 in
+  // test-cpu-prof-dir-worker.js on CI). The crash itself needs CI-runner
+  // timing; the deterministic regression test lives in WebKit
+  // (TestWebKitAPI). This workload widens the raced window as far as JS can: a
+  // callback with a huge declared parameter count invoked from native spends
+  // most of its runtime in doVMEntry's argument pad loop, which runs before
+  // topEntryFrame is stored. No process.nextTick leg on purpose: a non-empty
+  // tick queue makes the microtask jobs drain nested inside the tick-drain VM
+  // entry instead of as outermost entries, which is the raced state.
+  //
+  // Deadline: the Windows sampler effectively ticks at the ~15.6ms timer
+  // quantum (see the header comment), and only samples taken while
+  // vm.entryScope is set are recorded, which is a minority of this churn
+  // loop's wall time. 150ms is ~9 quantum ticks, around one expected recorded
+  // sample, so Windows gets 1.5s to keep the samples assertion reliable.
   test("sampler survives VM entry churn from callbacks with huge parameter counts", async () => {
     using dir = tempDir("cpu-prof-entry-churn", {
       "churn.js": `
@@ -461,7 +472,7 @@ describe.concurrent("--cpu-prof", () => {
         globalThis.c = { n: 0 };
         const { port1, port2 } = new MessageChannel();
         port1.onmessage = f;
-        const deadline = performance.now() + 150;
+        const deadline = performance.now() + ${isWindows ? 1500 : 150};
         function loop() {
           if (performance.now() >= deadline) {
             console.log("calls made:", c.n > 0);
@@ -472,7 +483,6 @@ describe.concurrent("--cpu-prof", () => {
           setImmediate(f);
           Promise.resolve().then(f);
           queueMicrotask(f);
-          process.nextTick(f);
           port2.postMessage(1);
           setImmediate(loop);
         }

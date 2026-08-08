@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -599,6 +599,36 @@ describe("FormData", () => {
       const formData = new FormData();
       formData.append("foo", Bun.file("missing"));
       expect(() => new Response(formData)).toThrow();
+    });
+
+    it("serializes only the basename, not the full path, as the multipart filename", async () => {
+      using dir = tempDir("formdata-bunfile-path", {
+        "nested/secret-dir/report.pdf": "%PDF",
+      });
+      const fullPath = join(String(dir), "nested", "secret-dir", "report.pdf");
+      const file = Bun.file(fullPath);
+      expect(file.name).toBe(fullPath);
+
+      for (const method of ["append", "set"] as const) {
+        const fd = new FormData();
+        fd[method]("upload", file);
+
+        const wire = await new Request("http://x/", { method: "POST", body: fd }).text();
+        const cd = wire.split("\r\n").find(l => l.startsWith("Content-Disposition"))!;
+        expect(cd).toBe(`Content-Disposition: form-data; name="upload"; filename="report.pdf"`);
+        expect(wire).not.toContain("secret-dir");
+        expect(wire).not.toContain(String(dir));
+      }
+
+      // Bun.file's own .name stays the full path.
+      expect(file.name).toBe(fullPath);
+
+      // An explicit filename argument is used verbatim.
+      const fd2 = new FormData();
+      fd2.append("upload", file, "override.bin");
+      const wire2 = await new Request("http://x/", { method: "POST", body: fd2 }).text();
+      const cd2 = wire2.split("\r\n").find(l => l.startsWith("Content-Disposition"))!;
+      expect(cd2).toBe(`Content-Disposition: form-data; name="upload"; filename="override.bin"`);
     });
   });
 

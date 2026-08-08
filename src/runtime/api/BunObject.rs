@@ -407,21 +407,22 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     }
     let bunstr = scopeguard::guard(bunstr, |s| s.deref());
 
-    let mut outbuf: Vec<u8> = Vec::new();
+    crate::shell::shell_body::validate_shell_arg_bunstr(global_this, *bunstr)?;
 
-    if bun_shell_parser::needs_escape_bunstr(*bunstr) {
-        let result = bun_shell_parser::escape_bun_str::<true>(*bunstr, &mut outbuf)?;
-        if !result {
-            return Err(global_this.throw(format_args!(
-                "String has invalid utf-16: {}",
-                bstr::BStr::new(bunstr.byte_slice()),
-            )));
-        }
+    if bun_shell_parser::needs_escape_bunstr(*bunstr)
+        || bun_shell_parser::is_if_clause_keyword_bunstr(*bunstr)
+    {
+        let mut outbuf: Vec<u8> = Vec::new();
+        let ok = bun_shell_parser::escape_bun_str::<true>(*bunstr, &mut outbuf)?;
+        debug_assert!(ok);
         let mut str = BunString::clone_utf8(&outbuf[..]);
         return str.transfer_to_js(global_this);
     }
 
-    Ok(jsval)
+    if jsval.is_string_literal() {
+        return Ok(jsval);
+    }
+    bunstr.to_js(global_this)
 }
 
 pub(crate) fn braces(

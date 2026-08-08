@@ -53,6 +53,10 @@ describe("Channel", () => {
     const onMessageHandler: any = mustCall(() => unsubscribe(name, onMessageHandler));
 
     subscribe(name, onMessageHandler);
+    subscribe(
+      name,
+      mustCall(() => {}),
+    );
 
     // This must not throw.
     channel(name).publish(data);
@@ -336,6 +340,185 @@ describe("Channel", () => {
     const heapUsedAfter = process.memoryUsage().heapUsed;
 
     expect(heapUsedBefore).toBeGreaterThanOrEqual(heapUsedAfter);
+  });
+});
+
+// publish() dispatches to the subscribers registered when it started, so a
+// subscriber that subscribes or unsubscribes cannot change the in-flight publish.
+describe("mutating subscribers during publish", () => {
+  test("a subscriber that unsubscribes itself does not skip later subscribers", () => {
+    const dc = channel("mutate1");
+    const calls: string[] = [];
+
+    const f1 = () => {
+      calls.push("f1");
+      dc.unsubscribe(f1);
+    };
+    const f2 = () => void calls.push("f2");
+    const f3 = () => void calls.push("f3");
+
+    dc.subscribe(f1);
+    dc.subscribe(f2);
+    dc.subscribe(f3);
+
+    dc.publish({ x: 1 });
+    expect(calls).toEqual(["f1", "f2", "f3"]);
+
+    // The unsubscribe still took effect for the next publish.
+    calls.length = 0;
+    dc.publish({ x: 2 });
+    expect(calls).toEqual(["f2", "f3"]);
+  });
+
+  test("several subscribers unsubscribing themselves do not skip later subscribers", () => {
+    const dc = channel("mutate2");
+    const calls: string[] = [];
+
+    const f1 = () => {
+      calls.push("f1");
+      dc.unsubscribe(f1);
+    };
+    const f2 = () => {
+      calls.push("f2");
+      dc.unsubscribe(f2);
+    };
+    const f3 = () => void calls.push("f3");
+
+    dc.subscribe(f1);
+    dc.subscribe(f2);
+    dc.subscribe(f3);
+
+    dc.publish({ x: 1 });
+    expect(calls).toEqual(["f1", "f2", "f3"]);
+
+    calls.length = 0;
+    dc.publish({ x: 2 });
+    expect(calls).toEqual(["f3"]);
+  });
+
+  test("unsubscribing a later subscriber still delivers the in-flight publish to it", () => {
+    const dc = channel("mutate3");
+    const calls: string[] = [];
+
+    const f2 = () => void calls.push("f2");
+    const f1 = () => {
+      calls.push("f1");
+      dc.unsubscribe(f2);
+    };
+
+    dc.subscribe(f1);
+    dc.subscribe(f2);
+
+    dc.publish({ x: 1 });
+    expect(calls).toEqual(["f1", "f2"]);
+
+    calls.length = 0;
+    dc.publish({ x: 2 });
+    expect(calls).toEqual(["f1"]);
+  });
+
+  test("unsubscribing every subscriber mid-publish finishes the in-flight publish", () => {
+    const name = "mutate4";
+    const dc = channel(name);
+    const calls: string[] = [];
+
+    const f2 = () => void calls.push("f2");
+    const f1 = () => {
+      calls.push("f1");
+      dc.unsubscribe(f1);
+      dc.unsubscribe(f2);
+    };
+
+    dc.subscribe(f1);
+    dc.subscribe(f2);
+
+    dc.publish({ x: 1 });
+    expect(calls).toEqual(["f1", "f2"]);
+    expect(hasSubscribers(name)).toBeFalse();
+  });
+
+  test("a subscriber added during publish does not receive the in-flight publish", () => {
+    const dc = channel("mutate5");
+    const calls: string[] = [];
+
+    const late = () => void calls.push("late");
+    const f1 = () => {
+      calls.push("f1");
+      dc.subscribe(late);
+    };
+
+    dc.subscribe(f1);
+
+    dc.publish({ x: 1 });
+    expect(calls).toEqual(["f1"]);
+
+    calls.length = 0;
+    dc.publish({ x: 2 });
+    expect(calls).toEqual(["f1", "late"]);
+  });
+
+  test("a channel emptied mid-publish can be re-subscribed by a later subscriber", () => {
+    const name = "mutate6";
+    const dc = channel(name);
+    const calls: string[] = [];
+
+    const f3 = () => void calls.push("f3");
+    const f2 = () => {
+      calls.push("f2");
+      dc.subscribe(f3);
+    };
+    const f1 = () => {
+      calls.push("f1");
+      dc.unsubscribe(f1);
+      dc.unsubscribe(f2);
+    };
+
+    dc.subscribe(f1);
+    dc.subscribe(f2);
+
+    dc.publish({ x: 1 });
+    expect(calls).toEqual(["f1", "f2"]);
+    expect(hasSubscribers(name)).toBeTrue();
+
+    calls.length = 0;
+    dc.publish({ x: 2 });
+    expect(calls).toEqual(["f3"]);
+  });
+
+  test("unsubscribing one of two registrations of the same function", () => {
+    const dc = channel("mutate7");
+    const calls: string[] = [];
+
+    const f1 = () => {
+      calls.push("f1");
+      dc.unsubscribe(f1);
+    };
+    const f2 = () => void calls.push("f2");
+
+    dc.subscribe(f1);
+    dc.subscribe(f2);
+    dc.subscribe(f1);
+
+    // Only the first registration is removed, so the second one still runs.
+    dc.publish({ x: 1 });
+    expect(calls).toEqual(["f1", "f2", "f1"]);
+  });
+
+  test("runStores publishes to every subscriber registered when it started", () => {
+    const dc = channel("mutate8");
+    const calls: string[] = [];
+
+    const f1 = () => {
+      calls.push("f1");
+      dc.unsubscribe(f1);
+    };
+    const f2 = () => void calls.push("f2");
+
+    dc.subscribe(f1);
+    dc.subscribe(f2);
+
+    dc.runStores({ a: 1 }, () => void calls.push("fn"));
+    expect(calls).toEqual(["f1", "f2", "fn"]);
   });
 });
 

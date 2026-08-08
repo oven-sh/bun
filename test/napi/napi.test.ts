@@ -1329,12 +1329,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         bunProc.exited,
       ]);
 
-      // The wrapper script should exit with 0 if the test passed
-      expect(bunExitCode).toBe(0);
       expect(bunStdout + bunStderr).toContain("Loading experimental module");
       expect(bunStdout + bunStderr).toContain("Created");
       expect(bunStderr).toContain("FATAL ERROR");
       expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
+      // The wrapper script should exit with 0 if the test passed
+      expect(bunExitCode).toBe(0);
 
       // The marker must NOT have actually been printed. Only check stdout: the
       // fixture prints the marker via console.log (stdout), while stderr contains

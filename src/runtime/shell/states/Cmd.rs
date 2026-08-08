@@ -850,13 +850,6 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    /// Main-thread re-entry for a subprocess exit posted from off-thread —
-    /// equivalent to [`Self::on_exec_done`] but drives the trampoline itself
-    /// since the dispatcher discards the [`Yield`].
-    pub(crate) fn on_subprocess_done(interp: &Interpreter, this: NodeId, exit_code: ExitCode) {
-        Self::on_exec_done(interp, this, exit_code).run(interp);
-    }
-
     /// [`Self::deinit`] for the VM-shutdown finalizer: defuses the
     /// `> ${arraybuffer}` unpins first — the heap sweep already deleted the
     /// `JSC::ArrayBuffer` impls they would write to.

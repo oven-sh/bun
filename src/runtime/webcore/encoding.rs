@@ -181,7 +181,7 @@ unsafe extern "C" fn Bun__encoding__constructFromLatin1(
             Encoding::Latin1 | Encoding::Buffer => unreachable!(),
         }, |E| construct_from_u8::<E>(input, len))
     });
-    JSValue::create_buffer(global_object, &mut slice[..])
+    bun_jsc::HostReturn::or_pending_exception(JSValue::create_buffer(global_object, &mut slice[..]))
 }
 
 /// # Safety
@@ -204,7 +204,7 @@ unsafe extern "C" fn Bun__encoding__constructFromUTF16(
             Encoding::Buffer => unreachable!(),
         }, |E| construct_from_u16::<E>(input, len))
     });
-    JSValue::create_buffer(global_object, &mut slice[..])
+    bun_jsc::HostReturn::or_pending_exception(JSValue::create_buffer(global_object, &mut slice[..]))
 }
 
 // for SQL statement

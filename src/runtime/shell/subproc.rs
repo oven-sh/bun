@@ -1801,11 +1801,11 @@ impl PipeReader {
         // on Windows — `start()` goes through `start_with_current_pipe`).
         let stdio_result = match result {
             StdioResult::Buffer(buf) => {
-                reader.source = Some(bun_io::Source::Pipe(buf));
+                reader.set_source(bun_io::Source::Pipe(buf));
                 StdioResult::Unavailable
             }
             StdioResult::BufferFd(fd) => {
-                reader.source = Some(bun_io::Source::File(bun_io::Source::open_file(fd)));
+                reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
                 StdioResult::BufferFd(fd)
             }
             StdioResult::Unavailable => panic!("Shouldn't happen."),

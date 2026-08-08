@@ -178,7 +178,12 @@ extern "C" fn Bun__JSONRows__wtf8ToJS(
 ) -> JSValue {
     // SAFETY: the C++ caller passes a live tape string.
     let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
-    utf8_bytes_to_js(bytes, global).unwrap_or(JSValue::ZERO)
+    match utf8_bytes_to_js(bytes, global) {
+        Ok(value) => value,
+        // Only the string's to_js can fail here (JSError / JSTerminated): the
+        // exception is pending and the caller RETURN_IF_EXCEPTIONs on empty.
+        Err(_) => JSValue::ZERO,
+    }
 }
 
 /// The whole document under `root` in one call into C++ (keys and short

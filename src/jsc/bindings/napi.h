@@ -181,6 +181,7 @@ public:
         : m_globalObject(globalObject)
         , m_napiModule(napiModule)
         , m_vm(JSC::getVM(globalObject))
+        , m_vmHandle(Bun__VmHandle__retainRef(WebCore::clientData(JSC::getVM(globalObject))->vmHandle))
     {
         napi_internal_register_cleanup_zig(this);
     }
@@ -193,7 +194,13 @@ public:
     ~NapiEnv()
     {
         delete[] filename;
+        Bun__VmHandle__release(m_vmHandle);
     }
+
+    // This env's own clone of its VM's handle: how a thread holding an env ref
+    // (a finalizer fired off the JS thread) posts work to the VM. Lives as long
+    // as the env, which can outlive the JSC VM's client data.
+    const ::BunVmHandleRef* vmHandle() const { return m_vmHandle; }
 
     void cleanup()
     {
@@ -234,20 +241,28 @@ public:
         m_cleanupHooks = Napi::HookSet();
         clearExceptionsBetweenFinalizers();
 
-        // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
-        // This prevents any GC-triggered finalizer execution while m_finalizers is being iterated.
-        JSC::DeferGCForAWhile deferGC(m_vm);
-
         m_isFinishingFinalizers = true;
         // A cleanup hook may itself have leaked an exception; the first
         // finalizer starts clean too.
         clearExceptionsBetweenFinalizers();
-        // Reverse insertion order so children are torn down before parents (Node.js LIFO).
-        // ListHashSet iteration is safe against concurrent inserts, and m_isFinishingFinalizers
-        // routes all removals to active=false, so the only unsafe op (erase-current) can't occur.
-        for (auto it = m_finalizers.rbegin(); it != m_finalizers.rend(); ++it) {
-            Bun::NapiHandleScope handle_scope(m_globalObject);
-            it->call(this);
+        // Drain to empty, last first, so children are torn down before parents (Node.js
+        // LIFO) and a finalizer that registers another finalizer while running (an addon
+        // creating an external buffer from a finalizer) has it run in this same cleanup
+        // rather than left behind. The entry being called stays in the set until it
+        // returns — its owner (NapiRef / external-buffer destructor) holds a pointer to that
+        // node and may deactivate() it from inside the call — and is removed afterwards; no
+        // iterator is held across a call, so inserts and removals during one are plain.
+        while (!m_finalizers.isEmpty()) {
+            const BoundFinalizer* current = &m_finalizers.last();
+            m_currentFinalizer = current;
+            {
+                Bun::NapiHandleScope handle_scope(m_globalObject);
+                current->call(this);
+            }
+            m_currentFinalizer = nullptr;
+            // Whatever the call appended sits after `current`; remove `current` itself by value
+            // (still a live node: deactivate() only marks the running entry).
+            m_finalizers.remove(*current);
             // Each finalizer starts from a clean exception state: Node.js
             // never propagates one finalizer's throw into the next (there
             // is no JS frame to catch in between). Leaving a pending
@@ -257,7 +272,6 @@ public:
             // the next napi call with a throw scope sees it. See #30286.
             clearExceptionsBetweenFinalizers();
         }
-        m_finalizers.clear();
         m_isFinishingFinalizers = false;
 
         instanceDataFinalizer.call(this, instanceData, true);
@@ -299,16 +313,23 @@ public:
         }
     }
 
-    void removeFinalizer(napi_finalize callback, void* hint, void* data)
-    {
-        m_finalizers.remove({ callback, hint, data });
-    }
-
     struct BoundFinalizer;
 
+    // The entry cleanup() is currently calling stays in the set until its call returns (its
+    // owner holds a pointer to that node); asking to remove it marks it instead. Any other
+    // entry is removed outright.
     void removeFinalizer(const BoundFinalizer& finalizer)
     {
+        if (m_currentFinalizer && *m_currentFinalizer == finalizer) {
+            m_currentFinalizer->active = false;
+            return;
+        }
         m_finalizers.remove(finalizer);
+    }
+
+    void removeFinalizer(napi_finalize callback, void* hint, void* data)
+    {
+        removeFinalizer(BoundFinalizer { callback, hint, data });
     }
 
     const auto& addFinalizer(napi_finalize callback, void* hint, void* data)
@@ -502,6 +523,8 @@ public:
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
+    // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
+    inline const BoundFinalizer* currentFinalizer() const { return m_currentFinalizer; }
 
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
@@ -528,8 +551,8 @@ public:
         napi_finalize callback = nullptr;
         void* hint = nullptr;
         void* data = nullptr;
-        // Allows bound finalizers to effectively remove themselves during cleanup without breaking iteration.
-        // Safe to be mutable because it's not included in the hash.
+        // The running entry cannot leave the set until its call returns; deactivating it from
+        // inside the call marks it instead. Not part of the hash.
         mutable bool active = true;
 
         BoundFinalizer() = default;
@@ -557,13 +580,9 @@ public:
 
         void deactivate(NapiEnv& env) const
         {
-            if (env.isFinishingFinalizers()) {
-                active = false;
-            } else {
-                env.removeFinalizer(*this);
-                // At this point the BoundFinalizer has been destroyed, but because we're not doing anything else here it's safe.
-                // https://isocpp.org/wiki/faq/freestore-mgmt#delete-this
-            }
+            // `*this` may be the set's own node: nothing is touched after the removal.
+            // https://isocpp.org/wiki/faq/freestore-mgmt#delete-this
+            env.removeFinalizer(*this);
         }
 
         bool operator==(const BoundFinalizer& other) const
@@ -590,8 +609,10 @@ private:
     // ListHashSet preserves insertion order so cleanup() can run finalizers in reverse
     // (LIFO), matching Node.js teardown semantics for napi_wrap references.
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
+    const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
     JSC::VM& m_vm;
+    const ::BunVmHandleRef* m_vmHandle;
     Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;

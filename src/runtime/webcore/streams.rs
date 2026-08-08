@@ -585,10 +585,6 @@ impl Pending {
         // SAFETY: VirtualMachine::get() returns the per-thread singleton VM; sole
         // `&`-borrow on this thread, outlives this call.
         let vm = VirtualMachine::get();
-        if vm.is_shutting_down() {
-            return;
-        }
-
         let clone = Box::new(core::mem::take(self));
         // `mem::take` resets `state`/`result`/`future` via `Default`;
         // no reader observes `future` after this.
@@ -612,10 +608,27 @@ impl Pending {
         boxed.run();
         drop(boxed);
     }
+
+    /// The loop refused the deferred fulfilment (VM teardown): nobody awaits
+    /// the read any more, so drop the promise's root and the parked result.
+    pub(crate) fn release_without_running(this: *mut Pending) {
+        // SAFETY: heap-allocated in run_on_next_tick; refused, so we own it.
+        let mut boxed = unsafe { bun_core::heap::take(this) };
+        boxed.state = PendingState::Used;
+        if let PendingFuture::Promise { promise, .. } = &boxed.future {
+            JSPromise::opaque_ref(*promise).to_js().unprotect();
+        }
+        drop(boxed);
+    }
 }
 
 impl bun_event_loop::Taskable for Pending {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StreamPending;
+    /// Deferred out of a finalizer or a late completion: do the script-free
+    /// part of what the dispatch would have done.
+    unsafe fn release_unrun(this: *mut Self) {
+        Pending::release_without_running(this);
+    }
 }
 
 pub enum PendingFuture {
@@ -751,7 +764,11 @@ impl StreamResult {
             // `release()` frees `.owned`/`.owned_and_done` ByteLists and
             // unprotects `.err.JSValue` instead of leaking on the shutdown path.
             self.release();
-            return Ok(JSValue::ZERO);
+            // No value is produced for a VM that is going away; say so the one
+            // way callers (a pull promise's settle) understand: a pending
+            // termination, not an empty "Ok".
+            global_this.vm().ensure_termination_exception_pending();
+            return Err(jsc::JsError::Terminated);
         }
 
         match self {

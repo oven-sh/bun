@@ -65,6 +65,10 @@ pub trait CompletionStruct: Node + Send + 'static {
         transpiler: &mut Transpiler<'a>,
         bump: &'a Arena,
     ) -> Result<(), crate::Error>;
+    /// Bundle thread, on dequeue: `false` if the owner released this build
+    /// while it was still queued ([`free_released_unstarted`] then frees it).
+    fn try_start(&mut self) -> bool;
+    fn free_released_unstarted(this: *mut Self);
     fn complete_on_bundle_thread(&mut self);
     fn set_result(&mut self, result: BundleV2Result);
     fn set_log(&mut self, log: bun_ast::Log);
@@ -74,8 +78,8 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// `FileMap` layout stays in T6.
     fn file_map(&mut self) -> Option<NonNull<FileMap>>;
     /// Returns a §Dispatch handle (erased owner + `&'static` vtable) the impl
-    /// provides, so the bundler can read `result == .err` /
-    /// `jsc_event_loop.enqueueTaskConcurrent` without naming the concrete
+    /// provides, so the bundler can read `result == .err` / `is_cancelled`,
+    /// and post plugin hops to the owning VM, without naming the concrete
     /// struct.
     fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle;
 
@@ -221,7 +225,13 @@ impl<C: CompletionStruct> BundleThread<C> {
                     break;
                 }
                 // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner keeps it alive
-                // until complete_on_bundle_thread() signals completion.
+                // until complete_on_bundle_thread() signals completion — unless it
+                // released the build while it sat here (its VM went away).
+                if !unsafe { (*completion).try_start() } {
+                    C::free_released_unstarted(completion);
+                    continue;
+                }
+                // SAFETY: as above; started ⇒ the owner waits for us.
                 let completion = unsafe { &mut *completion };
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
                 let generation = unsafe { (*instance).generation };

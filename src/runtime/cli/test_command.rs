@@ -2347,7 +2347,7 @@ impl TestCommand {
             vm.transpiler.options.minify_identifiers = false;
             vm.transpiler.options.minify_whitespace = false;
             vm.transpiler.options.dead_code_elimination = false;
-            vm.global().vm().set_control_flow_profiler(true);
+            vm.global().vm().enable_control_flow_profiler();
         }
 
         // For tests, we default to UTC time zone
@@ -3145,7 +3145,7 @@ impl TestCommand {
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
-                            crate::jsc_hooks::close_isolation_handles(vm);
+                            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
                             vm.swap_global_for_test_isolation();
                             reporter
                                 .jest

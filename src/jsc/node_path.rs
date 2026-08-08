@@ -53,6 +53,12 @@ impl<T: Unprotect> ThreadSafe<T> {
     }
 }
 
+// SAFETY: this is what the type asserts — the JS-backed views inside `T` are
+// GC-protected for as long as it is held, so they may be read from another
+// thread (under that thread's VM borrow); the protection itself is released
+// only on a JS thread (see `Drop`).
+unsafe impl<T: Unprotect> Send for ThreadSafe<T> {}
+
 impl<T: Unprotect> core::ops::Deref for ThreadSafe<T> {
     type Target = T;
     #[inline]
@@ -71,7 +77,11 @@ impl<T: Unprotect> core::ops::DerefMut for ThreadSafe<T> {
 impl<T: Unprotect> Drop for ThreadSafe<T> {
     #[inline]
     fn drop(&mut self) {
-        self.0.unprotect();
+        // The protection is engine state: released here on a JS thread, gone
+        // with the heap anywhere else (a pool thread releasing a dead VM's job).
+        if crate::virtual_machine::VirtualMachine::get_or_null().is_some() {
+            self.0.unprotect();
+        }
         // `self.0: T` drops next (field drop after `Drop::drop`).
     }
 }

@@ -1015,7 +1015,7 @@ impl Response {
             },
             |r| r.body.get().reset(),
         );
-        let json_value = args.next_eat().unwrap_or(JSValue::ZERO);
+        let json_value = args.next_eat().unwrap_or_default();
 
         if !json_value.is_empty() {
             // Validate top-level values that are not JSON serializable (Node.js compatibility)
@@ -1154,7 +1154,7 @@ impl Response {
                 ..Default::default()
             };
 
-            let url_string_value = args.next_eat().unwrap_or(JSValue::ZERO);
+            let url_string_value = args.next_eat().unwrap_or_default();
             url_string = OwnedString::new(if url_string_value.is_empty() {
                 BunString::empty()
             } else {

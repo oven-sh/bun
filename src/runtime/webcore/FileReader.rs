@@ -802,7 +802,7 @@ impl FileReader {
                             pending_buf[0..buffer.len()].copy_from_slice(&buffer);
                             self.pending.with_mut(|p| {
                                 p.result = streams::Result::IntoArrayAndDone(streams::IntoArray {
-                                    value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
+                                    value: self.pending_value.get().get().unwrap_or_default(),
                                     len: buffer.len() as u64, // @truncate
                                 })
                             });
@@ -828,7 +828,7 @@ impl FileReader {
                     self.buffered.with_mut(|b| b.clear());
 
                     let into_array = streams::IntoArray {
-                        value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
+                        value: self.pending_value.get().get().unwrap_or_default(),
                         len: buf.len() as u64, // @truncate
                     };
 

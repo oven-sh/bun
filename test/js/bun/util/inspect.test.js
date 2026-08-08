@@ -991,31 +991,35 @@ it("tolerates util.inspect being replaced with a non-function", async () => {
   expect(exitCode).toBe(0);
 });
 
-it("throws instead of crashing when util.inspect cannot load for a custom inspect hook", async () => {
-  // The util.inspect lazy property is initialized on first use; if node:util
-  // fails to evaluate (clobbered Symbol), the initializer still has to set a
-  // value or LazyProperty aborts the process.
-  const fixture = `
-    const custom = Symbol.for("nodejs.util.inspect.custom");
-    const obj = { [custom]() { return "custom!"; } };
-    globalThis.Symbol = NaN;
-    try {
-      Bun.inspect(obj);
-      console.log("no throw");
-    } catch (e) {
-      console.log("threw:", e.constructor.name);
-    }
-  `;
+it.each([false, true])(
+  "throws instead of crashing when util.inspect cannot load for a custom inspect hook (colors: %p)",
+  async colors => {
+    // The util.inspect lazy property is initialized on first use; if node:util
+    // fails to evaluate (clobbered Symbol), the initializer still has to set a
+    // value or LazyProperty aborts the process. The colors variant initializes
+    // the color stylize lazy property first, covering its fallback too.
+    const fixture = `
+      const custom = Symbol.for("nodejs.util.inspect.custom");
+      const obj = { [custom]() { return "custom!"; } };
+      globalThis.Symbol = NaN;
+      try {
+        Bun.inspect(obj${colors ? ", { colors: true }" : ""});
+        console.log("no throw");
+      } catch (e) {
+        console.log("threw:", e.constructor.name);
+      }
+    `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toBe("threw: TypeError\n");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-});
+    expect(stdout).toBe("threw: TypeError\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+);

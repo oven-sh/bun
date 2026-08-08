@@ -212,11 +212,10 @@ function pushAndCheck(stream: NativeReadable, chunk: any) {
   try {
     wantMore = stream.push(chunk);
   } catch (e) {
-    // A 'data' listener threw inside the pull-promise reaction. Node fires
-    // these from the native read callback, so reroute to uncaughtException,
-    // and schedule the read the unwound addChunk would have done.
+    // Node dispatches 'data' from its native read callback, where a listener throw is an uncaughtException.
     reportUncaughtException(e);
     wantMore = true;
+    // The throw unwound addChunk before maybeReadMore; keep the stream reading.
     process.nextTick(readAfterListenerThrow, stream);
   }
   if (!wantMore) {

@@ -760,3 +760,12 @@ export const fetchH3Internals = {
 export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
+
+export const byteStreamInternals = {
+  // Swap a ByteStream-backed stream's producer for one whose drain signal
+  // re-enters on_cancel, making consumed-during-signal_drained re-entrancy
+  // deterministic in tests.
+  cancelOnDrain: $newRustFunction("runtime/webcore/ByteStream.rs", "TestingAPIs.byteStreamCancelOnDrain", 1) as (
+    stream: ReadableStream,
+  ) => void,
+};

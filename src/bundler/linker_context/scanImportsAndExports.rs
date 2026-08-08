@@ -288,7 +288,6 @@ pub(crate) fn scan_imports_and_exports(
                     wrap_stack: Vec::new(),
                 }
             };
-            let lazy_module_init = crate::lazy_module_init_enabled();
             for source_index_ in &reachable {
                 let source_index = source_index_.get();
                 let id = source_index as usize;
@@ -298,9 +297,7 @@ pub(crate) fn scan_imports_and_exports(
                     continue;
                 }
 
-                if dependency_wrapper.flags[id].wrap != WrapKind::None
-                    || (lazy_module_init && source_index != Index::RUNTIME.get())
-                {
+                if dependency_wrapper.flags[id].wrap != WrapKind::None {
                     dependency_wrapper.wrap(source_index);
                 }
 
@@ -327,57 +324,6 @@ pub(crate) fn scan_imports_and_exports(
                     }
                 }
             }
-        }
-
-        if crate::lazy_module_init_enabled() {
-            let flags_all = this.graph.meta.items_flags();
-            let kinds = this.graph.ast.items_exports_kind();
-            let wrappers = this.graph.ast.items_wrapper_ref();
-            let mut lazy = vec![Ref::NONE; flags_all.len()];
-            for (i, f) in flags_all.iter().enumerate() {
-                if i as u32 != Index::RUNTIME.get()
-                    && f.wrap == WrapKind::Esm
-                    && !f.is_async_or_has_async_dependency
-                    && kinds[i] != ExportsKind::Cjs
-                    && wrappers[i].is_valid()
-                {
-                    lazy[i] = wrappers[i];
-                }
-            }
-            if std::env::var_os("BUN_BUNDLER_LAZY_INIT_DEBUG").is_some() {
-                let total = flags_all.len();
-                let n_lazy = lazy.iter().filter(|r| r.is_valid()).count();
-                let n_async = flags_all
-                    .iter()
-                    .filter(|f| f.is_async_or_has_async_dependency)
-                    .count();
-                let n_cjs = kinds.iter().filter(|k| **k == ExportsKind::Cjs).count();
-                let n_esm_wrap = flags_all.iter().filter(|f| f.wrap == WrapKind::Esm).count();
-                eprintln!(
-                    "[lazy-init] files={total} lazy={n_lazy} esm_wrapped={n_esm_wrap} async_tainted={n_async} cjs={n_cjs}"
-                );
-                let paths = this.parse_graph().input_files.items_source();
-                let mut shown = 0;
-                for (i, f) in flags_all.iter().enumerate() {
-                    if f.is_async_or_has_async_dependency && shown < 40 {
-                        // print only "roots": async files none of whose imports are async
-                        let recs = this.graph.ast.items_import_records()[i].as_slice();
-                        let has_async_dep = recs.iter().any(|r| {
-                            r.source_index.is_valid()
-                                && flags_all[r.source_index.get() as usize]
-                                    .is_async_or_has_async_dependency
-                        });
-                        if !has_async_dep {
-                            eprintln!(
-                                "[lazy-init] TLA root: {}",
-                                bstr::BStr::new(paths[i].path.text)
-                            );
-                            shown += 1;
-                        }
-                    }
-                }
-            }
-            this.lazy_init_wrappers = lazy;
         }
 
         // Step 3: Resolve "export * from" statements. This must be done after we
@@ -642,37 +588,6 @@ pub(crate) fn scan_imports_and_exports(
                 ptr: core::ptr::NonNull::new(string_buffer.as_mut_ptr()),
             });
 
-            // Lazy module init: a readable name symbol for the init function expression (`init$src/foo/bar.ts`).
-            if wrap == WrapKind::Esm
-                && this
-                    .lazy_init_wrappers
-                    .get(id)
-                    .is_some_and(|w| w.is_valid())
-            {
-                if this.lazy_init_fn_names.len() < this.lazy_init_wrappers.len() {
-                    let n = this.lazy_init_wrappers.len();
-                    this.lazy_init_fn_names.resize(n, Ref::NONE);
-                }
-                let pretty: &[u8] = source.path.pretty;
-                let mut name_buf: Vec<u8> = Vec::with_capacity(pretty.len() + 5);
-                name_buf.extend_from_slice(b"init$");
-                for &b in pretty {
-                    name_buf.push(if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' {
-                        b
-                    } else {
-                        b'_'
-                    });
-                }
-                let name_slice: &[u8] = this.graph.arena().alloc_slice_copy(&name_buf);
-                // SAFETY: arena-owned for the link's lifetime (Symbol.original_name contract).
-                let name_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(name_slice) };
-                this.lazy_init_fn_names[id] = this.graph.generate_new_symbol(
-                    source_index,
-                    bun_ast::symbol::Kind::HoistedFunction,
-                    name_static,
-                );
-            }
-
             // Pre-generate symbols for re-exports CommonJS symbols in case they
             // are necessary later. This is done now because the symbols map cannot be
             // mutated later due to parallelism.
@@ -827,25 +742,6 @@ pub(crate) fn scan_imports_and_exports(
                             // Also depend on any files that re-exported this symbol in between the
                             // file containing the import and the file containing the imported symbol
                             part.dependencies.append_slice_assume_capacity(re_exports);
-                        }
-
-                        // Lazy module init: use sites print `(init_dep(), sym)` for the file that *declares* the symbol
-                        // (which may be behind re-exports / in another chunk), so record that wrapper as used here.
-                        let lazy_wrapper = this
-                            .lazy_init_wrappers
-                            .get(import_source_index as usize)
-                            .copied()
-                            .unwrap_or(Ref::NONE);
-                        if lazy_wrapper.is_valid() && import_source_index != source_index {
-                            for &part_index in &*local_parts {
-                                this.graph.generate_symbol_import_and_use(
-                                    source_index,
-                                    part_index,
-                                    lazy_wrapper,
-                                    1,
-                                    Index::source(import_source_index),
-                                )?;
-                            }
                         }
                     }
 

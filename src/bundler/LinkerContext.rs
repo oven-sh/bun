@@ -125,12 +125,6 @@ pub struct LinkerContext<'a> {
     pub(crate) framework: Option<bun_ptr::BackRef<bake::Framework>>,
 
     pub(crate) mangled_props: MangledProps,
-
-    /// Per source index: the `init_*` wrapper to call at each use site of a binding imported from that file
-    /// (`Ref::NONE` = initialize eagerly at the import statement as usual). Populated when `BUN_BUNDLER_LAZY_INIT` is set.
-    pub(crate) lazy_init_wrappers: Vec<Ref>,
-    /// Per source index: a named symbol (`init$path`) for the module init function expression so profilers/stack traces attribute it.
-    pub(crate) lazy_init_fn_names: Vec<Ref>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -164,8 +158,6 @@ impl<'a> Default for LinkerContext<'a> {
             dev_server: None,
             framework: None,
             mangled_props: Default::default(),
-            lazy_init_wrappers: Vec::new(),
-            lazy_init_fn_names: Vec::new(),
         }
     }
 }
@@ -2011,7 +2003,6 @@ impl<'a> LinkerContext<'a> {
         import_record_index: u32,
         alloc: &Bump,
         ast: &JSAst<'_>,
-        imports_only_bindings: bool,
     ) -> Result<bool, BunError> {
         let record = &ast.import_records[import_record_index as usize];
         // Barrel optimization: deferred import records should be dropped
@@ -2114,16 +2105,6 @@ impl<'a> LinkerContext<'a> {
                     return Ok(true);
                 }
 
-                // Lazy module init: bindings imported from this file call `init()` at their use sites instead.
-                if imports_only_bindings
-                    && self
-                        .lazy_init_wrappers
-                        .get(record.source_index.get() as usize)
-                        .is_some_and(|w| w.is_valid())
-                {
-                    return Ok(true);
-                }
-
                 // Replace the statement with a call to "init()"
                 let init_call = Expr::init(
                     E::Call {
@@ -2191,9 +2172,6 @@ impl<'a> LinkerContext<'a> {
             // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
             // outlives only this call (see above).
             unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
-        // SAFETY: populated once before printing and never mutated afterwards (see above).
-        let lazy_init_wrappers: &[Ref] =
-            unsafe { bun_ptr::detach_lifetime_ref(&self.lazy_init_wrappers) }.as_slice();
 
         let print_options = js_printer::Options {
             bundling: true,
@@ -2236,8 +2214,6 @@ impl<'a> LinkerContext<'a> {
             } else {
                 Ref::NONE
             },
-            lazy_init_wrappers,
-            lazy_init_current_source: source_index.get(),
 
             input_files_for_dev_server: if self.options.output_format == Format::InternalBakeDev {
                 Some(parse_graph.input_files.items_source())

@@ -801,53 +801,17 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                     // "__esm(() => { ... })"
-                    let init_fn_name = c
-                        .lazy_init_fn_names
-                        .get(source_index as usize)
-                        .copied()
-                        .unwrap_or(Ref::NONE);
-                    let mut esm_args = Vec::<Expr>::from_slice(&[if init_fn_name.is_valid() {
-                        let mut func = G::Fn {
-                            name: Some(bun_ast::LocRef {
-                                loc: bun_ast::Loc::EMPTY,
-                                ref_: init_fn_name,
-                            }),
+                    let esm_args = Vec::<Expr>::from_slice(&[Expr::init(
+                        E::Arrow {
+                            is_async,
                             body: G::FnBody {
                                 stmts: inner_stmts,
                                 loc: bun_ast::Loc::EMPTY,
                             },
                             ..Default::default()
-                        };
-                        if is_async {
-                            func.flags.insert(bun_ast::flags::Function::IsAsync);
-                        }
-                        Expr::init(E::Function { func }, bun_ast::Loc::EMPTY)
-                    } else {
-                        Expr::init(
-                            E::Arrow {
-                                is_async,
-                                body: G::FnBody {
-                                    stmts: inner_stmts,
-                                    loc: bun_ast::Loc::EMPTY,
-                                },
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        )
-                    }]);
-
-                    // Lazy module init tracing: pass the module path so `__esm` can log what initialized when.
-                    if crate::lazy_module_init_enabled() {
-                        let path: &[u8] = c.parse_graph().input_files.items_source()
-                            [source_index as usize]
-                            .path
-                            .pretty;
-                        // SAFETY: source paths live in the bundler arena for the whole link.
-                        esm_args.push(Expr::init(
-                            E::String::init(unsafe { bun_ptr::detach_lifetime(path) }),
-                            bun_ast::Loc::EMPTY,
-                        ));
-                    }
+                        },
+                        bun_ast::Loc::EMPTY,
+                    )]);
 
                     // "var init_foo = __esm(...);"
                     let value = Expr::init(

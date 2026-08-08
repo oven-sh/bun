@@ -482,28 +482,6 @@ impl LinkerContext<'_> {
                 )
             };
 
-            // Lazy module init: namespace getters must evaluate the declaring module first: `() => (init_foo(), foo)`.
-            let lazy_wrapper = self
-                .lazy_init_wrappers
-                .get(exp_data.source_index.get() as usize)
-                .copied()
-                .unwrap_or(Ref::NONE);
-            let value = if lazy_wrapper.is_valid() {
-                ns_export_symbol_uses
-                    .put(lazy_wrapper, SymbolUse { count_estimate: 1 })
-                    .expect("OOM");
-                Expr::init(
-                    E::Call {
-                        target: Expr::init_identifier(lazy_wrapper, loc),
-                        ..Default::default()
-                    },
-                    loc,
-                )
-                .join_with_comma(value)
-            } else {
-                value
-            };
-
             let fn_body = G::FnBody {
                 stmts: stmts_eat1!(Stmt::allocate(arena, S::Return { value: Some(value) }, loc,)),
                 loc,
@@ -530,8 +508,7 @@ impl LinkerContext<'_> {
                 ..Default::default()
             });
             ns_export_symbol_uses
-                .put(exp_data.import_ref, SymbolUse { count_estimate: 1 })
-                .expect("OOM");
+                .put_assume_capacity(exp_data.import_ref, SymbolUse { count_estimate: 1 });
 
             // Make sure the part that declares the export is included
             let parts =

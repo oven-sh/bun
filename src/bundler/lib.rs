@@ -397,11 +397,3 @@ impl Default for output_file::Options {
         }
     }
 }
-
-/// Prototype gate: wrap every ESM module in an `init_*` thunk and call it at binding use sites (lazy module evaluation).
-pub fn lazy_module_init_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var_os("BUN_BUNDLER_LAZY_INIT").is_some_and(|v| !v.is_empty() && v != "0")
-    })
-}

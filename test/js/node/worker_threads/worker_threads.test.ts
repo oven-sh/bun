@@ -947,6 +947,25 @@ test("MessagePort.hasRef() reports actual loop-ref state", () => {
   port1.close();
 });
 
+// In a node worker only parentPort receives what the parent posts; the global
+// scope's `self.onmessage` is not a channel there (as in node). Libraries that
+// install both a parentPort listener and self.onmessage as a node/web shim
+// must see one delivery, not two.
+test("a parent message reaches parentPort only, not self.onmessage, in a node worker", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     let count = 0;
+     parentPort.on("message", () => { count++; });
+     self.onmessage = () => { count += 100; };
+     parentPort.on("message", () => setImmediate(() => parentPort.postMessage(count)));`,
+    { eval: true },
+  );
+  w.postMessage("x");
+  const [count] = await once(w, "message");
+  await w.terminate();
+  expect(count).toBe(1);
+});
+
 // node's setupPortReferencing tracks 'message' listeners only: a 'messageerror'
 // handler alone neither starts the port nor keeps the loop alive.
 test("onmessageerror alone does not ref the port", () => {

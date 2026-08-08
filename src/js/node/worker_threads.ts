@@ -759,11 +759,12 @@ if (
   // removing the listeners let the thread exit — node's parentPort lifecycle.
   if (transferredParentPort) {
     parentPort = transferredParentPort;
-    // node auto-starts parentPort. Registering it natively mirrors its messages
-    // onto the global scope so `self.onmessage` keeps working under a node
-    // Worker. The port arrives without a loop ref, so an unlistened parentPort
-    // does not by itself keep the thread alive (a 'message' listener refs it,
-    // as in node).
+    // node auto-starts parentPort, but delivery waits until the entry module has
+    // evaluated (registering it natively is how start() knows to defer). Only
+    // parentPort receives what the parent posts: `self.onmessage` on the global
+    // scope is not a channel in a node worker, as in node. The port arrives
+    // without a loop ref, so an unlistened parentPort does not by itself keep
+    // the thread alive (a 'message' listener refs it, as in node).
     _setParentPort(parentPort);
     parentPort.start();
   }

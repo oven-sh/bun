@@ -4231,8 +4231,6 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
 void GlobalObject::setNodeParentPort(WebCore::MessagePort* port)
 {
     m_nodeParentPort = port;
-    if (port)
-        port->setGlobalScopeMessageListenerCount(globalEventScope->messageListenerCount());
 }
 
 void GlobalObject::nodeWorkerEntryDidSettle()

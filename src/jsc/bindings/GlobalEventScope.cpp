@@ -36,11 +36,6 @@ void GlobalEventScope::onDidChangeListenerImpl(EventTarget& self, const AtomStri
             global.m_messageEventCount = 0;
             break;
         }
-        // A node worker's parentPort drains (or pauses) according to these listeners too.
-        if (auto* context = global.scriptExecutionContext()) {
-            if (auto* port = defaultGlobalObject(context->globalObject())->nodeParentPort())
-                port->setGlobalScopeMessageListenerCount(global.m_messageEventCount);
-        }
     }
 };
 

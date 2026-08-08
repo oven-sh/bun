@@ -20,7 +20,6 @@ class GlobalEventScope : public RefCounted<GlobalEventScope>, public EventTarget
     static void onDidChangeListenerImpl(EventTarget&, const AtomString&, OnDidChangeListenerKind);
 
 public:
-    unsigned messageListenerCount() const { return static_cast<unsigned>(m_messageEventCount); }
     GlobalEventScope(ScriptExecutionContext* context)
         : EventTargetWithInlineData()
         , m_context(context)

@@ -75,11 +75,7 @@ public:
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
 
     void start();
-    // For draining/pausing, a node worker's parentPort also counts `message` listeners on the
-    // worker's global scope (self.onmessage / addEventListener) — see setGlobalScopeMessageListenerCount.
-    bool hasMessageEventListener() const { return m_hasMessageEventListener || m_globalScopeMessageListenerCount > 0; }
-    // Only for the port registered as a node worker's parentPort (Zig::GlobalObject::nodeParentPort).
-    void setGlobalScopeMessageListenerCount(unsigned);
+    bool hasMessageEventListener() const { return m_hasMessageEventListener; }
     // The worker's entry module finished evaluating: a start() requested before that takes effect now.
     void entrySettled();
     void close();
@@ -159,7 +155,6 @@ private:
     bool m_isDispatching { false };
     bool m_closeEventDispatched { false };
     bool m_hasMessageEventListener { false };
-    unsigned m_globalScopeMessageListenerCount { 0 };
     bool m_startDeferredUntilEntrySettled { false };
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.

@@ -387,6 +387,7 @@ export function initializeNextTickQueue(
 
         drainMicrotasks();
       } while (!queue.isEmpty());
+      $putInternalField(nextTickQueue, 0, 0);
     }
 
     $putInternalField(nextTickQueue, 0, 0);

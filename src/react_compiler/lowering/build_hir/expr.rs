@@ -9,10 +9,10 @@ use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, Ref, StoreRef, symbol};
 
 use super::function::{lower_function_to_value, lower_object_method};
 use super::helpers::{
-    AssignmentStyle, MemberProperty, build_temporary_place, expression_type_name, lower_arguments,
-    lower_assignment, lower_expression_to_temporary, lower_identifier, lower_member_expression,
-    lower_object_property_key, lower_optional_call_expression, lower_optional_member_expression,
-    lower_value_to_temporary,
+    AssignmentStyle, ComputedKey, MemberProperty, build_temporary_place, expression_type_name,
+    lower_arguments, lower_assignment, lower_expression_to_temporary, lower_identifier,
+    lower_member_expression, lower_object_property_key, lower_optional_call_expression,
+    lower_optional_member_expression, lower_value_to_temporary,
 };
 use super::jsx::lower_jsx_call;
 use crate::lowering::FunctionNode;
@@ -145,7 +145,7 @@ pub(crate) fn lower_expression(
                     .key
                     .as_ref()
                     .ok_or_else(|| cold_todo("object property without key", loc))?;
-                let computed = prop.flags.contains(PF::IsComputed);
+                let computed = ComputedKey::from_bool(prop.flags.contains(PF::IsComputed));
                 let key = match lower_object_property_key(builder, key_expr, computed)? {
                     Some(k) => k,
                     None => continue,
@@ -1044,7 +1044,7 @@ fn lower_update(
     unary: &E::Unary,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
-    let prefix = matches!(unary.op, OpCode::UnPreInc | OpCode::UnPreDec);
+    let prefix = UpdatePosition::from_bool(matches!(unary.op, OpCode::UnPreInc | OpCode::UnPreDec));
     let operation = match unary.op {
         OpCode::UnPreInc | OpCode::UnPostInc => UpdateOperator::Increment,
         OpCode::UnPreDec | OpCode::UnPostDec => UpdateOperator::Decrement,
@@ -1100,7 +1100,10 @@ fn lower_update(
                 )?,
             };
 
-            let result_place = if prefix { new_value_place } else { prev_value };
+            let result_place = match prefix {
+                UpdatePosition::Prefix => new_value_place,
+                UpdatePosition::Postfix => prev_value,
+            };
             Ok(InstructionValue::LoadLocal {
                 loc: result_place.loc,
                 place: result_place,
@@ -1129,7 +1132,7 @@ fn lower_update_identifier(
     builder: &mut HirBuilder,
     ref_: Ref,
     arg_bun_loc: Loc,
-    prefix: bool,
+    prefix: UpdatePosition,
     operation: UpdateOperator,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
@@ -1178,7 +1181,7 @@ fn lower_update_identifier(
 
     let value = lower_identifier(builder, ref_, ident_loc)?;
 
-    if prefix {
+    if prefix == UpdatePosition::Prefix {
         Ok(InstructionValue::PrefixUpdate {
             lvalue: lvalue_place,
             operation,

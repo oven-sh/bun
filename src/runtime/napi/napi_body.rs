@@ -11,7 +11,7 @@ use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
 use bun_jsc::StringJsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{IsRejection, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
     JsResult, StrongOptional, Task,
@@ -200,12 +200,14 @@ enum EscapeError {
     EscapeCalledTwice,
 }
 
+bun_core::bool_enum!(Escapable);
+
 impl NapiHandleScope {
     /// Create a new handle scope in the given environment, or return null if creating one now is
     /// unsafe (i.e. inside a finalizer)
-    fn open(env: &NapiEnv, escapable: bool) -> *mut NapiHandleScope {
+    fn open(env: &NapiEnv, escapable: Escapable) -> *mut NapiHandleScope {
         // SAFETY: env is valid; C++ mutates env's scope stack (interior mutability).
-        unsafe { NapiHandleScope__open(env.as_mut_ptr(), escapable) }
+        unsafe { NapiHandleScope__open(env.as_mut_ptr(), escapable == Escapable::Yes) }
     }
 
     /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
@@ -249,7 +251,7 @@ impl NapiHandleScope {
     #[must_use]
     fn open_scoped(env: &NapiEnv) -> NapiHandleScopeGuard<'_> {
         NapiHandleScopeGuard {
-            scope: Self::open(env, false),
+            scope: Self::open(env, Escapable::No),
             env,
         }
     }
@@ -1107,7 +1109,7 @@ extern "C" fn napi_open_handle_scope(
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    *result = NapiHandleScope::open(env, false);
+    *result = NapiHandleScope::open(env, Escapable::No);
     env.ok()
 }
 
@@ -1210,7 +1212,7 @@ extern "C" fn napi_open_escapable_handle_scope(
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    *result = NapiHandleScope::open(env, true);
+    *result = NapiHandleScope::open(env, Escapable::Yes);
     env.ok()
 }
 
@@ -1866,7 +1868,7 @@ impl napi_async_work {
         // SAFETY: env is valid for the duration of this call.
         let env_ref = unsafe { &*env };
         if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-            let _ = vm.uncaught_exception(global, exception, false);
+            let _ = vm.uncaught_exception(global, exception, IsRejection::No);
         } else if global.has_exception() {
             global.report_active_exception_as_unhandled(jsc::JsError::Thrown);
         }
@@ -2322,7 +2324,7 @@ impl Finalizer {
             let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception(
                 env_ref.to_js(),
                 exception,
-                false,
+                IsRejection::No,
             );
         }
 
@@ -2330,7 +2332,7 @@ impl Finalizer {
             let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception(
                 env_ref.to_js(),
                 exception,
-                false,
+                IsRejection::No,
             );
         }
     }
@@ -2372,6 +2374,9 @@ extern "C" fn napi_internal_enqueue_finalizer(
 // ──────────────────────────────────────────────────────────────────────────
 // ThreadSafeFunction
 // ──────────────────────────────────────────────────────────────────────────
+
+bun_core::bool_enum!(pub(crate) CallMode { NonBlocking, Blocking });
+bun_core::bool_enum!(CallerMustFree);
 
 /// Ownership: the JS thread owns this allocation while the env lives and frees
 /// it in `destroy`; from `env_teardown_done` on it belongs to the remaining
@@ -2727,13 +2732,13 @@ impl ThreadSafeFunction {
     pub(crate) unsafe fn push(
         this: *mut ThreadSafeFunction,
         ctx: *mut c_void,
-        block: bool,
+        block: CallMode,
     ) -> napi_status {
         // SAFETY: live allocation; the borrow is scoped to this call and ends
         // before the free below.
         let (status, orphaned) = unsafe { (*this).enqueue(ctx, block) };
 
-        if orphaned {
+        if orphaned == CallerMustFree::Yes {
             // SAFETY: the lock is dropped, we dropped the last thread reference
             // and `env_teardown` already released everything it owned.
             unsafe { ThreadSafeFunction::free_orphaned(this) };
@@ -2743,9 +2748,9 @@ impl ThreadSafeFunction {
 
     /// Returns `(status, caller_must_free)`; the free must happen after the
     /// lock guard here is dropped, which is why only `push` may call this.
-    fn enqueue(&mut self, ctx: *mut c_void, block: bool) -> (napi_status, bool) {
+    fn enqueue(&mut self, ctx: *mut c_void, block: CallMode) -> (napi_status, CallerMustFree) {
         let _g = self.lock.lock_guard();
-        if block {
+        if block == CallMode::Blocking {
             while self.queue.is_blocked() && !self.is_closing() {
                 self.blocking_condvar.wait(&self.lock);
             }
@@ -2754,14 +2759,14 @@ impl ThreadSafeFunction {
             // queue (node's `Push` skips the queue-full check unless it is open),
             // so the caller's reference is still consumed and it can finalize.
             // don't set the error on the env as this is run from another thread
-            return (NapiStatus::queue_full as napi_status, false);
+            return (NapiStatus::queue_full as napi_status, CallerMustFree::No);
         }
 
         if self.is_closing() {
             // `env_teardown` sets `closing` under this same lock, so an env that
             // dies while we wait above lands here, never below.
             if self.thread_count.load(Ordering::SeqCst) <= 0 {
-                return (NapiStatus::invalid_arg as napi_status, false);
+                return (NapiStatus::invalid_arg as napi_status, CallerMustFree::No);
             }
             // Consumes this thread's reference, like Node's `Push`, so a thread
             // that stops calling after napi_closing does not pin the loop. That
@@ -2774,7 +2779,7 @@ impl ThreadSafeFunction {
         let _ = self.queue.count.fetch_add(1, Ordering::SeqCst);
         let _ = self.queue.data.write_item(ctx); // OOM/capacity failures are fire-and-forget
         self.schedule_dispatch();
-        (NapiStatus::ok as napi_status, false)
+        (NapiStatus::ok as napi_status, CallerMustFree::No)
     }
 
     /// Caller must hold `lock`. Reached from addon threads (`enqueue`,
@@ -2956,7 +2961,7 @@ impl ThreadSafeFunction {
             unsafe { (*this).release_locked(mode) }
         };
 
-        if orphaned {
+        if orphaned == CallerMustFree::Yes {
             // SAFETY: the lock is dropped, we dropped the last thread reference
             // and `env_teardown` already released everything it owned.
             unsafe { ThreadSafeFunction::free_orphaned(this) };
@@ -2969,9 +2974,9 @@ impl ThreadSafeFunction {
     fn release_locked(
         &mut self,
         mode: napi_threadsafe_function_release_mode,
-    ) -> (napi_status, bool) {
+    ) -> (napi_status, CallerMustFree) {
         if self.thread_count.load(Ordering::SeqCst) <= 0 {
-            return (NapiStatus::invalid_arg as napi_status, false);
+            return (NapiStatus::invalid_arg as napi_status, CallerMustFree::No);
         }
 
         let prev_remaining = self.thread_count.fetch_sub(1, Ordering::SeqCst);
@@ -2983,7 +2988,10 @@ impl ThreadSafeFunction {
             // released the JS-thread-owned resources; until then it owns us
             // and will free us itself if we are the last to let go.
             let orphaned = prev_remaining == 1 && self.env_teardown_done.load(Ordering::SeqCst);
-            return (NapiStatus::ok as napi_status, orphaned);
+            return (
+                NapiStatus::ok as napi_status,
+                CallerMustFree::from_bool(orphaned),
+            );
         }
 
         if mode == napi_threadsafe_function_release_mode::abort || prev_remaining == 1 {
@@ -3006,7 +3014,7 @@ impl ThreadSafeFunction {
             }
         }
 
-        (NapiStatus::ok as napi_status, false)
+        (NapiStatus::ok as napi_status, CallerMustFree::No)
     }
 }
 
@@ -3138,7 +3146,13 @@ extern "C" fn napi_call_threadsafe_function(
     // SAFETY: func is non-null per N-API contract, and the caller may not use it
     // afterwards if this reports napi_closing — that consumes the caller's
     // thread reference, which can free it.
-    unsafe { ThreadSafeFunction::push(func, data, is_blocking == NAPI_TSFN_BLOCKING) }
+    unsafe {
+        ThreadSafeFunction::push(
+            func,
+            data,
+            CallMode::from_bool(is_blocking == NAPI_TSFN_BLOCKING),
+        )
+    }
 }
 
 #[unsafe(no_mangle)]

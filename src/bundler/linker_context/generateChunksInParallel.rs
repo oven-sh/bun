@@ -17,6 +17,7 @@ use crate::Index;
 use crate::analyze_transpiled_module;
 use crate::analyze_transpiled_module::StringIDExt as _;
 use crate::cheap_prefix_normalizer;
+use crate::chunk::{EnableSourceMapShifts, ForceAbsolutePath};
 use crate::options;
 use crate::options::Loader;
 
@@ -398,7 +399,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // runtime bunfs references to out-of-root entrypoints resolve.
             chunk
                 .template
-                .print(&mut rel_path, !c.options.compile_mode.is_executable())
+                .print(
+                    &mut rel_path,
+                    options::SanitizeParentDirs::from_bool(!c.options.compile_mode.is_executable()),
+                )
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
@@ -678,8 +682,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 &chunks[ci],
                 chunks,
                 &mut ds,
-                false,
-                sourcemap_option != SourceMapOption::None,
+                ForceAbsolutePath::No,
+                EnableSourceMapShifts::from_bool(sourcemap_option != SourceMapOption::None),
                 &scc,
             )?;
             chunks[ci].intermediate_output = intermediate_output;
@@ -910,8 +914,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     &chunks[chunk_index_in_chunks_list],
                     chunks,
                     &mut display_size,
-                    false,
-                    false,
+                    ForceAbsolutePath::No,
+                    EnableSourceMapShifts::No,
                     standalone_chunk_contents.as_deref().unwrap(),
                 )?
             } else {
@@ -931,8 +935,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     &chunks[chunk_index_in_chunks_list],
                     chunks,
                     &mut display_size,
-                    force_abs,
-                    enable_sm,
+                    ForceAbsolutePath::from_bool(force_abs),
+                    EnableSourceMapShifts::from_bool(enable_sm),
                 )?
             };
             // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);

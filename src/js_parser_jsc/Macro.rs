@@ -22,7 +22,8 @@ use bun_resolver::package_json::{
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
 use bun_jsc::virtual_machine::{
-    InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine, runtime_hooks,
+    InitOptions as VirtualMachineInitOptions, IsRejection, MacroModeGuard, VirtualMachine,
+    runtime_hooks,
 };
 use bun_jsc::{
     self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
@@ -427,7 +428,7 @@ impl Macro {
             // CLI-path macro VM uses the caller's log sink and env loader.
 
             // JSC needs to be initialized if building from CLI
-            jsc::initialize(false);
+            jsc::initialize(jsc::EvalMode::No);
 
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
                 log: Some(NonNull::from(&mut *log)),
@@ -627,8 +628,9 @@ impl<'a> Run<'a> {
         match tag {
             T::Error => {
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                let _ =
-                    unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
+                let _ = unsafe {
+                    (*self.macro_.vm()).uncaught_exception(self.global, value, IsRejection::No)
+                };
                 return Ok(self.caller);
             }
             T::Undefined => {
@@ -664,7 +666,11 @@ impl<'a> Run<'a> {
                     {
                         // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
                         let _ = unsafe {
-                            (*self.macro_.vm()).uncaught_exception(self.global, value, false)
+                            (*self.macro_.vm()).uncaught_exception(
+                                self.global,
+                                value,
+                                IsRejection::No,
+                            )
                         };
                         return Err(MacroError::MacroFailed);
                     }
@@ -1091,7 +1097,7 @@ fn expr_from_blob(
 
     if is_text_like {
         let mut output = bun_core::MutableString::init_empty();
-        bun_core::quote_for_json(bytes, &mut output, true)?;
+        bun_core::quote_for_json(bytes, &mut output, bun_core::printer::AsciiOnly::Yes)?;
         let owned = output.to_owned_slice();
         // strip the surrounding quotes; copy into the bump arena so the
         // `E.String` data outlives `owned`.

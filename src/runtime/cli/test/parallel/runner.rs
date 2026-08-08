@@ -578,7 +578,7 @@ impl<'a> WorkerLoop<'a> {
                     .bun_test_root
                     .reset_hook_scope_for_test_isolation();
             } else {
-                Global::mimalloc_cleanup(false);
+                Global::mimalloc_cleanup(bun_core::Force::No);
             }
             self.reporter.jest.default_timeout_override = u32::MAX;
 

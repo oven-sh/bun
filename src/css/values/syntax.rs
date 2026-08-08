@@ -1,6 +1,8 @@
 use crate::css_parser as css;
-use crate::css_parser::{CssResult, ParserError, ParserOptions, PrintErr, Printer, Token};
-use crate::properties::custom::TokenList;
+use crate::css_parser::{
+    CssResult, ParserError, ParserOptions, PrintErr, Printer, Token, WsBefore,
+};
+use crate::properties::custom::{IsCustomProperty, TokenList};
 use crate::properties::transform::{Transform, TransformList};
 use crate::values::angle::Angle;
 use crate::values::color::CssColor;
@@ -45,7 +47,7 @@ impl SyntaxString {
             SyntaxString::Components(components) => {
                 dest.write_separated(
                     components.iter(),
-                    |d| d.delim(b'|', true),
+                    |d| d.delim(b'|', WsBefore::Yes),
                     |d, c| c.to_css(d),
                 )?;
             }
@@ -465,13 +467,13 @@ impl ParsedComponent {
             ParsedComponent::Repeated(r) => dest.write_separated(
                 r.components.iter(),
                 |d| match r.multiplier {
-                    Multiplier::Comma => d.delim(b',', false),
+                    Multiplier::Comma => d.delim(b',', WsBefore::No),
                     Multiplier::Space => d.write_char(b' '),
                     Multiplier::None => unreachable!(),
                 },
                 |d, c| c.to_css(d),
             ),
-            ParsedComponent::TokenList(t) => t.to_css(dest, false),
+            ParsedComponent::TokenList(t) => t.to_css(dest, IsCustomProperty::No),
         }
     }
 

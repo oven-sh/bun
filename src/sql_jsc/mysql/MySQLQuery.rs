@@ -5,7 +5,7 @@ use crate::error::ThrowSqlError;
 use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_core::String as BunString;
 
-use super::my_sql_value::Value;
+use super::my_sql_value::{Signedness, Value};
 use bun_sql::mysql::mysql_param::Param;
 use bun_sql::mysql::mysql_request;
 use bun_sql::mysql::mysql_types::FieldType;
@@ -21,6 +21,7 @@ use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 use crate::mysql::protocol::signature::Signature;
 use crate::shared::query_binding_iterator::QueryBindingIterator;
+use crate::shared::{IsLast, SimpleQuery, UseBigint};
 
 use super::js_mysql_connection::MySQLConnection;
 use super::my_sql_statement::{self as my_sql_statement, ExecutionFlags, MySQLStatement};
@@ -88,12 +89,12 @@ impl Flags {
         self.0 = (self.0 & !Self::RESULT_MODE_MASK) | ((m as u8) << Self::RESULT_MODE_SHIFT);
     }
     #[inline]
-    fn new(bigint: bool, simple: bool) -> Self {
+    fn new(bigint: UseBigint, simple: SimpleQuery) -> Self {
         let mut f = 0u8;
-        if bigint {
+        if bigint == UseBigint::Yes {
             f |= Self::BIGINT;
         }
-        if simple {
+        if simple == SimpleQuery::Yes {
             f |= Self::SIMPLE;
         }
         // result_mode default = .objects (assumed discriminant 0)
@@ -131,7 +132,7 @@ impl MySQLQuery {
                 js_value,
                 global_object,
                 param.r#type,
-                param.flags.contains(ColumnFlags::UNSIGNED),
+                Signedness::from_bool(param.flags.contains(ColumnFlags::UNSIGNED)),
                 roots,
             )?);
             i += 1;
@@ -442,7 +443,7 @@ impl MySQLQuery {
 
     /// Takes ownership of `query` (caller must have already ref'd it, e.g. via
     /// `JSValue.toBunString`). `cleanup()` will deref it exactly once.
-    pub(crate) fn init(query: BunString, bigint: bool, simple: bool) -> Self {
+    pub(crate) fn init(query: BunString, bigint: UseBigint, simple: SimpleQuery) -> Self {
         Self {
             statement: core::ptr::null_mut(),
             query,
@@ -485,11 +486,11 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub(crate) fn result(&mut self, is_last_result: bool) -> bool {
+    pub(crate) fn result(&mut self, is_last_result: IsLast) -> bool {
         if self.status == Status::Success || self.status == Status::Fail {
             return false;
         }
-        self.status = if is_last_result {
+        self.status = if is_last_result == IsLast::Yes {
             Status::Success
         } else {
             Status::PartialResponse

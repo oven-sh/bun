@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
+use super::IsNot;
 use super::get_signature;
 use super::throw;
 
@@ -47,7 +48,7 @@ pub(crate) fn to_be_array_of_size(
     let received = value.to_fmt(&mut formatter);
 
     if not {
-        let signature = get_signature("toBeArrayOfSize", "", true);
+        let signature = get_signature("toBeArrayOfSize", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -57,7 +58,7 @@ pub(crate) fn to_be_array_of_size(
         );
     }
 
-    let signature = get_signature("toBeArrayOfSize", "", false);
+    let signature = get_signature("toBeArrayOfSize", "", IsNot::No);
     throw!(
         this,
         global,

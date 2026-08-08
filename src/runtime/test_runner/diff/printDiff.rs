@@ -4,7 +4,8 @@ use std::fmt::Write;
 
 use bstr::BStr;
 
-use super::diff_match_patch;
+use super::diff_match_patch::{self, CheckLines};
+use bun_core::output::AnsiColors;
 use bun_core::strings;
 
 type Dmp = diff_match_patch::DiffMatchPatch<u8>;
@@ -18,12 +19,15 @@ pub(crate) struct DiffConfig {
     pub(crate) truncate_context: usize,
 }
 
+bun_core::bool_enum!(pub(crate) IsAgent);
+
 impl DiffConfig {
-    pub(crate) fn default(is_agent: bool, enable_ansi_colors: bool) -> DiffConfig {
+    pub(crate) fn default(is_agent: IsAgent, enable_ansi_colors: AnsiColors) -> DiffConfig {
+        let is_agent = is_agent == IsAgent::Yes;
         DiffConfig {
             min_bytes_before_chunking: if is_agent { 0 } else { 2 * 1024 }, // 2kb
             chunk_context_lines: if is_agent { 1 } else { 5 },
-            enable_ansi_colors,
+            enable_ansi_colors: enable_ansi_colors == AnsiColors::Enabled,
             truncate_threshold: if is_agent { 1024 } else { 2 * 1024 }, // 2kb
             truncate_context: if is_agent { 50 } else { 100 },
         }
@@ -84,8 +88,11 @@ pub(crate) fn print_diff_main(
         expected_slice,
         received_slice,
     ));
-    let char_diffs =
-        bun_core::handle_oom(dmp.diff(&lines_to_chars.chars_1, &lines_to_chars.chars_2, false));
+    let char_diffs = bun_core::handle_oom(dmp.diff(
+        &lines_to_chars.chars_1,
+        &lines_to_chars.chars_2,
+        CheckLines::No,
+    ));
     let diffs = bun_core::handle_oom(diff_match_patch::diff_chars_to_lines(
         &char_diffs,
         lines_to_chars.line_array.as_slice(),
@@ -517,8 +524,11 @@ fn print_modified_segment(
         }
     }
 
-    let mut char_diff =
-        bun_core::handle_oom(Dmp::default().diff(segment.removed, segment.inserted, true));
+    let mut char_diff = bun_core::handle_oom(Dmp::default().diff(
+        segment.removed,
+        segment.inserted,
+        CheckLines::Yes,
+    ));
     bun_core::handle_oom(diff_match_patch::diff_cleanup_semantic(&mut char_diff));
 
     let mut deleted_highlighted_length: usize = 0;

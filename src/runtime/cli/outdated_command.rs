@@ -9,6 +9,7 @@ use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_install::npm::ExtendedManifest;
 use bun_install::package_manager::{
     LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
@@ -53,6 +54,8 @@ impl<'a> FilterType<'a> {
     }
     // *NOTE*: name and path are not allocated → no Drop impl needed.
 }
+
+bun_core::bool_enum!(WasFiltered);
 
 impl OutdatedCommand {
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
@@ -170,14 +173,22 @@ impl OutdatedCommand {
                 manager,
                 populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
             )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &workspace_pkg_ids, true)
+            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(
+                manager,
+                &workspace_pkg_ids,
+                WasFiltered::Yes,
+            )
         } else if manager.options.do_.recursive() {
             let all_workspaces = Self::get_all_workspaces(manager);
             populate_manifest_cache::populate_manifest_cache(
                 manager,
                 populate_manifest_cache::Packages::Ids(&all_workspaces),
             )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &all_workspaces, true)
+            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(
+                manager,
+                &all_workspaces,
+                WasFiltered::Yes,
+            )
         } else {
             let root_pkg_id = manager
                 .root_package_id
@@ -190,7 +201,7 @@ impl OutdatedCommand {
                 manager,
                 populate_manifest_cache::Packages::Ids(&ids),
             )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &ids, false)
+            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &ids, WasFiltered::No)
         }
     }
 
@@ -411,7 +422,7 @@ impl OutdatedCommand {
     fn print_outdated_info_table<const ENABLE_ANSI_COLORS: bool>(
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
-        was_filtered: bool,
+        was_filtered: WasFiltered,
     ) -> crate::Result<()> {
         let package_patterns: Option<Vec<FilterType<'_>>> = 'package_patterns: {
             let args = manager.options.positionals.get(1..).unwrap_or(&[]);
@@ -459,7 +470,7 @@ impl OutdatedCommand {
         // `&manager.options`).
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
-        let needs_extended = min_age_ms.is_some();
+        let needs_extended = ExtendedManifest::from_bool(min_age_ms.is_some());
         let excludes = manager.options.minimum_release_age_excludes;
 
         let mut version_buf: String = String::new();
@@ -652,7 +663,7 @@ impl OutdatedCommand {
         }
 
         // Show workspace column if filtered OR if there are catalog dependencies
-        let show_workspace_column = was_filtered || has_catalog_deps;
+        let show_workspace_column = was_filtered == WasFiltered::Yes || has_catalog_deps;
 
         let package_column_inside_length = "Packages".len().max(max_name);
         let current_column_inside_length = "Current".len().max(max_current);

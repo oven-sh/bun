@@ -1170,14 +1170,16 @@ pub struct Pipe {
 }
 pub type uv_pipe_t = Pipe;
 
+bun_core::bool_enum!(pub Ipc);
+
 impl Pipe {
     /// `uv_pipe_init` wrapper. Returns the raw `ReturnCode`; callers
     /// in higher tiers map to `bun_sys::Result` themselves so this crate stays
     /// free of `bun_sys`.
     #[inline]
-    pub fn init(&mut self, loop_: *mut Loop, ipc: bool) -> ReturnCode {
+    pub fn init(&mut self, loop_: *mut Loop, ipc: Ipc) -> ReturnCode {
         // SAFETY: `self` is a valid `uv_pipe_t`-sized allocation.
-        unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) }
+        unsafe { uv_pipe_init(loop_, self, if ipc == Ipc::Yes { 1 } else { 0 }) }
     }
     #[inline]
     pub fn open(&mut self, file: uv_file) -> ReturnCode {

@@ -58,7 +58,11 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
         // https://webassembly.github.io/spec/web-api/#compile-a-potential-webassembly-response
         // requires a byte-case-insensitive match for `application/wasm`. Parameters
         // are disallowed, so this is a whole-value compare, not an essence check.
-        if !strings::eql_case_insensitive_ascii(content_type, b"application/wasm", true) {
+        if !strings::eql_case_insensitive_ascii(
+            content_type,
+            b"application/wasm",
+            strings::CheckLen::Yes,
+        ) {
             return Err(this
                 .err(
                     ErrorCode::WEBASSEMBLY_RESPONSE,

@@ -25,10 +25,11 @@ use bun_paths::{self as path, PathBuffer, SEP_STR};
 // borrow_subslice/length live on `cow_slice::CowSliceZ`).
 use bun_ptr::cow_slice::CowSlice;
 type CowString = CowSlice<u8>;
-use crate::cli::run_command::RunCommand;
+use crate::cli::run_command::{LogErrors, RunCommand, ScriptShell, Silent};
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path;
+use bun_resolver::fs::StoreFd;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
 use bun_sys::{
@@ -357,27 +358,29 @@ const ROOT_DEFAULT_IGNORE_PATTERNS: &[&[u8]] = &[
     b"bun.lock",
 ];
 
-// (pattern, can_override). `can_override == false` mirrors npm-packlist's
+bun_core::bool_enum!(CanOverride);
+
+// (pattern, can_override). `can_override == No` mirrors npm-packlist's
 // strict rules (only `.git` and `.npmrc` here; lockfiles live in
 // ROOT_DEFAULT_IGNORE_PATTERNS); everything else `"files"` can re-include.
-const DEFAULT_IGNORE_PATTERNS: &[(&[u8], bool)] = &[
-    (b".*.swp", true),
-    (b"._*", true),
-    (b".DS_Store", true),
-    (b".git", false),
-    (b".gitignore", true),
-    (b".hg", true),
-    (b".npmignore", true),
-    (b".npmrc", false),
-    (b".lock-wscript", true),
-    (b".svn", true),
-    (b".wafpickle-*", true),
-    (b"CVS", true),
-    (b"npm-debug.log", true),
+const DEFAULT_IGNORE_PATTERNS: &[(&[u8], CanOverride)] = &[
+    (b".*.swp", CanOverride::Yes),
+    (b"._*", CanOverride::Yes),
+    (b".DS_Store", CanOverride::Yes),
+    (b".git", CanOverride::No),
+    (b".gitignore", CanOverride::Yes),
+    (b".hg", CanOverride::Yes),
+    (b".npmignore", CanOverride::Yes),
+    (b".npmrc", CanOverride::No),
+    (b".lock-wscript", CanOverride::Yes),
+    (b".svn", CanOverride::Yes),
+    (b".wafpickle-*", CanOverride::Yes),
+    (b"CVS", CanOverride::Yes),
+    (b"npm-debug.log", CanOverride::Yes),
     // mentioned in the docs but does not appear to be ignored by default
-    // (b"config.gypi", false),
-    (b".env.production", true),
-    (b"bunfig.toml", true),
+    // (b"config.gypi", CanOverride::No),
+    (b".env.production", CanOverride::Yes),
+    (b"bunfig.toml", CanOverride::Yes),
 ];
 
 struct PackListEntry {
@@ -590,7 +593,11 @@ fn iterate_included_project_tree(
                 if entry.kind == bun_sys::FileKind::Directory {
                     for bin in bins {
                         if bin.ty == BinType::Dir
-                            && strings::eql_long(&bin.path, entry_subpath.as_bytes(), true)
+                            && strings::eql_long(
+                                &bin.path,
+                                entry_subpath.as_bytes(),
+                                strings::CheckLen::Yes,
+                            )
                         {
                             continue 'next_entry;
                         }
@@ -610,7 +617,11 @@ fn iterate_included_project_tree(
                 bun_sys::FileKind::Directory => {
                     for bin in bins {
                         if bin.ty == BinType::Dir
-                            && strings::eql_long(&bin.path, entry_subpath.as_bytes(), true)
+                            && strings::eql_long(
+                                &bin.path,
+                                entry_subpath.as_bytes(),
+                                strings::CheckLen::Yes,
+                            )
                         {
                             continue 'next_entry;
                         }
@@ -631,7 +642,11 @@ fn iterate_included_project_tree(
 
                     for bin in bins {
                         if bin.ty == BinType::File
-                            && strings::eql_long(&bin.path, entry_subpath.as_bytes(), true)
+                            && strings::eql_long(
+                                &bin.path,
+                                entry_subpath.as_bytes(),
+                                strings::CheckLen::Yes,
+                            )
                         {
                             continue 'next_entry;
                         }
@@ -766,7 +781,11 @@ fn add_entire_tree(
                     }
                     for bin in bins {
                         if bin.ty == BinType::File
-                            && strings::eql_long(&bin.path, entry_subpath.as_bytes(), true)
+                            && strings::eql_long(
+                                &bin.path,
+                                entry_subpath.as_bytes(),
+                                strings::CheckLen::Yes,
+                            )
                         {
                             continue 'next_entry;
                         }
@@ -779,7 +798,11 @@ fn add_entire_tree(
                 bun_sys::FileKind::Directory => {
                     for bin in bins {
                         if bin.ty == BinType::Dir
-                            && strings::eql_long(&bin.path, entry_subpath.as_bytes(), true)
+                            && strings::eql_long(
+                                &bin.path,
+                                entry_subpath.as_bytes(),
+                                strings::CheckLen::Yes,
+                            )
                         {
                             continue 'next_entry;
                         }
@@ -921,7 +944,7 @@ fn iterate_bundled_deps(
 
                 let Some(dep) = bundled_deps.iter_mut().find(|dep| {
                     debug_assert!(dep.from_root_package_json);
-                    strings::eql_long(entry_name.as_bytes(), &dep.name, true)
+                    strings::eql_long(entry_name.as_bytes(), &dep.name, strings::CheckLen::Yes)
                 }) else {
                     continue;
                 };
@@ -951,7 +974,7 @@ fn iterate_bundled_deps(
             let entry_name = _entry_name;
             let Some(dep) = bundled_deps.iter_mut().find(|dep| {
                 debug_assert!(dep.from_root_package_json);
-                strings::eql_long(entry_name, &dep.name, true)
+                strings::eql_long(entry_name, &dep.name, strings::CheckLen::Yes)
             }) else {
                 continue;
             };
@@ -1340,7 +1363,11 @@ fn iterate_project_tree(
                     debug_assert!(!entry_subpath_.as_bytes().is_empty());
                     for bin in bins {
                         if bin.ty == BinType::File
-                            && strings::eql_long(&bin.path, entry_subpath_.as_bytes(), true)
+                            && strings::eql_long(
+                                &bin.path,
+                                entry_subpath_.as_bytes(),
+                                strings::CheckLen::Yes,
+                            )
                         {
                             continue 'next_entry;
                         }
@@ -1353,7 +1380,11 @@ fn iterate_project_tree(
                 bun_sys::FileKind::Directory => {
                     for bin in bins {
                         if bin.ty == BinType::Dir
-                            && strings::eql_long(&bin.path, entry_subpath_.as_bytes(), true)
+                            && strings::eql_long(
+                                &bin.path,
+                                entry_subpath_.as_bytes(),
+                                strings::CheckLen::Yes,
+                            )
                         {
                             continue 'next_entry;
                         }
@@ -1541,7 +1572,7 @@ fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
     for bin in bins {
         match bin.ty {
             BinType::File => {
-                if strings::eql_long(bin.path.as_bytes(), maybe_bin_path, true) {
+                if strings::eql_long(bin.path.as_bytes(), maybe_bin_path, strings::CheckLen::Yes) {
                     return true;
                 }
             }
@@ -1580,7 +1611,7 @@ fn is_unconditionally_excluded(
     }
 
     for &(pattern, can_override) in DEFAULT_IGNORE_PATTERNS {
-        if can_override {
+        if can_override == CanOverride::Yes {
             continue;
         }
         if glob::r#match(pattern, entry_name).matches() {
@@ -1621,7 +1652,7 @@ fn is_excluded<'a>(
     let mut ignored = false;
 
     for &(pattern, can_override) in DEFAULT_IGNORE_PATTERNS {
-        if !can_override {
+        if can_override == CanOverride::No {
             continue;
         }
         if glob::r#match(pattern, entry_name).matches() {
@@ -2016,8 +2047,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         &mut *ctx.command_ctx,
         &mut this_transpiler,
         Some(pm_env(ctx.manager)),
-        ctx.manager.options.log_level != LogLevel::Silent,
-        false,
+        LogErrors::from_bool(ctx.manager.options.log_level != LogLevel::Silent),
+        StoreFd::No,
     ) {
         if matches!(err, crate::Error::Alloc(_)) {
             return Err(PackError::OutOfMemory);
@@ -2083,7 +2114,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                         b"prepublishOnly",
                         abs_workspace_path,
                         ctx.manager.env_mut(),
-                        ctx.manager.options.log_level == LogLevel::Silent,
+                        Silent::from_bool(ctx.manager.options.log_level == LogLevel::Silent),
                     )?;
                 }
             }
@@ -2098,7 +2129,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     b"prepack",
                     abs_workspace_path,
                     ctx.manager.env_mut(),
-                    ctx.manager.options.log_level == LogLevel::Silent,
+                    Silent::from_bool(ctx.manager.options.log_level == LogLevel::Silent),
                 )?;
             }
         }
@@ -2112,7 +2143,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     b"prepare",
                     abs_workspace_path,
                     ctx.manager.env_mut(),
-                    ctx.manager.options.log_level == LogLevel::Silent,
+                    Silent::from_bool(ctx.manager.options.log_level == LogLevel::Silent),
                 )?;
             }
         }
@@ -2432,7 +2463,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 b"postpack",
                 abs_workspace_path,
                 ctx.manager.env_mut(),
-                ctx.manager.options.log_level == LogLevel::Silent,
+                Silent::from_bool(ctx.manager.options.log_level == LogLevel::Silent),
             )?;
         }
 
@@ -2917,7 +2948,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             b"postpack",
             abs_workspace_path,
             ctx.manager.env_mut(),
-            ctx.manager.options.log_level == LogLevel::Silent,
+            Silent::from_bool(ctx.manager.options.log_level == LogLevel::Silent),
         )?;
     }
 
@@ -2954,9 +2985,9 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     name: &[u8],
     abs_workspace_path: &[u8],
     env: &mut bun_dotenv::Loader,
-    silent: bool,
+    silent: Silent,
 ) -> Result<(), PackError<FOR_PUBLISH>> {
-    let use_system_shell = command_ctx.debug.use_system_shell;
+    let use_system_shell = ScriptShell::from_bool(command_ctx.debug.use_system_shell);
     match RunCommand::run_package_script_foreground(
         command_ctx,
         script,

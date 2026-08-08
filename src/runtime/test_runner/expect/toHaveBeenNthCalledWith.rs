@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::DiffFormatter;
 use super::Expect;
+use super::IsNot;
 use super::throw;
 
 pub(crate) fn to_have_been_nth_called_with(
@@ -70,7 +71,7 @@ pub(crate) fn to_have_been_nth_called_with(
     expected_args_js_array.ensure_still_alive();
 
     if this.flags.get().not() {
-        let signature = Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", true);
+        let signature = Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -80,7 +81,7 @@ pub(crate) fn to_have_been_nth_called_with(
             expected_args_js_array.to_fmt(&mut formatter),
         );
     }
-    let signature = Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false);
+    let signature = Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", IsNot::No);
 
     // Handle case where function was not called enough times
     if total_calls < nth_call_num {

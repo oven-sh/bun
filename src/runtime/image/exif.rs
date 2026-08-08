@@ -142,6 +142,7 @@ fn parse_tiff(tiff: &[u8]) -> Option<Orientation> {
     if !big && &tiff[0..2] != b"II" {
         return None;
     }
+    let big = Endian::from_bool(big);
     if rd16(tiff, 2, big)? != 42 {
         return None;
     }
@@ -180,13 +181,15 @@ fn parse_tiff(tiff: &[u8]) -> Option<Orientation> {
     None
 }
 
+bun_core::bool_enum!(Endian { Little, Big });
+
 #[inline]
-fn rd16(b: &[u8], off: usize, big: bool) -> Option<u16> {
+fn rd16(b: &[u8], off: usize, big: Endian) -> Option<u16> {
     if off + 2 > b.len() {
         return None;
     }
     let bytes = [b[off], b[off + 1]];
-    Some(if big {
+    Some(if big == Endian::Big {
         u16::from_be_bytes(bytes)
     } else {
         u16::from_le_bytes(bytes)
@@ -194,12 +197,12 @@ fn rd16(b: &[u8], off: usize, big: bool) -> Option<u16> {
 }
 
 #[inline]
-fn rd32(b: &[u8], off: usize, big: bool) -> Option<u32> {
+fn rd32(b: &[u8], off: usize, big: Endian) -> Option<u32> {
     if off + 4 > b.len() {
         return None;
     }
     let bytes = [b[off], b[off + 1], b[off + 2], b[off + 3]];
-    Some(if big {
+    Some(if big == Endian::Big {
         u32::from_be_bytes(bytes)
     } else {
         u32::from_le_bytes(bytes)

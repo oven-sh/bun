@@ -9,13 +9,14 @@ use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform}
 use bun_semver::String;
 use bun_sys::{self as Syscall, Dir, Fd};
 
+use crate::Scope;
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
-use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
+use crate::lifecycle_script_runner::{Foreground, LifecycleScriptSubprocess, Optional};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
 // imported for `tree::Id` / `Tree` / `DependencySlice` / `package::*`, all of
@@ -26,7 +27,7 @@ use crate::lockfile_real::package::{
 };
 use crate::lockfile_real::{self as lockfile, DependencySlice, Tree};
 use crate::network_task::ForTarballError;
-use crate::package_install::{self, PackageInstall};
+use crate::package_install::{self, PackageInstall, SkipDelete};
 use crate::package_manager::{self, Options, PackageManager};
 use crate::package_manager_real::progress_strings::ProgressStrings;
 use crate::package_manager_task as task;
@@ -45,7 +46,7 @@ type Bitset = DynamicBitSet;
 pub struct PendingLifecycleScript {
     pub(crate) list: lockfile::package::scripts::List,
     pub(crate) tree_id: lockfile::tree::Id,
-    pub(crate) optional: bool,
+    pub(crate) optional: Optional,
 }
 
 pub struct PackageInstaller<'a> {
@@ -67,7 +68,7 @@ pub struct PackageInstaller<'a> {
     pub(crate) node_modules: NodeModulesFolder,
 
     pub(crate) skip_verify_installed_version_number: bool,
-    pub(crate) skip_delete: bool,
+    pub(crate) skip_delete: SkipDelete,
     pub(crate) force_install: bool,
     pub(crate) root_node_modules_folder: Dir,
     pub(crate) summary: &'a mut package_install::Summary,
@@ -427,6 +428,9 @@ pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     component_count == 1 || (component_count == 2 && alias[0] == b'@')
 }
 
+bun_core::bool_enum!(InstallPackages);
+bun_core::bool_enum!(CanDefer);
+
 impl<'a> PackageInstaller<'a> {
     // ──────────────────────────────────────────────────────────────────────
     // BACKREF accessors
@@ -489,7 +493,7 @@ impl<'a> PackageInstaller<'a> {
     // runtime arg rather than a const generic.
     fn increment_tree_install_count(
         &mut self,
-        should_install_packages: bool,
+        should_install_packages: InstallPackages,
         tree_id: lockfile::tree::Id,
         log_level: Options::LogLevel,
     ) {
@@ -535,7 +539,7 @@ impl<'a> PackageInstaller<'a> {
             // reshaped for borrowck — pass tree_id, re-borrow tree inside.
             self.link_tree_bins(
                 tree_id,
-                true,
+                CanDefer::Yes,
                 link_target_buf.as_mut_slice(),
                 link_dest_buf.as_mut_slice(),
                 link_rel_buf.as_mut_slice(),
@@ -543,7 +547,7 @@ impl<'a> PackageInstaller<'a> {
             );
         }
 
-        if should_install_packages {
+        if should_install_packages == InstallPackages::Yes {
             const FORCE: bool = false;
             self.install_available_packages::<FORCE>(log_level);
         }
@@ -555,7 +559,7 @@ impl<'a> PackageInstaller<'a> {
         // Takes only `tree_id` and re-borrows `&mut self.trees[tree_id]` to
         // satisfy borrowck.
         tree_id: TreeContextId,
-        can_defer: bool,
+        can_defer: CanDefer,
         link_target_buf: &mut [u8],
         link_dest_buf: &mut [u8],
         link_rel_buf: &mut [u8],
@@ -637,7 +641,8 @@ impl<'a> PackageInstaller<'a> {
                                 };
 
                                 if target_tree_id != tree_id {
-                                    if can_defer && !completed_trees.is_set(target_tree_id as usize)
+                                    if can_defer == CanDefer::Yes
+                                        && !completed_trees.is_set(target_tree_id as usize)
                                     {
                                         // Platform package's tree isn't installed
                                         // yet: link the package's own bin now and
@@ -670,15 +675,15 @@ impl<'a> PackageInstaller<'a> {
             // globally linked packages shouls always belong to the root
             // tree (0).
             let global = if !manager.options.global || tree_id != 0 {
-                false
+                Scope::Local
             } else {
                 'global: {
                     for request in manager.update_requests.iter() {
                         if request.package_id == package_id {
-                            break 'global true;
+                            break 'global Scope::Global;
                         }
                     }
-                    break 'global false;
+                    break 'global Scope::Local;
                 }
             };
 
@@ -797,7 +802,7 @@ impl<'a> PackageInstaller<'a> {
 
                 self.link_tree_bins(
                     tree_id as u32,
-                    false,
+                    CanDefer::No,
                     link_target_buf.as_mut_slice(),
                     link_dest_buf.as_mut_slice(),
                     link_rel_buf.as_mut_slice(),
@@ -818,7 +823,7 @@ impl<'a> PackageInstaller<'a> {
                 // reshaped for borrowck — `package_name` is `Box<[u8]>`;
                 // clone it for the error message since `entry.list` is moved into `spawn`.
                 let name: Box<[u8]> = entry.list.package_name.clone();
-                let output_in_foreground = false;
+                let output_in_foreground = Foreground::No;
 
                 if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
                     self.command_ctx,
@@ -947,7 +952,7 @@ impl<'a> PackageInstaller<'a> {
             }
 
             let optional = entry.optional;
-            let output_in_foreground = false;
+            let output_in_foreground = Foreground::No;
             if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
                 self.command_ctx,
                 entry.list,
@@ -1286,7 +1291,7 @@ impl<'a> PackageInstaller<'a> {
             }
             self.summary.fail += 1;
             self.increment_tree_install_count(
-                !IS_PENDING_PACKAGE_INSTALL,
+                InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
                 self.current_tree_id,
                 log_level,
             );
@@ -1492,7 +1497,7 @@ impl<'a> PackageInstaller<'a> {
                         }
                         self.summary.fail += 1;
                         self.increment_tree_install_count(
-                            !IS_PENDING_PACKAGE_INSTALL,
+                            InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
                             self.current_tree_id,
                             log_level,
                         );
@@ -1575,7 +1580,7 @@ impl<'a> PackageInstaller<'a> {
                     panic!("Internal assertion failure: unexpected resolution tag");
                 }
                 self.increment_tree_install_count(
-                    !IS_PENDING_PACKAGE_INSTALL,
+                    InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
                     self.current_tree_id,
                     log_level,
                 );
@@ -1644,7 +1649,7 @@ impl<'a> PackageInstaller<'a> {
                             }
                             Err(ForTarballError::AlreadyFailed) => self
                                 .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
                                     self.current_tree_id,
                                     log_level,
                                 ),
@@ -1676,7 +1681,7 @@ impl<'a> PackageInstaller<'a> {
                             }
                             Err(ForTarballError::AlreadyFailed) => self
                                 .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
                                     self.current_tree_id,
                                     log_level,
                                 ),
@@ -1714,7 +1719,7 @@ impl<'a> PackageInstaller<'a> {
                             }
                             Err(ForTarballError::AlreadyFailed) => self
                                 .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
                                     self.current_tree_id,
                                     log_level,
                                 ),
@@ -1725,7 +1730,7 @@ impl<'a> PackageInstaller<'a> {
                             panic!("unreachable, handled above");
                         }
                         self.increment_tree_install_count(
-                            !IS_PENDING_PACKAGE_INSTALL,
+                            InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
                             self.current_tree_id,
                             log_level,
                         );
@@ -1802,7 +1807,7 @@ impl<'a> PackageInstaller<'a> {
                     }
                     self.summary.fail += 1;
                     self.increment_tree_install_count(
-                        !IS_PENDING_PACKAGE_INSTALL,
+                        InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
                         self.current_tree_id,
                         log_level,
                     );
@@ -1990,7 +1995,9 @@ impl<'a> PackageInstaller<'a> {
                                 log_level,
                                 &mut folder_path,
                                 package_id,
-                                dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
+                                Optional::from_bool(
+                                    dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
+                                ),
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
@@ -2062,7 +2069,7 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     self.increment_tree_install_count(
-                        !IS_PENDING_PACKAGE_INSTALL,
+                        InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
                         self.current_tree_id,
                         log_level,
                     );
@@ -2077,7 +2084,7 @@ impl<'a> PackageInstaller<'a> {
                     // even if the package failed to install, we still need to increment the install
                     // counter for this tree
                     self.increment_tree_install_count(
-                        !IS_PENDING_PACKAGE_INSTALL,
+                        InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
                         self.current_tree_id,
                         log_level,
                     );
@@ -2303,7 +2310,9 @@ impl<'a> PackageInstaller<'a> {
                         log_level,
                         &mut folder_path,
                         package_id,
-                        dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
+                        Optional::from_bool(
+                            dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
+                        ),
                         resolution,
                     ) {
                         if is_trusted_through_update_request {
@@ -2338,7 +2347,7 @@ impl<'a> PackageInstaller<'a> {
             // only used in the `needs_install` branch's EACCES handler).
             destination_dir.close();
             self.increment_tree_install_count(
-                !IS_PENDING_PACKAGE_INSTALL,
+                InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
                 self.current_tree_id,
                 log_level,
             );
@@ -2351,7 +2360,7 @@ impl<'a> PackageInstaller<'a> {
     ) {
         self.summary.fail += 1;
         self.increment_tree_install_count(
-            !IS_PENDING_PACKAGE_INSTALL,
+            InstallPackages::from_bool(!IS_PENDING_PACKAGE_INSTALL),
             self.current_tree_id,
             log_level,
         );
@@ -2364,7 +2373,7 @@ impl<'a> PackageInstaller<'a> {
         log_level: Options::LogLevel,
         package_path: &mut bun_paths::AutoAbsPath,
         package_id: PackageID,
-        optional: bool,
+        optional: Optional,
         resolution: &Resolution,
     ) -> bool {
         let mut scripts: PackageScripts =

@@ -768,8 +768,8 @@ impl<'a> Snapshots<'a> {
                     re_indented,
                     &mut result_text,
                     b'`',
-                    false,
-                    false,
+                    js_printer::AsciiOnly::No,
+                    js_printer::Json::No,
                     strings::Encoding::Utf8,
                 )?;
                 result_text.extend_from_slice(b"`");
@@ -848,7 +848,7 @@ impl<'a> Snapshots<'a> {
             // SAFETY: snapshot_dir_path is a BACKREF into Jest::runner().files[..].source.path,
             // which outlives self (runner is process-global; files are never freed mid-run).
             let cached_dir = self.snapshot_dir_path.map(|p| unsafe { p.as_ref() });
-            if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
+            if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), strings::CheckLen::Yes) {
                 buf[pos] = 0;
                 // SAFETY: buf[pos] == 0 written above
                 let snapshot_dir_path = ZStr::from_buf(&buf[..], pos);

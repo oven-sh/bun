@@ -214,12 +214,15 @@ pub use crate::webview::chrome_process as ChromeProcess;
 // and hands `(&arena, &mut log, &source)` to a per-format closure that does the
 // format-specific parse, error match (StackOverflow / OOM / SyntaxError vs
 // log.to_js), and tail conversion.
+bun_core::bool_enum!(pub(crate) AcceptBlobOrBuffer);
+bun_core::bool_enum!(pub(crate) RejectNullish);
+
 fn with_text_format_source<R>(
     global: &bun_jsc::JSGlobalObject,
     frame: &bun_jsc::CallFrame,
     path: &'static [u8],
-    accept_blob_or_buffer: bool,
-    reject_nullish: bool,
+    accept_blob_or_buffer: AcceptBlobOrBuffer,
+    reject_nullish: RejectNullish,
     f: impl FnOnce(&bun_alloc::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
 ) -> bun_jsc::JsResult<R> {
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
@@ -229,7 +232,7 @@ fn with_text_format_source<R>(
     let _ast_scope = ast_memory_allocator.enter();
 
     let input_value = frame.argument(0);
-    if reject_nullish && input_value.is_empty_or_undefined_or_null() {
+    if reject_nullish == RejectNullish::Yes && input_value.is_empty_or_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected a string to parse")));
     }
 
@@ -237,7 +240,7 @@ fn with_text_format_source<R>(
     // Conditional-init + drop-flag — only the taken branch's holder is live.
     let _blob_hold: BlobOrStringOrBuffer;
     let _str_hold;
-    let bytes: &[u8] = if accept_blob_or_buffer {
+    let bytes: &[u8] = if accept_blob_or_buffer == AcceptBlobOrBuffer::Yes {
         _blob_hold = match BlobOrStringOrBuffer::from_js(global, input_value)? {
             Some(v) => v,
             None => {

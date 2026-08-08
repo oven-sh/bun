@@ -162,6 +162,11 @@ impl Chomp {
     pub(crate) const DEFAULT: Chomp = Chomp::Clip;
 }
 
+bun_core::bool_enum!(
+    /// [170] `|` literal or [174] `>` folded block scalar.
+    BlockScalarStyle { Literal, Folded }
+);
+
 // ───────────────────────────────────────────────────────────────────────────
 // Indent
 // ───────────────────────────────────────────────────────────────────────────
@@ -4874,7 +4879,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         &mut self,
         indent_indicator: IndentIndicator,
         chomp: Chomp,
-        folded: bool,
+        folded: BlockScalarStyle,
         start: Pos,
         line: Line,
     ) -> Result<Token<Enc>, ParseError> {
@@ -4886,7 +4891,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             content_indent: Indent,
             max_leading_indent: Indent,
             line: Line,
-            folded: bool,
+            folded: BlockScalarStyle,
             explicit_indent: bool,
             /// Folded: was the previous content line more-indented (started with
             /// space/tab beyond content_indent)? Breaks adjacent to such lines
@@ -4956,7 +4961,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 // First content of a new line after one or more line breaks:
                 // flush them, then remember whether *this* line is more-indented
                 // for the next fold decision.
-                if self.folded && !self.prev_more_indented && !self.cur_more_indented {
+                if self.folded == BlockScalarStyle::Folded
+                    && !self.prev_more_indented
+                    && !self.cur_more_indented
+                {
                     if self.leading_newlines == 1 {
                         self.text.push(Enc::ch(b' '));
                     } else {
@@ -5226,8 +5234,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         let (indent_indicator, chomp) = self.scan_block_header()?;
 
-        let result =
-            self.scan_auto_indented_literal_scalar(indent_indicator, chomp, false, start, line);
+        let result = self.scan_auto_indented_literal_scalar(
+            indent_indicator,
+            chomp,
+            BlockScalarStyle::Literal,
+            start,
+            line,
+        );
         self.whitespace_buf.clear();
         result
     }
@@ -5238,7 +5251,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         let (indent_indicator, chomp) = self.scan_block_header()?;
 
-        self.scan_auto_indented_literal_scalar(indent_indicator, chomp, true, start, line)
+        self.scan_auto_indented_literal_scalar(
+            indent_indicator,
+            chomp,
+            BlockScalarStyle::Folded,
+            start,
+            line,
+        )
     }
 
     fn scan_single_quoted_scalar(&mut self) -> Result<Token<Enc>, ParseError> {

@@ -538,7 +538,9 @@ impl<'a> Transpiler<'a> {
             self.options.env.prefix = Box::from(b"BUN_".as_slice());
         }
 
-        self.run_env_loader(self.options.env.disable_default_env_files)?;
+        self.run_env_loader(dot_env::SkipDefaultEnv::from_bool(
+            self.options.env.disable_default_env_files,
+        ))?;
 
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
@@ -665,10 +667,13 @@ fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_imp
     *out = tsconfig.merge_jsx(core::mem::take(out));
 }
 
+bun_core::bool_enum!(pub AutoJsx);
+bun_core::bool_enum!(KeepJsonAndTomlAsOneStatement);
+
 impl<'a> Transpiler<'a> {
     /// Initialize `self.linker` with back-pointers into this `Transpiler`,
     /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
-    pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
+    pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: AutoJsx) {
         // `Linker::init` dropped its `arena` arg (linker.rs:172
         // — global mimalloc). `crate::linker::Linker` stores raw pointers
         // so `&mut self.options` etc. coerce directly. Self-reference is
@@ -689,7 +694,7 @@ impl<'a> Transpiler<'a> {
             self.fs,
         );
 
-        if auto_jsx {
+        if auto_jsx == AutoJsx::Yes {
             // Most of the time, this will already be cached
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
@@ -711,12 +716,15 @@ impl<'a> Transpiler<'a> {
     /// [`Self::configure_linker_with_auto_jsx`] with `auto_jsx = true`.
     #[inline]
     pub fn configure_linker(&mut self) {
-        self.configure_linker_with_auto_jsx(true);
+        self.configure_linker_with_auto_jsx(AutoJsx::Yes);
     }
 
     /// Load `.env` files into the env loader according to
     /// `options.env.behavior`.
-    pub fn run_env_loader(&mut self, skip_default_env: bool) -> crate::Result<()> {
+    pub fn run_env_loader(
+        &mut self,
+        skip_default_env: dot_env::SkipDefaultEnv,
+    ) -> crate::Result<()> {
         use bun_options_types::schema::api::DotEnvBehavior;
         // Derived once up front; no other live `&mut` to this `Loader` exists
         // for the duration of this call.
@@ -1430,7 +1438,7 @@ impl<'a> Transpiler<'a> {
                 self.fs_mut(),
                 path.text,
                 dirname_fd,
-                USE_SHARED_BUFFER,
+                Fs::UseSharedBuffer::from_bool(USE_SHARED_BUFFER),
                 file_descriptor,
                 if USE_SHARED_BUFFER { None } else { Some(arena) },
             ) {
@@ -1772,7 +1780,9 @@ impl<'a> Transpiler<'a> {
                     source_backing,
                     arena,
                     log,
-                    this_parse.keep_json_and_toml_as_one_statement,
+                    KeepJsonAndTomlAsOneStatement::from_bool(
+                        this_parse.keep_json_and_toml_as_one_statement,
+                    ),
                 );
             }
             options::Loader::Text => {
@@ -1822,8 +1832,10 @@ fn parse_data_loader<'a>(
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
     log: &mut bun_ast::Log,
-    keep_json_and_toml_as_one_statement: bool,
+    keep_json_and_toml_as_one_statement: KeepJsonAndTomlAsOneStatement,
 ) -> Option<ParseResult<'a>> {
+    let keep_json_and_toml_as_one_statement =
+        keep_json_and_toml_as_one_statement == KeepJsonAndTomlAsOneStatement::Yes;
     // `bun_parsers::*` parse into the T2 value AST
     // (`bun_ast::Expr`); lift into the full T4
     // `bun_ast::Expr` via the deep-convert `From` bridge
@@ -1843,10 +1855,13 @@ fn parse_data_loader<'a>(
                 Err(_) => return None,
             }
         }
-        options::Loader::Toml => match bun_parsers::toml::TOML::parse(source, log, arena, false) {
-            Ok(e) => e,
-            Err(_) => return None,
-        },
+        options::Loader::Toml => {
+            use bun_parsers::toml::{RedactLogs, TOML};
+            match TOML::parse(source, log, arena, RedactLogs::No) {
+                Ok(e) => e,
+                Err(_) => return None,
+            }
+        }
         options::Loader::Yaml => match bun_parsers::yaml::YAML::parse(
             source,
             log,
@@ -1984,7 +1999,8 @@ fn parse_data_loader<'a>(
                         ..Default::default()
                     };
 
-                    let ref_ = bun_ast::Ref::init(count as u32, 0, false);
+                    let ref_ =
+                        bun_ast::Ref::init(count as u32, 0, bun_ast::IsSourceContentsSlice::No);
                     decls[count] = bun_ast::G::Decl {
                         binding: bun_ast::Binding::alloc(
                             arena,
@@ -3008,7 +3024,7 @@ impl<'a> Transpiler<'a> {
             self.fs_mut(),
             file_path_text,
             dirname_fd,
-            false,
+            Fs::UseSharedBuffer::No,
             None,
             None,
         ) {

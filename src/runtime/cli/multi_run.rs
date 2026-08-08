@@ -11,11 +11,12 @@ use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::BufferedReader;
 use bun_paths::{self as path, PathBuffer};
+use bun_resolver::fs::StoreFd;
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
 use crate::Command;
 use crate::filter_arg as FilterArg;
-use crate::run_command::RunCommand;
+use crate::run_command::{ForceUsingBun, LogErrors, RunCommand};
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under crate::api::bun::process.
@@ -45,22 +46,24 @@ struct ScriptConfig {
     path: Box<[u8]>,
 }
 
+bun_core::bool_enum!(PipeKind { Stdout, Stderr });
+
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
 /// so output can be routed to the correct parent stream.
 pub struct PipeReader<'a> {
     reader: BufferedReader,
     handle: *const ProcessHandle<'a>, // set in ProcessHandle::start()
-    is_stderr: bool,
+    kind: PipeKind,
     line_buffer: Vec<u8>,
 }
 
 impl<'a> PipeReader<'a> {
-    fn new(is_stderr: bool) -> Self {
+    fn new(kind: PipeKind) -> Self {
         Self {
             // BufferedReader::init(This) — the parent type fills the vtable.
             reader: BufferedReader::init::<Self>(),
             handle: ptr::null(),
-            is_stderr,
+            kind,
             line_buffer: Vec::new(),
         }
     }
@@ -209,14 +212,14 @@ impl<'a> ProcessHandle<'a> {
                 let _ = bun_sys::set_nonblocking(stdout_fd);
                 self.stdout_reader
                     .reader
-                    .start(stdout_fd, true)
+                    .start(stdout_fd, bun_io::IsPollable::Yes)
                     .map_err(Error::from)?;
             }
             if let Some(stderr_fd) = stderr_fd {
                 let _ = bun_sys::set_nonblocking(stderr_fd);
                 self.stderr_reader
                     .reader
-                    .start(stderr_fd, true)
+                    .start(stderr_fd, bun_io::IsPollable::Yes)
                     .map_err(Error::from)?;
             }
         }
@@ -310,7 +313,7 @@ impl<'a> State<'a> {
         pipe.line_buffer.extend_from_slice(chunk);
 
         // Route to correct parent stream: child stdout -> parent stdout, child stderr -> parent stderr
-        let writer = if pipe.is_stderr {
+        let writer = if pipe.kind == PipeKind::Stderr {
             Output::error_writer()
         } else {
             Output::writer()
@@ -366,7 +369,7 @@ impl<'a> State<'a> {
         if !pipe.line_buffer.is_empty() {
             let line = &pipe.line_buffer[..];
             let needs_newline = !line.is_empty() && line[line.len() - 1] != b'\n';
-            let writer = if pipe.is_stderr {
+            let writer = if pipe.kind == PipeKind::Stderr {
                 Output::error_writer()
             } else {
                 Output::writer()
@@ -798,7 +801,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // Out-param init pattern.
     let mut this_transpiler_slot =
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, false)?;
+    let _ = RunCommand::configure_env_for_run(
+        ctx,
+        &mut this_transpiler_slot,
+        None,
+        LogErrors::Yes,
+        StoreFd::No,
+    )?;
     // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
     let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
     let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
@@ -925,7 +934,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 this_transpiler,
                 None,
                 &dirpath,
-                run_in_bun,
+                ForceUsingBun::from_bool(run_in_bun),
             )?;
             let pkg_name: Box<[u8]> = if !pkgjson.name.is_empty() {
                 Box::<[u8]>::from(&pkgjson.name[..])
@@ -1022,7 +1031,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             this_transpiler,
             None,
             cwd,
-            run_in_bun,
+            ForceUsingBun::from_bool(run_in_bun),
         )?;
 
         // Load package.json scripts
@@ -1136,8 +1145,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             state: &raw const state,
             config,
             color_idx,
-            stdout_reader: PipeReader::new(false),
-            stderr_reader: PipeReader::new(true),
+            stdout_reader: PipeReader::new(PipeKind::Stdout),
+            stderr_reader: PipeReader::new(PipeKind::Stderr),
             process: None,
             start_time: None,
             end_time: None,

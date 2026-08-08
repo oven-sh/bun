@@ -4,12 +4,12 @@ use crate::cli::Command;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
-use crate::cli::test::timings::Timings;
+use crate::cli::test::timings::{OnlyMeasured, Timings};
 use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{BlockUntilConnected, VirtualMachine};
 use bun_jsc::{self as jsc};
 // `set_time_zone` / `delete_module_registry_entry` take the JSC-side
 // `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
@@ -35,6 +35,7 @@ bun_output::declare_scope!(bun_test, hidden);
 // Drop once the body is normalised to call `code_coverage::{text,lcov}`
 // directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
+    pub(super) use bun_sourcemap_jsc::code_coverage::text::IndentName;
     pub(super) use bun_sourcemap_jsc::code_coverage::{
         ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
     };
@@ -85,7 +86,7 @@ mod coverage {
             failing: Fraction,
             failed: bool,
             writer: &mut impl bun_io::Write,
-            indent_name: bool,
+            indent_name: text::IndentName,
             enable_ansi_colors: bool,
         ) -> bun_io::Result<()> {
             if enable_ansi_colors {
@@ -184,20 +185,20 @@ pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate:
 
 fn fmt_status_text_line(
     status: bun_test::Execution::Result,
-    emoji_or_color: bool,
+    emoji_or_color: Output::AnsiColors,
 ) -> Output::PrettyBuf {
     // emoji and color might be split into two different options in the future
     // some terminals support color, but not emoji.
     // For now, they are the same.
     match emoji_or_color {
-        true => match status.basic_result() {
+        Output::AnsiColors::Enabled => match status.basic_result() {
             bun_test::BasicResult::Pending => Output::pretty_fmt::<true>("<r><d>…<r>"),
             bun_test::BasicResult::Pass => Output::pretty_fmt::<true>("<r><green>✓<r>"),
             bun_test::BasicResult::Fail => Output::pretty_fmt::<true>("<r><red>✗<r>"),
             bun_test::BasicResult::Skip => Output::pretty_fmt::<true>("<r><yellow>»<d>"),
             bun_test::BasicResult::Todo => Output::pretty_fmt::<true>("<r><magenta>✎<r>"),
         },
-        false => match status.basic_result() {
+        Output::AnsiColors::Disabled => match status.basic_result() {
             bun_test::BasicResult::Pending => Output::pretty_fmt::<false>("<r><d>(pending)<r>"),
             bun_test::BasicResult::Pass => Output::pretty_fmt::<false>("<r><green>(pass)<r>"),
             bun_test::BasicResult::Fail => Output::pretty_fmt::<false>("<r><red>(fail)<r>"),
@@ -262,6 +263,12 @@ pub struct JunitReporter {
 
     pub(crate) hostname_value: Option<Box<[u8]>>,
 }
+
+bun_core::bool_enum!(
+    /// Whether a JUnit `<testsuite>` corresponds to a whole test file (as
+    /// opposed to a `describe` block within one).
+    pub(crate) IsFileSuite
+);
 
 #[derive(Default)]
 pub struct SuiteInfo {
@@ -389,7 +396,11 @@ impl JunitReporter {
             }
             body.extend_from_slice(b"      at ");
             if !func.slice().is_empty() {
-                let _ = write!(body, "{} (", frame.name_formatter(false));
+                let _ = write!(
+                    body,
+                    "{} (",
+                    frame.name_formatter(Output::AnsiColors::Disabled)
+                );
             }
             let file_start = body.len();
             body.extend_from_slice(file);
@@ -522,15 +533,16 @@ impl JunitReporter {
     }
 
     pub(crate) fn begin_test_suite(&mut self, name: &[u8]) -> crate::Result<()> {
-        self.begin_test_suite_with_line(name, 0, true)
+        self.begin_test_suite_with_line(name, 0, IsFileSuite::Yes)
     }
 
     pub(crate) fn begin_test_suite_with_line(
         &mut self,
         name: &[u8],
         line_number: u32,
-        is_file_suite: bool,
+        is_file_suite: IsFileSuite,
     ) -> crate::Result<()> {
+        let is_file_suite = is_file_suite == IsFileSuite::Yes;
         if self.contents.is_empty() && !self.elements_only {
             self.contents
                 .extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -1328,7 +1340,7 @@ impl CommandLineReporter {
                     )
                 };
                 junit
-                    .begin_test_suite_with_line(name, line_no, false)
+                    .begin_test_suite_with_line(name, line_no, IsFileSuite::No)
                     .expect("oom");
                 describe_suite_index += 1;
             }
@@ -1428,9 +1440,11 @@ impl CommandLineReporter {
                 buntest.bun_test_root.on_before_print();
 
                 if Output::enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&fmt_status_text_line(result, true));
+                    let _ = writer
+                        .write_all(&fmt_status_text_line(result, Output::AnsiColors::Enabled));
                 } else {
-                    let _ = writer.write_all(&fmt_status_text_line(result, false));
+                    let _ = writer
+                        .write_all(&fmt_status_text_line(result, Output::AnsiColors::Disabled));
                 }
                 let dim = match basic {
                     bun_test::BasicResult::Todo => {
@@ -1553,7 +1567,9 @@ impl CommandLineReporter {
             && self.worker_ipc_file_idx.is_none()
             && let Some(timings) = self.timings.as_mut()
         {
-            timings.write(self.jest.test_options.shard.is_some());
+            timings.write(OnlyMeasured::from_bool(
+                self.jest.test_options.shard.is_some(),
+            ));
         }
     }
 
@@ -1972,7 +1988,7 @@ impl CommandLineReporter {
                     failed,
                     failing,
                     &mut console,
-                    false,
+                    coverage::IndentName::No,
                     ENABLE_ANSI_COLORS,
                 )?;
 
@@ -2126,7 +2142,10 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
-        jsc::initialize_with(false, ctx.test_options.isolate);
+        jsc::initialize_with(
+            jsc::EvalMode::No,
+            jsc::ShortLivedGlobals::from_bool(ctx.test_options.isolate),
+        );
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
@@ -2375,7 +2394,7 @@ impl TestCommand {
 
         // Start the debugger before we scan for files
         // But, don't block the main thread waiting if they used --inspect-wait.
-        vm.ensure_debugger(false)?;
+        vm.ensure_debugger(BlockUntilConnected::No)?;
 
         let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
         // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
@@ -3143,7 +3162,7 @@ impl TestCommand {
                             t.record_since(file_name.as_bytes(), started);
                         }
                         reporter.jest.default_timeout_override = u32::MAX;
-                        Global::mimalloc_cleanup(false);
+                        Global::mimalloc_cleanup(bun_core::Force::No);
                         if isolate {
                             crate::jsc_hooks::close_isolation_handles(vm);
                             vm.swap_global_for_test_isolation();

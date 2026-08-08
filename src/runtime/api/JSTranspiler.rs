@@ -5,13 +5,13 @@ use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::Error;
-use crate::node::{Encoding, StringOrBuffer};
+use crate::node::{AllowStringObject, Encoding, IsAsync, StringOrBuffer};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
-use bun_bundler::transpiler::{MacroJSCtx, ParseOptions, ParseResult};
+use bun_bundler::transpiler::{AutoJsx, MacroJSCtx, ParseOptions, ParseResult};
 use bun_bundler::{self as Transpiler};
 use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
@@ -1048,7 +1048,7 @@ impl JSTranspiler {
         transpiler.set_log(&raw mut config.log);
 
         transpiler.options.no_macros = config.no_macros;
-        transpiler.configure_linker_with_auto_jsx(false);
+        transpiler.configure_linker_with_auto_jsx(AutoJsx::No);
         transpiler.options.env.behavior = options::EnvBehavior::disable;
         if let Err(err) = transpiler.configure_defines() {
             let log = &mut config.log;
@@ -1379,7 +1379,7 @@ impl JSTranspiler {
         let named_imports_value = named_imports_to_js(
             global,
             parse_result.ast.import_records.as_slice(),
-            self.config.get().trim_unused_imports.unwrap_or(false),
+            TrimUnusedImports::from_bool(self.config.get().trim_unused_imports.unwrap_or(false)),
         )?;
 
         let named_exports_value = named_exports_to_js(global, &mut parse_result.ast.named_exports)?;
@@ -1412,13 +1412,12 @@ impl JSTranspiler {
             ));
         };
 
-        let allow_string_object = true;
         let Some(code) = StringOrBuffer::from_js_with_encoding_maybe_async(
             global,
             code_arg,
             Encoding::Utf8,
-            true,
-            allow_string_object,
+            IsAsync::Yes,
+            AllowStringObject::Yes,
         )?
         else {
             return Err(global.throw_invalid_argument_type(
@@ -1629,11 +1628,14 @@ fn named_exports_to_js(
     bun_jsc::bun_string_jsc::to_js_array(global, &names)
 }
 
+bun_core::bool_enum!(TrimUnusedImports);
+
 fn named_imports_to_js(
     global: &JSGlobalObject,
     import_records: &[ImportRecord],
-    trim_unused_imports: bool,
+    trim_unused_imports: TrimUnusedImports,
 ) -> JsResult<JSValue> {
+    let trim_unused_imports = trim_unused_imports == TrimUnusedImports::Yes;
     let path_label = ZigString::static_(b"path");
     let kind_label = ZigString::static_(b"kind");
 
@@ -1801,7 +1803,9 @@ impl JSTranspiler {
             named_imports_to_js(
                 global,
                 self.scan_pass_result.get().import_records.as_slice(),
-                self.config.get().trim_unused_imports.unwrap_or(false),
+                TrimUnusedImports::from_bool(
+                    self.config.get().trim_unused_imports.unwrap_or(false),
+                ),
             )
         })();
         self.scan_pass_result.with_mut(|s| s.reset());

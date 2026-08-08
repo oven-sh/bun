@@ -41,15 +41,17 @@ pub fn upgrade_header_is_not_h2(value: &[u8]) -> bool {
         .any(|token| !strings::eql_any_case_insensitive_ascii(token, &[b"h2", b"h2c"]))
 }
 
-/// `Some(false)` if any token is `close` (wins), `Some(true)` if `keep-alive`, else `None`.
-pub fn connection_header_keep_alive(value: &[u8]) -> Option<bool> {
+bun_core::bool_enum!(pub ConnectionHeader { Close, KeepAlive });
+
+/// `Some(Close)` if any token is `close` (wins), `Some(KeepAlive)` if `keep-alive`, else `None`.
+pub fn connection_header_keep_alive(value: &[u8]) -> Option<ConnectionHeader> {
     let mut keep_alive = None;
     for token in HeaderValueIterator::init(value) {
         if strings::eql_case_insensitive_ascii_check_length(token, b"close") {
-            return Some(false);
+            return Some(ConnectionHeader::Close);
         }
         if strings::eql_case_insensitive_ascii_check_length(token, b"keep-alive") {
-            keep_alive = Some(true);
+            keep_alive = Some(ConnectionHeader::KeepAlive);
         }
     }
     keep_alive

@@ -279,8 +279,9 @@ pub fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
 pub fn resolve_reject_unauthorized(
     vm: &VirtualMachine,
     cfg: Option<&SSLConfig>,
-    is_server: bool,
+    role: bun_uws::TlsRole,
 ) -> bool {
+    let is_server = role == bun_uws::TlsRole::Server;
     match cfg {
         Some(cfg) => (!is_server || cfg.request_cert != 0) && cfg.reject_unauthorized != 0,
         None => !is_server && vm.get_tls_reject_unauthorized(),

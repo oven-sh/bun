@@ -21,7 +21,7 @@ use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
 
-use crate::node::stat::{StatsBig, StatsSmall};
+use crate::node::stat::{StatsBig, StatsKind, StatsSmall};
 use crate::node::types::PathLikeExt;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
@@ -34,9 +34,9 @@ macro_rules! log {
 fn stat_to_js_stats(
     global_this: &JSGlobalObject,
     stats: &PosixStat,
-    bigint: bool,
+    bigint: StatsKind,
 ) -> JsResult<JSValue> {
-    if bigint {
+    if bigint == StatsKind::BigInt {
         StatsBig::init(stats).to_js(global_this)
     } else {
         StatsSmall::init(stats).to_js(global_this)
@@ -828,8 +828,12 @@ impl StatWatcher {
         // so swallowing it here leaves the VM with an exception pending and
         // the next queued task re-enters JS under a
         // `scope.assertNoException()` RELEASE_ASSERT.
-        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_core::JsError>::into)?;
+        let jsvalue = stat_to_js_stats(
+            global_this,
+            &this_ref.get_last_stat(),
+            StatsKind::from_bool(this_ref.bigint),
+        )
+        .map_err(Into::<bun_core::JsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
@@ -854,8 +858,12 @@ impl StatWatcher {
             return Ok(());
         };
         let global_this = this_ref.global_this();
-        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_core::JsError>::into)?;
+        let jsvalue = stat_to_js_stats(
+            global_this,
+            &this_ref.get_last_stat(),
+            StatsKind::from_bool(this_ref.bigint),
+        )
+        .map_err(Into::<bun_core::JsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         let result = js::listener_get_cached(js_this).unwrap().call(
@@ -945,9 +953,12 @@ impl StatWatcher {
         };
         let global_this = this_ref.global_this();
         let prev_jsvalue = js::gc::prev_stat::get(js_this).unwrap_or(JSValue::UNDEFINED);
-        let current_jsvalue =
-            stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-                .map_err(Into::<bun_core::JsError>::into)?;
+        let current_jsvalue = stat_to_js_stats(
+            global_this,
+            &this_ref.get_last_stat(),
+            StatsKind::from_bool(this_ref.bigint),
+        )
+        .map_err(Into::<bun_core::JsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, current_jsvalue);
 
         // Propagate to the dispatcher: `report_error_or_terminate` reports a

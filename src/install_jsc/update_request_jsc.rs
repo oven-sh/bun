@@ -5,7 +5,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 pub(crate) fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     use bun_ast::Log;
     use bun_install::Subcommand;
-    use bun_install::package_manager::update_request::{self, UpdateRequest};
+    use bun_install::package_manager::update_request::{self, Fatal, UpdateRequest};
 
     // `to_slice_clone` returns `ZigStringSlice`; convert to owned `Vec<u8>`
     // via `.into_vec()` since there is no arena backing the slices here.
@@ -45,7 +45,7 @@ pub(crate) fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSVal
         &positionals_view,
         &mut array,
         Subcommand::Add,
-        false,
+        Fatal::No,
     ) {
         Ok(v) => v,
         Err(_) => {

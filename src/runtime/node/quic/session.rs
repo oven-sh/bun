@@ -10,8 +10,10 @@ use bun_jsc::{
 };
 
 use bun_lsquic_sys as lsquic;
+use bun_uws::Fin;
 
 use super::OrReport;
+use super::Side;
 
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
@@ -266,12 +268,20 @@ pub(super) struct DeferredAbort {
     marker: u64,
 }
 
+bun_core::bool_enum!(
+    /// CONNECTION_CLOSE frame type: transport (0x1c) vs application (0x1d).
+    pub(super) CloseKind { Transport, Application }
+);
+bun_core::bool_enum!(pub(super) StreamDirection { Bidi, Uni });
+bun_core::bool_enum!(StreamOrigin { Remote, Local });
+bun_core::bool_enum!(HandshakeOk);
+
 pub(super) enum SessionEvent {
     HandshakeDone {
         ok: bool,
     },
     PeerClose {
-        app_error: bool,
+        app_error: CloseKind,
         code: u64,
         reason: Vec<u8>,
     },
@@ -367,10 +377,10 @@ pub struct QuicSession {
     /// on the next depth-0 pass so its GOAWAY/CONNECTION_CLOSE does not share
     /// a flight with data written by the same dispatch (node's close lands an
     /// RTT after the data because its stream close is ack-gated).
-    pending_graceful: JsCell<Option<(bool, u64, Vec<u8>)>>,
+    pending_graceful: JsCell<Option<(CloseKind, u64, Vec<u8>)>>,
     pub(super) verneg: Cell<Option<(u32, u32)>>,
-    peer_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
-    self_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
+    peer_close: JsCell<Option<(CloseKind, u64, Vec<u8>)>>,
+    self_close: JsCell<Option<(CloseKind, u64, Vec<u8>)>>,
     datagram_drop_newest: Cell<bool>,
     qlog_enabled: Cell<bool>,
     qlog_fin_sent: Cell<bool>,
@@ -388,7 +398,7 @@ pub struct QuicSession {
     handshake_reported: Cell<bool>,
     new_token_reported: Cell<bool>,
     close_when_bound: Cell<bool>,
-    deferred_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
+    deferred_close: JsCell<Option<(CloseKind, u64, Vec<u8>)>>,
     handshake_pending_ok: Cell<bool>,
     hsk_snapshot: JsCell<Option<HskSnapshot>>,
     close_reported: Cell<bool>,
@@ -451,7 +461,7 @@ impl QuicSession {
         endpoint: *mut QuicEndpoint,
         endpoint_handle: JSValue,
         conn: *mut lsquic::lsquic_conn,
-        is_server: bool,
+        is_server: Side,
     ) -> JsResult<(*mut QuicSession, JSValue)> {
         let raw = bun_core::heap::into_raw(Box::new(Self::new(global, vtable)));
         let handle = crate::generated_classes::js_QuicSession::to_js(raw, global);
@@ -493,7 +503,7 @@ impl QuicSession {
         this.endpoint.set(endpoint);
         this.endpoint_js
             .set(Some(Strong::create(endpoint_handle, global)));
-        this.is_server.set(is_server);
+        this.is_server.set(is_server == Side::Server);
         this.this_value.with_mut(|r| r.set_strong(handle, global));
         this.write_stat(IDX_STATS_SESSION_CREATED_AT, now_ns());
         let _ = this.vtable;
@@ -606,6 +616,9 @@ impl QuicSession {
     pub(super) fn is_server(&self) -> bool {
         self.is_server.get()
     }
+    fn side(&self) -> Side {
+        Side::from_bool(self.is_server.get())
+    }
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push(event));
     }
@@ -683,9 +696,9 @@ impl QuicSession {
     }
     pub(super) fn take_pending_local_stream(
         &self,
-        uni: bool,
+        uni: StreamDirection,
     ) -> Option<*mut super::stream::QuicStream> {
-        let queue = if uni {
+        let queue = if uni == StreamDirection::Uni {
             &self.pending_local_uni
         } else {
             &self.pending_local_bidi
@@ -715,12 +728,12 @@ impl QuicSession {
             });
         }
     }
-    fn bump_stream_stat(&self, id: u64, local: bool) {
+    fn bump_stream_stat(&self, id: u64, local: StreamOrigin) {
         let idx = match (id & STREAM_ID_UNI_BIT != 0, local) {
-            (false, false) => IDX_STATS_SESSION_BIDI_IN_STREAM_COUNT,
-            (false, true) => IDX_STATS_SESSION_BIDI_OUT_STREAM_COUNT,
-            (true, false) => IDX_STATS_SESSION_UNI_IN_STREAM_COUNT,
-            (true, true) => IDX_STATS_SESSION_UNI_OUT_STREAM_COUNT,
+            (false, StreamOrigin::Remote) => IDX_STATS_SESSION_BIDI_IN_STREAM_COUNT,
+            (false, StreamOrigin::Local) => IDX_STATS_SESSION_BIDI_OUT_STREAM_COUNT,
+            (true, StreamOrigin::Remote) => IDX_STATS_SESSION_UNI_IN_STREAM_COUNT,
+            (true, StreamOrigin::Local) => IDX_STATS_SESSION_UNI_OUT_STREAM_COUNT,
         };
         let stats = self.stats.get();
         if !stats.is_null() {
@@ -757,7 +770,7 @@ impl QuicSession {
                 unsafe { (*qs).mark_wrote_to_lsquic() };
                 // SAFETY: `raw` is the live stream lsquic just created.
                 if let Some(s) = unsafe { lsquic::Stream::from_raw(raw) } {
-                    self.bump_stream_stat(s.id(), false);
+                    self.bump_stream_stat(s.id(), StreamOrigin::Remote);
                 }
                 self.push_event(SessionEvent::StreamReady {
                     stream: qs,
@@ -909,18 +922,18 @@ impl QuicSession {
                 SessionEvent::HandshakeDone { ok } => {
                     if ok {
                         self.capture_hsk_snapshot();
-                        if self.is_server.get() {
+                        if self.is_server() {
                             // Node's server reports at handshake COMPLETION
                             // (session.cc: server completion == confirmation
                             // per RFC 9001 §4.1.2).
-                            self.maybe_report_handshake(global, true);
+                            self.maybe_report_handshake(global, HandshakeOk::Yes);
                         } else {
                             // Node's client `opened` settles only for
                             // connections the server actually accepted.
                             self.handshake_pending_ok.set(true);
                         }
                     } else {
-                        self.maybe_report_handshake(global, false);
+                        self.maybe_report_handshake(global, HandshakeOk::No);
                     }
                 }
                 SessionEvent::HandshakeConfirmed => {
@@ -938,7 +951,8 @@ impl QuicSession {
                                         SessionEvent::PeerClose {
                                             app_error, code, ..
                                         } => {
-                                            return !*app_error && *code != 0;
+                                            return *app_error == CloseKind::Transport
+                                                && *code != 0;
                                         }
                                         SessionEvent::Closed => return true,
                                         _ => {}
@@ -948,7 +962,7 @@ impl QuicSession {
                             });
                         if !close_wins {
                             self.handshake_pending_ok.set(false);
-                            self.maybe_report_handshake(global, true);
+                            self.maybe_report_handshake(global, HandshakeOk::Yes);
                         }
                     }
                 }
@@ -980,7 +994,7 @@ impl QuicSession {
                         && self.with_state(|st| st.graceful_close == 1)
                         && !self
                             .endpoint_ref()
-                            .map(|ep| ep.is_http(self.is_server.get()))
+                            .map(|ep| ep.is_http(self.side()))
                             .unwrap_or(false)
                     {
                         stream.suppress_announce();
@@ -1370,7 +1384,7 @@ impl QuicSession {
                     // Node passes each fact only from the side that owns it:
                     // the server knows the previous path, the client knows it
                     // migrated to the preferred address.
-                    let (old_local_js, old_remote_js, preferred_js) = if self.is_server.get() {
+                    let (old_local_js, old_remote_js, preferred_js) = if self.is_server() {
                         (
                             old_local.to_js_socket_address(global),
                             old_remote.to_js_socket_address(global),
@@ -1449,15 +1463,16 @@ impl QuicSession {
         }
     }
 
-    fn maybe_report_handshake(&self, global: &JSGlobalObject, ok: bool) {
+    fn maybe_report_handshake(&self, global: &JSGlobalObject, ok: HandshakeOk) {
         if self.handshake_reported.replace(true) || self.destroyed.get() {
             return;
         }
+        let ok = ok == HandshakeOk::Yes;
         if ok {
             self.capture_hsk_snapshot();
         }
         let cert_ok = {
-            if let Some(endpoint) = self.endpoint_ref().filter(|_| ok && self.is_server.get()) {
+            if let Some(endpoint) = self.endpoint_ref().filter(|_| ok && self.is_server()) {
                 let verify_client = endpoint.server_verify_client.get();
                 !verify_client
                     || self
@@ -1515,7 +1530,7 @@ impl QuicSession {
         // close-error codes to RFC 9114's H3_NO_ERROR / H3_INTERNAL_ERROR.
         let is_http = self
             .endpoint_ref()
-            .map(|ep| ep.is_http(self.is_server.get()))
+            .map(|ep| ep.is_http(self.side()))
             .unwrap_or(false)
             && alpn_bytes
                 .as_deref()
@@ -1549,7 +1564,7 @@ impl QuicSession {
         // no client certificate reports X509_V_ERR_UNSPECIFIED.
         let pair = match snap_validation {
             Some(pair) => Some(pair),
-            None if self.is_server.get() && !have_peer_cert => {
+            None if self.is_server() && !have_peer_cert => {
                 Some(tls::validation_error_strings(tls::X509_V_ERR_UNSPECIFIED))
             }
             None => None,
@@ -1589,12 +1604,12 @@ impl QuicSession {
             let chunk = format!(
                 "\u{1e}{{\"qlog_version\":\"0.3\",\"qlog_format\":\"JSON-SEQ\",\"title\":\"bun node:quic\"}}\n\u{1e}{{\"time\":{t},\"name\":\"connectivity:connection_started\",\"data\":{{}}}}\n"
             );
-            self.emit_qlog(global, &chunk, false);
+            self.emit_qlog(global, &chunk, Fin::No);
         }
 
         // Node destroys the early streams and fires `onearlyrejected` — on
         // the CLIENT only.
-        if early_data.0 && !early_data.1 && !self.is_server.get() {
+        if early_data.0 && !early_data.1 && !self.is_server() {
             if let Some(callback) = callbacks::get(global, "onSessionEarlyDataRejected") {
                 let vm = global.bun_vm().as_mut();
                 vm.event_loop_ref()
@@ -1607,7 +1622,7 @@ impl QuicSession {
         if !cert_ok && !self.destroyed.get() && !self.conn.get().is_null() {
             self.self_close.with_mut(|s| {
                 *s = Some((
-                    false,
+                    CloseKind::Transport,
                     CRYPTO_ERROR_CERTIFICATE_REQUIRED,
                     b"peer did not provide a certificate".to_vec(),
                 ));
@@ -1635,7 +1650,7 @@ impl QuicSession {
         let ssl = conn.ssl().cast();
         let alpn = tls::negotiated_alpn(ssl).or_else(|| {
             self.endpoint_ref()
-                .and_then(|ep| ep.configured_alpn(self.is_server.get()))
+                .and_then(|ep| ep.configured_alpn(self.side()))
         });
         let validation = tls::validation_error(ssl);
         let peer_cert_der = tls::peer_certificate_der(ssl);
@@ -1658,10 +1673,11 @@ impl QuicSession {
 
     /// Deliver one qlog chunk (RFC 7464 JSON-SEQ records) via
     /// `onSessionQlog(data, fin)`.
-    fn emit_qlog(&self, global: &JSGlobalObject, data: &str, fin: bool) {
+    fn emit_qlog(&self, global: &JSGlobalObject, data: &str, fin: Fin) {
         if !self.qlog_enabled.get() || self.qlog_fin_sent.get() {
             return;
         }
+        let fin = fin == Fin::Yes;
         if fin {
             self.qlog_fin_sent.set(true);
         }
@@ -1700,15 +1716,21 @@ impl QuicSession {
             let chunk = format!(
                 "\u{1e}{{\"time\":{t},\"name\":\"connectivity:connection_closed\",\"data\":{{}}}}\n"
             );
-            self.emit_qlog(global, &chunk, true);
+            self.emit_qlog(global, &chunk, Fin::Yes);
         }
         let (error_type, code, reason): (i32, u64, Option<Vec<u8>>) = match taken {
-            Some((app, code, reason)) => (if app { 1 } else { 0 }, code, Some(reason)),
+            Some((app, code, reason)) => (
+                if app == CloseKind::Application { 1 } else { 0 },
+                code,
+                Some(reason),
+            ),
             None if self.conn.get().is_null() => {
                 match self.final_conn_status.with_mut(Option::take) {
-                    Some((status, msg)) => {
-                        map_conn_status(status, msg, self.handshake_reported.get())
-                    }
+                    Some((status, msg)) => map_conn_status(
+                        status,
+                        msg,
+                        HandshakeReported::from_bool(self.handshake_reported.get()),
+                    ),
                     None => (0, 0, None),
                 }
             }
@@ -1724,7 +1746,11 @@ impl QuicSession {
                 let msg = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr()) }
                     .to_bytes()
                     .to_vec();
-                map_conn_status(status, msg, self.handshake_reported.get())
+                map_conn_status(
+                    status,
+                    msg,
+                    HandshakeReported::from_bool(self.handshake_reported.get()),
+                )
             }
         };
         // `close_reported` is already latched above, so returning here would
@@ -1822,19 +1848,21 @@ impl QuicSession {
         &self,
         global: &JSGlobalObject,
         options: JSValue,
-    ) -> JsResult<(bool, u64, Vec<u8>)> {
-        let mut app = false;
+    ) -> JsResult<(CloseKind, u64, Vec<u8>)> {
+        let mut app = CloseKind::Transport;
         let mut code = 0u64;
         let mut reason = Vec::new();
         if options.is_object() {
-            app = options
-                .get(global, "type")?
-                .map(|v| {
-                    bun_core::String::from_js(v, global)
-                        .map(|s| s.to_utf8_bytes() == b"application")
-                })
-                .transpose()?
-                .unwrap_or(false);
+            app = CloseKind::from_bool(
+                options
+                    .get(global, "type")?
+                    .map(|v| {
+                        bun_core::String::from_js(v, global)
+                            .map(|s| s.to_utf8_bytes() == b"application")
+                    })
+                    .transpose()?
+                    .unwrap_or(false),
+            );
             code = super::endpoint::read_u64_option(global, options, "code")?.unwrap_or(0);
             reason = options
                 .get(global, "reason")?
@@ -1850,12 +1878,12 @@ impl QuicSession {
         Ok((app, code, reason))
     }
 
-    fn apply_graceful_close(&self, app: bool, code: u64, reason: Vec<u8>) {
+    fn apply_graceful_close(&self, app: CloseKind, code: u64, reason: Vec<u8>) {
         let is_http = self
             .endpoint_ref()
-            .map(|ep| ep.is_http(self.is_server.get()))
+            .map(|ep| ep.is_http(self.side()))
             .unwrap_or(false);
-        if is_http && !app && code == 0 && !self.streams.get().is_empty() {
+        if is_http && app == CloseKind::Transport && code == 0 && !self.streams.get().is_empty() {
             // RFC 9114 §5.2.
             if let Some(c) = self.conn() {
                 c.going_away();
@@ -1887,8 +1915,9 @@ impl QuicSession {
         false
     }
 
-    fn apply_close(&self, app: bool, code: u64, reason: &[u8]) {
+    fn apply_close(&self, app: CloseKind, code: u64, reason: &[u8]) {
         let Some(c) = self.conn() else { return };
+        let app = app == CloseKind::Application;
         if app || code != 0 || reason.len() > 1 {
             let creason = core::ffi::CStr::from_bytes_until_nul(reason).unwrap_or(c"close");
             c.abort_error(app, code.min(u32::MAX as u64) as core::ffi::c_uint, creason);
@@ -1940,7 +1969,7 @@ impl QuicSession {
                 self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_null() {
-                if self.is_server.get() && !self.close_reported.get() {
+                if self.is_server() && !self.close_reported.get() {
                     self.pending_graceful
                         .with_mut(|p| *p = Some((app, code, reason)));
                     self.close_when_bound.set(true);
@@ -2026,7 +2055,10 @@ impl QuicSession {
             self.pending_local_bidi.with_mut(|q| q.push_back(qs));
         }
         self.streams.with_mut(|v| v.push(qs));
-        self.bump_stream_stat(if unidirectional { STREAM_ID_UNI_BIT } else { 0 }, true);
+        self.bump_stream_stat(
+            if unidirectional { STREAM_ID_UNI_BIT } else { 0 },
+            StreamOrigin::Local,
+        );
         if let Some(buf) = body.as_array_buffer(global) {
             // SAFETY: `qs` was just created.
             unsafe {
@@ -2068,7 +2100,7 @@ impl QuicSession {
         // (RFC 9297 §2.1.1); otherwise not sent (0n).
         let is_http = self
             .endpoint_ref()
-            .is_some_and(|ep| ep.is_http(self.is_server.get()));
+            .is_some_and(|ep| ep.is_http(self.side()));
         if is_http && self.conn().and_then(|c| c.peer_h3_datagram()) == Some(false) {
             return JSValue::from_uint64_no_truncate(global, 0);
         }
@@ -2333,7 +2365,7 @@ impl QuicSession {
         let Some(ep) = self.endpoint_ref() else {
             return Ok(JSValue::UNDEFINED);
         };
-        let tp = if self.is_server.get() {
+        let tp = if self.is_server() {
             ep.server_local_tp.get()
         } else {
             ep.client_local_tp.get()
@@ -2390,17 +2422,19 @@ lsquic_callback! {
     }
 }
 
+bun_core::bool_enum!(HandshakeReported);
+
 /// Map an `lsquic_conn_status` to Node's `onSessionClose(type, code,
 /// reason)` shape (`type`: 0=transport, 1=application, 2=version-neg,
 /// 3=idle).
 fn map_conn_status(
     status: c_int,
     msg: Vec<u8>,
-    handshake_reported: bool,
+    handshake_reported: HandshakeReported,
 ) -> (i32, u64, Option<Vec<u8>>) {
     match status {
         // Node rejects `opened` with a transport error.
-        lsquic::LSCONN_ST_TIMED_OUT if !handshake_reported => (
+        lsquic::LSCONN_ST_TIMED_OUT if handshake_reported == HandshakeReported::No => (
             0,
             CRYPTO_ERROR_HANDSHAKE_FAILURE,
             Some(b"handshake timed out".to_vec()),
@@ -2454,7 +2488,7 @@ lsquic_callback! {
             }
         };
         session.push_event(SessionEvent::PeerClose {
-            app_error: app_error == 1,
+            app_error: CloseKind::from_bool(app_error == 1),
             code,
             reason,
         });

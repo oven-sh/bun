@@ -3,6 +3,7 @@ use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 use css::{CssResult as Result, PrintErr, Printer};
 
+use crate::css_properties::Important;
 use crate::css_properties::align::AlignHandler;
 use crate::css_properties::background::BackgroundHandler;
 use crate::css_properties::border::BorderHandler;
@@ -70,10 +71,10 @@ impl<'bump> DeclarationBlock<'bump> {
             decls: &mut DeclarationList<'bump>,
             ctx: &mut css::PropertyHandlerContext,
             hndlr: &mut DeclarationHandler<'bump>,
-            important: bool,
+            important: Important,
         ) {
             for prop in decls.iter_mut() {
-                ctx.is_important = important;
+                ctx.is_important = important == Important::Yes;
 
                 let handled = hndlr.handle_property(prop, ctx);
 
@@ -92,9 +93,9 @@ impl<'bump> DeclarationBlock<'bump> {
             &mut self.important_declarations,
             context,
             important_handler,
-            true,
+            Important::Yes,
         );
-        handle(&mut self.declarations, context, handler, false);
+        handle(&mut self.declarations, context, handler, Important::No);
 
         handler.finalize(context);
         important_handler.finalize(context);
@@ -120,7 +121,7 @@ impl<'bump> DeclarationBlock<'bump> {
         let mut i: usize = 0;
 
         for decl in self.declarations.iter() {
-            decl.to_css(dest, false)?;
+            decl.to_css(dest, Important::No)?;
             if i != length - 1 {
                 dest.write_char(b';')?;
                 dest.whitespace()?;
@@ -128,7 +129,7 @@ impl<'bump> DeclarationBlock<'bump> {
             i += 1;
         }
         for decl in self.important_declarations.iter() {
-            decl.to_css(dest, true)?;
+            decl.to_css(dest, Important::Yes)?;
             if i != length - 1 {
                 dest.write_char(b';')?;
                 dest.whitespace()?;

@@ -4,7 +4,7 @@ use bun_semver::string::Builder as StringBuilder;
 use bun_sys::Fd;
 
 use crate::PackageNameHash;
-use crate::npm;
+use crate::npm::{self, ExtendedManifest};
 
 #[derive(Default)]
 pub struct PackageManifestMap {
@@ -62,7 +62,7 @@ impl PackageManifestMap {
         scope: &npm::registry::Scope,
         name: &[u8],
         cache_behavior: CacheBehavior,
-        needs_extended_manifest: bool,
+        needs_extended_manifest: ExtendedManifest,
     ) -> Option<&mut npm::PackageManifest> {
         self.by_name_hash(
             ctx,
@@ -88,7 +88,7 @@ impl PackageManifestMap {
         scope: &npm::registry::Scope,
         name_hash: PackageNameHash,
         cache_behavior: CacheBehavior,
-        needs_extended_manifest: bool,
+        needs_extended_manifest: ExtendedManifest,
     ) -> Option<&mut npm::PackageManifest> {
         self.by_name_hash_allow_expired(
             ctx,
@@ -122,7 +122,7 @@ impl PackageManifestMap {
         name: &[u8],
         is_expired: Option<&mut bool>,
         cache_behavior: CacheBehavior,
-        needs_extended_manifest: bool,
+        needs_extended_manifest: ExtendedManifest,
     ) -> Option<&mut npm::PackageManifest> {
         self.by_name_hash_allow_expired(
             ctx,
@@ -146,7 +146,7 @@ impl PackageManifestMap {
         name_hash: PackageNameHash,
         is_expired: Option<&mut bool>,
         cache_behavior: CacheBehavior,
-        needs_extended_manifest: bool,
+        needs_extended_manifest: ExtendedManifest,
     ) -> Option<&mut npm::PackageManifest> {
         if cache_behavior == CacheBehavior::LoadFromMemory {
             let entry = self.hash_map.get_mut(&name_hash)?;
@@ -172,7 +172,8 @@ impl PackageManifestMap {
                 let demote = matches!(
                     value_ptr,
                     Value::Manifest(m)
-                        if needs_extended_manifest && !m.pkg.has_extended_manifest
+                        if needs_extended_manifest == ExtendedManifest::Yes
+                            && !m.pkg.has_extended_manifest
                 );
                 if demote {
                     let Value::Manifest(m) = core::mem::replace(value_ptr, Value::NotFound) else {
@@ -203,7 +204,9 @@ impl PackageManifestMap {
                     .ok()
                     .flatten()
                     {
-                        if needs_extended_manifest && !manifest.pkg.has_extended_manifest {
+                        if needs_extended_manifest == ExtendedManifest::Yes
+                            && !manifest.pkg.has_extended_manifest
+                        {
                             let value_ptr = vac.insert(Value::Expired(manifest));
                             if let Some(expiry) = is_expired {
                                 *expiry = true;

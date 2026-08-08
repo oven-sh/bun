@@ -10,6 +10,7 @@ use crate::bake::framework_router as FrameworkRouter;
 use crate::bake::{self as bake};
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::BlobExt;
+use crate::webcore::blob::CheckS3;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
 use crate::webcore::response::HeadersRef;
@@ -325,7 +326,7 @@ impl ReqLike for uws_sys::h3::Request {
 pub(super) trait RespLike {
     const IS_H3: bool;
     fn write_status(&mut self, status: &[u8]);
-    fn end_without_body(&mut self, close_connection: bool);
+    fn end_without_body(&mut self, close_connection: uws::CloseConnection);
     fn timeout(&mut self, seconds: u8);
     fn on_timeout_warn(&mut self, ud: *mut c_void);
     fn to_any_response(&mut self) -> uws::AnyResponse;
@@ -337,7 +338,7 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
         uws_sys::NewAppResponse::<SSL>::write_status(self, s)
     }
     #[inline]
-    fn end_without_body(&mut self, c: bool) {
+    fn end_without_body(&mut self, c: uws::CloseConnection) {
         uws_sys::NewAppResponse::<SSL>::end_without_body(self, c)
     }
     #[inline]
@@ -377,7 +378,7 @@ impl RespLike for uws_sys::h3::Response {
         uws_sys::h3::Response::write_status(self, s)
     }
     #[inline]
-    fn end_without_body(&mut self, c: bool) {
+    fn end_without_body(&mut self, c: uws::CloseConnection) {
         uws_sys::h3::Response::end_without_body(self, c)
     }
     #[inline]
@@ -410,7 +411,7 @@ impl RespLike for uws_sys::h3::Response {
 #[inline]
 pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
     resp.write_status(b"503 Service Unavailable");
-    resp.end_without_body(!R::IS_H3);
+    resp.end_without_body(uws::CloseConnection::from_bool(!R::IS_H3));
 }
 
 /// RFC 6455 §4.1: |Sec-WebSocket-Key| is the base64 encoding of a 16-byte
@@ -545,7 +546,7 @@ impl AnyRoute {
         let mut path = Node::PathOrFileDescriptor::Path(Node::PathLike::from_bun_string(
             init_ctx.global,
             &mut path_string,
-            false,
+            crate::node::IsAsync::No,
         )?);
         // NOTE: `from_bun_string` clones
         // the bytes (or bumps the WTF ref) into the PathLike payload, so we can
@@ -655,7 +656,7 @@ impl AnyRoute {
         path: &mut Node::PathOrFileDescriptor,
     ) -> JsResult<AnyRoute> {
         // The file/static route doesn't ref it.
-        let blob = <Blob as BlobExt>::find_or_create_file_from_path(path, global, false);
+        let blob = <Blob as BlobExt>::find_or_create_file_from_path(path, global, CheckS3::No);
 
         if blob.needs_to_read_file() {
             // Throw a more helpful error upfront if the file does not exist.
@@ -800,7 +801,7 @@ impl AnyRoute {
                         global,
                         relative_root,
                         url_prefix,
-                        stat_cache,
+                        super::directory_route::StatCache::from_bool(stat_cache),
                     )?;
                     return Ok(Some(AnyRoute::Directory(NonNull::new(route).expect(
                         "DirectoryRoute::create returns a fresh heap allocation",
@@ -1301,7 +1302,7 @@ fn on_timeout_for_idle_warn() {
 // methods on the same type — there is no separate Phase-A struct.
 pub(super) use super::{
     CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, NewServer,
-    ServerFlags, UserRoute,
+    ServerFlags, StopMode, UserRoute,
 };
 
 /// Generic over the
@@ -1676,7 +1677,7 @@ where
 
         // compress defaults to true when the argument is omitted.
         let compress_js = compress_value.unwrap_or(JSValue::TRUE);
-        let compress = compress_js.to_boolean();
+        let compress = uws::Compress::from_bool(compress_js.to_boolean());
 
         if let Some(buffer) = message_value.as_array_buffer(global) {
             let status = AnyWebSocket::publish_with_options(
@@ -2039,9 +2040,13 @@ where
         // A request that does not name "websocket" in its |Upgrade| token list,
         // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
         // WebSocket handshake; fall through so the caller's fetch() can respond.
-        if !strings::split(upgrade_header.slice(), b",")
-            .any(|t| strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true))
-        {
+        if !strings::split(upgrade_header.slice(), b",").any(|t| {
+            strings::eql_case_insensitive_ascii(
+                t.trim_ascii(),
+                b"websocket",
+                strings::CheckLen::Yes,
+            )
+        }) {
             return Ok(JSValue::FALSE);
         }
         if !is_valid_sec_websocket_key(sec_websocket_key_str.slice()) {
@@ -2056,7 +2061,7 @@ where
             // SAFETY: upgrader_ptr is live (ref_() above)
             let upgrader = unsafe { &*upgrader_ptr };
             upgrader.flags.set_has_written_status(true);
-            upgrader.end_without_body(true);
+            upgrader.end_without_body(uws::CloseConnection::Yes);
             return Ok(JSValue::FALSE);
         }
         if sec_websocket_protocol.len > 0 {
@@ -2614,7 +2619,9 @@ where
         // while this frame owns it. One-shot sweep (Node semantics): busy
         // connections are spared and are NOT marked to close later.
         self.deinit_running.set(true);
-        let closed = self.app_mut().close_idle_connections(false);
+        let closed = self
+            .app_mut()
+            .close_idle_connections(uws::CloseWhenIdle::No);
         self.deinit_running.set(false);
         self.deinit_if_we_can();
         Ok(JSValue::js_number(closed as f64))
@@ -2632,7 +2639,7 @@ where
                 && !self.flags.contains(ServerFlags::TERMINATED)
                 && !self.deinit_running.get())
         {
-            self.stop(abrupt);
+            self.stop(StopMode::from_bool(abrupt));
         }
 
         rc
@@ -2642,7 +2649,7 @@ where
         if self.has_listener()
             || (!self.flags.contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
         {
-            self.stop(true);
+            self.stop(StopMode::Abrupt);
         }
         JSValue::UNDEFINED
     }
@@ -2883,7 +2890,7 @@ where
             unreachable!();
         }
         resp.write_status(b"404 Not Found");
-        resp.end(b"", false);
+        resp.end(b"", uws::CloseConnection::No);
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2945,7 +2952,7 @@ where
         resp.write_header(b"Cache-Control", b"public, max-age=3600");
         resp.write_header_int(b"Age", 0);
         let buffer = writer.ctx.written();
-        resp.end(buffer, false);
+        resp.end(buffer, uws::CloseConnection::No);
         self.pending_requests.set(self.pending_requests.get() - 1);
     }
 
@@ -3125,7 +3132,7 @@ where
         if Ctx::IS_H3 {
             if ReqLike::header(req, b"transfer-encoding").is_some() {
                 RespLike::write_status(resp, b"400 Bad Request");
-                RespLike::end_without_body(resp, false);
+                RespLike::end_without_body(resp, uws::CloseConnection::No);
                 return None;
             }
         }
@@ -3148,7 +3155,7 @@ where
                 // would CONNECTION_CLOSE every sibling stream on the conn.
                 if len > server.config.max_request_body_size {
                     RespLike::write_status(resp, b"413 Request Entity Too Large");
-                    RespLike::end_without_body(resp, !Ctx::IS_H3);
+                    RespLike::end_without_body(resp, uws::CloseConnection::from_bool(!Ctx::IS_H3));
                     return None;
                 }
 
@@ -3471,7 +3478,7 @@ where
             // require fetch method to be set otherwise we dont know what route to call
             // this should be the fallback in case no route is provided to upgrade
             resp.write_status(b"403 Forbidden");
-            resp.end_without_body(true);
+            resp.end_without_body(uws::CloseConnection::Yes);
             return;
         }
         this.on_pending_request();

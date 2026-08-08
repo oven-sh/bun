@@ -364,6 +364,8 @@ pub(crate) struct Buf<U: PathUnit, const SEP_OPT: u8> {
     len: usize,
 }
 
+bun_core::bool_enum!(pub(crate) AddSeparator);
+
 impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     #[inline]
     fn set_length(&mut self, new_len: usize) {
@@ -371,9 +373,9 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     }
 
     /// Append `characters` (same code-unit width as `U`), optionally prefixing a separator.
-    fn append(&mut self, characters: &[U], add_separator: bool) {
+    fn append(&mut self, characters: &[U], add_separator: AddSeparator) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
-        if add_separator {
+        if add_separator == AddSeparator::Yes {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
                 PathSeparators::Any | PathSeparators::Auto => U::from_u8(SEP),
                 PathSeparators::Posix => U::from_u8(SEP_POSIX),
@@ -402,9 +404,9 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     }
 
     /// Append `characters` of the *other* code-unit width, transcoding into the buffer.
-    fn append_other(&mut self, characters: &[U::Other], add_separator: bool) {
+    fn append_other(&mut self, characters: &[U::Other], add_separator: AddSeparator) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
-        if add_separator {
+        if add_separator == AddSeparator::Yes {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
                 PathSeparators::Any | PathSeparators::Auto => U::from_u8(SEP),
                 PathSeparators::Posix => U::from_u8(SEP_POSIX),
@@ -643,7 +645,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let mut this = Self::init();
         // top_level_dir is &[u8]; `buf_append_input` routes it through
         // `append_other` (transcoding) when U == u16.
-        this.buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, AddSeparator::No);
         this
     }
 
@@ -664,10 +666,13 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
         #[cfg(windows)]
         {
-            this.buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
+            this.buf_append_input(
+                crate::windows::long_path_prefix_for::<U>(),
+                AddSeparator::No,
+            );
         }
 
-        this.buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, AddSeparator::No);
 
         this
     }
@@ -782,10 +787,13 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let mut this = Self::init();
         #[cfg(windows)]
         {
-            this.buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
+            this.buf_append_input(
+                crate::windows::long_path_prefix_for::<U>(),
+                AddSeparator::No,
+            );
         }
 
-        this.buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, AddSeparator::No);
         Ok(this)
     }
 
@@ -816,7 +824,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         }
 
         let mut this = Self::init();
-        this.buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, AddSeparator::No);
         Ok(this)
     }
 
@@ -935,6 +943,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     !self.slice()[self.len() - 1].eq_ascii(PathSeparators::from_u8(SEP_OPT).char())
                 }
             };
+        let add_sep = AddSeparator::from_bool(needs_sep);
 
         match Kind::from_u8(KIND) {
             Kind::Abs => {
@@ -967,7 +976,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     }
                 }
 
-                self.buf_append_input(trimmed, needs_sep);
+                self.buf_append_input(trimmed, add_sep);
             }
             Kind::Rel => {
                 debug_assert!(!is_input_absolute(input));
@@ -984,7 +993,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     }
                 }
 
-                self.buf_append_input(trimmed, needs_sep);
+                self.buf_append_input(trimmed, add_sep);
             }
             Kind::Any => {
                 let input_is_absolute = is_input_absolute(input);
@@ -1019,7 +1028,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     }
                 }
 
-                self.buf_append_input(trimmed, needs_sep);
+                self.buf_append_input(trimmed, add_sep);
             }
         }
         Ok(())
@@ -1264,7 +1273,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
     /// Dispatch `Buf::append` / `Buf::append_other` based on whether the input
     /// element type matches `U`.
-    fn buf_append_input<C: PathUnit>(&mut self, characters: &[C], add_separator: bool) {
+    fn buf_append_input<C: PathUnit>(&mut self, characters: &[C], add_separator: AddSeparator) {
         use core::any::TypeId;
         // Route via concrete `u8`/`u16` using the safe trait-dispatched
         // identity casts (`id_u8`/`id_from_u8` etc.) — each is the literal

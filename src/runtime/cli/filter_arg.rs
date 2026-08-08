@@ -302,11 +302,11 @@ impl PackageFilterIterator {
         let walker = GlobWalker::init_with_cwd(
             pattern,
             cwd,
-            true,
-            true,
-            false,
-            true,
-            true,
+            glob::Dot::Yes,
+            glob::Absolute::Yes,
+            glob::FollowSymlinks::No,
+            glob::ErrorOnBrokenSymlinks::Yes,
+            glob::OnlyFiles::Yes,
             Some(glob_ignore_fn),
         )??;
         // Heap-allocate the walker so its address is stable even if `self` moves between

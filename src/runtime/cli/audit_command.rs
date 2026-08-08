@@ -14,8 +14,8 @@ use bun_libdeflate_sys::libdeflate;
 use bun_parsers::json as bun_json;
 use bun_url::URL;
 
-use crate::cli::Command;
 use crate::cli::package_manager_command::PackageManagerCommand;
+use crate::cli::{Command, JsonOutput};
 
 // Boxed to avoid a struct lifetime param; the
 // clones are per-vulnerability, terminal-UI-bound, and not perf-relevant.
@@ -88,14 +88,14 @@ impl AuditCommand {
                 return Err(err.into());
             }
         };
-        let json_output = manager.options.json_output;
+        let json_output = JsonOutput::from_bool(manager.options.json_output);
 
         let code = Self::audit(
             ctx,
             manager,
             json_output,
             audit_level,
-            production,
+            ProdOnly::from_bool(production),
             audit_ignore_list,
         )?;
         Global::exit(code);
@@ -107,11 +107,12 @@ impl AuditCommand {
     fn audit(
         _ctx: Command::Context,
         pm: &mut PackageManager,
-        json_output: bool,
+        json_output: JsonOutput,
         audit_level: Option<AuditLevel>,
-        audit_prod_only: bool,
+        audit_prod_only: ProdOnly,
         ignore_list: &[&[u8]],
     ) -> Result<u32, bun_alloc::AllocError> {
+        let json_output = json_output == JsonOutput::Yes;
         bun_core::pretty_error!(
             "<r><b>bun audit <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
@@ -306,10 +307,16 @@ struct PackageVersions {
     versions: Vec<Box<[u8]>>,
 }
 
+bun_core::bool_enum!(
+    /// `--production`: audit only the production dependency closure.
+    ProdOnly
+);
+
 fn collect_packages_for_audit(
     pm: &mut PackageManager,
-    prod_only: bool,
+    prod_only: ProdOnly,
 ) -> Result<CollectPackagesResult, bun_alloc::AllocError> {
+    let prod_only = prod_only == ProdOnly::Yes;
     let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
     let mut packages_list: Vec<PackageVersions> = Vec::new();

@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::make_formatter;
 
 use super::Expect;
+use super::IsNot;
 use super::get_signature;
 use super::throw;
 
@@ -28,7 +29,7 @@ pub(crate) fn to_be_valid_date(
     let received = value.to_fmt(&mut formatter);
 
     if not {
-        let signature = get_signature("toBeValidDate", "", true);
+        let signature = get_signature("toBeValidDate", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -37,7 +38,7 @@ pub(crate) fn to_be_valid_date(
         );
     }
 
-    let signature = get_signature("toBeValidDate", "", false);
+    let signature = get_signature("toBeValidDate", "", IsNot::No);
     throw!(
         this,
         global,

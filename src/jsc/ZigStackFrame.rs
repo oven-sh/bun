@@ -5,6 +5,7 @@ use bstr::BStr;
 
 use bun_core::Output;
 use bun_core::String as BunString;
+use bun_core::output::AnsiColors;
 use bun_paths::strings;
 use bun_url::URL as ZigURL;
 
@@ -52,7 +53,12 @@ impl ZigStackFrame {
             write!(
                 &mut file,
                 "{}",
-                self.source_url_formatter(root_path, origin, true, false)
+                self.source_url_formatter(
+                    root_path,
+                    origin,
+                    ExcludeLineColumn::Yes,
+                    AnsiColors::Disabled
+                )
             )
             .expect("Vec<u8> write is infallible");
         }
@@ -75,7 +81,7 @@ impl ZigStackFrame {
         jsc_stack_frame_index: -1,
     };
 
-    pub fn name_formatter(&self, enable_color: bool) -> NameFormatter {
+    pub fn name_formatter(&self, enable_color: AnsiColors) -> NameFormatter {
         NameFormatter {
             function_name: self.function_name,
             code_type: self.code_type,
@@ -88,8 +94,8 @@ impl ZigStackFrame {
         &self,
         root_path: &'a [u8],
         origin: Option<&'a ZigURL<'a>>,
-        exclude_line_column: bool,
-        enable_color: bool,
+        exclude_line_column: ExcludeLineColumn,
+        enable_color: AnsiColors,
     ) -> SourceURLFormatter<'a> {
         SourceURLFormatter {
             source_url: self.source_url,
@@ -103,21 +109,25 @@ impl ZigStackFrame {
     }
 }
 
+bun_core::bool_enum!(pub(crate) ExcludeLineColumn);
+
 pub struct SourceURLFormatter<'a> {
     pub(crate) source_url: BunString,
     pub(crate) position: ZigStackFramePosition,
-    pub(crate) enable_color: bool,
+    pub(crate) enable_color: AnsiColors,
     pub(crate) origin: Option<&'a ZigURL<'a>>,
-    pub(crate) exclude_line_column: bool,
+    pub(crate) exclude_line_column: ExcludeLineColumn,
     pub(crate) remapped: bool,
     pub(crate) root_path: &'a [u8],
 }
 
 impl<'a> fmt::Display for SourceURLFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let enable_color = self.enable_color == AnsiColors::Enabled;
+        let exclude_line_column = self.exclude_line_column == ExcludeLineColumn::Yes;
         // `Output::pretty_fmt!` expands to a `&'static str` literal (substituting `<r>`/`<cyan>`/
         // etc. for ANSI sequences at compile time), so it is usable as a `write!` format string.
-        if self.enable_color {
+        if enable_color {
             f.write_str(Output::pretty_fmt!("<r><cyan>", true))?;
         }
 
@@ -140,7 +150,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             }
             write!(f, "{}", BStr::new(source_slice))?;
         } else {
-            if self.enable_color {
+            if enable_color {
                 let not_root = if cfg!(windows) {
                     self.root_path.len() > b"C:\\".len()
                 } else {
@@ -164,24 +174,24 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             }
         }
 
-        if !self.exclude_line_column
+        if !exclude_line_column
             && !source_slice.is_empty()
             && (self.position.line.is_valid() || self.position.column.is_valid())
         {
-            if self.enable_color {
+            if enable_color {
                 f.write_str(Output::pretty_fmt!("<r><d>:", true))?;
             } else {
                 f.write_str(":")?;
             }
         }
 
-        if self.enable_color {
+        if enable_color {
             f.write_str(Output::pretty_fmt!("<r>", true))?;
         }
 
-        if !self.exclude_line_column {
+        if !exclude_line_column {
             if self.position.line.is_valid() && self.position.column.is_valid() {
-                if self.enable_color {
+                if enable_color {
                     write!(
                         f,
                         Output::pretty_fmt!("<yellow>{}<r><d>:<yellow>{}<r>", true),
@@ -197,7 +207,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
                     )?;
                 }
             } else if self.position.line.is_valid() {
-                if self.enable_color {
+                if enable_color {
                     write!(
                         f,
                         Output::pretty_fmt!("<yellow>{}<r>", true),
@@ -216,17 +226,18 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
 pub struct NameFormatter {
     pub(crate) function_name: BunString,
     pub(crate) code_type: ZigStackFrameCode,
-    pub(crate) enable_color: bool,
+    pub(crate) enable_color: AnsiColors,
     pub(crate) is_async: bool,
 }
 
 impl fmt::Display for NameFormatter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = &self.function_name;
+        let enable_color = self.enable_color == AnsiColors::Enabled;
 
         match self.code_type {
             ZigStackFrameCode::EVAL => {
-                if self.enable_color {
+                if enable_color {
                     f.write_str(concat!(
                         Output::pretty_fmt!("<r><d>", true),
                         "eval",
@@ -236,7 +247,7 @@ impl fmt::Display for NameFormatter {
                     f.write_str("eval")?;
                 }
                 if !name.is_empty() {
-                    if self.enable_color {
+                    if enable_color {
                         write!(f, Output::pretty_fmt!(" <r><b><i>{}<r>", true), name)?;
                     } else {
                         write!(f, " {}", name)?;
@@ -245,7 +256,7 @@ impl fmt::Display for NameFormatter {
             }
             ZigStackFrameCode::FUNCTION => {
                 if !name.is_empty() {
-                    if self.enable_color {
+                    if enable_color {
                         if self.is_async {
                             write!(f, Output::pretty_fmt!("<r><b><i>async {}<r>", true), name,)?;
                         } else {
@@ -259,7 +270,7 @@ impl fmt::Display for NameFormatter {
                         }
                     }
                 } else {
-                    if self.enable_color {
+                    if enable_color {
                         if self.is_async {
                             f.write_str(concat!(
                                 Output::pretty_fmt!("<r><d>", true),

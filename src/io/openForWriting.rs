@@ -49,6 +49,8 @@ impl OpenForWritingInput for &ZStr {
     }
 }
 
+bun_core::bool_enum!(pub ForceSync);
+
 pub fn open_for_writing<P, C>(
     dir: Fd,
     input_path: &P,
@@ -56,7 +58,7 @@ pub fn open_for_writing<P, C>(
     mode: Mode,
     pollable: &mut bool,
     is_socket: &mut bool,
-    force_sync: bool,
+    force_sync: ForceSync,
     out_nonblocking: &mut bool,
     ctx: C,
     on_force_sync_or_isa_tty: fn(C),
@@ -88,7 +90,7 @@ pub fn open_for_writing_impl<P, C>(
     mode: Mode,
     pollable: &mut bool,
     is_socket: &mut bool,
-    force_sync: bool,
+    force_sync: ForceSync,
     out_nonblocking: &mut bool,
     ctx: C,
     on_force_sync_or_isa_tty: fn(C),
@@ -136,13 +138,13 @@ where
 
                 *is_socket = bun_sys::S::ISSOCK(stat.st_mode as Mode);
 
-                if force_sync || isatty {
+                if force_sync == ForceSync::Yes || isatty {
                     // Prevents interleaved or dropped stdout/stderr output for terminals.
                     // As noted in the following reference, local TTYs tend to be quite fast and
                     // this behavior has become expected due historical functionality on OS X,
                     // even though it was originally intended to change in v1.0.2 (Libuv 1.2.1).
                     // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
-                    let _ = bun_sys::update_nonblocking(fd, false);
+                    let _ = bun_sys::update_nonblocking(fd, bun_sys::IoMode::Blocking);
                     is_nonblocking = false;
                     // this.force_sync = true;
                     // this.writer.force_sync = true;
@@ -175,7 +177,7 @@ where
     {
         *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
             != 0
-            && !force_sync;
+            && force_sync == ForceSync::No;
         return Ok(fd);
     }
 }

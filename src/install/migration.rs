@@ -553,7 +553,11 @@ fn migrate_npm_lockfile<'a>(
                             };
                             if let Some(wksp_entry) = wksp.get(resolved_str) {
                                 let pkg_name = package_name_from_path(pkg_path);
-                                if !strings::eql_long(&wksp_entry.name, pkg_name, true) {
+                                if !strings::eql_long(
+                                    &wksp_entry.name,
+                                    pkg_name,
+                                    strings::CheckLen::Yes,
+                                ) {
                                     let pkg_name_hash = string_hash(pkg_name);
                                     if !this.workspace_paths.contains(&pkg_name_hash) {
                                         // Package resolve path is an entry in the workspace map, but
@@ -1464,7 +1468,8 @@ fn migrate_npm_lockfile<'a>(
         this.verify_data()?;
     }
 
-    this.meta_hash = this.generate_meta_hash(false, this.packages.len())?;
+    this.meta_hash =
+        this.generate_meta_hash(lockfile::PrintNameVersion::No, this.packages.len())?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile: this,

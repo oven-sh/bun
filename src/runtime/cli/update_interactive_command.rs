@@ -12,6 +12,7 @@ use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_install::npm::ExtendedManifest;
 use bun_install::package_manager::{
     LogLevel, ManifestLoad, ROOT_PACKAGE_JSON_PATH, Subcommand, WorkspaceFilter,
     install_with_manager, populate_manifest_cache,
@@ -147,6 +148,12 @@ struct TerminalSize {
     height: usize,
     width: usize,
 }
+
+bun_core::bool_enum!(
+    /// Where `truncate_with_ellipsis` places the ellipsis: in the middle
+    /// (showing both start and end) or at the end (keeping only the start).
+    EllipsisAt { Middle, End }
+);
 
 impl UpdateInteractiveCommand {
     // Common utility functions to reduce duplication
@@ -917,7 +924,7 @@ impl UpdateInteractiveCommand {
         // borrow from `manager`, so the caller may keep using it afterwards.
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
-        let needs_extended = min_age_ms.is_some();
+        let needs_extended = ExtendedManifest::from_bool(min_age_ms.is_some());
         let excludes = manager.options.minimum_release_age_excludes;
         let update_to_latest = manager.options.do_.update_to_latest();
         let default_url_hash = *bun_install::npm::Registry::DEFAULT_URL_HASH;
@@ -1235,7 +1242,7 @@ impl UpdateInteractiveCommand {
         } // Default fallback
     }
 
-    fn truncate_with_ellipsis(text: &[u8], max_width: usize, only_end: bool) -> Box<[u8]> {
+    fn truncate_with_ellipsis(text: &[u8], max_width: usize, only_end: EllipsisAt) -> Box<[u8]> {
         if text.len() <= max_width {
             return Box::from(text);
         }
@@ -1247,7 +1254,7 @@ impl UpdateInteractiveCommand {
         // Put ellipsis in the middle to show both start and end of package name
         let ellipsis = "…".as_bytes();
         let available_chars = max_width - 1; // Reserve 1 char for ellipsis
-        let start_chars = if only_end {
+        let start_chars = if only_end == EllipsisAt::End {
             available_chars
         } else {
             available_chars / 2
@@ -1487,7 +1494,7 @@ impl UpdateInteractiveCommand {
                     current_size
                         .width
                         .saturating_sub(b"? Select packages to update - ".len()),
-                    true,
+                    EllipsisAt::End,
                 );
                 bun_core::prettyln!(
                     "<r><cyan>?<r> Select packages to update<d> - {}<r>",
@@ -1725,8 +1732,11 @@ impl UpdateInteractiveCommand {
                     } else {
                         state.max_name_len
                     };
-                    let display_name =
-                        Self::truncate_with_ellipsis(&pkg.name, available_name_width, false);
+                    let display_name = Self::truncate_with_ellipsis(
+                        &pkg.name,
+                        available_name_width,
+                        EllipsisAt::Middle,
+                    );
 
                     let package_url: Box<[u8]> =
                         if Output::enable_ansi_colors_stdout() && pkg.uses_default_registry {
@@ -1792,7 +1802,7 @@ impl UpdateInteractiveCommand {
                     let truncated_current = Self::truncate_with_ellipsis(
                         &pkg.current_version,
                         state.max_current_len,
-                        false,
+                        EllipsisAt::Middle,
                     );
                     bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_current));
 
@@ -1818,7 +1828,7 @@ impl UpdateInteractiveCommand {
                     let truncated_target = Self::truncate_with_ellipsis(
                         &pkg.update_version,
                         state.max_update_len,
-                        false,
+                        EllipsisAt::Middle,
                     );
 
                     // For width calculation, use the truncated version string length
@@ -1889,7 +1899,7 @@ impl UpdateInteractiveCommand {
                     let truncated_latest = Self::truncate_with_ellipsis(
                         &pkg.latest_version,
                         state.max_latest_len,
-                        false,
+                        EllipsisAt::Middle,
                     );
                     if current_ver_parsed.valid && latest_ver_parsed.valid {
                         let current_full = semver::Version {
@@ -1969,7 +1979,7 @@ impl UpdateInteractiveCommand {
                         let truncated_workspace = Self::truncate_with_ellipsis(
                             &pkg.workspace_name,
                             state.max_workspace_len,
-                            true,
+                            EllipsisAt::End,
                         );
                         bun_core::pretty!("<r><d>{}<r>", BStr::new(&truncated_workspace));
                     }

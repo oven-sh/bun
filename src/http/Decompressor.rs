@@ -1,4 +1,5 @@
 use bun_core::MutableString;
+use bun_core::compress::Chunk;
 use bun_http_types::Encoding::Encoding;
 
 // The streaming decoders below own only their C-side state and take
@@ -57,7 +58,7 @@ impl Decompressor {
         encoding: Encoding,
         buffer: &[u8],
         body_out_str: &mut MutableString,
-        is_done: bool,
+        is_done: Chunk,
     ) -> crate::Result<()> {
         if !encoding.is_compressed() {
             return Ok(());

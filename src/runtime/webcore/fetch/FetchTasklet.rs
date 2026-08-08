@@ -30,7 +30,7 @@ use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
-use crate::webcore::response::HeadersRef;
+use crate::webcore::response::{HeadersRef, Redirected};
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
@@ -256,6 +256,9 @@ impl HTTPRequestBody {
     }
 }
 
+bun_core::bool_enum!(LastChunk);
+bun_core::bool_enum!(FromFinalizer);
+
 impl FetchTasklet {
     // ───── raw-ptr field accessors (centralised unsafe) ───────────────────
     //
@@ -320,11 +323,11 @@ impl FetchTasklet {
     /// `on_data` call per the `StreamResult::Temporary*` contract — `on_data`
     /// copies/consumes before returning and never retains the slice.
     #[inline]
-    fn temporary_chunk(chunk: &[u8], done: bool) -> StreamResult {
+    fn temporary_chunk(chunk: &[u8], done: LastChunk) -> StreamResult {
         // See INVARIANT above. `RawSlice` is non-owning; backing buffer
         // outlives the synchronous `on_data` call.
         let v = bun_ptr::RawSlice::new(chunk);
-        if done {
+        if done == LastChunk::Yes {
             StreamResult::TemporaryAndDone(v)
         } else {
             StreamResult::Temporary(v)
@@ -819,7 +822,7 @@ impl FetchTasklet {
                 // body can be marked as used but we still need to pipe the data
                 if self.result.has_more {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                    bytes.on_data(Self::temporary_chunk(chunk, LastChunk::No))?;
                     self.drop_backpressure_if_unobserved(&readable, &bytes);
                 } else {
                     self.clear_stream_handlers();
@@ -827,7 +830,7 @@ impl FetchTasklet {
                     buffer_reset.set(false);
 
                     let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, true))?;
+                    bytes.on_data(Self::temporary_chunk(chunk, LastChunk::Yes))?;
                     drop(prev);
                 }
                 return Ok(());
@@ -847,12 +850,12 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
-                        bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                        bytes.on_data(Self::temporary_chunk(chunk, LastChunk::No))?;
                         self.drop_backpressure_if_unobserved(&readable, &bytes);
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(&global_this);
-                        bytes.on_data(Self::temporary_chunk(chunk, true))?;
+                        bytes.on_data(Self::temporary_chunk(chunk, LastChunk::Yes))?;
                     }
 
                     return Ok(());
@@ -1695,7 +1698,7 @@ impl FetchTasklet {
         // reader.cancel() / body.cancel() aborts the fetch so the server sees the
         // close (Node/Deno/browsers abort unconditionally). abort_task() is idempotent.
         self.abort_task();
-        self.ignore_remaining_response_body(false);
+        self.ignore_remaining_response_body(FromFinalizer::No);
     }
 
     pub(crate) fn on_stream_drained(&self) {
@@ -1818,7 +1821,7 @@ impl FetchTasklet {
             None => BunString::clone_utf8(http_response.status),
         };
         let url = BunString::clone_utf8(metadata.url.slice());
-        let redirected = self.result.redirected;
+        let redirected = Redirected::from_bool(self.result.redirected);
         Response::init(
             crate::webcore::response::Init {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
@@ -1833,7 +1836,7 @@ impl FetchTasklet {
         )
     }
 
-    fn ignore_remaining_response_body(&mut self, from_finalizer: bool) {
+    fn ignore_remaining_response_body(&mut self, from_finalizer: FromFinalizer) {
         bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
@@ -1863,7 +1866,7 @@ impl FetchTasklet {
         // `MutatorState::Sweeping` is forbidden. The request-body sink is left
         // for `clear_sink()` in `deinit()` (an event-loop task, outside sweep)
         // to detach.
-        if !from_finalizer {
+        if from_finalizer == FromFinalizer::No {
             self.clear_stream_handlers();
         }
         self.readable_stream_ref.deinit();
@@ -2693,11 +2696,11 @@ impl FetchTasklet {
                 if let Some(promise) = locked.promise {
                     if promise.is_empty_or_undefined_or_null() {
                         // Scenario 2b.
-                        this.ignore_remaining_response_body(true);
+                        this.ignore_remaining_response_body(FromFinalizer::Yes);
                     }
                 } else {
                     // Scenario 3.
-                    this.ignore_remaining_response_body(true);
+                    this.ignore_remaining_response_body(FromFinalizer::Yes);
                 }
             }
         }

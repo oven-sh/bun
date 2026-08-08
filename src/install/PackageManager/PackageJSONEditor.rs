@@ -424,7 +424,11 @@ pub(crate) fn edit_update_no_args(
                                     }
 
                                     let workspace_dep_name = workspace_dep.name.slice(string_buf);
-                                    if !strings::eql_long(workspace_dep_name, dep_name, true) {
+                                    if !strings::eql_long(
+                                        workspace_dep_name,
+                                        dep_name,
+                                        strings::CheckLen::Yes,
+                                    ) {
                                         continue;
                                     }
 
@@ -709,8 +713,8 @@ pub(crate) fn edit_catalogs_after_update(
         let dep_name = dep.name.slice(string_buf);
         let catalog_name = dep.version.catalog().slice(string_buf);
         let Some(index) = infos.iter().position(|info| {
-            strings::eql_long(&info.dep_name, dep_name, true)
-                && strings::eql_long(&info.catalog_name, catalog_name, true)
+            strings::eql_long(&info.dep_name, dep_name, strings::CheckLen::Yes)
+                && strings::eql_long(&info.catalog_name, catalog_name, strings::CheckLen::Yes)
         }) else {
             continue;
         };
@@ -813,8 +817,8 @@ pub(crate) fn edit_catalogs_after_update(
                 .unwrap_or_else(|| bun_core::out_of_memory());
 
             let Some(index) = infos.iter().position(|info| {
-                strings::eql_long(&info.dep_name, key_str, true)
-                    && strings::eql_long(&info.catalog_name, catalog_name, true)
+                strings::eql_long(&info.dep_name, key_str, strings::CheckLen::Yes)
+                    && strings::eql_long(&info.catalog_name, catalog_name, strings::CheckLen::Yes)
             }) else {
                 continue;
             };
@@ -826,7 +830,11 @@ pub(crate) fn edit_catalogs_after_update(
                 None => arena_dup(arena, &info.original_version_literal),
             };
 
-            changed |= !strings::eql_long(new_literal, &info.original_version_literal, true);
+            changed |= !strings::eql_long(
+                new_literal,
+                &info.original_version_literal,
+                strings::CheckLen::Yes,
+            );
 
             dep.value = Some(Expr::allocate(
                 arena,
@@ -915,7 +923,11 @@ pub(crate) fn edit(
                                         );
 
                                     if request.package_id != INVALID_PACKAGE_ID
-                                        && strings::eql_long(list, dependency_list, true)
+                                        && strings::eql_long(
+                                            list,
+                                            dependency_list,
+                                            strings::CheckLen::Yes,
+                                        )
                                         && !keep_catalog_reference
                                     {
                                         replacing += 1;

@@ -4,6 +4,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
 use super::Expect;
+use super::IsNot;
 use super::get_signature;
 use super::throw;
 
@@ -113,7 +114,7 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         if not {
-            let signature = get_signature("toContain", "<green>expected<r>", true);
+            let signature = get_signature("toContain", "<green>expected<r>", IsNot::Yes);
             return throw!(
                 this,
                 global,
@@ -127,7 +128,7 @@ impl Expect {
             );
         }
 
-        let signature = get_signature("toContain", "<green>expected<r>", false);
+        let signature = get_signature("toContain", "<green>expected<r>", IsNot::No);
         throw!(
             this,
             global,

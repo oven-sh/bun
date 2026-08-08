@@ -17,6 +17,7 @@ use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
+use crate::package_manager::IsRoot;
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
 
@@ -513,7 +514,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 manager,
                 &root_pkg_expr,
                 log,
-                true,
+                IsRoot::Yes,
                 &importers_obj,
                 importer_versions.value_ptr,
             )?;
@@ -542,7 +543,11 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let value = prop.value.as_ref().expect("infallible: prop has value");
 
                 let path = as_string(key).unwrap();
-                if !strings::eql_long(path, workspace_path.slice(string_bytes!(lockfile)), true) {
+                if !strings::eql_long(
+                    path,
+                    workspace_path.slice(string_bytes!(lockfile)),
+                    strings::CheckLen::Yes,
+                ) {
                     continue;
                 }
 
@@ -589,7 +594,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     manager,
                     value,
                     log,
-                    false,
+                    IsRoot::No,
                     &importers_obj,
                     importer_versions.value_ptr,
                 )?;
@@ -689,7 +694,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                     if strings::eql_long(
                                         workspace_path_buf.slice(),
                                         link_path_buf.slice(),
-                                        true,
+                                        strings::CheckLen::Yes,
                                     ) {
                                         continue 'next_dep;
                                     }
@@ -1316,7 +1321,7 @@ fn parse_append_package_dependencies(
 
                     let mut behavior = dependency::Behavior::PEER;
 
-                    if strings::eql_long(name_str, peer_name_str, true) {
+                    if strings::eql_long(name_str, peer_name_str, strings::CheckLen::Yes) {
                         if let Some(peers_meta) = package_obj.get(b"peerDependenciesMeta") {
                             if !peers_meta.is_object() {
                                 return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
@@ -1332,7 +1337,11 @@ fn parse_append_package_dependencies(
                                     return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                                 };
 
-                                if strings::eql_long(name_str, peer_meta_name_str, true) {
+                                if strings::eql_long(
+                                    name_str,
+                                    peer_meta_name_str,
+                                    strings::CheckLen::Yes,
+                                ) {
                                     let meta_obj = peer_meta_prop
                                         .value
                                         .as_ref()
@@ -1417,7 +1426,7 @@ fn parse_append_importer_dependencies(
     manager: &mut PackageManager,
     pkg_expr: &Expr,
     log: &mut bun_ast::Log,
-    is_root: bool,
+    is_root: IsRoot,
     importers_obj: &Expr,
     importer_versions: &mut StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(u32, u32), ParseAppendDependenciesError> {
@@ -1541,13 +1550,17 @@ fn parse_append_importer_dependencies(
         }
     }
 
-    if is_root {
+    if is_root == IsRoot::Yes {
         let workspace_paths_snapshot: Vec<String> = lockfile.workspace_paths.values().to_vec();
         'workspaces: for workspace_path in &workspace_paths_snapshot {
             for prop in e_object(importers_obj).properties.slice() {
                 let key = prop.key.as_ref().expect("infallible: prop has key");
                 let path = as_string(key).unwrap();
-                if !strings::eql_long(path, workspace_path.slice(string_bytes!(lockfile)), true) {
+                if !strings::eql_long(
+                    path,
+                    workspace_path.slice(string_bytes!(lockfile)),
+                    strings::CheckLen::Yes,
+                ) {
                     continue;
                 }
 

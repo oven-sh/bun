@@ -15,6 +15,8 @@ use crate::{
     us_bun_verify_error_t, us_socket_t,
 };
 
+bun_core::bool_enum!(pub Ipc);
+
 #[repr(C)]
 pub struct SocketGroup {
     pub loop_: *mut Loop,
@@ -270,7 +272,7 @@ impl SocketGroup {
         ssl_ctx: Option<*mut SslCtx>,
         socket_ext_size: c_int,
         fd: LIBUS_SOCKET_DESCRIPTOR,
-        ipc: bool,
+        ipc: Ipc,
     ) -> *mut us_socket_t {
         // SAFETY: forwarding to C.
         unsafe {
@@ -280,7 +282,7 @@ impl SocketGroup {
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 socket_ext_size,
                 fd,
-                ipc as c_int,
+                (ipc == Ipc::Yes) as c_int,
             )
         }
     }

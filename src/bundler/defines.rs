@@ -20,10 +20,14 @@ use crate::defines_table::{
 // moved down to `bun_js_parser::defines_table`, so `for_identifier` reads it
 // directly with no cross-crate hook.
 // ══════════════════════════════════════════════════════════════════════════
+use bun_js_parser::defines::CanBeRemovedIfUnused;
 pub use bun_js_parser::defines::{
-    Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines, UserDefines,
-    UserDefinesArray, are_parts_equal,
+    Define, DefineData, DotDefine, Flags, IdentifierDefine, MethodCallMustBeReplacedWithUndefined,
+    Options, RawDefines, UserDefines, UserDefinesArray, Valueless, are_parts_equal,
 };
+
+bun_core::bool_enum!(pub DropDebugger);
+bun_core::bool_enum!(pub OmitUnusedGlobalCalls);
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.
 pub(crate) type DefineDataInit<'a> = Options<'a>;
@@ -127,8 +131,8 @@ pub trait DefineExt: Sized {
     fn init(
         user_defines: Option<UserDefines>,
         string_defines: Option<UserDefinesArray>,
-        drop_debugger: bool,
-        omit_unused_global_calls: bool,
+        drop_debugger: DropDebugger,
+        omit_unused_global_calls: OmitUnusedGlobalCalls,
     ) -> Result<Box<Define>, bun_alloc::AllocError>;
 }
 
@@ -160,13 +164,13 @@ impl DefineExt for Define {
     fn init(
         _user_defines: Option<UserDefines>,
         string_defines: Option<UserDefinesArray>,
-        drop_debugger: bool,
-        omit_unused_global_calls: bool,
+        drop_debugger: DropDebugger,
+        omit_unused_global_calls: OmitUnusedGlobalCalls,
     ) -> Result<Box<Define>, bun_alloc::AllocError> {
         let mut define = Box::new(Define {
             identifiers: StringHashMap::default(),
             dots: StringHashMap::default(),
-            drop_debugger,
+            drop_debugger: drop_debugger == DropDebugger::Yes,
         });
         define.dots.reserve(124);
 
@@ -189,7 +193,7 @@ impl DefineExt for Define {
             ..Default::default()
         });
 
-        if omit_unused_global_calls {
+        if omit_unused_global_calls == OmitUnusedGlobalCalls::Yes {
             for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {
                 define.insert_global(global, &to_string_safe)?;
             }
@@ -259,8 +263,8 @@ pub trait DefineDataExt: Sized {
     fn parse(
         key: &[u8],
         value_str: &[u8],
-        value_is_undefined: bool,
-        method_call_must_be_replaced_with_undefined_: bool,
+        value_is_undefined: Valueless,
+        method_call_must_be_replaced_with_undefined_: MethodCallMustBeReplacedWithUndefined,
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, crate::Error>;
@@ -269,8 +273,8 @@ pub trait DefineDataExt: Sized {
         user_defines: &mut UserDefines,
         key: &[u8],
         value_str: &[u8],
-        value_is_undefined: bool,
-        method_call_must_be_replaced_with_undefined_: bool,
+        value_is_undefined: Valueless,
+        method_call_must_be_replaced_with_undefined_: MethodCallMustBeReplacedWithUndefined,
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<(), crate::Error>;
@@ -288,8 +292,8 @@ impl DefineDataExt for DefineData {
         user_defines: &mut UserDefines,
         key: &[u8],
         value_str: &[u8],
-        value_is_undefined: bool,
-        method_call_must_be_replaced_with_undefined_: bool,
+        value_is_undefined: Valueless,
+        method_call_must_be_replaced_with_undefined_: MethodCallMustBeReplacedWithUndefined,
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<(), crate::Error> {
@@ -310,8 +314,8 @@ impl DefineDataExt for DefineData {
     fn parse(
         key: &[u8],
         value_str: &[u8],
-        value_is_undefined: bool,
-        method_call_must_be_replaced_with_undefined_: bool,
+        value_is_undefined: Valueless,
+        method_call_must_be_replaced_with_undefined_: MethodCallMustBeReplacedWithUndefined,
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, crate::Error> {
@@ -356,7 +360,7 @@ impl DefineDataExt for DefineData {
         if is_ident {
             // Special-case undefined. it's not an identifier here
             // https://github.com/evanw/esbuild/issues/1407
-            let value = if value_is_undefined || value_str == b"undefined" {
+            let value = if value_is_undefined == Valueless::Yes || value_str == b"undefined" {
                 ExprData::EUndefined(bun_ast::E::Undefined)
             } else {
                 ExprData::EIdentifier(
@@ -376,8 +380,9 @@ impl DefineDataExt for DefineData {
                     None
                 },
                 flags: Flags::new(
-                    /* valueless: */ value_is_undefined,
-                    /* can_be_removed_if_unused: */ true,
+                    /* valueless: */
+                    value_is_undefined,
+                    /* can_be_removed_if_unused: */ CanBeRemovedIfUnused::Yes,
                     /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                     /* method_call_must_be_replaced_with_undefined: */
                     method_call_must_be_replaced_with_undefined_,
@@ -404,8 +409,10 @@ impl DefineDataExt for DefineData {
                     None
                 },
                 flags: Flags::new(
-                    /* valueless: */ value_is_undefined,
-                    /* can_be_removed_if_unused: */ can_be_removed_if_unused,
+                    /* valueless: */
+                    value_is_undefined,
+                    /* can_be_removed_if_unused: */
+                    CanBeRemovedIfUnused::from_bool(can_be_removed_if_unused),
                     /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                     /* method_call_must_be_replaced_with_undefined: */
                     method_call_must_be_replaced_with_undefined_,
@@ -450,8 +457,10 @@ impl DefineDataExt for DefineData {
                 None
             },
             flags: Flags::new(
-                /* valueless: */ value_is_undefined,
-                /* can_be_removed_if_unused: */ can_be_removed_if_unused,
+                /* valueless: */
+                value_is_undefined,
+                /* can_be_removed_if_unused: */
+                CanBeRemovedIfUnused::from_bool(can_be_removed_if_unused),
                 /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                 /* method_call_must_be_replaced_with_undefined: */
                 method_call_must_be_replaced_with_undefined_,
@@ -472,8 +481,8 @@ impl DefineDataExt for DefineData {
                 &mut user_defines,
                 key,
                 value,
-                false,
-                false,
+                Valueless::No,
+                MethodCallMustBeReplacedWithUndefined::No,
                 log,
                 bump,
             )?;
@@ -485,8 +494,8 @@ impl DefineDataExt for DefineData {
                     &mut user_defines,
                     drop_item,
                     b"",
-                    true,
-                    true,
+                    Valueless::Yes,
+                    MethodCallMustBeReplacedWithUndefined::Yes,
                     log,
                     bump,
                 )?;

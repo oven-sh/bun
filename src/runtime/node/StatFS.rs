@@ -1,6 +1,8 @@
 //! StatFS and BigIntStatFS classes from node:fs
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+
+use crate::node::stat::StatsKind;
 // On POSIX this is `libc::statfs`; on Windows it's `uv_statfs_t` (the value
 // `sys_uv::statfs` returns / `uv_fs_statfs` writes into `req.ptr`). Field
 // names match (`f_type`/`f_bsize`/…); widths differ (u64 vs platform-specific)
@@ -140,8 +142,8 @@ pub enum StatFS {
 
 impl StatFS {
     #[inline]
-    pub(crate) fn init(stat_: &RawStatFS, big: bool) -> StatFS {
-        if big {
+    pub(crate) fn init(stat_: &RawStatFS, big: StatsKind) -> StatFS {
+        if big == StatsKind::BigInt {
             StatFS::Big(StatFSBig::init(stat_))
         } else {
             StatFS::Small(StatFSSmall::init(stat_))

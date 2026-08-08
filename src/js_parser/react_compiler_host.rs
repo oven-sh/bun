@@ -97,12 +97,11 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         ref_
     }
 
-    fn runtime_sentinel(&mut self, early: bool) -> js_ast::Ref {
+    fn runtime_sentinel(&mut self, early: bun_react_compiler::RuntimeSentinel) -> js_ast::Ref {
         let p = &mut *self.p;
-        let name: &'static [u8] = if early {
-            b"__EARLY_RETURN_SENTINEL"
-        } else {
-            b"__MEMO_CACHE_SENTINEL"
+        let name: &'static [u8] = match early {
+            bun_react_compiler::RuntimeSentinel::EarlyReturn => b"__EARLY_RETURN_SENTINEL",
+            bun_react_compiler::RuntimeSentinel::MemoCache => b"__MEMO_CACHE_SENTINEL",
         };
         p.runtime_identifier_ref(name)
     }

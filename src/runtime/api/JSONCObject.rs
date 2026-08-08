@@ -15,8 +15,8 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         global,
         frame,
         b"input.jsonc",
-        false,
-        true,
+        super::AcceptBlobOrBuffer::No,
+        super::RejectNullish::Yes,
         |_arena, log, source| {
             // parse_jsonc maps empty input to {}; the public API rejects it like JSON.parse.
             if source.contents.is_empty() {

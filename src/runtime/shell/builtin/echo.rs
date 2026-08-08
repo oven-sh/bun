@@ -64,7 +64,7 @@ impl Echo {
                 let is_last = i == args_len - 1;
 
                 if escape_sequences {
-                    stop_output = append_with_escapes(&mut out, thearg);
+                    stop_output = append_with_escapes(&mut out, thearg).is_break();
                 } else if is_last {
                     if thearg.last() == Some(&b'\n') {
                         has_leading_newline = true;
@@ -119,8 +119,8 @@ impl Echo {
 }
 
 /// Appends `input` to `output`, interpreting backslash escape sequences.
-/// Returns true if a `\c` escape was encountered (meaning stop all output).
-fn append_with_escapes(output: &mut Vec<u8>, input: &[u8]) -> bool {
+/// Returns `Break` if a `\c` escape was encountered (meaning stop all output).
+fn append_with_escapes(output: &mut Vec<u8>, input: &[u8]) -> core::ops::ControlFlow<()> {
     let mut i = 0usize;
     while i < input.len() {
         if input[i] == b'\\' && i + 1 < input.len() {
@@ -139,7 +139,7 @@ fn append_with_escapes(output: &mut Vec<u8>, input: &[u8]) -> bool {
                 }
                 b'c' => {
                     // \c: produce no further output
-                    return true;
+                    return core::ops::ControlFlow::Break(());
                 }
                 b'e' | b'E' => {
                     output.push(0x1b);
@@ -199,5 +199,5 @@ fn append_with_escapes(output: &mut Vec<u8>, input: &[u8]) -> bool {
             i += 1;
         }
     }
-    false
+    core::ops::ControlFlow::Continue(())
 }

@@ -21,7 +21,7 @@ use crate::webcore::BlobExt as _;
 #[inline]
 #[allow(clippy::disallowed_methods)] // template is a runtime parameter
 fn pretty_fmt_const<const ENABLE_ANSI_COLORS: bool>(s: &str) -> PrettyStr {
-    PrettyStr(Output::pretty_fmt_rt(s, ENABLE_ANSI_COLORS).0)
+    PrettyStr(Output::pretty_fmt_rt(s, Output::AnsiColors::from_bool(ENABLE_ANSI_COLORS)).0)
 }
 #[repr(transparent)]
 struct PrettyStr(Vec<u8>);

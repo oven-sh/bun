@@ -80,6 +80,9 @@ capabilities! {
     CLIENT_REMEMBER_OPTIONS                = 31,
 }
 
+bun_core::bool_enum!(pub Ssl);
+bun_core::bool_enum!(pub HasDbName);
+
 impl Capabilities {
     pub fn reject(&mut self) {
         self.CLIENT_ZSTD_COMPRESSION_ALGORITHM = false;
@@ -104,14 +107,14 @@ impl Capabilities {
         Self::from_int(self.to_int() & other.to_int())
     }
 
-    pub fn get_default_capabilities(ssl: bool, has_db_name: bool) -> Capabilities {
+    pub fn get_default_capabilities(ssl: Ssl, has_db_name: HasDbName) -> Capabilities {
         Capabilities {
             CLIENT_PROTOCOL_41: true,
             CLIENT_PLUGIN_AUTH: true,
             CLIENT_SECURE_CONNECTION: true,
-            CLIENT_CONNECT_WITH_DB: has_db_name,
+            CLIENT_CONNECT_WITH_DB: has_db_name == HasDbName::Yes,
             CLIENT_DEPRECATE_EOF: true,
-            CLIENT_SSL: ssl,
+            CLIENT_SSL: ssl == Ssl::Yes,
             CLIENT_MULTI_STATEMENTS: true,
             CLIENT_MULTI_RESULTS: true,
             ..Default::default()

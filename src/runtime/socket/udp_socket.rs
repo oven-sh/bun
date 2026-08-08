@@ -7,7 +7,7 @@ use bun_core::{String as BunString, ZigStringSlice};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{IsRejection, VirtualMachine};
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
     SysErrorJsc, SystemError,
@@ -805,7 +805,7 @@ impl UDPSocket {
             return;
         }
         if callback.is_empty_or_undefined_or_null() {
-            let _ = vm.uncaught_exception(global_this, err, false);
+            let _ = vm.uncaught_exception(global_this, err, IsRejection::No);
             return;
         }
 
@@ -914,7 +914,7 @@ impl UDPSocket {
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-        drop: bool,
+        drop: uws::udp::Membership,
     ) -> JsResult<JSValue> {
         if this.closed.get() {
             return Err(global_this.throw_value(
@@ -978,7 +978,7 @@ impl UDPSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_membership(this, global_this, callframe, false)
+        Self::set_membership(this, global_this, callframe, uws::udp::Membership::Add)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -987,14 +987,14 @@ impl UDPSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_membership(this, global_this, callframe, true)
+        Self::set_membership(this, global_this, callframe, uws::udp::Membership::Drop)
     }
 
     fn set_source_specific_membership(
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-        drop: bool,
+        drop: uws::udp::Membership,
     ) -> JsResult<JSValue> {
         if this.closed.get() {
             return Err(global_this.throw_value(
@@ -1088,7 +1088,12 @@ impl UDPSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_source_specific_membership(this, global_this, callframe, false)
+        Self::set_source_specific_membership(
+            this,
+            global_this,
+            callframe,
+            uws::udp::Membership::Add,
+        )
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1097,7 +1102,12 @@ impl UDPSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_source_specific_membership(this, global_this, callframe, true)
+        Self::set_source_specific_membership(
+            this,
+            global_this,
+            callframe,
+            uws::udp::Membership::Drop,
+        )
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1944,7 +1954,7 @@ impl UDPSocket {
         }
 
         let size = args[0].coerce_to_i32(global_this)?;
-        let is_recv = args[1].to_boolean();
+        let is_recv = uws::udp::BufferKind::from_bool(args[1].to_boolean());
 
         let bad_fd =
             || bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt);

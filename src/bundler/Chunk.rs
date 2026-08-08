@@ -474,6 +474,9 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
     }
 }
 
+bun_core::bool_enum!(pub ForceAbsolutePath);
+bun_core::bool_enum!(pub EnableSourceMapShifts);
+
 impl IntermediateOutput {
     pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
         // mimalloc serves large allocations via mmap already, so the global
@@ -564,12 +567,12 @@ impl IntermediateOutput {
         // Accept both `&mut usize` and
         // `Option<&mut usize>` so call sites spelled either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
-        force_absolute_path: bool,
-        enable_source_map_shifts: bool,
+        force_absolute_path: ForceAbsolutePath,
+        enable_source_map_shifts: EnableSourceMapShifts,
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
         // switch (enable_source_map_shifts) { inline else => |b| ... }
-        if enable_source_map_shifts {
+        if enable_source_map_shifts == EnableSourceMapShifts::Yes {
             self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
                 parse_graph,
@@ -613,12 +616,12 @@ impl IntermediateOutput {
         // Accept both `&mut usize` and
         // `Option<&mut usize>` so call sites spelled either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
-        force_absolute_path: bool,
-        enable_source_map_shifts: bool,
+        force_absolute_path: ForceAbsolutePath,
+        enable_source_map_shifts: EnableSourceMapShifts,
         standalone_chunk_contents: &[Option<Box<[u8]>>],
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
-        if enable_source_map_shifts {
+        if enable_source_map_shifts == EnableSourceMapShifts::Yes {
             self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
                 parse_graph,
@@ -656,7 +659,7 @@ impl IntermediateOutput {
         chunk: &Chunk,
         chunks: &[Chunk],
         display_size: Option<&mut usize>,
-        force_absolute_path: bool,
+        force_absolute_path: ForceAbsolutePath,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
     ) -> Result<CodeResult, AllocError> {
         // `Graph.input_files` SoA accessors live in `Graph::InputFileColumns`;
@@ -697,8 +700,9 @@ impl IntermediateOutput {
                 // esbuild's `pathBetweenChunks`: with a public path configured, every
                 // reference is `publicPath + outdir-relative path`. Importer-relative
                 // paths would escape the prefix from chunks in subdirectories.
-                let use_outdir_relative_path =
-                    from_chunk_dir.is_empty() || force_absolute_path || !import_prefix.is_empty();
+                let use_outdir_relative_path = from_chunk_dir.is_empty()
+                    || force_absolute_path == ForceAbsolutePath::Yes
+                    || !import_prefix.is_empty();
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
@@ -1224,16 +1228,21 @@ pub struct EntryPoint(u64);
 /// so `EntryPoint` can be a u64
 pub(crate) type EntryPointId = u32;
 
+bun_core::bool_enum!(pub(crate) IsEntryPoint);
+bun_core::bool_enum!(pub(crate) IsHtml);
+
 impl EntryPoint {
     const ENTRY_POINT_ID_MASK: u64 = (1 << 30) - 1;
 
     pub(crate) fn new(
         source_index: u32,
         entry_point_id: u32,
-        is_entry_point: bool,
-        is_html: bool,
+        is_entry_point: IsEntryPoint,
+        is_html: IsHtml,
     ) -> Self {
         debug_assert!((entry_point_id as u64) <= Self::ENTRY_POINT_ID_MASK);
+        let is_entry_point = is_entry_point == IsEntryPoint::Yes;
+        let is_html = is_html == IsHtml::Yes;
         EntryPoint(
             (source_index as u64)
                 | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32)

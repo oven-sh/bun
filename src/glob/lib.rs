@@ -7,7 +7,7 @@ pub mod matcher;
 // `match` is a Rust keyword; re-export with raw identifier.
 pub use crate::glob_walker as walk;
 pub use crate::matcher::{MatchResult, r#match};
-pub use walk::GlobWalker;
+pub use walk::{Absolute, Dot, ErrorOnBrokenSymlinks, FollowSymlinks, GlobWalker, OnlyFiles};
 
 // `ignore_filter_fn` is a runtime fn-pointer field supplied at `init()` rather than a type
 // parameter (const-generic fn ptrs are unstable).

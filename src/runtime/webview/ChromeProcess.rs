@@ -421,7 +421,7 @@ fn spawn(
             libc::AF_UNIX as i32,
             libc::SOCK_STREAM as i32,
             0,
-            false, // .blocking
+            bun_sys::IoMode::Blocking,
         )?;
         let fds = scopeguard::guard(fds, |fds| {
             fds[0].close();

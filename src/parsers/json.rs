@@ -91,11 +91,16 @@ struct ParseOutput {
     indentation: Indentation,
 }
 
+bun_core::bool_enum!(
+    /// Whether anything after the root value (other than trivia) is an error.
+    TrailingData { Allow, Reject }
+);
+
 fn parse_impl(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     opts: JSONOptions,
-    check_len: bool,
+    check_len: TrailingData,
 ) -> crate::Result<ParseOutput> {
     parse_impl_in(source, log, opts, check_len, E::TapeAlloc::Global)
 }
@@ -104,7 +109,7 @@ fn parse_impl_in(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     opts: JSONOptions,
-    check_len: bool,
+    check_len: TrailingData,
     tape_alloc: E::TapeAlloc,
 ) -> crate::Result<ParseOutput> {
     let contents: &[u8] = &source.contents;
@@ -192,12 +197,12 @@ fn run_stage2<'s>(
     log: &mut bun_ast::Log,
     sidx: &mut StructuralIndex<'s>,
     opts: JSONOptions,
-    check_len: bool,
+    check_len: TrailingData,
     tape_alloc: E::TapeAlloc,
 ) -> crate::Result<ParseOutput> {
     let mut parser = Parser::new(source, log, sidx, opts, tape_alloc);
     let root = parser.parse_value()?;
-    if check_len && !parser.at_trailing_end() {
+    if check_len == TrailingData::Reject && !parser.at_trailing_end() {
         return Err(parser.unexpected_here());
     }
     let tape = parser.take_tape();
@@ -328,7 +333,14 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
+    Ok(parse_classic(
+        source,
+        log,
+        bump,
+        JSON_OPTS,
+        TrailingData::from_bool(CHECK_LEN),
+    )?
+    .root)
 }
 
 fn parse_classic(
@@ -336,14 +348,19 @@ fn parse_classic(
     log: &mut bun_ast::Log,
     bump: &Bump,
     opts: JSONOptions,
-    check_len: bool,
+    check_len: TrailingData,
 ) -> crate::Result<ParseOutput> {
     let opts = JSONOptions {
         record_value_locs: true,
         ..opts
     };
     let mut out = parse_impl(source, log, opts, check_len)?;
-    out.root = match materialize_impl(&out.root, source, bump, opts.was_originally_macro) {
+    out.root = match materialize_impl(
+        &out.root,
+        source,
+        bump,
+        WasOriginallyMacro::from_bool(opts.was_originally_macro),
+    ) {
         Ok(root) => root,
         Err(e) => {
             log.add_error_fmt_opts(
@@ -427,7 +444,15 @@ fn parse_to_rows(
         let root = Expr::init(
             // SAFETY: the tape's own pointer; `ParsedJson` keeps it alive, and
             // an empty span never dereferences it anyway.
-            unsafe { E::ObjectJSON::new(tape.root_ptr(), 0, 0, true, bun_ast::Loc::EMPTY) },
+            unsafe {
+                E::ObjectJSON::new(
+                    tape.root_ptr(),
+                    0,
+                    0,
+                    E::IsSingleLine::Yes,
+                    bun_ast::Loc::EMPTY,
+                )
+            },
             bun_ast::Loc { start: 0 },
         );
         return Ok(ParsedJson {
@@ -435,7 +460,7 @@ fn parse_to_rows(
             tape: Some(tape),
         });
     }
-    let out = parse_impl(source, log, opts, false)?;
+    let out = parse_impl(source, log, opts, TrailingData::Allow)?;
     Ok(ParsedJson {
         root: out.root,
         tape: out.tape,
@@ -454,11 +479,19 @@ fn parse_to_rows_in(
         return Ok(Expr::init(
             // SAFETY: the arena-allocated tape's own pointer; it lives until the
             // arena resets, and an empty span never dereferences it anyway.
-            unsafe { E::ObjectJSON::new(tape.root_ptr(), 0, 0, true, bun_ast::Loc::EMPTY) },
+            unsafe {
+                E::ObjectJSON::new(
+                    tape.root_ptr(),
+                    0,
+                    0,
+                    E::IsSingleLine::Yes,
+                    bun_ast::Loc::EMPTY,
+                )
+            },
             bun_ast::Loc { start: 0 },
         ));
     }
-    Ok(parse_impl_in(source, log, opts, false, tape_alloc)?.root)
+    Ok(parse_impl_in(source, log, opts, TrailingData::Allow, tape_alloc)?.root)
 }
 
 /// Parse package.json (comments & trailing commas allowed) into the classic `E::Object` AST.
@@ -470,7 +503,7 @@ pub fn parse_package_json_utf8(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS, false)?.root)
+    Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS, TrailingData::Allow)?.root)
 }
 
 #[derive(Default)]
@@ -492,7 +525,7 @@ pub fn parse_package_json_utf8_with_opts(
             ..Default::default()
         });
     }
-    let out = parse_classic(source, log, bump, opts, false)?;
+    let out = parse_classic(source, log, bump, opts, TrailingData::Allow)?;
     Ok(JsonResult {
         root: out.root,
         indentation: out.indentation,
@@ -507,7 +540,7 @@ pub fn parse_for_macro(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS, false)?.root)
+    Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS, TrailingData::Allow)?.root)
 }
 
 /// `tsconfig.json` / `.jsonc` (comments, trailing commas) into the classic `E::Object` AST.
@@ -520,7 +553,7 @@ pub fn parse_ts_config(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root)
+    Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, TrailingData::Allow)?.root)
 }
 
 /// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.
@@ -545,15 +578,17 @@ pub fn parse_env_json(
         }
         let rewritten: &[u8] = bump.alloc_slice_copy(&unescaped);
         let rw_source = bun_ast::Source::init_path_string("", rewritten);
-        return Ok(parse_classic(&rw_source, log, bump, DOTENV_JSON_OPTS, false)?.root);
+        return Ok(
+            parse_classic(&rw_source, log, bump, DOTENV_JSON_OPTS, TrailingData::Allow)?.root,
+        );
     }
 
     match contents[0] {
         b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
-            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
+            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, TrailingData::Allow)?.root)
         }
         b'-' | b'.' if leads_a_number(contents) => {
-            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
+            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, TrailingData::Allow)?.root)
         }
         _ => {
             let word_len = contents
@@ -913,7 +948,7 @@ pub fn materialize(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
-    materialize_impl(root, source, bump, false).inspect_err(|_| {
+    materialize_impl(root, source, bump, WasOriginallyMacro::No).inspect_err(|_| {
         log.add_error_fmt_opts(
             format_args!("JSON document is too deeply nested"),
             bun_ast::AddErrorOptions {
@@ -925,11 +960,13 @@ pub fn materialize(
     })
 }
 
+bun_core::bool_enum!(WasOriginallyMacro);
+
 fn materialize_impl(
     root: &Expr,
     source: &bun_ast::Source,
     bump: &Bump,
-    was_originally_macro: bool,
+    was_originally_macro: WasOriginallyMacro,
 ) -> crate::Result<Expr> {
     let m = Materializer {
         contents: &source.contents,
@@ -948,7 +985,7 @@ fn materialize_impl(
 struct Materializer<'a> {
     contents: &'a [u8],
     bump: &'a Bump,
-    was_originally_macro: bool,
+    was_originally_macro: WasOriginallyMacro,
     stack_check: bun_core::StackCheck,
     overflowed: core::cell::Cell<bool>,
 }
@@ -998,7 +1035,7 @@ impl Materializer<'_> {
         E::Object {
             properties,
             is_single_line: o.is_single_line,
-            was_originally_macro: self.was_originally_macro,
+            was_originally_macro: self.was_originally_macro == WasOriginallyMacro::Yes,
             close_brace_loc: o.close_brace_loc,
             ..Default::default()
         }
@@ -1032,7 +1069,7 @@ impl Materializer<'_> {
         E::Array {
             items,
             is_single_line: a.is_single_line,
-            was_originally_macro: self.was_originally_macro,
+            was_originally_macro: self.was_originally_macro == WasOriginallyMacro::Yes,
             close_bracket_loc: a.close_bracket_loc,
             ..Default::default()
         }

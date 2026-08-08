@@ -5,6 +5,7 @@ use core::fmt::{self, Display, Formatter, Write as _};
 use core::ptr::NonNull;
 
 use crate::output as Output;
+use crate::string::printer::AsciiOnly;
 // `strings` is the canonical `crate::strings` (lib.rs); `js_printer`/`js_lexer`
 // are defined locally below (move-in subset) and re-exported at the crate root.
 use crate::strings;
@@ -37,6 +38,7 @@ pub mod js_lexer {
 
 pub mod js_printer {
     use super::strings::Encoding;
+    use crate::string::printer::{AsciiOnly, Json};
     use core::fmt;
     /// Minimal escape set for fmt.rs quoting.
     /// bun_js_printer overrides with the full (ctrl-char, \u escape, encoding-aware) impl.
@@ -52,7 +54,7 @@ pub mod js_printer {
         input: &[u8],
         f: &mut impl fmt::Write,
         quote: u8,
-        ascii_only: bool,
+        ascii_only: AsciiOnly,
         enc: Encoding,
     ) -> fmt::Result {
         // Writes the escaped body WITHOUT surrounding quotes. Delegate to the
@@ -62,7 +64,12 @@ pub mod js_printer {
         // ASCII escape.
         let mut buf: Vec<u8> = Vec::with_capacity(input.len() + 8);
         crate::string::printer::write_pre_quoted_string(
-            input, &mut buf, quote, ascii_only, true, enc,
+            input,
+            &mut buf,
+            quote,
+            ascii_only,
+            Json::Yes,
+            enc,
         )
         .map_err(|_| fmt::Error)?;
         f.write_str(&String::from_utf8_lossy(&buf))
@@ -358,8 +365,11 @@ impl<const SHORT: bool> Display for IntegrityFormatter<SHORT> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         const BUF_LEN: usize = SHA512_DIGEST.div_ceil(3) * 4;
         let mut buf = [0u8; BUF_LEN];
-        let count =
-            bun_simdutf_sys::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
+        let count = bun_simdutf_sys::simdutf::base64::encode(
+            &self.bytes[..SHA512_DIGEST],
+            &mut buf,
+            bun_simdutf_sys::simdutf::base64::Alphabet::Standard,
+        );
         let encoded = &buf[..count];
         if SHORT {
             write!(
@@ -413,7 +423,13 @@ impl Display for JSONFormatterUTF8<'_> {
         if self.opts.quote {
             js_printer::write_json_string(self.input, f, strings::Encoding::Utf8)
         } else {
-            js_printer::write_pre_quoted_string(self.input, f, b'"', false, strings::Encoding::Utf8)
+            js_printer::write_pre_quoted_string(
+                self.input,
+                f,
+                b'"',
+                AsciiOnly::No,
+                strings::Encoding::Utf8,
+            )
         }
     }
 }

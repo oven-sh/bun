@@ -6,7 +6,8 @@ use crate::Error;
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{
-    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, get_cert_error_from_no, h2,
+    self as http, AllowProxyUrl, AlpnOffer, HTTPCertError, HTTPClient, InitError,
+    get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
@@ -751,7 +752,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if socket.target_port != target_port {
                     continue;
                 }
-                if !strings::eql_long(&socket.target_hostname, target_hostname, true) {
+                if !strings::eql_long(
+                    &socket.target_hostname,
+                    target_hostname,
+                    strings::CheckLen::Yes,
+                ) {
                     continue;
                 }
                 // A tunnel established with reject_unauthorized=false never
@@ -784,7 +789,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             if strings::eql_long(
                 &socket.hostname_buf[..socket.hostname_len as usize],
                 hostname,
-                true,
+                strings::CheckLen::Yes,
             ) {
                 let http_socket = socket.http_socket;
 
@@ -853,7 +858,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     .cast::<HTTPClient<'static>>(),
             )
             .ptr(),
-            false, // dont allow half-open sockets
+            uws::AllowHalfOpen::No,
         )?;
         client.allow_retry = false;
         Ok(Some(socket))
@@ -1036,7 +1041,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     .cast::<HTTPClient<'static>>(),
             )
             .ptr(),
-            false,
+            uws::AllowHalfOpen::No,
         )?;
         client.allow_retry = false;
         if SSL {
@@ -1173,7 +1178,7 @@ impl<const SSL: bool> Handler<SSL> {
                             .expect("TLS socket has native handle after handshake")
                             .cast::<bun_boringssl_sys::SSL>()
                     };
-                    if !client.check_server_identity::<SSL>(socket, ssl, true) {
+                    if !client.check_server_identity::<SSL>(socket, ssl, AllowProxyUrl::Yes) {
                         // checkServerIdentity already called closeAndFail() → fail()
                         // → result callback, which may have destroyed the
                         // AsyncHTTP that embeds `client`. Socket is terminated

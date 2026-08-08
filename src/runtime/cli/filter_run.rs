@@ -8,13 +8,14 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
-use crate::cli::run_command::RunCommand;
+use crate::cli::run_command::{ForceUsingBun, LogErrors, RunCommand};
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_io::{BufferedReader, ReadState};
+use bun_resolver::fs::StoreFd;
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_sys as sys;
 
@@ -159,11 +160,11 @@ impl<'a> ProcessHandle<'a> {
         {
             if let Some(stdout) = stdout_fd {
                 let _ = sys::set_nonblocking(stdout);
-                handle.stdout.start(stdout, true)?;
+                handle.stdout.start(stdout, bun_io::IsPollable::Yes)?;
             }
             if let Some(stderr) = stderr_fd {
                 let _ = sys::set_nonblocking(stderr);
-                handle.stderr.start(stderr, true)?;
+                handle.stderr.start(stderr, bun_io::IsPollable::Yes)?;
             }
         }
         #[cfg(not(unix))]
@@ -262,6 +263,8 @@ macro_rules! fmt {
     };
 }
 
+bun_core::bool_enum!(IsAbort);
+
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
     // Raw `*mut` — `init_global` returns the
@@ -297,7 +300,7 @@ impl<'a> State<'a> {
     fn read_chunk(&mut self, handle: &mut ProcessHandle<'a>, chunk: &[u8]) -> crate::Result<()> {
         if self.pretty_output {
             handle.buffer.extend_from_slice(chunk);
-            let _ = self.redraw(false);
+            let _ = self.redraw(IsAbort::No);
         } else {
             let mut content = chunk;
             self.draw_buf.clear();
@@ -355,7 +358,7 @@ impl<'a> State<'a> {
             }
         }
         if self.pretty_output {
-            let _ = self.redraw(false);
+            let _ = self.redraw(IsAbort::No);
         } else {
             self.draw_buf.clear();
             // flush any remaining buffer
@@ -443,7 +446,7 @@ impl<'a> State<'a> {
         }
     }
 
-    fn redraw(&mut self, is_abort: bool) -> crate::Result<()> {
+    fn redraw(&mut self, is_abort: IsAbort) -> crate::Result<()> {
         if !self.pretty_output {
             return Ok(());
         }
@@ -462,7 +465,7 @@ impl<'a> State<'a> {
         for idx in 0..self.handles.len() {
             let handle = &self.handles[idx];
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
-            let elide_lines = if is_abort {
+            let elide_lines = if is_abort == IsAbort::Yes {
                 None
             } else {
                 Some(handle.config.elide_count.unwrap_or(10))
@@ -591,7 +594,7 @@ impl<'a> State<'a> {
 
     fn finalize(&mut self) -> u8 {
         if self.aborted {
-            let _ = self.redraw(true);
+            let _ = self.redraw(IsAbort::Yes);
         }
         for handle in self.handles.iter() {
             if let Some(proc) = &handle.process {
@@ -744,7 +747,13 @@ pub(crate) fn run_scripts_with_filter(
     // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(&mut *ctx, &mut this_transpiler, None, true, false)?;
+    let _ = RunCommand::configure_env_for_run(
+        &mut *ctx,
+        &mut this_transpiler,
+        None,
+        LogErrors::Yes,
+        StoreFd::No,
+    )?;
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
     let mut this_transpiler = unsafe { this_transpiler.assume_init() };
 
@@ -792,7 +801,7 @@ pub(crate) fn run_scripts_with_filter(
             &mut this_transpiler,
             None,
             dirpath,
-            run_in_bun,
+            ForceUsingBun::from_bool(run_in_bun),
         )?;
 
         for (i, name) in [&pre_script_name[..], script_name, &post_script_name[..]]

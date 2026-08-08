@@ -6,6 +6,12 @@ use bun_jsc::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult};
 use super::assert::myers_diff as MyersDiff;
 use super::assert::myers_diff::{Diff, DiffKind, Line};
 
+bun_core::bool_enum!(pub(crate) CheckCommaDisparity);
+bun_core::bool_enum!(
+    /// Split `actual` and `expected` into lines before diffing.
+    pub(crate) DiffMode { Chars, Lines }
+);
+
 /// Compare `actual` and `expected`, producing a diff that would turn `actual`
 /// into `expected`.
 ///
@@ -24,9 +30,9 @@ pub(crate) fn myers_diff(
     expected: &BunString,
     // If true, strings that have a trailing comma but are otherwise equal are
     // considered equal.
-    check_comma_disparity: bool,
+    check_comma_disparity: CheckCommaDisparity,
     // split `actual` and `expected` into lines before diffing
-    lines: bool,
+    lines: DiffMode,
 ) -> JsResult<JSValue> {
     // Short circuit on empty strings. Note that, in release builds where
     // assertions are disabled, if `actual` and `expected` are both dead, this
@@ -40,7 +46,7 @@ pub(crate) fn myers_diff(
     let actual_encoding = actual.encoding();
     let expected_encoding = expected.encoding();
 
-    if lines {
+    if lines == DiffMode::Lines {
         if actual_encoding != expected_encoding {
             let actual_utf8 = actual.to_utf8_without_ref();
             let expected_utf8 = expected.to_utf8_without_ref();
@@ -100,7 +106,7 @@ fn diff_lines<'s, T>(
     global: &JSGlobalObject,
     actual: &'s [T],
     expected: &'s [T],
-    check_comma_disparity: bool,
+    check_comma_disparity: CheckCommaDisparity,
 ) -> JsResult<JSValue>
 where
     T: PartialEq + Copy + From<u8>,
@@ -109,7 +115,7 @@ where
     let a = MyersDiff::split::<T>(actual);
     let e = MyersDiff::split::<T>(expected);
 
-    let diff: MyersDiff::DiffList<&'s [T]> = if check_comma_disparity {
+    let diff: MyersDiff::DiffList<&'s [T]> = if check_comma_disparity == CheckCommaDisparity::Yes {
         MyersDiff::Differ::<&'s [T], true>::diff(a.as_slice(), e.as_slice())
             .map_err(|err| map_diff_error(global, err))?
     } else {

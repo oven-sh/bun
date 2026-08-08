@@ -24,7 +24,7 @@ macro_rules! debug_socket_monitor {
         pub(crate) fn load() {
             if let Some(monitor) = $env.get() {
                 ENABLED.store(true, Ordering::Relaxed);
-                let f = match File::create(bun_sys::Fd::cwd(), monitor, /* truncate = */ true) {
+                let f = match File::create(bun_sys::Fd::cwd(), monitor, bun_sys::Truncate::Yes) {
                     Ok(f) => f,
                     Err(_) => {
                         ENABLED.store(false, Ordering::Relaxed);

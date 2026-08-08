@@ -7,7 +7,7 @@ pub(crate) mod visit_expr;
 pub(crate) mod visit_stmt;
 
 use crate::lexer as js_lexer;
-use crate::p::{LowerUsingDeclarationsContext, P};
+use crate::p::{LowerUsingDeclarationsContext, P, ShouldHoistFns};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
     Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
@@ -36,6 +36,11 @@ use core::ptr::NonNull;
 
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
+
+bun_core::bool_enum!(pub(crate) WasAnonymousNamedExpr);
+bun_core::bool_enum!(pub(crate) CouldBeConstValue);
+bun_core::bool_enum!(pub(crate) CouldBeMacro);
+bun_core::bool_enum!(pub(crate) IsInOrOf);
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
@@ -390,12 +395,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let is_after = self.vis_scope().is_after_const_local_prefix;
                 self.visit_decl(
                     decl,
-                    was_anonymous_named_expr,
-                    was_const && !is_after,
+                    WasAnonymousNamedExpr::from_bool(was_anonymous_named_expr),
+                    CouldBeConstValue::from_bool(was_const && !is_after),
                     if Self::ALLOW_MACROS {
-                        prev_macro_call_count != self.macro_call_count
+                        CouldBeMacro::from_bool(prev_macro_call_count != self.macro_call_count)
                     } else {
-                        false
+                        CouldBeMacro::No
                     },
                 );
             } else if IS_POSSIBLY_DECL_TO_REMOVE {
@@ -414,7 +419,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
                             let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(decl, false, was_const && !is_after, false);
+                            self.visit_decl(
+                                decl,
+                                WasAnonymousNamedExpr::No,
+                                CouldBeConstValue::from_bool(was_const && !is_after),
+                                CouldBeMacro::No,
+                            );
                         } else {
                             continue 'outer;
                         }
@@ -524,15 +534,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn visit_decl(
         &mut self,
         decl: &mut G::Decl,
-        was_anonymous_named_expr: bool,
-        could_be_const_value: bool,
-        could_be_macro: bool,
+        was_anonymous_named_expr: WasAnonymousNamedExpr,
+        could_be_const_value: CouldBeConstValue,
+        could_be_macro: CouldBeMacro,
     ) {
+        let could_be_macro = could_be_macro == CouldBeMacro::Yes;
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {
                 let id_ref = id.r#ref;
-                if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
+                if could_be_const_value == CouldBeConstValue::Yes
+                    || (Self::ALLOW_MACROS && could_be_macro)
+                {
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {
                             self.const_values.put(id_ref, val).expect("oom");
@@ -548,7 +561,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 decl.value = Some(self.maybe_keep_expr_symbol_name(
                     decl.value.unwrap(),
                     original_name,
-                    was_anonymous_named_expr,
+                    was_anonymous_named_expr == WasAnonymousNamedExpr::Yes,
                 ));
             }
             BData::BObject(_) | BData::BArray(_) => {
@@ -562,10 +575,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
+    pub(crate) fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: IsInOrOf) -> Stmt {
         match stmt.data {
             StmtData::SExpr(mut st) => {
-                let assign_target = if is_in_or_of {
+                let assign_target = if is_in_or_of == IsInOrOf::Yes {
                     AssignTarget::Replace
                 } else {
                     AssignTarget::None
@@ -1562,7 +1575,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let raw = core::mem::replace(stmts, ListManaged::new_in(arena)).into_bump_slice_mut();
             // SAFETY: current_scope is a valid arena ptr for the parse.
             let parent_is_none = p.current_scope().parent.is_none();
-            *stmts = ctx.finalize(p, raw, parent_is_none);
+            *stmts = ctx.finalize(p, raw, ShouldHoistFns::from_bool(parent_is_none));
         }
 
         #[cfg(debug_assertions)]

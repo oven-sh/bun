@@ -31,7 +31,10 @@ use super::package_manager_options as Options;
 fn pretty_help(text: &str) {
     Output::pretty(format_args!(
         "{}",
-        Output::pretty_fmt_rt(text, Output::enable_ansi_colors_stdout())
+        Output::pretty_fmt_rt(
+            text,
+            Output::AnsiColors::from_bool(Output::enable_ansi_colors_stdout())
+        )
     ));
 }
 

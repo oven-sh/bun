@@ -280,6 +280,8 @@ pub enum AllocatorType {
     Mini,
 }
 
+bun_core::bool_enum!(pub ForceUnregister);
+
 // `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
 // generation_number, allocator_type). On Windows the variants live in
 // `windows_event_loop`; the shared `EventLoopCtxVTable` above names
@@ -388,15 +390,15 @@ impl FilePoll {
     // put back via `Store::put`; Drop would be wrong here.
     pub fn deinit(&mut self) {
         let ctx = get_vm_ctx(self.allocator_type);
-        self.deinit_possibly_defer(ctx, false);
+        self.deinit_possibly_defer(ctx, ForceUnregister::No);
     }
 
     pub(crate) fn deinit_force_unregister(&mut self) {
         let ctx = get_vm_ctx(self.allocator_type);
-        self.deinit_possibly_defer(ctx, true);
+        self.deinit_possibly_defer(ctx, ForceUnregister::Yes);
     }
 
-    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
+    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: ForceUnregister) {
         // `loop_mut()` is the crate-private nonnull-asref accessor (single
         // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
         // and dropped before any `&mut Store` is materialised.
@@ -420,7 +422,7 @@ impl FilePoll {
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        self.deinit_possibly_defer(vm, false);
+        self.deinit_possibly_defer(vm, ForceUnregister::No);
     }
 
     pub fn is_registered(&self) -> bool {
@@ -554,11 +556,16 @@ impl FilePoll {
         poll
     }
 
-    pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
+    pub fn register(
+        &mut self,
+        loop_: &mut Loop,
+        flag: Flags,
+        one_shot: OneShot,
+    ) -> sys::Result<()> {
         self.register_with_fd(
             loop_,
             flag,
-            if one_shot {
+            if one_shot == OneShot::Yes {
                 OneShotFlag::OneShot
             } else {
                 OneShotFlag::None
@@ -870,7 +877,11 @@ impl FilePoll {
         sys::Result::Ok(())
     }
 
-    pub fn unregister(&mut self, loop_: &mut Loop, force_unregister: bool) -> sys::Result<()> {
+    pub fn unregister(
+        &mut self,
+        loop_: &mut Loop,
+        force_unregister: ForceUnregister,
+    ) -> sys::Result<()> {
         self.unregister_with_fd(loop_, self.fd, force_unregister)
     }
 
@@ -878,7 +889,7 @@ impl FilePoll {
         &mut self,
         loop_: &mut Loop,
         fd: Fd,
-        force_unregister: bool,
+        force_unregister: ForceUnregister,
     ) -> sys::Result<()> {
         // Note: compute the syscall result first, then unconditionally
         // deactivate. Avoids a raw-pointer scopeguard.
@@ -913,7 +924,7 @@ impl FilePoll {
         &mut self,
         loop_: &mut Loop,
         fd: Fd,
-        force_unregister: bool,
+        force_unregister: ForceUnregister,
     ) -> sys::Result<()> {
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
@@ -950,7 +961,7 @@ impl FilePoll {
             return sys::Result::Ok(());
         };
 
-        if self.flags.contains(Flags::NeedsRearm) && !force_unregister {
+        if self.flags.contains(Flags::NeedsRearm) && force_unregister == ForceUnregister::No {
             syslog!(
                 "unregister: {} ({}) skipped due to needs_rearm",
                 <&'static str>::from(flag),
@@ -1519,6 +1530,8 @@ static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec {
     tv_sec: 0,
     tv_nsec: 0,
 };
+
+bun_core::bool_enum!(pub OneShot);
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]

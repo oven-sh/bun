@@ -236,6 +236,12 @@ type IgnoreFilterFn = fn(&[u8]) -> bool;
 /// component count works.
 pub type ComponentSet = AutoBitSet;
 
+bun_core::bool_enum!(pub Dot);
+bun_core::bool_enum!(pub Absolute);
+bun_core::bool_enum!(pub FollowSymlinks);
+bun_core::bool_enum!(pub ErrorOnBrokenSymlinks);
+bun_core::bool_enum!(pub OnlyFiles);
+
 pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     // PERF: per-walk allocations (paths, workbuf, matchedPaths) use the
     // global allocator; an arena could bulk-free them — profile if hot.
@@ -248,13 +254,13 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub(crate) pattern_components: Vec<Component>,
     pub matched_paths: MatchedMap,
 
-    pub(crate) dot: bool,
-    pub(crate) absolute: bool,
+    pub(crate) dot: Dot,
+    pub(crate) absolute: Absolute,
 
     pub(crate) cwd: Box<[u8]>,
-    pub(crate) follow_symlinks: bool,
-    pub(crate) error_on_broken_symlinks: bool,
-    pub(crate) only_files: bool,
+    pub(crate) follow_symlinks: FollowSymlinks,
+    pub(crate) error_on_broken_symlinks: ErrorOnBrokenSymlinks,
+    pub(crate) only_files: OnlyFiles,
 
     pub(crate) path_buf: Box<PathBuffer>,
     // iteration state
@@ -558,7 +564,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let mut dir_path_buf = Box::new(PathBuffer::uninit());
         let mut dir_path_len: usize = 'dir_path: {
             if ROOT {
-                if !self.walker.absolute {
+                if self.walker.absolute == Absolute::No {
                     dir_path_buf[0] = 0;
                     break 'dir_path 0;
                 }
@@ -684,9 +690,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 };
                 self.close_disallowing_cwd(fd);
                 let mode = stat_result.st_mode as u32;
-                let matches = (S::ISDIR(mode) && !self.walker.only_files)
+                let matches = (S::ISDIR(mode) && self.walker.only_files == OnlyFiles::No)
                     || S::ISREG(mode)
-                    || !self.walker.only_files;
+                    || self.walker.only_files == OnlyFiles::No;
                 if matches {
                     if let Some(path) = self
                         .walker
@@ -889,13 +895,15 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         if err.get_errno() == E::ENOTDIR {
                                             break 'brk None;
                                         }
-                                        if self.walker.error_on_broken_symlinks {
+                                        if self.walker.error_on_broken_symlinks
+                                            == ErrorOnBrokenSymlinks::Yes
+                                        {
                                             return Ok(Err(self.walker.handle_sys_err_with_path(
                                                 &err,
                                                 symlink_full_path_z,
                                             )));
                                         }
-                                        if !self.walker.only_files
+                                        if self.walker.only_files == OnlyFiles::No
                                             && self.walker.eval_file(&active, entry_name)
                                         {
                                             match self.walker.prepare_matched_path_symlink(
@@ -971,7 +979,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 self.close_disallowing_cwd(dir_fd);
                             }
 
-                            if add_dir && !self.walker.only_files {
+                            if add_dir && self.walker.only_files == OnlyFiles::No {
                                 match self
                                     .walker
                                     .prepare_matched_path_symlink(symlink_full_path_z.as_bytes())?
@@ -1060,7 +1068,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     );
                                 }
                             }
-                            if add_dir && !self.walker.only_files {
+                            if add_dir && self.walker.only_files == OnlyFiles::No {
                                 match self.walker.prepare_matched_path(entry_name, dir_dir_path)? {
                                     Some(prepared_path) => {
                                         return Ok(Ok(Some(prepared_path)));
@@ -1076,6 +1084,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             // followSymlinks option governs wildcard traversal,
                             // not explicitly-spelled path segments.
                             let follow_active: Option<ComponentSet> = if self.walker.follow_symlinks
+                                == FollowSymlinks::Yes
                             {
                                 self.walker
                                     .eval_impl(&active, entry_name)
@@ -1094,7 +1103,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 continue;
                             }
 
-                            if self.walker.only_files {
+                            if self.walker.only_files == OnlyFiles::Yes {
                                 continue;
                             }
 
@@ -1154,7 +1163,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             None,
                                         );
                                     }
-                                    if add_dir && !self.walker.only_files {
+                                    if add_dir && self.walker.only_files == OnlyFiles::No {
                                         match self
                                             .walker
                                             .prepare_matched_path(entry_name, dir_dir_path)?
@@ -1168,7 +1177,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 }
                                 bun_sys::FileKind::SymLink => {
                                     let follow_active: Option<ComponentSet> =
-                                        if self.walker.follow_symlinks {
+                                        if self.walker.follow_symlinks == FollowSymlinks::Yes {
                                             Some(active.clone().expect("OOM"))
                                         } else {
                                             let subset = self
@@ -1182,7 +1191,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             entry_name,
                                             follow_active,
                                         )?;
-                                    } else if !self.walker.only_files {
+                                    } else if self.walker.only_files == OnlyFiles::No {
                                         if self.walker.eval_file(&active, entry_name) {
                                             match self
                                                 .walker
@@ -1383,11 +1392,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     // Note: out-param constructor reshaped to return Self.
     pub fn init(
         pattern: &[u8],
-        dot: bool,
-        absolute: bool,
-        follow_symlinks: bool,
-        error_on_broken_symlinks: bool,
-        only_files: bool,
+        dot: Dot,
+        absolute: Absolute,
+        follow_symlinks: FollowSymlinks,
+        error_on_broken_symlinks: ErrorOnBrokenSymlinks,
+        only_files: OnlyFiles,
         ignore_filter_fn: Option<IgnoreFilterFn>,
     ) -> Result<Maybe<Self>, Error> {
         // `bun_paths::fs::FileSystem` (singleton holds only the cwd string; the
@@ -1430,11 +1439,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     pub fn init_with_cwd(
         pattern: &[u8],
         cwd: &[u8],
-        dot: bool,
-        absolute: bool,
-        follow_symlinks: bool,
-        error_on_broken_symlinks: bool,
-        only_files: bool,
+        dot: Dot,
+        absolute: Absolute,
+        follow_symlinks: FollowSymlinks,
+        error_on_broken_symlinks: ErrorOnBrokenSymlinks,
+        only_files: OnlyFiles,
         ignore_filter_fn: Option<IgnoreFilterFn>,
     ) -> Result<Maybe<Self>, Error> {
         log!("initWithCwd(cwd={})", bstr::BStr::new(cwd));
@@ -1666,7 +1675,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             return None;
         }
 
-        let hidden = !self.dot && Self::starts_with_dot(entry_name);
+        let hidden = self.dot == Dot::No && Self::starts_with_dot(entry_name);
 
         // Handle double wildcard `**`, this could possibly
         // propagate the `**` to the directory's children
@@ -1762,7 +1771,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         log!("matchPatternImpl: {}", bstr::BStr::new(filepath));
         // A pattern segment that itself starts with a literal `.` opts into
         // matching dotfiles for that segment, regardless of the `dot` flag.
-        if !self.dot
+        if self.dot == Dot::No
             && Self::starts_with_dot(filepath)
             && !Self::starts_with_dot(pattern_component.pattern_slice(&self.pattern))
         {
@@ -1807,7 +1816,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let mut child = self.make_set();
         let comps = &self.pattern_components;
         let len: u32 = u32::try_from(comps.len()).expect("int cast");
-        let hidden = !self.dot && Self::starts_with_dot(entry_name);
+        let hidden = self.dot == Dot::No && Self::starts_with_dot(entry_name);
         let mut it = active.iterator::<true, true>();
         while let Some(i) = it.next() {
             let idx: u32 = u32::try_from(i).expect("int cast");
@@ -1956,7 +1965,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     #[inline]
     fn join(&self, subdir_parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
-        if !self.absolute {
+        if self.absolute == Absolute::No {
             // If relative paths enabled, stdlib join is preferred over
             // ResolvePath.joinBuf because it doesn't try to normalize the path
             return Ok(bun_paths::join_sep_maybe_z::<SENTINEL>(subdir_parts));

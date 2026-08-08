@@ -118,13 +118,15 @@ pub(crate) fn generate(
     Global::exit(0);
 }
 
+bun_core::bool_enum!(FileCreated { Unchanged, Created });
+
 // Create a file with given contents, returns if file was newly created
-fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
+fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<FileCreated> {
     // Check if file exists and has same contents
     if let Ok(source_contents) = bun_sys::File::read_from(Fd::cwd(), filename) {
         // `source_contents` is a Vec<u8>; freed on drop.
-        if strings::eql_long(&source_contents, contents, true) {
-            return bun_sys::Result::Ok(false);
+        if strings::eql_long(&source_contents, contents, strings::CheckLen::Yes) {
+            return bun_sys::Result::Ok(FileCreated::Unchanged);
         }
     }
 
@@ -142,7 +144,7 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
         0o644,
     )?;
     match bun_sys::File::from_fd(fd).write_all(contents) {
-        bun_sys::Result::Ok(()) => bun_sys::Result::Ok(true),
+        bun_sys::Result::Ok(()) => bun_sys::Result::Ok(FileCreated::Created),
         bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
     }
 }
@@ -290,7 +292,7 @@ pub(crate) fn generate_files(
                 )?;
                 match create_file(&file_name, &content) {
                     bun_sys::Result::Ok(new) => {
-                        if new {
+                        if new == FileCreated::Created {
                             max_filename_len = max_filename_len.max(file_name.len());
                             filenames[index] = Some(file_name);
                         }

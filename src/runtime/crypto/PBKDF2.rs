@@ -6,7 +6,7 @@ use bun_jsc::{
     JsResult,
 };
 
-use crate::node::StringOrBuffer;
+use crate::node::{AllowStringObject, IsAsync, StringOrBuffer};
 
 use crate::crypto::evp::{self, Algorithm};
 
@@ -68,7 +68,7 @@ impl PBKDF2 {
     pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
-        is_async: bool,
+        is_async: IsAsync,
     ) -> JsResult<PBKDF2> {
         let [arg0, arg1, arg2, arg3, arg4, arg5] = call_frame.arguments_as_array::<6>();
 
@@ -180,12 +180,12 @@ impl PBKDF2 {
         };
         // Non-async path: `StringOrBuffer` fields drop with `out` on early return — no explicit call needed.
         let mut guard = scopeguard::guard(&mut out, |out| {
-            if global_this.has_exception() && is_async {
+            if global_this.has_exception() && is_async == IsAsync::Yes {
                 bun_jsc::Unprotect::unprotect(out);
             }
         });
 
-        let allow_string_object = true;
+        let allow_string_object = AllowStringObject::Yes;
         guard.salt = match StringOrBuffer::from_js_maybe_async(
             global_this,
             arg1,
@@ -226,13 +226,13 @@ impl PBKDF2 {
             return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
         }
 
-        if !is_async {
+        if is_async == IsAsync::No {
             if let StringOrBuffer::Buffer(buffer) = &mut guard.salt {
                 buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
             }
         }
 
-        if is_async {
+        if is_async == IsAsync::Yes {
             if !arg5.is_function() {
                 return Err(global_this.throw_invalid_argument_type_value(
                     b"callback",

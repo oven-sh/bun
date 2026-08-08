@@ -66,6 +66,10 @@ bun_opaque::opaque_ffi! {
     pub struct WebSocketUpgradeContext;
 }
 
+bun_core::bool_enum!(pub CloseConnection);
+bun_core::bool_enum!(pub FlushImmediately);
+bun_core::bool_enum!(pub FirstBodyWrite);
+
 /// Opaque handle for `uws::Response<SSL>`.
 ///
 /// The SSL flag is modeled as a `const SSL: bool` parameter on an opaque
@@ -108,7 +112,7 @@ impl<const SSL: bool> Response<SSL> {
         std::ptr::from_mut::<Self>(self).cast::<us_socket_t>()
     }
 
-    pub fn end(&mut self, data: &[u8], close_connection: bool) {
+    pub fn end(&mut self, data: &[u8], close_connection: CloseConnection) {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
             c::uws_res_end(
@@ -116,12 +120,12 @@ impl<const SSL: bool> Response<SSL> {
                 self.downcast(),
                 data.as_ptr(),
                 data.len(),
-                close_connection,
+                close_connection == CloseConnection::Yes,
             );
         }
     }
 
-    pub(crate) fn try_end(&mut self, data: &[u8], total: usize, close_: bool) -> bool {
+    pub(crate) fn try_end(&mut self, data: &[u8], total: usize, close_: CloseConnection) -> bool {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
             c::uws_res_try_end(
@@ -130,7 +134,7 @@ impl<const SSL: bool> Response<SSL> {
                 data.as_ptr(),
                 data.len(),
                 total,
-                close_,
+                close_ == CloseConnection::Yes,
             )
         }
     }
@@ -139,8 +143,12 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_is_connect_request(Self::ssl_flag(), self.as_raw())
     }
 
-    pub(crate) fn flush_headers(&mut self, flush_immediately: bool) {
-        c::uws_res_flush_headers(Self::ssl_flag(), self.as_raw(), flush_immediately)
+    pub(crate) fn flush_headers(&mut self, flush_immediately: FlushImmediately) {
+        c::uws_res_flush_headers(
+            Self::ssl_flag(),
+            self.as_raw(),
+            flush_immediately == FlushImmediately::Yes,
+        )
     }
 
     pub(crate) fn is_corked(&mut self) -> bool {
@@ -155,8 +163,8 @@ impl<const SSL: bool> Response<SSL> {
         })
     }
 
-    pub fn should_close_connection(&self) -> bool {
-        self.state().is_http_connection_close()
+    pub fn should_close_connection(&self) -> CloseConnection {
+        CloseConnection::from_bool(self.state().is_http_connection_close())
     }
 
     pub(crate) fn prepare_for_sendfile(&mut self) {
@@ -230,16 +238,20 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    pub fn end_without_body(&mut self, close_connection: bool) {
-        c::uws_res_end_without_body(Self::ssl_flag(), self.as_raw(), close_connection)
+    pub fn end_without_body(&mut self, close_connection: CloseConnection) {
+        c::uws_res_end_without_body(
+            Self::ssl_flag(),
+            self.as_raw(),
+            close_connection == CloseConnection::Yes,
+        )
     }
 
-    pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
+    pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: CloseConnection) {
         c::uws_res_end_sendfile(
             Self::ssl_flag(),
             self.as_raw(),
             write_offset,
-            close_connection,
+            close_connection == CloseConnection::Yes,
         )
     }
 
@@ -280,7 +292,7 @@ impl<const SSL: bool> Response<SSL> {
 
     /// Write body bytes without copying the unwritten tail into uWS backpressure.
     /// Returns the number of body bytes accepted. See `HttpResponse::tryWriteBody`.
-    pub(crate) fn try_write_body(&mut self, data: &[u8], is_first: bool) -> usize {
+    pub(crate) fn try_write_body(&mut self, data: &[u8], is_first: FirstBodyWrite) -> usize {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
             c::uws_res_try_write_body(
@@ -288,7 +300,7 @@ impl<const SSL: bool> Response<SSL> {
                 self.downcast(),
                 data.as_ptr(),
                 data.len(),
-                is_first,
+                is_first == FirstBodyWrite::Yes,
             )
         }
     }
@@ -539,8 +551,12 @@ impl<const SSL: bool> Response<SSL> {
         );
     }
 
-    pub(crate) fn end_stream(&mut self, close_connection: bool) {
-        c::uws_res_end_stream(Self::ssl_flag(), self.as_raw(), close_connection)
+    pub(crate) fn end_stream(&mut self, close_connection: CloseConnection) {
+        c::uws_res_end_stream(
+            Self::ssl_flag(),
+            self.as_raw(),
+            close_connection == CloseConnection::Yes,
+        )
     }
 
     /// Run `handler` while the response is corked.
@@ -729,7 +745,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.write_mark())
     }
 
-    pub fn end_send_file(self, write_offset: u64, close_connection: bool) {
+    pub fn end_send_file(self, write_offset: u64, close_connection: CloseConnection) {
         any_dispatch!(self, |r| r.end_send_file(write_offset, close_connection))
     }
 
@@ -751,7 +767,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
 
-    pub fn flush_headers(self, flush_immediately: bool) {
+    pub fn flush_headers(self, flush_immediately: FlushImmediately) {
         any_dispatch!(self, |r| r.flush_headers(flush_immediately))
     }
 
@@ -815,7 +831,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.write(data))
     }
 
-    pub fn try_write_body(self, data: &[u8], is_first: bool) -> usize {
+    pub fn try_write_body(self, data: &[u8], is_first: FirstBodyWrite) -> usize {
         any_dispatch!(self, |r| r.try_write_body(data, is_first))
     }
 
@@ -823,15 +839,20 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.spill_body(data))
     }
 
-    pub fn end(self, data: &[u8], close_connection: bool) {
+    pub fn end(self, data: &[u8], close_connection: CloseConnection) {
         any_dispatch!(self, |r| r.end(data, close_connection))
     }
 
-    pub fn should_close_connection(self) -> bool {
+    pub fn should_close_connection(self) -> CloseConnection {
         any_dispatch!(self, |r| r.should_close_connection())
     }
 
-    pub fn try_end(self, data: &[u8], total_size: usize, close_connection: bool) -> bool {
+    pub fn try_end(
+        self,
+        data: &[u8],
+        total_size: usize,
+        close_connection: CloseConnection,
+    ) -> bool {
         any_dispatch!(self, |r| r.try_end(data, total_size, close_connection))
     }
 
@@ -847,7 +868,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.write_header_int(key, value))
     }
 
-    pub fn end_without_body(self, close_connection: bool) {
+    pub fn end_without_body(self, close_connection: CloseConnection) {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
     }
 
@@ -939,7 +960,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.is_connect_request())
     }
 
-    pub fn end_stream(self, close_connection: bool) {
+    pub fn end_stream(self, close_connection: CloseConnection) {
         any_dispatch!(self, |r| r.end_stream(close_connection))
     }
 

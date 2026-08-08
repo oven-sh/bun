@@ -22,9 +22,9 @@ pub type Loop = bun_sys::windows::libuv::Loop;
 /// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
 /// from this constant. T2 cannot name `bun_io`, so the value is mirrored.
 use crate::max_buf::MaxBuf;
-use crate::pipes::{FileType, PollOrFd, ReadState};
+use crate::pipes::{FileType, IsPollable, PollOrFd, ReadState, ReceivedHup};
 #[cfg(windows)]
-use crate::source::Source;
+use crate::source::{Source, WasCanceled};
 
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -294,7 +294,7 @@ impl PosixBufferedReader {
         // Unregister the FilePoll if it's registered
         if let PollOrFd::Poll(poll) = &mut self.handle {
             if poll.is_registered() {
-                let _ = poll.unregister(self.vtable.loop_().cast(), false);
+                let _ = poll.unregister(self.vtable.loop_().cast(), crate::ForceUnregister::No);
             }
         }
     }
@@ -485,8 +485,8 @@ impl PosixBufferedReader {
         }
     }
 
-    pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
-        if !is_pollable {
+    pub fn start(&mut self, fd: Fd, is_pollable: IsPollable) -> sys::Result<()> {
+        if is_pollable == IsPollable::No {
             self.buffer().clear();
             self.flags.remove(PosixFlags::IS_DONE);
             self.handle.close(None, None::<fn(*mut c_void)>);
@@ -507,7 +507,12 @@ impl PosixBufferedReader {
         sys::Result::Ok(())
     }
 
-    pub fn start_file_offset(&mut self, fd: Fd, poll: bool, offset: usize) -> sys::Result<()> {
+    pub fn start_file_offset(
+        &mut self,
+        fd: Fd,
+        poll: IsPollable,
+        offset: usize,
+    ) -> sys::Result<()> {
         self._offset = offset;
         self.flags.insert(PosixFlags::USE_PREAD);
         self.start(fd, poll)
@@ -563,24 +568,33 @@ impl PosixBufferedReader {
         match file_type {
             FileType::NonblockingPipe => {
                 // SAFETY: caller contract.
-                unsafe { Self::read_pipe(this, fd, 0, false) };
+                unsafe { Self::read_pipe(this, fd, 0, ReceivedHup::No) };
             }
             FileType::File => {
                 // SAFETY: caller contract.
-                unsafe { Self::read_file(this, fd, 0, false) };
+                unsafe { Self::read_file(this, fd, 0, ReceivedHup::No) };
             }
             FileType::Socket => {
                 // SAFETY: caller contract.
-                unsafe { Self::read_socket(this, fd, 0, false) };
+                unsafe { Self::read_socket(this, fd, 0, ReceivedHup::No) };
             }
             FileType::Pipe => match bun_core::is_readable(fd) {
                 bun_core::Pollable::Ready => {
                     // SAFETY: caller contract.
-                    unsafe { Self::read_from_blocking_pipe_without_blocking(this, fd, 0, false) };
+                    unsafe {
+                        Self::read_from_blocking_pipe_without_blocking(this, fd, 0, ReceivedHup::No)
+                    };
                 }
                 bun_core::Pollable::Hup => {
                     // SAFETY: caller contract.
-                    unsafe { Self::read_from_blocking_pipe_without_blocking(this, fd, 0, true) };
+                    unsafe {
+                        Self::read_from_blocking_pipe_without_blocking(
+                            this,
+                            fd,
+                            0,
+                            ReceivedHup::Yes,
+                        )
+                    };
                 }
                 bun_core::Pollable::NotReady => {
                     // SAFETY: caller contract; borrow scoped to the call.
@@ -593,7 +607,11 @@ impl PosixBufferedReader {
     /// # Safety
     /// `this` is the live reader registered as the poll's user data; see
     /// [`Self::read`] for why the entry is raw.
-    pub unsafe fn on_poll(this: *mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
+    pub unsafe fn on_poll(
+        this: *mut PosixBufferedReader,
+        size_hint: isize,
+        received_hup: ReceivedHup,
+    ) {
         // SAFETY: caller contract — `this` is live; borrows end at each `;`.
         let (paused, fd, file_type) = unsafe {
             (
@@ -684,7 +702,7 @@ impl PosixBufferedReader {
         this: *mut PosixBufferedReader,
         fd: Fd,
         size_hint: isize,
-        received_hup: bool,
+        received_hup: ReceivedHup,
     ) {
         fn pread_fn(fd1: Fd, buf: &mut [u8], offset: usize) -> sys::Result<usize> {
             sys::pread(fd1, buf, i64::try_from(offset).expect("int cast"))
@@ -717,7 +735,7 @@ impl PosixBufferedReader {
         this: *mut PosixBufferedReader,
         fd: Fd,
         size_hint: isize,
-        received_hup: bool,
+        received_hup: ReceivedHup,
     ) {
         // SAFETY: caller contract.
         unsafe {
@@ -738,7 +756,7 @@ impl PosixBufferedReader {
         this: *mut PosixBufferedReader,
         fd: Fd,
         size_hint: isize,
-        received_hup: bool,
+        received_hup: ReceivedHup,
     ) {
         // SAFETY: caller contract.
         unsafe {
@@ -763,13 +781,13 @@ impl PosixBufferedReader {
         this: *mut PosixBufferedReader,
         fd: Fd,
         _size_hint: isize,
-        received_hup_initially: bool,
+        received_hup_initially: ReceivedHup,
     ) {
         // The vtable is two Copy scalars set once at `start()`; copying it out
         // lets every `on_read_chunk` dispatch run with no borrow of `*this`.
         // SAFETY: caller contract — `this` is live.
         let vtable = unsafe { (*this).vtable };
-        let mut received_hup = received_hup_initially;
+        let mut received_hup = received_hup_initially == ReceivedHup::Yes;
         loop {
             let streaming = vtable.is_streaming_enabled();
             let mut got_retry = false;
@@ -1002,9 +1020,10 @@ impl PosixBufferedReader {
         file_type: FileType,
         fd: Fd,
         _size_hint: isize,
-        received_hup: bool,
+        received_hup: ReceivedHup,
         sys_fn: impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize>,
     ) {
+        let received_hup = received_hup == ReceivedHup::Yes;
         // Copy scalars set once at `start()`; dispatching through the copy
         // keeps `*this` unborrowed across every re-entry point.
         // SAFETY: caller contract — `this` is live.
@@ -1345,7 +1364,7 @@ impl PosixBufferedReader {
         this: *mut PosixBufferedReader,
         fd: Fd,
         size_hint: isize,
-        received_hup: bool,
+        received_hup: ReceivedHup,
     ) {
         // SAFETY: caller contract; borrow ends at `;`.
         unsafe {
@@ -1639,7 +1658,7 @@ impl WindowsBufferedReader {
         self.start_with_current_pipe()
     }
 
-    pub fn start(&mut self, fd: Fd, _: bool) -> sys::Result<()> {
+    pub fn start(&mut self, fd: Fd, _: IsPollable) -> sys::Result<()> {
         debug_assert!(self.source.is_none());
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
@@ -1653,7 +1672,12 @@ impl WindowsBufferedReader {
         self.start_with_current_pipe()
     }
 
-    pub fn start_file_offset(&mut self, fd: Fd, poll: bool, offset: usize) -> sys::Result<()> {
+    pub fn start_file_offset(
+        &mut self,
+        fd: Fd,
+        poll: IsPollable,
+        offset: usize,
+    ) -> sys::Result<()> {
         self._offset = offset;
         self.flags.insert(WindowsFlags::USE_PREAD);
         self.start(fd, poll)
@@ -1762,7 +1786,7 @@ impl WindowsBufferedReader {
         );
 
         // ALWAYS complete the read first (cleans up fs_t, updates state)
-        file.complete(was_canceled);
+        file.complete(WasCanceled::from_bool(was_canceled));
 
         if parent_ptr.is_null() {
             if file.state != crate::source::FileState::Closing {
@@ -1894,7 +1918,7 @@ impl WindowsBufferedReader {
                             .to_error(sys::Tag::write)
                             {
                                 // SAFETY: see above.
-                                unsafe { (*file_raw).complete(false) };
+                                unsafe { (*file_raw).complete(WasCanceled::No) };
                                 this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
                                 this.flags.insert(WindowsFlags::IS_PAUSED);
                                 // we should inform the error if we are unable to keep reading
@@ -1972,7 +1996,7 @@ impl WindowsBufferedReader {
                 .to_error(sys::Tag::write)
                 {
                     // SAFETY: see above.
-                    unsafe { (*file_raw).complete(false) };
+                    unsafe { (*file_raw).complete(WasCanceled::No) };
                     self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
                     return sys::Result::Err(err);
                 }

@@ -1,4 +1,6 @@
 use core::ffi::c_void;
+#[cfg(not(windows))]
+use core::ops::ControlFlow;
 use core::ptr::NonNull;
 use core::sync::atomic::AtomicU8;
 #[cfg(not(windows))]
@@ -336,7 +338,12 @@ impl WriteFile {
     // reshaped for borrowck — take (off, len) here and re-derive the slice
     // internally so callers don't hold a borrow of self across the &mut self call.
     #[cfg(not(windows))]
-    pub(crate) fn do_write(&mut self, off: usize, len: usize, wrote: &mut usize) -> bool {
+    pub(crate) fn do_write(
+        &mut self,
+        off: usize,
+        len: usize,
+        wrote: &mut usize,
+    ) -> ControlFlow<()> {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
 
@@ -362,18 +369,18 @@ impl WriteFile {
                             continue;
                         }
                         self.wait_for_writable();
-                        return false;
+                        return ControlFlow::Break(());
                     } else {
                         self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                         self.system_error = Some(err.to_system_error().into());
-                        return false;
+                        return ControlFlow::Break(());
                     }
                 }
             }
             break;
         }
 
-        true
+        ControlFlow::Continue(())
     }
 
     pub(crate) fn then(
@@ -562,7 +569,7 @@ impl WriteFile {
             if remain_len > 0 && self.errno.is_none() {
                 let mut wrote: usize = 0;
                 let continue_writing = self.do_write(off, remain_len, &mut wrote);
-                if !continue_writing {
+                if continue_writing.is_break() {
                     // Stop writing, we errored
                     if self.errno.is_some() {
                         self.on_finish();

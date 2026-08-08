@@ -27,7 +27,7 @@ pub struct DateTimeText {
 /// MySQL DATE/DATETIME/TIMESTAMP text. Accepts the 10-byte date-only form
 /// (`YYYY-MM-DD`) and either `' '` or `'T'` as the date/time separator.
 pub(crate) fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
-    parse(text, true, true)
+    parse(text, AllowDateOnly::Yes, AllowTSeparator::Yes)
 }
 
 /// Postgres `timestamp` (WITHOUT TIME ZONE) text. Requires the full
@@ -35,10 +35,17 @@ pub(crate) fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
 /// separator, `infinity`, BC dates, 5+ digit years) returns `None` so the
 /// caller can fall back to `Date.parse`.
 pub(crate) fn parse_postgres_timestamp(text: &[u8]) -> Option<DateTimeText> {
-    parse(text, false, false)
+    parse(text, AllowDateOnly::No, AllowTSeparator::No)
 }
 
-fn parse(text: &[u8], allow_date_only: bool, allow_t_separator: bool) -> Option<DateTimeText> {
+bun_core::bool_enum!(AllowDateOnly);
+bun_core::bool_enum!(AllowTSeparator);
+
+fn parse(
+    text: &[u8],
+    allow_date_only: AllowDateOnly,
+    allow_t_separator: AllowTSeparator,
+) -> Option<DateTimeText> {
     fn parse_u(bytes: &[u8]) -> Option<u32> {
         if bytes.is_empty() {
             return None;
@@ -63,10 +70,15 @@ fn parse(text: &[u8], allow_date_only: bool, allow_t_separator: bool) -> Option<
         ..Default::default()
     };
     if text.len() == 10 {
-        return if allow_date_only { Some(result) } else { None };
+        return if allow_date_only == AllowDateOnly::Yes {
+            Some(result)
+        } else {
+            None
+        };
     }
 
-    let separator_ok = text[10] == b' ' || (allow_t_separator && text[10] == b'T');
+    let separator_ok =
+        text[10] == b' ' || (allow_t_separator == AllowTSeparator::Yes && text[10] == b'T');
     if text.len() < 19 || !separator_ok || text[13] != b':' || text[16] != b':' {
         return None;
     }

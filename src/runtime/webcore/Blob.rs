@@ -19,7 +19,8 @@ use bun_core::Output;
 use bun_core::{
     OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice, strings,
 };
-use bun_http_types::MimeType::MimeType;
+use bun_dotenv::HttpScheme;
+use bun_http_types::MimeType::{Dupe, MimeType};
 use bun_jsc::StringJsc as _;
 use bun_sys::{self, Fd};
 
@@ -42,7 +43,7 @@ fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
         .as_mut()
         .transpiler
         .env_mut()
-        .get_http_proxy(true, None, None)
+        .get_http_proxy(HttpScheme::Http, None, None)
         .map(|p| p.href.to_vec())
 }
 
@@ -108,7 +109,8 @@ pub trait ReadBytesHandler {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::webcore_types::{
-    Blob, Blob__deref, Blob__ref, BlobContentType, ClosingState, MAX_SIZE, SizeType,
+    Blob, Blob__deref, Blob__ref, BlobContentType, ClosingState, IncludeContentType, MAX_SIZE,
+    SizeType,
 };
 
 /// 1: Initial
@@ -136,6 +138,9 @@ pub use bun_jsc::generated::JSBlob as js;
 // live on `bun_jsc::webcore_types::Blob`; everything that touches the event
 // loop / S3 / fs / `VirtualMachine` is here.
 // ──────────────────────────────────────────────────────────────────────────
+
+bun_core::bool_enum!(pub WasString);
+bun_core::bool_enum!(pub CheckS3);
 
 #[allow(non_snake_case, clippy::too_many_arguments)]
 pub trait BlobExt {
@@ -275,18 +280,18 @@ pub trait BlobExt {
     fn create_with_bytes_and_allocator(
         bytes: Vec<u8>,
         global_this: &JSGlobalObject,
-        was_string: bool,
+        was_string: WasString,
     ) -> Blob
     where
         Self: Sized;
     fn try_create(
         bytes_: &[u8],
         global_this: &JSGlobalObject,
-        was_string: bool,
+        was_string: WasString,
     ) -> Result<Blob, bun_alloc::AllocError>
     where
         Self: Sized;
-    fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob
+    fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: WasString) -> Blob
     where
         Self: Sized;
     fn transfer(&self);
@@ -383,7 +388,7 @@ pub trait BlobExt {
     fn find_or_create_file_from_path(
         path_or_fd: &mut PathOrFileDescriptor,
         global_this: &JSGlobalObject,
-        check_s3: bool,
+        check_s3: CheckS3,
     ) -> Blob
     where
         Self: Sized;
@@ -1019,7 +1024,11 @@ impl BlobExt for Blob {
                 }
                 return Ok(());
             }
-            write_format_for_size::<W, ENABLE_ANSI_COLORS>(self.is_jsdom_file.get(), 0, writer)?;
+            write_format_for_size::<W, ENABLE_ANSI_COLORS>(
+                IsJsDomFile::from_bool(self.is_jsdom_file.get()),
+                0,
+                writer,
+            )?;
         } else {
             let content_type = self.content_type_slice();
             let offset = self.offset.get();
@@ -1083,7 +1092,7 @@ impl BlobExt for Blob {
                 }
                 store::Data::Bytes(_) => {
                     write_format_for_size::<W, ENABLE_ANSI_COLORS>(
-                        self.is_jsdom_file.get(),
+                        IsJsDomFile::from_bool(self.is_jsdom_file.get()),
                         self.size.get() as usize,
                         writer,
                     )?;
@@ -1421,7 +1430,11 @@ impl BlobExt for Blob {
             // SAFETY: bun_vm() never returns null for a Bun-owned global; `env`
             // is a live `*mut Loader` owned by the transpiler.
             let proxy = unsafe {
-                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
+                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(
+                    HttpScheme::Http,
+                    None,
+                    None,
+                )
             };
             let proxy_url = proxy.map(|p| p.href);
 
@@ -1531,9 +1544,11 @@ impl BlobExt for Blob {
                 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
                 if is_stdout_or_stderr {
                     // SAFETY: sink is live; sole owner here.
-                    if let bun_sys::Result::Err(err) =
-                        unsafe { (*sink).writer.with_mut(|w| w.start_sync(fd, false)) }
-                    {
+                    if let bun_sys::Result::Err(err) = unsafe {
+                        (*sink)
+                            .writer
+                            .with_mut(|w| w.start_sync(fd, bun_io::IsPollable::No))
+                    } {
                         unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -1542,9 +1557,11 @@ impl BlobExt for Blob {
                     }
                 } else {
                     // SAFETY: sink is live; sole owner here.
-                    if let bun_sys::Result::Err(err) =
-                        unsafe { (*sink).writer.with_mut(|w| w.start(fd, true)) }
-                    {
+                    if let bun_sys::Result::Err(err) = unsafe {
+                        (*sink)
+                            .writer
+                            .with_mut(|w| w.start(fd, bun_io::IsPollable::Yes))
+                    } {
                         unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -1709,7 +1726,11 @@ impl BlobExt for Blob {
             // SAFETY: `bun_vm()` returns the live per-global VM; `transpiler.env`
             // is the process-singleton dotenv loader, never null once init'd.
             let proxy_url: Option<bun_url::URL<'_>> = unsafe {
-                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
+                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(
+                    HttpScheme::Http,
+                    None,
+                    None,
+                )
             };
             // Copy the href out of the env map before any reentrant JS (the
             // `get_truthy`/credential getters below) can mutate `process.env`
@@ -1865,9 +1886,9 @@ impl BlobExt for Blob {
             let start_result = unsafe {
                 (*sink).writer.with_mut(|w| {
                     if is_stdout_or_stderr {
-                        w.start_sync(fd, false)
+                        w.start_sync(fd, bun_io::IsPollable::No)
                     } else {
-                        w.start(fd, true)
+                        w.start(fd, bun_io::IsPollable::Yes)
                     }
                 })
             };
@@ -2063,7 +2084,7 @@ impl BlobExt for Blob {
 
     fn get_mime_type_or_content_type(&self) -> Option<MimeType> {
         if self.content_type_was_set.get() {
-            return Some(MimeType::init(self.content_type_slice(), false, None));
+            return Some(MimeType::init(self.content_type_slice(), Dupe::No, None));
         }
         self.store().map(|s| s.mime_type.clone())
     }
@@ -2440,7 +2461,7 @@ impl BlobExt for Blob {
     fn create_with_bytes_and_allocator(
         bytes: Vec<u8>,
         global_this: &JSGlobalObject,
-        was_string: bool,
+        was_string: WasString,
     ) -> Blob {
         let len = bytes.len();
         let blob = Blob::default();
@@ -2450,7 +2471,7 @@ impl BlobExt for Blob {
         } else {
             None
         });
-        if was_string {
+        if was_string == WasString::Yes {
             blob.content_type
                 .set(BlobContentType::from_mime(&bun_http_types::MimeType::TEXT));
         }
@@ -2461,7 +2482,7 @@ impl BlobExt for Blob {
     fn try_create(
         bytes_: &[u8],
         global_this: &JSGlobalObject,
-        was_string: bool,
+        was_string: WasString,
     ) -> Result<Blob, bun_alloc::AllocError> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -2478,7 +2499,7 @@ impl BlobExt for Blob {
                         is_all_ascii: None,
                     }));
                     let blob = Blob::init_with_store(store, global_this);
-                    if was_string && blob.content_type_slice().is_empty() {
+                    if was_string == WasString::Yes && blob.content_type_slice().is_empty() {
                         blob.content_type
                             .set(BlobContentType::from_mime(&bun_http_types::MimeType::TEXT));
                     }
@@ -2494,7 +2515,7 @@ impl BlobExt for Blob {
         ))
     }
 
-    fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob {
+    fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: WasString) -> Blob {
         Self::try_create(bytes_, global_this, was_string).expect("oom")
     }
 
@@ -2640,7 +2661,11 @@ impl BlobExt for Blob {
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
             // if to_utf16_alloc returns None, it means there are no non-ASCII characters
-            let converted = match strings::to_utf16_alloc(buf, false, false) {
+            let converted = match strings::to_utf16_alloc(
+                buf,
+                strings::FailIfInvalid::No,
+                strings::Sentinel::No,
+            ) {
                 Ok(converted) => converted,
                 Err(_) => {
                     if LIFETIME == Lifetime::Temporary {
@@ -2886,8 +2911,9 @@ impl BlobExt for Blob {
         let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
-            if let Some(external) = strings::to_utf16_alloc(buf, false, false)
-                .map_err(|_| global.throw_out_of_memory())?
+            if let Some(external) =
+                strings::to_utf16_alloc(buf, strings::FailIfInvalid::No, strings::Sentinel::No)
+                    .map_err(|_| global.throw_out_of_memory())?
             {
                 if LIFETIME != Lifetime::Temporary {
                     self.set_is_ascii_flag(false);
@@ -3298,7 +3324,7 @@ impl BlobExt for Blob {
                     return Blob::try_create(
                         top_value.as_array_buffer(global).unwrap().byte_slice(),
                         global,
-                        false,
+                        WasString::No,
                     )
                     .map_err(Into::into);
                 }
@@ -3656,10 +3682,10 @@ impl BlobExt for Blob {
     fn find_or_create_file_from_path(
         path_or_fd: &mut PathOrFileDescriptor,
         global_this: &JSGlobalObject,
-        check_s3: bool,
+        check_s3: CheckS3,
     ) -> Blob {
         // ─── S3 (`s3://…`) branch ──────────────────────────────────────────
-        if check_s3 {
+        if check_s3 == CheckS3::Yes {
             if let PathOrFileDescriptor::Path(p) = &*path_or_fd {
                 if p.slice().starts_with(b"s3://") {
                     // SAFETY: bun_vm() is live for the duration of a host call.
@@ -4187,7 +4213,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut path_or_fd,
                         global_this,
-                        true,
+                        CheckS3::Yes,
                     ));
                 }
                 PathOrFileDescriptorSerializeTag::Path => {
@@ -4209,7 +4235,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut dest,
                         global_this,
-                        true,
+                        CheckS3::Yes,
                     ));
                 }
             }
@@ -4333,7 +4359,7 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunStri
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
-    Blob::new(this.dupe_with_content_type(true))
+    Blob::new(this.dupe_with_content_type(IncludeContentType::Yes))
 }
 
 #[unsafe(no_mangle)]
@@ -4348,12 +4374,14 @@ pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
 // writeFormat
 // ──────────────────────────────────────────────────────────────────────────
 
+bun_core::bool_enum!(pub(crate) IsJsDomFile);
+
 pub(crate) fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
-    is_jdom_file: bool,
+    is_jdom_file: IsJsDomFile,
     size: usize,
     writer: &mut W,
 ) -> core::fmt::Result {
-    if is_jdom_file {
+    if is_jdom_file == IsJsDomFile::Yes {
         bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r>File<r>")?;
     } else {
         bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r>Blob<r>")?;
@@ -4391,7 +4419,8 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
                 path: node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                    dirname, false,
+                    dirname,
+                    bun_ptr::cow_slice::Ownership::Borrowed,
                 )),
                 recursive: true,
                 always_return_none: true,
@@ -4528,7 +4557,8 @@ fn write_file_with_empty_source_to_destination(
                                     node_fs.mkdir_recursive(&node::fs::args::Mkdir {
                                         path: node::PathLike::String(
                                             bun_ptr::cow_slice::CowSlice::init_unchecked(
-                                                dirpath, false,
+                                                dirpath,
+                                                bun_ptr::cow_slice::Ownership::Borrowed,
                                             ),
                                         ),
                                         recursive: true,
@@ -5117,7 +5147,7 @@ pub(crate) fn write_file_internal(
     // if path_or_blob is a path, convert it into a file blob
     let mut destination_blob: Blob = match path_or_blob {
         PathOrBlob::Path(path) => {
-            let new_blob = Blob::find_or_create_file_from_path(path, global_this, true);
+            let new_blob = Blob::find_or_create_file_from_path(path, global_this, CheckS3::Yes);
             if new_blob.store.get().is_none() {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Writing to an empty blob is not implemented yet"
@@ -5723,7 +5753,7 @@ pub(crate) fn construct_bun_file(
     // The sync path took no `protect()`, so `Drop for PathOrFileDescriptor`
     // suffices to release `path`.
 
-    let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
+    let blob = Blob::find_or_create_file_from_path(&mut path, global_object, CheckS3::No);
 
     if let Some(opts) = options {
         if opts.is_object() {
@@ -6597,7 +6627,7 @@ impl Any {
         }
 
         if let Any::WTFStringImpl(_) = self {
-            let blob = Blob::create(self.slice(), global, true);
+            let blob = Blob::create(self.slice(), global, WasString::Yes);
             // `Blob::create(.., true)` copied the bytes; `Any` still owns the
             // +1 WTF ref. `detach()` releases it and resets `*self` (the bare
             // `*self = Any::Blob(default)` here previously leaked that ref).
@@ -6798,8 +6828,12 @@ impl Internal {
 
     pub(crate) fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
-        if let Some(out) = strings::to_utf16_alloc(bytes_without_bom, false, false)
-            .map_err(|_| global_this.throw_out_of_memory())?
+        if let Some(out) = strings::to_utf16_alloc(
+            bytes_without_bom,
+            strings::FailIfInvalid::No,
+            strings::Sentinel::No,
+        )
+        .map_err(|_| global_this.throw_out_of_memory())?
         {
             let out_len = out.len();
             // Ownership transfers to JSC's external-string finalizer.

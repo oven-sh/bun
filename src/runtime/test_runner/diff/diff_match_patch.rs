@@ -83,6 +83,8 @@ impl<Unit: DiffUnit> Default for DiffMatchPatch<Unit> {
     }
 }
 
+bun_core::bool_enum!(pub(crate) CheckLines);
+
 impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     /// Find the differences between two texts.
     /// @param before Old string to be diffed.
@@ -98,7 +100,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         // If false, then don't run a line-level diff first
         // to identify the changed areas. If true, then run
         // a faster slightly less optimal diff.
-        check_lines: bool,
+        check_lines: CheckLines,
     ) -> Result<DiffList<Unit>, DiffError> {
         let deadline = if self.config.diff_timeout == 0 {
             u64::MAX
@@ -112,7 +114,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         &self,
         before: &[Unit],
         after: &[Unit],
-        check_lines: bool,
+        check_lines: CheckLines,
         deadline: u64,
     ) -> Result<DiffList<Unit>, DiffError> {
         // Trim off common prefix (speedup).
@@ -182,7 +184,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         &self,
         before: &[Unit],
         after: &[Unit],
-        check_lines: bool,
+        check_lines: CheckLines,
         deadline: u64,
     ) -> Result<DiffList<Unit>, DiffError> {
         if before.is_empty() {
@@ -276,7 +278,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
             diffs.extend(diffs_b);
             return Ok(diffs);
         }
-        if check_lines
+        if check_lines == CheckLines::Yes
             && before.len() as u64 > self.config.diff_check_lines_over
             && after.len() as u64 > self.config.diff_check_lines_over
         {
@@ -586,8 +588,8 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         let text2b = &text2[y..];
 
         // Compute both diffs serially.
-        let mut diffs = self.diff_internal(text1a, text2a, false, deadline)?;
-        let diffs_b = self.diff_internal(text1b, text2b, false, deadline)?;
+        let mut diffs = self.diff_internal(text1a, text2a, CheckLines::No, deadline)?;
+        let diffs_b = self.diff_internal(text1b, text2b, CheckLines::No, deadline)?;
         diffs.extend(diffs_b);
         Ok(diffs)
     }
@@ -617,7 +619,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         };
         {
             let char_diffs: DiffList<usize> =
-                dmp_usize.diff_internal(text1, text2, false, deadline)?;
+                dmp_usize.diff_internal(text1, text2, CheckLines::No, deadline)?;
             // Convert the diff back to original text.
             diffs = diff_chars_to_lines(&char_diffs, line_array)?;
             // Eliminate freak matches (e.g. blank lines)
@@ -658,8 +660,12 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
                                     + count_insert,
                         );
                         pointer = pointer - count_delete - count_insert;
-                        let sub_diff =
-                            self.diff_internal(&text_delete, &text_insert, false, deadline)?;
+                        let sub_diff = self.diff_internal(
+                            &text_delete,
+                            &text_insert,
+                            CheckLines::No,
+                            deadline,
+                        )?;
                         let sub_len = sub_diff.len();
                         diffs.splice(pointer..pointer, sub_diff);
                         pointer += sub_len;
@@ -1461,7 +1467,7 @@ mod tests {
         let dmp = Dmp::default();
         let text1 = b"The quick brown fox jumps over the lazy dog.";
         let text2 = b"That quick brown fox jumped over a lazy dog.";
-        let _diffs = dmp.diff(text2, text1, true).unwrap();
+        let _diffs = dmp.diff(text2, text1, CheckLines::Yes).unwrap();
     }
 
     #[test]
@@ -1475,15 +1481,15 @@ mod tests {
         };
 
         // Null case.
-        let diffs = this.diff(b"", b"", false).unwrap();
+        let diffs = this.diff(b"", b"", CheckLines::No).unwrap();
         assert!(diffs.is_empty());
 
         // Equality.
-        let diffs = this.diff(b"abc", b"abc", false).unwrap();
+        let diffs = this.diff(b"abc", b"abc", CheckLines::No).unwrap();
         assert_eq!(vec![d(Operation::Equal, b"abc")], diffs);
 
         // Simple insertion.
-        let diffs = this.diff(b"abc", b"ab123c", false).unwrap();
+        let diffs = this.diff(b"abc", b"ab123c", CheckLines::No).unwrap();
         assert_eq!(
             vec![
                 d(Operation::Equal, b"ab"),

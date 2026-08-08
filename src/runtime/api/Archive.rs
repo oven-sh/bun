@@ -4,7 +4,7 @@ use std::ffi::CString;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::{Store as BlobStore, StoreRef};
+use crate::webcore::blob::{Store as BlobStore, StoreRef, WasString};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, Output, ZBox, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
@@ -953,8 +953,11 @@ impl TaskContext for BlobContext {
                 // self.result already replaced with Uncompressed above — ownership transferred
                 Ok(PromiseResult::Resolve(match self.output_type {
                     BlobOutputType::Blob => {
-                        let blob_ptr =
-                            Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
+                        let blob_ptr = Blob::new(Blob::create_with_bytes_and_allocator(
+                            data,
+                            global,
+                            WasString::No,
+                        ));
                         // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
                         unsafe { (*blob_ptr).to_js(global) }
                     }
@@ -1273,8 +1276,11 @@ impl TaskContext for FilesContext {
 
                 for entry in entries.iter_mut() {
                     let data = core::mem::take(&mut entry.data); // Ownership transferred
-                    let blob_ptr =
-                        Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
+                    let blob_ptr = Blob::new(Blob::create_with_bytes_and_allocator(
+                        data,
+                        global,
+                        WasString::No,
+                    ));
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
                     let blob = unsafe { &mut *blob_ptr };
                     blob.is_jsdom_file.set(true);

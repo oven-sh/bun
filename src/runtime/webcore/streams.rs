@@ -32,6 +32,7 @@ pub mod bun_s3 {
     pub use crate::webcore::s3::MultiPartUpload;
     pub use crate::webcore::s3::multipart::UploadBackpressure;
 }
+use crate::webcore::s3::multipart::IsLast;
 
 /// `Blob.SizeType` is `u64` (see `webcore::blob::SizeType`).
 type BlobSizeType = crate::webcore::BlobSizeType;
@@ -1266,7 +1267,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         if self.requested_end && !res.state().is_http_write_called() {
             self.handle_first_write_if_necessary();
-            let success = res.try_end(buf, self.end_len, false);
+            let success = res.try_end(buf, self.end_len, uws::CloseConnection::No);
             if success {
                 self.has_backpressure = false;
                 self.handle_wrote(self.end_len);
@@ -1290,7 +1291,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // holds the on_writable registration and forwards the drain to
         // `on_writable()` below.
         if self.requested_end {
-            res.end(buf, false);
+            res.end(buf, uws::CloseConnection::No);
             self.has_backpressure = false;
         } else {
             self.has_backpressure = matches!(res.write(buf), uws::WriteResult::Backpressure(_));
@@ -1341,7 +1342,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if self.requested_end && !res.state().is_http_write_called() {
             self.handle_first_write_if_necessary();
             let end_len = self.end_len;
-            let success = res.try_end(&self.buffer[base..], end_len, false);
+            let success = res.try_end(&self.buffer[base..], end_len, uws::CloseConnection::No);
             if success {
                 self.has_backpressure = false;
                 self.handle_wrote(end_len);
@@ -1362,7 +1363,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let buf_len = self.buffer.len().saturating_sub(base);
         // See `send_without_auto_flusher`.
         if self.requested_end {
-            res.end(&self.buffer[base..], false);
+            res.end(&self.buffer[base..], uws::CloseConnection::No);
             self.has_backpressure = false;
         } else {
             self.has_backpressure = matches!(
@@ -1842,7 +1843,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
         } else {
             if let Some(res) = self.any_res() {
-                res.end(b"", false);
+                res.end(b"", uws::CloseConnection::No);
             }
         }
 
@@ -1999,7 +2000,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if !self.ended_response {
                 if let Some(res) = self.any_res() {
                     // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
-                    res.end_stream(false);
+                    res.end_stream(uws::CloseConnection::No);
                 }
             }
         }
@@ -2342,7 +2343,7 @@ impl NetworkSink {
         let has_source = !matches!(self.source, SourceHandle::None);
 
         let result = match self.task_ref() {
-            Some(task) => task.write_bytes(bytes, false),
+            Some(task) => task.write_bytes(bytes, IsLast::No),
             None => return Writable::Owned(len),
         };
         match result {
@@ -2365,7 +2366,7 @@ impl NetworkSink {
         let has_source = !matches!(self.source, SourceHandle::None);
 
         let result = match self.task_ref() {
-            Some(task) => task.write_latin1(bytes, false),
+            Some(task) => task.write_latin1(bytes, IsLast::No),
             None => return Writable::Owned(len),
         };
         match result {
@@ -2388,7 +2389,7 @@ impl NetworkSink {
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
         let result = match self.task_ref() {
-            Some(task) => task.write_utf16(bytes, false),
+            Some(task) => task.write_utf16(bytes, IsLast::No),
             None => return Writable::Owned(len),
         };
         match result {
@@ -2412,7 +2413,7 @@ impl NetworkSink {
         self.pending.run();
         // flush everything and send EOF
         if let Some(task) = self.task_ref() {
-            let _ = task.write_bytes(b"", true);
+            let _ = task.write_bytes(b"", IsLast::Yes);
             // bun.handleOom → Rust aborts on OOM
         }
 
@@ -2480,7 +2481,7 @@ impl NetworkSink {
                 message: b"ReadableStream ended with an error",
             });
         } else {
-            let _ = task.write_bytes(b"", true);
+            let _ = task.write_bytes(b"", IsLast::Yes);
         }
         // SAFETY: `wrapper` live with rc ≥ 1; this may free `*this`.
         unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref_(wrapper) };
@@ -2503,7 +2504,7 @@ impl NetworkSink {
                 self.ended = true;
                 // we need to send EOF
                 if let Some(task) = self.task_ref() {
-                    let _ = task.write_bytes(b"", true);
+                    let _ = task.write_bytes(b"", IsLast::Yes);
                 }
                 self.source.close(None);
             }

@@ -221,6 +221,10 @@ pub(crate) enum ReceiveChunkContent {
     Css(u64),
 }
 
+bun_core::bool_enum!(pub(crate) SsrGraph);
+bun_core::bool_enum!(pub(crate) IsRoute);
+bun_core::bool_enum!(pub(crate) NewFilesStale);
+
 pub struct TakeJSBundleOptionsClient<'a> {
     pub(crate) kind: ChunkKind,
     pub(crate) script_id: source_map_store::Key,
@@ -420,13 +424,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// bits with `are_new_files_stale`.
     pub(crate) fn ensure_stale_bit_capacity(
         &mut self,
-        are_new_files_stale: bool,
+        are_new_files_stale: NewFilesStale,
     ) -> Result<(), bun_alloc::AllocError> {
         let want = self.bundled_files.count().max(self.stale_files.bit_length);
         // Align forward to 8 usize words (8*64 bits).
         const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
         let aligned = want.div_ceil(STEP) * STEP;
-        self.stale_files.resize(aligned, are_new_files_stale)
+        self.stale_files
+            .resize(aligned, are_new_files_stale == NewFilesStale::Yes)
     }
 
     /// `IncrementalGraph(side).freeFileContent` (client only).
@@ -537,8 +542,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         ctx: &mut HotUpdateContext<'_>,
         index: impl Into<bun_ast::Index>,
         content: ReceiveChunkContent,
-        is_ssr_graph: bool,
+        is_ssr_graph: SsrGraph,
     ) -> Result<(), crate::Error> {
+        let is_ssr_graph = is_ssr_graph == SsrGraph::Yes;
         let index: bun_ast::Index = index.into();
         // SAFETY: see `owner()`.
         let dev = unsafe { self.owner() };
@@ -1277,18 +1283,20 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub(crate) fn insert_stale(
         &mut self,
         abs_path: &[u8],
-        is_ssr_graph: bool,
+        is_ssr_graph: SsrGraph,
     ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
-        self.insert_stale_extra(abs_path, is_ssr_graph, false)
+        self.insert_stale_extra(abs_path, is_ssr_graph, IsRoute::No)
     }
 
     /// `IncrementalGraph(side).insertStaleExtra` (spec :1300).
     pub(crate) fn insert_stale_extra(
         &mut self,
         abs_path: &[u8],
-        is_ssr_graph: bool,
-        is_route: bool,
+        is_ssr_graph: SsrGraph,
+        is_route: IsRoute,
     ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
+        let is_ssr_graph = is_ssr_graph == SsrGraph::Yes;
+        let is_route = is_route == IsRoute::Yes;
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let idx = gop.index;
         let found_existing = gop.found_existing;
@@ -1376,7 +1384,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         if !found_existing {
             self.first_dep.push(None);
             self.first_import.push(None);
-            self.ensure_stale_bit_capacity(true)?;
+            self.ensure_stale_bit_capacity(NewFilesStale::Yes)?;
         }
         Ok(InsertEmptyResult {
             index: FileIndex::init(idx as u32),
@@ -1418,8 +1426,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         key: InsertFailureKey<'_>,
         log: &bun_ast::Log,
-        is_ssr_graph: bool,
+        is_ssr_graph: SsrGraph,
     ) -> Result<(), bun_alloc::AllocError> {
+        let is_ssr_graph = is_ssr_graph == SsrGraph::Yes;
         let (idx, found_existing) = match key {
             InsertFailureKey::AbsPath(abs_path) => {
                 let gop = self.bundled_files.get_or_put(abs_path)?;
@@ -1435,7 +1444,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
             InsertFailureKey::Index(i) => (i as usize, true),
         };
-        self.ensure_stale_bit_capacity(true)?;
+        self.ensure_stale_bit_capacity(NewFilesStale::Yes)?;
         self.stale_files.set(idx);
 
         match SIDE {

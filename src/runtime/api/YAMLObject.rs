@@ -1030,8 +1030,8 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
         global,
         call_frame,
         b"input.yaml",
-        true,
-        false,
+        super::AcceptBlobOrBuffer::Yes,
+        super::RejectNullish::No,
         |arena, log, source| {
             // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
             // once by pointer identity, so a cyclic graph is fine here.

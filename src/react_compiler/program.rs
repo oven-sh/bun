@@ -53,6 +53,8 @@ pub enum JsxImportKind {
     CreateElement,
 }
 
+bun_core::bool_enum!(pub RuntimeSentinel { MemoCache, EarlyReturn });
+
 /// Parser-side state the React Compiler needs. Implemented by `P` at the
 /// hook site so this crate stays free of a `bun_js_parser` dependency.
 ///
@@ -97,7 +99,7 @@ pub trait Host {
     /// runtime export, declared on the parser's `runtime_imports` table on
     /// first use so the linker wires it to `runtime.js` exactly like
     /// `__toESM` / `__require` (no `S::Import` AST node).
-    fn runtime_sentinel(&mut self, _early: bool) -> Ref {
+    fn runtime_sentinel(&mut self, _early: RuntimeSentinel) -> Ref {
         unreachable!("runtime_sentinel requires the bun parser host")
     }
 
@@ -921,12 +923,14 @@ fn is_valid_component_params(host: &dyn Host, args: &[G::Arg], has_rest_arg: boo
 // Function type detection
 // -----------------------------------------------------------------------
 
+bun_core::bool_enum!(InReactHoc);
+
 fn get_react_function_type(
     host: &dyn Host,
     name: Option<&[u8]>,
     func: &FunctionNode<'_>,
     body_directives: &[&[u8]],
-    in_react_hoc: bool,
+    in_react_hoc: InReactHoc,
     opts: &ReactCompilerOptions,
 ) -> Option<ReactFunctionType> {
     let has_dynamic_gating_directive = opts.dynamic_gating.is_some()
@@ -958,7 +962,7 @@ fn get_component_or_hook_like(
     host: &dyn Host,
     name: Option<&[u8]>,
     func: &FunctionNode<'_>,
-    in_react_hoc: bool,
+    in_react_hoc: InReactHoc,
 ) -> Option<ReactFunctionType> {
     let body = func.body().stmts.slice();
     if let Some(fn_name) = name {
@@ -980,7 +984,7 @@ fn get_component_or_hook_like(
         }
     }
 
-    if in_react_hoc {
+    if in_react_hoc == InReactHoc::Yes {
         return if calls_hooks_or_creates_jsx_in_stmts(host, body) {
             Some(ReactFunctionType::Component)
         } else {
@@ -1098,6 +1102,8 @@ fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
 // finalized after.
 // -----------------------------------------------------------------------
 
+bun_core::bool_enum!(pub ModuleScopeOptOut);
+
 pub struct ReactCompilerState {
     options: ReactCompilerOptions,
     env_config: EnvironmentConfig,
@@ -1120,12 +1126,12 @@ impl ReactCompilerState {
     /// `p.react_compiler = Some(..)` without a `&mut p` borrow conflict.
     pub fn new(
         options: ReactCompilerOptions,
-        has_module_scope_opt_out: bool,
+        has_module_scope_opt_out: ModuleScopeOptOut,
         import_bindings: IndexMap<Ref, VariableBinding>,
     ) -> Self {
         bun_core::scoped_log!(
             react_compiler,
-            "ReactCompilerState::new opt_out={}",
+            "ReactCompilerState::new opt_out={:?}",
             has_module_scope_opt_out
         );
         let context = ProgramContext::new(
@@ -1236,7 +1242,7 @@ pub fn maybe_compile_pending(
         host,
         FunctionNode::Function(&tmp),
         name,
-        pending.in_react_hoc,
+        InReactHoc::from_bool(pending.in_react_hoc),
     )?;
     let mut flags = pending.flags;
     set_flag(&mut flags, flags::Function::IsAsync, cf.is_async);
@@ -1256,7 +1262,7 @@ fn maybe_compile_node(
     host: &mut dyn Host,
     node: FunctionNode<'_>,
     name: Option<&[u8]>,
-    in_react_hoc: bool,
+    in_react_hoc: InReactHoc,
 ) -> Option<CodegenFunction> {
     bun_core::scoped_log!(
         react_compiler,
@@ -1312,7 +1318,7 @@ fn maybe_compile_node(
     // validation diagnostics; Bun skips early — the diagnostics channel is not
     // wired yet, and skipping avoids registering a spurious runtime import.
     if find_directive_disabling_memoization(&body_directives).is_some()
-        || state.context.has_module_scope_opt_out
+        || state.context.has_module_scope_opt_out == ModuleScopeOptOut::Yes
     {
         bun_core::scoped_log!(react_compiler, "  -> bail: opt-out directive");
         return None;

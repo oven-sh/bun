@@ -135,7 +135,7 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     source_provider_url: &mut BunString,
 ) -> Option<Box<[u8]>> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
-    crate::initialize(false);
+    crate::initialize(crate::EvalMode::No);
     let (bytes, handle) = CachedBytecode::generate(format, source, source_provider_url)?;
     let owned = Box::<[u8]>::from(bytes);
     // `handle` was just produced by C++ and is valid until deref;

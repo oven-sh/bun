@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use bun_http::lshpack::{DecodeResult, HpackError, HpackHandle};
+use bun_http::lshpack::{DecodeResult, HpackError, HpackHandle, NeverIndex};
 
 /// RFC 7541 §6.3: a Dynamic Table Size Update integer never needs more than 6 bytes for a u32.
 pub const MAX_SIZE_UPDATE_BYTES: usize = 6;
@@ -55,7 +55,7 @@ impl Coder {
         &mut self,
         name: &[u8],
         value: &[u8],
-        never_index: bool,
+        never_index: NeverIndex,
         dst: &mut [u8],
         offset: usize,
     ) -> Result<usize, HpackError> {

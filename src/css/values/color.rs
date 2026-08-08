@@ -7,7 +7,7 @@ use crate::PrintErr;
 use crate::compat::Feature;
 use crate::css_parser as css;
 use crate::css_parser::CssResult;
-use crate::printer::Printer;
+use crate::printer::{Printer, WsBefore};
 use crate::targets;
 use crate::values::angle::Angle;
 use crate::values::calc::Calc;
@@ -463,11 +463,11 @@ impl CssColor {
                             return dest.write_str("transparent");
                         } else {
                             dest.write_fmt(format_args!("rgba({}", color.red))?;
-                            dest.delim(b',', false)?;
+                            dest.delim(b',', WsBefore::No)?;
                             dest.write_fmt(format_args!("{}", color.green))?;
-                            dest.delim(b',', false)?;
+                            dest.delim(b',', WsBefore::No)?;
                             dest.write_fmt(format_args!("{}", color.blue))?;
-                            dest.delim(b',', false)?;
+                            dest.delim(b',', WsBefore::No)?;
 
                             // Try first with two decimal places, then with three.
                             let mut rounded_alpha = (color.alpha_f32() * 100.0).round() / 100.0;
@@ -510,19 +510,19 @@ impl CssColor {
             CssColor::LightDark { light, dark } => {
                 if !dest.targets.is_compatible(Feature::LightDark) {
                     dest.write_str("var(--buncss-light")?;
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     light.to_css(dest)?;
                     dest.write_char(b')')?;
                     dest.whitespace()?;
                     dest.write_str("var(--buncss-dark")?;
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     dark.to_css(dest)?;
                     return dest.write_char(b')');
                 }
 
                 dest.write_str("light-dark(")?;
                 light.to_css(dest)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 dark.to_css(dest)?;
                 dest.write_char(b')')
             }
@@ -1124,7 +1124,7 @@ pub(crate) fn parse_color_function(
     function: &'static [u8],
     input: &mut css::Parser,
 ) -> CssResult<CssColor> {
-    let mut parser = ComponentParser::new(true);
+    let mut parser = ComponentParser::new(AllowNone::Yes);
 
     crate::match_ignore_ascii_case! { function, {
         b"lab" => parse_lab::<LAB>(input, &mut parser, |l, a, b, alpha| {
@@ -1140,7 +1140,7 @@ pub(crate) fn parse_color_function(
             LABColor::Oklch(OKLCH { l, c, h, alpha })
         }),
         b"color" => parse_predefined(input, &mut parser),
-        b"hsl" | b"hsla" => parse_hsl_hwb::<HSL>(input, &mut parser, true, |h, s, l, a| {
+        b"hsl" | b"hsla" => parse_hsl_hwb::<HSL>(input, &mut parser, AllowsLegacy::Yes, |h, s, l, a| {
             let hsl = HSL { h, s, l, alpha: a };
             if !h.is_nan() && !s.is_nan() && !l.is_nan() && !a.is_nan() {
                 CssColor::Rgba(RGBA::from(hsl))
@@ -1148,7 +1148,7 @@ pub(crate) fn parse_color_function(
                 CssColor::Float(Box::new(FloatColor::Hsl(hsl)))
             }
         }),
-        b"hwb" => parse_hsl_hwb::<HWB>(input, &mut parser, false, |h, w, b, a| {
+        b"hwb" => parse_hsl_hwb::<HWB>(input, &mut parser, AllowsLegacy::No, |h, w, b, a| {
             let hwb = HWB { h, w, b, alpha: a };
             if !h.is_nan() && !w.is_nan() && !b.is_nan() && !a.is_nan() {
                 CssColor::Rgba(RGBA::from(hwb))
@@ -1174,10 +1174,12 @@ pub(crate) fn parse_color_function(
     }}
 }
 
+bun_core::bool_enum!(pub(crate) LegacySyntax);
+
 pub(crate) fn parse_rgb_components(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
-) -> CssResult<(f32, f32, f32, bool)> {
+) -> CssResult<(f32, f32, f32, LegacySyntax)> {
     let red = parser.parse_number_or_percentage(input)?;
 
     let is_legacy_syntax = parser.from.is_none()
@@ -1228,7 +1230,7 @@ pub(crate) fn parse_rgb_components(
     if is_legacy_syntax && (g.is_nan() || b.is_nan()) {
         return Err(input.new_custom_error(css::ParserError::invalid_value));
     }
-    Ok((r, g, b, is_legacy_syntax))
+    Ok((r, g, b, LegacySyntax::from_bool(is_legacy_syntax)))
 }
 
 fn map_gamut<T>(color: T) -> T
@@ -1356,6 +1358,8 @@ pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> +
     })
 }
 
+bun_core::bool_enum!(pub(crate) AllowsLegacy);
+
 /// Parses the hsl() and hwb() functions.
 /// The results of this function are stored as floating point if there are any `none` components.
 /// https://drafts.csswg.org/css-color-4/#the-hsl-notation
@@ -1364,13 +1368,13 @@ pub(crate) fn parse_hsl_hwb<
 >(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
-    allows_legacy: bool,
+    allows_legacy: AllowsLegacy,
     func: fn(f32, f32, f32, f32) -> CssColor,
 ) -> CssResult<CssColor> {
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             let (h, a, b, is_legacy) = parse_hsl_hwb_components::<T>(i, p, allows_legacy)?;
-            let alpha = if is_legacy {
+            let alpha = if is_legacy == LegacySyntax::Yes {
                 parse_legacy_alpha(i, p)?
             } else {
                 parse_alpha(i, p)?
@@ -1384,11 +1388,11 @@ pub(crate) fn parse_hsl_hwb<
 pub(crate) fn parse_hsl_hwb_components<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
-    allows_legacy: bool,
-) -> CssResult<(f32, f32, f32, bool)> {
+    allows_legacy: AllowsLegacy,
+) -> CssResult<(f32, f32, f32, LegacySyntax)> {
     let _ = core::marker::PhantomData::<T>; // autofix
     let h = parse_angle_or_number(input, parser)?;
-    let is_legacy_syntax = allows_legacy
+    let is_legacy_syntax = allows_legacy == AllowsLegacy::Yes
         && parser.from.is_none()
         && !h.is_nan()
         && input.try_parse(|i| i.expect_comma()).is_ok();
@@ -1405,7 +1409,7 @@ pub(crate) fn parse_hsl_hwb_components<T>(
         return Err(input.new_custom_error(css::ParserError::invalid_value));
     }
 
-    Ok((h, a, b, is_legacy_syntax))
+    Ok((h, a, b, LegacySyntax::from_bool(is_legacy_syntax)))
 }
 
 pub(crate) fn parse_angle_or_number(
@@ -1424,14 +1428,14 @@ fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult
     input.parse_nested_block(|i| {
         parser.parse_relative::<SRGB, CssColor, _>(i, |i, p| {
             let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
-            let alpha = if is_legacy {
+            let alpha = if is_legacy == LegacySyntax::Yes {
                 parse_legacy_alpha(i, p)?
             } else {
                 parse_alpha(i, p)?
             };
 
             if !r.is_nan() && !g.is_nan() && !b.is_nan() && !alpha.is_nan() {
-                if is_legacy {
+                if is_legacy == LegacySyntax::Yes {
                     return Ok(CssColor::Rgba(RGBA::new(r as u8, g as u8, b as u8, alpha)));
                 }
 
@@ -1870,13 +1874,15 @@ define_colorspace! {
 // ComponentParser
 // ──────────────────────────────────────────────────────────────────────────
 
+bun_core::bool_enum!(pub(crate) AllowNone);
+
 pub(crate) struct ComponentParser {
-    pub(crate) allow_none: bool,
+    pub(crate) allow_none: AllowNone,
     pub(crate) from: Option<RelativeComponentParser>,
 }
 
 impl ComponentParser {
-    pub(crate) fn new(allow_none: bool) -> ComponentParser {
+    pub(crate) fn new(allow_none: AllowNone) -> ComponentParser {
         ComponentParser {
             allow_none,
             from: None,
@@ -1949,7 +1955,7 @@ impl ComponentParser {
             Ok(NumberOrPercentage::Percentage {
                 unit_value: value.v,
             })
-        } else if self.allow_none {
+        } else if self.allow_none == AllowNone::Yes {
             input.expect_ident_matching(b"none")?;
             Ok(NumberOrPercentage::Number { value: f32::NAN })
         } else {
@@ -1975,7 +1981,7 @@ impl ComponentParser {
             })
         } else if let Ok(value) = input.try_parse(CSSNumberFns::parse) {
             Ok(css::color::AngleOrNumber::Number { value })
-        } else if self.allow_none {
+        } else if self.allow_none == AllowNone::Yes {
             input.expect_ident_matching(b"none")?;
             Ok(css::color::AngleOrNumber::Number { value: f32::NAN })
         } else {
@@ -1993,7 +1999,7 @@ impl ComponentParser {
 
         if let Ok(val) = input.try_parse(Percentage::parse) {
             Ok(val.v)
-        } else if self.allow_none {
+        } else if self.allow_none == AllowNone::Yes {
             input.expect_ident_matching(b"none")?;
             Ok(f32::NAN)
         } else {
@@ -2010,7 +2016,7 @@ impl ComponentParser {
 
         if let Ok(val) = input.try_parse(CSSNumberFns::parse) {
             Ok(val)
-        } else if self.allow_none {
+        } else if self.allow_none == AllowNone::Yes {
             input.expect_ident_matching(b"none")?;
             Ok(f32::NAN)
         } else {
@@ -2615,7 +2621,7 @@ pub(crate) fn write_components(
     dest.write_char(b' ')?;
     write_component(c, dest)?;
     if alpha.is_nan() || (alpha - 1.0).abs() > f32::EPSILON {
-        dest.delim(b'/', true)?;
+        dest.delim(b'/', WsBefore::Yes)?;
         write_component(alpha, dest)?;
     }
     dest.write_char(b')')
@@ -2646,7 +2652,7 @@ pub(crate) fn write_predefined(
     write_component(c, dest)?;
 
     if alpha.is_nan() || (alpha - 1.0).abs() > f32::EPSILON {
-        dest.delim(b'/', true)?;
+        dest.delim(b'/', WsBefore::Yes)?;
         write_component(alpha, dest)?;
     }
 

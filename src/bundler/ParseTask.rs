@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::Error as AnyError;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_ast::ImportRecord;
-use bun_ast::{Loc, Location, Log, Msg, Source};
+use bun_ast::{Loc, Location, Log, Msg, Recycled, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
@@ -31,6 +31,7 @@ use crate::bun_css;
 use crate::bun_fs as Fs;
 use crate::bun_node_fallbacks as NodeFallbackModules;
 use crate::bundle_v2::{self as bundler, BundleV2};
+use crate::bundled_ast::ForceInline;
 use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
 use crate::html_scanner::HTMLScanner;
 use crate::options::{self, Loader};
@@ -777,8 +778,8 @@ pub mod parse_worker {
                 // below); reshape as a closure so every `?` exits through one
                 // post-amble that flushes `temp_log`.
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
-                    let root: Expr =
-                        bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?;
+                    use bun_parsers::toml::{RedactLogs, TOML};
+                    let root: Expr = TOML::parse(source, &mut temp_log, bump, RedactLogs::No)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -792,7 +793,7 @@ pub mod parse_worker {
                         .unwrap(),
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                let _ = temp_log.clone_to_with_recycled(log, Recycled::Yes);
                 return result;
             }
             Loader::Yaml => {
@@ -818,7 +819,7 @@ pub mod parse_worker {
                         .unwrap(),
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                let _ = temp_log.clone_to_with_recycled(log, Recycled::Yes);
                 return result;
             }
             Loader::Json5 => {
@@ -840,7 +841,7 @@ pub mod parse_worker {
                         .unwrap(),
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                let _ = temp_log.clone_to_with_recycled(log, Recycled::Yes);
                 return result;
             }
             Loader::Xml => {
@@ -869,7 +870,7 @@ pub mod parse_worker {
                         .unwrap(),
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                let _ = temp_log.clone_to_with_recycled(log, Recycled::Yes);
                 return result;
             }
             Loader::Text => {
@@ -897,7 +898,7 @@ pub mod parse_worker {
                     source,
                     Some(b"text/plain"),
                     None,
-                    topts.compile_mode.is_standalone_html(),
+                    ForceInline::from_bool(topts.compile_mode.is_standalone_html()),
                 );
                 return Ok(ast);
             }
@@ -938,7 +939,7 @@ pub mod parse_worker {
                     source,
                     Some(b"text/html"),
                     None,
-                    topts.compile_mode.is_standalone_html(),
+                    ForceInline::from_bool(topts.compile_mode.is_standalone_html()),
                 );
                 return Ok(ast);
             }
@@ -1357,7 +1358,7 @@ pub mod parse_worker {
                     source,
                     None,
                     Some(unique_key),
-                    topts.compile_mode.is_standalone_html(),
+                    ForceInline::from_bool(topts.compile_mode.is_standalone_html()),
                 );
                 return Ok(ast);
             }
@@ -1456,7 +1457,7 @@ pub mod parse_worker {
                     fs_ref,
                     file_path.text,
                     contents_dir,
-                    false,
+                    _resolver::fs::UseSharedBuffer::No,
                     contents_file.unwrap_valid(),
                     read_arena,
                 ) {

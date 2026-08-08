@@ -260,7 +260,7 @@ impl History {
 
         // Don't add duplicates of the last entry
         if let Some(last) = self.entries.last() {
-            if strings::eql_long(last, line, true) {
+            if strings::eql_long(last, line, strings::CheckLen::Yes) {
                 self.position = self.entries.len();
                 return Ok(());
             }
@@ -568,7 +568,7 @@ impl ReplCommand {
 
     fn find(name: &[u8]) -> Option<&'static ReplCommand> {
         Self::ALL.iter().find(|&cmd| {
-            strings::eql_long(cmd.name, name, true)
+            strings::eql_long(cmd.name, name, strings::CheckLen::Yes)
                 || (name.len() > 1 && cmd.name.starts_with(name))
         })
     }
@@ -836,6 +836,8 @@ enum InputMode {
     Multiline,
     Editor,
 }
+
+bun_core::bool_enum!(pub(super) PrintResult);
 
 pub(super) struct Repl<'a> {
     line_editor: LineEditor,
@@ -1426,7 +1428,7 @@ impl<'a> Repl<'a> {
     /// result to stdout. Errors are written to stderr.
     /// Returns true if an error occurred (the caller should set exit_code=1 and
     /// skip onBeforeExit); false on success (caller preserves process.exitCode).
-    pub(super) fn eval_script(&mut self, code: &[u8], print_result: bool) -> bool {
+    pub(super) fn eval_script(&mut self, code: &[u8], print_result: PrintResult) -> bool {
         let Some(global) = self.global else {
             return true;
         };
@@ -1436,11 +1438,12 @@ impl<'a> Repl<'a> {
 
         let no_color = env_var::NO_COLOR.get().unwrap_or(false);
         self.use_colors = Output::enable_ansi_colors_stdout() && !no_color;
-        let stderr_colors = Output::enable_ansi_colors_stderr() && !no_color;
+        let stderr_colors =
+            Output::AnsiColors::from_bool(Output::enable_ansi_colors_stderr() && !no_color);
 
         // Empty / whitespace-only script: nothing to do (matches `node -e ""`)
         if strings::trim(code, b" \t\n\r").is_empty() {
-            if print_result {
+            if print_result == PrintResult::Yes {
                 if self.use_colors {
                     self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
                 } else {
@@ -1538,7 +1541,7 @@ impl<'a> Repl<'a> {
             vm.as_mut().auto_tick_active();
         }
 
-        if print_result {
+        if print_result == PrintResult::Yes {
             if actual_result.is_undefined() {
                 if self.use_colors {
                     self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
@@ -1918,14 +1921,18 @@ impl<'a> Repl<'a> {
 
     fn print_js_error(&self, error_value: JSValue) {
         // Interactive REPL writes everything to stdout (single terminal stream).
-        self.print_js_error_to(error_value, Output::writer(), self.use_colors);
+        self.print_js_error_to(
+            error_value,
+            Output::writer(),
+            Output::AnsiColors::from_bool(self.use_colors),
+        );
     }
 
     fn print_js_error_to(
         &self,
         error_value: JSValue,
         writer: &mut bun_core::io::Writer,
-        enable_colors: bool,
+        enable_colors: Output::AnsiColors,
     ) {
         // Note: the `bun_core::io::Writer` vtable doesn't implement
         // `bun_io::Write`, so buffer through a `Vec<u8>` (which does) and
@@ -1941,7 +1948,7 @@ impl<'a> Repl<'a> {
             core::slice::from_ref(&error_value),
             &mut buf,
             jsc::ConsoleObject::FormatOptions {
-                enable_colors,
+                enable_colors: enable_colors == Output::AnsiColors::Enabled,
                 add_newline: true,
                 flush: false,
                 quote_strings: true,

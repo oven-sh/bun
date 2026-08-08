@@ -23,7 +23,7 @@ use bun_install::{
 use bun_io::Loop as AsyncLoop;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
-use bun_io::{BufferedReader, ReadState};
+use bun_io::{BufferedReader, IsPollable, ReadState};
 use bun_ptr::{RefCount, RefPtr, ThreadSafeRefCount};
 #[cfg(not(windows))]
 use bun_spawn::SpawnResultExt as _;
@@ -234,8 +234,9 @@ pub(crate) fn perform_security_scan_after_resolution(
 
     // For remove/uninstall, scan all remaining packages after removal
     // For other commands, scan all if no update requests, otherwise scan update packages
-    let scan_all =
-        manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty();
+    let scan_all = ScanAll::from_bool(
+        manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty(),
+    );
     let result = attempt_security_scan(
         manager,
         security_scanner,
@@ -264,7 +265,7 @@ pub(crate) fn perform_security_scan_after_resolution(
                 scan_all,
                 command_ctx,
                 original_cwd,
-                true,
+                IsRetry::Yes,
             )?;
             match retry_result {
                 ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
@@ -283,7 +284,13 @@ pub fn perform_security_scan_for_all(
         return Ok(None);
     };
 
-    let result = attempt_security_scan(manager, security_scanner, true, command_ctx, original_cwd)?;
+    let result = attempt_security_scan(
+        manager,
+        security_scanner,
+        ScanAll::Yes,
+        command_ctx,
+        original_cwd,
+    )?;
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
@@ -301,10 +308,10 @@ pub fn perform_security_scan_for_all(
             let retry_result = attempt_security_scan_with_retry(
                 manager,
                 security_scanner,
-                true,
+                ScanAll::Yes,
                 command_ctx,
                 original_cwd,
-                true,
+                IsRetry::Yes,
             )?;
             match retry_result {
                 ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
@@ -763,10 +770,17 @@ impl<'a> JSONBuilder<'a> {
 // scanner-entry.d.ts is NOT included in the build (type definitions only)
 const SCANNER_ENTRY_SOURCE: &[u8] = include_bytes!("./scanner-entry.ts");
 
+bun_core::bool_enum!(
+    /// Scan every package in the lockfile rather than only the packages being
+    /// added/updated by this command.
+    ScanAll
+);
+bun_core::bool_enum!(pub(crate) IsRetry);
+
 fn attempt_security_scan(
     manager: &mut PackageManager,
     security_scanner: &[u8],
-    scan_all: bool,
+    scan_all: ScanAll,
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<ScanAttemptResult, Error> {
@@ -776,17 +790,17 @@ fn attempt_security_scan(
         scan_all,
         command_ctx,
         original_cwd,
-        false,
+        IsRetry::No,
     )
 }
 
 fn attempt_security_scan_with_retry(
     manager: &mut PackageManager,
     security_scanner: &[u8],
-    scan_all: bool,
+    scan_all: ScanAll,
     command_ctx: CommandContext,
     original_cwd: &[u8],
-    is_retry: bool,
+    is_retry: IsRetry,
 ) -> Result<ScanAttemptResult, Error> {
     if manager.options.log_level == crate::package_manager::Options::LogLevel::Verbose {
         bun_core::pretty_errorln!(
@@ -819,7 +833,7 @@ fn attempt_security_scan_with_retry(
 
     let mut collector = PackageCollector::init(manager);
 
-    if scan_all {
+    if scan_all == ScanAll::Yes {
         collector.collect_all_packages()?;
     } else {
         collector.collect_update_packages()?;
@@ -1167,7 +1181,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // Windows (see the `.uv_loop` projection in `loop_()`); pass through.
         let uv_loop = self.loop_();
         // SAFETY: *pipe was just heap-allocated above and is non-null.
-        if let Some(e) = unsafe { (**pipe).init(uv_loop, false) }.to_error(bun_sys::Tag::pipe) {
+        if let Some(e) = unsafe { (**pipe).init(uv_loop, uv::Ipc::No) }.to_error(bun_sys::Tag::pipe)
+        {
             return Err(e.into());
         }
         if let Some(e) = unsafe { (**pipe).open(fds.1.unwrap().uv()) }.to_error(bun_sys::Tag::open)
@@ -1265,7 +1280,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // StaticPipeWriter still holds a pointer to it (child crash case).
         self.remaining_fds = 2;
         self.ipc_reader
-            .start(ipc_read_fd, true)
+            .start(ipc_read_fd, IsPollable::Yes)
             .map_err(|e| e.to_zig_err())?;
 
         // `to_process` consumes `SpawnResult` by value on POSIX (and
@@ -1485,7 +1500,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         security_scanner_pkg_id: Option<PackageID>,
         _command_ctx: CommandContext, // Reserved for future use
         _original_cwd: &[u8],         // Reserved for future use
-        is_retry: bool,
+        is_retry: IsRetry,
     ) -> Result<ScanAttemptResult, Error> {
         // `defer { ipc_data.deinit(); stderr_data.deinit(); }` — Vec fields drop with self.
 
@@ -1591,7 +1606,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 ErrorCode::ModuleNotFound => {
                     // If this is a retry after partial install, we need to handle it differently
                     // The scanner might have been installed but the lockfile wasn't updated
-                    if is_retry {
+                    if is_retry == IsRetry::Yes {
                         // Check if the scanner is an npm package name (not a file path)
                         let is_package_name = bun_paths::is_package_path(security_scanner);
 

@@ -25,7 +25,9 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_paths::{self as paths, PathBuffer};
 use bun_sys as sys;
-use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
+use bun_uws::{
+    self as uws, AnyResponse, CloseConnection, Opcode, Request, WebSocketUpgradeContext,
+};
 use bun_watcher::WatchItemColumns as _;
 use bun_wyhash::{Wyhash, hash};
 
@@ -40,7 +42,7 @@ use bun_ast::Loader;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
 use bun_safety::ThreadLock;
-use bun_watcher::Watcher;
+use bun_watcher::{CloseDescriptors, Watcher};
 
 pub(super) use crate::bake::dev_server::DirectoryWatchStore;
 pub(super) use crate::bake::dev_server::HmrSocket;
@@ -72,6 +74,7 @@ impl LogToJsAggregateErrorExt for Log {
 }
 pub(super) use crate::bake::dev_server::HotReloadEvent;
 pub(super) use crate::bake::dev_server::incremental_graph::IncrementalGraph;
+use crate::bake::dev_server::incremental_graph::{IsRoute, NewFilesStale, SsrGraph};
 pub(super) use crate::bake::dev_server::memory_cost::MemoryCost;
 
 impl DevServer {
@@ -905,7 +908,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         // `debug_assert!` does not evaluate its argument in release. Hoist
         // the side-effecting `insert_stale`
         // out so the refresh runtime is registered at index 0 in all builds.
-        let idx = dev.client_graph.insert_stale(&rfr.import_source, false)?;
+        let idx = dev
+            .client_graph
+            .insert_stale(&rfr.import_source, SsrGraph::No)?;
         debug_assert!(idx == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0));
     }
 
@@ -948,8 +953,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             // SAFETY: `server_graph` is disjoint from `framework`.
             let server_file = unsafe { &mut (*dev_ptr).server_graph }.insert_stale_extra(
                 &fsr.entry_server,
-                false,
-                true,
+                SsrGraph::No,
+                IsRoute::Yes,
             )?;
 
             types.push(framework_router::Type {
@@ -971,7 +976,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 client_file: if let Some(client) = &fsr.entry_client {
                     Some(to_opaque_file_id::<{ bake::Side::Client }>(
                         // SAFETY: `client_graph` is disjoint from `framework`.
-                        unsafe { &mut (*dev_ptr).client_graph }.insert_stale(client, false)?,
+                        unsafe { &mut (*dev_ptr).client_graph }
+                            .insert_stale(client, SsrGraph::No)?,
                     ))
                 } else {
                     None
@@ -984,7 +990,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 server_file,
                 RouteIndexAndRecurseFlag::new(
                     framework_router::RouteIndex::init(u32::try_from(i).expect("int cast")),
-                    true,
+                    RecurseWhenVisiting::Yes,
                 ),
             )?;
         }
@@ -1100,7 +1106,7 @@ impl Drop for DevServer {
         let watcher = unsafe { ::core::mem::ManuallyDrop::take(&mut self.bun_watcher) };
         // SAFETY: `Box::into_raw` yields the unique heap pointer; ownership
         // transfers to `shutdown`, which reclaims or hands off to the thread.
-        unsafe { Watcher::shutdown(Box::into_raw(watcher), true) };
+        unsafe { Watcher::shutdown(Box::into_raw(watcher), CloseDescriptors::Yes) };
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
@@ -1287,8 +1293,10 @@ impl DevServer {
             )?;
         }
 
-        self.server_graph.ensure_stale_bit_capacity(true)?;
-        self.client_graph.ensure_stale_bit_capacity(true)?;
+        self.server_graph
+            .ensure_stale_bit_capacity(NewFilesStale::Yes)?;
+        self.client_graph
+            .ensure_stale_bit_capacity(NewFilesStale::Yes)?;
         Ok(())
     }
 
@@ -1395,7 +1403,7 @@ pub(crate) fn is_allowed_host_header(
         return false;
     };
     let host = host_without_port(host);
-    if strings::eql_case_insensitive_ascii(host, b"localhost", true) {
+    if strings::eql_case_insensitive_ascii(host, b"localhost", strings::CheckLen::Yes) {
         return true;
     }
     const DOT_LOCALHOST: &[u8] = b".localhost";
@@ -1403,7 +1411,7 @@ pub(crate) fn is_allowed_host_header(
         && strings::eql_case_insensitive_ascii(
             &host[host.len() - DOT_LOCALHOST.len()..],
             DOT_LOCALHOST,
-            true,
+            strings::CheckLen::Yes,
         )
     {
         return true;
@@ -1420,7 +1428,7 @@ pub(crate) fn is_allowed_host_header(
         hostname: Some(h), ..
     }) = address
     {
-        return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
+        return strings::eql_case_insensitive_ascii(host, h.as_bytes(), strings::CheckLen::Yes);
     }
     false
 }
@@ -1465,7 +1473,7 @@ fn is_allowed_dev_origin(req: &Request) -> bool {
         return false;
     };
     let origin_host = host_without_port(&origin[scheme_end + 3..]);
-    if strings::eql_case_insensitive_ascii(origin_host, b"localhost", true) {
+    if strings::eql_case_insensitive_ascii(origin_host, b"localhost", strings::CheckLen::Yes) {
         return true;
     }
     const DOT_LOCALHOST: &[u8] = b".localhost";
@@ -1473,15 +1481,17 @@ fn is_allowed_dev_origin(req: &Request) -> bool {
         && strings::eql_case_insensitive_ascii(
             &origin_host[origin_host.len() - DOT_LOCALHOST.len()..],
             DOT_LOCALHOST,
-            true,
+            strings::CheckLen::Yes,
         )
     {
         return true;
     }
     match req.header(b"host") {
-        Some(host) => {
-            strings::eql_case_insensitive_ascii(origin_host, host_without_port(host), true)
-        }
+        Some(host) => strings::eql_case_insensitive_ascii(
+            origin_host,
+            host_without_port(host),
+            strings::CheckLen::Yes,
+        ),
         None => false,
     }
 }
@@ -1489,7 +1499,10 @@ fn is_allowed_dev_origin(req: &Request) -> bool {
 fn host_forbidden(resp: AnyResponse) {
     resp.corked(move || {
         resp.write_status(b"403 Forbidden");
-        resp.end(b"Blocked: Host header does not match the dev server", false);
+        resp.end(
+            b"Blocked: Host header does not match the dev server",
+            CloseConnection::No,
+        );
     });
 }
 
@@ -1498,7 +1511,7 @@ fn origin_forbidden(resp: AnyResponse) {
         resp.write_status(b"403 Forbidden");
         resp.end(
             b"Blocked: Origin header does not match the dev server",
-            false,
+            CloseConnection::No,
         );
     });
 }
@@ -1679,7 +1692,7 @@ impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
     fn write_status(&mut self, status: &[u8]) {
         bun_uws_sys::response::Response::<SSL>::write_status(self, status)
     }
-    fn end(&mut self, data: &[u8], close_connection: bool) {
+    fn end(&mut self, data: &[u8], close_connection: CloseConnection) {
         bun_uws_sys::response::Response::<SSL>::end(self, data, close_connection)
     }
     fn as_any_response(&mut self) -> bun_uws::AnyResponse {
@@ -1719,7 +1732,7 @@ fn not_found(resp: AnyResponse) {
 
 fn on_not_found_corked(resp: AnyResponse) {
     resp.write_status(b"404 Not Found");
-    resp.end(b"Not Found", false);
+    resp.end(b"Not Found", CloseConnection::No);
 }
 
 fn on_outdated_js_corked(resp: AnyResponse) {
@@ -1731,7 +1744,7 @@ fn on_outdated_js_corked(resp: AnyResponse) {
     resp.end(
         b"try{location.reload()}catch(_){}\n\
          addEventListener(\"DOMContentLoaded\",function(event){location.reload()})",
-        false,
+        CloseConnection::No,
     );
 }
 
@@ -1833,14 +1846,14 @@ fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         resp.write_status(b"501 Not Implemented");
         resp.end(
             b"Viewing source without opening in editor is not implemented yet!",
-            false,
+            CloseConnection::No,
         );
         return;
     }
 
     // TODO: better editor detection. on chloe's dev env, this opens apple terminal + vim
     resp.write_status(b"501 Not Implemented");
-    resp.end(b"TODO", false);
+    resp.end(b"TODO", CloseConnection::No);
 }
 
 struct RequestEnsureRouteBundledCtx {
@@ -1948,7 +1961,7 @@ impl RequestEnsureRouteBundledCtx {
     }
 
     fn on_plugin_error(&mut self) -> JsResult<()> {
-        self.resp.end(b"Plugin Error", false);
+        self.resp.end(b"Plugin Error", CloseConnection::No);
         Ok(())
     }
 
@@ -2104,7 +2117,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                 dev.route_bundle_ptr(route_bundle_index).server_state =
                     route_bundle::State::Bundling;
 
-                dev.start_async_bundle(entry_points, false, Instant::now())
+                dev.start_async_bundle(entry_points, HadReloadEvent::No, Instant::now())
                     .expect("oom");
                 return Ok(());
             }
@@ -2437,6 +2450,8 @@ struct FrameworkRequestArgs {
     set_async_local_storage: JSValue,
 }
 
+bun_core::bool_enum!(pub(crate) FirstRequest);
+
 impl DevServer {
     /// Note: raw-pointer receiver. A previous version of this body bound
     /// long-lived `&mut RouteBundle` / `&mut Type` from
@@ -2456,8 +2471,9 @@ impl DevServer {
         route_bundle_index: route_bundle::Index,
         framework_bundle: &mut route_bundle::Framework,
         params_js_value: JSValue,
-        first_request: bool,
+        first_request: FirstRequest,
     ) -> JsResult<FrameworkRequestArgs> {
+        let first_request = first_request == FirstRequest::Yes;
         // SAFETY: `this` is live; `vm` is a `BackRef` (safe Deref); `vm.global`
         // is valid for VM lifetime.
         let global = unsafe { &*(&(*this).vm).global };
@@ -2700,7 +2716,7 @@ impl DevServer {
                 route_bundle_index,
                 framework_bundle,
                 params_js_value,
-                true,
+                FirstRequest::Yes,
             )
         }?;
 
@@ -3170,7 +3186,7 @@ impl DeferredRequest {
                 // client has framing.
                 r.response.write_status(b"500 Internal Server Error");
                 r.response.write_header_int(b"Content-Length", 0);
-                r.response.end_without_body(true);
+                r.response.end_without_body(CloseConnection::Yes);
             }
             Handler::Aborted => {}
         }
@@ -3183,11 +3199,13 @@ pub struct ResponseAndMethod {
     pub method: Method,
 }
 
+bun_core::bool_enum!(pub(crate) HadReloadEvent);
+
 impl DevServer {
     pub(crate) fn start_async_bundle(
         &mut self,
         entry_points: EntryPointList,
-        had_reload_event: bool,
+        had_reload_event: HadReloadEvent,
         timer: Instant,
     ) -> crate::Result<()> {
         debug_assert!(self.current_bundle.is_none());
@@ -3277,7 +3295,7 @@ impl DevServer {
             // SAFETY: see `heap_ptr` note above.
             unsafe { &*heap_ptr },
             event_loop,
-            false, // watching is handled separately
+            bundler::bundle_v2::CliWatchFlag::No, // watching is handled separately
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
@@ -3324,7 +3342,7 @@ impl DevServer {
             ast_alloc_state,
             timer,
             start_data,
-            had_reload_event,
+            had_reload_event: had_reload_event == HadReloadEvent::Yes,
             requests: ::core::mem::take(&mut self.next_bundle.requests),
             promise: ::core::mem::take(&mut self.next_bundle.promise),
             resolution_failure_entries: Default::default(),
@@ -3357,12 +3375,12 @@ impl DevServer {
                         bake::Side::Client => self.client_graph.insert_failure(
                             incremental_graph::InsertFailureKey::Index(index),
                             log,
-                            false,
+                            SsrGraph::No,
                         )?,
                         bake::Side::Server => self.server_graph.insert_failure(
                             incremental_graph::InsertFailureKey::Index(index),
                             log,
-                            true,
+                            SsrGraph::Yes,
                         )?,
                     }
                 }
@@ -4025,7 +4043,7 @@ pub(super) fn finalize_bundle(
                             .map(|v| v.as_slice().to_vec().into_boxed_slice()),
                     }),
                 },
-                false,
+                SsrGraph::No,
             )?,
             graph @ (bake::Graph::Server | bake::Graph::Ssr) => dev.server_graph.receive_chunk(
                 &mut ctx,
@@ -4043,7 +4061,7 @@ pub(super) fn finalize_bundle(
                             .map(|v| v.as_slice().to_vec().into_boxed_slice()),
                     }),
                 },
-                graph == bake::Graph::Ssr,
+                SsrGraph::from_bool(graph == bake::Graph::Ssr),
             )?,
         }
     }
@@ -4077,8 +4095,8 @@ pub(super) fn finalize_bundle(
                 // and `code()` only reads.
                 unsafe { ::core::slice::from_raw_parts(chunks_ptr, chunks_len) },
                 None,
-                false,
-                false,
+                bundler::chunk::ForceAbsolutePath::No,
+                bundler::chunk::EnableSourceMapShifts::No,
             )?
         };
 
@@ -4116,7 +4134,7 @@ pub(super) fn finalize_bundle(
             &mut ctx,
             index,
             incremental_graph::ReceiveChunkContent::Css(h),
-            false,
+            SsrGraph::No,
         )?;
 
         // If imported on server, there needs to be a server-side file entry
@@ -4151,7 +4169,7 @@ pub(super) fn finalize_bundle(
                 code: generated_js,
                 source_map: None,
             },
-            false,
+            SsrGraph::No,
         )?;
         let client_index = ctx
             .get_cached_index(bake::Side::Client, index)
@@ -4243,8 +4261,10 @@ pub(super) fn finalize_bundle(
     }
     dev.index_failures()?;
 
-    dev.client_graph.ensure_stale_bit_capacity(false)?;
-    dev.server_graph.ensure_stale_bit_capacity(false)?;
+    dev.client_graph
+        .ensure_stale_bit_capacity(NewFilesStale::No)?;
+    dev.server_graph
+        .ensure_stale_bit_capacity(NewFilesStale::No)?;
 
     dev.generation = dev.generation.wrapping_add(1);
     if Environment::ENABLE_LOGS {
@@ -4976,10 +4996,10 @@ impl DevServer {
                         debug_assert!(unsafe { (*current).debug_mutex.try_lock() });
                     }
 
-                    break 'brk (true, reload_event_timer);
+                    break 'brk (HadReloadEvent::Yes, reload_event_timer);
                 }
             } else {
-                (false, Instant::now())
+                (HadReloadEvent::No, Instant::now())
             };
 
             // Note: iterate by index — `route_bundle_ptr` /
@@ -5034,17 +5054,17 @@ impl DevServer {
                 bake::Graph::Server => self.server_graph.insert_failure(
                     incremental_graph::InsertFailureKey::AbsPath(abs_path),
                     log,
-                    false,
+                    SsrGraph::No,
                 )?,
                 bake::Graph::Ssr => self.server_graph.insert_failure(
                     incremental_graph::InsertFailureKey::AbsPath(abs_path),
                     log,
-                    true,
+                    SsrGraph::Yes,
                 )?,
                 bake::Graph::Client => self.client_graph.insert_failure(
                     incremental_graph::InsertFailureKey::AbsPath(abs_path),
                     log,
-                    false,
+                    SsrGraph::No,
                 )?,
             }
         }
@@ -5062,12 +5082,12 @@ impl DevServer {
         let _g = self.graph_safety_lock.guard();
 
         let owner: serialized_failure::OwnerPacked = if graph == bake::Graph::Client {
-            let idx = self.client_graph.insert_stale(abs_path, false)?;
+            let idx = self.client_graph.insert_stale(abs_path, SsrGraph::No)?;
             serialized_failure::OwnerPacked::new(bake::Side::Client, idx.get())
         } else {
             let idx = self
                 .server_graph
-                .insert_stale(abs_path, graph == bake::Graph::Ssr)?;
+                .insert_stale(abs_path, SsrGraph::from_bool(graph == bake::Graph::Ssr))?;
             serialized_failure::OwnerPacked::new(bake::Side::Server, idx.get())
         };
         let current_bundle = self
@@ -5289,9 +5309,11 @@ impl DevServer {
                     // R-2: shared deref — only `bundle.path` is read; mutation of
                     // `dev_server_id` goes through the `Cell` `index_location` above.
                     let html_ref = unsafe { &*html };
-                    let incremental_graph_index =
-                        self.client_graph
-                            .insert_stale_extra(&html_ref.bundle.path, false, true)?;
+                    let incremental_graph_index = self.client_graph.insert_stale_extra(
+                        &html_ref.bundle.path,
+                        SsrGraph::No,
+                        IsRoute::Yes,
+                    )?;
                     let file = &mut self.client_graph.bundled_files.values_mut()
                         [incremental_graph_index.get() as usize];
                     file.html_route_bundle_index = Some(bundle_index);
@@ -5452,7 +5474,7 @@ impl DevServer {
                         any_blob.to_blob(global),
                     )),
                     BunString::empty(),
-                    false,
+                    crate::webcore::response::Redirected::No,
                 );
                 let vm = self.vm();
                 let _exit = vm.enter_event_loop_scope();
@@ -5466,7 +5488,7 @@ impl DevServer {
 fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
     let message = b"404 Not Found";
     resp.write_status(b"404 Not Found");
-    resp.end(message, true);
+    resp.end(message, CloseConnection::Yes);
 }
 
 impl DevServer {
@@ -5885,7 +5907,7 @@ impl DevServer {
 
     pub(crate) fn publish(&self, topic: HmrTopic, message: &[u8], opcode: Opcode) {
         if let Some(s) = &self.server {
-            let _ = s.publish(&topic.uws_topic(), message, opcode, false);
+            let _ = s.publish(&topic.uws_topic(), message, opcode, uws::Compress::No);
         }
     }
 
@@ -5927,13 +5949,13 @@ impl DevServer {
     ) -> crate::Result<OpaqueFileId> {
         let index = self
             .server_graph
-            .insert_stale_extra(abs_path, false, true)
+            .insert_stale_extra(abs_path, SsrGraph::No, IsRoute::Yes)
             .map_err(crate::Error::from)?;
         self.route_lookup.put(
             index,
             RouteIndexAndRecurseFlag::new(
                 associated_route,
-                file_kind == framework_router::FileKind::Layout,
+                RecurseWhenVisiting::from_bool(file_kind == framework_router::FileKind::Layout),
             ),
         )?;
         Ok(to_opaque_file_id::<{ bake::Side::Server }>(index))
@@ -6073,14 +6095,17 @@ impl DevServer {
     }
 }
 
+bun_core::bool_enum!(pub(crate) RecurseWhenVisiting);
+
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 pub struct RouteIndexAndRecurseFlag(pub u32);
 impl RouteIndexAndRecurseFlag {
     pub(crate) fn new(
         route_index: framework_router::RouteIndex,
-        should_recurse_when_visiting: bool,
+        should_recurse_when_visiting: RecurseWhenVisiting,
     ) -> Self {
+        let should_recurse_when_visiting = should_recurse_when_visiting == RecurseWhenVisiting::Yes;
         RouteIndexAndRecurseFlag(
             (route_index.get() & 0x7FFF_FFFF) | ((should_recurse_when_visiting as u32) << 31),
         )
@@ -6314,7 +6339,7 @@ impl UnrefSourceMapRequest {
             source_map_store::RemoveOrUpgradeMode::Remove,
         );
         r.write_status(b"204 No Content");
-        r.end(b"", false);
+        r.end(b"", CloseConnection::No);
         // SAFETY: ctx is the original heap-allocated pointer; the only borrow
         // derived from it points into a separate DevServer allocation and has
         // ended.
@@ -6766,7 +6791,7 @@ fn new_route_params_for_bundle_promise(
             route_bundle_index,
             &mut *framework_bundle,
             params_js_value,
-            false,
+            FirstRequest::No,
         )
     }?;
 

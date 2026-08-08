@@ -18,7 +18,9 @@ use crate::webcore::s3::client::{
     S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
     S3ListObjectsResult,
 };
+use crate::webcore::s3::credentials_jsc::RequestPayer;
 use bun_core::{ZigString, strings};
+use bun_dotenv::HttpScheme;
 use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
 
@@ -274,7 +276,7 @@ impl S3Ext for S3 {
             options,
             self.acl,
             self.storage_class,
-            self.request_payer,
+            RequestPayer::from_bool(self.request_payer),
             global_object,
         )
     }
@@ -339,7 +341,7 @@ impl S3Ext for S3 {
             .as_mut()
             .transpiler
             .env_mut()
-            .get_http_proxy(true, None, None);
+            .get_http_proxy(HttpScheme::Http, None, None);
         let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
@@ -434,7 +436,7 @@ impl S3Ext for S3 {
             .as_mut()
             .transpiler
             .env_mut()
-            .get_http_proxy(true, None, None);
+            .get_http_proxy(HttpScheme::Http, None, None);
         let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.

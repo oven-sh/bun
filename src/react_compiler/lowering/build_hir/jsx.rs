@@ -257,7 +257,7 @@ pub(super) fn lower_jsx_call(
         // expression (which may itself be a user-authored array) is passed
         // through verbatim. Recover that bit so lower_jsx_children knows
         // whether an EArray is the transform's container or a real child.
-        let is_static_children = if args.len() == 6 {
+        let is_static_children = StaticChildren::from_bool(if args.len() == 6 {
             matches!(args[3].data, ExprData::EBoolean(b) if b.value)
         } else {
             match &call.target.data {
@@ -267,7 +267,7 @@ pub(super) fn lower_jsx_call(
                 }
                 _ => false,
             }
-        };
+        });
 
         // `key` was hoisted out of the props object into args[2] by the visit
         // pass. Lower it BEFORE children so instruction order matches JSX
@@ -398,15 +398,17 @@ fn is_jsx_runtime_fragment(builder: &HirBuilder, tag: &Expr) -> bool {
     host.ref_name(ref_) == b"Fragment" && host.module_scope().generated.contains(&ref_)
 }
 
+bun_core::bool_enum!(StaticChildren);
+
 /// The visit pass packs children into the props object as either a single
 /// expression or an `E::Array` (when there were ≥2 children or a spread child).
 fn lower_jsx_children(
     builder: &mut HirBuilder,
     value: &Expr,
-    is_static_children: bool,
+    is_static_children: StaticChildren,
     out: &mut HirVec<Place>,
 ) -> Result<(), CompilerError> {
-    if is_static_children {
+    if is_static_children == StaticChildren::Yes {
         if let ExprData::EArray(arr) = &value.data {
             for item in arr.items.iter() {
                 match &item.data {

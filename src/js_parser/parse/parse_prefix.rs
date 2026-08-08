@@ -4,9 +4,11 @@ use bun_collections::VecExt;
 
 use crate::lexer::T;
 use crate::p::P;
+use crate::parse::IncludeRaw;
 use crate::parser::{
-    AsyncPrefixExpression, AwaitOrYield, DeferredErrors, FnOrArrowDataParse, ParenExprOpts,
-    ParseClassOptions, PropertyOpts, SkipTypeParameterResult, TypeParameterFlag, prefill,
+    AsyncPrefixExpression, AwaitOrYield, DeferredErrors, FnOrArrowDataParse, IsAsync,
+    ParenExprOpts, ParseClassOptions, PropertyOpts, SkipTypeParameterResult, TypeParameterFlag,
+    prefill,
 };
 use bun_ast::e::UnaryFlags;
 use bun_ast::expr::EFlags;
@@ -282,7 +284,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         let head = p.lexer.to_e_string()?;
 
-        let (parts, _tail_loc) = p.parse_template_parts(false)?;
+        let (parts, _tail_loc) = p.parse_template_parts(IncludeRaw::No)?;
 
         // Check if TemplateLiteral is unsupported. We don't care for this product.`
         // if ()
@@ -529,7 +531,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn pfx_t_function(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        p.parse_fn_expr(loc, false)
+        p.parse_fn_expr(loc, IsAsync::No)
     }
 
     fn pfx_t_class(p: &mut Self) -> PResult<Expr> {

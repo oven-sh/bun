@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use bun_jsc::virtual_machine::IsRejection;
 use bun_uws as uws;
 
 pub struct WebSocketServerContext {
@@ -93,10 +94,11 @@ impl Handler {
             return;
         }
 
-        let _ =
-            VirtualMachine::get()
-                .as_mut()
-                .uncaught_exception(global_object, error_value, false);
+        let _ = VirtualMachine::get().as_mut().uncaught_exception(
+            global_object,
+            error_value,
+            IsRejection::No,
+        );
     }
 
     pub fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {

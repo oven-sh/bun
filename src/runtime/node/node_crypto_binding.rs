@@ -10,7 +10,7 @@ use bun_jsc::{
     JsResult, StrongOptional,
 };
 
-use crate::node::StringOrBuffer;
+use crate::node::{AllowStringObject, IsAsync, StringOrBuffer};
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params
 // are by-value `JSValue`, so no caller-side preconditions remain.
@@ -858,8 +858,12 @@ mod _impl {
                 }
             }
 
-            let Some(password) =
-                StringOrBuffer::from_js_maybe_async(global, password_value, IS_ASYNC, true)?
+            let Some(password) = StringOrBuffer::from_js_maybe_async(
+                global,
+                password_value,
+                IsAsync::from_bool(IS_ASYNC),
+                AllowStringObject::Yes,
+            )?
             else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"password",
@@ -877,8 +881,12 @@ mod _impl {
                 }
             });
 
-            let Some(salt) =
-                StringOrBuffer::from_js_maybe_async(global, salt_value, IS_ASYNC, true)?
+            let Some(salt) = StringOrBuffer::from_js_maybe_async(
+                global,
+                salt_value,
+                IsAsync::from_bool(IS_ASYNC),
+                AllowStringObject::Yes,
+            )?
             else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"salt",
@@ -1200,7 +1208,7 @@ mod _impl {
 
     #[bun_jsc::host_fn]
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let data = PBKDF2::from_js(global_this, call_frame, true)?;
+        let data = PBKDF2::from_js(global_this, call_frame, IsAsync::Yes)?;
 
         let job = pbkdf2::create_job(global_this, data);
         // SAFETY: `job` was just boxed by `create()` and is live; `ctx.promise` is
@@ -1211,7 +1219,7 @@ mod _impl {
 
     #[bun_jsc::host_fn]
     fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let data = PBKDF2::from_js(global_this, call_frame, false)?;
+        let data = PBKDF2::from_js(global_this, call_frame, IsAsync::No)?;
         // `PBKDF2`'s `StringOrBuffer` fields release on `Drop`, so the local
         // just goes out of scope.
         let mut data = data;

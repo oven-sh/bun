@@ -20,10 +20,10 @@ use bun_core::strings;
 use bun_ast::LexerLog as _;
 
 use crate::lexer::T;
-use crate::p::P;
+use crate::p::{IsSpread, P};
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
-    FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
+    FnOrArrowDataParse, IsAsync, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
     StmtList, TypeParameterFlag,
 };
@@ -32,6 +32,8 @@ use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{ArrayBinding, StrictModeKind};
 use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt};
+
+bun_core::bool_enum!(pub(crate) IncludeRaw);
 
 // File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
 // so this is a direct `impl P` block.
@@ -280,7 +282,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn parse_template_parts(
         &mut self,
-        include_raw: bool,
+        include_raw: IncludeRaw,
     ) -> Result<(bun_ast::StoreSlice<E::TemplatePart>, bun_ast::Loc), Error> {
         let p = self;
         let mut parts = BumpVec::<E::TemplatePart>::with_capacity_in(1, p.arena);
@@ -297,7 +299,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             tail_loc = p.lexer.loc();
             p.lexer.rescan_close_brace_as_template_token()?;
 
-            let tail: E::TemplateContents = if !include_raw {
+            let tail: E::TemplateContents = if include_raw == IncludeRaw::No {
                 E::TemplateContents::Cooked(p.lexer.to_e_string()?)
             } else {
                 E::TemplateContents::Raw(p.lexer.raw_template_contents().into())
@@ -517,9 +519,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // First, try converting the expressions to bindings
             for i in 0..items.len() {
-                let mut is_spread = false;
+                let mut is_spread = IsSpread::No;
                 if let js_ast::expr::Data::ESpread(v) = &items[i].data {
-                    is_spread = true;
+                    is_spread = IsSpread::Yes;
                     let inner = v.value;
                     items[i] = inner;
                 }
@@ -1566,7 +1568,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         // "async function() {}"
         if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {
-            return p.parse_fn_expr(async_range.loc, true);
+            return p.parse_fn_expr(async_range.loc, IsAsync::Yes);
         }
 
         // Check the precedence level to avoid parsing an arrow function in

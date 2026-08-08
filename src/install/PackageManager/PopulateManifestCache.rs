@@ -5,14 +5,16 @@ use bun_core::Output;
 use crate::Dependency;
 use crate::DependencyID;
 use crate::ManifestLoad;
-use crate::NetworkTask;
 use crate::PackageID;
 use crate::Resolution;
 use crate::dependency::Behavior;
 use crate::invalid_package_id;
+use crate::network_task::{IsOptional, NetworkTask};
+use crate::npm::ExtendedManifest;
 // Import the
 // *module* under the `Task` name so `Task::Id` resolves as a path (matches
 // `runTasks.rs` / `PackageManagerEnqueue.rs`).
+use super::InstallPeer;
 use super::PackageManager;
 use super::enqueue;
 use super::run_tasks::{self, RunTasksCallbacks};
@@ -48,7 +50,7 @@ fn start_manifest_task(
     manager: &mut PackageManager,
     pkg_name: &[u8],
     dep: &Dependency,
-    needs_extended_manifest: bool,
+    needs_extended_manifest: ExtendedManifest,
 ) -> Result<(), StartManifestTaskError> {
     let task_id = Task::Id::for_manifest(pkg_name);
     // Read the *raw* OPTIONAL bit
@@ -89,7 +91,7 @@ fn start_manifest_task(
         pkg_name,
         scope.get(),
         None,
-        is_optional,
+        IsOptional::from_bool(is_optional),
         needs_extended_manifest,
     )?;
 
@@ -175,7 +177,8 @@ pub fn populate_manifest_cache(
                 let pkg_name_slice = pkg_name.slice(string_buf);
                 // `options` is not mutated between here and the
                 // `start_manifest_task` call — read via the BACKREF `mgr_ref`.
-                let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
+                let needs_extended_manifest =
+                    ExtendedManifest::from_bool(mgr_ref.options.minimum_release_age_ms.is_some());
 
                 // `scope_for_package_name` borrows only `options` (via the
                 // BACKREF `mgr_ref`); `manifests` is a disjoint field projected
@@ -234,7 +237,9 @@ pub fn populate_manifest_cache(
 
                     // `options` read via BACKREF `mgr_ref` — see provenance-root
                     // note above.
-                    let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
+                    let needs_extended_manifest = ExtendedManifest::from_bool(
+                        mgr_ref.options.minimum_release_age_ms.is_some(),
+                    );
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
                     // See disjoint-field note on the `.All` arm above.
                     let scope =
@@ -296,7 +301,7 @@ pub fn populate_manifest_cache(
                 if let Err(err) = run_tasks::run_tasks::<ManifestsOnlyCallbacks>(
                     manager,
                     &mut (),
-                    true,
+                    InstallPeer::Yes,
                     log_level,
                 ) {
                     closure.err = Some(err);

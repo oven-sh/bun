@@ -3,6 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::throw;
 use super::DiffFormatter;
 use super::Expect;
+use super::IsNot;
 
 impl Expect {
     /// Object.is()
@@ -40,7 +41,7 @@ impl Expect {
         let has_custom_label = this.custom_label.is_empty();
 
         if not {
-            let signature = Expect::get_signature("toBe", "<green>expected<r>", true);
+            let signature = Expect::get_signature("toBe", "<green>expected<r>", IsNot::Yes);
             return throw!(
                 this,
                 global_this,
@@ -49,7 +50,7 @@ impl Expect {
             );
         }
 
-        let signature = Expect::get_signature("toBe", "<green>expected<r>", false);
+        let signature = Expect::get_signature("toBe", "<green>expected<r>", IsNot::No);
         if left.jest_deep_equals(right, global_this)? || left.jest_strict_deep_equals(right, global_this)? {
             // Rust format strings must be literals, so branch the call on
             // `has_custom_label` instead.

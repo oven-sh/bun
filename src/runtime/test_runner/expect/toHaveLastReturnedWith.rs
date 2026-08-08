@@ -4,6 +4,7 @@ use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
 use super::Expect;
+use super::IsNot;
 use super::throw;
 
 pub(crate) fn to_have_last_returned_with(
@@ -58,13 +59,13 @@ pub(crate) fn to_have_last_returned_with(
     // Handle failure
     let mut formatter = Formatter::new(global_this).with_quote_strings(true);
 
-    let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
+    let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", IsNot::No);
 
     if this.flags.get().not() {
         return throw!(
             this,
             global_this,
-            Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", true),
+            Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", IsNot::Yes),
             concat!(
                 "\n\n",
                 "Expected mock function not to have last returned: <green>{}<r>\n",

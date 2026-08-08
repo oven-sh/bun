@@ -470,7 +470,7 @@ impl HTMLRewriter {
                     },
                     body_value,
                     BunString::empty(),
-                    false,
+                    webcore::response::Redirected::No,
                 )),
                 Response::finalize,
             );
@@ -768,6 +768,8 @@ pub struct RewriterPipe {
     pump_controller_attached: Cell<bool>,
 }
 
+bun_core::bool_enum!(CancelUpstream);
+
 impl RewriterPipe {
     /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
     /// here may touch other GC cells, and the other `claims` holders may
@@ -885,7 +887,7 @@ impl RewriterPipe {
     /// still alive (it is rooted by the cell's `inputStream` slot until the
     /// handle is dropped here). Idempotent: the handle is `None` after the
     /// first call.
-    fn detach_input_source(&self, cancel_upstream: bool) {
+    fn detach_input_source(&self, cancel_upstream: CancelUpstream) {
         let mut src = self.input_source.replace(SourceHandle::None);
         match &src {
             SourceHandle::ByteStream(bs) => bs.parent_const().set_sink_owner(JSValue::UNDEFINED),
@@ -894,7 +896,7 @@ impl RewriterPipe {
         }
         let mut upstream = src;
         JSSink::<RewriterPipe>::detach(&mut src, &self.global);
-        if cancel_upstream {
+        if cancel_upstream == CancelUpstream::Yes {
             match upstream {
                 SourceHandle::ByteStream(_) | SourceHandle::FileReader(_) => {
                     upstream.close(None);
@@ -1017,7 +1019,7 @@ impl RewriterPipe {
                 webcore::body::Value::Locked(pv)
             }),
             BunString::empty(),
-            false,
+            webcore::response::Redirected::No,
         ));
         let result_ref = BackRef::from(result);
         this.response.set(Some(result_ref));
@@ -1309,7 +1311,7 @@ impl RewriterPipe {
         // pipe; otherwise the controller's destructor would later dispatch
         // `__controllerDetached`/`__finalize` on freed memory. The upstream
         // already ended, so there is nothing to cancel.
-        self.detach_input_source(false);
+        self.detach_input_source(CancelUpstream::No);
 
         if self.js_pump_reaction_pending.get() {
             // The pump-promise `.then()` reaction is the single terminal
@@ -1363,7 +1365,7 @@ impl RewriterPipe {
     /// `SourceHandle::on_close` entry — the output reader cancelled.
     pub fn cancel_from_output(&self, _err: Option<SysError>) {
         self.detach_output();
-        self.detach_input_source(true);
+        self.detach_input_source(CancelUpstream::Yes);
         js_HTMLRewriterTransform::input_stream_set_cached(
             self.cell.get(),
             &self.global,
@@ -1591,7 +1593,7 @@ impl RewriterPipe {
     fn fail(&self, err: webcore::body::ValueError) {
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
-        self.detach_input_source(true);
+        self.detach_input_source(CancelUpstream::Yes);
         let cell = self.cell.get();
         if cell.is_cell() {
             js_HTMLRewriterTransform::input_stream_set_cached(

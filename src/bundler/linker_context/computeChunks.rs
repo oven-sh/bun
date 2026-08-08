@@ -11,6 +11,7 @@ use bun_wyhash::{self, Wyhash};
 
 use crate::bun_css;
 use crate::bun_fs;
+use crate::chunk::{IsEntryPoint, IsHtml};
 use crate::options::{PathTemplate, PlaceholderField};
 use crate::{BundleV2, Chunk, Index, IndexInt, LinkerContext};
 
@@ -19,13 +20,19 @@ use super::find_all_imported_parts_in_js_order::find_all_imported_parts_in_js_or
 use super::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
 use super::find_imported_files_in_css_order::find_imported_files_in_css_order;
 
+bun_core::bool_enum!(HasHtmlChunk);
+bun_core::bool_enum!(IsBrowserChunkFromServerBuild);
+
 #[inline(always)]
-fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) -> chunk::Flags {
+fn make_flags(
+    has_html_chunk: HasHtmlChunk,
+    is_browser_chunk_from_server_build: IsBrowserChunkFromServerBuild,
+) -> chunk::Flags {
     let mut f = chunk::Flags::empty();
-    if has_html_chunk {
+    if has_html_chunk == HasHtmlChunk::Yes {
         f |= chunk::Flags::HAS_HTML_CHUNK;
     }
-    if is_browser_chunk_from_server_build {
+    if is_browser_chunk_from_server_build == IsBrowserChunkFromServerBuild::Yes {
         f |= chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD;
     }
     f
@@ -127,14 +134,21 @@ pub(crate) fn compute_chunks(
             let html_chunk_entry = html_chunks.get_or_put(js_chunk_key)?;
             if !html_chunk_entry.found_existing {
                 *html_chunk_entry.value_ptr = Chunk {
-                    entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
+                    entry_point: chunk::EntryPoint::new(
+                        source_index,
+                        entry_bit,
+                        IsEntryPoint::Yes,
+                        IsHtml::No,
+                    ),
                     entry_bits: entry_point_chunk_bits.clone()?,
                     content: chunk::Content::Html,
                     output_source_map: SourceMapPieces::init(),
                     flags: make_flags(
-                        false,
-                        could_be_browser_target_from_server_build
-                            && ast_targets[source_index as usize] == Target::Browser,
+                        HasHtmlChunk::No,
+                        IsBrowserChunkFromServerBuild::from_bool(
+                            could_be_browser_target_from_server_build
+                                && ast_targets[source_index as usize] == Target::Browser,
+                        ),
                     ),
                     ..Default::default()
                 };
@@ -168,7 +182,12 @@ pub(crate) fn compute_chunks(
                 // const css_chunk_entry = try js_chunks.getOrPut();
                 let order_len = order.len() as usize;
                 *css_chunk_entry.value_ptr = Chunk {
-                    entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
+                    entry_point: chunk::EntryPoint::new(
+                        source_index,
+                        entry_bit,
+                        IsEntryPoint::Yes,
+                        IsHtml::No,
+                    ),
                     entry_bits: entry_point_chunk_bits,
                     content: chunk::Content::Css(chunk::CssChunk {
                         imports_in_chunk_in_order: order,
@@ -179,9 +198,11 @@ pub(crate) fn compute_chunks(
                     }),
                     output_source_map: SourceMapPieces::init(),
                     flags: make_flags(
-                        has_html_chunk,
-                        could_be_browser_target_from_server_build
-                            && ast_targets[source_index as usize] == Target::Browser,
+                        HasHtmlChunk::from_bool(has_html_chunk),
+                        IsBrowserChunkFromServerBuild::from_bool(
+                            could_be_browser_target_from_server_build
+                                && ast_targets[source_index as usize] == Target::Browser,
+                        ),
                     ),
                     ..Default::default()
                 };
@@ -196,14 +217,21 @@ pub(crate) fn compute_chunks(
         entry_point_to_js_chunk_idx[entry_id_] =
             u32::try_from(js_chunk_entry.index).expect("int cast");
         *js_chunk_entry.value_ptr = Chunk {
-            entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
+            entry_point: chunk::EntryPoint::new(
+                source_index,
+                entry_bit,
+                IsEntryPoint::Yes,
+                IsHtml::No,
+            ),
             entry_bits: entry_point_chunk_bits,
             content: chunk::Content::Javascript(chunk::JavaScriptChunk::default()),
             output_source_map: SourceMapPieces::init(),
             flags: make_flags(
-                has_html_chunk,
-                could_be_browser_target_from_server_build
-                    && ast_targets[source_index as usize] == Target::Browser,
+                HasHtmlChunk::from_bool(has_html_chunk),
+                IsBrowserChunkFromServerBuild::from_bool(
+                    could_be_browser_target_from_server_build
+                        && ast_targets[source_index as usize] == Target::Browser,
+                ),
             ),
             ..Default::default()
         };
@@ -259,7 +287,12 @@ pub(crate) fn compute_chunks(
                         }
                     }
                     *css_chunk_entry.value_ptr = Chunk {
-                        entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
+                        entry_point: chunk::EntryPoint::new(
+                            source_index,
+                            entry_bit,
+                            IsEntryPoint::Yes,
+                            IsHtml::No,
+                        ),
                         entry_bits: entry_bits.clone()?,
                         content: chunk::Content::Css(chunk::CssChunk {
                             imports_in_chunk_in_order: order,
@@ -271,9 +304,11 @@ pub(crate) fn compute_chunks(
                         files_with_parts_in_chunk: css_files_with_parts_in_chunk,
                         output_source_map: SourceMapPieces::init(),
                         flags: make_flags(
-                            has_html_chunk,
-                            could_be_browser_target_from_server_build
-                                && ast_targets[source_index as usize] == Target::Browser,
+                            HasHtmlChunk::from_bool(has_html_chunk),
+                            IsBrowserChunkFromServerBuild::from_bool(
+                                could_be_browser_target_from_server_build
+                                    && ast_targets[source_index as usize] == Target::Browser,
+                            ),
                         ),
                         ..Default::default()
                     };
@@ -310,14 +345,19 @@ pub(crate) fn compute_chunks(
                                 entry_point: chunk::EntryPoint::new(
                                     source_index.get(),
                                     0,
-                                    false,
-                                    false,
+                                    IsEntryPoint::No,
+                                    IsHtml::No,
                                 ),
                                 content: chunk::Content::Javascript(
                                     chunk::JavaScriptChunk::default(),
                                 ),
                                 output_source_map: SourceMapPieces::init(),
-                                flags: make_flags(false, is_browser_chunk_from_server_build),
+                                flags: make_flags(
+                                    HasHtmlChunk::No,
+                                    IsBrowserChunkFromServerBuild::from_bool(
+                                        is_browser_chunk_from_server_build,
+                                    ),
+                                ),
                                 ..Default::default()
                             };
                         } else if could_be_browser_target_from_server_build

@@ -539,7 +539,8 @@ impl WebWorker {
         }
 
         // SAFETY: `parent` is live (see above); borrow ends at `;`.
-        let store_fd = unsafe { (*parent).transpiler.resolver.store_fd };
+        let store_fd =
+            unsafe { (*parent).transpiler.resolver.store_fd } == bun_resolver::fs::StoreFd::Yes;
 
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             cpp_worker,
@@ -1119,7 +1120,7 @@ impl WebWorker {
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
-                    is_rejection,
+                    crate::virtual_machine::IsRejection::from_bool(is_rejection),
                 );
                 if !handled {
                     // exit_code is already 1 from uncaught_exception; re-setting it here
@@ -1158,7 +1159,7 @@ impl WebWorker {
             vm.global().vm().release_weak_refs();
             // `Arena = bumpalo::Bump` has no collect; global mimalloc
             // handles reclamation.
-            let _ = vm.global().vm().run_gc(false);
+            let _ = vm.global().vm().run_gc(crate::GcMode::Async);
         }
 
         // Always do a first tick so we call CppTask without delay after

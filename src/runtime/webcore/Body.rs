@@ -8,11 +8,11 @@ use crate::webcore::jsc::{
     JSGlobalObject, JSPromise, JSValue, JsResult, SystemError, URLSearchParams, VirtualMachine,
 };
 use crate::webcore::{
-    self, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, FetchHeaders, Lifetime,
-    ReadableStream, blob, streams,
+    self, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, FetchHeaders, IncludeContentType,
+    Lifetime, ReadableStream, blob, streams,
 };
 use bun_core::Output;
-use bun_http_types::MimeType::MimeType;
+use bun_http_types::MimeType::{Dupe, MimeType};
 // Re-export so callers can write `body::InternalBlob`.
 use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
@@ -176,7 +176,11 @@ impl Body {
                 formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                 writer.write_str("\n")?;
                 formatter.write_indent(writer)?;
-                blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(false, size, writer)?;
+                blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(
+                    blob::IsJsDomFile::No,
+                    size,
+                    writer,
+                )?;
             }
             Value::Locked(locked) => {
                 let global = locked.global();
@@ -685,6 +689,8 @@ impl Value {
     }
 }
 
+bun_core::bool_enum!(StreamMode { Bytes, Text });
+
 impl Value {
     // We may not have all the data yet
     // So we can't know for sure if it's empty or not
@@ -785,7 +791,7 @@ impl Value {
                 if let Some(readable) = locked.readable.get(global_this) {
                     return Ok(readable.value);
                 }
-                self.locked_to_native_stream(global_this, false)
+                self.locked_to_native_stream(global_this, StreamMode::Bytes)
             }
             Value::Error(err) => {
                 // Leave `self` as `Error` so the promise-returning readers
@@ -836,7 +842,7 @@ impl Value {
                 *self = Value::Used;
                 Ok(stream)
             }
-            Value::Locked(_) => self.locked_to_native_stream(global_this, true),
+            Value::Locked(_) => self.locked_to_native_stream(global_this, StreamMode::Text),
             Value::Error(err) => {
                 let reason = err.to_js(global_this);
                 ReadableStream::errored(global_this, reason)
@@ -851,7 +857,7 @@ impl Value {
     fn locked_to_native_stream(
         &mut self,
         global_this: &JSGlobalObject,
-        text_mode: bool,
+        text_mode: StreamMode,
     ) -> JsResult<JSValue> {
         let Value::Locked(locked) = self else {
             unreachable!("locked_to_native_stream on non-Locked Value");
@@ -907,7 +913,7 @@ impl Value {
         }
 
         let context_ptr: *mut ByteStream = &raw mut reader.context;
-        let stream_value = if text_mode {
+        let stream_value = if text_mode == StreamMode::Text {
             reader.to_text_readable_stream(global_this)?
         } else {
             reader.to_readable_stream(global_this)?
@@ -926,7 +932,7 @@ impl Value {
         // In text mode the returned stream emits strings, so it must not be
         // cached as the body's byte stream (consulted by `.body`, `bodyUsed`,
         // and `throw_if_body_unusable`). Mark the body consumed instead.
-        if text_mode {
+        if text_mode == StreamMode::Text {
             *self = Value::Used;
         }
 
@@ -993,7 +999,7 @@ impl Value {
             if let Some(blob) = value.as_class_ref::<Blob>() {
                 return Ok(Value::Blob(
                     // We must preserve "type" so that DOMFormData and the "type" field are preserved.
-                    blob.dupe_with_content_type(true),
+                    blob.dupe_with_content_type(IncludeContentType::Yes),
                 ));
             }
 
@@ -1193,7 +1199,8 @@ impl Value {
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
                                 let content_slice = content_type.to_slice();
-                                let mime_type = MimeType::init(content_slice.slice(), true, None);
+                                let mime_type =
+                                    MimeType::init(content_slice.slice(), Dupe::Yes, None);
                                 set_blob_content_type(blob, mime_type);
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
@@ -1607,7 +1614,9 @@ impl Value {
         }
 
         if let Value::Blob(b) = self {
-            return Ok(Value::Blob(b.dupe_with_content_type(false)));
+            return Ok(Value::Blob(
+                b.dupe_with_content_type(IncludeContentType::No),
+            ));
         }
 
         if let Value::WTFStringImpl(s) = *self {
@@ -2215,7 +2224,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_slice();
-                    let mime_type = MimeType::init(content_slice.slice(), true, None);
+                    let mime_type = MimeType::init(content_slice.slice(), Dupe::Yes, None);
                     set_blob_content_type(blob, mime_type);
                     // content_slice dropped (replaces defer content_slice.deinit())
                 }

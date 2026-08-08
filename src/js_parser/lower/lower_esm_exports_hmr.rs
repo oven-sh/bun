@@ -34,6 +34,8 @@ struct DeduplicatedImportResult {
     pub import_record_index: u32,
 }
 
+bun_core::bool_enum!(IsLiveBindingSource);
+
 impl<'a> ConvertESMExportsForHmr<'a> {
     // Note: takes the concrete `P<'p, TS, SCAN>`; `AstBuilder` instead
     // open-codes the equivalent transform (see bundler/AstBuilder.rs).
@@ -283,14 +285,26 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                 st.func.flags.remove(bun_ast::flags::Function::IsExport);
 
-                self.visit_ref_to_export(p, st.func.name.unwrap().ref_, None, stmt.loc, false)?;
+                self.visit_ref_to_export(
+                    p,
+                    st.func.name.unwrap().ref_,
+                    None,
+                    stmt.loc,
+                    IsLiveBindingSource::No,
+                )?;
 
                 break 'stmt stmt;
             }
             js_ast::StmtData::SExportClause(st) => {
                 for item in st.items.iter() {
                     let ref_ = item.name.ref_;
-                    self.visit_ref_to_export(p, ref_, Some(item.alias), item.name.loc, false)?;
+                    self.visit_ref_to_export(
+                        p,
+                        ref_,
+                        Some(item.alias),
+                        item.name.loc,
+                        IsLiveBindingSource::No,
+                    )?;
                 }
 
                 return Ok(()); // do not emit a statement here
@@ -325,7 +339,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         ref_,
                         Some(item.alias),
                         item.name.loc,
-                        !self.is_in_node_modules, // live binding when this may be replaced
+                        IsLiveBindingSource::from_bool(!self.is_in_node_modules), // live binding when this may be replaced
                     )?;
 
                     // imports and export statements have their alias +
@@ -520,7 +534,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         match binding.data {
             B::B::BMissing(_) => {}
             B::B::BIdentifier(id) => {
-                self.visit_ref_to_export(p, id.r#ref, None, binding.loc, false)?;
+                self.visit_ref_to_export(p, id.r#ref, None, binding.loc, IsLiveBindingSource::No)?;
             }
             B::B::BArray(array) => {
                 for item in array.items.iter() {
@@ -542,7 +556,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         ref_: Ref,
         export_symbol_name: Option<js_ast::StoreStr>,
         loc: bun_ast::Loc,
-        is_live_binding_source: bool,
+        is_live_binding_source: IsLiveBindingSource,
     ) -> Result<(), AllocError> {
         let (kind, has_been_assigned_to, original_name) = {
             let symbol = &p.symbols[ref_.inner_index() as usize];
@@ -563,7 +577,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         } else {
             Expr::init_identifier(ref_, loc)
         };
-        if is_live_binding_source
+        if is_live_binding_source == IsLiveBindingSource::Yes
             || (kind == js_ast::symbol::Kind::Import && !self.is_in_node_modules)
             || has_been_assigned_to
         {

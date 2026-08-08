@@ -21,7 +21,7 @@ use std::cell::Cell;
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
-use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
+use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, IsRejection, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
     JSValue, JsCell, JsRef, JsResult,
@@ -1832,9 +1832,11 @@ impl CronJob {
                     let global_ref = vm.global();
                     // SAFETY: single JS thread; `&mut` derived via the thread-local
                     // raw pointer (avoids `&T` → `&mut T` provenance laundering).
-                    let _ = VirtualMachine::get()
-                        .as_mut()
-                        .uncaught_exception(global_ref, err, false);
+                    let _ = VirtualMachine::get().as_mut().uncaught_exception(
+                        global_ref,
+                        err,
+                        IsRejection::No,
+                    );
                 }
                 Self::schedule_next(this, vm);
                 return;
@@ -2448,7 +2450,11 @@ unsafe fn spawn_cmd_prepare<T: SpawnCmdTarget>(
                             | PosixFlags::CLOSED_WITHOUT_REPORTING,
                     );
                 }
-                if s!().stdout_reader().start(stdout, true).is_err() {
+                if s!()
+                    .stdout_reader()
+                    .start(stdout, bun_io::IsPollable::Yes)
+                    .is_err()
+                {
                     s!().set_err(format_args!("Failed to start reading stdout"));
                     return Err(());
                 }

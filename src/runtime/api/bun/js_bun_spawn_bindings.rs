@@ -28,6 +28,7 @@ use crate::api::bun_process::SpawnResultExt as _;
 use crate::api::bun_process::{self as spawn, CStrPtr, Process, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
+use crate::api::bun_subprocess::subprocess_pipe_reader::LazyStart;
 use crate::api::bun_subprocess::{
     self as Subprocess, Readable, Subprocess as SubprocessT, Writable,
 };
@@ -1523,7 +1524,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 None,
                 core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
                 posix_ipc_fd.native(),
-                true,
+                bun_uws::Ipc::Yes,
             );
             if !raw_socket.is_null() {
                 let socket = raw_socket;
@@ -1707,7 +1708,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 // process has already exited, but we haven't called wait4() yet
                 // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                proc.wait(IS_SYNC);
+                proc.wait(bun_spawn::WaitMode::from_bool(IS_SYNC));
             }
         }
     }
@@ -1719,7 +1720,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
+        Readable::pipe_reader_mut(pipe).start(
+            subprocess_nn,
+            event_loop_nn,
+            LazyStart::from_bool(!IS_SYNC && lazy),
+        );
         if (IS_SYNC || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
@@ -1729,7 +1734,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // Note: see stdout arm above — avoid aliased &mut.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
+        Readable::pipe_reader_mut(pipe).start(
+            subprocess_nn,
+            event_loop_nn,
+            LazyStart::from_bool(!IS_SYNC && lazy),
+        );
 
         if (IS_SYNC || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
@@ -1808,7 +1817,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             .counters
             .mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
-        subprocess.process_mut().wait(true);
+        subprocess.process_mut().wait(bun_spawn::WaitMode::Blocking);
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.
@@ -1830,7 +1839,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         }
         sys::Result::Err(_) => {
-            subprocess.process_mut().wait(true);
+            subprocess.process_mut().wait(bun_spawn::WaitMode::Blocking);
         }
     }
 
@@ -2149,7 +2158,11 @@ fn append_envp_from_js(
         let line_bytes = line.as_bytes();
         let key_end = strings::index_of_char_usize(line_bytes, b'=').unwrap_or(line_bytes.len());
         let is_path_key = if cfg!(windows) {
-            strings::eql_case_insensitive_ascii(&line_bytes[..key_end], b"PATH", true)
+            strings::eql_case_insensitive_ascii(
+                &line_bytes[..key_end],
+                b"PATH",
+                strings::CheckLen::Yes,
+            )
         } else {
             &line_bytes[..key_end] == b"PATH"
         };

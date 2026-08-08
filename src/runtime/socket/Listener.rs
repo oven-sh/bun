@@ -67,6 +67,8 @@ fn with_ssl_ctx_cache<R>(
 // `to_js(self)` impl does would invalidate that link).
 use crate::generated_classes::js_Listener;
 
+bun_core::bool_enum!(pub(crate) ForceClose);
+
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut Listener` — `&mut T` auto-derefs to `&T`
@@ -227,7 +229,7 @@ impl Listener {
                     reject_unauthorized: crate::socket::resolve_reject_unauthorized(
                         vm,
                         ssl_cfg_taken.as_ref(),
-                        true,
+                        uws::TlsRole::Server,
                     ),
                     poll_ref: JsCell::new(KeepAlive::init()),
                     group: JsCell::new(uws::SocketGroup::default()),
@@ -349,7 +351,7 @@ impl Listener {
             reject_unauthorized: crate::socket::resolve_reject_unauthorized(
                 vm,
                 ssl_cfg_taken.as_ref(),
-                true,
+                uws::TlsRole::Server,
             ),
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -794,7 +796,7 @@ impl Listener {
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::do_stop(this, true);
+        Self::do_stop(this, ForceClose::Yes);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -809,17 +811,17 @@ impl Listener {
 
         Self::do_stop(
             this,
-            if frame.arguments_count() > 0 && arg0.is_boolean() {
+            ForceClose::from_bool(if frame.arguments_count() > 0 && arg0.is_boolean() {
                 arg0.to_boolean()
             } else {
                 false
-            },
+            }),
         );
 
         Ok(JSValue::UNDEFINED)
     }
 
-    fn do_stop(this: &Self, force_close: bool) {
+    fn do_stop(this: &Self, force_close: ForceClose) {
         if matches!(this.listener.get(), ListenerType::None) {
             return;
         }
@@ -838,7 +840,7 @@ impl Listener {
             this.this_value.with_mut(|r| r.downgrade());
             this.strong_data
                 .with_mut(|s| s.clear_without_deallocation());
-        } else if force_close {
+        } else if force_close == ForceClose::Yes {
             this.group.with_mut(|g| g.close_all());
         }
 
@@ -1221,7 +1223,7 @@ impl Listener {
                     tls_ref.reset_client_tls_flags(crate::socket::resolve_reject_unauthorized(
                         vm,
                         ssl_taken.as_ref(),
-                        false,
+                        uws::TlsRole::Client,
                     ));
                     TLSSocket::data_set_cached(
                         tls_ref.get_this_value(global),
@@ -1372,7 +1374,7 @@ impl Listener {
 
         default_data.ensure_still_alive();
 
-        let allow_half_open = socket_config.allow_half_open;
+        let allow_half_open = uws::AllowHalfOpen::from_bool(socket_config.allow_half_open);
         let mut ssl_taken = socket_config.ssl.take();
 
         let promise = jsc::JSPromise::create(global);
@@ -1489,7 +1491,7 @@ fn connect_finish<const IS_SSL: bool>(
     mut ssl: Option<&mut SSLConfig>,
     owned_ssl_ctx: Option<NonNull<boring_sys::SSL_CTX>>,
     default_data: JSValue,
-    allow_half_open: bool,
+    allow_half_open: uws::AllowHalfOpen,
     port: Option<u16>,
     promise_value: JSValue,
 ) -> JsResult<JSValue> {
@@ -1565,11 +1567,15 @@ fn connect_finish<const IS_SSL: bool>(
         socket_ref.this_value.with_mut(|r| r.upgrade(global));
     }
     socket_ref.reset_client_tls_flags(
-        IS_SSL && crate::socket::resolve_reject_unauthorized(vm, ssl.as_deref(), false),
+        IS_SSL
+            && crate::socket::resolve_reject_unauthorized(vm, ssl.as_deref(), uws::TlsRole::Client),
     );
     {
         let mut f = socket_ref.flags.get();
-        f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
+        f.set(
+            SocketFlags::ALLOW_HALF_OPEN,
+            allow_half_open == uws::AllowHalfOpen::Yes,
+        );
         socket_ref.flags.set(f);
     }
     // Note: `do_connect` reads `self.connection` directly so no second
@@ -1841,7 +1847,11 @@ impl WindowsNamedPipeListeningContext {
 
         // SAFETY: `this` was just allocated above; `&mut uv_pipe` is scoped to
         // this call.
-        let init_result = unsafe { (*this).uv_pipe.init((*this).vm.uv_loop().cast(), false) };
+        let init_result = unsafe {
+            (*this)
+                .uv_pipe
+                .init((*this).vm.uv_loop().cast(), uv::Ipc::No)
+        };
         if init_result.is_err() {
             return Err(ListenPipeError::Other(crate::Error::FailedToInitPipe));
         }

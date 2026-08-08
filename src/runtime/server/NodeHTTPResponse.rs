@@ -10,6 +10,7 @@ use bun_core::scoped_log;
 use bun_core::{ZigString, ZigStringSlice};
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
+use bun_jsc::virtual_machine::IsRejection;
 use bun_ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -1274,6 +1275,8 @@ pub enum AbortEvent {
     Timeout = 2,
 }
 
+bun_core::bool_enum!(IsLast);
+
 impl NodeHTTPResponse {
     fn handle_abort_or_timeout<const EVENT: AbortEvent>(&self, js_value: JSValue) {
         // defer { if event == abort, raw_response = None }
@@ -1338,7 +1341,7 @@ impl NodeHTTPResponse {
             // (on_data_or_aborted runs the ondata callback). Clearing the slot
             // alone would un-root `pinned_value` while it is still read later.
             self.clear_pending_pinned_write(vm_get().global(), js_this);
-            self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
+            self.on_data_or_aborted(b"", IsLast::Yes, AbortEvent::Abort, js_this);
         }
 
         // `raw_response` is cleared before `deref()` because
@@ -1531,7 +1534,9 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
             if raw_response.state().is_response_pending() {
-                raw_response.end_without_body(raw_response.state().is_http_connection_close());
+                raw_response.end_without_body(uws::CloseConnection::from_bool(
+                    raw_response.state().is_http_connection_close(),
+                ));
             }
         }
         this.on_request_complete();
@@ -1581,13 +1586,15 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
             if !raw_response.state().is_http_status_called() {
                 raw_response.write_status(b"500 Internal Server Error");
             }
-            raw_response.end_stream(raw_response.state().is_http_connection_close());
+            raw_response.end_stream(uws::CloseConnection::from_bool(
+                raw_response.state().is_http_connection_close(),
+            ));
         }
 
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
+    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, IsRejection::Yes);
     if had_promise {
         this.deref();
     }
@@ -1623,7 +1630,7 @@ impl NodeHTTPResponse {
             raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
-            raw_response.end_without_body(true);
+            raw_response.end_without_body(uws::CloseConnection::Yes);
         }
         self.on_request_complete();
         Ok(JSValue::UNDEFINED)
@@ -1667,7 +1674,11 @@ impl NodeHTTPResponse {
                     Ok(b) => b,
                     Err(err) => {
                         let exc = global_this.take_exception(err);
-                        let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
+                        let _ = bun_vm_mut(global_this).uncaught_exception(
+                            global_this,
+                            exc,
+                            IsRejection::No,
+                        );
                         return JSValue::UNDEFINED;
                     }
                 };
@@ -1682,7 +1693,11 @@ impl NodeHTTPResponse {
                     Ok(b) => b,
                     Err(err) => {
                         let exc = global_this.take_exception(err);
-                        let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
+                        let _ = bun_vm_mut(global_this).uncaught_exception(
+                            global_this,
+                            exc,
+                            IsRejection::No,
+                        );
                         return JSValue::UNDEFINED;
                     }
                 };
@@ -1692,7 +1707,14 @@ impl NodeHTTPResponse {
         bytes
     }
 
-    fn on_data_or_aborted(&self, chunk: &[u8], last: bool, event: AbortEvent, this_value: JSValue) {
+    fn on_data_or_aborted(
+        &self,
+        chunk: &[u8],
+        last: IsLast,
+        event: AbortEvent,
+        this_value: JSValue,
+    ) {
+        let last = last == IsLast::Yes;
         scoped_log!(
             NodeHTTPResponse,
             "onDataOrAborted({}, {})",
@@ -1776,7 +1798,7 @@ impl NodeHTTPResponse {
                 armed
             }
         };
-        self.on_data_or_aborted(chunk, last, AbortEvent::None, this_value);
+        self.on_data_or_aborted(chunk, IsLast::from_bool(last), AbortEvent::None, this_value);
     }
 
     /// Release the pin + GC root + byte owner taken by a zero-copy write.
@@ -1830,7 +1852,7 @@ impl NodeHTTPResponse {
             return false;
         }
         let remaining = p.remaining();
-        let consumed = response.try_write_body(remaining, false);
+        let consumed = response.try_write_body(remaining, uws::FirstBodyWrite::No);
         if consumed < remaining.len() {
             self.pending_pinned_write.set(PendingPinnedWrite {
                 remaining: ptr::from_ref(&remaining[consumed..]),
@@ -2106,9 +2128,14 @@ impl NodeHTTPResponse {
             self.update_flags(|f| f.insert(Flags::ENDED));
             let raw_response = self.raw_response.get().unwrap();
             if !state.is_http_write_called() || !bytes.is_empty() {
-                raw_response.end(bytes, state.is_http_connection_close());
+                raw_response.end(
+                    bytes,
+                    uws::CloseConnection::from_bool(state.is_http_connection_close()),
+                );
             } else {
-                raw_response.end_stream(state.is_http_connection_close());
+                raw_response.end_stream(uws::CloseConnection::from_bool(
+                    state.is_http_connection_close(),
+                ));
             }
             self.on_request_complete();
 
@@ -2125,7 +2152,7 @@ impl NodeHTTPResponse {
                 let is_buffer = matches!(string_or_buffer, crate::node::StringOrBuffer::Buffer(_));
 
                 scoped_log!(NodeHTTPResponse, "tryWriteBody({} bytes)", bytes_len);
-                let consumed = raw_response.try_write_body(bytes, true);
+                let consumed = raw_response.try_write_body(bytes, uws::FirstBodyWrite::Yes);
                 if consumed >= bytes_len {
                     raw_response.clear_on_writable();
                     js::on_writable_set_cached(js_this, global_object, JSValue::UNDEFINED);
@@ -2429,7 +2456,7 @@ impl NodeHTTPResponse {
         if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
             if let Some(raw_response) = self.raw_response.get() {
                 // Don't flush immediately; queue a microtask to uncork the socket.
-                raw_response.flush_headers(false);
+                raw_response.flush_headers(uws::FlushImmediately::No);
                 if raw_response.is_corked() {
                     self.register_auto_flush();
                 }

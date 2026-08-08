@@ -8,6 +8,10 @@ use bun_sys::FdExt;
 use crate::FilePollFlag;
 use crate::{FilePollRef, Owner};
 
+bun_core::bool_enum!(pub IsPollable);
+bun_core::bool_enum!(pub ReceivedHup);
+bun_core::bool_enum!(pub CloseFd);
+
 pub enum PollOrFd {
     Poll(FilePollRef),
     Fd(Fd),
@@ -55,7 +59,7 @@ impl PollOrFd {
         &mut self,
         ctx: Option<*mut c_void>,
         on_close_fn: Option<F>,
-        close_fd: bool,
+        close_fd: CloseFd,
     ) where
         F: FnOnce(*mut c_void),
     {
@@ -104,10 +108,10 @@ impl PollOrFd {
             }
             #[cfg(not(windows))]
             {
-                if close_async && close_fd {
+                if close_async && close_fd == CloseFd::Yes {
                     crate::closer::Closer::close(fd, ());
                 } else {
-                    if close_fd {
+                    if close_fd == CloseFd::Yes {
                         let _ = fd.close_allowing_bad_file_descriptor(None);
                     }
                 }
@@ -126,7 +130,7 @@ impl PollOrFd {
     where
         F: FnOnce(*mut c_void),
     {
-        self.close_impl(ctx, on_close_fn, true);
+        self.close_impl(ctx, on_close_fn, CloseFd::Yes);
     }
 }
 

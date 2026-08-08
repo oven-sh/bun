@@ -693,11 +693,11 @@ impl ShellCpTask {
         let args = crate::node::fs::args::Cp {
             src: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
                 self.src_absolute.as_deref().unwrap(),
-                false,
+                bun_ptr::cow_slice::Ownership::Borrowed,
             )),
             dest: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
                 self.tgt_absolute.as_deref().unwrap(),
-                false,
+                bun_ptr::cow_slice::Ownership::Borrowed,
             )),
             flags: crate::node::fs::args::CpFlags {
                 recursive: self.opts.recursive,
@@ -725,7 +725,7 @@ impl ShellCpTask {
                     args,
                     vm,
                     std::ptr::from_mut::<ShellCpTask>(self),
-                    false,
+                    crate::node::fs::EnablePromise::No,
                 );
             }
             EventLoopHandle::Mini(mini) => {

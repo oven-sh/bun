@@ -59,6 +59,15 @@ pub use bun_sys::PlatformIoVec;
 
 // ──────────────────────────────────────────────────────────────────────────
 
+bun_core::bool_enum!(
+    /// Whether the parsed value will be used off the JS thread (threadpool
+    /// task): strings are converted to thread-safe slices and buffers are
+    /// pinned/protected.
+    pub IsAsync
+);
+bun_core::bool_enum!(pub AllowStringObject);
+bun_core::bool_enum!(pub AllowFile);
+
 pub enum BlobOrStringOrBuffer {
     Blob(Box<Blob>),
     StringOrBuffer(StringOrBuffer),
@@ -92,11 +101,16 @@ impl BlobOrStringOrBuffer {
     pub(crate) fn from_js_maybe_file_maybe_async(
         global: &JSGlobalObject,
         value: JSValue,
-        allow_file: bool,
-        is_async: bool,
+        allow_file: AllowFile,
+        is_async: IsAsync,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         // Check StringOrBuffer first because it's more common and cheaper.
-        let str = match StringOrBuffer::from_js_maybe_async(global, value, is_async, true)? {
+        let str = match StringOrBuffer::from_js_maybe_async(
+            global,
+            value,
+            is_async,
+            AllowStringObject::Yes,
+        )? {
             Some(s) => s,
             None => {
                 // `as_class_ref` is the safe shared-borrow downcast (centralised
@@ -106,12 +120,12 @@ impl BlobOrStringOrBuffer {
                 let Some(blob) = value.as_class_ref::<Blob>() else {
                     return Ok(None);
                 };
-                if allow_file && blob.needs_to_read_file() {
+                if allow_file == AllowFile::Yes && blob.needs_to_read_file() {
                     return Err(global
                         .throw_invalid_arguments(format_args!("File blob cannot be used here")));
                 }
 
-                if is_async {
+                if is_async == IsAsync::Yes {
                     // For async/cross-thread usage, copy the blob data to an owned slice
                     // rather than referencing the store which isn't thread-safe
                     let blob_data = blob.shared_view();
@@ -132,23 +146,23 @@ impl BlobOrStringOrBuffer {
     pub(crate) fn from_js_maybe_file(
         global: &JSGlobalObject,
         value: JSValue,
-        allow_file: bool,
+        allow_file: AllowFile,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, allow_file, false)
+        Self::from_js_maybe_file_maybe_async(global, value, allow_file, IsAsync::No)
     }
 
     pub fn from_js(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file(global, value, true)
+        Self::from_js_maybe_file(global, value, AllowFile::Yes)
     }
 
     pub(crate) fn from_js_async(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, true, true)
+        Self::from_js_maybe_file_maybe_async(global, value, AllowFile::Yes, IsAsync::Yes)
     }
 
     /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
@@ -220,12 +234,11 @@ impl BlobOrStringOrBuffer {
             _ => {}
         }
 
-        let allow_string_object = true;
         match StringOrBuffer::from_js_with_encoding_value_allow_string_object(
             global,
             value,
             encoding_value,
-            allow_string_object,
+            AllowStringObject::Yes,
         )? {
             Some(s) => Ok(Some(Self::StringOrBuffer(s))),
             None => Ok(None),
@@ -385,13 +398,14 @@ impl StringOrBuffer {
         out: &mut StringOrBuffer,
         global: &JSGlobalObject,
         value: JSValue,
-        is_async: bool,
-        allow_string_object: bool,
+        is_async: IsAsync,
+        allow_string_object: AllowStringObject,
     ) -> JsResult<bool> {
         use jsc::JSType;
+        let is_async = is_async == IsAsync::Yes;
         match value.js_type() {
             str_type @ (JSType::String | JSType::StringObject | JSType::DerivedStringObject) => {
-                if !allow_string_object && str_type != JSType::String {
+                if allow_string_object == AllowStringObject::No && str_type != JSType::String {
                     return Ok(false);
                 }
                 let mut str = bun_core::String::from_js(value, global)?;
@@ -459,8 +473,8 @@ impl StringOrBuffer {
     pub(crate) fn from_js_maybe_async(
         global: &JSGlobalObject,
         value: JSValue,
-        is_async: bool,
-        allow_string_object: bool,
+        is_async: IsAsync,
+        allow_string_object: AllowStringObject,
     ) -> JsResult<Option<StringOrBuffer>> {
         let mut out = Self::EMPTY;
         if Self::from_js_maybe_async_into(&mut out, global, value, is_async, allow_string_object)? {
@@ -472,7 +486,7 @@ impl StringOrBuffer {
 
     #[inline]
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<StringOrBuffer>> {
-        Self::from_js_maybe_async(global, value, false, true)
+        Self::from_js_maybe_async(global, value, IsAsync::No, AllowStringObject::Yes)
     }
 
     #[inline]
@@ -481,7 +495,13 @@ impl StringOrBuffer {
         value: JSValue,
         encoding: Encoding,
     ) -> JsResult<Option<StringOrBuffer>> {
-        Self::from_js_with_encoding_maybe_async(global, value, encoding, false, true)
+        Self::from_js_with_encoding_maybe_async(
+            global,
+            value,
+            encoding,
+            IsAsync::No,
+            AllowStringObject::Yes,
+        )
     }
 
     /// Out-param convenience wrapper — see [`from_js_with_encoding_maybe_async_into`].
@@ -492,7 +512,14 @@ impl StringOrBuffer {
         value: JSValue,
         encoding: Encoding,
     ) -> JsResult<bool> {
-        Self::from_js_with_encoding_maybe_async_into(out, global, value, encoding, false, true)
+        Self::from_js_with_encoding_maybe_async_into(
+            out,
+            global,
+            value,
+            encoding,
+            IsAsync::No,
+            AllowStringObject::Yes,
+        )
     }
 
     /// Out-param core of [`from_js_with_encoding_maybe_async`]. Writes into
@@ -504,17 +531,17 @@ impl StringOrBuffer {
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
-        is_async: bool,
-        allow_string_object: bool,
+        is_async: IsAsync,
+        allow_string_object: AllowStringObject,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if is_async {
+            let buffer = if is_async == IsAsync::Yes {
                 Buffer::from_js_pinned(global, value)
                     .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
             } else {
                 Buffer::from_array_buffer(global, value)
             };
-            if is_async {
+            if is_async == IsAsync::Yes {
                 buffer.buffer.value.protect();
             }
             *out = Self::Buffer(buffer);
@@ -559,8 +586,8 @@ impl StringOrBuffer {
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
-        is_async: bool,
-        allow_string_object: bool,
+        is_async: IsAsync,
+        allow_string_object: AllowStringObject,
     ) -> JsResult<Option<StringOrBuffer>> {
         let mut out = Self::EMPTY;
         if Self::from_js_with_encoding_maybe_async_into(
@@ -581,7 +608,7 @@ impl StringOrBuffer {
         global: &JSGlobalObject,
         value: JSValue,
         encoding_value: JSValue,
-        allow_string_object: bool,
+        allow_string_object: AllowStringObject,
     ) -> JsResult<Option<StringOrBuffer>> {
         let encoding: Encoding = 'brk: {
             if !encoding_value.is_cell() {
@@ -589,7 +616,7 @@ impl StringOrBuffer {
             }
             break 'brk Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8);
         };
-        let is_async = false;
+        let is_async = IsAsync::No;
         Self::from_js_with_encoding_maybe_async(
             global,
             value,
@@ -902,7 +929,7 @@ pub trait PathLikeExt {
     fn from_bun_string(
         global: &JSGlobalObject,
         str: &mut bun_core::String,
-        will_be_async: bool,
+        will_be_async: IsAsync,
     ) -> JsResult<PathLike>
     where
         Self: Sized;
@@ -1184,7 +1211,7 @@ impl PathLikeExt for PathLike {
                 Ok(Some(Self::from_bun_string(
                     ctx,
                     &mut str,
-                    arguments.will_be_async,
+                    IsAsync::from_bool(arguments.will_be_async),
                 )?))
             }
             _ => {
@@ -1230,7 +1257,7 @@ impl PathLikeExt for PathLike {
                     return Ok(Some(Self::from_bun_string(
                         ctx,
                         &mut str,
-                        arguments.will_be_async,
+                        IsAsync::from_bool(arguments.will_be_async),
                     )?));
                 }
 
@@ -1242,9 +1269,9 @@ impl PathLikeExt for PathLike {
     fn from_bun_string(
         global: &JSGlobalObject,
         str: &mut bun_core::String,
-        will_be_async: bool,
+        will_be_async: IsAsync,
     ) -> JsResult<PathLike> {
-        if will_be_async {
+        if will_be_async == IsAsync::Yes {
             let sliced = str.to_thread_safe_slice();
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
@@ -1409,6 +1436,8 @@ unsafe extern "C" fn append_buffer_span(
     out.views.push(element);
 }
 
+bun_core::bool_enum!(pub PinBuffers);
+
 impl VectorArrayBuffer {
     /// Collect an array of ArrayBufferViews into iovecs. Every element is read
     /// before any raw pointer is taken, so user code run by an indexed read (a
@@ -1421,8 +1450,9 @@ impl VectorArrayBuffer {
     pub fn from_js(
         global_object: &JSGlobalObject,
         val: JSValue,
-        pin: bool,
+        pin: PinBuffers,
     ) -> JsResult<VectorArrayBuffer> {
+        let pin = pin == PinBuffers::Yes;
         let mut out = VectorArrayBuffer {
             value: val,
             buffers: Vec::new(),

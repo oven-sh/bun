@@ -17,6 +17,8 @@ use bun_sys::{Fd, File};
 
 use super::parallel::file_range::FileRange;
 
+bun_core::bool_enum!(pub OnlyMeasured);
+
 pub struct Timings {
     /// The first `--timings` path; `--update-timings` writes here.
     path: Box<[u8]>,
@@ -192,8 +194,8 @@ impl Timings {
     /// report. `only_measured` (set under `--shard`) writes just the files this
     /// run ran; otherwise everything read is carried through so a local partial
     /// run doesn't shrink the table.
-    pub fn write(&mut self, only_measured: bool) {
-        let map = if only_measured {
+    pub fn write(&mut self, only_measured: OnlyMeasured) {
+        let map = if only_measured == OnlyMeasured::Yes {
             &mut self.measured
         } else {
             &mut self.map

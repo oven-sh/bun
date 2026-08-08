@@ -6,6 +6,8 @@ use bun_sys as syscall;
 // The "ArrayBufferSink" symbol-name concatenation lives in the `JsSinkAbi`
 // impl in `Sink.rs` (see `array_buffer_sink_abi`).
 
+bun_core::bool_enum!(pub AsUint8Array);
+
 #[derive(Default)]
 pub struct ArrayBufferSink {
     pub(crate) bytes: Vec<u8>,
@@ -146,8 +148,9 @@ impl ArrayBufferSink {
     pub fn to_js(
         &mut self,
         global_this: &JSGlobalObject,
-        as_uint8array: bool,
+        as_uint8array: AsUint8Array,
     ) -> JsResult<JSValue> {
+        let as_uint8array = as_uint8array == AsUint8Array::Yes;
         if self.streaming {
             // Propagate the JS exception explicitly.
             let value: JSValue = if as_uint8array {

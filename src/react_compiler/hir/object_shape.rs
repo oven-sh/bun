@@ -225,6 +225,8 @@ impl Clone for ShapeRegistry {
 // Builder functions (matching TS addFunction, addHook, addObject)
 // =============================================================================
 
+bun_core::bool_enum!(pub IsConstructor);
+
 /// Add a non-hook function to a ShapeRegistry.
 /// Returns a `Type::Function` representing the added function.
 #[cold]
@@ -234,7 +236,7 @@ pub fn add_function(
     properties: Vec<(&'static str, Type)>,
     sig: FunctionSignatureBuilder,
     id: Option<&'static str>,
-    is_constructor: bool,
+    is_constructor: IsConstructor,
 ) -> Type {
     let shape_id: &'static str = id.unwrap_or_else(|| registry.next_anon_id());
     let return_type = sig.return_type.clone();
@@ -261,7 +263,7 @@ pub fn add_function(
     Type::Function {
         shape_id: Some(shape_id),
         return_type: Box::new(return_type),
-        is_constructor,
+        is_constructor: is_constructor == IsConstructor::Yes,
     }
 }
 

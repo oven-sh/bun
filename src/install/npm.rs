@@ -1306,7 +1306,9 @@ pub mod package_manifest {
                     // SAFETY: atomic field projection from a worker thread (no
                     // `&mut PackageManager`); `wake_raw` is the thread-safe wake.
                     unsafe {
-                        (*pm).pending_manifest_saves.fetch_sub(1, core::sync::atomic::Ordering::Release);
+                        (*pm)
+                            .pending_manifest_saves
+                            .fetch_sub(1, core::sync::atomic::Ordering::Release);
                         PackageManager::wake_raw(pm);
                     }
                 }
@@ -1326,7 +1328,9 @@ pub mod package_manifest {
             // SAFETY: task is a valid Box-allocated SaveTask
             let batch = PoolBatch::from(unsafe { core::ptr::addr_of_mut!((*task).task) });
             let manager = PackageManager::get();
-            manager.pending_manifest_saves.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            manager
+                .pending_manifest_saves
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             manager.thread_pool.schedule(batch);
         }
 

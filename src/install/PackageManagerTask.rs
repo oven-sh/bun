@@ -448,29 +448,53 @@ impl<'a> Task<'a> {
                     let dir = match dir {
                         Some(d) => d,
                         None => {
-                            if let Some(ssh) = Repository::try_ssh(url) {
-                                match Repository::download(
-                                    req.env,
-                                    &mut this.log,
-                                    // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                                    unsafe { &mut *manager }.get_cache_directory(),
-                                    this.id,
-                                    name,
-                                    ssh,
-                                    attempt,
-                                ) {
-                                    Ok(d) => d,
-                                    Err(err) => {
-                                        this.err = Some(err);
+                            let fallback = match Repository::try_ssh(url) {
+                                Some(ssh) => ssh,
+                                // git clones file:// and git:// URLs as
+                                // written. Bare strings are excluded (git
+                                // treats them as cwd-relative paths), as are
+                                // http(s) URLs whose verbatim clone already
+                                // failed (attempt > 1).
+                                None if attempt == 1
+                                    && bun_core::strings::contains(url, b"://") =>
+                                {
+                                    // Final attempt: have `download` log it.
+                                    attempt = 2;
+                                    url
+                                }
+                                None => {
+                                    // No candidate: fail rather than complete
+                                    // without a repository, keeping an earlier
+                                    // https error if one was set.
+                                    if this.status != Status::Fail {
+                                        this.err = Some(crate::Error::RepositoryNotFound);
                                         this.status = Status::Fail;
                                         this.data = Data {
                                             git_clone: ManuallyDrop::new(Fd::invalid()),
                                         };
-                                        break 'body;
                                     }
+                                    break 'body;
                                 }
-                            } else {
-                                break 'body;
+                            };
+                            match Repository::download(
+                                req.env,
+                                &mut this.log,
+                                // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
+                                unsafe { &mut *manager }.get_cache_directory(),
+                                this.id,
+                                name,
+                                fallback,
+                                attempt,
+                            ) {
+                                Ok(d) => d,
+                                Err(err) => {
+                                    this.err = Some(err);
+                                    this.status = Status::Fail;
+                                    this.data = Data {
+                                        git_clone: ManuallyDrop::new(Fd::invalid()),
+                                    };
+                                    break 'body;
+                                }
                             }
                         }
                     };

@@ -17,6 +17,7 @@ import {
   toHaveBins,
 } from "harness";
 import { join, resolve, sep } from "path";
+import { pathToFileURL } from "url";
 import {
   createTestContext,
   destroyTestContext,
@@ -840,6 +841,155 @@ describe.concurrent("bun-install", () => {
 
     expect(stderr).toContain("cloning repository for");
     expect(stderr).toContain("long-git-dep");
+    expect(stdout).toContain("bun install v1.");
+    expect(exitCode).toBe(1);
+  });
+
+  // Shared by the git file:// tests below. Isolates git from the machine's
+  // config (a developer gitconfig can carry url rewrites, signing, autocrlf);
+  // `base` must contain an "empty.gitconfig" file.
+  const gitFixtureEnv = (base: string) => ({
+    ...env,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: join(base, "empty.gitconfig"),
+    GIT_AUTHOR_NAME: "bun-test",
+    GIT_AUTHOR_EMAIL: "bun@example.com",
+    GIT_COMMITTER_NAME: "bun-test",
+    GIT_COMMITTER_EMAIL: "bun@example.com",
+  });
+  const runGit = async (cwd: string, gitEnv: NodeJS.Dict<string>, ...args: string[]) => {
+    await using proc = spawn({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "ignore", stderr: "pipe" });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
+  };
+
+  it.each([
+    ["", "2.0.0"],
+    ["#v1", "1.0.0"],
+  ])("installs a git dependency from a file:// URL (committish %j)", async (committish, expectedVersion) => {
+    using dir = tempDir("git-file-dep-test", {
+      "empty.gitconfig": "",
+      "repo/package.json": JSON.stringify({ name: "git-file-dep", version: "1.0.0" }),
+    });
+    const gitEnv = gitFixtureEnv(String(dir));
+    const repoDir = join(String(dir), "repo");
+    const projDir = join(String(dir), "proj");
+    await runGit(repoDir, gitEnv, "init", "-q");
+    await runGit(repoDir, gitEnv, "add", "-A");
+    await runGit(repoDir, gitEnv, "commit", "-q", "-m", "1.0.0");
+    await runGit(repoDir, gitEnv, "tag", "v1");
+    await write(join(repoDir, "package.json"), JSON.stringify({ name: "git-file-dep", version: "2.0.0" }));
+    await runGit(repoDir, gitEnv, "commit", "-q", "-a", "-m", "2.0.0");
+
+    await write(
+      join(projDir, "package.json"),
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "git-file-dep": `git+${pathToFileURL(repoDir).href}${committish}` },
+      }),
+    );
+
+    const lockfilePath = join(projDir, "bun.lock");
+    const installEnv = { ...gitEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") };
+    let savedLockfile = "";
+    // "cold" clones the file:// URL from scratch; "lockfile-cold-cache"
+    // re-clones to install the lockfile-pinned commit; "resolve-warm-cache"
+    // re-resolves against the cached bare repo (the `git fetch` path).
+    for (const mode of ["cold", "lockfile-cold-cache", "resolve-warm-cache"] as const) {
+      if (mode === "lockfile-cold-cache") {
+        savedLockfile = await file(lockfilePath).text();
+        await rm(join(projDir, "node_modules"), { recursive: true, force: true });
+        await rm(join(String(dir), ".cache"), { recursive: true, force: true });
+      } else if (mode === "resolve-warm-cache") {
+        await rm(join(projDir, "node_modules"), { recursive: true, force: true });
+        await rm(lockfilePath, { force: true });
+      }
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: projDir,
+        env: installEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      if (mode === "lockfile-cold-cache") {
+        // An install driven by the lockfile must keep the pinned commit.
+        expect(await file(lockfilePath).text()).toBe(savedLockfile);
+      } else {
+        expect(stderr).toContain("Saved lockfile");
+      }
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+      expect(await file(join(projDir, "node_modules", "git-file-dep", "package.json")).json()).toMatchObject({
+        name: "git-file-dep",
+        version: expectedVersion,
+      });
+    }
+  });
+
+  it("does not treat a bare git specifier as a project-relative path", async () => {
+    // "sshlatest" is classified as a git dependency. It must fail to
+    // resolve; handing it to git verbatim would clone the ./sshlatest
+    // directory (git resolves bare strings as local paths) and poison the
+    // shared cache with cwd-dependent content.
+    using dir = tempDir("git-bare-word", {
+      "empty.gitconfig": "",
+      "proj/package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "bare-word-dep": "sshlatest" },
+      }),
+      "proj/sshlatest/package.json": JSON.stringify({ name: "bare-word-dep", version: "9.9.9" }),
+    });
+    const gitEnv = gitFixtureEnv(String(dir));
+    const projDir = join(String(dir), "proj");
+    const decoyRepo = join(projDir, "sshlatest");
+    await runGit(decoyRepo, gitEnv, "init", "-q");
+    await runGit(decoyRepo, gitEnv, "add", "-A");
+    await runGit(decoyRepo, gitEnv, "commit", "-q", "-m", "init");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projDir,
+      env: { ...gitEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("cloning repository for");
+    expect(stderr).not.toContain("no commit matching");
+    expect(await exists(join(projDir, "node_modules", "bare-word-dep"))).toBe(false);
+    expect(stdout).toContain("bun install v1.");
+    expect(exitCode).toBe(1);
+  });
+
+  it("fails cleanly for a git file:// dependency that is not a repository", async () => {
+    using dir = tempDir("git-file-bad", { "empty.gitconfig": "" });
+    const projDir = join(String(dir), "proj");
+    await write(
+      join(projDir, "package.json"),
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "bad-git-dep": `git+${pathToFileURL(join(String(dir), "missing-repo")).href}` },
+      }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projDir,
+      env: { ...gitFixtureEnv(String(dir)), BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain('"git clone" for "bad-git-dep" failed');
+    expect(stderr).toContain("cloning repository for");
+    expect(stderr).not.toContain("no commit matching");
     expect(stdout).toContain("bun install v1.");
     expect(exitCode).toBe(1);
   });

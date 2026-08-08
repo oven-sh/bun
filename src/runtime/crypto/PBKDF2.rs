@@ -255,6 +255,11 @@ impl bun_jsc::Unprotect for PBKDF2 {
         self.password.unprotect();
         self.salt.unprotect();
     }
+
+    fn disarm_for_dead_vm(&mut self) {
+        self.password.disarm_for_dead_vm();
+        self.salt.disarm_for_dead_vm();
+    }
 }
 
 pub(crate) struct Pbkdf2Ctx {

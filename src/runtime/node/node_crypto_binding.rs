@@ -1126,6 +1126,11 @@ mod _impl {
             bun_jsc::Unprotect::unprotect(&mut self.password);
             bun_jsc::Unprotect::unprotect(&mut self.salt);
         }
+
+        fn disarm_for_dead_vm(&mut self) {
+            bun_jsc::Unprotect::disarm_for_dead_vm(&mut self.password);
+            bun_jsc::Unprotect::disarm_for_dead_vm(&mut self.salt);
+        }
     }
 
     impl CryptoJobCtx for Scrypt {

@@ -6,6 +6,7 @@ use bun_paths::strings;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
@@ -18,7 +19,10 @@ use bun_jsc::AbortSignal;
 use bun_jsc::EventLoopTaskPtr;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, Task, ThreadSafe, Unprotect};
+use bun_jsc::{
+    ConcurrentPosterGate, EventLoopHandle, JSGlobalObject, JSValue, JsResult, Task, ThreadSafe,
+    Unprotect,
+};
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
@@ -1012,6 +1016,11 @@ mod _async_tasks {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in create()).
             let mut task = unsafe { bun_core::heap::take(this) };
+            // `run_from_js_thread` leaves the sentinel error here; only the shutdown-drain path
+            // still holds a real result, whose payloads only `fs_to_js` would otherwise free.
+            if let Ok(result) = task.result.as_mut() {
+                result.fs_discard();
+            }
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
         }
@@ -1067,6 +1076,7 @@ mod _async_tasks {
         }
         impl Unprotect for $ty {
             #[inline] fn unprotect(&mut self) {}
+            #[inline] fn disarm_for_dead_vm(&mut self) {}
         } )+
     };
 }
@@ -1155,6 +1165,10 @@ mod _async_tasks {
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub trait FsReturn {
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+
+        /// Release payloads only [`Self::fs_to_js`] would free, for a result that will never
+        /// reach the JS thread. Types whose `Drop` already frees everything keep the no-op.
+        fn fs_discard(&mut self) {}
     }
     impl FsReturn for JSValue {
         #[inline]
@@ -1191,17 +1205,37 @@ mod _async_tasks {
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(crate::node::types::FdJsc::to_js(*self, global))
         }
+        fn fs_discard(&mut self) {
+            // `fs_to_js` would have transferred the descriptor to JS; nothing else closes it.
+            let fd = core::mem::replace(self, FD::INVALID);
+            if fd != FD::INVALID {
+                fd.close();
+            }
+        }
     }
     impl FsReturn for StringOrBuffer {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.to_js(global)
         }
+        fn fs_discard(&mut self) {
+            // `Drop for StringOrBuffer` deliberately skips `Buffer` (bytes transfer in `to_js`).
+            if let StringOrBuffer::Buffer(buffer) = self {
+                buffer.destroy();
+            }
+        }
     }
     impl FsReturn for StringOrUndefined {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.to_js(global)
+        }
+        fn fs_discard(&mut self) {
+            // `transfer_to_js` would have consumed the ref; `BunString` has no `Drop`.
+            if let StringOrUndefined::String(s) = core::mem::replace(self, StringOrUndefined::None)
+            {
+                s.deref();
+            }
         }
     }
     impl FsReturn for ret::Read {
@@ -1229,6 +1263,27 @@ mod _async_tasks {
             // JS). Swap in an empty `Files` payload so `&mut self` stays valid.
             let owned = core::mem::replace(self, ret::Readdir::Files(Box::default()));
             owned.to_js(global)
+        }
+        fn fs_discard(&mut self) {
+            // Mirrors `ResultListEntryValue::deinit`; no `Drop` releases the entries.
+            match self {
+                ret::Readdir::WithFileTypes(items) => {
+                    for item in items.iter() {
+                        item.deref();
+                    }
+                }
+                ret::Readdir::Buffers(items) => {
+                    for item in items.iter_mut() {
+                        item.destroy();
+                    }
+                }
+                ret::Readdir::Files(items) => {
+                    for item in items.iter() {
+                        item.deref();
+                    }
+                }
+            }
+            *self = ret::Readdir::Files(Box::default());
         }
     }
     impl FsReturn for StatOrNotFound {
@@ -1263,6 +1318,9 @@ mod _async_tasks {
         pub(crate) result: Maybe<R>,
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
+        /// Keeps the loop's [`ConcurrentPosterGate`] readable after the VM is torn down (the
+        /// blocking syscall can outlive it).
+        pub(crate) gate: Arc<ConcurrentPosterGate>,
     }
 
     bun_threading::intrusive_work_task!([R, A: Unprotect, const F: NodeFSFunctionEnum] AsyncFSTask<R, A, F>, task);
@@ -1305,16 +1363,14 @@ mod _async_tasks {
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
+                // SAFETY: `event_loop()` is a value field of the live `vm`.
+                gate: unsafe { (*vm.event_loop()).poster_gate() },
             });
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
-            // Counted so shutdown's `wait_for_concurrent_posters` covers the
-            // work-pool completion post; paired in `work_pool_callback`.
-            // SAFETY: `event_loop()` is a value field of the live `vm`.
-            unsafe { (*vm.event_loop()).concurrent_poster_begin() };
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
             promise
         }
@@ -1334,20 +1390,46 @@ mod _async_tasks {
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
-            // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
-            // documented accessor for off-thread (work-pool) callers; the
-            // event-loop's concurrent queue is MPSC-safe.
+            // Clone, not borrow: the JS thread may free `this` (and its `Arc`) right after the
+            // enqueue, before `end_post`.
             // SAFETY: `this` is still exclusively owned here (see above).
-            let vm = unsafe { (*this).global_object().bun_vm_concurrently() };
-            // SAFETY: VirtualMachine and its event loop are process-static
-            // (LIFETIMES.tsv); the concurrent queue is MPSC-safe. Ownership of
-            // `this` transfers to the JS thread here — no use after this call.
-            unsafe {
-                (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(this));
-                // Pairs with `concurrent_poster_begin` in `create()`. The JS thread may free `this`
-                // once popped and tear the VM down at zero — this is the pool thread's last touch.
-                (*(*vm).event_loop()).concurrent_poster_end();
+            let gate = Arc::clone(unsafe { &(*this).gate });
+            if gate.begin_post() {
+                // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
+                // documented accessor for off-thread (work-pool) callers; the
+                // event-loop's concurrent queue is MPSC-safe.
+                // SAFETY: `begin_post()` returned true, so the VM, its event loop, and the
+                // global object all stay live until the matching `end_post()`. Ownership of
+                // `this` transfers to the JS thread at the enqueue — no use after it.
+                unsafe {
+                    let vm = (*this).global_object().bun_vm_concurrently();
+                    (*(*vm).event_loop())
+                        .enqueue_task_concurrent(ConcurrentTask::create_from(this));
+                }
+                gate.end_post();
+            } else {
+                // The VM shut down while the syscall was blocked; the completion has nowhere
+                // to go. SAFETY: the post was refused, so this thread still owns `this`.
+                unsafe { Self::dispose_without_post(this) };
             }
+        }
+
+        /// The loop's gate refused the completion post: the VM is torn down (or mid-teardown).
+        /// Free the task on the work-pool thread without touching the JS heap — the promise
+        /// `Strong` and the args' protect counts died with it.
+        ///
+        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`, exclusively owned by
+        /// the caller (the post never happened); called at most once.
+        unsafe fn dispose_without_post(this: *mut Self) {
+            // SAFETY: caller guarantees `this` is the live Box-leaked allocation.
+            let mut task = unsafe { bun_core::heap::take(this) };
+            if let Ok(result) = task.result.as_mut() {
+                result.fs_discard();
+            }
+            let Self { promise, args, .. } = *task;
+            // Intentionally never dropped: the Strong handle died with the VM heap.
+            let _ = core::mem::ManuallyDrop::new(promise);
+            args.dispose_for_dead_vm();
         }
 
         pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
@@ -1402,6 +1484,10 @@ mod _async_tasks {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in create()).
             let mut task = unsafe { bun_core::heap::take(this) };
+            // Same as `UVFSRequest::destroy`: only the shutdown-drain path holds a real result.
+            if let Ok(result) = task.result.as_mut() {
+                result.fs_discard();
+            }
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
         }
@@ -1452,6 +1538,8 @@ mod _async_tasks {
         /// outlives this task; `ParentRef` gives a safe `&ShellCpTask` projection
         /// for `cp_on_copy` and round-trips the `*mut` for `cp_on_finish`.
         pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
+        /// `Some` iff `evtloop` is the JS loop (see [`AsyncFSTask::gate`]).
+        pub(crate) gate: Option<Arc<ConcurrentPosterGate>>,
     }
 
     bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
@@ -1622,16 +1710,14 @@ mod _async_tasks {
                 // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
                 // that owns and outlives this task; pointer carries write provenance.
                 shelltask: unsafe { bun_ptr::ParentRef::from_nullable_mut(shelltask) },
+                // SAFETY: `event_loop()` is a value field of the live `vm`.
+                gate: Some(unsafe { (*vm.event_loop()).poster_gate() }),
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
             }
             task.tracker.did_schedule(global_object);
 
-            // Counted so shutdown's `wait_for_concurrent_posters` covers the completion post;
-            // paired in `on_subtask_done`'s Js arm (the mini path never touches the JS event loop).
-            // SAFETY: `event_loop()` is a value field of the live `vm`.
-            unsafe { (*vm.event_loop()).concurrent_poster_begin() };
             let raw = bun_core::heap::release(task);
             WorkPool::schedule(&raw mut raw.task);
             raw
@@ -1661,6 +1747,7 @@ mod _async_tasks {
                 // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
                 // that owns and outlives this task; pointer carries write provenance.
                 shelltask: unsafe { bun_ptr::ParentRef::from_nullable_mut(shelltask) },
+                gate: None,
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
@@ -1730,18 +1817,32 @@ mod _async_tasks {
             // Count reached zero ⇒ exclusive access. `this` carries mutable
             // provenance from `Box::leak`, so the enqueued callback may safely
             // form `&mut *this` on the JS thread.
-            if let EventLoopHandle::Js { owner } = this_ref.evtloop {
-                this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
-                    js: ConcurrentTask::from_callback(this, |p| {
-                        // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
-                        // JS-thread callback holds the only live reference (exclusive `&mut`).
-                        unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) }
-                    })
-                    .as_ptr(),
-                });
-                // Pairs with `concurrent_poster_begin` in `create_with_shell_task`. The JS thread
-                // may free the task once popped and tear the VM down at zero — last touch of loop.
-                owner.concurrent_poster_end();
+            if let EventLoopHandle::Js { .. } = this_ref.evtloop {
+                // Clone, not borrow: the JS thread may free the task (and its `Arc`) right
+                // after the enqueue, before `end_post`.
+                let gate = Arc::clone(
+                    this_ref
+                        .gate
+                        .as_ref()
+                        .expect("JS-loop cp task always carries the poster gate"),
+                );
+                if gate.begin_post() {
+                    // SAFETY (`evtloop` deref): `begin_post()` pins the VM and its event loop
+                    // live until `end_post()`; ownership of `this` transfers at the enqueue.
+                    this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
+                        js: ConcurrentTask::from_callback(this, |p| {
+                            // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
+                            // JS-thread callback holds the only live reference (exclusive `&mut`).
+                            unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) }
+                        })
+                        .as_ptr(),
+                    });
+                    gate.end_post();
+                } else {
+                    // The VM shut down while a copy was blocked; the completion has nowhere to
+                    // go. SAFETY: the post was refused, so this thread still owns `this`.
+                    unsafe { Self::dispose_without_post(this) };
+                }
             } else {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                     mini: AnyTaskWithExtraContext::from_callback_auto_deinit(
@@ -1835,6 +1936,32 @@ mod _async_tasks {
             }
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
             // `to_thread_safe()` when `src`/`dest` are Buffers, so nothing leaks here.
+        }
+
+        /// The loop's gate refused the completion post: the VM is torn down (or mid-teardown).
+        /// Free the task on the work-pool thread without touching the JS heap — the promise
+        /// `Strong` and the args' protect counts died with it.
+        ///
+        /// SAFETY: `this` must be the Box::leak'd task, exclusively owned by the caller (the
+        /// subtask count hit zero and the post never happened); called at most once.
+        unsafe fn dispose_without_post(this: *mut Self) {
+            // SAFETY: caller guarantees `this` is the live Box-leaked allocation.
+            let task = unsafe { bun_core::heap::take(this) };
+            let Self {
+                promise,
+                args,
+                shelltask,
+                ..
+            } = *task;
+            // Intentionally never dropped: the Strong handle died with the VM heap.
+            let _ = core::mem::ManuallyDrop::new(promise);
+            args.dispose_for_dead_vm();
+            // `cp_on_finish` (JS thread) never runs for a refused post, so reclaim the shell
+            // parent here: its interpreter died with the VM, its fields are plain heap.
+            if let Some(parent) = shelltask {
+                // SAFETY: subtask count hit zero and the interpreter is gone — sole reference.
+                drop(unsafe { bun_core::heap::take(parent.as_mut_ptr()) });
+            }
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
@@ -2228,6 +2355,8 @@ mod _async_tasks {
 
         pub(crate) pending_err: Option<sys::Error>,
         pub(crate) pending_err_mutex: bun_threading::Mutex,
+        /// See [`AsyncFSTask::gate`].
+        pub(crate) gate: Arc<ConcurrentPosterGate>,
     }
 
     bun_threading::intrusive_work_task!(AsyncReaddirRecursiveTask, task);
@@ -2405,14 +2534,12 @@ mod _async_tasks {
                 root_fd: FD::INVALID,
                 pending_err: None,
                 pending_err_mutex: bun_threading::Mutex::default(),
+                // SAFETY: `event_loop()` is a value field of the live `vm`.
+                gate: unsafe { (*vm.event_loop()).poster_gate() },
             });
             task.r#ref.ref_(bun_io::js_vm_ctx());
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
-            // Counted so shutdown's `wait_for_concurrent_posters` covers the
-            // single CAS-gated completion post; paired in `finish_concurrently`.
-            // SAFETY: `event_loop()` is a value field of the live `vm`.
-            unsafe { (*vm.event_loop()).concurrent_poster_begin() };
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
             promise
         }
@@ -2584,22 +2711,30 @@ mod _async_tasks {
                 }
             }
 
-            // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
-            // documented accessor for off-thread (work-pool) callers.
-            let vm = self.global_object().bun_vm_concurrently();
-            // `ConcurrentTask::create` heap-allocates a fresh task; the
-            // queue takes ownership of it.
-            // SAFETY: `vm` is the process-singleton VM (LIFETIMES.tsv); the
-            // concurrent queue is MPSC-safe and the borrow is scoped to the call.
-            unsafe {
-                (*vm).enqueue_task_concurrent(ConcurrentTask::create(Task::init(
-                    std::ptr::from_mut::<Self>(self),
-                )));
+            // Clone, not borrow: the JS thread may free `self` (and its `Arc`) right after the
+            // enqueue, before `end_post`.
+            let gate = Arc::clone(&self.gate);
+            let this = std::ptr::from_mut::<Self>(self);
+            if gate.begin_post() {
+                // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
+                // documented accessor for off-thread (work-pool) callers.
+                // `ConcurrentTask::create` heap-allocates a fresh task; the
+                // queue takes ownership of it.
+                // SAFETY: `begin_post()` returned true, so the VM, its event loop, and the
+                // global object all stay live until the matching `end_post()`; the concurrent
+                // queue is MPSC-safe. The JS thread may free `this` once popped — the enqueue
+                // is this thread's last touch of it.
+                unsafe {
+                    let vm = (*this).global_object().bun_vm_concurrently();
+                    (*vm).enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
+                }
+                gate.end_post();
+            } else {
+                // The VM shut down while the scan was blocked; the completion has nowhere to
+                // go. SAFETY: the post was refused and the subtask count hit zero, so this
+                // thread exclusively owns `this`.
+                unsafe { Self::dispose_without_post(this) };
             }
-            // Pairs with `concurrent_poster_begin` in `create()`. The JS thread may free `self`
-            // once popped and tear the VM down at zero — last touch of both.
-            // SAFETY: `event_loop()` is a value field of the process-static VM.
-            unsafe { (*(*vm).event_loop()).concurrent_poster_end() };
         }
 
         fn clear_result_list(&mut self) {
@@ -2700,6 +2835,26 @@ mod _async_tasks {
             task.free_root_path();
             task.clear_result_list();
         }
+
+        /// The loop's gate refused the completion post: the VM is torn down (or mid-teardown).
+        /// Free the task on the work-pool thread without touching the JS heap — the promise
+        /// `Strong` and the args' protect counts died with it. Entry disposal
+        /// (`clear_result_list`) is already off-thread-safe: `finish_concurrently` runs it on
+        /// pool threads on the error path.
+        ///
+        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`, exclusively owned by
+        /// the caller (the post never happened); called at most once.
+        unsafe fn dispose_without_post(this: *mut Self) {
+            // SAFETY: caller guarantees `this` is the live Box-leaked allocation.
+            let mut task = unsafe { bun_core::heap::take(this) };
+            debug_assert!(task.root_fd == FD::INVALID); // closed by finish_concurrently
+            task.free_root_path();
+            task.clear_result_list();
+            let Self { promise, args, .. } = *task;
+            // Intentionally never dropped: the Strong handle died with the VM heap.
+            let _ = core::mem::ManuallyDrop::new(promise);
+            args.dispose_for_dead_vm();
+        }
     }
 
     /// Maps a readdir element type to its `ResultListEntryValue` variant.
@@ -2781,6 +2936,7 @@ pub mod args {
         ($ty:ident; $($field:ident),+ $(,)?) => {
             impl Unprotect for $ty {
                 #[inline] fn unprotect(&mut self) { $( self.$field.unprotect(); )+ }
+                #[inline] fn disarm_for_dead_vm(&mut self) { $( self.$field.disarm_for_dead_vm(); )+ }
             }
             impl $ty {
                 pub fn to_thread_safe(&mut self) { $( self.$field.to_thread_safe(); )+ }
@@ -2858,6 +3014,9 @@ pub mod args {
             self.buffers.value.unprotect();
             // `self.buffers.buffers`: `Vec` frees on drop.
         }
+
+        // The element roots/pins are released only in `unprotect`; `Drop` touches no JS state.
+        fn disarm_for_dead_vm(&mut self) {}
     }
     impl FdVectorIo {
         pub(crate) fn to_thread_safe(&mut self) {
@@ -2907,6 +3066,9 @@ pub mod args {
     impl Unprotect for FTruncate {
         #[inline]
         fn unprotect(&mut self) {}
+
+        #[inline]
+        fn disarm_for_dead_vm(&mut self) {}
     }
     impl FTruncate {
         pub(crate) fn to_thread_safe(&self) {}
@@ -3410,6 +3572,11 @@ pub mod args {
         fn unprotect(&mut self) {
             self.0.unprotect();
         }
+
+        #[inline]
+        fn disarm_for_dead_vm(&mut self) {
+            self.0.disarm_for_dead_vm();
+        }
     }
     impl Rm {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rm> {
@@ -3806,6 +3973,11 @@ pub mod args {
         fn unprotect(&mut self) {
             self.buffer.unprotect();
         }
+
+        #[inline]
+        fn disarm_for_dead_vm(&mut self) {
+            self.buffer.disarm_for_dead_vm();
+        }
     }
     impl Write {
         pub(crate) fn to_thread_safe(&mut self) {
@@ -3974,6 +4146,10 @@ pub mod args {
                 self.buffer.buffer.unpin();
             }
             self.buffer.buffer.value.unprotect();
+        }
+
+        fn disarm_for_dead_vm(&mut self) {
+            self.pinned = false;
         }
     }
     impl Read {
@@ -4210,6 +4386,14 @@ pub mod args {
             self.path.unprotect();
             // Signal unref handled by `Drop` (idempotent via `.take()`).
         }
+
+        fn disarm_for_dead_vm(&mut self) {
+            self.path.disarm_for_dead_vm();
+            // `Drop` would deref the signal's non-atomic WebCore refcount.
+            if let Some(signal) = self.signal.take() {
+                let _ = core::mem::ManuallyDrop::new(signal);
+            }
+        }
     }
     impl ReadFile {
         pub(crate) fn to_thread_safe(&mut self) {
@@ -4300,6 +4484,15 @@ pub mod args {
             self.file.unprotect();
             self.data.unprotect();
             // Signal unref handled by `Drop` (idempotent via `.take()`).
+        }
+
+        fn disarm_for_dead_vm(&mut self) {
+            self.file.disarm_for_dead_vm();
+            self.data.disarm_for_dead_vm();
+            // `Drop` would deref the signal's non-atomic WebCore refcount.
+            if let Some(signal) = self.signal.take() {
+                let _ = core::mem::ManuallyDrop::new(signal);
+            }
         }
     }
     impl WriteFile {
@@ -4405,6 +4598,11 @@ pub mod args {
         fn unprotect(&mut self) {
             self.0.unprotect();
         }
+
+        #[inline]
+        fn disarm_for_dead_vm(&mut self) {
+            self.0.disarm_for_dead_vm();
+        }
     }
 
     pub struct Exists {
@@ -4422,6 +4620,12 @@ pub mod args {
         fn unprotect(&mut self) {
             if let Some(p) = &mut self.path {
                 p.unprotect();
+            }
+        }
+
+        fn disarm_for_dead_vm(&mut self) {
+            if let Some(p) = &mut self.path {
+                p.disarm_for_dead_vm();
             }
         }
     }

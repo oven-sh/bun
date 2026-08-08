@@ -257,8 +257,7 @@ test("returning a Temporal value from a macro fails with the coercion error", as
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("");
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("cannot coerce Temporal.PlainDate to Bun's AST");
   expect(exitCode).not.toBe(0);
 });

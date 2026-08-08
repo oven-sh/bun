@@ -1023,7 +1023,7 @@ mod draft {
                     let mut addr_buf: [usize; 20] = [0; 20];
                     let trace_buf: StackTrace;
 
-                    let trace: &StackTrace = 'blk: {
+                    let trace: &StackTrace = {
                         let idx: usize = match seed {
                             // For an actual fault the signal/exception handler hands
                             // us the saved register context. Seeding the walk from
@@ -1046,7 +1046,7 @@ mod draft {
                             index: idx,
                             instruction_addresses: &addr_buf,
                         };
-                        break 'blk &trace_buf;
+                        &trace_buf
                     };
 
                     if debug_trace {

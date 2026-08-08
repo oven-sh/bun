@@ -1780,11 +1780,9 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
 // worker/VM teardown: the completion is instead refused at the event loop's
 // poster gate and freed on the pool thread. The fs ops below block forever by
 // design, so these tests hang (and time out) if shutdown ever waits on them.
-test.concurrent.skipIf(isWindows)(
-  "terminate() settles while the worker has an fs read blocked on a FIFO",
-  async () => {
-    using dir = tempDir("worker-terminate-blocked-read", {
-      "main.cjs": `
+test.concurrent.skipIf(isWindows)("terminate() settles while the worker has an fs read blocked on a FIFO", async () => {
+  using dir = tempDir("worker-terminate-blocked-read", {
+    "main.cjs": `
         const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
         if (isMainThread) {
           const w = new Worker(__filename, { workerData: process.argv[2] });
@@ -1801,20 +1799,19 @@ test.concurrent.skipIf(isWindows)(
           parentPort.postMessage("pending");
         }
       `,
-    });
-    const fifo = join(String(dir), "pipe.fifo");
-    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.cjs", fifo],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("exit event\nterminate resolved\n");
-    expect(exitCode).toBe(0);
-  },
-);
+  });
+  const fifo = join(String(dir), "pipe.fifo");
+  expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.cjs", fifo],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("exit event\nterminate resolved\n");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent.skipIf(isWindows)(
   "process.exit() with a blocked fs read pending completes under BUN_DESTRUCT_VM_ON_EXIT",

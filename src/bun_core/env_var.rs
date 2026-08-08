@@ -266,8 +266,7 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_INTERNAL_BUNX_INSTALL, "BUN_INTERNAL_BUNX_INSTALL", {});
     // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts.
     new_feature_flag!(pub BUN_INTERNAL_FAIL_PIPE_READER_START, "BUN_INTERNAL_FAIL_PIPE_READER_START", {});
-    // Debug-only fault injection for test/js/web/fetch/exiting.test.ts (delays
-    // `FetchTasklet::deref_from_thread` into the exit window).
+    // Debug-only fault injection for test/js/web/fetch/exiting.test.ts.
     new_feature_flag!(pub BUN_INTERNAL_FETCH_DELAY_DEREF_FROM_THREAD, "BUN_INTERNAL_FETCH_DELAY_DEREF_FROM_THREAD", {});
     // Test-only: bypass the stdin isatty gate in `bun update --interactive` so
     // tests can drive the multi-select by writing keystrokes to a pipe.

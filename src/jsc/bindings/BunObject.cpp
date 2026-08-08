@@ -784,7 +784,6 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     auto& vm = JSC::getVM(globalObject);
     vm.ensureHeapProfiler();
     auto& heapProfiler = *vm.heapProfiler();
-    heapProfiler.clearSnapshots();
 
     Bun__Feature__heap_snapshot += 1;
 

@@ -1194,6 +1194,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     if bun_core::image::building() && url_type == URLType::Remote {
+        global_this.throw_disabled_in_snapshot_error_if_needed("fetch() to the network")?; // warn mode: logs a stack and lets it through
+    }
+    if bun_core::image::building()
+        && url_type == URLType::Remote
+        && !bun_core::env_var::BUN_IMAGE_IO_WARN.get().unwrap_or(false)
+    {
         // Nothing that talks to the network may exist across a snapshot: abort the caller's signal (so its own timeout/cleanup runs) and reject before any tasklet, body stream or listener is created.
         if let Some(sig) = signal.take() {
             // SAFETY: `sig` came from `AbortSignal::ref_()` above; unref after signalling.

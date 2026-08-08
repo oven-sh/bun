@@ -1879,6 +1879,7 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
             .rare_data()
             .forget_entropy_cache_for_image_restore()
     };
+    crate::dns_jsc::internal::flush_dns_cache_for_image_restore(); // answers in the image came from the builder's network
     #[cfg(target_os = "macos")]
     {
         // SAFETY: main-thread VM adopted above; single-threaded at this point of restore.

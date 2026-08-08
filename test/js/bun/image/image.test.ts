@@ -162,3 +162,25 @@ test("random sources and time bases are fresh in every process restored from the
   expect(a.now).toBeLessThan(5000);
   expect(b.timeOrigin).toBeGreaterThanOrEqual(a.timeOrigin);
 }, 60000);
+
+test("DNS answers cached by the builder are not served after restore; keep-alive pool recovers", async () => {
+  using dir = tempDir("bun-image-dns", {});
+  const img = join(String(dir), "dns.img");
+  const fixture = join(import.meta.dir, "dns-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_IMAGE_OUT: img, BUN_IMAGE_IO_WARN: "1" }, stdout: "pipe", stderr: "pipe" });
+    const out = await p.stdout.text();
+    await p.exited;
+    expect(JSON.parse(out.match(/\[js\] build (.*)/)![1]).size).toBeGreaterThan(0);
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_IMAGE_IN: img }, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  const m = out.match(/\[js\] restored (.*)/);
+  expect(m, err.slice(-600)).not.toBeNull();
+  const r = JSON.parse(m![1]);
+  expect(r.before.size).toBe(0); // flushed at restore
+  expect(r.after.cacheHitsCompleted).toBe(0); // the post-restore lookup was a miss, i.e. asked this machine
+  expect(r.status).toBe(200);
+  expect(r.body).toBe("ok2");
+  expect(code).toBe(0);
+}, 60000);

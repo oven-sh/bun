@@ -248,6 +248,13 @@ type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
 type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
+/// Resolve-task id (git checkout / tarball extract) -> the package that task
+/// appended during the resolve phase. A task's callback queue is drained
+/// exactly once, so a dependency enqueued after that drain must resolve
+/// through this map instead of queueing a callback that nothing will ever
+/// process.
+type AppendedTaskPackageMap =
+    HashMap<Task::Id, PackageID /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap =
     HashMap<u64, FolderResolutionEntry /* , IdentityContext<u64>, 80 */>;
 pub(crate) type NpmAliasMap =
@@ -329,6 +336,7 @@ pub struct PackageManager {
     pub manifests: PackageManifestMap,
     pub(crate) folders: FolderResolutionMap,
     pub(crate) git_repositories: RepositoryMap,
+    pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
     pub(crate) async_network_task_queue: AsyncNetworkTaskQueue,
@@ -1914,6 +1922,7 @@ pub fn init(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
         wr!(network_tarball_batch, thread_pool::Batch::default());
@@ -2346,6 +2355,7 @@ fn init_with_runtime_once(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
         wr!(network_tarball_batch, thread_pool::Batch::default());

@@ -75,11 +75,7 @@ test.skipIf(!isASAN || isWindows)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [buildOut, buildErr, buildCode] = await Promise.all([
-      build.stdout.text(),
-      build.stderr.text(),
-      build.exited,
-    ]);
+    const [buildOut, buildErr, buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect({ buildErr: buildErr.includes("error") ? buildErr : "", buildOut: "", buildCode }).toEqual({
       buildErr: "",
       buildOut: "",
@@ -105,11 +101,7 @@ test.skipIf(!isASAN || isWindows)(
       );
       const results = await Promise.all(
         procs.map(async proc => {
-          const [stdout, stderr, exitCode] = await Promise.all([
-            proc.stdout.text(),
-            proc.stderr.text(),
-            proc.exited,
-          ]);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           return { stdout, stderr, exitCode };
         }),
       );

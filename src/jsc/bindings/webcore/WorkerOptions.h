@@ -8,6 +8,31 @@
 
 namespace WebCore {
 
+// node:worker_threads resourceLimits. JSC has no per-VM hard cap, so the two *SizeMb limits are summed into one post-GC heap check; codeRangeSizeMb/stackSizeMb are echoed, not enforced.
+struct WorkerResourceLimits {
+    double maxYoungGenerationSizeMb { -1 };
+    double maxOldGenerationSizeMb { -1 };
+    double codeRangeSizeMb { -1 };
+    double stackSizeMb { 4 };
+
+    // 0 when no heap limit is configured.
+    size_t heapLimitBytes() const
+    {
+        double mb = 0;
+        if (std::isfinite(maxOldGenerationSizeMb) && maxOldGenerationSizeMb > 0)
+            mb += maxOldGenerationSizeMb;
+        if (std::isfinite(maxYoungGenerationSizeMb) && maxYoungGenerationSizeMb > 0)
+            mb += maxYoungGenerationSizeMb;
+        if (mb <= 0)
+            return 0;
+        // SAFETY: clamp in double before casting; an out-of-range double-to-size_t cast is UB.
+        double bytes = mb * 1024.0 * 1024.0;
+        if (bytes >= static_cast<double>(std::numeric_limits<size_t>::max()))
+            return std::numeric_limits<size_t>::max();
+        return static_cast<size_t>(bytes);
+    }
+};
+
 struct WorkerOptions {
     enum class Kind : uint8_t {
         // Created by the global Worker constructor
@@ -38,6 +63,8 @@ struct WorkerOptions {
     Vector<String> argv;
     // If nullopt, inherit execArgv from the parent thread
     std::optional<Vector<String>> execArgv;
+    // Defaults (no heap limit) when no resourceLimits object was passed.
+    WorkerResourceLimits resourceLimits;
 };
 
 } // namespace WebCore

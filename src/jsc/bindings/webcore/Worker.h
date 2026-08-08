@@ -46,6 +46,7 @@ class JSPromise;
 namespace WebCore {
 
 class ScriptExecutionContext;
+class WorkerHeapLimitObserver;
 struct StructuredSerializeOptions;
 struct WorkerOptions;
 
@@ -127,6 +128,12 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     WorkerOptions& options() { return m_options; }
+    size_t heapLimitBytes() const { return m_options.resourceLimits.heapLimitBytes(); }
+    void setTerminatedDueToOOM() { m_terminatedDueToOOM.store(true); }
+    // See WorkerHeapLimitObserver in Worker.cpp for the lifecycle/threading contract.
+    void installHeapLimitObserver(JSC::VM&, void* nativeWorker);
+    void disarmHeapLimitObserver() { m_heapLimitDisarmed.store(true, std::memory_order_release); }
+    bool heapLimitObserverDisarmed() const { return m_heapLimitDisarmed.load(std::memory_order_acquire); }
 
     // -- Worker-thread entry points (each posts to m_parentContextId) --------
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
@@ -192,6 +199,10 @@ private:
 
     std::atomic<State> m_state { State::Pending };
     std::atomic<bool> m_terminateRequested { false };
+    std::atomic<bool> m_terminatedDueToOOM { false };
+    std::atomic<bool> m_heapLimitDisarmed { false };
+    // SAFETY: never removeObserver'd; the Heap (and its observer list) dies in WebWorker__teardownJSCVM, before ~Worker destroys this.
+    std::unique_ptr<WorkerHeapLimitObserver> m_heapLimitObserver;
 
     // Stable for the process lifetime; used with ScriptExecutionContext::
     // postTaskTo() so the worker thread never dereferences the parent context
@@ -208,6 +219,8 @@ private:
 };
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
+// Defined in Worker.cpp; also used by the worker.resourceLimits getter in JSWorker.cpp.
+JSC::JSObject* createResourceLimitsObject(JSC::JSGlobalObject*, const WorkerResourceLimits&);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
 

@@ -228,6 +228,12 @@ unsafe extern "C" {
         message: &mut BunString,
         err: JSValue,
     );
+    // See WorkerHeapLimitObserver in Worker.cpp for the threading contract. `native_worker` is `*const WebWorker` as an opaque c_void (a non-repr(C) type cannot appear in an extern block, even behind a pointer).
+    safe fn WebWorker__installHeapLimitObserver(
+        cpp_worker: *mut c_void,
+        global: &JSGlobalObject,
+        native_worker: *const c_void,
+    );
 }
 
 /// Process-global registry of worker threads that have been spawned and
@@ -401,6 +407,33 @@ extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut c_void {
     vm.worker_ref()
         .map(|w| w.cpp_worker)
         .unwrap_or(core::ptr::null_mut())
+}
+
+// SAFETY: WorkerHeapLimitObserver calls these from whichever thread holds the
+// GC conn (including JSC's collector thread, where the per-thread VM is not
+// installed), so they take the captured-at-install-time pointer and touch only
+// the atomic. `this` is owned by C++ WebCore::Worker and outlives its JSC heap.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn WebWorker__setRequestedTerminate(this: *mut WebWorker) {
+    let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+    let _ = this.set_requested_terminate();
+}
+
+/// Same contract as [`WebWorker__setRequestedTerminate`].
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn WebWorker__hasRequestedTerminate(this: *const WebWorker) -> bool {
+    let this = bun_ptr::ParentRef::from(NonNull::new(this.cast_mut()).expect("WebWorker FFI ptr"));
+    this.has_requested_terminate()
+}
+
+// SAFETY: mutator-thread only (reads the per-thread VM, which JSC-internal
+// threads lack). For node:vm's checkForTermination, which runs inside a
+// script/module evaluation; GC-side code must use the pointer-taking variant.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn WebWorker__currentWorkerHasRequestedTerminate() -> bool {
+    VirtualMachine::get()
+        .worker_ref()
+        .is_some_and(WebWorker::has_requested_terminate)
 }
 
 impl WebWorker {
@@ -953,6 +986,20 @@ impl WebWorker {
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
         }
+
+        // resourceLimits heap-limit observer (no-op without a configured
+        // limit). Registered here — after the JSC VM exists and before the
+        // entry point runs — rather than inside `Zig__GlobalObject__create`,
+        // so `self` is handed to C++ race-free on this thread instead of the
+        // C++ `Worker` reading back its `impl_` field, which the parent
+        // thread only assigns after `create()` returns.
+        // SAFETY: `vm` is the live, not-yet-published VM; `(*vm).global` was
+        // set by `init_worker` and is valid for the VM's lifetime.
+        WebWorker__installHeapLimitObserver(
+            self.cpp_worker,
+            JSGlobalObject::opaque_ref(unsafe { (*vm).global }),
+            core::ptr::from_ref(self).cast(),
+        );
 
         // Publish `vm` now (rather than at the end of startVM) so that:
         //   - a concurrent notifyNeedTermination()/terminateAllAndWait() can

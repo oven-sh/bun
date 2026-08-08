@@ -12,7 +12,7 @@
     "stats": {
       "dirs": 215,
       "files": 1296,
-      "excluded": 160
+      "excluded": 162
     }
   },
   "dirs": [
@@ -250,6 +250,7 @@
     "cli/test/test-changed.test.ts",
     "internal/build-post-link-ordering.test.ts",
     "internal/macos-cross-config.test.ts",
+    "js/bun/internal-module-dev-reload.test.ts",
     "js/bun/console/console-iterator.test.ts",
     "js/bun/crypto/wpt-webcrypto.generateKey.test.ts",
     "js/bun/ffi/ffi.test.js",

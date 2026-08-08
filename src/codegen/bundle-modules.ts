@@ -15,10 +15,10 @@ import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
-import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
+import { getJS2NativeCPP, getJS2NativeRust, getJS2NativeSignature } from "./generate-js2native";
 import { cap, checkAscii, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
-import { define } from "./replacements";
+import { define, getNumericReplacementsSignature } from "./replacements";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
@@ -243,6 +243,22 @@ if (out.exitCode !== 0) {
 
 mark("Bundle modules");
 
+// Hash of every codegen-assigned numeric ID space baked into module JS
+// ($lazy native-call IDs, module registry indices, error-code and js_classes
+// IDs). InternalModuleRegistry.cpp refuses hot-reloading JS_DIR files whose
+// stamp doesn't match the binary's, so a renumbering rebuild can't make
+// $lazy(N) dispatch to the wrong native code. Content isn't hashed: editing
+// JS never invalidates the stamp.
+const js2nativeSignature = getJS2NativeSignature();
+const generation = new Bun.CryptoHasher("sha256")
+  .update(JSON.stringify([moduleList, nativeStartIndex]))
+  .update(js2nativeSignature)
+  .update(getNumericReplacementsSignature())
+  .digest("hex")
+  .slice(0, 16);
+const generationStamp = `// @bun-internal-module-generation=${generation}\n`;
+const stampedNativeCallCount = (JSON.parse(js2nativeSignature) as unknown[]).length;
+
 const outputs = new Map();
 
 for (const entrypoint of bundledEntryPoints) {
@@ -279,9 +295,24 @@ for (const entrypoint of bundledEntryPoints) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
   }
 
+  // Guard rail: the stamp is only sound if every $lazy ID this file bakes was
+  // registered before the stamp was computed. Registration happens during
+  // module preprocessing, so this can only fire if the stamp computation gets
+  // moved above it.
+  for (const match of captured.matchAll(/@lazy\((\d+)\)/g)) {
+    if (Number(match[1]) >= stampedNativeCallCount) {
+      throw new Error(
+        `${file_path} bakes $lazy ID ${match[1]}, but only ${stampedNativeCallCount} native calls were ` +
+          `registered when the generation stamp was computed.`,
+      );
+    }
+  }
+
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, captured);
+  // Stamp only the on-disk copy, at EOF so line numbers match the embedded
+  // sources (which always match the binary and don't need a stamp).
+  fs.writeFileSync(outputPath, captured + generationStamp);
   outputs.set(file_path.replace(".js", ""), captured);
 }
 
@@ -380,6 +411,14 @@ writeIfNotChanged(
   `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}
 #define BUN_NATIVE_MODULE_START_INDEX ${nativeStartIndex}
 `,
+);
+
+// Included only by InternalModuleRegistry.cpp (not from any header): the hash
+// changes on every ID renumbering, and keeping it off the PCH include chain
+// keeps that a one-TU recompile.
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "InternalModuleRegistry+generation.h"),
+  `#define BUN_INTERNAL_MODULE_GENERATION "${generation}"\n`,
 );
 
 // This code slice is used in InternalModuleRegistry.h for inlining the enum. I dont think we

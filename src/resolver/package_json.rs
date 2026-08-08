@@ -1278,6 +1278,10 @@ pub(crate) struct ESModule<'a> {
     pub(crate) conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
     pub(crate) module_type: &'a mut ModuleType,
+    /// Input: ignore the "bun" condition on a retry when its target was absent on disk (#7142).
+    pub(crate) skip_bun_condition: bool,
+    /// Output: set to true iff the returned resolution came from matching the "bun" condition.
+    pub(crate) matched_bun_condition: &'a mut bool,
 }
 
 #[derive(Clone)]
@@ -2110,6 +2114,14 @@ impl<'a> ESModule<'a> {
             EntryData::Map(object) => {
                 for entry in object.list.iter() {
                     let key: &[u8] = &entry.key;
+                    if self.skip_bun_condition && key == b"bun" {
+                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                            log.add_note_fmt(format_args!(
+                                "The key \"bun\" is being skipped because its target does not exist on disk"
+                            ));
+                        }
+                        continue;
+                    }
                     if self.conditions.contains_key(key) {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!(
@@ -2136,6 +2148,18 @@ impl<'a> ESModule<'a> {
 
                         if key == b"require" {
                             *self.module_type = ModuleType::Cjs;
+                        }
+
+                        if key == b"bun"
+                            && matches!(
+                                result.status,
+                                Status::Exact
+                                    | Status::ExactEndsWithStar
+                                    | Status::Inexact
+                                    | Status::PackageResolve
+                            )
+                        {
+                            *self.matched_bun_condition = true;
                         }
 
                         return result;

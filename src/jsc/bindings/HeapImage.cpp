@@ -426,6 +426,9 @@ static bool findEmbeddedImage(char* out, size_t cap)
 
 extern "C" void Bun__imageMaybeRestore()
 {
+    // Only compiled executables carry or sit next to images; a plain `bun` takes part only when asked to through the environment.
+    if (!bun_is_compiled_executable() && !getenv("BUN_IMAGE_IN") && !getenv("BUN_IMAGE_OUT"))
+        return;
     // No setenv()/heap use in a process that is about to restore: environ would be reallocated into memory the image overlays.
     bool wantImage = getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || siblingImageExists() || embeddedImageExists();
     if (wantImage)

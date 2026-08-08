@@ -338,6 +338,46 @@ describe("oversized inputs", () => {
   });
 });
 
+describe("RSA generateKey", () => {
+  const rsaAlgorithms: [string, KeyUsage[]][] = [
+    ["RSASSA-PKCS1-v1_5", ["sign", "verify"]],
+    ["RSA-PSS", ["sign", "verify"]],
+    ["RSA-OAEP", ["encrypt", "decrypt"]],
+  ];
+
+  // Resolves to the reported and actual modulus size of the generated key, or to the
+  // name of the error generateKey rejected with.
+  const outcome = async (name: string, modulusLength: number, keyUsages: KeyUsage[]) => {
+    try {
+      const { publicKey } = (await crypto.subtle.generateKey(
+        { name, modulusLength, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        true,
+        keyUsages,
+      )) as CryptoKeyPair;
+      const jwk = (await crypto.subtle.exportKey("jwk", publicKey)) as JsonWebKey;
+      return {
+        reported: (publicKey.algorithm as KeyAlgorithm & { modulusLength: number }).modulusLength,
+        actual: Buffer.from(jwk.n!, "base64url").length * 8,
+      };
+    } catch (e) {
+      return (e as Error).name;
+    }
+  };
+
+  // BoringSSL rounds the requested modulus down to a multiple of 128 bits, so asking
+  // for 520 or 1032 bits used to resolve with a 512- or 1024-bit key instead.
+  it.each(rsaAlgorithms)("%s rejects a modulusLength it cannot generate exactly", async (name, keyUsages) => {
+    expect({
+      "520": await outcome(name, 520, keyUsages),
+      "1032": await outcome(name, 1032, keyUsages),
+    }).toEqual({ "520": "OperationError", "1032": "OperationError" });
+  });
+
+  it("generates a modulus of exactly modulusLength bits", async () => {
+    expect(await outcome("RSASSA-PKCS1-v1_5", 1024, ["sign", "verify"])).toEqual({ reported: 1024, actual: 1024 });
+  });
+});
+
 describe("Ed25519", () => {
   describe("generateKey", () => {
     it("should return CryptoKeys without namedCurve in algorithm field", async () => {

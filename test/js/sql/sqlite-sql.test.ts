@@ -1605,16 +1605,24 @@ describe("SQL helpers", () => {
   });
 
   test("file with named parameters", async () => {
-    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
-    await strictSql`CREATE TABLE file_named_test (id INTEGER, name TEXT)`;
-    await strictSql.unsafe("INSERT INTO file_named_test VALUES (:id, :name)", { id: 1, name: "Alice" });
-
     await using dir = tempDir("sql-file-named", {
       "query.sql": `SELECT * FROM file_named_test WHERE name = :name`,
     });
 
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE file_named_test (id INTEGER, name TEXT)`;
+    await strictSql.unsafe("INSERT INTO file_named_test VALUES (:id, :name)", { id: 1, name: "Alice" });
+
     const result = await strictSql.file(path.join(dir, "query.sql"), { name: "Alice" });
     expect(result).toEqual([{ id: 1, name: "Alice" }]);
+
+    // Non-strict connections use the same file with prefixed keys.
+    await using defaultSql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+    await defaultSql`CREATE TABLE file_named_test (id INTEGER, name TEXT)`;
+    await defaultSql.unsafe("INSERT INTO file_named_test VALUES (:id, :name)", { ":id": 2, ":name": "Bob" });
+
+    const defaultResult = await defaultSql.file(path.join(dir, "query.sql"), { ":name": "Bob" });
+    expect(defaultResult).toEqual([{ id: 2, name: "Bob" }]);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -60,6 +60,39 @@ it("loadavg", () => {
 
 it("homedir", () => {
   expect(os.homedir() !== "unknown").toBe(true);
+});
+
+it.skipIf(isWindows)("homedir honors $HOME; userInfo().homedir does not", async () => {
+  const child = `
+    const os = require("node:os");
+    process.stdout.write(JSON.stringify({ homedir: os.homedir(), userInfo: os.userInfo().homedir }));
+  `;
+  const run = async env => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", child],
+      env,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { out: JSON.parse(stdout), exitCode };
+  };
+  const base = { ...bunEnv, HOME: undefined };
+
+  const [unset, set, empty] = await Promise.all([
+    run({ ...base }),
+    run({ ...base, HOME: "/bun-homedir-test" }),
+    run({ ...base, HOME: "" }),
+  ]);
+
+  // uv_os_homedir: $HOME whenever present (including ""), passwd only when absent.
+  // uv_os_get_passwd (os.userInfo().homedir): passwd regardless of $HOME.
+  const passwd = unset.out.userInfo;
+  expect({ unset: unset.out, set: set.out, empty: empty.out }).toEqual({
+    unset: { homedir: passwd, userInfo: passwd },
+    set: { homedir: "/bun-homedir-test", userInfo: passwd },
+    empty: { homedir: "", userInfo: passwd },
+  });
+  expect([unset.exitCode, set.exitCode, empty.exitCode]).toEqual([0, 0, 0]);
 });
 
 it("tmpdir", () => {

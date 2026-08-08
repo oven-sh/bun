@@ -106,6 +106,15 @@ impl QuietWriterAdapter {
         // the io::Writer is the first field (repr(C)).
         unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<io::Writer>() }
     }
+    /// Take and clear the sticky write errno this adapter's `write_all`/`flush`
+    /// recorded (raw `libc` value). See `ConsoleObject::forward_write_error`.
+    #[inline]
+    pub fn take_err(&mut self) -> Option<i32> {
+        match output_sink().quiet_writer_adapter_take_err(self) {
+            0 => None,
+            errno => Some(errno),
+        }
+    }
 }
 
 /// Opaque file handle. Replaces `bun_sys::File` in this crate.

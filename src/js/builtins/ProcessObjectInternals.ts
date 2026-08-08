@@ -55,6 +55,10 @@ export function getStdioWriteStream(
     stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
     stream.readable = false;
     stream._type = "fs";
+    // Node's stdio (net.Socket / SyncWriteStream) has autoDestroy:true paired
+    // with the _destroy -> _undestroy() override below, so errorOrDestroy
+    // emits 'error' per failed write and the stream stays writable.
+    stream._writableState.autoDestroy = true;
 
     // When stdout/stderr are piped or connected to a socket, they should have Symbol.asyncIterator
     // to match Node.js behavior where they become Duplex streams (Socket)
@@ -65,11 +69,6 @@ export function getStdioWriteStream(
           // stdout/stderr don't produce readable data, so yield nothing
         })();
       };
-    } else {
-      // File-backed stdio: Node's SyncWriteStream runs end() -> finish ->
-      // destroy -> the _destroy override below -> _undestroy(), which resets
-      // writable state so later writes succeed. autoClose:false disabled that.
-      stream._writableState.autoDestroy = true;
     }
   }
 
@@ -77,9 +76,18 @@ export function getStdioWriteStream(
     stream.destroySoon = stream.destroy;
     stream._destroy = function (err, cb) {
       cb(err);
+      // Bun keeps running after an uncaughtException (unlike Node), so preserve
+      // errorEmitted across _undestroy() when no 'error' listener is attached
+      // to keep emitErrorNT's one-shot guard latched instead of re-reporting
+      // forever. With a listener, reset it so the listener fires per write.
+      const w = this._writableState;
+      const hadErrorEmitted = w.errorEmitted;
       this._undestroy();
+      if (this.listenerCount("error") === 0) {
+        w.errorEmitted = hadErrorEmitted;
+      }
 
-      if (!this._writableState.emitClose) {
+      if (!w.emitClose) {
         process.nextTick(() => {
           this.emit("close");
         });

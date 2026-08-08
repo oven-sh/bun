@@ -348,6 +348,54 @@ impl Drop for FlushOnDrop<'_> {
     }
 }
 
+#[inline]
+fn level_uses_stderr(message_type: MessageType, level: MessageLevel) -> bool {
+    matches!(level, MessageLevel::Warning | MessageLevel::Error)
+        || message_type == MessageType::Assert
+}
+
+unsafe extern "C" {
+    fn Bun__ConsoleObject__onStdioWriteError(global: &JSGlobalObject, fd: i32, err: JSValue);
+}
+
+/// Surface any write errno the console adapter recorded on
+/// `process.stdout`/`stderr` as an `'error'` event. Bun's native `console.*`
+/// writes to the fd directly, bypassing the stream; Node routes through
+/// `process.stdout.write()`. The C++ side drops it when no `'error'` listener
+/// is attached (matching `test-process-external-stdio-close`).
+fn forward_write_error(global: &JSGlobalObject, is_stderr: bool) {
+    let errno = {
+        // SAFETY: single-JS-thread top-level host call; `&mut` is scoped to
+        // this block so nothing derived from it is live across the re-entrant
+        // FFI below.
+        let console = unsafe { vm_console_mut(global) };
+        let backing = if is_stderr {
+            &mut console.error_writer_backing
+        } else {
+            &mut console.writer_backing
+        };
+        match backing.take_err() {
+            None => return,
+            Some(e) => e,
+        }
+    };
+    // Don't call into JS under a pending exception; errno was cleared above.
+    if global.has_exception() {
+        return;
+    }
+    // EAGAIN/EINTR are filtered at record time (drain_to_fd), so any errno
+    // reaching here is non-transient.
+    debug_assert!(errno != bun_sys::E::EAGAIN as i32 && errno != bun_sys::E::EINTR as i32);
+    let sys_err = bun_sys::Error::new(errno, bun_sys::Tag::write);
+    let js_err = crate::SysErrorJsc::to_js(&sys_err, global);
+    if global.has_exception() {
+        return;
+    }
+    // SAFETY: C++ side resolves `process.stdout`/`stderr` and calls
+    // `.destroy(err)`; `js_err` is stack-rooted for the call's duration.
+    unsafe { Bun__ConsoleObject__onStdioWriteError(global, if is_stderr { 2 } else { 1 }, js_err) };
+}
+
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
@@ -358,6 +406,7 @@ pub extern "C" fn message_with_type_and_level(
     vals: *const JSValue,
     len: usize,
 ) {
+    let is_stderr = level_uses_stderr(message_type, level);
     if let Err(err) = message_with_type_and_level_(ctype, message_type, level, global, vals, len) {
         // The exception is already set on the VM (`JsError::Thrown`); for OOM
         // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
@@ -366,6 +415,8 @@ pub extern "C" fn message_with_type_and_level(
         }
         debug_assert!(global.has_exception());
     }
+    // Safe with a pending exception: clears the sticky errno and returns early.
+    forward_write_error(global, is_stderr);
 }
 
 fn message_with_type_and_level_(
@@ -407,8 +458,7 @@ fn message_with_type_and_level_(
 
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same
     // time. We do this the slightly annoying way to avoid assigning a pointer.
-    let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
-        || message_type == MessageType::Assert;
+    let use_stderr = level_uses_stderr(message_type, level);
     let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
 
     if message_type == MessageType::Clear {
@@ -544,7 +594,13 @@ fn message_with_type_and_level_(
         // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
         // the only later uses are in the mutually-exclusive `Trace` block, and
         // `message_type == Log` here.
-        let w = unsafe { (*console).writer() };
+        let w = unsafe {
+            if use_stderr {
+                (*console).error_writer()
+            } else {
+                (*console).writer()
+            }
+        };
         let _ = w.write_all(b"\n");
         let _ = w.flush();
     } else if message_type != MessageType::Trace {
@@ -5822,6 +5878,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
         let _ = writeln!(writer, "{}: {}", bstr::BStr::new(slice), current);
     }
     let _ = writer.flush();
+    forward_write_error(global_this, false);
 }
 
 #[unsafe(no_mangle)]
@@ -5954,7 +6011,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else {
-            return;
+            break;
         };
         let _ = bun_io::Write::write_all(&mut writer, b" ");
         if Output::enable_ansi_colors_stderr() {
@@ -5965,6 +6022,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     }
     let _ = bun_io::Write::write_all(&mut writer, b"\n");
     let _ = bun_io::Write::flush(&mut writer);
+    forward_write_error(global, true);
 }
 
 /// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's

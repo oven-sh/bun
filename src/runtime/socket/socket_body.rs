@@ -4193,11 +4193,22 @@ impl SocketMode {
 
 impl bun_event_loop::Taskable for DuplexUpgradeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DuplexUpgradeContext;
-    /// A `Close` (or `StartTLS`) hop that will not run: `this` is the heap
-    /// context itself, freed by nobody else once queued — tear it down.
+    /// The context's one queued hop will not run, and nothing else frees the
+    /// context. If the TLSSocket is still attached (a `StartTLS` that never
+    /// ran: no wrapper was created, so no close ever detached it), route it
+    /// through its close first — that consumes our +1 and detaches it from the
+    /// duplex, so its finalizer during ~VM finds nothing to reach into — then
+    /// free the context.
     unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { Self::deinit(this) }
+        // SAFETY: fn contract; the single queue entry for `this`.
+        unsafe {
+            (*this).queued = false;
+            if let Some(tls) = (*this).tls.take() {
+                let socket = Self::duplex_socket(this);
+                TLSSocket::on_close(tls.into_this_ptr(), socket, 0, None);
+            }
+            Self::deinit(this);
+        }
     }
 }
 
@@ -4211,6 +4222,11 @@ pub(crate) struct DuplexUpgradeContext {
     /// through the safe `event_loop_mut()` accessor instead of a raw deref.
     pub vm: &'static VirtualMachine,
     pub(in crate::socket) task_event: EventState,
+    /// A `task_event` hop is in the VM's queue. The context is enqueued by
+    /// pointer, so at most one entry may exist: a second request while queued
+    /// (the stop phase closing a duplex whose StartTLS has not run) only
+    /// updates `task_event`, which the pending entry reads when it runs.
+    queued: bool,
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
     /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
     pub ssl_config: Option<SSLConfig>,
@@ -4408,6 +4424,8 @@ impl DuplexUpgradeContext {
     /// callers must not hold a `&`/`&mut Self` across the call — pass the raw
     /// pointer directly so no Stacked Borrows protector spans the dealloc.
     pub(crate) unsafe fn run_event(this: *mut Self) {
+        // SAFETY: `this` is live; disjoint field write.
+        unsafe { (*this).queued = false };
         // SAFETY: `this` is live; copy of a `Copy` field.
         match unsafe { (*this).task_event } {
             EventState::StartTLS => {
@@ -4511,6 +4529,10 @@ impl DuplexUpgradeContext {
     unsafe fn enqueue_self_task(this: *mut Self) {
         // SAFETY: fn contract; `vm` is process-lifetime, borrow ends at `;`.
         unsafe {
+            if core::mem::replace(&mut (*this).queued, true) {
+                // Already in the queue: that entry runs the updated `task_event`.
+                return;
+            }
             (*this)
                 .vm
                 .event_loop_mut()
@@ -4778,6 +4800,7 @@ pub fn js_upgrade_duplex_to_tls(
         ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls.as_ptr())));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
         ptr::addr_of_mut!((*duplex_context).task_event).write(EventState::StartTLS);
+        ptr::addr_of_mut!((*duplex_context).queued).write(false);
         // When `owned_ctx` is set, `runEvent` builds from it and ignores
         // `ssl_config` for SSL_CTX construction; servername/ALPN already
         // copied onto `tls` above so the config's only remaining use is the

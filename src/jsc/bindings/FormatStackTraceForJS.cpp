@@ -366,6 +366,8 @@ WTF::String formatStackTrace(
             }
             sb.append(functionName);
             sb.append(" ("_s);
+        } else if (frame.isAsyncFrame()) {
+            sb.append("async "_s);
         }
 
         if (!sourceURLForFrame.isEmpty()) {

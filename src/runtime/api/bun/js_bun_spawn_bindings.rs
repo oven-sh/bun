@@ -289,7 +289,7 @@ pub(crate) fn spawn(
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync::<false>(global_this, args, secondary_args_value)
+    spawn_maybe_sync::<false, false>(global_this, args, secondary_args_value)
 }
 
 /// Bun.spawnSync() calls this.
@@ -298,14 +298,25 @@ pub(crate) fn spawn_sync(
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
+    spawn_maybe_sync::<true, false>(global_this, args, secondary_args_value)
 }
 
-fn spawn_maybe_sync<const IS_SYNC: bool>(
+/// Bun.spawnAndWait() calls this.
+pub(crate) fn spawn_and_wait(
+    global_this: &JSGlobalObject,
+    args: JSValue,
+    secondary_args_value: Option<JSValue>,
+) -> JsResult<JSValue> {
+    spawn_maybe_sync::<false, true>(global_this, args, secondary_args_value)
+}
+
+fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
     global_this: &JSGlobalObject,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
+    const { assert!(!(IS_SYNC && BUFFERED_ASYNC)) };
+
     if IS_SYNC {
         // We skip this on Windows due to test failures.
         #[cfg(not(windows))]
@@ -334,7 +345,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];
 
-    if IS_SYNC {
+    if IS_SYNC || BUFFERED_ASYNC {
         stdio[1] = Stdio::Pipe;
         stdio[2] = Stdio::Pipe;
     }
@@ -464,17 +475,22 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
 
         if !args.is_empty() && args.is_object() {
-            // Reject terminal option on spawnSync
-            if IS_SYNC {
+            // Reject terminal option on spawnSync / spawnAndWait
+            if IS_SYNC || BUFFERED_ASYNC {
                 if args.get_truthy(global_this, "terminal")?.is_some() {
                     return Err(global_this.throw_invalid_arguments(format_args!(
-                        "terminal option is only supported for Bun.spawn, not Bun.spawnSync",
+                        "terminal option is only supported for Bun.spawn, not Bun.{}",
+                        if BUFFERED_ASYNC {
+                            "spawnAndWait"
+                        } else {
+                            "spawnSync"
+                        },
                     )));
                 }
             }
 
             // This must run before the stdio parsing happens
-            if !IS_SYNC {
+            if !IS_SYNC && !BUFFERED_ASYNC {
                 if let Some(val) = args.get_truthy(global_this, "ipc")? {
                     if val.is_cell() && val.is_callable() {
                         maybe_ipc_mode = Some('ipc_mode: {
@@ -594,7 +610,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                         let mut stdio_iter = stdio_val.array_iterator(global_this)?;
                         let mut i: i32 = 0;
                         while let Some(value) = stdio_iter.next()? {
-                            Stdio::extract(&mut stdio[i as usize], global_this, i, value, IS_SYNC)?;
+                            Stdio::extract(
+                                &mut stdio[i as usize],
+                                global_this,
+                                i,
+                                value,
+                                IS_SYNC || BUFFERED_ASYNC,
+                            )?;
                             if i == 2 {
                                 break;
                             }
@@ -606,7 +628,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                             // extract() leaves `out_stdio` untouched when `value` is undefined, so this
                             // must be initialized to a sane default instead of `undefined`.
                             let mut new_item: Stdio = Stdio::Ignore;
-                            Stdio::extract(&mut new_item, global_this, i, value, IS_SYNC)?;
+                            Stdio::extract(
+                                &mut new_item,
+                                global_this,
+                                i,
+                                value,
+                                IS_SYNC || BUFFERED_ASYNC,
+                            )?;
 
                             let opt = match new_item.as_spawn_option(i) {
                                 stdio::ResultT::Result(opt) => opt,
@@ -631,19 +659,37 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             } else {
                 if let Some(value) = args.get(global_this, "stdin")? {
-                    Stdio::extract(&mut stdio[0], global_this, 0, value, IS_SYNC)?;
+                    Stdio::extract(
+                        &mut stdio[0],
+                        global_this,
+                        0,
+                        value,
+                        IS_SYNC || BUFFERED_ASYNC,
+                    )?;
                 }
 
                 if let Some(value) = args.get(global_this, "stderr")? {
-                    Stdio::extract(&mut stdio[2], global_this, 2, value, IS_SYNC)?;
+                    Stdio::extract(
+                        &mut stdio[2],
+                        global_this,
+                        2,
+                        value,
+                        IS_SYNC || BUFFERED_ASYNC,
+                    )?;
                 }
 
                 if let Some(value) = args.get(global_this, "stdout")? {
-                    Stdio::extract(&mut stdio[1], global_this, 1, value, IS_SYNC)?;
+                    Stdio::extract(
+                        &mut stdio[1],
+                        global_this,
+                        1,
+                        value,
+                        IS_SYNC || BUFFERED_ASYNC,
+                    )?;
                 }
             }
 
-            if !IS_SYNC {
+            if !IS_SYNC && !BUFFERED_ASYNC {
                 if let Some(lazy_val) = args.get(global_this, "lazy")? {
                     if lazy_val.is_boolean() {
                         lazy = lazy_val.to_boolean();
@@ -1009,7 +1055,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     env_array.push(core::ptr::null());
     argv.push(core::ptr::null());
 
-    if IS_SYNC {
+    if IS_SYNC || BUFFERED_ASYNC {
         for (i, io) in stdio.iter_mut().enumerate() {
             io.to_sync(i as u32);
         }
@@ -1289,8 +1335,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         stdin: JsCell::new(Writable::Ignore),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
-        // 1=JS (released in Subprocess::finalize), 2=Process exit handler
-        // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
+        // 1=JS wrapper / spawnSync owner / spawnAndWait promise; 2=exit handler.
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: Cell::new(None),
@@ -1318,6 +1363,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         )),
         exited_due_to_maxbuf: Cell::new(None),
+        spawn_and_wait_promise: JsCell::new(jsc::StrongOptional::empty()),
+        spawn_and_wait_had_timeout: Cell::new(BUFFERED_ASYNC && timeout.is_some()),
+        spawn_and_wait_had_max_buffer: Cell::new(BUFFERED_ASYNC && max_buffer.is_some()),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
@@ -1367,13 +1415,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     ) {
         Ok(v) => subprocess.stdin.set(v),
         Err(err) => {
-            // ref_count = 2 from the aggregate above, but neither the JS
-            // wrapper nor the process exit handler are wired up yet, so
-            // release both. stdout/stderr are still `.ignore` — close the raw
-            // spawned pipe handles directly since `Readable.init()` will not
-            // run. `finalizeStreams()` here only closes `stdio_pipes` and the
-            // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
-            // no-op.
+            // Neither owner is wired up yet; stdout/stderr are still `.ignore`.
             #[cfg(unix)]
             {
                 if let Some(fd) = spawned_stdout {
@@ -1405,26 +1447,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     }
                 }
             }
-            subprocess.finalize_streams();
-            subprocess.process_mut().detach();
-            if let Some(ipc_data) = subprocess.ipc_data.take() {
-                // SAFETY: owned ref from `SendQueue::new` above; nothing else
-                // holds it yet (no socket wired, no task scheduled).
-                unsafe {
-                    (*ipc_data.as_ptr()).detach();
-                    <IPC::SendQueue as bun_ptr::CellRefCounted>::deref(ipc_data.as_ptr());
-                }
-            }
-            // Release the intrusive ref
-            // (finalize() won't run on this error path).
-            // SAFETY: this error path returns without ever reading `process` again.
-            unsafe { Process::deref(subprocess.process.as_ptr()) };
-            let mut mb = subprocess.stdout_maxbuf.get();
-            MaxBuf::remove_from_subprocess(&mut mb);
-            subprocess.stdout_maxbuf.set(mb);
-            let mut mb = subprocess.stderr_maxbuf.get();
-            MaxBuf::remove_from_subprocess(&mut mb);
-            subprocess.stderr_maxbuf.set(mb);
             subprocess.deref();
             subprocess.deref();
             // Note: `Writable::init` returns
@@ -1611,7 +1633,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    let out = if !IS_SYNC {
+    let out = if !IS_SYNC && !BUFFERED_ASYNC {
         // `subprocess_ptr` came from `heap::alloc` above and has not yet been
         // wrapped; ownership transfers to the C++ JS cell (released via
         // `SubprocessClass__finalize`). Use the raw-ptr entrypoint instead of
@@ -1659,29 +1681,31 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             subprocess.set_event_loop_timer_refd(true);
         }
 
-        debug_assert!(out != JSValue::ZERO);
+        debug_assert!(BUFFERED_ASYNC || out != JSValue::ZERO);
 
-        if on_exit_callback.is_cell() {
-            Subprocess::js::on_exit_callback_set_cached(out, global_this, on_exit_callback);
-        }
-        if on_disconnect_callback.is_cell() {
-            Subprocess::js::on_disconnect_callback_set_cached(
-                out,
-                global_this,
-                on_disconnect_callback,
-            );
-        }
-        if ipc_callback.is_cell() {
-            Subprocess::js::ipc_callback_set_cached(out, global_this, ipc_callback);
-        }
+        if !BUFFERED_ASYNC {
+            if on_exit_callback.is_cell() {
+                Subprocess::js::on_exit_callback_set_cached(out, global_this, on_exit_callback);
+            }
+            if on_disconnect_callback.is_cell() {
+                Subprocess::js::on_disconnect_callback_set_cached(
+                    out,
+                    global_this,
+                    on_disconnect_callback,
+                );
+            }
+            if ipc_callback.is_cell() {
+                Subprocess::js::ipc_callback_set_cached(out, global_this, ipc_callback);
+            }
 
-        if let Stdio::ReadableStream(rs) = &stdio[0] {
-            Subprocess::js::stdin_set_cached(out, global_this, rs.value);
-        }
+            if let Stdio::ReadableStream(rs) = &stdio[0] {
+                Subprocess::js::stdin_set_cached(out, global_this, rs.value);
+            }
 
-        // Cache the terminal JS value if a terminal was created
-        if terminal_js_value != JSValue::ZERO {
-            Subprocess::js::terminal_set_cached(out, global_this, terminal_js_value);
+            // Cache the terminal JS value if a terminal was created
+            if terminal_js_value != JSValue::ZERO {
+                Subprocess::js::terminal_set_cached(out, global_this, terminal_js_value);
+            }
         }
 
         match subprocess.process_mut().watch() {
@@ -1699,8 +1723,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     let subprocess_ptr_exit = subprocess_ptr;
     scopeguard::defer! {
         if send_exit_notification {
-            // SAFETY: subprocess_ptr is live for the lifetime of this defer.
-            let proc = unsafe { &*subprocess_ptr_exit }.process_mut();
+            // SAFETY: subprocess_ptr is live here; `on_exit` below may drop its
+            // last ref (and its ref on `proc`), so nothing reads it afterwards.
+            let proc: *mut Process = unsafe { (*subprocess_ptr_exit).process.as_ptr() };
+            // SAFETY: live Process; hold +1 across its own exit dispatch.
+            let _keep = unsafe { bun_ptr::ScopedRef::<Process>::new(proc) };
+            // SAFETY: `_keep` holds `proc` live for this scope.
+            let proc = unsafe { &mut *proc };
             if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
@@ -1744,6 +1773,10 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
+            if BUFFERED_ASYNC {
+                // Nothing will own slot 1; the exit handler's deref then runs deinit.
+                subprocess.deref();
+            }
             return Err(JsError::Thrown);
         }
     }
@@ -1759,7 +1792,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // paths the caller never receives the Subprocess, so the OwnedFd slot
     // must remain for the GC'd wrapper's finalize_streams to close.
     #[cfg(not(windows))]
-    if !socket_fd_indices.is_empty() {
+    if !BUFFERED_ASYNC && !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {
             for j in &socket_fd_indices {
                 if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
@@ -1797,6 +1830,16 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
             };
         }
+
+        if BUFFERED_ASYNC {
+            // Owns slot 1 of the refcount; released in `maybe_resolve_spawn_and_wait`.
+            let promise = jsc::JSPromise::create(global_this).to_js();
+            subprocess
+                .spawn_and_wait_promise
+                .with_mut(|p| p.set(global_this, promise));
+            return Ok(promise);
+        }
+
         return Ok(out);
     }
 
@@ -1999,65 +2042,18 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     subprocess.update_has_pending_activity();
 
-    let signal_code = SubprocessT::get_signal_code(subprocess, global_this);
-    let exit_code = SubprocessT::get_exit_code(subprocess, global_this);
-    let stdout = subprocess
-        .stdout
-        .with_mut(|s| s.to_buffered_value(global_this))?;
-    let stderr = subprocess
-        .stderr
-        .with_mut(|s| s.to_buffered_value(global_this))?;
-    let resource_usage: JSValue = if !global_this.has_exception() {
-        subprocess.create_resource_usage_object(global_this)?
-    } else {
-        JSValue::ZERO
-    };
-    let exited_due_to_timeout = did_timeout;
-    let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf.get();
-    let result_pid = JSValue::js_number_from_int32(subprocess.pid());
+    let sync_value = subprocess.build_sync_result(
+        global_this,
+        timeout.is_some(),
+        did_timeout,
+        max_buffer.is_some(),
+    );
     // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
     // above (spawnSync path: never handed to a JS wrapper); reclaim ownership.
     // `subprocess` (`&mut *subprocess_ptr`) is not used after this line.
     SubprocessT::finalize(unsafe { Box::from_raw(subprocess_ptr) });
 
-    let sync_value = JSValue::create_empty_object(global_this, 0);
-    sync_value.put(global_this, b"exitCode", exit_code);
-    if !signal_code.is_empty_or_undefined_or_null() {
-        sync_value.put(global_this, b"signalCode", signal_code);
-    }
-    sync_value.put(global_this, b"stdout", stdout);
-    sync_value.put(global_this, b"stderr", stderr);
-    sync_value.put(
-        global_this,
-        b"success",
-        JSValue::from(exit_code.is_int32() && exit_code.as_int32() == 0),
-    );
-    sync_value.put(global_this, b"resourceUsage", resource_usage);
-    if timeout.is_some() {
-        sync_value.put(
-            global_this,
-            b"exitedDueToTimeout",
-            if exited_due_to_timeout {
-                JSValue::TRUE
-            } else {
-                JSValue::FALSE
-            },
-        );
-    }
-    if max_buffer.is_some() {
-        sync_value.put(
-            global_this,
-            b"exitedDueToMaxBuffer",
-            if exited_due_to_max_buffer.is_some() {
-                JSValue::TRUE
-            } else {
-                JSValue::FALSE
-            },
-        );
-    }
-    sync_value.put(global_this, b"pid", result_pid);
-
-    Ok(sync_value)
+    sync_value
 }
 
 fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsError {

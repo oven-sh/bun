@@ -113,14 +113,14 @@ pub use bun_spawn::process::StdioKind;
 // codegen shim hands to whichever method JS calls next. `UnsafeCell`-backed
 // fields suppress `noalias` on the outer `&Subprocess`, making the miscompile
 // structurally impossible.
-// Intrusive ref-count: `RefPtr<Subprocess>` provides ref/deref and frees the
-// Box when ref_count → 0; `deinit` runs when the last ref drops.
+// Intrusive ref-count; teardown runs in [`Subprocess::deinit`] on last deref.
 #[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = Subprocess::deinit)]
 pub struct Subprocess<'a> {
     pub(crate) ref_count: RefCount<Subprocess<'a>>,
     /// Intrusively-refcounted `Process`. Allocated via
     /// `heap::alloc` in `Process::init_posix`/`init_windows`; the +1 ref
-    /// from construction is released in [`Subprocess::finalize`] via
+    /// from construction is released in [`Subprocess::deinit`] via
     /// `Process::deref()`. Not `Arc` — `Process` carries its own
     /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
     /// boundary by raw identity, so wrapping in `Arc` would double-count and
@@ -163,6 +163,11 @@ pub struct Subprocess<'a> {
     pub(crate) stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
+
+    /// Pending `Bun.spawnAndWait()` promise; resolved once exited and pipes closed.
+    pub(crate) spawn_and_wait_promise: JsCell<jsc::StrongOptional>,
+    pub(crate) spawn_and_wait_had_timeout: Cell<bool>,
+    pub(crate) spawn_and_wait_had_max_buffer: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
@@ -445,6 +450,10 @@ impl Subprocess<'_> {
         if self.flags.get().contains(Flags::IS_SYNC) {
             return;
         }
+        // No JS wrapper (spawnAndWait) or already finalized.
+        if self.this_value.get().is_empty() {
+            return;
+        }
 
         let has_pending = self.compute_has_pending_activity();
         if cfg!(debug_assertions) {
@@ -533,6 +542,115 @@ impl Subprocess<'_> {
         // later completes and reaches here, we must re-evaluate so the JsRef can
         // be downgraded and the JSSubprocess + buffered output become collectable.
         self.update_has_pending_activity();
+
+        if self.spawn_and_wait_promise.get().has() {
+            self.maybe_resolve_spawn_and_wait();
+        }
+    }
+
+    pub(crate) fn maybe_resolve_spawn_and_wait(&self) {
+        if !self.process().has_exited() {
+            return;
+        }
+        if matches!(self.stdout.get(), Readable::Pipe(_)) {
+            return;
+        }
+        if matches!(self.stderr.get(), Readable::Pipe(_)) {
+            return;
+        }
+
+        let Some(promise_js) = self.spawn_and_wait_promise.with_mut(|p| p.try_swap()) else {
+            return;
+        };
+        let Some(promise) = promise_js.as_any_promise() else {
+            self.deref();
+            return;
+        };
+
+        let global_this = self.global_this;
+        let global_this = global_this.get();
+        let event_loop = global_this.bun_vm().as_mut().event_loop();
+        // SAFETY: event_loop points into the live VM and outlives this scope.
+        let _guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+
+        match self.build_sync_result(
+            global_this,
+            self.spawn_and_wait_had_timeout.get(),
+            self.event_loop_timer.get().state == EventLoopTimerState::FIRED,
+            self.spawn_and_wait_had_max_buffer.get(),
+        ) {
+            Ok(result) => {
+                let _ = promise.resolve(global_this, result);
+            }
+            Err(_) => {
+                let err = global_this
+                    .try_take_exception()
+                    .unwrap_or(JSValue::UNDEFINED);
+                let _ = promise.reject(global_this, err);
+            }
+        }
+
+        // Releases the pending-promise ref; may run `deinit` and free `self`.
+        self.deref();
+    }
+
+    /// Build the `SyncSubprocess`-shaped result for `Bun.spawnSync` / `Bun.spawnAndWait`.
+    pub(crate) fn build_sync_result(
+        &self,
+        global_this: &JSGlobalObject,
+        had_timeout: bool,
+        did_timeout: bool,
+        had_max_buffer: bool,
+    ) -> JsResult<JSValue> {
+        let signal_code = self.get_signal_code(global_this);
+        let exit_code = self.get_exit_code(global_this);
+        let stdout = self.stdout.with_mut(|s| s.to_buffered_value(global_this))?;
+        let stderr = self.stderr.with_mut(|s| s.to_buffered_value(global_this))?;
+        let resource_usage = if !global_this.has_exception() {
+            self.create_resource_usage_object(global_this)?
+        } else {
+            JSValue::ZERO
+        };
+        let result_pid = JSValue::js_number_from_int32(self.pid());
+
+        let sync_value = JSValue::create_empty_object(global_this, 0);
+        sync_value.put(global_this, b"exitCode", exit_code);
+        if !signal_code.is_empty_or_undefined_or_null() {
+            sync_value.put(global_this, b"signalCode", signal_code);
+        }
+        sync_value.put(global_this, b"stdout", stdout);
+        sync_value.put(global_this, b"stderr", stderr);
+        sync_value.put(
+            global_this,
+            b"success",
+            JSValue::from(exit_code.is_int32() && exit_code.as_int32() == 0),
+        );
+        sync_value.put(global_this, b"resourceUsage", resource_usage);
+        if had_timeout {
+            sync_value.put(
+                global_this,
+                b"exitedDueToTimeout",
+                if did_timeout {
+                    JSValue::TRUE
+                } else {
+                    JSValue::FALSE
+                },
+            );
+        }
+        if had_max_buffer {
+            sync_value.put(
+                global_this,
+                b"exitedDueToMaxBuffer",
+                if self.exited_due_to_maxbuf.get().is_some() {
+                    JSValue::TRUE
+                } else {
+                    JSValue::FALSE
+                },
+            );
+        }
+        sync_value.put(global_this, b"pid", result_pid);
+
+        Ok(sync_value)
     }
 
     pub(crate) fn js_ref(&self) {
@@ -1186,6 +1304,11 @@ impl Subprocess<'_> {
         if !did_update_has_pending_activity {
             self.update_has_pending_activity();
         }
+
+        if self.spawn_and_wait_promise.get().has() {
+            self.maybe_resolve_spawn_and_wait();
+        }
+
         self.disconnect_ipc(true);
         self.deref();
     }
@@ -1244,7 +1367,7 @@ impl Subprocess<'_> {
         }
     }
 
-    // This must only be run once per Subprocess
+    // Idempotent: called eagerly from `finalize()` and again from `deinit()`.
     pub(crate) fn finalize_streams(&self) {
         bun_output::scoped_log!(Subprocess, "finalizeStreams");
         self.close_process();
@@ -1287,6 +1410,7 @@ impl Subprocess<'_> {
         }
     }
 
+    /// JS wrapper finalizer / spawnSync release; teardown is in [`Subprocess::deinit`].
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(Subprocess, "finalize");
         // Refcounted: the trailing `this.deref()` releases the JS wrapper's +1;
@@ -1297,6 +1421,8 @@ impl Subprocess<'_> {
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer
         this.this_value.with_mut(|v| v.finalize());
+        this.update_flags(|f| f.insert(Flags::FINALIZED));
+        debug_assert!(!this.spawn_and_wait_promise.get().has());
 
         this.clear_abort_signal();
 
@@ -1326,31 +1452,43 @@ impl Subprocess<'_> {
             this.deref();
         }
 
+        // Swept at VM teardown with the child still running.
         let exit_handler_pending = this.process().exit_handler.is_some();
         this.process_mut().detach();
         if exit_handler_pending {
             this.deref();
         }
-        // Release the intrusive ref now,
-        // not when `ref_count` → 0. The raw `*mut Process` is left dangling but
-        // no code path reads `this.process` after this (finalize runs once).
-        // SAFETY: `process` is the live Box-backed Process; deref() frees it
-        // when its own ThreadSafeRefCount reaches zero.
-        unsafe { Process::deref(this.process.as_ptr()) };
 
-        if this.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(this.event_loop_timer.as_ptr());
+        // The wrapper's own +1; may run `deinit`.
+        this.deref();
+    }
+
+    /// `RefCount` destructor; idempotent with `finalize` / `on_process_exit`.
+    fn deinit(this: *mut Self) {
+        bun_output::scoped_log!(Subprocess, "deinit");
+        // SAFETY: refcount == 0 ⇒ `this` is the unique owner of a live Box.
+        let this_ref: &Self = unsafe { &*this };
+
+        this_ref.clear_abort_signal();
+        this_ref.finalize_streams();
+        this_ref.process_mut().detach();
+        // SAFETY: `process` is the live Box-backed Process holding the +1 from
+        // `to_process`; nothing reads `this.process` after this.
+        unsafe { Process::deref(this_ref.process.as_ptr()) };
+
+        if this_ref.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
+            Self::timer_all().remove(this_ref.event_loop_timer.as_ptr());
         }
-        this.set_event_loop_timer_refd(false);
+        this_ref.set_event_loop_timer_refd(false);
 
-        let mut mb = this.stdout_maxbuf.get();
+        let mut mb = this_ref.stdout_maxbuf.get();
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-        this.stdout_maxbuf.set(mb);
-        let mut mb = this.stderr_maxbuf.get();
+        this_ref.stdout_maxbuf.set(mb);
+        let mut mb = this_ref.stderr_maxbuf.get();
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-        this.stderr_maxbuf.set(mb);
+        this_ref.stderr_maxbuf.set(mb);
 
-        if let Some(ipc_data) = this.ipc_data.take() {
+        if let Some(ipc_data) = this_ref.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
             // get here (that is what allowed `computeHasPendingActivity` to drop
             // to false and let GC collect us). Detach and release our ref; any
@@ -1363,8 +1501,8 @@ impl Subprocess<'_> {
             }
         }
 
-        this.update_flags(|f| f.insert(Flags::FINALIZED));
-        this.deref();
+        // SAFETY: allocated via `heap::into_raw(Box::new(..))` in `spawn_maybe_sync`.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub(crate) fn get_exited(&self, this_value: JSValue, global_this: &JSGlobalObject) -> JSValue {

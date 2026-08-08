@@ -1,7 +1,10 @@
 #include "config.h"
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/TopExceptionScope.h>
+#include <JavaScriptCore/JSGlobalObject.h>
 #include "JSCTaskScheduler.h"
 #include "BunClientData.h"
+#include "ZigGlobalObject.h"
 
 using Ticket = JSC::DeferredWorkTimer::Ticket;
 using Task = JSC::DeferredWorkTimer::Task;
@@ -107,9 +110,18 @@ static void runPendingWork(::BunVmHandle* vmHandle, Bun::JSCTaskScheduler& sched
     holder.unlockEarly();
 
     // Deferred work runs script (FinalizationRegistry callbacks, wasm
-    // completions); not once the VM's stop was requested.
+    // completions); not once the VM's stop was requested. Like any other
+    // event-loop callback boundary, an exception a task lets escape is
+    // reported as uncaught here rather than left on the VM for the next entry.
     if (pendingTicket && !pendingTicket->isCancelled() && Bun__VmHandle__scriptAllowed(vmHandle)) {
+        auto& vm = job->vm();
+        auto* globalObject = job->ticket->target()->globalObject();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         job->task(job->ticket.get());
+        if (auto* exception = scope.exception(); exception && !vm.hasPendingTerminationException()) {
+            scope.clearException();
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        }
     }
 
     delete job;

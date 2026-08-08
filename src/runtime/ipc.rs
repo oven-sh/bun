@@ -2264,7 +2264,7 @@ enum DecodeStep {
     Fail(IPCDecodeError),
 }
 
-fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
+fn finish_decode(send_queue: &SendQueue, step: &DecodeStep, global: &JSGlobalObject) {
     match step {
         DecodeStep::Message(_) => unreachable!("caller dispatches Message"),
         DecodeStep::Wait => {
@@ -2274,7 +2274,13 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
             Output::print_errorln("IPC message is too long.");
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
-        DecodeStep::Fail(_) => {
+        DecodeStep::Fail(e) => {
+            if matches!(e, IPCDecodeError::JSError) {
+                // deserialize/restoreBuffers threw and the exception is still
+                // pending; the event-loop exit drains microtasks right after
+                // this returns, which asserts no-pending-exception.
+                global.clear_exception_except_termination();
+            }
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
     }
@@ -2354,7 +2360,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                     DecodeStep::Message(result) => {
                         handle_ipc_message(send_queue, result.message, &global_this);
                     }
-                    step => return finish_decode(send_queue, &step),
+                    step => return finish_decode(send_queue, &step, &global_this),
                 }
             }
         }
@@ -2389,7 +2395,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                             log!("hit NotEnoughBytes");
                             return;
                         }
-                        Err(e) => return finish_decode(send_queue, &DecodeStep::Fail(e)),
+                        Err(e) => return finish_decode(send_queue, &DecodeStep::Fail(e), &global_this),
                     }
                 }
             }
@@ -2407,7 +2413,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                     DecodeStep::Message(result) => {
                         handle_ipc_message(send_queue, result.message, &global_this);
                     }
-                    step => return finish_decode(send_queue, &step),
+                    step => return finish_decode(send_queue, &step, &global_this),
                 }
             }
         }
@@ -2533,7 +2539,7 @@ pub mod IPCHandlers {
                             DecodeStep::Message(result) => {
                                 handle_ipc_message(send_queue, result.message, &global_this);
                             }
-                            step => return finish_decode(send_queue, &step),
+                            step => return finish_decode(send_queue, &step, &global_this),
                         }
                     }
                 }
@@ -2555,7 +2561,7 @@ pub mod IPCHandlers {
                             DecodeStep::Message(result) => {
                                 handle_ipc_message(send_queue, result.message, &global_this);
                             }
-                            step => return finish_decode(send_queue, &step),
+                            step => return finish_decode(send_queue, &step, &global_this),
                         }
                     }
                 }

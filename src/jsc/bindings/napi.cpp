@@ -2069,7 +2069,11 @@ extern "C" napi_status napi_get_all_property_names(
             if (key_mode == napi_key_include_prototypes) {
                 // Climb up the prototype chain to find inherited properties
                 while (!owner->getOwnPropertyDescriptor(globalObject, propKey, desc)) {
-                    JSObject* proto = owner->getPrototype(globalObject).getObject();
+                    NAPI_RETURN_IF_EXCEPTION(env);
+                    JSValue protoValue = owner->getPrototype(globalObject);
+                    // A Proxy "getPrototypeOf" trap can throw, returning empty.
+                    NAPI_RETURN_IF_EXCEPTION(env);
+                    JSObject* proto = protoValue.getObject();
                     if (!proto) {
                         break;
                     }

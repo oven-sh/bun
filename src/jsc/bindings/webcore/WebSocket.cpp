@@ -879,7 +879,7 @@ ExceptionOr<void> WebSocket::terminate()
 {
     // LOG(Network, "WebSocket %p terminate()", this);
 
-    if (m_state == CLOSING || m_state == CLOSED)
+    if (m_state == CLOSED) // CLOSING still force-closes (npm ws parity)
         return {};
     if (m_state == CONNECTING) {
         failConnectingWebSocket();
@@ -1736,6 +1736,10 @@ extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSo
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)
 {
     webSocket->didFailWithErrorCode(errorCode);
+}
+extern "C" void WebSocket__didStartClosingHandshake(WebCore::WebSocket* webSocket)
+{
+    webSocket->didStartClosingHandshake();
 }
 extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
 {

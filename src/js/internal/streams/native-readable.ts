@@ -12,6 +12,7 @@ const transferToNativeReadable = $newCppFunction(
   1,
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
+const { reportUncaughtException } = require("internal/shared");
 
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
@@ -207,10 +208,26 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer, isClos
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
 function pushAndCheck(stream: NativeReadable, chunk: any) {
-  if (!stream.push(chunk)) {
+  let wantMore: boolean;
+  try {
+    wantMore = stream.push(chunk);
+  } catch (e) {
+    // Node dispatches 'data' from its native read callback, where a listener throw is an uncaughtException.
+    reportUncaughtException(e);
+    wantMore = true;
+    // The throw unwound addChunk before maybeReadMore; keep the stream reading.
+    process.nextTick(readAfterListenerThrow, stream);
+  }
+  if (!wantMore) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
   }
+}
+
+function readAfterListenerThrow(stream: NativeReadable) {
+  // On native close, handleResult already scheduled the EOF push(null).
+  if (stream.destroyed || stream[kCloseState][0]) return;
+  stream.read(0);
 }
 
 function handleNumberResult(stream: NativeReadable, result: number, chunk: any, isClosed: boolean) {

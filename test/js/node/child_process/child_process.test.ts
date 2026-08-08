@@ -1145,3 +1145,50 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     expect(errors.map(e => e.code)).toEqual(["ENOENT"]);
   });
 });
+
+// Node dispatches child stdio 'data' from its native read callback, so a
+// listener throw is an uncaughtException, never an unhandledRejection.
+it("throw from a child stdio 'data' listener is an uncaughtException and the stream still ends", async () => {
+  const script = `
+    const { spawn } = require("node:child_process");
+    let ue = 0, ur = 0, data = 0, closes = 0, n = 0;
+    const N = 3;
+    process.on("uncaughtException", (e, origin) => {
+      if (origin !== "uncaughtException" || !String(e.message).startsWith("data-throw-")) {
+        console.log("unexpected: origin=" + origin + " message=" + (e && e.message));
+        process.exit(1);
+      }
+      ue++;
+      next();
+    });
+    process.on("unhandledRejection", () => { ur++; next(); });
+    process.on("exit", () => {
+      console.log("spawned=" + n + " data=" + data + " closes=" + closes + " ue=" + ue + " ur=" + ur);
+    });
+    function next() {
+      if (n >= N) return;
+      n++;
+      // The parent queues its first pipe read on the next tick, while the
+      // child needs process startup plus the timer before it first writes,
+      // so the write always lands on the async (pending-pull) path.
+      const c = spawn(process.execPath, ["-e", "setTimeout(() => console.log('hi'), 50)"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      c.on("close", () => closes++);
+      c.stdout.on("data", () => { data++; throw new Error("data-throw-" + n); });
+    }
+    next();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "spawned=3 data=3 closes=3 ue=3 ur=0",
+    stderr: "",
+    exitCode: 0,
+  });
+});

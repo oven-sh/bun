@@ -6,9 +6,11 @@
 // The array identity must stay stable (push/splice only, never reassign):
 // the nextTick closure captures it once at setup.
 //
-// Currently only TickObject `init` events are delivered (enough for
-// console.log/stream.write tick-coalescing tests); promise, timer and native
-// resource events are still unimplemented.
+// This bridge delivers only TickObject `init` events (enough for
+// console.log/stream.write tick-coalescing tests); promise and native resource
+// events are still unimplemented. Timer lifecycle events are delivered
+// separately by node/async_hooks.ts, which shares newAsyncId() below so timer
+// and tick async ids never collide.
 const tickInitHooks = [];
 let nextAsyncId = 1;
 

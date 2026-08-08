@@ -336,6 +336,32 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // This tests the fix for napi_reference_unref underflow protection
       await checkSameOutput("test_ref_unref_underflow", []);
     });
+    it("napi_create_reference accepts primitives when the module declares NAPI_VERSION >= 10", async () => {
+      // Node.js keys the primitive-reference gate on the module's declared
+      // Node-API version: >= 10 may reference any napi_valuetype, < 10 only
+      // object/function/symbol. checkSameOutput asserts parity with Node for
+      // both addon builds.
+      const result = await checkSameOutput("test_create_reference_primitive_by_version", []);
+      // napi_ok = 0, napi_invalid_arg = 1
+      expect(result).toContain("declared=10 header=10 undefined: status=0 roundTrip=1");
+      expect(result).toContain("declared=10 header=10 null: status=0 roundTrip=1");
+      expect(result).toContain("declared=10 header=10 boolean: status=0 roundTrip=1");
+      expect(result).toContain("declared=10 header=10 number: status=0 roundTrip=1");
+      expect(result).toContain("declared=10 header=10 string: status=0 roundTrip=1");
+      expect(result).toContain("declared=10 header=10 bigint: status=0 roundTrip=1");
+      expect(result).toContain("declared=10 header=10 symbol: status=0 roundTrip=1");
+      expect(result).toContain("declared=10 header=10 object: status=0 roundTrip=1");
+      expect(result).toContain("declared=10 header=10 function: status=0 roundTrip=1");
+      expect(result).toContain("declared=8 header=8 undefined: status=1 roundTrip=0");
+      expect(result).toContain("declared=8 header=8 null: status=1 roundTrip=0");
+      expect(result).toContain("declared=8 header=8 boolean: status=1 roundTrip=0");
+      expect(result).toContain("declared=8 header=8 number: status=1 roundTrip=0");
+      expect(result).toContain("declared=8 header=8 string: status=1 roundTrip=0");
+      expect(result).toContain("declared=8 header=8 bigint: status=1 roundTrip=0");
+      expect(result).toContain("declared=8 header=8 symbol: status=0 roundTrip=1");
+      expect(result).toContain("declared=8 header=8 object: status=0 roundTrip=1");
+      expect(result).toContain("declared=8 header=8 function: status=0 roundTrip=1");
+    });
   });
 
   describe("napi_get_version / node_api_create_external_string_*", () => {

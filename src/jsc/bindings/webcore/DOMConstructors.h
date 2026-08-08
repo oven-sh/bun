@@ -60,9 +60,12 @@ enum class DOMConstructorID : uint16_t {
     CookieMap,
     EventEmitter,
     URLPattern,
+
+    // Keep last. Sizes ConstructorArray.
+    Count,
 };
 
-static constexpr unsigned numberOfDOMConstructors = 51;
+static constexpr unsigned numberOfDOMConstructors = static_cast<unsigned>(DOMConstructorID::Count);
 
 class DOMConstructors {
     WTF_MAKE_NONCOPYABLE(DOMConstructors);

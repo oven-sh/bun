@@ -42,11 +42,14 @@ function headFile(p: string): string {
 
 function existsInHead(p: string): boolean {
   const r = Bun.spawnSync({
-    cmd: ["git", "-C", repoRoot, "cat-file", "-e", `HEAD:${p}`],
+    cmd: ["git", "-C", repoRoot, "ls-tree", "--name-only", "HEAD", "--", p],
     stdout: "pipe",
     stderr: "pipe",
   });
-  return r.exitCode === 0;
+  if (r.exitCode !== 0) {
+    throw new Error(`git ls-tree HEAD -- ${p} failed: ${r.stderr.toString()}`);
+  }
+  return r.stdout.toString().trim().length > 0;
 }
 
 test("dead Rust symbols (uws_sys, crash_handler, collections) do not reappear", () => {

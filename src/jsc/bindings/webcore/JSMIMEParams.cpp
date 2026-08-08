@@ -399,19 +399,18 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncGet, (JSGlobalObject * globalObjec
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // 2. Get argument
+    // 2. Get argument. Node.js passes the name to the internal Map without
+    // string coercion, so a non-string key never matches a stored string key.
     JSValue nameValue = callFrame->argument(0);
-    String name = nameValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     // 3. Perform operation on the map
     JSMap* map = thisObject->jsMap();
-    auto has = map->has(globalObject, jsString(vm, name));
+    auto has = map->has(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, {});
     if (!has) {
         return JSValue::encode(jsNull());
     }
-    JSValue result = map->get(globalObject, jsString(vm, name));
+    JSValue result = map->get(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     // 4. Return result (null if not found)
@@ -430,11 +429,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncHas, (JSGlobalObject * globalObjec
     }
 
     JSValue nameValue = callFrame->argument(0);
-    String name = nameValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     JSMap* map = thisObject->jsMap();
-    bool result = map->has(globalObject, jsString(vm, name));
+    bool result = map->has(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     return JSValue::encode(jsBoolean(result));
@@ -494,11 +491,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncDelete, (JSGlobalObject * globalOb
     }
 
     JSValue nameValue = callFrame->argument(0);
-    String name = nameValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     JSMap* map = thisObject->jsMap();
-    map->remove(globalObject, jsString(vm, name));
+    map->remove(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     return JSValue::encode(jsUndefined());

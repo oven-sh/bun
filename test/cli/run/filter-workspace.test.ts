@@ -833,7 +833,7 @@ describe("output timing", () => {
       }),
       "packages/bg/go.js": `
         const child = Bun.spawn({
-          cmd: [process.execPath, "-e", "await Bun.sleep(10_000)"],
+          cmd: [process.execPath, "-e", "await Bun.sleep(30_000)"],
           stdio: ["ignore", "inherit", "inherit"],
           detached: true,
         });
@@ -863,6 +863,7 @@ describe("output timing", () => {
     }
     // Ctrl-C semantics: the terminal signals the foreground process group
     // (bun run and the script), but not the detached grandchild.
+    const start = Date.now();
     process.kill(-proc.pid, "SIGINT");
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Reap the pipe-holding grandchild so nothing outlives the test. Guard the
@@ -878,5 +879,7 @@ describe("output timing", () => {
       stdout: expect.any(String),
       stderr: expect.any(String),
     });
+    // Waiting out the grandchild's 30s sleep means the abort bypass regressed.
+    expect(Date.now() - start).toBeLessThan(15000);
   });
 });

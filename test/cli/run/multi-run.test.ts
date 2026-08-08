@@ -1003,7 +1003,7 @@ describe.concurrent("timing edge cases", () => {
     using dir = tempDir("mr-abort-late", {
       "bg.js": `
         const child = Bun.spawn({
-          cmd: [process.execPath, "-e", "await Bun.sleep(10_000)"],
+          cmd: [process.execPath, "-e", "await Bun.sleep(30_000)"],
           stdio: ["ignore", "inherit", "inherit"],
           detached: true,
         });
@@ -1021,6 +1021,7 @@ describe.concurrent("timing edge cases", () => {
         },
       }),
     });
+    const start = Date.now();
     const r = await runMulti(["run", "--parallel", "fail", "bg"], String(dir), {
       BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
     });
@@ -1032,6 +1033,8 @@ describe.concurrent("timing edge cases", () => {
     } catch {}
     expectExited(r.stderr, "fail", 1);
     expect(r.exitCode).toBe(1);
+    // Waiting out the child's 30s sleep means the abort bypass regressed.
+    expect(Date.now() - start).toBeLessThan(15000);
   });
 });
 

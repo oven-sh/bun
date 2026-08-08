@@ -44,6 +44,10 @@ function generate(name) {
         fn: "doRequestIP",
         length: 1,
       },
+      writeEarlyHints: {
+        fn: "writeEarlyHints",
+        length: 2,
+      },
       timeout: {
         fn: "doTimeout",
         length: 2,

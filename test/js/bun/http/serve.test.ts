@@ -2330,6 +2330,128 @@ it("#5859 arrayBuffer", async () => {
   expect(async () => await Bun.file(tmp).json()).toThrow();
 });
 
+describe("server.writeEarlyHints", () => {
+  it("sends a native 103 response before the final response", async () => {
+    const completed = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req, server) {
+        expect(
+          server.writeEarlyHints(req, {
+            Link: "</app.css>; rel=preload; as=style",
+            "X-Trace-Id": "early-hints",
+          }),
+        ).toBe(true);
+        expect(server.writeEarlyHints(req, {})).toBe(false);
+        return new Response("final response");
+      },
+    });
+
+    const chunks: Buffer[] = [];
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(_socket, data) {
+          chunks.push(Buffer.from(data));
+        },
+        end() {
+          completed.resolve();
+        },
+        error(_socket, error) {
+          completed.reject(error);
+        },
+        close() {
+          completed.resolve();
+        },
+      },
+    });
+    connection.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    connection.flush();
+
+    await completed.promise;
+    const response = Buffer.concat(chunks).toString();
+    expect(response).toStartWith(
+      "HTTP/1.1 103 Early Hints\r\nLink: </app.css>; rel=preload; as=style\r\nX-Trace-Id: early-hints\r\n\r\n",
+    );
+    expect(response).toContain("\r\n\r\nHTTP/1.1 200");
+    expect(response).toContain("final response");
+  });
+
+  it("returns false after the final response begins streaming", async () => {
+    const statusFlushed = Promise.withResolvers<void>();
+    const hintsWritten = Promise.withResolvers<boolean>();
+    const completed = Promise.withResolvers<void>();
+    let started = false;
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req, server) {
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              if (started) return;
+              started = true;
+              controller.enqueue("first chunk");
+              await statusFlushed.promise;
+              hintsWritten.resolve(server.writeEarlyHints(req, { Link: "</late.css>; rel=preload; as=style" }));
+              controller.close();
+            },
+          }),
+        );
+      },
+    });
+
+    const chunks: Buffer[] = [];
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(_socket, data) {
+          chunks.push(Buffer.from(data));
+          if (Buffer.concat(chunks).includes("HTTP/1.1 200")) statusFlushed.resolve();
+        },
+        end() {
+          completed.resolve();
+        },
+        error(_socket, error) {
+          completed.reject(error);
+        },
+        close() {
+          completed.resolve();
+        },
+      },
+    });
+    connection.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    connection.flush();
+
+    await completed.promise;
+    const response = Buffer.concat(chunks).toString();
+    expect(await hintsWritten.promise).toBe(false);
+    expect(response).toStartWith("HTTP/1.1 200");
+    expect(response).not.toContain("HTTP/1.1 103 Early Hints");
+    expect(response).not.toContain("Link: </late.css>; rel=preload; as=style");
+    expect(response).toContain("first chunk");
+  });
+
+  it("returns false after the request completes", async () => {
+    let request: Request | undefined;
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        request = req;
+        return new Response("final response");
+      },
+    });
+
+    await fetch(server.url).then(response => response.text());
+    expect(request).toBeDefined();
+    expect(server.writeEarlyHints(request!, { Link: "</app.css>; rel=preload; as=style" })).toBe(false);
+  });
+});
+
 describe("server.requestIP", () => {
   it.if(isIPv4())("v4", async () => {
     using server = Bun.serve({

@@ -354,6 +354,30 @@ Use this for development and hot reloading. Only `fetch`, `error`, `routes`, and
 
 ## Per-Request Controls
 
+### `server.writeEarlyHints(Request, HeadersInit)`
+
+Send an HTTP `103 Early Hints` response before the final response. This lets a
+browser begin fetching critical resources while your handler finishes rendering
+the document.
+
+```ts
+Bun.serve({
+  async fetch(req, server) {
+    server.writeEarlyHints(req, {
+      Link: "</app.css>; rel=preload; as=style, </app.js>; rel=modulepreload",
+    });
+
+    const html = await renderPage();
+    return new Response(html, {
+      headers: { "Content-Type": "text/html" },
+    });
+  },
+});
+```
+
+The method returns `false` when the request has already completed, the
+transport does not support informational responses, or `headers` is empty.
+
 ### `server.timeout(Request, seconds)`
 
 Override the idle timeout for an individual request. Pass `0` to disable the timeout entirely for that request.
@@ -613,6 +637,12 @@ interface Server extends Disposable {
    * Get count of WebSocket clients subscribed to a topic.
    */
   subscriberCount(topic: string): number;
+
+  /**
+   * Send an HTTP 103 Early Hints response before the final response.
+   * @returns false when the request is complete, transport is unsupported, or headers are empty
+   */
+  writeEarlyHints(request: Request, headers: HeadersInit): boolean;
 
   /**
    * Get client IP address and port.

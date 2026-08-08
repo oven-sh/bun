@@ -2920,6 +2920,102 @@ static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// napi_throw() followed by napi_call_function() promotes the stashed exception
+// into vm.m_exception. With a VM-level exception pending, the string creators
+// and buffer-info accessors below reach C++ helpers that assert "no pending
+// exception" under debug/assert builds (release builds compile the check out).
+// The entry points must refuse with napi_pending_exception before touching
+// those helpers, and leave the pending exception intact.
+static napi_value test_vm_pending_exception_no_abort(
+    const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  // Build every input before arming the exception.
+  napi_value global, isNaN, arraybuffer, typedarray, dataview, buffer;
+  void *ab_data;
+  void *buf_data;
+  NODE_API_CALL(env, napi_get_global(env, &global));
+  NODE_API_CALL(env, napi_get_named_property(env, global, "isNaN", &isNaN));
+  NODE_API_CALL(env,
+                napi_create_arraybuffer(env, 16, &ab_data, &arraybuffer));
+  NODE_API_CALL(env, napi_create_typedarray(env, napi_uint8_array, 16,
+                                            arraybuffer, 0, &typedarray));
+  NODE_API_CALL(env,
+                napi_create_dataview(env, 16, arraybuffer, 0, &dataview));
+  NODE_API_CALL(env,
+                napi_create_buffer_copy(env, 4, "abcd", &buf_data, &buffer));
+
+  // Arm: E pending on env, then napi_call_function pushes it onto the VM.
+  napi_value msg, err;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "E1", 2, &msg));
+  NODE_API_CALL(env, napi_create_error(env, nullptr, msg, &err));
+  NODE_API_CALL(env, napi_throw(env, err));
+  napi_value r;
+  napi_status call_st =
+      napi_call_function(env, global, isNaN, 0, nullptr, &r);
+  printf("napi_call_function: pending_exception=%s\n",
+         call_st == napi_pending_exception ? "true" : "false");
+
+  napi_value out;
+  bool bool_out;
+  void *ptr_out;
+  size_t len_out;
+  napi_typedarray_type ta_type;
+  const char16_t utf16[] = {'x', 0};
+
+  napi_create_string_utf8(env, "x", 1, &out);
+  printf("napi_create_string_utf8: survived\n");
+  napi_create_string_latin1(env, "x", 1, &out);
+  printf("napi_create_string_latin1: survived\n");
+  napi_create_string_utf16(env, utf16, 1, &out);
+  printf("napi_create_string_utf16: survived\n");
+  napi_is_arraybuffer(env, arraybuffer, &bool_out);
+  printf("napi_is_arraybuffer: survived\n");
+  napi_get_arraybuffer_info(env, arraybuffer, &ptr_out, &len_out);
+  printf("napi_get_arraybuffer_info: survived\n");
+  napi_get_typedarray_info(env, typedarray, &ta_type, &len_out, &ptr_out,
+                           &out, &len_out);
+  printf("napi_get_typedarray_info: survived\n");
+  napi_get_dataview_info(env, dataview, &len_out, &ptr_out, &out, &len_out);
+  printf("napi_get_dataview_info: survived\n");
+  napi_get_buffer_info(env, buffer, &ptr_out, &len_out);
+  printf("napi_get_buffer_info: survived\n");
+  napi_create_array(env, &out);
+  printf("napi_create_array: survived\n");
+  napi_create_array_with_length(env, 4, &out);
+  printf("napi_create_array_with_length: survived\n");
+
+  // The original exception must still be pending and catchable.
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+  napi_value exc;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+  napi_value exc_msg;
+  char exc_buf[16];
+  size_t exc_len = 0;
+  NODE_API_CALL(env, napi_get_named_property(env, exc, "message", &exc_msg));
+  NODE_API_CALL(env, napi_get_value_string_utf8(env, exc_msg, exc_buf,
+                                                sizeof(exc_buf), &exc_len));
+  printf("exception: pending=%s message=%s\n", pending ? "true" : "false",
+         exc_buf);
+
+  // Second route: napi_create_bigint_words past the engine cap throws a
+  // RangeError directly into the VM; the next string-creator call must also
+  // survive. Node accepts 1M words so this route is a no-op there.
+  static uint64_t words[1000001];
+  napi_value big;
+  napi_create_bigint_words(env, 0, 1000001, words, &big);
+  napi_create_string_utf8(env, "y", 1, &out);
+  printf("bigint_route: survived\n");
+  pending = false;
+  napi_is_exception_pending(env, &pending);
+  if (pending) {
+    NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+  }
+
+  return ok(env);
+}
+
 // Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
 // Previously it used StringImpl::createWithoutCopying for ASCII strings,
 // which could leave dangling pointers in JSC's atom string table.
@@ -4091,6 +4187,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
+  REGISTER_FUNCTION(env, exports, test_vm_pending_exception_no_abort);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_status);

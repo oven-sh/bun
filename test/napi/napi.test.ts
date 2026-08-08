@@ -451,6 +451,27 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("side_effect arr[7]=undefined");
       expect(result).toContain("side_effect script_ran=false");
     });
+
+    it("does not abort when a VM exception is already pending", async () => {
+      const result = await checkSameOutput("test_vm_pending_exception_no_abort", []);
+      expect(result).toContain("napi_call_function: pending_exception=true");
+      for (const fn of [
+        "napi_create_string_utf8",
+        "napi_create_string_latin1",
+        "napi_create_string_utf16",
+        "napi_is_arraybuffer",
+        "napi_get_arraybuffer_info",
+        "napi_get_typedarray_info",
+        "napi_get_dataview_info",
+        "napi_get_buffer_info",
+        "napi_create_array",
+        "napi_create_array_with_length",
+      ]) {
+        expect(result).toContain(`${fn}: survived`);
+      }
+      expect(result).toContain("exception: pending=true message=E1");
+      expect(result).toContain("bigint_route: survived");
+    });
   });
 
   describe("status code alignment with Node.js", () => {

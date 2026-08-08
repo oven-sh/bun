@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -827,5 +828,81 @@ describe.concurrent("fetch-tls", () => {
       expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(stderr).toContain("ignoring extra certs");
     }
+  });
+
+  describe("client tls material errors carry the BoringSSL reason", () => {
+    // These used to collapse to { code: "FailedToOpenSocket", message: "Was
+    // there a typo in the url or port?" } because the SSL_CTX is built lazily
+    // on the HTTP thread, which only ever returned a generic init failure.
+    const keysDir = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
+    const readKey = (name: string) => readFileSync(join(keysDir, name), "utf8");
+
+    const agent1Cert = readKey("agent1-cert.pem");
+    const agent1Key = readKey("agent1-key.pem");
+    const agent2Key = readKey("agent2-key.pem");
+    const rsaCert = readKey("rsa_cert.crt");
+    // rsa_private.pem re-encrypted with pass:'password' (see fixtures/keys/Makefile).
+    const rsaEncryptedKey = readKey("rsa_private_encrypted.pem");
+
+    async function rejection(clientTls: TLSOptions) {
+      await using server = Bun.serve({
+        port: 0,
+        tls: CERT_LOCALHOST_IP,
+        fetch: () => new Response("ok"),
+      });
+      let caught: any;
+      await fetch(server.url, { tls: { ...clientTls, rejectUnauthorized: false } as any }).then(
+        r => r.text(),
+        e => (caught = e),
+      );
+      return caught;
+    }
+
+    it("cert/key mismatch rejects with ERR_OSSL_X509_KEY_VALUES_MISMATCH", async () => {
+      const err = await rejection({ cert: agent1Cert, key: agent2Key });
+      expect(err).toBeInstanceOf(Error);
+      expect({ code: err.code, library: err.library, reason: err.reason }).toEqual({
+        code: "ERR_OSSL_X509_KEY_VALUES_MISMATCH",
+        library: "X.509 certificate routines",
+        reason: "KEY_VALUES_MISMATCH",
+      });
+      expect(err.message).not.toContain("typo in the url or port");
+    });
+
+    it("wrong passphrase rejects with the BoringSSL decrypt reason", async () => {
+      const err = await rejection({ cert: rsaCert, key: rsaEncryptedKey, passphrase: "wrong" });
+      expect(err).toBeInstanceOf(Error);
+      // BoringSSL reports this from ERR_LIB_CIPHER, which Node's library-prefix
+      // map does not cover, so the code has no library segment.
+      expect({ code: err.code, library: err.library, reason: err.reason }).toEqual({
+        code: "ERR_OSSL_BAD_DECRYPT",
+        library: "Cipher functions",
+        reason: "BAD_DECRYPT",
+      });
+      expect(err.message).not.toContain("typo in the url or port");
+    });
+
+    it("non-PEM cert string rejects with ERR_OSSL_PEM_NO_START_LINE", async () => {
+      const err = await rejection({ cert: "not a pem", key: agent1Key });
+      expect(err).toBeInstanceOf(Error);
+      expect({ code: err.code, library: err.library, reason: err.reason }).toEqual({
+        code: "ERR_OSSL_PEM_NO_START_LINE",
+        library: "PEM routines",
+        reason: "NO_START_LINE",
+      });
+      expect(err.message).not.toContain("typo in the url or port");
+    });
+
+    it("matching cert/key still succeeds", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        tls: CERT_LOCALHOST_IP,
+        fetch: () => new Response("ok"),
+      });
+      const res = await fetch(server.url, {
+        tls: { cert: agent1Cert, key: agent1Key, rejectUnauthorized: false } as any,
+      });
+      expect(await res.text()).toBe("ok");
+    });
   });
 });

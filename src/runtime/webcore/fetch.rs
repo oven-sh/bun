@@ -98,6 +98,34 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
     http::ssl_config::global_registry::intern(config)
 }
 
+/// Probe the client `SSL_CTX` so bad cert/key rejects with `ERR_OSSL_*` instead of the HTTP thread's generic `FailedToOpenSocket`.
+fn validate_client_tls_identity(global: &JSGlobalObject, config: &SSLConfig) -> JsResult<()> {
+    let has_client_identity = config.cert.is_some()
+        || config.key.is_some()
+        || !config.cert_file_name.is_null()
+        || !config.key_file_name.is_null();
+    if !has_client_identity {
+        return Ok(());
+    }
+    let mut err = bun_uws::create_bun_socket_error_t::none;
+    match config
+        .as_usockets_for_client_verification()
+        .create_ssl_context(&mut err)
+    {
+        Some(ctx) => {
+            // SAFETY: `create_ssl_context` returns a +1 ref; the HTTP thread
+            // builds its own from the interned config, so release this one.
+            unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
+            Ok(())
+        }
+        None => Err(
+            global.throw_value(crate::socket::uws_jsc::create_bun_socket_error_to_js(
+                err, global,
+            )),
+        ),
+    }
+}
+
 /// Build the refcounted `bun_s3_signing::S3Credentials` from the lower-tier
 /// `bun_dotenv::S3Credentials` POD mirror. The dotenv crate (T2) cannot name
 /// `bun_s3_signing` types (would be an upward dep), so the conversion lives at
@@ -775,6 +803,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                 return Ok(JSValue::ZERO);
                             }
                             Ok(Some(config)) => {
+                                validate_client_tls_identity(global_this, &config)?;
                                 // Intern via `ssl_config::global_registry` for dedup and pointer equality
                                 break 'extract_ssl_config Some(ssl_config_intern_for_http(config));
                             }

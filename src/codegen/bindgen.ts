@@ -736,7 +736,7 @@ function emitCppStructHeader(w: CodeWriter, type: TypeImpl) {
 
   switch (type.kind) {
     default: {
-      throw new Error(`TODO: emitCppStructHeader for Type ${type.kind}`);
+      throw new Error(`emitCppStructHeader: unsupported type kind ${type.kind}`);
     }
   }
 }

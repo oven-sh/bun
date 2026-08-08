@@ -449,23 +449,28 @@ impl Loop {
 
     /// Complete every in-flight request on this thread's loop (fs, write,
     /// connect): requests cannot be cancelled, and their callbacks expect the
-    /// VM that issued them, so teardown runs this after script is forbidden
-    /// and before the JSC VM goes away (Node's `CleanupHandles`).
-    pub fn drain_requests() {
+    /// VM that issued them — and may start more work (a shell pipeline moving
+    /// to its next builtin) — so teardown runs this in its stop phase, script
+    /// forbidden but the VM alive and still accepting (and later awaiting)
+    /// off-thread work (Node's `CleanupHandles`). `true` if anything ran.
+    pub fn drain_requests() -> bool {
         THREADLOCAL_LOOP.with(|slot| {
             let loop_ = slot.get();
             if loop_.is_null() {
-                return;
+                return false;
             }
+            let mut ran = false;
             // SAFETY: live per-thread loop; `count` is the active arm of the
             // union whenever the loop is initialised (uv/win.h).
             unsafe {
                 while (*loop_).active_reqs.count > 0 {
                     log!("drain_requests: {} in flight", (*loop_).active_reqs.count);
                     uv_run(loop_, RunMode::Once);
+                    ran = true;
                 }
             }
-        });
+            ran
+        })
     }
 
     /// Closes this thread's libuv loop. Called from `WebWorker::shutdown` after

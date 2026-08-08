@@ -673,21 +673,28 @@ pub mod js_bundler {
                         || env == JSValue::FALSE
                         || (env.is_number() && env.as_number() == 0.0)
                     {
-                        this.env_behavior = api::DotEnvBehavior::Disable;
+                        this.env_behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
                     } else if env == JSValue::TRUE || (env.is_number() && env.as_number() == 1.0) {
                         this.env_behavior = api::DotEnvBehavior::LoadAll;
                     } else if env.is_string() {
                         let slice = env.to_slice(global_this)?;
-                        match api::DotEnvBehavior::parse_str(slice.slice()) {
-                            Ok((behavior, prefix)) => {
-                                this.env_behavior = behavior;
-                                if let Some(prefix) = prefix {
-                                    this.env_prefix.append_slice_exact(prefix)?;
-                                }
+                        let s = slice.slice();
+                        if let Some(asterisk) = bun_core::strings::index_of_char(s, b'*') {
+                            if asterisk == 0 {
+                                this.env_behavior = api::DotEnvBehavior::LoadAll;
+                            } else {
+                                this.env_behavior = api::DotEnvBehavior::Prefix;
+                                this.env_prefix
+                                    .append_slice_exact(&s[..asterisk as usize])?;
                             }
-                            Err(()) => {
-                                return Err(global_this.throw_invalid_arguments(format_args!("env must be 'inline', 'disable', or a string with a '*' character")));
-                            }
+                        } else if s == b"inline" || s == b"1" {
+                            this.env_behavior = api::DotEnvBehavior::LoadAll;
+                        } else if s == b"disable" || s == b"0" {
+                            this.env_behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
+                        } else {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "env must be 'inline', 'disable', or a string with a '*' character"
+                            )));
                         }
                         drop(slice);
                     } else {

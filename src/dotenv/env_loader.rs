@@ -61,10 +61,7 @@ impl DotEnvBehavior {
     pub const LoadAll: Self = Self::load_all;
     pub const LoadAllWithoutInlining: Self = Self::load_all_without_inlining;
 
-    /// String-branch classifier shared by bunfig (serve.env) and
-    /// JSBundler (Bun.build env). Only the *string* arm is common to
-    /// both specs — the surrounding null/bool/number dispatch and the error
-    /// reporting intentionally diverge per call site, so they stay inline there.
+    /// String-branch classifier for bunfig `serve.env`.
     ///
     /// Returns `Ok((behavior, prefix))` where `prefix` is `Some(&s[..idx])` only for
     /// `DotEnvBehavior::prefix`; `Err(())` means the string is none of

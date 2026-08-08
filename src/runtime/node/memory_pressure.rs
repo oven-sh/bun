@@ -56,8 +56,17 @@ pub(crate) fn emit(global: &JSGlobalObject, lvl: i32) {
     unsafe { Process__emitMemoryPressureEvent(core::ptr::from_ref(global).cast_mut(), lvl) };
 }
 
+/// The queued form of a pressure notification: `Task::ptr` packs the level,
+/// there is no allocation.
+pub(crate) struct MemoryPressureTask;
+impl bun_event_loop::Taskable for MemoryPressureTask {
+    const TAG: bun_event_loop::TaskTag = task_tag::MemoryPressureTask;
+    /// Nothing is owned (`this` is the packed level).
+    unsafe fn release_unrun(_: *mut Self) {}
+}
+
 fn pressure_task(lvl: i32) -> Task {
-    Task::new(task_tag::MemoryPressureTask, lvl as usize as *mut ())
+    Task::init(lvl as usize as *mut MemoryPressureTask)
 }
 
 #[cfg(not(windows))]

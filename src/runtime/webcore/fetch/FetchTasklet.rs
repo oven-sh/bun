@@ -50,6 +50,12 @@ use boringssl::c::{X509_free, d2i_X509};
 pub struct FetchTaskletDeinitHop(FetchTasklet);
 impl Taskable for FetchTaskletDeinitHop {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletDeinit;
+    /// The last ref dropped on the HTTP thread while we were tearing down:
+    /// deinit here, on the JS thread with the heap alive, as the hop intended.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe { Self::run(this) }
+    }
 }
 impl FetchTaskletDeinitHop {
     /// # Safety
@@ -62,6 +68,12 @@ impl FetchTaskletDeinitHop {
 
 impl Taskable for FetchTasklet {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
+    /// A progress hop the HTTP thread posted: it carries the +1 that
+    /// `on_progress_update` would have dropped. The HTTP thread is parked /
+    /// this VM's requests are back, so a 1→0 here deinits against a live heap.
+    unsafe fn release_unrun(this: *mut Self) {
+        FetchTasklet::deref(this);
+    }
 }
 
 bun_output::declare_scope!(FetchTasklet, visible);
@@ -2760,4 +2772,9 @@ impl FetchTaskletPromiseSettle {
 
 impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletPromiseSettle;
+    /// Drop the held value and promise handle without settling.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the completion queued.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
 }

@@ -498,4 +498,10 @@ impl Drop for WindowsNamedPipeContext {
 #[cfg(windows)]
 impl bun_event_loop::Taskable for WindowsNamedPipeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipeContext;
+    /// A `Deinit` hop (refcount already zero) that will not run: `this` is the
+    /// heap context, freed by nobody else — do what the hop does, script-free.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe { Self::run_event(this) }
+    }
 }

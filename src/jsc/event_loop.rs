@@ -216,15 +216,10 @@ unsafe extern "Rust" {
     /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_wtf_timer(timer: *mut (), vm: *mut VirtualMachine);
-    /// Tag-specific shutdown release for a queued-but-never-run task. Called
-    /// from `release_queued_tasks` (after `shutdown_for_exit`,
-    /// before `destructOnExit`) for every entry left in `self.tasks`.
-    /// Returns `true` iff the tag was consumed; `false` means the entry
-    /// must be left in the queue (it stays reachable from the static-rooted
-    /// VM box, which is the pre-`532a5411961b` behaviour for tags that don't
-    /// own JSC handles or whose callback isn't safe to no-op-dispatch).
-    /// Defined in `bun_runtime::dispatch`. Link-time resolved.
-    fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool;
+    /// Free a queued task that will never run, through its type's
+    /// `Taskable::release_unrun` (one arm per tag in `bun_runtime::dispatch`).
+    /// JS thread, JSC heap alive. Link-time resolved.
+    fn __bun_release_task_unrun(task: bun_event_loop::Task);
 }
 
 #[inline]
@@ -724,30 +719,24 @@ impl EventLoop {
     }
 
     pub fn enqueue_task(&mut self, task: Task) {
-        if self.closed_for_tasks && task.tag != bun_event_loop::task_tag::ManagedTask {
+        if self.closed_for_tasks {
             // Teardown already released the queue and this loop never ticks
             // again: release the task now, as `release_queued_tasks` would have
             // — the queue owns refusal, like `VmHandle::post` does off-thread.
-            // SAFETY: JS thread, JSC heap alive (teardown phase B/C); the
-            // definer matches the dispatch tag set.
-            if unsafe { __bun_release_task_at_shutdown(task) } {
-                return;
-            }
+            // SAFETY: JS thread, JSC heap alive (teardown phase B/C).
+            unsafe { __bun_release_task_unrun(task) };
+            return;
         }
         let _ = self.tasks.write_item(task);
     }
 
-    /// Drain `concurrent_tasks` without running them and `delete` any
-    /// `EventLoopTask*` payloads so their captured `Ref<>`s drop. Called from
-    /// `release_queued_tasks` in teardown, after `join_child_workers()` (every
-    /// child has posted its close task by then) and before the JSC VM is
-    /// destroyed (so the Refs' destructors run against a live heap). Without
-    /// this, the last child's close-task lambda — and the proxy reachable
-    /// through it — leak.
-    pub fn drop_concurrent_cpp_tasks(&mut self) {
-        unsafe extern "C" {
-            fn Bun__deleteEventLoopTask(task: *mut CppTask);
-        }
+    /// Move whatever other threads posted (`concurrent_tasks`) into
+    /// `self.tasks`, freeing the heap `ConcurrentTask` carriers, so one pass
+    /// over `self.tasks` releases everything. Called by `release_queued_tasks`
+    /// in teardown, after `join_child_workers()` (every child has posted its
+    /// close task by then) and before the JSC VM is destroyed (so captured
+    /// `Ref<>`s in queued C++ lambdas drop against a live heap).
+    fn take_concurrent_tasks(&mut self) {
         let mut iter = self.concurrent_tasks.pop_batch().iterator();
         loop {
             let node = iter.next();
@@ -758,16 +747,7 @@ impl EventLoop {
             // iterator advanced past it before returning, so reading then
             // freeing here is sound.
             let (task, auto_delete) = unsafe { ((*node).task, (*node).auto_delete()) };
-            if task.tag == bun_event_loop::task_tag::CppTask {
-                // SAFETY: every `CppTask` payload is a heap
-                // `WebCore::EventLoopTask*` (`ScriptExecutionContext::postTask*`
-                // → `new EventLoopTask`); we own it once popped.
-                unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
-            } else {
-                // Hand non-Cpp payloads to `self.tasks` so `deinit()`'s
-                // existing per-tag reclaim handles them.
-                let _ = self.tasks.write_item(task);
-            }
+            let _ = self.tasks.write_item(task);
             if auto_delete {
                 // SAFETY: heap-owned (see `ConcurrentTask::create`); not yet
                 // freed, and the iterator no longer references it.
@@ -776,46 +756,18 @@ impl EventLoop {
         }
     }
 
-    /// Release queued-but-never-run tasks that own a ref the dispatch path
-    /// would have dropped. Called from `global_exit` after `shutdown_for_exit`
-    /// (HTTP daemon parked, no further cross-thread posts) and before
-    /// `destructOnExit` (JSC still live, so `FetchTasklet::deinit` can drop
-    /// its `Strong`/`Weak` handles). Re-runs `drop_concurrent_cpp_tasks` first
-    /// so any task the HTTP thread posted after the earlier drain — its
-    /// `is_shutting_down()` read is non-atomic and can lag — is forwarded into
-    /// `self.tasks` for the per-tag release below.
-    ///
-    /// `ManagedTask` entries are deliberately re-queued rather than freed:
-    /// owners (e.g. `SendQueue.close_next_tick` / `after_close_task`) keep raw
-    /// back-pointers that they `cancel()` from `Drop`, and those `Drop`s fire
-    /// during `destructOnExit` (`Subprocess::finalize` → `SendQueue::drop`).
-    /// Freeing the box here would leave those pointers dangling and make
-    /// `cancel()` a heap-use-after-free. `deinit()` runs after `destructOnExit`
-    /// — every owner has cancelled and cleared its pointer by then — so it is
-    /// the correct teardown point for `ManagedTask`s.
-    ///
-    /// Tags `__bun_release_task_at_shutdown` doesn't claim are likewise
-    /// re-queued so they remain reachable from the static-rooted VM box (the
-    /// pre-`532a5411961b` state). Consuming them without freeing unhooked that
-    /// root and surfaced the boxes as direct leaks; the definer can't safely
-    /// dispatch every erased callback at shutdown.
+    /// Release, without running, every task still queued — what other
+    /// threads posted and what this thread enqueued — through each type's
+    /// `Taskable::release_unrun`, and refuse (release on arrival) anything
+    /// enqueued from here on. Teardown phase B: JS thread, script forbidden,
+    /// JSC heap alive, HTTP thread parked / children joined.
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
-        self.drop_concurrent_cpp_tasks();
+        self.take_concurrent_tasks();
         let _ = self.promote_yield_tasks();
-        let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
-            // SAFETY: tag-specific release (drops JSC handles while the VM is
-            // still live); definer in `bun_runtime::dispatch` matches the same
-            // tag set `tick_queue_with_count` does. `false` ⇒ not handled.
-            let consumed = task.tag != bun_event_loop::task_tag::ManagedTask
-                && unsafe { __bun_release_task_at_shutdown(task) };
-            if !consumed {
-                requeue.push(task);
-            }
-        }
-        for task in requeue {
-            let _ = self.tasks.write_item(task);
+            // SAFETY: JS thread, heap alive; `task` just left the queue.
+            unsafe { __bun_release_task_unrun(task) };
         }
         // Pending immediates likewise: cancelling one drops its keep-alive on
         // this thread's loop, so it happens now, not after the loop is gone.
@@ -837,42 +789,23 @@ impl EventLoop {
     }
 
     pub fn deinit(&mut self) {
-        // Free (don't run — running could re-enter the dying VM) queued
-        // ManagedTask boxes. Other tags are left in place: they were re-queued
-        // by `release_queued_tasks` because their callback can't
-        // be no-op-dispatched safely (some callbacks call into JS) and
-        // their box may be aliased by the originator. Keeping them in
-        // `self.tasks` (a field of the static-rooted `VirtualMachine` box that
-        // is never `dealloc`'d) leaves the chain reachable to LSan — the same
-        // visibility they had via `concurrent_tasks` before
-        // `drop_concurrent_cpp_tasks` drained it. CppTasks must NOT be deleted
-        // here: this runs after JSC VM teardown on both worker and main paths,
-        // and a queued lambda's captured Refs may have destructors that touch
-        // the (freed) JSC heap. They are reclaimed before teardown by
-        // `release_queued_tasks`'s CppTask arm.
-        let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
-        while let Some(task) = self.tasks.read_item() {
-            if task.tag == bun_event_loop::task_tag::ManagedTask {
-                // SAFETY: every ManagedTask is heap-owned (ManagedTask::new -> heap::into_raw)
-                // and this one is no longer queued.
-                unsafe { ManagedTask::ManagedTask::release(task.ptr.cast()) };
-            } else {
-                requeue.push(task);
-            }
-        }
-        // Reassigning a fresh value drops the old buffers in place.
-        self.tasks = Queue::init();
-        for task in requeue {
-            let _ = self.tasks.write_item(task);
-        }
+        // Everything queued was released by `release_queued_tasks` (which
+        // also made later enqueues release on arrival) and refused posts never
+        // reach `concurrent_tasks`; nothing can be left to leak with the VM box.
+        debug_assert!(
+            self.tasks.readable_length() == 0 && self.concurrent_tasks.is_empty(),
+            "queued tasks must be released (release_queued_tasks) before the loop is destroyed"
+        );
         debug_assert!(
             self.immediate_tasks.is_empty() && self.next_immediate_tasks.is_empty(),
             "pending immediates must be released (release_queued_tasks) while the loop is alive"
         );
-        // Free the deferred-task map's storage. The tasks must not be run (same rule as the
-        // queued tasks above), and an entry owns nothing but a `Copy` ctx pointer whose owner
-        // released it when the JSC teardown before this finalized it. A worker's VM box is
-        // `dealloc`'d without running `Drop` (WebWorker::shutdown), so nothing else frees it.
+        self.tasks = Queue::init();
+        // Free the deferred-task map's storage. The tasks must not be run, and an
+        // entry owns nothing but a `Copy` ctx pointer whose owner released it when
+        // the JSC teardown before this finalized it. A worker's VM box is
+        // `dealloc`'d without running `Drop` (WebWorker::shutdown), so nothing
+        // else frees it.
         self.deferred_tasks = DeferredTaskQueue::DeferredTaskQueue::default();
     }
 

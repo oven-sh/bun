@@ -1213,10 +1213,18 @@ mod _async_tasks {
     /// `Taskable` glue for the libuv-request ops (Windows), which complete on
     /// the JS thread and re-enter through the task queue under a per-`F` tag.
     #[cfg(windows)]
-    impl<R, A: Unprotect, const F: NodeFSFunctionEnum> bun_event_loop::Taskable
+    impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> bun_event_loop::Taskable
         for UVFSRequest<R, A, F>
+    where
+        Op<{ F }>: NodeFSDispatch<R, A>,
     {
         const TAG: bun_event_loop::TaskTag = F.task_tag();
+        /// A libuv fs request that completed into the queue after the last
+        /// tick: destroy releases its promise handle and keep-alive.
+        unsafe fn release_unrun(this: *mut Self) {
+            // SAFETY: fn contract — `Box::leak`'d in `UVFSRequest::create`.
+            unsafe { Self::destroy(this) }
+        }
     }
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
@@ -1499,6 +1507,12 @@ mod _async_tasks {
         } else {
             bun_event_loop::task_tag::AsyncCpTask
         };
+        /// A finished fs.cp whose completion will not run: destroy releases
+        /// its promise handle, protected arguments and keep-alive.
+        unsafe fn release_unrun(this: *mut Self) {
+            // SAFETY: fn contract — posted by `on_subtask_done` with the count at zero.
+            unsafe { Self::destroy(this) }
+        }
     }
 
     impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {

@@ -200,6 +200,9 @@ pub struct YesTask {
 
 impl Taskable for YesTask {
     const TAG: TaskTag = task_tag::ShellYesTask;
+    /// Lives inside the builtin's `Box<Yes>` (freed with the interpreter) and
+    /// took nothing for the bounce; nothing to do.
+    unsafe fn release_unrun(_: *mut Self) {}
 }
 
 impl YesTask {

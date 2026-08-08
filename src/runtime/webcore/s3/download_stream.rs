@@ -46,6 +46,10 @@ pub struct S3HttpDownloadStreamingTask {
 // Hot-dispatch tag for `ConcurrentTask::from`.
 impl Taskable for S3HttpDownloadStreamingTask {
     const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
+    /// As `S3HttpSimpleTask`: the completion frees the context; run it.
+    unsafe fn release_unrun(this: *mut Self) {
+        S3HttpDownloadStreamingTask::on_response(this);
+    }
 }
 
 impl S3HttpDownloadStreamingTask {

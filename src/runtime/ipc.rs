@@ -1133,8 +1133,8 @@ impl SendQueue {
         unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
     }
 
-    /// `__bun_release_task_at_shutdown` hook: a scheduled deferred task that
-    /// will never run still owns a ref; drop it (skipping the JS callbacks).
+    /// `Taskable::release_unrun`: a scheduled deferred task that will never
+    /// run still owns a ref; drop it (skipping the JS callbacks).
     ///
     /// # Safety
     /// `this` is the queued root pointer, live via the ref taken at schedule.
@@ -1820,6 +1820,10 @@ impl uv::StreamReader for SendQueue {
 
 impl bun_event_loop::Taskable for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the SendQueue root queued with a held ref.
+        unsafe { SendQueue::release_deferred_unrun(this) }
+    }
 }
 
 impl Drop for SendQueue {

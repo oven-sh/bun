@@ -220,6 +220,9 @@ impl Default for RuntimeTranspilerStore {
 
 impl Taskable for RuntimeTranspilerStore {
     const TAG: TaskTag = task_tag::RuntimeTranspilerStore;
+    /// The "drain my finished jobs" ping owns nothing (`this` is the VM's
+    /// store); the jobs themselves are released by `release_queued_jobs_for_teardown`.
+    unsafe fn release_unrun(_: *mut Self) {}
 }
 
 impl RuntimeTranspilerStore {

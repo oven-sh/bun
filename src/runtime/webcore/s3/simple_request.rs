@@ -141,6 +141,12 @@ pub struct S3HttpSimpleTask {
 
 impl Taskable for S3HttpSimpleTask {
     const TAG: TaskTag = task_tag::S3HttpSimpleTask;
+    /// A response the HTTP thread handed back during teardown: its native
+    /// completion is what frees the caller's context (and settles a promise
+    /// nobody can observe — script is forbidden), so run it.
+    unsafe fn release_unrun(this: *mut Self) {
+        let _ = S3HttpSimpleTask::on_response(this);
+    }
 }
 
 // Re-export the canonical alias so sibling modules that imported it from here keep compiling.

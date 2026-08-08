@@ -334,6 +334,14 @@ pub struct Job<C: JobContext> {
 
 impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
+    /// A completion the pool posted whose `then` will not run. (Dispatch goes
+    /// through the erased header — [`release_unrun_erased`] — since the queue
+    /// only knows the shared tag; this is the same thing for a known `C`.)
+    unsafe fn release_unrun(this: *mut Self) {
+        let vm = VirtualMachine::get();
+        // SAFETY: fn contract; JS thread with the heap alive.
+        unsafe { Self::release_unrun_on(this, &vm.global().js_thread()) }
+    }
 }
 
 impl<C: JobContext> Job<C> {
@@ -347,7 +355,7 @@ impl<C: JobContext> Job<C> {
                 // are only reached through this header, so `p` is this `Job<C>`.
                 complete: |p, cx| unsafe { Self::complete(p.cast::<Self>(), cx) },
                 // SAFETY: as above.
-                release_unrun: |p, cx| unsafe { Self::release_unrun(p.cast::<Self>(), cx) },
+                release_unrun: |p, cx| unsafe { Self::release_unrun_on(p.cast::<Self>(), cx) },
                 // SAFETY: as above.
                 release_js: |p, cx| unsafe { Self::release_js(p.cast::<Self>(), cx) },
                 prev: core::ptr::null_mut(),
@@ -414,7 +422,7 @@ impl<C: JobContext> Job<C> {
     ///
     /// # Safety
     /// As [`complete`](Self::complete).
-    unsafe fn release_unrun(this: *mut Self, cx: &JsThread<'_>) {
+    unsafe fn release_unrun_on(this: *mut Self, cx: &JsThread<'_>) {
         // SAFETY: fn contract.
         unsafe {
             if !(*this).header.js_released {

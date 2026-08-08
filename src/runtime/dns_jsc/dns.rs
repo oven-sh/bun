@@ -194,6 +194,13 @@ pub(crate) mod lib_uv_backend {
     }
     impl bun_event_loop::Taskable for LibuvCompleteHolder {
         const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GetAddrInfoLibuvComplete;
+        /// A uv_getaddrinfo the stop phase cancelled and drained into the queue:
+        /// its completion is what frees the request and its cache slot, and it
+        /// only settles promises (no callback runs; script is forbidden), so run it.
+        unsafe fn release_unrun(this: *mut Self) {
+            // SAFETY: fn contract — the box `on_raw_libuv_complete` queued.
+            unsafe { bun_core::heap::take(this) }.run();
+        }
     }
 
     extern "C" fn on_raw_libuv_complete(

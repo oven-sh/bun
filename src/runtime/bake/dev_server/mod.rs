@@ -394,6 +394,18 @@ pub struct HotReloadEvent {
 
 impl bun_event_loop::Taskable for HotReloadEvent {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakeHotReloadEvent;
+    /// An inline slot of the watcher's `WatcherAtomics`. If its DevServer is
+    /// gone (`owner` nulled by `Drop for DevServer`, which then leaves the
+    /// atomics to the queued event), this was the last thing keeping the
+    /// atomics alive; otherwise the DevServer still owns them.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; `atomics` is the heap WatcherAtomics `this` lives in.
+        unsafe {
+            if (*this).owner.is_null() {
+                bun_core::heap::destroy((*this).atomics);
+            }
+        }
+    }
 }
 
 impl HotReloadEvent {

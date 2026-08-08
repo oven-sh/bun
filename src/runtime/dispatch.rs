@@ -13,10 +13,11 @@
 //! `#[no_mangle]` so the linker resolves the call directly — no runtime
 //! registration, no `AtomicPtr`, no init-order hazard.
 //!
-//! **Adding a variant** (do all three):
+//! **Adding a variant** (do all four):
 //!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io::poll_tag`);
-//!   2. `impl bun_jsc::Taskable for YourType { const TAG = task_tag::YourType; }`;
-//!   3. a match arm here.
+//!   2. `impl bun_jsc::Taskable for YourType { const TAG; unsafe fn release_unrun(..) }`;
+//!   3. a `run_task` arm and a `release_task_unrun` arm here;
+//!   4. bump the `task_tag::COUNT` assertion below.
 
 // Flat re-export landing pad for `generated_js2native.rs` thunks. Kept in a
 // sibling file so this hot-path module stays focused on the task/timer/poll
@@ -73,10 +74,7 @@ use crate::shell::builtins::{
     touch::ShellTouchTask,
     yes::YesTask as ShellYesTask,
 };
-use crate::shell::dispatch_tasks::{
-    AsyncDeinitReader as ShellIOReaderAsyncDeinit, AsyncDeinitWriter as ShellIOWriterAsyncDeinit,
-    ShellAsyncSubprocessDone, ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask,
-};
+use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
 use crate::shell::interpreter::ShellTask;
 #[cfg(not(windows))]
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
@@ -337,9 +335,6 @@ pub(crate) fn run_task(
 
         // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
         task_tag::ShellAsync
-        | task_tag::ShellAsyncSubprocessDone
-        | task_tag::ShellIOWriterAsyncDeinit
-        | task_tag::ShellIOReaderAsyncDeinit
         | task_tag::ShellCondExprStatTask
         | task_tag::ShellCpTask
         | task_tag::ShellTouchTask
@@ -500,15 +495,6 @@ pub(crate) fn run_task(
             StreamPending::run_from_js_thread(cast_ptr!(StreamPending));
         }
 
-        // ── timer wrappers (declared in the union but never dispatched) ──
-        task_tag::ImmediateObject | task_tag::TimeoutObject => {
-            // This is a *reachable* producer bug (timer object enqueued as Task),
-            // not provable-unreachable — `unreachable_unchecked()` here would be
-            // release-build UB. PORTING.md §Dispatch only sanctions UB for the
-            // truly-unreachable wildcard.
-            panic!("Unexpected Task tag: {}", task.tag.0);
-        }
-
         _ => {
             // A value outside `task_tag::COUNT` is a producer bug, but it's
             // treated as a recoverable crash, not UB.
@@ -575,18 +561,6 @@ fn run_task_cold(task: Task) {
             let interp = unsafe { &*t.interp };
             ShellAsync::run_from_main_thread(interp, t.node);
         }
-        task_tag::ShellAsyncSubprocessDone => {
-            let t = cast_ptr!(ShellAsyncSubprocessDone);
-            ShellAsyncSubprocessDone::run_from_main_thread(t);
-        }
-        task_tag::ShellIOWriterAsyncDeinit => {
-            let t = cast_ptr!(ShellIOWriterAsyncDeinit);
-            ShellIOWriterAsyncDeinit::run_from_main_thread(t);
-        }
-        task_tag::ShellIOReaderAsyncDeinit => {
-            let t = cast_ptr!(ShellIOReaderAsyncDeinit);
-            ShellIOReaderAsyncDeinit::run_from_main_thread(t);
-        }
         task_tag::ShellCondExprStatTask => {
             shell_dispatch!(nested ShellCondExprStatTask);
         }
@@ -625,11 +599,12 @@ fn run_task_cold(task: Task) {
     }
 }
 
-/// Compile-time guard that the arm count above tracks
-/// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
+/// Compile-time guard that the arm counts in `run_task` and
+/// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
+/// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 67,
-    "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
+    task_tag::COUNT == 62,
+    "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1188,220 +1163,136 @@ unsafe fn __bun_tick_queue_with_count(
 // (former duplicate `__bun_run_tasks` removed r6 — `bun_jsc::task::run_tasks`
 // had no callers; `__bun_tick_queue_with_count` above is the sole entry point.)
 
-/// `__bun_release_task_at_shutdown` body — declared `extern "Rust"` in
-/// `bun_jsc::event_loop`. Called from `release_queued_tasks` on
-/// the JS thread for every queued task that will never be dispatched (the JS
-/// thread is past `global_exit`'s `is_shutting_down` flip and the loop will
-/// not tick again), after the HTTP daemon has parked and before
-/// `destructOnExit`. Releases the boxes and JSC handles the dispatch path
-/// would have dropped. Tags not yet listed leak their box at exit; add them
-/// as LSan surfaces them.
+/// `__bun_release_task_unrun` — declared `extern "Rust"` in
+/// `bun_jsc::event_loop`. A queued task that will never be dispatched (its VM
+/// is tearing down: script is forbidden and the loop no longer ticks) is freed
+/// through its type's [`Taskable::release_unrun`](bun_event_loop::Taskable).
+/// One arm per tag, no fallthrough: a tag cannot exist without its type
+/// having decided how it is released. JS thread, JSC heap alive.
 #[unsafe(no_mangle)]
-fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
-    use bun_event_loop::task_tag;
-    // JS thread, heap alive: this is the tearing-down VM.
-    let global = VirtualMachine::get().global();
+fn __bun_release_task_unrun(task: bun_event_loop::Task) {
+    use bun_event_loop::{Taskable, task_tag};
+    /// `<T as Taskable>::release_unrun(task.ptr as *mut T)`, SAFETY spelled once.
+    macro_rules! release {
+        ($ty:ty) => {{
+            // SAFETY: §Dispatch — `task.tag` was set together with `task.ptr`
+            // through `Taskable`; the tag identifies the pointee type, and the
+            // task just came off the queue and is not used afterwards.
+            unsafe { <$ty as Taskable>::release_unrun(task.ptr.cast::<$ty>()) }
+        }};
+    }
     match task.tag {
-        // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
-        // posted this entry, then deref'd its own +1 if final; the JS-side
-        // +1 it expected `on_progress_update` to drop is the one we release
-        // here. Runs on the JS thread, so the plain `deref` (→ `deinit` on
-        // 1→0) is the right teardown path; the HTTP daemon is already
-        // parked (`shutdown_for_exit` precedes `destroy`), so the
-        // `Box<AsyncHTTP>` and any `metadata` it owns are exclusively ours.
-        task_tag::FetchTasklet => {
-            // SAFETY: `task.ptr` is the live heap `FetchTasklet`; HTTP daemon is
-            // already parked so we hold the sole reference.
-            FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
-            true
-        }
-        // The last ref dropped on the HTTP thread while we were tearing down:
-        // deinit here, on the JS thread with the heap alive, as the hop intended.
-        task_tag::FetchTaskletDeinit => {
-            // SAFETY: as the dispatch arm.
-            unsafe { crate::webcore::fetch::FetchTaskletDeinitHop::run(task.ptr.cast()) };
-            true
-        }
-        task_tag::SendQueueDeferred => {
-            // SAFETY: `task.ptr` is the SendQueue root queued with a held ref.
-            unsafe {
-                crate::ipc::SendQueue::release_deferred_unrun(
-                    task.ptr.cast::<crate::ipc::SendQueue>(),
-                )
-            };
-            true
-        }
-        task_tag::FileResponseStreamEof => {
-            // SAFETY: `on_read_chunk` took a ref for the queued task; adopt it.
-            drop(unsafe {
-                bun_ptr::ScopedRef::<crate::server::FileResponseStream>::adopt(
-                    task.ptr.cast::<crate::server::FileResponseStream>(),
-                )
-            });
-            true
-        }
-        // A libuv fs request (Windows) that completed into the queue after the
-        // last tick: destroy releases its promise handle and keep-alive.
-        #[cfg(windows)]
-        for_each_fs_uv_op!(__fs_pat) => {
-            macro_rules! __fs_destroy {
-                ($($tag:ident $ty:ident;)*) => { match task.tag {
-                    $(task_tag::$tag => {
-                        // SAFETY: tag identifies pointee; `Box::leak`'d in `UVFSRequest::create`.
-                        unsafe { fs_async::$ty::destroy(task.ptr.cast::<fs_async::$ty>()) };
-                    })*
-                    // SAFETY: outer arm guard proves one of the table tags matched.
-                    _ => unsafe { core::hint::unreachable_unchecked() },
-                }};
-            }
-            for_each_fs_uv_op!(__fs_destroy);
-            true
-        }
-        // Deferred out of a finalizer or a late completion; the loop is gone,
-        // so do the JS-free part of what the dispatch arm would have done.
-        task_tag::StreamPending => {
-            StreamPending::release_without_running(task.ptr.cast::<StreamPending>());
-            true
-        }
-        task_tag::ValkeyDeferredClose => {
-            // SAFETY: boxed at the enqueue site; we own it once refused/popped.
-            unsafe {
-                bun_core::heap::take(
-                    task.ptr
-                        .cast::<crate::valkey_jsc::js_valkey::ValkeyDeferredClose>(),
-                )
-            }
-            .run();
-            true
-        }
-        // A cross-thread Atomics.notify (or Wasm/FinalizationRegistry
-        // completion) enqueued this after the event loop's last tick. The
-        // dispatch arm above would have `delete`d it; mirror that here so the
-        // re-queue path doesn't keep it alive past worker VM dealloc. Runs
-        // before JSC teardown, so ~Ref<Ticket> is safe.
-        task_tag::JSCDeferredWorkTask => {
-            unsafe extern "C" {
-                fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
-            }
-            // SAFETY: every JSCDeferredWorkTask payload is heap-allocated by
-            // `new JSCDeferredWorkTask` in JSCTaskScheduler::onScheduleWorkSoon;
-            // we own it once popped.
-            unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
-            true
-        }
-        // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
-        // that were already batch-moved into `self.tasks`. Must run before
-        // JSC teardown: a queued lambda may capture Refs whose destructors
-        // touch the JSC heap. Worker `shutdown()` calls `release_queued_tasks`
-        // for the same reason.
-        task_tag::CppTask => {
-            unsafe extern "C" {
-                fn Bun__deleteEventLoopTask(task: *mut CppTask);
-            }
-            // SAFETY: every CppTask payload is a heap `WebCore::EventLoopTask*`;
-            // we own it once popped.
-            unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
-            true
-        }
-        // Queue presence means the work-pool phase finished and the queue
-        // owned the job; parking it would strand the ctx's native resources.
-        // An async zlib/brotli/zstd write whose completion will not run:
-        // unpin, unref, drop the write's ref — no callbacks.
-        task_tag::NativeZlib => {
-            // SAFETY: `task.ptr` is the stream the pool posted (write's ref held).
-            unsafe {
-                node_zlib_binding::CompressionStream::<NativeZlib>::release_unrun(task.ptr.cast())
-            };
-            true
-        }
-        task_tag::NativeBrotli => {
-            // SAFETY: as above.
-            unsafe {
-                node_zlib_binding::CompressionStream::<NativeBrotli>::release_unrun(task.ptr.cast())
-            };
-            true
-        }
-        task_tag::NativeZstd => {
-            // SAFETY: as above.
-            unsafe {
-                node_zlib_binding::CompressionStream::<NativeZstd>::release_unrun(task.ptr.cast())
-            };
-            true
-        }
-        // A Bun.build the bundle thread handed back during teardown (cancelled
-        // in the stop phase): its completion releases the keep-alive, plugin
-        // cell and promise against the live heap.
-        task_tag::JSBundleCompletionTask => {
-            let _ =
-                crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(
-                    task.ptr.cast(),
-                );
-            true
-        }
-        // Plugin requests of a cancelled build: arena-owned by a bundle pass
-        // that failed them itself and may already be gone — nothing to touch.
-        task_tag::BundleV2PluginResolve
-        | task_tag::BundleV2PluginLoad
-        | task_tag::BundleV2DeferredBatchTask => true,
-        // napi async work the pool handed back during teardown: its `complete`
-        // callback is how the addon learns the outcome and frees the work
-        // (Node calls it from environment cleanup too); script it tries to run
-        // is refused at the boundary.
-        task_tag::NapiAsyncWork => {
-            let vm = VirtualMachine::get().as_mut();
-            // SAFETY: `task.ptr` is the addon's live work object the pool posted.
-            unsafe { (*task.ptr.cast::<napi_async_work>()).run_from_js(vm, global) };
-            true
-        }
-        // A finished fs.cp whose completion will not run: destroy releases its
-        // promise handle, protected arguments and keep-alive.
-        task_tag::AsyncCpTask => {
-            // SAFETY: as the dispatch arm.
-            unsafe { crate::node::fs::AsyncCpTask::destroy(task.ptr.cast()) };
-            true
-        }
-        task_tag::ShellAsyncCpTask => {
-            // SAFETY: as above.
-            unsafe { crate::node::fs::ShellAsyncCpTask::destroy(task.ptr.cast()) };
-            true
-        }
-        // A stat-watcher continuation the pool posted: drop the ref it carries.
-        task_tag::StatWatcherHop => {
-            // SAFETY: as the dispatch arm.
-            unsafe { crate::node::node_fs_stat_watcher::StatWatcher::release_hop(task.ptr.cast()) };
-            true
-        }
-        // The transpiler store's "drain my queue" ping owns nothing; the jobs
-        // themselves are released by `release_queued_jobs_for_teardown`.
-        task_tag::RuntimeTranspilerStore => true,
-        // An S3 request the HTTP thread handed back during teardown: its native
-        // completion is what frees the caller's context (and settles a promise
-        // nobody can observe — script is forbidden), so run it.
-        task_tag::S3HttpSimpleTask => {
-            let _ = S3HttpSimpleTask::on_response(task.ptr.cast());
-            true
-        }
-        task_tag::S3HttpDownloadStreamingTask => {
-            S3HttpDownloadStreamingTask::on_response(task.ptr.cast());
-            true
-        }
         task_tag::AnyTaskJob => {
-            // SAFETY: every queued payload with this tag is a live heap `Job<C>`
-            // its `Completion` posted; we own it once popped (JS thread, heap alive).
-            unsafe { bun_jsc::job::release_unrun_erased(task.ptr, &global.js_thread()) };
-            true
+            // The one erased tag: every payload is a `Job<C>` reached through
+            // its header. SAFETY: as `release!`.
+            let js = VirtualMachine::get().global().js_thread();
+            unsafe { bun_jsc::job::release_unrun_erased(task.ptr, &js) }
         }
-        // A napi finalizer queued before the loop stopped: Node runs an addon's
-        // finalizers during environment cleanup (script already forbidden), and
-        // an addon counts on them (external buffers freed when a Worker exits).
-        task_tag::NapiFinalizerTask => {
-            NapiFinalizerTask::run_on_js_thread(task.ptr.cast());
-            true
+        task_tag::AsyncModule => release!(bun_jsc::async_module::AsyncModule),
+        task_tag::BakeHotReloadEvent => release!(BakeHotReloadEvent),
+        task_tag::BundleV2DeferredBatchTask => release!(BundleV2DeferredBatchTask),
+        task_tag::BundleV2PluginResolve => {
+            release!(bun_bundler::bundle_v2::api::JSBundler::Resolve)
         }
-        // Re-queued by the caller; the box stays reachable from the
-        // static-rooted VM queue, because running these callbacks
-        // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,
-        // `dns::Holder::run` call straight into JS).
-        _ => false,
+        task_tag::BundleV2PluginLoad => release!(bun_bundler::bundle_v2::api::JSBundler::Load),
+        task_tag::ShellYesTask => release!(ShellYesTask),
+        task_tag::CppTask => release!(CppTask),
+        task_tag::DuplexUpgradeContext => release!(crate::socket::DuplexUpgradeContext),
+        task_tag::FetchTasklet => release!(FetchTasklet),
+        task_tag::FetchTaskletDeinit => release!(crate::webcore::fetch::FetchTaskletDeinitHop),
+        task_tag::FetchTaskletPromiseSettle => {
+            release!(crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle)
+        }
+        task_tag::FileResponseStreamEof => release!(crate::server::FileResponseStream),
+        task_tag::FSWatchTask => release!(FSWatchTask),
+        task_tag::HotReloadTask => release!(hot_reloader::HotReloadTask),
+        task_tag::WatchReloadTask => release!(hot_reloader::WatchReloadTask),
+        task_tag::JSBundleCompletionTask => {
+            release!(crate::api::js_bundle_completion_task::JSBundleCompletionTask)
+        }
+        task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
+        task_tag::ManagedTask => release!(ManagedTask),
+        task_tag::NapiAsyncWork => release!(napi_async_work),
+        task_tag::NapiFinalizerTask => release!(NapiFinalizerTask),
+        task_tag::NativePromiseContextDeferredDerefTask => {
+            release!(NativePromiseContextDeferredDerefTask)
+        }
+        task_tag::NativeBrotli => release!(NativeBrotli),
+        task_tag::NativeZlib => release!(NativeZlib),
+        task_tag::NativeZstd => release!(NativeZstd),
+        task_tag::PollPendingModulesTask => release!(bun_jsc::async_module::Queue),
+        task_tag::PosixSignalTask => release!(PosixSignalTask),
+        task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
+        task_tag::ProcessWaiterThreadTask => {
+            #[cfg(not(windows))]
+            release!(ProcessWaiterThreadTask<Process>);
+            #[cfg(windows)]
+            unreachable!("posix-only tag");
+        }
+        task_tag::FlushPendingFileSinkTask => release!(FlushPendingFileSinkTask),
+        task_tag::RuntimeTranspilerStore => release!(RuntimeTranspilerStore),
+        task_tag::S3HttpDownloadStreamingTask => release!(S3HttpDownloadStreamingTask),
+        task_tag::S3HttpSimpleTask => release!(S3HttpSimpleTask),
+        task_tag::SendQueueDeferred => release!(crate::ipc::SendQueue),
+        task_tag::ServerAllConnectionsClosedTask => release!(ServerAllConnectionsClosedTask),
+        task_tag::ShellAsync => release!(crate::shell::dispatch_tasks::ShellAsyncTask),
+        task_tag::ShellCondExprStatTask => release!(ShellCondExprStatTask),
+        task_tag::ShellCpTask => release!(ShellCpTask),
+        task_tag::ShellGlobTask => release!(ShellGlobTask),
+        task_tag::ShellLsTask => release!(ShellLsTask),
+        task_tag::ShellMkdirTask => release!(ShellMkdirTask),
+        task_tag::ShellMvBatchedTask => release!(ShellMvBatchedTask),
+        task_tag::ShellMvCheckTargetTask => release!(ShellMvCheckTargetTask),
+        task_tag::ShellRmDirTask => release!(ShellRmDirTask),
+        task_tag::ShellRmTask => release!(ShellRmTask),
+        task_tag::ShellTouchTask => release!(ShellTouchTask),
+        task_tag::StatWatcherTimerUpdate => {
+            release!(crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate)
+        }
+        task_tag::StatWatcherHop => release!(crate::node::node_fs_stat_watcher::StatWatcher),
+        task_tag::AsyncCpTask => release!(crate::node::fs::AsyncCpTask),
+        task_tag::ShellAsyncCpTask => release!(crate::node::fs::ShellAsyncCpTask),
+        task_tag::StreamPending => release!(StreamPending),
+        task_tag::ThreadSafeFunction => release!(ThreadSafeFunction),
+        task_tag::ValkeyDeferredClose => {
+            release!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
+        }
+        // ── Windows-only producers ───────────────────────────────────────
+        task_tag::GetAddrInfoLibuvComplete => {
+            #[cfg(windows)]
+            release!(crate::dns_jsc::LibuvCompleteHolder);
+            #[cfg(not(windows))]
+            unreachable!("windows-only tag");
+        }
+        task_tag::WindowsNamedPipeContext => {
+            #[cfg(windows)]
+            release!(crate::socket::WindowsNamedPipeContext);
+            #[cfg(not(windows))]
+            unreachable!("windows-only tag");
+        }
+        task_tag::Open
+        | task_tag::Close
+        | task_tag::Read
+        | task_tag::Readv
+        | task_tag::Write
+        | task_tag::Writev
+        | task_tag::StatFS => {
+            #[cfg(windows)]
+            {
+                macro_rules! __fs_release {
+                    ($($tag:ident $ty:ident;)*) => { match task.tag {
+                        $(task_tag::$tag => release!(fs_async::$ty),)*
+                        // SAFETY: the outer arm proves one of the table tags matched.
+                        _ => unsafe { core::hint::unreachable_unchecked() },
+                    }};
+                }
+                for_each_fs_uv_op!(__fs_release);
+            }
+            #[cfg(not(windows))]
+            unreachable!("windows-only tag (libuv fs request)");
+        }
+        // Every tag has an arm above (`task_tag::COUNT` is asserted); a value
+        // outside the range is a producer bug.
+        _ => unreachable!("task tag out of range: {}", task.tag.0),
     }
 }

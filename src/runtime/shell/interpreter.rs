@@ -2590,6 +2590,12 @@ pub struct ShellTask {
 }
 
 impl ShellTask {
+    /// A queued completion that will never run (`Taskable::release_unrun`):
+    /// drop the keep-alive `schedule` took, as `run_from_main_thread` would have.
+    pub(crate) fn unref_unrun(&mut self) {
+        self.keep_alive.unref(self.event_loop.as_event_loop_ctx());
+    }
+
     /// A subtask created on a pool thread (`ls -R` discovering a directory):
     /// it reports to the same loop as `parent`, whose poster was captured on
     /// the JS thread — nothing here derives one from the VM.

@@ -43,12 +43,31 @@ impl JSValueNapiExt for JSValue {
 // `Taskable` impls for the napi heap tasks dispatched through the JS event loop.
 impl Taskable for napi_async_work {
     const TAG: TaskTag = task_tag::NapiAsyncWork;
+    /// Work the pool handed back during teardown: its `complete` callback is
+    /// how the addon learns the outcome and frees the work (Node calls it from
+    /// environment cleanup too); script it tries to run is refused at the boundary.
+    unsafe fn release_unrun(this: *mut Self) {
+        let vm = VirtualMachine::get().as_mut();
+        let global = vm.global();
+        // SAFETY: fn contract — the addon's live work object the pool posted.
+        unsafe { (*this).run_from_js(vm, global) };
+    }
 }
 impl Taskable for ThreadSafeFunction {
     const TAG: TaskTag = task_tag::ThreadSafeFunction;
+    /// `this` is the TSFN itself, which the env's cleanup hook (`env_teardown`,
+    /// run with the exit handlers before the queue is released) already
+    /// neutralised or freed. Nothing to do, and `this` must not be dereferenced.
+    unsafe fn release_unrun(_: *mut Self) {}
 }
 impl Taskable for NapiFinalizerTask {
     const TAG: TaskTag = task_tag::NapiFinalizerTask;
+    /// A finalizer queued before the loop stopped: Node runs an addon's
+    /// finalizers during environment cleanup (script already forbidden), and
+    /// an addon counts on them (external buffers freed when a Worker exits).
+    unsafe fn release_unrun(this: *mut Self) {
+        NapiFinalizerTask::run_on_js_thread(this);
+    }
 }
 
 bun_output::declare_scope!(napi, visible);
@@ -2950,9 +2969,9 @@ impl ThreadSafeFunction {
         drop(self.env.take());
         self.env_teardown_done.store(true, Ordering::SeqCst);
         // Cleanup hooks are the loop's last tick: a task still queued for this
-        // TSFN will never run (no tag arm in `__bun_release_task_at_shutdown`
-        // dereferences it either). With no thread_count reference left, nobody
-        // else can reach this, so free it here.
+        // TSFN will never run (and its `release_unrun` does not dereference it).
+        // With no thread_count reference left, nobody else can reach this, so
+        // free it here.
         self.thread_count.load(Ordering::SeqCst) <= 0
     }
 

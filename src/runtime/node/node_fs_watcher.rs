@@ -147,6 +147,17 @@ pub struct FSWatchTaskPosix {
 #[cfg(not(windows))]
 impl Taskable for FSWatchTaskPosix {
     const TAG: TaskTag = task_tag::FSWatchTask;
+    /// A batch of events the watcher thread posted that nobody will emit:
+    /// free it (its entries own their paths) and drop the activity unit it
+    /// took — as the refused-post path in `enqueue` does.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; the FSWatcher outlives its tasks.
+        unsafe {
+            let ctx = (*this).ctx;
+            Self::deinit(this);
+            ctx.expect("FSWatchTask.ctx unset").get().unref_task();
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -352,6 +363,15 @@ pub struct FSWatchTaskWindows {
 #[cfg(windows)]
 impl Taskable for FSWatchTaskWindows {
     const TAG: TaskTag = task_tag::FSWatchTask;
+    /// As the POSIX task: free the batch, drop the activity unit.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; the FSWatcher outlives its tasks.
+        unsafe {
+            let ctx = (*this).ctx;
+            Self::deinit(this);
+            ctx.expect("FSWatchTask.ctx unset").get().unref_task();
+        }
+    }
 }
 
 #[cfg(windows)]

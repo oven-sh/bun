@@ -1018,9 +1018,14 @@ pub(crate) fn native_zstd(global: &JSGlobalObject) -> JSValue {
 #[doc(hidden)]
 macro_rules! __impl_compression_stream {
     ($native:ident, $ctx:ty, $type_name:literal) => {
-        // Tag for the event-loop dispatcher (bun_runtime::dispatch::run_task).
         impl ::bun_event_loop::Taskable for $native {
             const TAG: ::bun_event_loop::TaskTag = ::bun_event_loop::task_tag::$native;
+            /// An async write whose completion will not run: unpin, unref, drop
+            /// the write's ref — no callbacks.
+            unsafe fn release_unrun(this: *mut Self) {
+                // SAFETY: fn contract — the stream the pool posted (write's ref held).
+                unsafe { $crate::node::node_zlib_binding::CompressionStream::<$native>::release_unrun(this) }
+            }
         }
 
         /// `T.js.*` — cached-property accessors emitted by

@@ -213,6 +213,12 @@ enum NextAction {
 // enqueued pointer back to `ShellAsyncTask`; both sides MUST agree.
 impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
+    /// The `Async` node's bounce box, freed only at the end of a chain that
+    /// will not continue: free it here.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `Async::init` made; nothing else frees an unrun one.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
 }
 
 /// Mini-loop trampoline.

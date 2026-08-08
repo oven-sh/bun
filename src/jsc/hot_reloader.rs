@@ -559,7 +559,30 @@ where
         // SAFETY: precondition — `this` came from heap::alloc in `enqueue`.
         drop(unsafe { bun_core::heap::take(this) });
     }
+}
 
+impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> bun_event_loop::Taskable
+    for Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+where
+    Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
+{
+    const TAG: bun_event_loop::TaskTag = if RELOAD_IMMEDIATELY {
+        task_tag::WatchReloadTask
+    } else {
+        task_tag::HotReloadTask
+    };
+    /// A file change the watcher thread posted that will not reload anything.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `enqueue` posted.
+        unsafe { Self::deinit(this) }
+    }
+}
+
+impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
+    Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+where
+    Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
+{
     pub fn run(&mut self) {
         // Since we rely on the event loop for hot reloads, there can be
         // a delay before the next reload begins. In the time between the
@@ -609,16 +632,8 @@ where
         }));
         // SAFETY: `that` was just allocated above and is exclusively owned here.
         unsafe {
-            // Note: `JscTask::init` requires `Taskable`, but const-generic
-            // `Task<Ctx, _, _>` can't implement it (one tag per monomorphization).
-            // Use the raw `(tag, ptr)` constructor.
-            let tag = if RELOAD_IMMEDIATELY {
-                task_tag::WatchReloadTask
-            } else {
-                task_tag::HotReloadTask
-            };
             let concurrent = (*that).concurrent_task.insert(ConcurrentTask {
-                task: JscTask::new(tag, that.cast::<()>()),
+                task: JscTask::init(that),
                 ..Default::default()
             });
             // `&that.concurrent_task` is an interior pointer into the

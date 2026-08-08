@@ -1275,4 +1275,10 @@ impl CompletionStruct for JSBundleCompletionTask {
 
 impl bun_event_loop::Taskable for JSBundleCompletionTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::JSBundleCompletionTask;
+    /// A Bun.build the bundle thread handed back during teardown (cancelled in
+    /// the stop phase): its completion releases the keep-alive, plugin cell
+    /// and promise against the live heap.
+    unsafe fn release_unrun(this: *mut Self) {
+        let _ = JSBundleCompletionTask::on_complete_anytask(this);
+    }
 }

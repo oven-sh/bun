@@ -4194,25 +4194,17 @@ pub struct ServerAllConnectionsClosedTask {
 
 impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ServerAllConnectionsClosedTask;
+    /// A `server.stop()` whose all-closed notification will not run: drop the
+    /// promise handle with the box.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `schedule` queued.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
 }
 
 impl ServerAllConnectionsClosedTask {
-    /// Use `ManagedTask::new_owned` (not `Task::init`) so a still-pending task
-    /// at process exit is freed by `EventLoop::deinit()`. Without this the
-    /// `Box` (and its `JSPromiseStrong`) leaks 24 bytes per `server.stop()`
-    /// that races `process.exit()`. `JSPromiseStrong`'s own `Drop` is already
-    /// a no-op past `is_shutting_down()` (see `bun_jsc::Strong::Impl::destroy`).
     pub(crate) fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
-        fn call_erased(this: *mut ServerAllConnectionsClosedTask) -> bun_event_loop::JsResult<()> {
-            // `this` is the unique owning pointer heap-allocated below
-            // in `schedule()`; `ManagedTask::new_owned` invokes this exactly once.
-            ServerAllConnectionsClosedTask::run_from_js_thread(this).map_err(Into::into)
-        }
-        let ptr = bun_core::heap::into_raw(Box::new(this));
-        vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_owned(
-            ptr,
-            call_erased,
-        ));
+        vm.enqueue_task(bun_event_loop::Task::from_boxed(Box::new(this)));
     }
 
     /// Resolve the `server.stop()` promise

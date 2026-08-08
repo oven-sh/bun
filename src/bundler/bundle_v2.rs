@@ -1106,6 +1106,9 @@ pub mod bv2_impl {
             impl bun_event_loop::Taskable for Resolve {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolve;
+                /// Arena-owned by a bundle pass that already failed its
+                /// outstanding requests when it was cancelled; nothing to free.
+                unsafe fn release_unrun(_: *mut Self) {}
             }
             impl Resolve {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
@@ -1299,6 +1302,8 @@ pub mod bv2_impl {
             }
             impl bun_event_loop::Taskable for Load {
                 const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2PluginLoad;
+                /// As `Resolve`: arena-owned by its (cancelled) bundle pass.
+                unsafe fn release_unrun(_: *mut Self) {}
             }
             impl crate::Graph::OutstandingNode for Load {
                 fn link(&mut self) -> &mut crate::Graph::OutstandingLink<Self> {

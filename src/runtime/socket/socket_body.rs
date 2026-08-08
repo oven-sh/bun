@@ -4193,6 +4193,12 @@ impl SocketMode {
 
 impl bun_event_loop::Taskable for DuplexUpgradeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DuplexUpgradeContext;
+    /// A `Close` (or `StartTLS`) hop that will not run: `this` is the heap
+    /// context itself, freed by nobody else once queued — tear it down.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe { Self::deinit(this) }
+    }
 }
 
 pub(crate) struct DuplexUpgradeContext {

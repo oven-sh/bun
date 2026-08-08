@@ -108,10 +108,23 @@ impl Queue {
 // borrow into `VirtualMachine.modules`, never freed by the dispatcher.
 impl bun_event_loop::Taskable for Queue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PollPendingModulesTask;
+    /// A "poll your pending modules" ping from an install thread: `this` is
+    /// the VM's own queue; nothing is owned.
+    unsafe fn release_unrun(_: *mut Self) {}
 }
 
 impl bun_event_loop::Taskable for AsyncModule {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncModule;
+    /// A module whose dependencies finished installing but whose fulfilment
+    /// will not run: undo `done()`'s bookkeeping and drop it (its promise
+    /// handle, arena and parse result go with the box).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `done()` queued.
+        let mut this = unsafe { bun_core::heap::take(this) };
+        let vm = VirtualMachine::get().as_mut();
+        this.poll_ref.unref(bun_io::js_vm_ctx());
+        vm.modules.scheduled -= 1;
+    }
 }
 
 impl AsyncModule {

@@ -1697,9 +1697,31 @@ impl RemoveFileHandler for RemoveFileParent {
 
 impl bun_event_loop::Taskable for ShellRmTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellRmTask;
+    /// The rm's own completion hop: drop the keep-alive and this pending
+    /// callback's count (frees the task when it was the last).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).task.unref_unrun();
+            ShellRmTask::decr_pending_and_maybe_deinit(this);
+        }
+    }
 }
 impl bun_event_loop::Taskable for DirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellRmDirTask;
+    /// A verbose-output hop: free the (non-root) dir task and give back the
+    /// pending-callback unit it holds on its rm — as `run_from_main_thread`
+    /// does when there is nothing to write.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; capture before the decrement (it may free the root).
+        unsafe {
+            let (tm, has_parent) = ((*this).task_manager, !(*this).parent_task.is_null());
+            if has_parent {
+                Self::deinit(this);
+            }
+            ShellRmTask::decr_pending_and_maybe_deinit(tm);
+        }
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {

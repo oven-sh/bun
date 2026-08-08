@@ -2092,4 +2092,9 @@ impl ValkeyDeferredClose {
 
 impl bun_event_loop::Taskable for ValkeyDeferredClose {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredClose;
+    /// The deferred close is script-free bookkeeping; do it.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed at the enqueue site.
+        unsafe { bun_core::heap::take(this) }.run();
+    }
 }

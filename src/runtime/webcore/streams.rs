@@ -624,6 +624,11 @@ impl Pending {
 
 impl bun_event_loop::Taskable for Pending {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StreamPending;
+    /// Deferred out of a finalizer or a late completion: do the script-free
+    /// part of what the dispatch would have done.
+    unsafe fn release_unrun(this: *mut Self) {
+        Pending::release_without_running(this);
+    }
 }
 
 pub enum PendingFuture {

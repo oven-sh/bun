@@ -80,7 +80,6 @@ pub mod task_tag {
         GetAddrInfoLibuvComplete,
         HotReloadTask,
         WatchReloadTask,
-        ImmediateObject,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,
         ManagedTask,
@@ -104,12 +103,9 @@ pub mod task_tag {
         SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
         ServerAllConnectionsClosedTask,
         ShellAsync,
-        ShellAsyncSubprocessDone,
         ShellCondExprStatTask,
         ShellCpTask,
         ShellGlobTask,
-        ShellIOReaderAsyncDeinit,
-        ShellIOWriterAsyncDeinit,
         ShellLsTask,
         ShellMkdirTask,
         ShellMvBatchedTask,
@@ -124,7 +120,6 @@ pub mod task_tag {
         ShellAsyncCpTask,
         StreamPending,
         ThreadSafeFunction,
-        TimeoutObject,
         ValkeyDeferredClose,
         WindowsNamedPipeContext,
         Write,
@@ -138,22 +133,36 @@ pub struct Task {
     pub ptr: *mut (),
 }
 
-/// Type → tag binding for [`Task`]. Implement on every type that can be
+/// What it takes to be queued as a [`Task`]: a tag, and how the task is
+/// freed when it will never run. Implement on every type that can be
 /// enqueued; the impl lives in whatever crate owns the type.
 ///
-/// ```ignore
-/// impl bun_event_loop::Taskable for FetchTasklet {
-///     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
-/// }
-/// ```
+/// A queued task ends one of three ways: it runs (`bun_runtime::dispatch::
+/// run_task`); it is refused at post because its VM already closed (the
+/// poster frees it — `Postable::release_refused` / the `Posted::Refused` arm);
+/// or it was queued in time but its VM stops before running it —
+/// [`release_unrun`](Self::release_unrun), required here so no type can be
+/// queued without having decided it.
 ///
 /// Re-exported from `bun_jsc` for ergonomics, but defined here (lowest tier on
 /// the hot-dispatch list, see PORTING.md §Dispatch) so that
 /// [`Task::init`] can use it without a dep cycle.
 pub trait Taskable {
     /// The tag constant from [`task_tag`] for this type. Both this and the
-    /// `bun_runtime::dispatch::run_task` match arm MUST agree.
+    /// `bun_runtime::dispatch` match arms MUST agree.
     const TAG: TaskTag;
+
+    /// The task is in its VM's queue and will never be dispatched (the VM is
+    /// tearing down: script is forbidden and the loop no longer ticks). Free
+    /// it and whatever it holds — keep-alives, JS handles, refs, buffers —
+    /// without running it. JS thread, JSC heap still alive. `this` is the
+    /// queued [`Task::ptr`] (for the tags whose `ptr` packs an integer, that
+    /// value). A type that can never be in a queue at that point says so here
+    /// with `unreachable!` and the reason.
+    ///
+    /// # Safety
+    /// `this` came off the queue under `Self::TAG` and is not used afterwards.
+    unsafe fn release_unrun(this: *mut Self);
 }
 
 impl TaskTag {
@@ -190,6 +199,10 @@ impl Task {
 // Taskable impls for the low-tier task wrappers defined in this crate.
 impl Taskable for crate::ManagedTask::ManagedTask {
     const TAG: TaskTag = task_tag::ManagedTask;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — a queued ManagedTask is the heap box `new*` made.
+        unsafe { crate::ManagedTask::ManagedTask::release(this) }
+    }
 }
 // ────────────────────────────────────────────────────────────────────────────
 

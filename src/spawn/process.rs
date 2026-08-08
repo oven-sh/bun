@@ -999,6 +999,20 @@ pub mod waiter_thread_posix {
         pub(crate) rusage: Rusage,
     }
 
+    impl<T: ProcessLike> bun_event_loop::Taskable for ResultTask<T> {
+        const TAG: TaskTag = T::TASK_TAG;
+        /// An exit status the waiter thread posted whose delivery will not run:
+        /// drop it and the strong ref it carried for the JS thread.
+        unsafe fn release_unrun(this: *mut Self) {
+            // SAFETY: fn contract — the box `ResultTask::new` made; `subprocess`
+            // holds the ref taken before `append()`.
+            unsafe {
+                let t = bun_core::heap::take(this);
+                T::release_ref_from_waiter_thread(t.subprocess);
+            }
+        }
+    }
+
     impl<T: ProcessLike> ResultTask<T> {
         #[inline]
         pub(crate) fn new(v: ResultTask<T>) -> *mut ResultTask<T> {
@@ -1170,7 +1184,7 @@ pub mod waiter_thread_posix {
                                     subprocess: process,
                                     rusage,
                                 });
-                                let ct = ConcurrentTask::create(Task::new(T::TASK_TAG, rt.cast()));
+                                let ct = ConcurrentTask::create(Task::init(rt));
                                 let poster = T::js_poster(process_ref)
                                     .expect("JS-owned process has a poster");
                                 if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {

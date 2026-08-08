@@ -850,13 +850,6 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    /// Main-thread re-entry for a subprocess exit posted from off-thread —
-    /// equivalent to [`Self::on_exec_done`] but drives the trampoline itself
-    /// since the dispatcher discards the [`Yield`].
-    pub(crate) fn on_subprocess_done(interp: &Interpreter, this: NodeId, exit_code: ExitCode) {
-        Self::on_exec_done(interp, this, exit_code).run(interp);
-    }
-
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Cmd {} deinit", this);
         let me = interp.as_cmd_mut(this);

@@ -17,6 +17,15 @@ bun_opaque::opaque_ffi! {
 
 impl Taskable for CppTask {
     const TAG: TaskTag = task_tag::CppTask;
+    /// Delete the `WebCore::EventLoopTask` — its captured `Ref`s drop against
+    /// the still-live heap.
+    unsafe fn release_unrun(this: *mut Self) {
+        unsafe extern "C" {
+            fn Bun__deleteEventLoopTask(task: *mut CppTask);
+        }
+        // SAFETY: fn contract; every CppTask payload is a heap EventLoopTask.
+        unsafe { Bun__deleteEventLoopTask(this) }
+    }
 }
 
 impl CppTask {

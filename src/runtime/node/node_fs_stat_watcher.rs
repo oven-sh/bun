@@ -1195,6 +1195,11 @@ pub(crate) enum StatWatcherHop {
 
 impl bun_event_loop::Taskable for StatWatcher {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StatWatcherHop;
+    /// A continuation the pool posted: drop the ref it carries.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe { StatWatcher::release_hop(this) }
+    }
 }
 
 pub(crate) struct InitialStatTask {
@@ -1289,4 +1294,10 @@ impl StatWatcherTimerUpdate {
 
 impl bun_event_loop::Taskable for StatWatcherTimerUpdate {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StatWatcherTimerUpdate;
+    /// The holder owns nothing (a non-owning scheduler ref); timers are
+    /// already disarmed, so just drop it.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `schedule_timer_update` posted.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
 }

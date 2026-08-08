@@ -1875,6 +1875,7 @@ fn parse_data_loader<'a>(
                 compact: true,
                 encoding: bun_parsers::xml::InputEncoding::File,
             };
+            bun_core::analytics::Features::xml_parse_inc();
             match bun_parsers::xml::XML::parse(source, log, arena, options) {
                 Ok(e) => e,
                 Err(_) => return None,

@@ -97,7 +97,6 @@ use bstr::BStr;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
-use bun_core::strings;
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
@@ -112,6 +111,7 @@ use bun_s3_signing::storage_class::StorageClass;
 // here is `crate::webcore`, not the `s3` directory. Route through the `s3`
 // re-export hub instead.
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
+use crate::webcore::s3::xml_response;
 use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
     execute_simple_s3_request,
@@ -658,17 +658,15 @@ impl MultiPartUpload {
             S3DownloadResult::Success(response) => {
                 // response.body is bun.MutableString — `list` is a Vec<u8>
                 let slice = response.body.list.as_slice();
-                // PERF: upload_id is duped out of the body instead of slicing into it
-                if let Some(start) = strings::index_of(slice, b"<UploadId>") {
-                    let value_start = start + b"<UploadId>".len();
-                    if let Some(end) = strings::index_of(slice, b"</UploadId>") {
-                        if end >= value_start {
-                            self_
-                                .upload_id
-                                .set(Box::<[u8]>::from(&slice[value_start..end]));
-                        }
+                // <InitiateMultipartUploadResult><Bucket/><Key/><UploadId/></…>
+                xml_response::with_document(slice, |document| {
+                    if let Some(upload_id) = document
+                        .filter(|root| root.name == b"InitiateMultipartUploadResult")
+                        .and_then(|root| root.child_text(b"UploadId"))
+                    {
+                        self_.upload_id.set(Box::<[u8]>::from(upload_id));
                     }
-                }
+                });
                 let upload_id = self_.upload_id.get();
                 if upload_id.is_empty()
                     || upload_id.len() > Self::MAX_UPLOAD_ID_LEN

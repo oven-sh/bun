@@ -9499,11 +9499,26 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
 
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
 /// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
+/// EAGAIN polls: anything sharing the open file description can flip O_NONBLOCK.
 fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
     while !bytes.is_empty() {
         match write(fd, bytes) {
             Ok(0) => return false, // short write → give up
             Ok(n) => bytes = &bytes[n..],
+            // Darwin's write$NOCANCEL is single-shot (no EINTR retry in `write()`).
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EINTR => continue,
+            #[cfg(unix)]
+            Err(e) if e.is_retry() => {
+                let mut pfd = [posix::PollFd {
+                    fd: fd.native(),
+                    events: posix::POLL_OUT,
+                    revents: 0,
+                }];
+                if posix::poll(&mut pfd, -1).is_err() {
+                    return false;
+                }
+            }
             Err(_) => return false,
         }
     }

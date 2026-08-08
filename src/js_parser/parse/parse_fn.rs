@@ -101,6 +101,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
+        p.validate_function_name(&func, FunctionKind::Stmt);
+
         if Self::IS_TYPESCRIPT_ENABLED {
             // Don't output anything if it's just a forward declaration of a function
             if opts.is_typescript_declare

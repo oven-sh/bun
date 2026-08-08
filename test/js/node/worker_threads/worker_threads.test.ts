@@ -1868,7 +1868,11 @@ test.concurrent.skipIf(isWindows)(
             });
           });
         } else {
-          fs.readFile(workerData, () => {});
+          // Buffer path + AbortSignal: their normal teardown cleanup (unpin,
+          // signal unref) must be skipped by the refused-post disposal, since
+          // both would touch the dead JS heap.
+          const controller = new AbortController();
+          fs.readFile(Buffer.from(workerData), { signal: controller.signal }, () => {});
           parentPort.postMessage("pending");
         }
       `,
@@ -1877,7 +1881,9 @@ test.concurrent.skipIf(isWindows)(
     expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.cjs", fifo],
-      env: bunEnv,
+      // Malloc=1 forces system malloc for the JSC heap so ASAN can see a
+      // use-after-free if the disposal ever touches it.
+      env: { ...bunEnv, Malloc: "1" },
       cwd: String(dir),
       stderr: "pipe",
     });

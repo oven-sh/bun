@@ -1076,6 +1076,7 @@ mod _async_tasks {
         }
         impl Unprotect for $ty {
             #[inline] fn unprotect(&mut self) {}
+            #[inline] fn disarm_for_dead_vm(&mut self) {}
         } )+
     };
 }
@@ -1203,6 +1204,13 @@ mod _async_tasks {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(crate::node::types::FdJsc::to_js(*self, global))
+        }
+        fn fs_discard(&mut self) {
+            // `fs_to_js` would have transferred the descriptor to JS; nothing else closes it.
+            let fd = core::mem::replace(self, FD::INVALID);
+            if fd != FD::INVALID {
+                fd.close();
+            }
         }
     }
     impl FsReturn for StringOrBuffer {
@@ -1421,7 +1429,7 @@ mod _async_tasks {
             let Self { promise, args, .. } = *task;
             // Intentionally never dropped: the Strong handle died with the VM heap.
             let _ = core::mem::ManuallyDrop::new(promise);
-            args.dispose_skip_unprotect();
+            args.dispose_for_dead_vm();
         }
 
         pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
@@ -1947,7 +1955,7 @@ mod _async_tasks {
             } = *task;
             // Intentionally never dropped: the Strong handle died with the VM heap.
             let _ = core::mem::ManuallyDrop::new(promise);
-            args.dispose_skip_unprotect();
+            args.dispose_for_dead_vm();
             // `cp_on_finish` (JS thread) never runs for a refused post, so reclaim the shell
             // parent here: its interpreter died with the VM, its fields are plain heap.
             if let Some(parent) = shelltask {
@@ -2845,7 +2853,7 @@ mod _async_tasks {
             let Self { promise, args, .. } = *task;
             // Intentionally never dropped: the Strong handle died with the VM heap.
             let _ = core::mem::ManuallyDrop::new(promise);
-            args.dispose_skip_unprotect();
+            args.dispose_for_dead_vm();
         }
     }
 
@@ -2928,6 +2936,7 @@ pub mod args {
         ($ty:ident; $($field:ident),+ $(,)?) => {
             impl Unprotect for $ty {
                 #[inline] fn unprotect(&mut self) { $( self.$field.unprotect(); )+ }
+                #[inline] fn disarm_for_dead_vm(&mut self) { $( self.$field.disarm_for_dead_vm(); )+ }
             }
             impl $ty {
                 pub fn to_thread_safe(&mut self) { $( self.$field.to_thread_safe(); )+ }
@@ -3005,6 +3014,9 @@ pub mod args {
             self.buffers.value.unprotect();
             // `self.buffers.buffers`: `Vec` frees on drop.
         }
+
+        // The element roots/pins are released only in `unprotect`; `Drop` touches no JS state.
+        fn disarm_for_dead_vm(&mut self) {}
     }
     impl FdVectorIo {
         pub(crate) fn to_thread_safe(&mut self) {
@@ -3054,6 +3066,9 @@ pub mod args {
     impl Unprotect for FTruncate {
         #[inline]
         fn unprotect(&mut self) {}
+
+        #[inline]
+        fn disarm_for_dead_vm(&mut self) {}
     }
     impl FTruncate {
         pub(crate) fn to_thread_safe(&self) {}
@@ -3557,6 +3572,11 @@ pub mod args {
         fn unprotect(&mut self) {
             self.0.unprotect();
         }
+
+        #[inline]
+        fn disarm_for_dead_vm(&mut self) {
+            self.0.disarm_for_dead_vm();
+        }
     }
     impl Rm {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rm> {
@@ -3953,6 +3973,11 @@ pub mod args {
         fn unprotect(&mut self) {
             self.buffer.unprotect();
         }
+
+        #[inline]
+        fn disarm_for_dead_vm(&mut self) {
+            self.buffer.disarm_for_dead_vm();
+        }
     }
     impl Write {
         pub(crate) fn to_thread_safe(&mut self) {
@@ -4121,6 +4146,10 @@ pub mod args {
                 self.buffer.buffer.unpin();
             }
             self.buffer.buffer.value.unprotect();
+        }
+
+        fn disarm_for_dead_vm(&mut self) {
+            self.pinned = false;
         }
     }
     impl Read {
@@ -4357,6 +4386,14 @@ pub mod args {
             self.path.unprotect();
             // Signal unref handled by `Drop` (idempotent via `.take()`).
         }
+
+        fn disarm_for_dead_vm(&mut self) {
+            self.path.disarm_for_dead_vm();
+            // `Drop` would deref the signal's non-atomic WebCore refcount.
+            if let Some(signal) = self.signal.take() {
+                let _ = core::mem::ManuallyDrop::new(signal);
+            }
+        }
     }
     impl ReadFile {
         pub(crate) fn to_thread_safe(&mut self) {
@@ -4447,6 +4484,15 @@ pub mod args {
             self.file.unprotect();
             self.data.unprotect();
             // Signal unref handled by `Drop` (idempotent via `.take()`).
+        }
+
+        fn disarm_for_dead_vm(&mut self) {
+            self.file.disarm_for_dead_vm();
+            self.data.disarm_for_dead_vm();
+            // `Drop` would deref the signal's non-atomic WebCore refcount.
+            if let Some(signal) = self.signal.take() {
+                let _ = core::mem::ManuallyDrop::new(signal);
+            }
         }
     }
     impl WriteFile {
@@ -4552,6 +4598,11 @@ pub mod args {
         fn unprotect(&mut self) {
             self.0.unprotect();
         }
+
+        #[inline]
+        fn disarm_for_dead_vm(&mut self) {
+            self.0.disarm_for_dead_vm();
+        }
     }
 
     pub struct Exists {
@@ -4569,6 +4620,12 @@ pub mod args {
         fn unprotect(&mut self) {
             if let Some(p) = &mut self.path {
                 p.unprotect();
+            }
+        }
+
+        fn disarm_for_dead_vm(&mut self) {
+            if let Some(p) = &mut self.path {
+                p.disarm_for_dead_vm();
             }
         }
     }

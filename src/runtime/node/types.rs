@@ -289,6 +289,13 @@ impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
             sob.unprotect();
         }
     }
+
+    fn disarm_for_dead_vm(&mut self) {
+        // `Blob` never rides a work-pool fs task (no `FsArgument` impl), so no arm for it.
+        if let Self::StringOrBuffer(sob) = self {
+            sob.disarm_for_dead_vm();
+        }
+    }
 }
 
 impl bun_jsc::Unprotect for StringOrBuffer {
@@ -304,6 +311,12 @@ impl bun_jsc::Unprotect for StringOrBuffer {
                 buffer.buffer.unpin();
             }
             buffer.buffer.value.unprotect();
+        }
+    }
+
+    fn disarm_for_dead_vm(&mut self) {
+        if let Self::Buffer(buffer) = self {
+            buffer.pinned = false;
         }
     }
 }

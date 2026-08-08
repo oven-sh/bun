@@ -33,6 +33,12 @@ use crate::array_buffer::MarkedArrayBuffer;
 /// [`ThreadSafe<T>`].
 pub trait Unprotect {
     fn unprotect(&mut self);
+
+    /// The VM died before the JS thread could run [`Self::unprotect`] or `Drop`: clear every
+    /// cleanup that would touch the JS heap or VM-owned state (buffer pins, AbortSignal refs)
+    /// so the plain `Drop` is safe off the JS thread. Protect counts died with the heap and
+    /// need no balancing. Required (no default) so every impl accounts for its fields.
+    fn disarm_for_dead_vm(&mut self);
 }
 
 /// RAII guard returned by `into_thread_safe()`: a `T` whose JS-backed buffers
@@ -52,14 +58,15 @@ impl<T: Unprotect> ThreadSafe<T> {
         Self(value)
     }
 
-    /// Drop the inner `T` (freeing its owned Rust payloads) WITHOUT running
-    /// [`Unprotect::unprotect`]: for teardown paths where the VM that held
-    /// the protect counts is already freed, so touching them would be a UAF.
-    pub fn dispose_skip_unprotect(self) {
-        let this = core::mem::ManuallyDrop::new(self);
+    /// Dispose on a work-pool thread after the VM died: skip [`Unprotect::unprotect`], clear
+    /// the JS-heap-touching `Drop` behavior via [`Unprotect::disarm_for_dead_vm`], then drop
+    /// the inner `T` to free its owned Rust payloads.
+    pub fn dispose_for_dead_vm(self) {
+        let mut this = core::mem::ManuallyDrop::new(self);
+        this.0.disarm_for_dead_vm();
         // SAFETY: `this` is `ManuallyDrop`, so `ThreadSafe::drop` (the
         // unprotect) never runs and the inner value is read out exactly once;
-        // its own `Drop` frees the owned payloads.
+        // its disarmed `Drop` frees the owned payloads.
         drop(unsafe { core::ptr::read(&raw const this.0) });
     }
 }
@@ -236,6 +243,13 @@ impl Unprotect for PathLike {
             b.buffer.value.unprotect();
         }
     }
+
+    fn disarm_for_dead_vm(&mut self) {
+        // `Drop` unpins a pinned Buffer path — a JS-cell deref the dead heap can't take.
+        if let Self::Buffer(b) = self {
+            b.pinned = false;
+        }
+    }
 }
 
 /// `node.PathOrFileDescriptor`.
@@ -302,6 +316,12 @@ impl Unprotect for PathOrFileDescriptor {
     fn unprotect(&mut self) {
         if let Self::Path(p) = self {
             p.unprotect();
+        }
+    }
+
+    fn disarm_for_dead_vm(&mut self) {
+        if let Self::Path(p) = self {
+            p.disarm_for_dead_vm();
         }
     }
 }

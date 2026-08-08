@@ -622,8 +622,7 @@ impl<'a> State<'a> {
             self.handles.iter_mut().map(std::ptr::from_mut).collect();
         for handle in handles {
             // SAFETY: points into `self.handles`, live for the whole run loop.
-            let handle = unsafe { &mut *handle };
-            if let Some(proc) = &mut handle.process {
+            if let Some(proc) = unsafe { (*handle).process.as_ref() } {
                 // if we get an error here we simply ignore it
                 // SAFETY: proc.ptr is a live `*mut Process` (set in start(); leaked
                 // until program exit per on_process_exit note).
@@ -632,7 +631,9 @@ impl<'a> State<'a> {
             // An already-exited handle may be waiting on pipes a grandchild
             // still holds; with `aborted` set this finishes it now. Killed
             // handles finish when their exit arrives.
-            let _ = self.maybe_finish(handle);
+            // SAFETY: same `self.handles` element as above; the exclusive
+            // reborrow is confined to this call.
+            let _ = self.maybe_finish(unsafe { &mut *handle });
         }
     }
 
@@ -1098,7 +1099,7 @@ pub(crate) fn run_scripts_with_filter(
         .handles
         .iter_mut()
         .filter(|handle| handle.remaining_dependencies == 0)
-        .map(|handle| std::ptr::from_mut(handle))
+        .map(std::ptr::from_mut)
         .collect();
     for handle in roots {
         // SAFETY: points into `state.handles`, which lives for the whole loop.

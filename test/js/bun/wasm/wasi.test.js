@@ -28,7 +28,7 @@ it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   using dir = tempDir("wasi-set-rights", {
     "inside.txt": "inside",
   });
-  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  const wasi = new WASI({ version: "preview1", preopens: { "/": String(dir) } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
 
   const WASI_ESUCCESS = 0;
@@ -48,7 +48,7 @@ it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
 });
 
 it("random_get fills only the requested window", () => {
-  const wasi = new WASI({});
+  const wasi = new WASI({ version: "preview1" });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
 
   const WASI_ESUCCESS = 0;
@@ -76,7 +76,7 @@ it("path_open reports the host errno to the guest when the open fails", () => {
   using dir = tempDir("wasi-path-open-errno", {
     "exists.txt": "x",
   });
-  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  const wasi = new WASI({ version: "preview1", preopens: { "/": String(dir) } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
   const memory = Buffer.from(wasi.memory.buffer);
   const view = new DataView(wasi.memory.buffer);
@@ -122,7 +122,7 @@ it("path_* syscalls cannot escape the preopened directory", () => {
     fs.symlinkSync(path.join("..", "secret.txt"), path.join(sandbox, "escape"));
   }
 
-  const wasi = new WASI({ preopens: { "/": sandbox } });
+  const wasi = new WASI({ version: "preview1", preopens: { "/": sandbox } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
   const memory = Buffer.from(wasi.memory.buffer);
 
@@ -162,4 +162,104 @@ it("path_* syscalls cannot escape the preopened directory", () => {
     WASI_ESUCCESS,
   );
   expect(wasi.FD_MAP.has(4)).toBe(true);
+});
+
+it("implements the Node WASI lifecycle and import-object contract", () => {
+  const memory = new WebAssembly.Memory({ initial: 1 });
+  const wasi = new WASI({ version: "preview1", stdin: 4, stdout: 5, stderr: 6 });
+
+  expect(wasi.getImportObject()).toEqual({ wasi_snapshot_preview1: wasi.wasiImport });
+  expect(wasi.FD_MAP.get(0).real).toBe(4);
+  expect(wasi.FD_MAP.get(1).real).toBe(5);
+  expect(wasi.FD_MAP.get(2).real).toBe(6);
+
+  let startCalls = 0;
+  const command = { exports: { memory, _start: () => startCalls++ } };
+  expect(wasi.start(command)).toBe(0);
+  expect(startCalls).toBe(1);
+  expect(() => wasi.start(command)).toThrow(expect.objectContaining({ code: "ERR_WASI_ALREADY_STARTED" }));
+});
+
+it("starts an unstable WASI module through getImportObject()", async () => {
+  using dir = tempDir("wasi-start", {});
+  const outputPath = path.join(String(dir), "output.txt");
+  const outputFd = fs.openSync(outputPath, "w");
+
+  try {
+    const wasi = new WASI({ version: "unstable", stdout: outputFd });
+    const wasm = await WebAssembly.compile(fs.readFileSync(import.meta.dir + "/hello-wasi.wasm"));
+    const instance = await WebAssembly.instantiate(wasm, wasi.getImportObject());
+    expect(wasi.start(instance)).toBe(0);
+  } finally {
+    fs.closeSync(outputFd);
+  }
+
+  expect(fs.readFileSync(outputPath, "utf8")).toBe("hello world\n");
+});
+
+it("returns a WASI proc_exit code from start()", () => {
+  const wasi = new WASI({ version: "preview1" });
+  const command = {
+    exports: {
+      memory: new WebAssembly.Memory({ initial: 1 }),
+      _start: () => wasi.wasiImport.proc_exit(7),
+    },
+  };
+
+  expect(wasi.start(command)).toBe(7);
+});
+
+it("initializes reactor modules and rejects command modules", () => {
+  const memory = new WebAssembly.Memory({ initial: 1 });
+  const wasi = new WASI({ version: "preview1" });
+  let initializeCalls = 0;
+  const reactor = { exports: { memory, _initialize: () => initializeCalls++ } };
+
+  expect(wasi.initialize(reactor)).toBeUndefined();
+  expect(initializeCalls).toBe(1);
+  expect(() => wasi.initialize(reactor)).toThrow(expect.objectContaining({ code: "ERR_WASI_ALREADY_STARTED" }));
+
+  const command = {
+    exports: {
+      memory: new WebAssembly.Memory({ initial: 1 }),
+      _start() {},
+    },
+  };
+  expect(() => new WASI({ version: "preview1" }).initialize(command)).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+});
+
+it("validates the WASI version option", () => {
+  expect(() => new WASI()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  expect(() => new WASI({ version: "unsupported" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+  );
+
+  const unstable = new WASI({ version: "unstable" });
+  expect(unstable.getImportObject()).toEqual({ wasi_unstable: unstable.wasiImport });
+});
+
+it("validates and normalizes WASI constructor options", () => {
+  expect(() => new WASI({ version: "preview1", args: "args" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+  expect(() => new WASI({ version: "preview1", env: "env" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+  expect(() => new WASI({ version: "preview1", preopens: "preopens" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+  expect(() => new WASI({ version: "preview1", stdout: -1 })).toThrow(
+    expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+  );
+  expect(() => new WASI({ version: "preview1", returnOnExit: 1 })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+
+  const wasi = new WASI({ version: "preview1", args: [42, true] });
+  const memory = new WebAssembly.Memory({ initial: 1 });
+  wasi.initialize({ exports: { memory } });
+  wasi.wasiImport.args_sizes_get(0, 4);
+  expect(new DataView(memory.buffer).getUint32(0, true)).toBe(2);
 });

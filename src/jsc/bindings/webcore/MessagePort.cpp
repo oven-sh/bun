@@ -401,7 +401,6 @@ void MessagePort::contextDestroyed()
     ASSERT(scriptExecutionContext());
 
     close();
-<<<<<<< HEAD
 
     // A close() that ran while the context was still alive set
     // m_closeEventPending and queued the deferred close-event task. If the
@@ -421,10 +420,8 @@ void MessagePort::contextDestroyed()
     // retainer.
     m_closeEventPending.store(false, std::memory_order_release);
 
-    ContextDestructionObserver::contextDestroyed();
-=======
     ActiveDOMObject::contextDestroyed();
->>>>>>> 9d519e8ca9 (Worker / worker_threads: WebCore-shaped lifetimes, joined threads, one ordered VM teardown (#37075))
+
 }
 
 bool MessagePort::virtualHasPendingActivity() const

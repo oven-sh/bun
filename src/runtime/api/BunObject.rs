@@ -480,7 +480,15 @@ pub(crate) fn braces(
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, &[brace_str]);
+        // Return the (quote-stripped) token text, not the raw input.
+        let mut word: Vec<u8> = Vec::with_capacity(brace_slice.slice().len());
+        for tok in &lexer_output.tokens {
+            if let Braces::Token::Text(txt) = tok {
+                word.extend_from_slice(txt.slice());
+            }
+        }
+        let s = BunString::from_bytes(&word[..]);
+        return bun_string_jsc::to_js_array(global, &[s]);
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to

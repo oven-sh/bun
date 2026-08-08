@@ -285,7 +285,7 @@ impl Expansion {
         for (i, &b) in me.current_out.iter().enumerate() {
             if next_meta < me.meta_offsets.len() && me.meta_offsets[next_meta] as usize == i {
                 next_meta += 1;
-            } else if matches!(b, b'{' | b'}' | b',' | b'\\') {
+            } else if matches!(b, b'{' | b'}' | b',' | b'\\' | b'\'' | b'"' | b'$') {
                 escaped.push(b'\\');
             }
             escaped.push(b);

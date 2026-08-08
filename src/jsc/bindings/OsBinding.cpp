@@ -19,9 +19,17 @@ extern "C" uint64_t Bun__Os__getFreeMemory(void)
     }
     return (uint64_t)info.free_count * sysconf(_SC_PAGESIZE);
 }
+
+// Darwin has no per-process memory cgroup equivalent that libuv consults, so
+// uv_get_available_memory() == uv_get_free_memory() there.
+extern "C" uint64_t Bun__Os__getAvailableMemory(void)
+{
+    return Bun__Os__getFreeMemory();
+}
 #endif
 
 #if OS(LINUX)
+#include <wtf/RAMSize.h>
 #include <sys/sysinfo.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -98,12 +106,120 @@ extern "C" uint64_t Bun__Os__getFreeMemory(void)
     }
     return 0;
 }
+
+// Read a short file (cgroup control file, /proc/self/cgroup) into buf and
+// NUL-terminate. Returns 0 on success, -1 on any failure. Matches libuv's
+// uv__slurp.
+static int bunSlurp(const char* filename, char* buf, size_t len)
+{
+    int fd;
+    ssize_t n;
+
+    do {
+        fd = open(filename, O_RDONLY | O_CLOEXEC);
+    } while (fd == -1 && errno == EINTR);
+    if (fd == -1) {
+        return -1;
+    }
+
+    do {
+        n = read(fd, buf, len - 1);
+    } while (n == -1 && errno == EINTR);
+    close(fd);
+
+    if (n < 0) {
+        return -1;
+    }
+    buf[n] = '\0';
+    return 0;
+}
+
+// Read a single decimal uint64 from a cgroup control file. 0 = couldn't read.
+static uint64_t bunReadCgroupUint64(const char* filename)
+{
+    char buf[32];
+    uint64_t rc = 0;
+    if (bunSlurp(filename, buf, sizeof(buf)) == 0) {
+        sscanf(buf, "%" SCNu64, &rc);
+    }
+    return rc;
+}
+
+// Current cgroup memory usage for this process. Matches libuv's
+// uv__get_cgroup_current_memory: cgroup v2 reads memory.current under the
+// path from /proc/self/cgroup's "0::/<path>" line; cgroup v1 reads
+// memory.usage_in_bytes under the :memory: controller's mount path.
+static uint64_t bunGetCgroupCurrentMemory(void)
+{
+    char buf[1024];
+    char filename[4097];
+
+    if (bunSlurp("/proc/self/cgroup", buf, sizeof(buf)) != 0) {
+        return 0;
+    }
+
+    if (strncmp(buf, "0::/", 4) == 0) {
+        char* p = buf + strlen("0::/");
+        int n = static_cast<int>(strcspn(p, "\n"));
+        snprintf(filename, sizeof(filename), "/sys/fs/cgroup/%.*s/memory.current", n, p);
+        return bunReadCgroupUint64(filename);
+    }
+
+    // cgroup v1: locate the :memory: controller line.
+    char* p = strchr(buf, ':');
+    while (p != nullptr && strncmp(p, ":memory:", 8) != 0) {
+        p = strchr(p, '\n');
+        if (p != nullptr) {
+            p = strchr(p, ':');
+        }
+    }
+    if (p != nullptr) {
+        p += strlen(":memory:/");
+        int n = static_cast<int>(strcspn(p, "\n"));
+        snprintf(filename, sizeof(filename), "/sys/fs/cgroup/memory/%.*s/memory.usage_in_bytes", n, p);
+        uint64_t current = bunReadCgroupUint64(filename);
+        if (current != 0) {
+            return current;
+        }
+    }
+    return bunReadCgroupUint64("/sys/fs/cgroup/memory/memory.usage_in_bytes");
+}
+
+// Matches libuv's uv_get_available_memory: when the process runs under a
+// cgroup memory limit, return the remaining budget (limit - current usage);
+// otherwise fall back to host MemAvailable. The limit is WTF::ramSize(),
+// the same cgroup-aware value process.constrainedMemory() returns, so
+// availableMemory() <= constrainedMemory() holds by construction.
+extern "C" uint64_t Bun__Os__getAvailableMemory(void)
+{
+    uint64_t constrained = static_cast<uint64_t>(WTF::ramSize());
+
+    struct sysinfo info;
+    if (constrained == 0 || sysinfo(&info) != 0) {
+        return Bun__Os__getFreeMemory();
+    }
+    uint64_t total = static_cast<uint64_t>(info.totalram) * info.mem_unit;
+    if (constrained >= total) {
+        return Bun__Os__getFreeMemory();
+    }
+
+    uint64_t current = bunGetCgroupCurrentMemory();
+    if (constrained < current) {
+        return 0;
+    }
+    return constrained - current;
+}
 #endif
 
 #if OS(WINDOWS)
 extern "C" uint64_t uv_get_available_memory(void);
 
 extern "C" uint64_t Bun__Os__getFreeMemory(void)
+{
+    return uv_get_available_memory();
+}
+
+extern "C" uint64_t Bun__Os__getAvailableMemory(void)
 {
     return uv_get_available_memory();
 }
@@ -123,5 +239,10 @@ extern "C" uint64_t Bun__Os__getFreeMemory(void)
         return 0;
     }
     return static_cast<uint64_t>(free_pages) * sysconf(_SC_PAGESIZE);
+}
+
+extern "C" uint64_t Bun__Os__getAvailableMemory(void)
+{
+    return Bun__Os__getFreeMemory();
 }
 #endif

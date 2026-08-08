@@ -1387,6 +1387,64 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         None,
                     );
                     manager.task_batch.push(ThreadPoolBatch::from(queued));
+                } else if C::IS_STORE_INSTALLER {
+                    // Installing! The isolated store parked its entry contexts
+                    // under `checkout_id` (`enqueue_git_for_checkout`) with a
+                    // `Dependency` waiter under the clone id. Enqueue each
+                    // waiter's checkout directly from its lockfile resolution:
+                    // re-running the dependency resolver here would bind the
+                    // already-resolved dependency and return without ever
+                    // scheduling the checkout, starving the parked entry.
+                    if let Some(waiters) = manager.task_queue.remove(&task.id) {
+                        for waiter in waiters.iter() {
+                            let dep_id = match waiter {
+                                bun_install::TaskCallbackContext::Dependency(id) => *id,
+                                _ => continue,
+                            };
+                            let pkg_id = manager.lockfile.buffers.resolutions[dep_id as usize];
+                            if pkg_id == INVALID_PACKAGE_ID {
+                                continue;
+                            }
+                            let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
+                            if res.tag != bun_install::ResolutionTag::Git {
+                                continue;
+                            }
+                            let (dep_name_handle, is_required) = {
+                                let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                                (dep.name, dep.behavior.is_required())
+                            };
+                            // SAFETY: `string_bytes` lives as long as
+                            // `manager.lockfile` and is not reallocated while
+                            // install-phase tasks are draining.
+                            let string_buf = unsafe {
+                                bun_ptr::detach_lifetime(
+                                    manager.lockfile.buffers.string_bytes.as_slice(),
+                                )
+                            };
+                            // SAFETY: `res.tag == Git` checked above — `value.git`
+                            // is the active union arm.
+                            let res_git = res.git();
+                            let resolved = res_git.resolved.slice(string_buf);
+                            let checkout_id = Task::Id::for_git_checkout(
+                                res_git.repo.slice(string_buf),
+                                resolved,
+                            );
+                            if manager.has_created_network_task(checkout_id, is_required) {
+                                continue;
+                            }
+                            let queued = enqueue::enqueue_git_checkout(
+                                manager,
+                                checkout_id,
+                                repo_fd,
+                                dep_id,
+                                dep_name_handle.slice(string_buf),
+                                &res,
+                                resolved,
+                                None,
+                            );
+                            manager.task_batch.push(ThreadPoolBatch::from(queued));
+                        }
+                    }
                 } else {
                     // Resolving!
                     let dependency_list_entry = manager

@@ -200,4 +200,41 @@ describe("path.resolve", () => {
     const expectedEnding = isWindows ? "\\c" : "/c";
     assert.ok(result.endsWith(expectedEnding));
   });
+
+  test("win32 long UNC device root (> PATH_MAX_WIDE) is pure string algebra", () => {
+    // path.win32 functions are pure string operations and must not impose OS
+    // path-length limits. A \\?\ or \\.\ prefixed input whose UNC "device"
+    // component alone exceeded PATH_MAX_WIDE used to return an ENAMETOOLONG
+    // SystemError object as the return value (not thrown) instead of a string.
+    const w = path.win32;
+    const seg = Buffer.alloc(120000, "x").toString();
+    const dev = "\\\\?\\" + seg; // 120004 chars, whole thing is the UNC device
+
+    // resolve: with a trailing component so the exact output is well-defined.
+    expect(w.resolve(dev + "\\a\\b")).toBe(dev + "\\a\\b");
+    expect(w.resolve("//?/" + seg + "/a/b")).toBe(dev + "\\a\\b");
+    expect(w.resolve("\\\\.\\" + seg + "\\a")).toBe("\\\\.\\" + seg + "\\a");
+
+    // bare device (no trailing component): must be a string, never an Error.
+    for (const f of ["resolve", "toNamespacedPath"]) {
+      const v = w[f](dev);
+      expect(v).not.toBeInstanceOf(Error);
+      expect(typeof v).toBe("string");
+      expect(v.startsWith(dev)).toBe(true);
+    }
+
+    // relative: same device, one extra component.
+    expect(w.relative(dev, dev + "\\y")).toBe("y");
+    expect(w.relative(dev + "\\a", dev + "\\b")).toBe("..\\b");
+
+    // toNamespacedPath on a long regular UNC path (device fits, tail is long).
+    const unc = "\\\\srv\\shr\\" + seg;
+    expect(w.toNamespacedPath(unc)).toBe("\\\\?\\UNC\\srv\\shr\\" + seg);
+
+    // Just above the old threshold (PATH_MAX_WIDE = 32767).
+    const edge = "\\\\?\\" + Buffer.alloc(32770, "x").toString();
+    expect(typeof w.resolve(edge)).toBe("string");
+    expect(typeof w.toNamespacedPath(edge)).toBe("string");
+    expect(w.relative(edge, edge + "\\y")).toBe("y");
+  });
 });

@@ -2544,6 +2544,7 @@ fn relative_windows_t<'a, T: PathCharCwd>(
     buf: &'a mut [T],
     buf2: &mut [T],
     buf3: &mut [T],
+    tmp_buf: &mut [T],
 ) -> MaybeSlice<'a, T> {
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
@@ -2551,7 +2552,7 @@ fn relative_windows_t<'a, T: PathCharCwd>(
     }
 
     // Backed by expandable buf2 because fromOrig may be long.
-    let from_orig = resolve_windows_t(&[from], buf2, buf3)?;
+    let from_orig = resolve_windows_t(&[from], buf2, buf3, tmp_buf)?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // Borrowck: resolve into buf, then operate via raw indices.
@@ -2560,7 +2561,7 @@ fn relative_windows_t<'a, T: PathCharCwd>(
     // resolved value.
     let to_orig_len = {
         let (ptr, len) = {
-            let r = resolve_windows_t(&[to], buf, buf3)?;
+            let r = resolve_windows_t(&[to], buf, buf3, tmp_buf)?;
             (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
@@ -2737,7 +2738,7 @@ fn relative_posix_js_t<T: PathCharCwd>(
 ) -> JsResult<JSValue> {
     match relative_posix_t(from, to, buf, buf2, buf3) {
         Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
+        Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
     }
 }
 
@@ -2748,10 +2749,11 @@ fn relative_windows_js_t<T: PathCharCwd>(
     buf: &mut [T],
     buf2: &mut [T],
     buf3: &mut [T],
+    tmp_buf: &mut [T],
 ) -> JsResult<JSValue> {
-    match relative_windows_t(from, to, buf, buf2, buf3) {
+    match relative_windows_t(from, to, buf, buf2, buf3, tmp_buf) {
         Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
+        Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
     }
 }
 
@@ -2768,12 +2770,13 @@ fn relative_js_t<T: PathCharCwd>(
     let buf_len =
         ((from.len() + max_path_size::<T>() + 1) * 2 + to.len() + max_path_size::<T>() + 1)
             .max(path_size::<T>());
-    // +1 for null terminator; ×3 for buf/buf2/buf3 carved from one slab.
-    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 1) * 3);
+    // +1 for null terminator; ×4 for buf/buf2/buf3/tmp_buf carved from one slab.
+    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 1) * 4);
     let (buf, rest) = scratch.slice().split_at_mut(buf_len + 1);
-    let (buf2, buf3) = rest.split_at_mut(buf_len + 1);
+    let (buf2, rest) = rest.split_at_mut(buf_len + 1);
+    let (buf3, tmp_buf) = rest.split_at_mut(buf_len + 1);
     if is_windows {
-        relative_windows_js_t(global_object, from, to, buf, buf2, buf3)
+        relative_windows_js_t(global_object, from, to, buf, buf2, buf3, tmp_buf)
     } else {
         relative_posix_js_t(global_object, from, to, buf, buf2, buf3)
     }
@@ -2923,10 +2926,9 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
+    tmp_buf: &mut [T],
 ) -> MaybeSlice<'a, T> {
     let is_sep_t = is_sep_windows_t::<T>;
-    // Sized to the larger of the two T variants.
-    let mut tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER + 1];
 
     // Backed by tmpBuf.
     // Borrowck: track resolved_device length into tmp_buf.
@@ -3174,13 +3176,9 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                             buf_offset = buf_size;
                             let first_part_len = first_part_end - first_part_start;
                             buf_size += first_part_len;
-                            if buf_size > tmp_buf.len() {
-                                return Err(bun_sys::Error::from_code(
-                                    bun_sys::E::ENAMETOOLONG,
-                                    bun_sys::Tag::TODO,
-                                ));
-                            }
-                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
+                            debug_assert!(buf_size <= tmp_buf.len());
+                            // SAFETY: caller sizes tmp_buf to cover any single
+                            // input path (see *_js_t); ptr::copy handles overlap.
                             unsafe {
                                 core::ptr::copy(
                                     path_ptr.add(first_part_start),
@@ -3194,13 +3192,8 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                             let slice_len = j - last;
                             buf_offset = buf_size;
                             buf_size += slice_len;
-                            if buf_size > tmp_buf.len() {
-                                return Err(bun_sys::Error::from_code(
-                                    bun_sys::E::ENAMETOOLONG,
-                                    bun_sys::Tag::TODO,
-                                ));
-                            }
-                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
+                            debug_assert!(buf_size <= tmp_buf.len());
+                            // SAFETY: same tmp_buf sizing invariant as above.
                             unsafe {
                                 core::ptr::copy(
                                     path_ptr.add(last),
@@ -3357,7 +3350,7 @@ fn resolve_posix_js_t<T: PathCharCwd>(
 ) -> JsResult<JSValue> {
     match resolve_posix_t(paths, buf, buf2) {
         Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
+        Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
     }
 }
 
@@ -3366,10 +3359,11 @@ fn resolve_windows_js_t<T: PathCharCwd>(
     paths: &[&[T]],
     buf: &mut [T],
     buf2: &mut [T],
+    tmp_buf: &mut [T],
 ) -> JsResult<JSValue> {
-    match resolve_windows_t(paths, buf, buf2) {
+    match resolve_windows_t(paths, buf, buf2, tmp_buf) {
         Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
+        Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
     }
 }
 
@@ -3393,11 +3387,12 @@ fn resolve_js_t<T: PathCharCwd>(
     buf_len += max_path_size::<T>() + 1;
     buf_len = buf_len.max(path_size::<T>());
     // +2 to account for separator and null terminator during path resolution.
-    // Carve buf/buf2 from one pooled slab.
-    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 2) * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 2);
+    // Carve buf/buf2/tmp_buf from one pooled slab.
+    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 2) * 3);
+    let (buf, rest) = scratch.slice().split_at_mut(buf_len + 2);
+    let (buf2, tmp_buf) = rest.split_at_mut(buf_len + 2);
     if is_windows {
-        resolve_windows_js_t(global_object, paths, buf, buf2)
+        resolve_windows_js_t(global_object, paths, buf, buf2, tmp_buf)
     } else {
         resolve_posix_js_t(global_object, paths, buf, buf2)
     }
@@ -3472,11 +3467,12 @@ fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     path: &[T],
     buf: &'a mut [T],
     buf2: &mut [T],
+    tmp_buf: &mut [T],
 ) -> MaybeSlice<'a, T> {
     // validateString of `path` is performed in pub fn toNamespacedPath.
     // Backed by buf.
     // Borrowck: capture length, then re-borrow buf.
-    let resolved_len = resolve_windows_t(&[path], buf, buf2)?.len();
+    let resolved_len = resolve_windows_t(&[path], buf, buf2, tmp_buf)?.len();
 
     let len = resolved_len;
     if len <= 2 {
@@ -3544,10 +3540,11 @@ fn to_namespaced_path_windows_js_t<T: PathCharCwd>(
     path: &[T],
     buf: &mut [T],
     buf2: &mut [T],
+    tmp_buf: &mut [T],
 ) -> JsResult<JSValue> {
-    match to_namespaced_path_windows_t(path, buf, buf2) {
+    match to_namespaced_path_windows_t(path, buf, buf2, tmp_buf) {
         Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
+        Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
     }
 }
 
@@ -3562,10 +3559,11 @@ fn to_namespaced_path_js_t<T: PathCharCwd>(
     }
     // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend to relative paths.
     let buf_len = (path.len() + max_path_size::<T>() + 1).max(path_size::<T>());
-    // +8 for possible UNC prefix, +1 for null terminator; ×2 for buf/buf2.
-    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 8 + 1) * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 8 + 1);
-    to_namespaced_path_windows_js_t(global_object, path, buf, buf2)
+    // +8 for possible UNC prefix, +1 for null terminator; ×3 for buf/buf2/tmp_buf.
+    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 8 + 1) * 3);
+    let (buf, rest) = scratch.slice().split_at_mut(buf_len + 8 + 1);
+    let (buf2, tmp_buf) = rest.split_at_mut(buf_len + 8 + 1);
+    to_namespaced_path_windows_js_t(global_object, path, buf, buf2, tmp_buf)
 }
 
 fn to_namespaced_path(

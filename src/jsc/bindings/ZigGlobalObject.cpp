@@ -2136,6 +2136,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
         });
 
+    m_nonErrorLazyStackCustomGetterSetter.initLater(
+        [](const Initializer<CustomGetterSetter>& init) {
+            init.set(CustomGetterSetter::create(init.vm, nonErrorInstanceLazyStackCustomGetter, nonErrorInstanceLazyStackCustomSetter));
+        });
+
     m_JSDOMFileConstructor.initLater(
         [](const Initializer<JSObject>& init) {
             JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);

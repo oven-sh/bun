@@ -60,6 +60,7 @@ using namespace JSC;
     macro(byobRequest) \
     macro(bytes) \
     macro(cancel) \
+    macro(capturedStackTrace) \
     macro(checkBufferRead) \
     macro(checks) \
     macro(close) \

@@ -125,6 +125,10 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
     std::optional<OrdinalNumber> column = columnNumber().zeroBasedInt() >= 0 ? std::optional(columnNumber()) : std::nullopt;
     std::optional<OrdinalNumber> line = lineNumber().zeroBasedInt() >= 0 ? std::optional(lineNumber()) : std::nullopt;
 
+    if (isAsync()) {
+        sb.append("async "_s);
+    }
+
     if (functionName.length() > 0) {
 
         if (isConstructor()) {

@@ -612,8 +612,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
     // A finalizer running while a worker's env drains its finalizers can
     // register another (here: an external buffer with a finalize_cb). Bun runs
-    // that one in the same cleanup rather than leaving it behind the walk (node
-    // drops it with the isolate, so this is bun-only rather than same-output).
+    // that one in the same cleanup rather than leaving it behind the walk. Bun-
+    // only rather than same-output: node hands an external buffer's finalizer to
+    // the BackingStore deleter, not to the env's tracked references, so a buffer
+    // created during teardown dies with the isolate and node prints late=0.
     it("runs a finalizer that another finalizer registered during env cleanup", async () => {
       await using proc = spawn({
         cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_finalizer_registered_during_env_cleanup", "[]"],

@@ -2350,6 +2350,12 @@ impl<'a> PackageInstall<'a> {
                                 ZStr::from_buf(&buf[..], subpath_len + 1 + b"package.json".len());
                             break 'package_json_exists sys::exists_at(self.cache_dir, subpath);
                         }
+                        resolution::Tag::Git => {
+                            crate::package_manager::directories::is_git_folder_in_cache_at(
+                                self.cache_dir,
+                                self.cache_dir_subpath.as_bytes(),
+                            )
+                        }
                         _ => sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath)
                             .unwrap_or(false),
                     };
@@ -2364,15 +2370,22 @@ impl<'a> PackageInstall<'a> {
                     });
                 let cache_dir_subpath_without_patch_hash =
                     &self.cache_dir_subpath.as_bytes()[..idx];
-                // Use a stack PathBuffer (no shared state).
-                let mut join_buf = PathBuffer::uninit();
-                join_buf[..cache_dir_subpath_without_patch_hash.len()]
-                    .copy_from_slice(cache_dir_subpath_without_patch_hash);
-                join_buf[cache_dir_subpath_without_patch_hash.len()] = 0;
-                // SAFETY: NUL written above.
-                let subpath =
-                    ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
-                let exists = sys::directory_exists_at(self.cache_dir, subpath).unwrap_or(false);
+                let exists = if matches!(resolution_tag, resolution::Tag::Git) {
+                    crate::package_manager::directories::is_git_folder_in_cache_at(
+                        self.cache_dir,
+                        cache_dir_subpath_without_patch_hash,
+                    )
+                } else {
+                    // Use a stack PathBuffer (no shared state).
+                    let mut join_buf = PathBuffer::uninit();
+                    join_buf[..cache_dir_subpath_without_patch_hash.len()]
+                        .copy_from_slice(cache_dir_subpath_without_patch_hash);
+                    join_buf[cache_dir_subpath_without_patch_hash.len()] = 0;
+                    // SAFETY: NUL written above.
+                    let subpath =
+                        ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
+                    sys::directory_exists_at(self.cache_dir, subpath).unwrap_or(false)
+                };
                 if exists {
                     manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
                 }

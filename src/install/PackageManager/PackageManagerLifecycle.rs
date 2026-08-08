@@ -177,7 +177,13 @@ impl PackageManager {
                     return PreinstallState::Extract;
                 }
 
-                if directories::is_folder_in_cache(self, folder_path) {
+                let folder_in_cache =
+                    if matches!(pkg.resolution.tag, ResolutionTag::Git) && patch_hash.is_none() {
+                        directories::is_git_folder_in_cache(self, folder_path)
+                    } else {
+                        directories::is_folder_in_cache(self, folder_path)
+                    };
+                if folder_in_cache {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
                     return PreinstallState::Done;
                 }
@@ -200,7 +206,12 @@ impl PackageManager {
                         });
                     // Owned NUL-terminated copy.
                     let non_patched_path = ZBox::from_bytes(&folder_path.as_bytes()[..idx]);
-                    if directories::is_folder_in_cache(self, &non_patched_path) {
+                    let base_in_cache = if matches!(pkg.resolution.tag, ResolutionTag::Git) {
+                        directories::is_git_folder_in_cache(self, &non_patched_path)
+                    } else {
+                        directories::is_folder_in_cache(self, &non_patched_path)
+                    };
+                    if base_in_cache {
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::ApplyPatch);
                         // yay step 1 is already done for us
                         return PreinstallState::ApplyPatch;

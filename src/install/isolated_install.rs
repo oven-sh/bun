@@ -2370,6 +2370,12 @@ pub(crate) fn install_isolated_packages(
                                         pkg_cache_dir_subpath.set_length(cache_dir_path_save);
                                         exists
                                     }
+                                    ResolutionTag::Git => {
+                                        package_manager::directories::is_git_folder_in_cache_at(
+                                            cache_dir,
+                                            pkg_cache_dir_subpath.slice_z().as_bytes(),
+                                        )
+                                    }
                                     _ => sys::directory_exists_at(
                                         cache_dir,
                                         pkg_cache_dir_subpath.slice_z(),

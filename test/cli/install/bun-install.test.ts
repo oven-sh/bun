@@ -5248,6 +5248,195 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("re-clones a git dependency whose cache folder was left incomplete by an interrupted install", async () => {
+    using dir = tempDir("git-cache-incomplete", {
+      gitconfig: "[core]\n\tautocrlf = false\n",
+      "dep-src/package.json": `${JSON.stringify({ name: "real-dep-name", version: "2.5.0" })}\n`,
+      "dep-src/index.js": "module.exports = 'hello';\n",
+    });
+    const root = String(dir);
+    const gitEnv = {
+      ...env,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: join(root, "gitconfig"),
+      GIT_AUTHOR_NAME: "bun-test",
+      GIT_AUTHOR_EMAIL: "test@bun.sh",
+      GIT_COMMITTER_NAME: "bun-test",
+      GIT_COMMITTER_EMAIL: "test@bun.sh",
+    };
+    async function git(args: string[], cwd: string): Promise<string> {
+      await using proc = spawn({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("fatal:");
+      expect(exitCode).toBe(0);
+      return out;
+    }
+    const srcDir = join(root, "dep-src");
+    await git(["init", "-q", "-b", "main"], srcDir);
+    await git(["add", "-A"], srcDir);
+    await git(["commit", "-qm", "init"], srcDir);
+    const sha = (await git(["rev-parse", "HEAD"], srcDir)).trim();
+    await git(["clone", "-q", "--bare", srcDir, join(root, "my-git-dep.git")], root);
+    // After `update-server-info` a bare repo is served over git's dumb HTTP
+    // protocol as plain static files.
+    await git(["update-server-info"], join(root, "my-git-dep.git"));
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (!pathname.startsWith("/my-git-dep.git/")) return new Response("not found", { status: 404 });
+        const f = file(join(root, "my-git-dep.git", pathname.slice("/my-git-dep.git/".length)));
+        return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
+      },
+    });
+
+    const cacheDir = join(root, "bun-cache");
+    const cacheFolder = join(cacheDir, `@G@${sha}`);
+    const projectDir = join(root, "project");
+    await write(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "my-app",
+        dependencies: { "my-git-dep": `git+http://127.0.0.1:${server.port}/my-git-dep.git` },
+      }),
+    );
+
+    async function install(cwd = projectDir, args: string[] = [], retries = 1): Promise<void> {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd,
+        env: { ...gitEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [err, exitCode, out] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      // A loaded CI machine can OOM-kill the spawned git child; that is
+      // environmental, not the behavior under test. Retry once.
+      if (retries > 0 && err.includes("git failed with signal 9")) return install(cwd, args, retries - 1);
+      expect(err).not.toContain("error:");
+      // The object form surfaces both streams when the exit code is wrong.
+      expect({ out, err, exitCode }).toMatchObject({ exitCode: 0 });
+    }
+    async function resetProject(): Promise<void> {
+      await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(projectDir, "bun.lock"), { force: true });
+    }
+    async function poisonCacheFolder(): Promise<void> {
+      await rm(cacheFolder, { recursive: true, force: true });
+      await mkdir(cacheFolder, { recursive: true });
+    }
+
+    // An install killed between `git clone --no-checkout` and `git checkout`
+    // leaves the per-commit cache folder behind without its files. It must not
+    // be trusted as a cached checkout: that silently resolves the dependency
+    // as an empty package named after the URL ("my-git-dep.git").
+    await poisonCacheFolder();
+    await install();
+    expect(await file(join(projectDir, "node_modules", "my-git-dep", "package.json")).json()).toMatchObject({
+      name: "real-dep-name",
+      version: "2.5.0",
+    });
+    expect(await exists(join(projectDir, "node_modules", "my-git-dep", "index.js"))).toBe(true);
+    expect(await file(join(projectDir, "bun.lock")).text()).toContain(
+      `real-dep-name@git+http://127.0.0.1:${server.port}/my-git-dep.git#${sha}`,
+    );
+    expect(await file(join(cacheFolder, ".bun-tag")).text()).toBe(sha);
+
+    // A complete cached checkout (matching .bun-tag) is reused, not re-cloned.
+    await write(join(cacheFolder, "cache-reused-sentinel.txt"), "reused");
+    await resetProject();
+    await install();
+    expect(await exists(join(projectDir, "node_modules", "my-git-dep", "cache-reused-sentinel.txt"))).toBe(true);
+
+    // A cache folder whose .bun-tag doesn't match the commit it is named after
+    // is rebuilt from the repository.
+    await write(join(cacheFolder, ".bun-tag"), "0000000000000000000000000000000000000000");
+    await resetProject();
+    await install();
+    expect(await exists(join(projectDir, "node_modules", "my-git-dep", "cache-reused-sentinel.txt"))).toBe(false);
+    expect(await file(join(projectDir, "node_modules", "my-git-dep", "package.json")).json()).toMatchObject({
+      name: "real-dep-name",
+    });
+    expect(await file(join(cacheFolder, ".bun-tag")).text()).toBe(sha);
+
+    // With the resolution already in bun.lock, the install phase checks the
+    // cache folder itself. An incomplete folder must be checked out again, not
+    // copied into node_modules as an empty package.
+    await poisonCacheFolder();
+    await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+    await install();
+    expect(await file(join(projectDir, "node_modules", "my-git-dep", "package.json")).json()).toMatchObject({
+      name: "real-dep-name",
+      version: "2.5.0",
+    });
+    expect(await file(join(cacheFolder, ".bun-tag")).text()).toBe(sha);
+
+    // Same for the isolated linker.
+    const isolatedDir = join(root, "project-isolated");
+    await write(
+      join(isolatedDir, "package.json"),
+      JSON.stringify({
+        name: "my-isolated-app",
+        dependencies: { "my-git-dep": `git+http://127.0.0.1:${server.port}/my-git-dep.git` },
+      }),
+    );
+    await install(isolatedDir, ["--linker=isolated"]);
+    await poisonCacheFolder();
+    await rm(join(isolatedDir, "node_modules"), { recursive: true, force: true });
+    await install(isolatedDir, ["--linker=isolated"]);
+    expect(await file(join(isolatedDir, "node_modules", "my-git-dep", "package.json")).json()).toMatchObject({
+      name: "real-dep-name",
+      version: "2.5.0",
+    });
+    expect(await file(join(cacheFolder, ".bun-tag")).text()).toBe(sha);
+
+    // A bare mirror left incomplete by an interrupted `git clone --bare`
+    // (named after the URL hash, so it is revisited forever) is rebuilt
+    // instead of failing every later `git fetch`.
+    const mirror = (await readdirSorted(cacheDir)).find(entry => entry.endsWith(".git"));
+    expect(mirror).toBeDefined();
+    await rm(join(cacheDir, mirror!), { recursive: true, force: true });
+    await mkdir(join(cacheDir, mirror!), { recursive: true });
+    await resetProject();
+    await install();
+    expect(await file(join(projectDir, "node_modules", "my-git-dep", "package.json")).json()).toMatchObject({
+      name: "real-dep-name",
+      version: "2.5.0",
+    });
+
+    // A failed `git checkout` (here: the tree object missing from the mirror,
+    // which `git log` during resolution does not notice but checkout cannot
+    // unpack) reports the failure and leaves neither a cache folder nor
+    // temporary junk behind.
+    const treeSha = (await git(["rev-parse", "HEAD^{tree}"], srcDir)).trim();
+    const blobPath = join(cacheDir, mirror!, "objects", treeSha.slice(0, 2), treeSha.slice(2));
+    const blobBytes = await file(blobPath).arrayBuffer();
+    await rm(blobPath, { force: true });
+    await rm(cacheFolder, { recursive: true, force: true });
+    await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: projectDir,
+        env: { ...gitEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [err, exitCode, out] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      expect(err).toContain(`"git checkout" for "my-git-dep" failed`);
+      expect({ out, err, exitCode }).not.toMatchObject({ exitCode: 0 });
+    }
+    expect((await readdirSorted(cacheDir)).filter(entry => entry.startsWith("@G@") || entry.endsWith(".tmp"))).toEqual(
+      [],
+    );
+    await write(blobPath, blobBytes);
+    await install();
+    expect(await file(join(projectDir, "node_modules", "my-git-dep", "package.json")).json()).toMatchObject({
+      name: "real-dep-name",
+      version: "2.5.0",
+    });
+  });
+
   it("should fail on invalid Git URL", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

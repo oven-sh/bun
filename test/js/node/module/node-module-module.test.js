@@ -144,6 +144,25 @@ describe.concurrent("node-module-module", () => {
     expect(fs.readdirSync(path.join(cacheDir, tagged[0])).length).toBeGreaterThanOrEqual(3);
   });
 
+  test("compile cache records a parse-failed .mjs as ESM regardless of package type", async () => {
+    // Parse-failure bookkeeping keys off the file extension like the
+    // synchronous loader and Node, not the enclosing package.json "type".
+    using dir = tempDir("compile-cache-parse-failure-type", {
+      "main.mjs": `import "./pkg/broken.mjs";`,
+      "pkg/package.json": `{"type":"commonjs"}`,
+      "pkg/broken.mjs": `import {;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: { ...bunEnv, NODE_COMPILE_CACHE: path.join(String(dir), "cc"), NODE_DEBUG_NATIVE: "COMPILE_CACHE" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toMatch(/skip persisting ESM file:.*broken\.mjs because the cache was not initialized/);
+    expect(exitCode).not.toBe(0);
+  });
+
   test.skipIf(process.platform === "win32")(
     "compile cache persists modules loaded after a non-fatal self-kill",
     async () => {

@@ -898,10 +898,17 @@ impl TranspilerJob {
                 && loader.is_java_script_like()
                 && path.is_file()
             {
-                crate::node_compile_cache::note_parse_failure(
-                    path.text,
-                    !matches!(module_type, ModuleType::Esm),
-                );
+                // `module_type` here comes from package.json alone; mirror the
+                // synchronous path's extension sniff (transpile_file) so both
+                // paths record the same type: the extension wins over
+                // package.json "type", and only .js/.ts consult it.
+                let is_cjs = match path.name().ext {
+                    b".cjs" | b".cts" => true,
+                    b".mjs" | b".mts" => false,
+                    b".js" | b".ts" => !matches!(module_type, ModuleType::Esm),
+                    _ => true,
+                };
+                crate::node_compile_cache::note_parse_failure(path.text, is_cjs);
             }
             self.parse_error = Some(crate::CrateError::ParseError);
             return;

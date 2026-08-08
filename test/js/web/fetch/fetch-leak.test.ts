@@ -711,15 +711,22 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
         // 32 cycles * 512 Requests * 16 KiB = 256 MiB through the pool. If deinit() is
         // skipped for any heap-backed variant, RSS climbs by ~256 MiB; with the
         // Zig semantics it stays flat. 64 MiB is well above GC/allocator noise.
-        // ASAN's quarantine retains freed allocations so widen the threshold there.
-        if (deltaMB > ${isASAN ? 320 : 64}) {
+        // The ASAN bound must also stay below that 256 MiB signal; the child's
+        // quarantine is capped (env below) so freed churn recycles, and 128 MiB
+        // covers what ASAN still retains (observed delta ~6 MiB).
+        if (deltaMB > ${isASAN ? 128 : 64}) {
           throw new Error("Request body (${kind}) leaked " + Math.round(deltaMB) + " MB over 32 cycles of 512 Requests");
         }
       `;
 
         await using proc = Bun.spawn({
           cmd: [bunExe(), "--smol", "-e", script],
-          env: bunEnv,
+          env: {
+            ...bunEnv,
+            // Cap the quarantine so it cannot retain freed bodies toward the
+            // default 256 MB, which would cross the 128 MiB leak threshold.
+            ...(isASAN && { ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS ?? ""}:quarantine_size_mb=32`.replace(/^:/, "") }),
+          },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -747,10 +754,11 @@ test("should not leak using readable stream", async () => {
       SERVER_URL: server.url.href,
       // The regression this guards retained the 128 KiB body per request, i.e.
       // ~32 MiB over the 250 sampled iterations; RSS of a non-leaking run still
-      // drifts by several MiB over that window (allocator high-water, lazily
-      // freed pages), so the allowance sits between the two. ASAN's quarantine
+      // drifts over that window (allocator high-water, lazily freed pages):
+      // a few MiB on Linux, up to 14 observed on Windows lanes. The allowance
+      // sits between that drift and the 32 MiB signal. ASAN's quarantine
       // retains freed allocations so RSS stays elevated under bun-asan.
-      MAX_MEMORY_INCREASE: isASAN ? "64" : "16", // in MB
+      MAX_MEMORY_INCREASE: isASAN ? "64" : "20", // in MB
       // The fixture asserts RSS stabilizes after iteration 250, but with the
       // default 256 MB quarantine the freed 128 KB bodies are never reused and
       // RSS keeps climbing through all 500 iterations (~97 MB past the sample

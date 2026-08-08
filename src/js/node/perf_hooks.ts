@@ -79,7 +79,8 @@ class PerformanceNodeTiming {
   }
 
   get startTime() {
-    return this.nodeStart;
+    // A "node" entry is the timeOrigin reference, so its startTime is always 0.
+    return 0;
   }
 
   get duration() {
@@ -107,11 +108,22 @@ if (PerformanceEntry) {
   Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
 }
 
+// Own-property shape taken from Node's lib/internal/perf/nodetiming.js.
+const performanceNodeTimingEntryDescriptors = {
+  __proto__: null,
+  name: { __proto__: null, value: "node", enumerable: true, configurable: true },
+  entryType: { __proto__: null, value: "node", enumerable: true, configurable: true },
+  startTime: { __proto__: null, value: 0, enumerable: true, configurable: true },
+  duration: { __proto__: null, get: () => performance.now(), enumerable: true, configurable: true },
+};
+
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
+  Object.defineProperties(object, performanceNodeTimingEntryDescriptors);
 
-  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
-  object.loopStart = object.idleTime = 1;
+  // Milestones are ms offsets from timeOrigin; Bun doesn't record them yet.
+  object.nodeStart = object.v8Start = object.environment = object.bootstrapComplete = 0;
+  object.loopStart = object.idleTime = 0;
   object.loopExit = -1;
   return object;
 }

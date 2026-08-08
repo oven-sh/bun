@@ -11,6 +11,65 @@ test("stubs", () => {
   expect(perf.performance.eventLoopUtilization()).toBeObject();
 });
 
+// https://github.com/oven-sh/bun/issues/23041
+test("nodeTiming reports offsets from timeOrigin, not epoch timestamps", () => {
+  const nt = perf.performance.nodeTiming;
+
+  expect(nt.name).toBe("node");
+  expect(nt.entryType).toBe("node");
+  // A "node" entry is the timeOrigin reference, so startTime is 0 in Node.
+  expect(nt.startTime).toBe(0);
+  expect(nt.duration).toBeGreaterThan(0);
+
+  // timeOrigin is epoch-scale; the milestones are offsets from it, so they must
+  // not themselves be epoch timestamps.
+  expect(perf.performance.timeOrigin).toBeGreaterThan(1e12);
+  for (const key of ["nodeStart", "v8Start", "environment", "bootstrapComplete", "loopStart", "idleTime"] as const) {
+    expect(nt[key]).toBeNumber();
+    expect(nt[key]).toBeLessThan(1e12);
+  }
+  expect(nt.loopExit).toBe(-1);
+
+  // Node defines name/entryType/startTime as own data properties
+  // (writable:false) and duration as an own getter.
+  for (const [key, value] of [
+    ["name", "node"],
+    ["entryType", "node"],
+    ["startTime", 0],
+  ] as const) {
+    expect({ key, ...Object.getOwnPropertyDescriptor(nt, key) }).toEqual({
+      key,
+      value,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  const durationDesc = Object.getOwnPropertyDescriptor(nt, "duration");
+  expect({
+    enumerable: durationDesc?.enumerable,
+    configurable: durationDesc?.configurable,
+    get: typeof durationDesc?.get,
+  }).toEqual({ enumerable: true, configurable: true, get: "function" });
+
+  const json = nt.toJSON();
+  // duration is a live reading, so assert it's positive and drop it before comparing.
+  expect(json.duration).toBeGreaterThan(0);
+  delete json.duration;
+  expect(json).toEqual({
+    name: "node",
+    entryType: "node",
+    startTime: 0,
+    nodeStart: nt.nodeStart,
+    v8Start: nt.v8Start,
+    bootstrapComplete: nt.bootstrapComplete,
+    environment: nt.environment,
+    loopStart: nt.loopStart,
+    loopExit: nt.loopExit,
+    idleTime: nt.idleTime,
+  });
+});
+
 test("doesn't throw", () => {
   expect(() => performance.mark("test")).not.toThrow();
   expect(() => performance.measure("test", "test")).not.toThrow();
@@ -142,6 +201,28 @@ test("timerify and createHistogram survive Object.prototype option pollution", a
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "timerify=function\nhistogram=function\n", exitCode: 0 });
   expect(stderr).not.toContain("ERR_INVALID_ARG_TYPE");
+});
+
+test("nodeTiming initialization survives Object.prototype.value pollution", async () => {
+  // The own-property descriptor for `duration` is an accessor descriptor; an
+  // inherited `value` key would make it invalid ("Invalid property descriptor")
+  // without the null-prototype guard.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `Object.prototype.value = 1;
+       const nt = require("node:perf_hooks").performance.nodeTiming;
+       console.log(JSON.stringify({ name: nt.name, entryType: nt.entryType, startTime: nt.startTime }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("Invalid property descriptor");
+  expect(JSON.parse(stdout)).toEqual({ name: "node", entryType: "node", startTime: 0 });
+  expect(exitCode).toBe(0);
 });
 
 test("timerify and AsyncResource.bind survive Object.prototype.get pollution", async () => {

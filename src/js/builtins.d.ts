@@ -432,6 +432,13 @@ declare function $evaluateCommonJSModule(
 declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
+declare function $requireCommonJSModule(this: JSCommonJSModule, id: string, options?: { paths?: string[] }): any;
+/** `require("node:module")`, the `this` a user-supplied `Module._load` is invoked with. */
+declare const $nodeModuleConstructor: any;
+/** User-installed `Module._load`, else `undefined`; `options` is Bun's `require(id, options)` extension. */
+declare const $overriddenModuleLoad:
+  | ((request: string, parent: JSCommonJSModule, isMain: boolean, options?: { paths?: string[] }) => any)
+  | undefined;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

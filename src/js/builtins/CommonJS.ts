@@ -15,7 +15,23 @@ export function require(this: JSCommonJSModule, _: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
+export function overridableRequire(this: JSCommonJSModule, originalId: string) {
+  // Dispatch through Module._load only once user code has replaced it.
+  const customLoad = $overriddenModuleLoad;
+  if (customLoad !== undefined) {
+    if ($argumentCount() > 1) {
+      // Bun-only `require(id, options)` rides as a 4th arg so `originalLoad.apply(this, arguments)` preserves it.
+      return customLoad.$call($nodeModuleConstructor, originalId, this, false, $argument(1));
+    }
+    return customLoad.$call($nodeModuleConstructor, originalId, this, false);
+  }
+  return $requireCommonJSModule.$apply(this, arguments);
+}
+
+// The default `Module._load(request, parent, isMain)` calls this with `parent` as `this`.
+$overriddenName = "require";
+$visibility = "Private";
+export function requireCommonJSModule(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
   const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
   if (id.startsWith("node:")) {
     if (id !== originalId) {
@@ -78,8 +94,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   var out: LoaderModule | -1;
 
-  // This is where we load the module. We will see if Module._load and
-  // Module._compile are actually important for compatibility.
+  // This is where we load the module.
   //
   // Note: we do not need to wrap this in a try/catch for release, if it throws
   // the C++ code will clear the module from the map.

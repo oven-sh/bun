@@ -444,6 +444,126 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParseChunk);
 
+// consumedBytes: byte offset in data after the last parsed value. Caller must RETURN_IF_EXCEPTION.
+static JSC::StreamingJSONParseResult::Status parseJSONLFromBytes(
+    JSGlobalObject* globalObject, JSC::ThrowScope& scope,
+    const uint8_t* data, size_t length,
+    MarkedArgumentBuffer& values, size_t& consumedBytes)
+{
+    using Status = JSC::StreamingJSONParseResult::Status;
+    consumedBytes = 0;
+
+    if (length <= WTF::String::MaxLength
+        && simdutf::validate_ascii(reinterpret_cast<const char*>(data), length)) {
+        auto r = JSC::streamingJSONParse(
+            globalObject,
+            StringView { std::span { reinterpret_cast<const char8_t*>(data), length } },
+            values);
+        consumedBytes = r.charactersConsumed;
+        return r.status;
+    }
+
+    const auto parseConverted = [&](size_t from, size_t to, Status& status, size_t& localBytes) -> bool {
+        localBytes = 0;
+        size_t n = to - from;
+        size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(data + from), n);
+        if (u16Length > WTF::String::MaxLength) {
+            throwOutOfMemoryError(globalObject, scope);
+            return false;
+        }
+        auto str = WTF::String::fromUTF8ReplacingInvalidSequences(
+            std::span { reinterpret_cast<const char8_t*>(data + from), n });
+        if (str.isNull()) {
+            throwOutOfMemoryError(globalObject, scope);
+            return false;
+        }
+        auto r = JSC::streamingJSONParse(globalObject, str, values);
+        if (scope.exception()) [[unlikely]]
+            return false;
+        status = r.status;
+        if (r.charactersConsumed > 0) {
+            localBytes = str.is8Bit()
+                ? simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.span8().data()), r.charactersConsumed)
+                : simdutf::utf8_length_from_utf16le(reinterpret_cast<const char16_t*>(str.span16().data()), r.charactersConsumed);
+            localBytes = std::min(localBytes, n);
+        }
+        return true;
+    };
+
+    size_t segStart = 0;
+    while (segStart < length) {
+        const uint8_t* nl = static_cast<const uint8_t*>(memchr(data + segStart, '\n', length - segStart));
+        size_t segEnd = nl ? static_cast<size_t>(nl - data) + 1 : length;
+        bool segAscii = (segEnd - segStart) <= WTF::String::MaxLength
+            && simdutf::validate_ascii(reinterpret_cast<const char*>(data + segStart), segEnd - segStart);
+
+        // Extend with consecutive lines of the same kind.
+        while (segEnd < length) {
+            const uint8_t* nl2 = static_cast<const uint8_t*>(memchr(data + segEnd, '\n', length - segEnd));
+            size_t lineEnd = nl2 ? static_cast<size_t>(nl2 - data) + 1 : length;
+            bool lineAscii = simdutf::validate_ascii(reinterpret_cast<const char*>(data + segEnd), lineEnd - segEnd);
+            if (lineAscii != segAscii)
+                break;
+            if (segAscii && (lineEnd - segStart) > WTF::String::MaxLength)
+                break;
+            segEnd = lineEnd;
+        }
+
+        bool isLast = segEnd >= length;
+        size_t sizeBefore = values.size();
+        size_t consumedBefore = consumedBytes;
+
+        Status status;
+        size_t localBytes;
+        if (segAscii) {
+            auto r = JSC::streamingJSONParse(
+                globalObject,
+                StringView { std::span { reinterpret_cast<const char8_t*>(data + segStart), segEnd - segStart } },
+                values);
+            if (scope.exception()) [[unlikely]]
+                return Status::Error;
+            status = r.status;
+            localBytes = r.charactersConsumed;
+        } else if (!parseConverted(segStart, segEnd, status, localBytes)) {
+            return Status::Error;
+        }
+
+        if (localBytes > 0)
+            consumedBytes = segStart + localBytes;
+
+        if (status == Status::Error)
+            return status;
+
+        if (status == Status::NeedMoreData) {
+            if (isLast)
+                return status;
+
+            size_t from;
+            if (segAscii) {
+                from = segStart + localBytes;
+            } else {
+                // localBytes may overshoot the input when invalid UTF-8 was replaced; rewind.
+                while (values.size() > sizeBefore)
+                    values.removeLast();
+                consumedBytes = consumedBefore;
+                from = segStart;
+            }
+
+            Status fbStatus;
+            size_t fbBytes;
+            if (!parseConverted(from, length, fbStatus, fbBytes))
+                return Status::Error;
+            if (fbBytes > 0)
+                consumedBytes = from + fbBytes;
+            return fbStatus;
+        }
+
+        segStart = segEnd;
+    }
+
+    return Status::Complete;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -473,22 +593,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
             length -= 3;
         }
 
-        if (length <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(data), length)) {
-            auto chars = std::span { reinterpret_cast<const char8_t*>(data), length };
-            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
-        } else {
-            size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(data), length);
-            if (u16Length > String::MaxLength) {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
-            auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(data), length });
-            if (str.isNull()) {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
-            result = JSC::streamingJSONParse(globalObject, str, values);
-        }
+        size_t consumedBytes;
+        auto status = parseJSONLFromBytes(globalObject, scope, data, length, values, consumedBytes);
+        result = { consumedBytes, status };
     } else {
         auto* inputString = arg.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -570,30 +677,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
             bomOffset = 3;
         }
 
-        if (sliceLen <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(sliceData), sliceLen)) {
-            auto chars = std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen };
-            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
-            // For ASCII, byte offset = character offset
-            readBytes = start + bomOffset + result.charactersConsumed;
-        } else {
-            size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(sliceData), sliceLen);
-            if (u16Length > String::MaxLength) {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
-            auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen });
-            if (str.isNull()) {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
-            result = JSC::streamingJSONParse(globalObject, str, values);
-            // Convert character offset back to UTF-8 byte offset
-            if (str.is8Bit()) {
-                readBytes = start + bomOffset + simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.span8().data()), result.charactersConsumed);
-            } else {
-                readBytes = start + bomOffset + simdutf::utf8_length_from_utf16le(reinterpret_cast<const char16_t*>(str.span16().data()), result.charactersConsumed);
-            }
-        }
+        size_t consumedBytes;
+        auto status = parseJSONLFromBytes(globalObject, scope, sliceData, sliceLen, values, consumedBytes);
+        result = { consumedBytes, status };
+        readBytes = start + bomOffset + consumedBytes;
     } else {
         auto* inputString = arg.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});

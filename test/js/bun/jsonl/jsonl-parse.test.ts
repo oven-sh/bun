@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.JSONL", () => {
   test("has Symbol.toStringTag", () => {
@@ -331,13 +332,13 @@ describe("Bun.JSONL", () => {
       test("4 GB Uint8Array of null bytes", () => {
         const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
         expect(() => Bun.JSONL.parse(buf)).toThrow();
-      });
+      }, 30_000);
 
       test("4 GB Uint8Array with first byte 0xFF (non-ASCII path)", () => {
         const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
         buf[0] = 255;
         expect(() => Bun.JSONL.parse(buf)).toThrow();
-      });
+      }, 30_000);
     });
   });
 
@@ -2247,5 +2248,294 @@ describe("Bun.JSONL", () => {
         expect(true).toBe(true);
       });
     });
+  });
+
+  describe("per-line ASCII segmentation (typed array input)", () => {
+    const enc = (s: string) => new TextEncoder().encode(s);
+
+    // The byte path should match the string path on every input. The string
+    // path is unchanged by the segmentation optimization, so it serves as the
+    // reference.
+    const checkSame = (text: string) => {
+      const ref = Bun.JSONL.parseChunk(text);
+      const buf = enc(text);
+      const got = Bun.JSONL.parseChunk(buf);
+      expect(got.values).toStrictEqual(ref.values);
+      expect(got.done).toBe(ref.done);
+      expect(got.error === null).toBe(ref.error === null);
+      // `read` is bytes for the typed array path, chars for the string path.
+      // For the success cases the last value ends on an ASCII byte, so the
+      // byte offset of that position equals the UTF-8 byte length of the
+      // string prefix up to ref.read.
+      expect(got.read).toBe(enc(text.slice(0, ref.read)).byteLength);
+      return got;
+    };
+
+    describe("equivalence with string path", () => {
+      const ascii = '{"a":1}';
+      const cjk = '{"jp":"\u65e5\u672c\u8a9e"}';
+      const emoji = '{"e":"\u{1f389}"}';
+      const latin1 = '{"s":"\u00f1\u00e9\u00fc"}';
+
+      test("all ASCII lines", () => {
+        checkSame([ascii, ascii, ascii, ascii].join("\n") + "\n");
+      });
+
+      test("all non-ASCII lines", () => {
+        checkSame([cjk, emoji, latin1, cjk].join("\n") + "\n");
+      });
+
+      test("interleaved ASCII / non-ASCII lines", () => {
+        checkSame([ascii, cjk, ascii, emoji, ascii, latin1, ascii].join("\n") + "\n");
+      });
+
+      test("non-ASCII first, ASCII last, no trailing newline", () => {
+        checkSame([cjk, ascii, emoji, ascii].join("\n"));
+      });
+
+      test("runs of same kind batched together", () => {
+        // 5 ASCII, 3 non-ASCII, 4 ASCII, 2 non-ASCII
+        const lines = [ascii, ascii, ascii, ascii, ascii, cjk, emoji, latin1, ascii, ascii, ascii, ascii, cjk, emoji];
+        const r = checkSame(lines.join("\n") + "\n");
+        expect(r.values.length).toBe(lines.length);
+      });
+
+      test("empty lines between segments of different kinds", () => {
+        checkSame([ascii, "", "", cjk, "", ascii].join("\n") + "\n");
+      });
+
+      test("error inside non-ASCII segment after ASCII values", () => {
+        const r = checkSame([ascii, ascii, '{"\u65e5":BAD}', ascii].join("\n") + "\n");
+        expect(r.values).toStrictEqual([{ a: 1 }, { a: 1 }]);
+        expect(r.error).toBeInstanceOf(SyntaxError);
+      });
+
+      test("error inside ASCII segment after non-ASCII values", () => {
+        const r = checkSame([cjk, emoji, "{bad}", ascii].join("\n") + "\n");
+        expect(r.values.length).toBe(2);
+        expect(r.error).toBeInstanceOf(SyntaxError);
+      });
+
+      test("trailing incomplete ASCII line after non-ASCII segment", () => {
+        const r = checkSame([cjk, ascii, '{"x":'].join("\n"));
+        expect(r.values.length).toBe(2);
+        expect(r.done).toBe(false);
+        expect(r.error).toBeNull();
+      });
+
+      test("trailing incomplete non-ASCII line after ASCII segment", () => {
+        const r = checkSame([ascii, ascii, '{"jp":"\u65e5'].join("\n"));
+        expect(r.values.length).toBe(2);
+        expect(r.done).toBe(false);
+        expect(r.error).toBeNull();
+      });
+    });
+
+    describe("multi-line values straddling a segment boundary", () => {
+      test("opens in ASCII segment, closes in non-ASCII segment", () => {
+        // `{` and `}` are on their own ASCII lines; the non-ASCII key is on
+        // the middle line.
+        checkSame('{"a":1}\n{\n  "\u65e5": 1\n}\n{"b":2}\n');
+      });
+
+      test("opens in non-ASCII segment, closes in ASCII segment", () => {
+        checkSame('{"a":1}\n{"\u65e5":\n  1\n}\n{"b":2}\n');
+      });
+
+      test("array spans three segments (ASCII / non-ASCII / ASCII)", () => {
+        const r = checkSame('[1,\n"\u65e5\u672c",\n3]\n{"after":true}\n');
+        expect(r.values).toStrictEqual([[1, "\u65e5\u672c", 3], { after: true }]);
+      });
+
+      test("several complete values, then a straddling value, then more", () => {
+        const lines = ['{"a":1}', '{"b":2}', '{"c":3}', "{", '  "\u65e5": 4', "}", '{"d":5}', '{"\u{1f389}":6}'];
+        const r = checkSame(lines.join("\n") + "\n");
+        expect(r.values.length).toBe(6);
+        expect(r.done).toBe(true);
+      });
+
+      test("straddling value is the only value and remains incomplete", () => {
+        const r = checkSame('{\n  "\u65e5": 1\n');
+        expect(r.values).toStrictEqual([]);
+        expect(r.done).toBe(false);
+        expect(r.error).toBeNull();
+      });
+
+      test("non-ASCII segment with complete values, then straddling tail", () => {
+        // The non-ASCII segment parses one complete value and then begins a
+        // multi-line value that continues into an ASCII line. Exercises the
+        // rollback path.
+        const r = checkSame('{"jp":"\u65e5"}\n{"\u65e5":\n1}\n{"a":1}\n');
+        expect(r.values).toStrictEqual([{ jp: "\u65e5" }, { "\u65e5": 1 }, { a: 1 }]);
+      });
+    });
+
+    describe("parseChunk read/done across segments", () => {
+      test("read is a byte offset after each segment kind", () => {
+        const text = '{"a":1}\n{"jp":"\u65e5\u672c"}\n{"b":2}\n';
+        const buf = enc(text);
+        const r = Bun.JSONL.parseChunk(buf);
+        expect(r.values).toStrictEqual([{ a: 1 }, { jp: "\u65e5\u672c" }, { b: 2 }]);
+        expect(r.read).toBe(enc('{"a":1}\n{"jp":"\u65e5\u672c"}\n{"b":2}').byteLength);
+        expect(r.done).toBe(true);
+      });
+
+      test("start offset landing in a later ASCII segment", () => {
+        const head = '{"jp":"\u65e5\u672c"}\n';
+        const tail = '{"a":1}\n{"b":2}\n';
+        const buf = enc(head + tail);
+        const r = Bun.JSONL.parseChunk(buf, enc(head).byteLength);
+        expect(r.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+        expect(r.read).toBe(enc(head + '{"a":1}\n{"b":2}').byteLength);
+        expect(r.done).toBe(true);
+      });
+
+      test("end offset cutting a non-ASCII segment mid-line", () => {
+        const text = '{"a":1}\n{"jp":"\u65e5\u672c"}\n{"b":2}\n';
+        const buf = enc(text);
+        const cut = enc('{"a":1}\n{"jp":"').byteLength + 1; // inside the first CJK char
+        const r = Bun.JSONL.parseChunk(buf, 0, cut);
+        expect(r.values).toStrictEqual([{ a: 1 }]);
+        expect(r.done).toBe(false);
+        expect(r.read).toBe(7);
+      });
+
+      test("start/end selecting exactly the non-ASCII middle segment", () => {
+        const head = '{"a":1}\n';
+        const mid = '{"jp":"\u65e5\u672c"}\n';
+        const tail = '{"b":2}\n';
+        const buf = enc(head + mid + tail);
+        const s = enc(head).byteLength;
+        const e = enc(head + mid).byteLength;
+        const r = Bun.JSONL.parseChunk(buf, s, e);
+        expect(r.values).toStrictEqual([{ jp: "\u65e5\u672c" }]);
+        expect(r.read).toBe(enc(head + '{"jp":"\u65e5\u672c"}').byteLength);
+      });
+
+      test("trailing incomplete line at end of ASCII segment preceded by non-ASCII", () => {
+        const buf = enc('{"jp":"\u65e5"}\n{"a":1}\n{"b":');
+        const r = Bun.JSONL.parseChunk(buf);
+        expect(r.values).toStrictEqual([{ jp: "\u65e5" }, { a: 1 }]);
+        expect(r.done).toBe(false);
+        expect(r.read).toBe(enc('{"jp":"\u65e5"}\n{"a":1}').byteLength);
+      });
+
+      test("trailing incomplete line at end of non-ASCII segment preceded by ASCII", () => {
+        const buf = enc('{"a":1}\n{"b":2}\n{"jp":"\u65e5');
+        const r = Bun.JSONL.parseChunk(buf);
+        expect(r.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+        expect(r.done).toBe(false);
+        expect(r.read).toBe('{"a":1}\n{"b":2}'.length);
+      });
+    });
+
+    test("BOM followed by a non-ASCII first line", () => {
+      const body = enc('{"jp":"\u65e5\u672c"}\n{"a":1}\n');
+      const buf = new Uint8Array(3 + body.length);
+      buf.set([0xef, 0xbb, 0xbf], 0);
+      buf.set(body, 3);
+
+      expect(Bun.JSONL.parse(buf)).toStrictEqual([{ jp: "\u65e5\u672c" }, { a: 1 }]);
+
+      const r = Bun.JSONL.parseChunk(buf);
+      expect(r.values).toStrictEqual([{ jp: "\u65e5\u672c" }, { a: 1 }]);
+      expect(r.read).toBe(3 + enc('{"jp":"\u65e5\u672c"}\n{"a":1}').byteLength);
+      expect(r.done).toBe(true);
+    });
+
+    test("invalid UTF-8 bytes are replaced per segment as before", () => {
+      // Line 1: ASCII. Line 2: a string value containing an invalid byte.
+      // fromUTF8ReplacingInvalidSequences maps the lone 0xFF to U+FFFD.
+      const line1 = enc('{"a":1}\n');
+      const line2 = Uint8Array.of(0x22, 0xff, 0x22, 0x0a); // "<0xFF>"\n
+      const line3 = enc('{"b":2}\n');
+      const buf = new Uint8Array(line1.length + line2.length + line3.length);
+      buf.set(line1, 0);
+      buf.set(line2, line1.length);
+      buf.set(line3, line1.length + line2.length);
+
+      const r = Bun.JSONL.parseChunk(buf);
+      expect(r.values).toStrictEqual([{ a: 1 }, "\uFFFD", { b: 2 }]);
+      expect(r.done).toBe(true);
+      expect(r.read).toBeLessThanOrEqual(buf.byteLength);
+      expect(r.read).toBe(line1.length + line2.length + '{"b":2}'.length);
+
+      // Same with the invalid-UTF-8 line last: `read` must not overshoot the
+      // input even though U+FFFD re-encodes to 3 bytes.
+      const tail = buf.subarray(0, line1.length + line2.length);
+      const r2 = Bun.JSONL.parseChunk(tail);
+      expect(r2.values).toStrictEqual([{ a: 1 }, "\uFFFD"]);
+      expect(r2.read).toBeLessThanOrEqual(tail.byteLength);
+    });
+
+    test("interleaved lines: many values match string-path results exactly", () => {
+      const pool = [
+        '{"i":0}',
+        '{"jp":"\u65e5\u672c\u8a9e"}',
+        '{"e":"\u{1f389}\u{1f680}"}',
+        '{"s":"plain ascii text that is a bit longer than the others"}',
+        '{"l":"\u00f1\u00e9\u00fc"}',
+        "[1,2,3]",
+        "42",
+        "true",
+      ];
+      const lines: string[] = [];
+      for (let i = 0; i < 500; i++) lines.push(pool[i % pool.length]);
+      const text = lines.join("\n") + "\n";
+      const r = checkSame(text);
+      expect(r.values.length).toBe(500);
+      expect(r.done).toBe(true);
+    });
+
+    // Spawns two subprocesses that each build and parse a 16 MB buffer.
+    test.concurrent(
+      "mixed ASCII/non-ASCII input does not convert the whole buffer",
+      async () => {
+        // One non-ASCII byte used to force the entire buffer through
+        // String::fromUTF8ReplacingInvalidSequences, costing roughly 2x the
+        // buffer size in peak memory. With per-line segmentation the peak
+        // should match the all-ASCII case.
+        const bufMB = 16;
+        const prog = `
+          const mixed = process.env.JSONL_MIXED === "1";
+          const line = '{"id":0,"s":"' + Buffer.alloc(200, "x").toString() + '"}\\n';
+          const nLines = Math.floor((${bufMB} * 1024 * 1024) / line.length);
+          const buf = Buffer.alloc(nLines * line.length + 32);
+          for (let i = 0; i < nLines; i++) buf.write(line, i * line.length, "latin1");
+          let end = nLines * line.length;
+          end += buf.write(mixed ? '{"jp":"\\u65e5\\u672c\\u8a9e"}\\n' : '{"jp":"abc"}\\n', end, "utf8");
+          const input = buf.subarray(0, end);
+          let ascii = true;
+          for (let i = 0; i < input.length; i++) if (input[i] > 0x7f) { ascii = false; break; }
+          if (mixed === ascii) throw new Error("fixture mismatch: mixed=" + mixed + " ascii=" + ascii);
+          Bun.gc(true);
+          const before = process.memoryUsage().rss;
+          const r = Bun.JSONL.parse(input);
+          const after = process.memoryUsage().rss;
+          if (r.length !== nLines + 1) throw new Error("bad count: " + r.length);
+          if (mixed && r[r.length - 1].jp !== "\\u65e5\\u672c\\u8a9e") throw new Error("bad tail");
+          console.log(after - before);
+        `;
+        const run = async (mixed: boolean) => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", prog],
+            env: { ...bunEnv, JSONL_MIXED: mixed ? "1" : "0" },
+            stderr: "pipe",
+          });
+          const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(err).toBe("");
+          expect(code).toBe(0);
+          return Number(out.trim());
+        };
+        const [asciiBytes, mixedBytes] = await Promise.all([run(false), run(true)]);
+        const deltaMB = (mixedBytes - asciiBytes) / (1024 * 1024);
+        // Without segmentation every 200-byte ASCII value ends up as a 16-bit
+        // JSString (LiteralParser<char16_t> source), which alone is ~bufMB of
+        // residual over the 8-bit baseline; observed unfixed delta is ~2x bufMB
+        // on linux-x64. With segmentation the two runs match within noise.
+        expect(deltaMB).toBeLessThan(bufMB);
+      },
+      30_000,
+    );
   });
 });

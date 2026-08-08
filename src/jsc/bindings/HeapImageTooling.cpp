@@ -1449,6 +1449,8 @@ void heapImageToolingAfterRestore()
 {
     const char* d = getenv("BUN_MEMDEBUG");
     s_dir = (d && *d) ? strdup(d) : nullptr; // the builder's pointer would point into its environment
+    if (s_dir)
+        mi_prof_enable(64 * 1024); // the profiler state came from the builder (off); sample what this process allocates so newpayload can attribute it
 }
 
 void heapImageToolingInstall()
@@ -1604,7 +1606,21 @@ extern "C" void Bun__heapImageToolingTick(JSC::VM* vm)
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
         WTF::releaseFastMallocFreeMemory();
         mi_collect(true);
-        fprintf(stderr, "[memdebug] full GC done\n");
+        fprintf(stderr, "[memdebug] full GC done; purge_delay=%ld purge_decommits=%ld arena_reserve=%ldKiB\n", mi_option_get(mi_option_purge_delay), mi_option_get(mi_option_purge_decommits), mi_option_get(mi_option_arena_reserve));
+        mi_arenas_print(); // per-arena slice maps: what the fresh arenas still hold after everything freeable was freed
+        { // live bytes outside the image, as mimalloc sees them: the difference to the arenas' dirty pages is fragmentation
+            struct Live {
+                size_t bytes = 0, blocks = 0, imageBytes = 0;
+            } live;
+            mi_heap_visit_blocks(mi_heap_main(), true, [](const mi_heap_t*, const mi_heap_area_t*, void* block, size_t size, void* arg) {
+                auto* l = static_cast<Live*>(arg);
+                if (!block) return true;
+                auto it = std::upper_bound(frozenRanges.begin(), frozenRanges.end(), std::make_pair((uintptr_t)block, UINTPTR_MAX));
+                if (it != frozenRanges.begin() && (uintptr_t)block < std::prev(it)->second) { l->imageBytes += size; return true; }
+                l->bytes += size; l->blocks++;
+                return true; }, &live);
+            fprintf(stderr, "[memdebug] live malloc outside the image: %.1f MB in %zu blocks (image-resident live: %.1f MB)\n", live.bytes / 1048576.0, live.blocks, live.imageBytes / 1048576.0);
+        }
     }
     std::string base = std::string(s_dir) + "/memdebug." + std::to_string(getpid()) + "." + std::to_string(s_seq);
     mi_prof_dump_to_file((base + ".mi.pb").c_str());

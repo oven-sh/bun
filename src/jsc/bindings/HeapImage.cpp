@@ -1775,7 +1775,6 @@ static void imageRestoreAndRun(const char* path)
             if (verbose) fprintf(stderr, "[image] dup2(%d, %d)\n", src, fd);
         }
     }
-    heapImageToolingAfterRestore();
     setvbuf(stderr, nullptr, _IONBF, 0);
     setvbuf(stdout, nullptr, _IOLBF, 0); // stdio buffering mode was decided in the builder (whose fds may have been files)
     if (!getenv("BUN_IMAGE_NOFRESHHEAP")) {
@@ -1856,6 +1855,7 @@ static void imageRestoreAndRun(const char* path)
             mi_free(probe);
         }
     }
+    heapImageToolingAfterRestore();
     heapImageToolingArmTraps();
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
     if (hdr.reserved[1]) {

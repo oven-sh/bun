@@ -770,14 +770,12 @@ mod draft {
 
     /// Where the crash trace is seeded from. Each call site has exactly one.
     #[derive(Clone, Copy)]
-    pub enum TraceSeed<'a> {
+    pub enum TraceSeed {
         /// Signal/exception handler saved the fault register context. `pc`
         /// becomes frame 0. POSIX: `fp` is the saved frame-pointer register and
         /// the walk follows the fp chain. Windows: `fp` is the `*const CONTEXT`
         /// from `EXCEPTION_POINTERS` and the walk uses `RtlVirtualUnwind`.
         Fault { pc: usize, fp: usize },
-        /// A trace was already captured upstream.
-        ErrorReturn(&'a StackTrace<'a>),
         /// Walk the current stack and trim the capture machinery above this PC.
         BeginAddr(usize),
         /// Walk the current stack with no trim (the handler's own `return_address()`
@@ -787,7 +785,7 @@ mod draft {
 
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
     #[cold]
-    pub fn crash_handler(reason: CrashReason, seed: TraceSeed<'_>) -> ! {
+    pub fn crash_handler(reason: CrashReason, seed: TraceSeed) -> ! {
         if cfg!(debug_assertions) {
             Output::disable_scoped_debug_writer();
         }
@@ -1027,7 +1025,6 @@ mod draft {
 
                     let trace: &StackTrace = 'blk: {
                         let idx: usize = match seed {
-                            TraceSeed::ErrorReturn(ert) => break 'blk ert,
                             // For an actual fault the signal/exception handler hands
                             // us the saved register context. Seeding the walk from
                             // the fault `pc`/`fp` is the only reliable way to recover
@@ -1437,11 +1434,7 @@ mod draft {
     }
 
     #[cold]
-    pub fn panic_impl(
-        msg: &[u8],
-        error_return_trace: Option<&StackTrace>,
-        begin_addr: Option<usize>,
-    ) -> ! {
+    pub fn panic_impl(msg: &[u8], begin_addr: Option<usize>) -> ! {
         // Not `unwrap_or_else(debug::return_address)`: the default trim anchor
         // must be read from *this* function's frame. Evaluated lazily, the
         // `#[inline(always)]` intrinsic reads the closure's frame instead,
@@ -1459,10 +1452,7 @@ mod draft {
                 // SAFETY: process is about to abort; the borrow is never invalidated.
                 CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) })
             },
-            match error_return_trace {
-                Some(ert) if ert.index > 0 => TraceSeed::ErrorReturn(ert),
-                _ => TraceSeed::BeginAddr(begin_addr),
-            },
+            TraceSeed::BeginAddr(begin_addr),
         );
     }
 
@@ -3633,7 +3623,7 @@ mod draft {
             "unsupported uv function: {}",
             bstr::BStr::new(name_bytes)
         );
-        panic_impl(msg.slice(), None, None);
+        panic_impl(msg.slice(), None);
     }
 
     /// # Safety

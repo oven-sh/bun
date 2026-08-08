@@ -68,7 +68,7 @@ test("dead Rust symbols (uws_sys, crash_handler, collections) do not reappear", 
     // `const false`.
     [
       "src/crash_handler/lib.rs",
-      /cold_handle_error_return_trace|handle_error_return_trace_extra|VERBOSE_ERROR_TRACE|HAVE_ERROR_RETURN_TRACING/,
+      /error_return_trace|VERBOSE_ERROR_TRACE|HAVE_ERROR_RETURN_TRACING|TraceSeed::ErrorReturn/,
     ],
     // Nothing Display-formats a StackLine (the symbolizer formats its
     // .address field directly).

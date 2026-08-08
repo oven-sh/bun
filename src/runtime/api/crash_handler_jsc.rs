@@ -129,7 +129,7 @@ pub(crate) mod js_bindings {
     #[bun_jsc::host_fn]
     fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
-        crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
+        crash_handler::panic_impl(b"invoked crashByPanic() handler", None);
     }
 
     #[bun_jsc::host_fn]

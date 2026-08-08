@@ -1210,7 +1210,10 @@ extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject
     JSObject* bunObject = globalObject->bunObject();
     if (!bunObject)
         return;
-    struct LaunchDerivedProp { ASCIILiteral name; JSValue (*make)(VM&, JSObject*); };
+    struct LaunchDerivedProp {
+        ASCIILiteral name;
+        JSValue (*make)(VM&, JSObject*);
+    };
     static const LaunchDerivedProp props[] = {
         { "argv"_s, BunObject_lazyPropCb_wrap_argv },
     };

@@ -169,9 +169,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
         unsafe extern "C" {
-            fn Bun__memdebugInstall();
+            fn Bun__heapImageInit();
         }
-        Bun__memdebugInstall();
+        Bun__heapImageInit();
     }
 
     // Windows-only startup. Must run BEFORE the first libuv

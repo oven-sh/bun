@@ -1854,17 +1854,6 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
         unsafe { Bun__Process__reloadEnvAfterImageRestore(vm.global) };
     }
     {
-        // SAFETY: main-thread VM.
-        let vm = unsafe { &mut *vm_ptr };
-        let msg = format!(
-            "[image] vm.is_shutting_down={} worker_terminated={}\n",
-            vm.is_shutting_down,
-            vm.worker_ref().is_some()
-        );
-        // SAFETY: writing a byte buffer to fd 2.
-        unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
-    }
-    {
         // SAFETY: main-thread VM; single-threaded at this point of restore.
         let vm = unsafe { &mut *vm_ptr };
         vm.origin_timer = std::time::Instant::now(); // performance.now()/process.uptime()/hrtime count from this launch, not the builder's

@@ -70,7 +70,7 @@ export const mimalloc: Dependency = {
     if (override) defines.MI_MALLOC_OVERRIDE = true;
     if (osxZone) defines.MI_OSX_ZONE = 1;
 
-    // Heap images (src/jsc/bindings/BunMemDebug.cpp): executables carrying an image get deterministic address hints from
+    // Heap images (src/jsc/bindings/HeapImage.cpp): executables carrying an image get deterministic address hints from
     // their first allocation; a process building one (BUN_IMAGE_OUT) keeps its heap at the base that becomes the image.
     defines.MI_HEAP_IMAGE_BUILD_ENV = "BUN_IMAGE_OUT"; // quoted into a C string literal by the builder
 

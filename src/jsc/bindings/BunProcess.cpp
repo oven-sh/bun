@@ -3197,7 +3197,6 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
     return JSC::jsString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(Bun__version_sha)));
 }
 
-
 // Heap-image restore: `process.env` was materialized from the builder's environment. Rebuild it from the (reloaded) loader map and
 // re-install it on `process` so `process.env.X` reads see this process's environment. (Code that captured the old object keeps that copy.)
 extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject*);
@@ -3208,7 +3207,10 @@ extern "C" void Bun__Process__reloadEnvAfterImageRestore(JSC::JSGlobalObject* le
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue fresh = Bun::createEnvironmentVariablesMap(globalObject);
-    if (scope.exception() || !fresh || !fresh.isObject()) { (void)scope.tryClearException(); return; }
+    if (scope.exception() || !fresh || !fresh.isObject()) {
+        (void)scope.tryClearException();
+        return;
+    }
     globalObject->m_processEnvObject.set(vm, globalObject, fresh.getObject());
     JSObject* process = globalObject->processObject();
     process->putDirect(vm, JSC::Identifier::fromString(vm, "env"_s), fresh, 0);

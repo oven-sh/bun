@@ -269,6 +269,16 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         bool wasRemoved = globalObject->requireMap()->remove(globalObject, this->filename());
         ASSERT(wasRemoved);
 
+        // Keep the error reachable for a replayed makeModule of this module's
+        // ESM synthetic source, matching commonJSModuleSyntheticSourceCode's
+        // error path. Plain CJS require never registers with the module
+        // loader, so this is a no-op there.
+        auto filenameString = this->filename().toWTFString(globalObject);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        else if (auto* registryEntry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, filenameString)))
+            registryEntry->setEvaluationError(globalObject, exception->value());
+
         scope.throwException(globalObject, exception);
         return false;
     }

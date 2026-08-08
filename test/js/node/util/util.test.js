@@ -154,7 +154,14 @@ describe("util", () => {
     });
 
     it("propagates a throwing getPrototypeOf trap", () => {
-      const proxy = new Proxy({}, { getPrototypeOf() { throw new Error("nope"); } });
+      const proxy = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("nope");
+          },
+        },
+      );
       expect(() => util.isError(proxy)).toThrow("nope");
     });
   });

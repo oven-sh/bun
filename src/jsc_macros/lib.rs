@@ -1014,16 +1014,18 @@ pub fn derive_js_affine(input: TokenStream) -> TokenStream {
     let checks = field_tys.iter().map(|ty| {
         quote! { __assert_js_affine::<#ty>(); }
     });
-    // `__check`'s body is type-checked at its definition, generics included;
-    // nothing needs to name or call it.
+    // The field checks sit in an associated const on the type itself, so its
+    // generic parameters are in scope and nothing is left unused.
     quote! {
         // SAFETY: every field is `JsAffine` (checked below).
         unsafe impl #impl_g ::bun_jsc::job::JsAffine for #name #ty_g #where_g {}
-        const _: () = {
-            fn __assert_js_affine<T: ?Sized + ::bun_jsc::job::JsAffine>() {}
-            #[allow(dead_code)]
-            fn __check #impl_g () #where_g { #(#checks)* }
-        };
+        #[doc(hidden)]
+        impl #impl_g #name #ty_g #where_g {
+            pub const __JS_AFFINE_FIELDS: () = {
+                const fn __assert_js_affine<T: ?Sized + ::bun_jsc::job::JsAffine>() {}
+                #(#checks)*
+            };
+        }
     }
     .into()
 }

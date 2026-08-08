@@ -194,10 +194,8 @@ impl VmHandle {
         refusal_gate::before_post(self);
         let Some(_a) = self.enter() else {
             // SAFETY: handed to us by the caller and not yet queued anywhere.
-            refusal_gate::refused(
-                self,
-                format_args!("post: {}", unsafe { task.as_ref() }.task.tag.name()),
-            );
+            let tag = unsafe { task.as_ref() }.task.tag;
+            refusal_gate::refused(self, format_args!("post: {}", tag.name()));
             return Posted::Refused(task);
         };
         // SAFETY: inside the gate.
@@ -429,7 +427,9 @@ mod refusal_gate {
 
     pub(super) fn refused(h: &VmHandle, what: core::fmt::Arguments<'_>) {
         if h.posts_parked() {
-            eprintln!("[vm_handle] refused {what}");
+            let w = bun_core::output::error_writer();
+            let _ = writeln!(w, "[vm_handle] refused {what}");
+            let _ = w.flush();
         }
     }
 }

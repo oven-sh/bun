@@ -1187,7 +1187,10 @@ it("throw from a child stdio 'data' listener is an uncaughtException and the str
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe("spawned=3 data=3 closes=3 ue=3 ur=0");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "spawned=3 data=3 closes=3 ue=3 ur=0",
+    stderr: "",
+    exitCode: 0,
+  });
 });

@@ -363,6 +363,39 @@ describe("MessagePort pipe", () => {
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
   });
+
+  // Each onmessage enqueues the next message mid-drain, so the drain's budget
+  // (1000 when the inbox starts with one message) runs out with the inbox
+  // non-empty while the in-handler send has already posted the continuation
+  // drain task. Exercises the budget-yield handoff; out-of-order or missing
+  // delivery fails.
+  test("self-feeding chain outlives the drain budget and stays in order", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { port1, port2 } = new MessageChannel();
+          const N = 2500;
+          let next = 0;
+          port1.onmessage = e => {
+            if (e.data !== next) { console.error("out of order", e.data, next); process.exit(1); }
+            next++;
+            if (next === N) { console.log("OK"); port1.close(); port2.close(); return; }
+            port2.postMessage(next);
+          };
+          port2.postMessage(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // worker.postMessage / parentPort.postMessage go through the same coalesced

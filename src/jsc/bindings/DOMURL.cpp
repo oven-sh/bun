@@ -117,14 +117,7 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
     // The authority ends at the first path/query/fragment terminator;
     // backslash terminates it for special schemes and never appears in a
     // valid host, so treating it as a terminator is safe for both kinds.
-    size_t authorityEnd = view.length();
-    for (size_t i = authorityStart; i < view.length(); i++) {
-        char16_t ch = view[i];
-        if (ch == '/' || ch == '?' || ch == '#' || ch == '\\') {
-            authorityEnd = i;
-            break;
-        }
-    }
+    size_t authorityEnd = Bun::findURLHostTerminator(view, authorityStart);
 
     // Userinfo is percent-encoded, not IDNA-mapped, in node too: only the
     // host span after the last '@' gets the delta.

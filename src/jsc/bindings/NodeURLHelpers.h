@@ -20,4 +20,8 @@ bool containsUnicode16IDNADeltaSource(WTF::StringView view);
 // the input unchanged when no delta source is present.
 WTF::String applyUnicode16IDNADelta(const WTF::String& input);
 
+// Index of the first WHATWG host-state terminator (/ \ ? #) at or after
+// `start`, or view.length() when none.
+size_t findURLHostTerminator(WTF::StringView view, size_t start = 0);
+
 } // namespace Bun

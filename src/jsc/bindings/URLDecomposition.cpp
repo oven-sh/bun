@@ -113,17 +113,6 @@ static unsigned countASCIIDigits(StringView string)
     return length;
 }
 
-// The WHATWG host/hostname states stop at the first of these; the IDNA delta must not touch anything past it.
-static size_t findHostTerminator(StringView value)
-{
-    for (size_t i = 0; i < value.length(); i++) {
-        char16_t c = value[i];
-        if (c == '/' || c == '\\' || c == '?' || c == '#')
-            return i;
-    }
-    return value.length();
-}
-
 void URLDecomposition::setHost(StringView value)
 {
     auto fullURL = this->fullURL();
@@ -132,7 +121,7 @@ void URLDecomposition::setHost(StringView value)
     // Non-special schemes and '['-prefixed (IPv6) hosts never run IDNA.
     String mappedValue;
     if (fullURL.hasSpecialScheme() && !value.startsWith('[')) {
-        size_t terminator = findHostTerminator(value);
+        size_t terminator = Bun::findURLHostTerminator(value);
         size_t hostEnd = value.left(terminator).reverseFind(':');
         size_t hostSpanEnd = hostEnd == notFound ? terminator : hostEnd;
         auto hostSpan = value.left(hostSpanEnd);
@@ -190,7 +179,7 @@ void URLDecomposition::setHostname(StringView host)
     // schemes run IDNA on it.
     String mappedHost;
     if (fullURL.hasSpecialScheme() && !host.startsWith('[')) {
-        size_t terminator = findHostTerminator(host);
+        size_t terminator = Bun::findURLHostTerminator(host);
         auto hostSpan = host.left(terminator);
         if (Bun::containsUnicode16IDNADeltaSource(hostSpan)) {
             auto mappedSpan = Bun::applyUnicode16IDNADelta(hostSpan.toString());

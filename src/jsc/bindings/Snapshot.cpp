@@ -819,19 +819,22 @@ static bool platformResidentPages(uint64_t addr, uint64_t size, std::vector<int>
 template<typename F> static void platformDataSegments(F&& f)
 {
     // The main executable's writable PT_LOAD segments (.data, .bss, and the GOT: we link with -z norelro), page-rounded.
-    struct Ctx { F* f; } ctx { &f };
+    struct Ctx {
+        F* f;
+    } ctx { &f };
     dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* arg) -> int {
         if (info->dlpi_name && *info->dlpi_name) return 0; // main executable only
         size_t pg = getpagesize();
         for (int i = 0; i < info->dlpi_phnum; i++) {
-            const ElfW(Phdr)& ph = info->dlpi_phdr[i];
+            const ElfW(Phdr) & ph = info->dlpi_phdr[i];
             if (ph.p_type != PT_LOAD || !(ph.p_flags & PF_W)) continue;
             uint64_t lo = (info->dlpi_addr + ph.p_vaddr) & ~(uint64_t)(pg - 1);
             uint64_t hi = (info->dlpi_addr + ph.p_vaddr + ph.p_memsz + pg - 1) & ~(uint64_t)(pg - 1);
             (*static_cast<Ctx*>(arg)->f)(lo, hi - lo);
         }
         return 0;
-    }, &ctx);
+    },
+        &ctx);
 }
 static void platformWriteJIT(void* dst, const void* src, size_t len)
 {

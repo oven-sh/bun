@@ -442,7 +442,11 @@ test("envGate: the snapshot is only restored when the gated environment variable
   expect(other.stdout.toString()).toContain("[js] restored"); // ungated variables don't matter
 }, 60000);
 
-const runEnv = () => ({ HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, XDG_CACHE_HOME: join(String(tempDir("bun-snapshot-cache", {})), "c") });
+const runEnv = () => ({
+  HOME: bunEnv.HOME!,
+  PATH: bunEnv.PATH!,
+  XDG_CACHE_HOME: join(String(tempDir("bun-snapshot-cache", {})), "c"),
+});
 function build(args: string[]) {
   const r = Bun.spawnSync({ cmd: [bunExe(), "build", ...args], env: bunEnv, stderr: "pipe", stdout: "pipe" });
   return { out: r.stderr.toString() + r.stdout.toString(), code: r.exitCode };
@@ -532,16 +536,36 @@ test("local I/O during the build is refused by default (auto mode keeps the plai
   expect(s.code).toBe(0); // the build still produced a working (plain) executable
   expect(runExe(strict).stdout).toBe(""); // boots plainly: the fixture only prints when restored
   const local = join(String(dir), "local");
-  const l = build(["--compile", "--snapshot", "--snapshot-io=local", join(import.meta.dir, "io-fixture.js"), "--outfile", local]);
+  const l = build([
+    "--compile",
+    "--snapshot",
+    "--snapshot-io=local",
+    join(import.meta.dir, "io-fixture.js"),
+    "--outfile",
+    local,
+  ]);
   expect(l.out).toContain("local I/O operations ran before the freeze");
   expect(l.out).toMatch(/node:fs x1 from:\n\s+at readFileSync/); // attributed to the call site
   expect(l.out).toContain("[snapshot] embedded");
   expect(l.code).toBe(0);
   expect(runExe(local).stdout).toMatch(/restored, exe bytes \d+/);
   // The io option is meaningless without the snapshot step, and manual mode explains itself when the app never snapshots.
-  expect(build(["--compile", "--snapshot-io=local", join(import.meta.dir, "auto-fixture.js"), "--outfile", join(String(dir), "x")]).out).toContain("only applies together with --snapshot");
-  const m = build(["--compile", "--snapshot=manual", join(import.meta.dir, "auto-fixture.js"), "--outfile", join(String(dir), "manual")]);
+  expect(
+    build([
+      "--compile",
+      "--snapshot-io=local",
+      join(import.meta.dir, "auto-fixture.js"),
+      "--outfile",
+      join(String(dir), "x"),
+    ]).out,
+  ).toContain("only applies together with --snapshot");
+  const m = build([
+    "--compile",
+    "--snapshot=manual",
+    join(import.meta.dir, "auto-fixture.js"),
+    "--outfile",
+    join(String(dir), "manual"),
+  ]);
   expect(m.out).toContain("In manual mode the app has to call Bun.startupSnapshot.take()");
   expect(m.code).toBe(1);
 });
-

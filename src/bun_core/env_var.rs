@@ -93,7 +93,6 @@ new!(pub BUN_IMAGE_ALLOW_LOCAL_IO: boolean, "BUN_IMAGE_ALLOW_LOCAL_IO", {});
 new!(pub BUN_IMAGE_EMBED_RAW: boolean, "BUN_IMAGE_EMBED_RAW", {});
 new!(pub BUN_IMAGE_KEEP_SIDECAR: boolean, "BUN_IMAGE_KEEP_SIDECAR", {});
 new!(pub BUN_SNAPSHOT_QUIET_TIMEOUT: unsigned, "BUN_SNAPSHOT_QUIET_TIMEOUT", {});
-new!(pub BUN_SNAPSHOT_CANCEL_TIMERS: boolean, "BUN_SNAPSHOT_CANCEL_TIMERS", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 // so we'll keep it for now.
 new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });

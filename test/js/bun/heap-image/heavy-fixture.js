@@ -13,5 +13,5 @@ async function afterRestore() {
   server.stop(true); process.exit(0);
 }
 process.on("restore", () => { afterRestore().catch(e => { console.error("[js] FAIL", e); process.exit(1); }); });
-if (process.env.BUN_IMAGE_OUT) setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { cancelTimers: true }), 50);
+if (process.env.BUN_IMAGE_OUT) setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { timers: "cancel" }), 50);
 else afterRestore();

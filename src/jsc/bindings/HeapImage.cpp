@@ -553,18 +553,6 @@ extern "C" void Bun__heapImageInit()
     heapImageToolingInstall();
 }
 
-// Experiment: turn resident anonymous heap pages into a private file mapping of themselves (clean, evictable, COW on write).
-
-// After filesnap: which frozen pages were COW'd back to private (dirty), attributed to MarkedBlock subspaces vs other malloc.
-
-// UnlinkedCodeBlock component census (bytes by part) over live cells; "new" = allocated after the image.
-
-// Live sampled malloc blocks allocated after restore (outside every image range), with their allocation stacks -> TSV for owners3.ts-style bucketing.
-
-// Census of cells allocated after the image was made (mortal blocks + non-immortal precise allocations), by class.
-
-// "mutated": which imaged JS objects did the app write to since restore? Aggregated by class + shape (first own property names), so the app authors get a concrete list.
-
 namespace Bun::HeapImage {
 // Image pages this process wrote and then put back to their original bytes (refcounts, transient flags) are handed back to
 // the clean file mapping. Called by the application when it goes idle (Bun.unsafe.recleanImagePages()).

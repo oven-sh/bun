@@ -115,22 +115,27 @@ pub fn take_snapshot_request() -> Option<String> {
         .take()
 }
 
-static CANCEL_TIMERS: AtomicU32 = AtomicU32::new(0);
-/// The app asked the runtime to drop every armed timer as part of taking the snapshot (its intervals re-arm themselves after restore).
-pub fn set_cancel_timers_at_snapshot(on: bool) {
-    CANCEL_TIMERS.store(on as u32, Ordering::Release);
+/// What `Bun.unsafe.snapshot()` does about timers that are still armed when the process goes quiet.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SnapshotTimers {
+    /// Armed timers keep the process from being snapshotted (the default: the app is expected to clear them itself).
+    Refuse = 0,
+    /// Timers survive the snapshot; their deadlines are re-based onto the restoring process's clock.
+    Keep = 1,
+    /// The runtime drops every armed timer as part of taking the snapshot (the app re-arms what it needs after restore).
+    Cancel = 2,
 }
-pub fn cancel_timers_at_snapshot() -> bool {
-    CANCEL_TIMERS.load(Ordering::Acquire) != 0
+static SNAPSHOT_TIMERS: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+pub fn set_snapshot_timers(mode: SnapshotTimers) {
+    SNAPSHOT_TIMERS.store(mode as u8, Ordering::Release);
 }
-
-static KEEP_TIMERS: AtomicU32 = AtomicU32::new(0);
-/// The app keeps its armed timers across the snapshot; their deadlines are re-based onto the restoring process's monotonic clock.
-pub fn set_keep_timers_at_snapshot(on: bool) {
-    KEEP_TIMERS.store(on as u32, Ordering::Release);
-}
-pub fn keep_timers_at_snapshot() -> bool {
-    KEEP_TIMERS.load(Ordering::Acquire) != 0
+pub fn snapshot_timers() -> SnapshotTimers {
+    match SNAPSHOT_TIMERS.load(Ordering::Acquire) {
+        1 => SnapshotTimers::Keep,
+        2 => SnapshotTimers::Cancel,
+        _ => SnapshotTimers::Refuse,
+    }
 }
 
 /// Monotonic (sec, nsec) at the moment the image was frozen; lives in __DATA so the restored process can compute how far its own clock is from it.

@@ -1,5 +1,5 @@
 const epoch = Bun.unsafe.snapshotState().epoch;
 if (epoch > 0) { console.log("[js] restored APP_MODE=" + (process.env.APP_MODE ?? "<unset>")); process.exit(0); }
 process.on("restore", () => { console.log("[js] restored APP_MODE=" + (process.env.APP_MODE ?? "<unset>")); process.exit(0); });
-if (process.env.BUN_IMAGE_OUT) setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { cancelTimers: true, envGate: ["APP_MODE", "APP_UNSET_TOO"] }), 30);
+if (process.env.BUN_IMAGE_OUT) setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { timers: "cancel", envGate: ["APP_MODE", "APP_UNSET_TOO"] }), 30);
 else { console.log("[js] plain boot APP_MODE=" + (process.env.APP_MODE ?? "<unset>")); }

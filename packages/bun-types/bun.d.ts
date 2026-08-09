@@ -4941,6 +4941,47 @@ declare module "bun" {
      * should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
      */
     function memoryFootprint(): number | undefined;
+
+    /**
+     * Heap images (experimental). Freeze this process's heap into an image
+     * file once it goes quiet; later launches of the same executable resume
+     * from it instead of booting. Only meaningful in a process started with
+     * `BUN_IMAGE_OUT` set, which `bun build --compile --compile-image` does.
+     * Never returns: the process exits after writing the image, or with a
+     * message naming what kept it busy.
+     */
+    function snapshot(
+      path: string,
+      options?: {
+        /**
+         * What to do about timers still armed when the process goes quiet.
+         * `"keep"` re-bases them onto the restored process's clock; `"cancel"`
+         * drops them. By default armed timers keep the snapshot from being taken.
+         */
+        timers?: "keep" | "cancel";
+        /**
+         * Environment variables the imaged boot depended on. A launch whose
+         * values for these differ from the build's boots normally instead of
+         * resuming from the image.
+         */
+        envGate?: string[];
+      },
+    ): never;
+
+    /**
+     * In a process resumed from an image: hand back to the shared image any
+     * page this process wrote and then restored to its original contents.
+     * Cheap; call it once startup work has settled. A no-op elsewhere.
+     */
+    function recleanImagePages(): void;
+
+    /**
+     * Embed an image file into an executable produced by `bun build --compile`,
+     * writing the result to `outPath` (default: in place). This is the second
+     * pass of `--compile-image`, exposed for build pipelines that drive
+     * `Bun.build()` themselves.
+     */
+    function embedImage(exePath: string, imagePath: string, outPath?: string): void;
   }
 
   type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";

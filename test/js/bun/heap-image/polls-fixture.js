@@ -14,4 +14,4 @@ process.on("restore", async () => {
   process.exit(0);
 });
 await Bun.dns.lookup("localhost").catch(() => {});
-setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { keepTimers: true }), 100);
+setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { timers: "keep" }), 100);

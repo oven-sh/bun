@@ -5,4 +5,4 @@ function ctx() {
 }
 console.log("[js] build " + JSON.stringify(ctx()));
 process.on("restore", () => { console.log("[js] restored " + JSON.stringify(ctx())); process.exit(0); });
-setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { cancelTimers: true }), 50);
+setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { timers: "cancel" }), 50);

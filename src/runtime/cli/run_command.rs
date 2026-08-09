@@ -1695,29 +1695,8 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
                 .get()
                 .unwrap_or(15),
         );
-    if bun_core::env_var::BUN_SNAPSHOT_CANCEL_TIMERS
-        .get()
-        .unwrap_or(false)
-    {
-        // Experiment escape hatch standing in for the app's own "prepare for snapshot" step: drop every armed timer without running it.
-        let state = crate::jsc_hooks::runtime_state();
-        if !state.is_null() {
-            // SAFETY: main thread; RuntimeState/VM live; JS not on the stack.
-            unsafe {
-                let before = (*state).timer.active_timer_count;
-                crate::timer::All::cancel_all_timeout_objects(&raw mut (*state).timer, vm);
-                bun_core::Output::err_generic(
-                    "snapshot: cancelled {} armed timers at the app's request",
-                    (before,),
-                );
-                bun_core::Output::flush();
-            }
-        }
-    }
-    let cancel_timers = bun_core::image::cancel_timers_at_snapshot()
-        || bun_core::env_var::BUN_SNAPSHOT_CANCEL_TIMERS
-            .get()
-            .unwrap_or(false);
+    let cancel_timers =
+        bun_core::image::snapshot_timers() == bun_core::image::SnapshotTimers::Cancel;
     loop {
         if cancel_timers {
             // The app asked us to drop its (self-re-arming) timers; do it every round since draining runs JS that may arm more.
@@ -1795,7 +1774,8 @@ fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<S
     if !state.is_null() {
         // SAFETY: main-thread RuntimeState.
         let armed = unsafe { (*state).timer.active_timer_count };
-        if armed > 0 && !bun_core::image::keep_timers_at_snapshot() {
+        if armed > 0 && bun_core::image::snapshot_timers() != bun_core::image::SnapshotTimers::Keep
+        {
             out.push(format!("{armed} ref'd timers armed (setTimeout/setInterval/AbortSignal.timeout) — clear them before snapshotting"));
         }
     }

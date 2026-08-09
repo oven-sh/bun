@@ -29,15 +29,22 @@ fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [path, opts] = frame.arguments_as_array::<2>();
     if !path.is_string() {
         return Err(global.throw_invalid_arguments(format_args!(
-            "snapshot(path, {{ cancelTimers, keepTimers, envGate }}) expects a file path"
+            "snapshot(path, {{ timers, envGate }}) expects a file path"
         )));
     }
     if opts.is_object() {
-        if let Some(v) = opts.get(global, "cancelTimers")? {
-            bun_core::image::set_cancel_timers_at_snapshot(v.to_boolean());
-        }
-        if let Some(v) = opts.get(global, "keepTimers")? {
-            bun_core::image::set_keep_timers_at_snapshot(v.to_boolean());
+        if let Some(v) = opts.get(global, "timers")? {
+            let mode = v.to_bun_string(global)?;
+            let mode = if mode.eql_comptime("keep") {
+                bun_core::image::SnapshotTimers::Keep
+            } else if mode.eql_comptime("cancel") {
+                bun_core::image::SnapshotTimers::Cancel
+            } else {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "snapshot: `timers` must be \"keep\" or \"cancel\""
+                )));
+            };
+            bun_core::image::set_snapshot_timers(mode);
         }
         // envGate: names of environment variables the imaged boot depended on. The image records their values (or
         // absence) at build time and is only restored by processes whose environment agrees; anything else boots normally.

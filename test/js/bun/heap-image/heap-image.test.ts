@@ -200,14 +200,14 @@ test("full GC right after restore is not stalled by the builder's parked threads
   expect(code).toBe(0);
 }, 60000);
 
-test("keepTimers: timers armed before the snapshot keep running after restore, re-based on the new clock; stdin still delivers", async () => {
+test("timers: \"keep\" — timers armed before the snapshot keep running after restore, re-based on the new clock; stdin still delivers", async () => {
   using dir = tempDir("bun-image-keeptimers", {});
   const img = join(String(dir), "kt.img");
   const fixture = join(import.meta.dir, "keeptimers-fixture.js");
   {
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
-      env: { ...buildEnv, BUN_IMAGE_OUT: img, KEEP: "1" },
+      env: { ...buildEnv, BUN_IMAGE_OUT: img, TIMERS: "keep" },
       terminal: { cols: 80, rows: 24, data() {} },
     });
     await p.exited;
@@ -225,11 +225,15 @@ test("keepTimers: timers armed before the snapshot keep running after restore, r
     },
   });
   const deadline = Date.now() + 20000;
-  while (!/post-restore timer fired; interval ticks since restore=(\d+)/.test(out) && Date.now() < deadline)
-    await Bun.sleep(50);
+  while (!/remaining-time timer fired (\d+)ms after restore/.test(out) && Date.now() < deadline) await Bun.sleep(50);
   const ticks = Number(/interval ticks since restore=(\d+)/.exec(out)?.[1] ?? -1);
   expect(ticks).toBeGreaterThanOrEqual(2); // 100 ms interval over ~500 ms; 0 would mean the pre-snapshot interval died
   expect(ticks).toBeLessThan(50); // not a burst of catch-up fires from un-rebased deadlines
+  // The one-shot had ~1.5 s left at the freeze; it must still have ~1.5 s left after restore (an un-rebased deadline
+  // would be long past and fire immediately). Upper bound is loose for slow (debug/ASAN) runners.
+  const remaining = Number(/remaining-time timer fired (\d+)ms after restore/.exec(out)![1]);
+  expect(remaining).toBeGreaterThanOrEqual(1000);
+  expect(remaining).toBeLessThan(5000);
   p.terminal!.write("q");
   expect(await p.exited).toBe(0);
   expect(out).toContain('stdin data: "q"');

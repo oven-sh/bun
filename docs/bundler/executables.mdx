@@ -363,7 +363,7 @@ process.on("restore", () => {
 
 if (process.env.BUN_IMAGE_OUT) {
   Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, {
-    keepTimers: true, // timers armed now keep running after restore, re-based on the new clock
+    timers: "keep", // timers armed now keep running after restore, re-based on the new clock ("cancel" drops them; by default armed timers block the snapshot)
     envGate: ["APP_MODE"], // launches where these variables differ from the build boot normally
   });
 }

@@ -17,4 +17,4 @@ process.on("restore", () => {
     }
   }, 20);
 });
-setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { cancelTimers: true }), 100);
+setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { timers: "cancel" }), 100);

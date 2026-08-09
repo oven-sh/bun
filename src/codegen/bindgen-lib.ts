@@ -115,7 +115,7 @@ interface TypePropsMap<T> {
 type PropertyMapKeys = keyof TypePropsMap<any>;
 type Props<T, K extends TypeKind> = K extends PropertyMapKeys ? TypePropsMap<T>[K] : BaseTypeProps<T, K>;
 
-export type AcceptedDictionaryTypeKind = Exclude<TypeKind, "globalObject" | "zigVirtualMachine">;
+export type AcceptedDictionaryTypeKind = Exclude<TypeKind, "globalObject" | "virtualMachine">;
 
 function builtinType<T>() {
   return <K extends TypeKind>(kind: K) => new TypeImpl(kind, undefined as any, {}) as Type<T, any> as Type<T, K>;
@@ -132,7 +132,7 @@ export namespace t {
    * Can only be used as an argument type.
    * Tells the code generator to pass `*JSC.VirtualMachine` as a parameter
    */
-  export const zigVirtualMachine = builtinType<never>()("zigVirtualMachine");
+  export const virtualMachine = builtinType<never>()("virtualMachine");
 
   /**
    * Provides the raw JSValue from the JavaScriptCore API. Avoid using this if
@@ -211,9 +211,9 @@ export namespace t {
    * })
    * ```
    *
-   * ```zig
-   * pub fn foo(bar: []const u8) void {
-   *   // ...
+   * ```rust
+   * pub fn foo(bar: &[u8]) {
+   *     // ...
    * }
    * ```
    */
@@ -290,8 +290,8 @@ export namespace t {
    * Equivalent to `stringEnum`, but using an enum sourced from the given
    * file. Use this to get an enum type that can have functions added.
    */
-  export function zigEnum(file: string, impl: string): Type<string, "zigEnum"> {
-    return new TypeImpl("zigEnum", { file, impl });
+  export function nativeEnum(file: string, impl: string): Type<string, "nativeEnum"> {
+    return new TypeImpl("nativeEnum", { file, impl });
   }
 }
 
@@ -320,13 +320,13 @@ interface FuncOptionsWithVariant extends FuncMetadata {
    * });
    * ```
    *
-   * ```zig
-   * pub fn foo1(a: i32) i32 {
-   *    return a;
+   * ```rust
+   * pub fn foo1(a: i32) -> i32 {
+   *     a
    * }
    *
-   * pub fn foo2(a: i32, b: i32) bool {
-   *     return a == b;
+   * pub fn foo2(a: i32, b: i32) -> bool {
+   *     a == b
    * }
    * ```
    */
@@ -336,10 +336,6 @@ type FuncWithoutOverloads = FuncMetadata & FuncVariant;
 export type FuncOptions = FuncOptionsWithVariant | FuncWithoutOverloads;
 
 export interface FuncMetadata {
-  /**
-   * The namespace where the implementation is, by default it's in the root.
-   */
-  implNamespace?: string;
   /**
    * TODO:
    * Automatically generate code to expose this function on a well-known object

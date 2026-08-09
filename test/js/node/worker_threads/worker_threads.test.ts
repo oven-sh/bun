@@ -1247,7 +1247,7 @@ test.concurrent("a port stranded in an exited worker's inbox closes its peer", a
   // signalCode null => it exited on its own rather than hanging until killed.
   expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: "port1 closed\nparent exit",
-    stderr,
+    stderr: "",
     exitCode: 0,
     signalCode: null,
   });

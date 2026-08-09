@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -1340,6 +1340,33 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           "napi diagnostics: heap snapshots:",
           snapshots.map(f => `${f} (${statSync(join(diagDir, f)).size} bytes)`),
         );
+        // The artifact is public. The child ran with an allowlisted env, but
+        // also redact any string in the snapshot that equals or contains an
+        // environment value of this process before uploading; drop the file
+        // if it can't be parsed.
+        const secrets = [...new Set([...Object.values(ciEnv), ...Object.values(process.env)])].filter(
+          (v): v is string => typeof v === "string" && v.length >= 8 && !/^(true|false|\d+)$/.test(v),
+        );
+        for (const f of snapshots) {
+          const file = join(diagDir, f);
+          try {
+            const snap = JSON.parse(readFileSync(file, "utf8"));
+            if (!Array.isArray(snap.strings)) throw new Error("no strings table");
+            let redacted = 0;
+            snap.strings = snap.strings.map((str: string) => {
+              if (typeof str === "string" && secrets.some(v => str.includes(v))) {
+                redacted++;
+                return "<redacted>";
+              }
+              return str;
+            });
+            writeFileSync(file, JSON.stringify(snap));
+            console.error(`napi diagnostics: ${f}: redacted ${redacted} strings`);
+          } catch (e) {
+            console.error(`napi diagnostics: ${f}: not uploading (${e})`);
+            rmSync(file, { force: true });
+          }
+        }
         if (isBuildKite) {
           // harness strips BUILDKITE_* from process.env; ciEnv still has them.
           const up = spawnSync({

@@ -35,8 +35,12 @@ setImmediate(() => {
   process.exit(1);
 });
 `], {
+  // The child may write a heap snapshot that gets uploaded as a public build
+  // artifact, and a snapshot contains every live string - so it must not
+  // inherit anything secret. Pass an explicit allowlist, not process.env.
   env: { 
-    ...process.env,
+    ...Object.fromEntries(Object.entries(process.env).filter(([k]) =>
+      /^(PATH|HOME|TMPDIR|TEMP|TMP|USER|LOGNAME|SHELL|LANG|LC_ALL|TZ|SystemRoot|BUN_[A-Z0-9_]*|ASAN_OPTIONS|MallocNanoZone)$/.test(k))),
     NAPI_DIAG_SNAPSHOT: path.join(__dirname, 'napi-diag-' + process.pid + '.heapsnapshot'),
     // Diagnostics: one line per GC cycle on stderr (C:<n> = conservative roots visited).
     BUN_JSC_logGC: "2",

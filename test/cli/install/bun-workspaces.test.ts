@@ -279,14 +279,10 @@ test("dependency on same name as workspace and dist-tag", async () => {
 });
 
 describe("workspace and file: dependency sharing a name", () => {
-  // A root `file:` dependency whose name matched a workspace member used to be
-  // placed next to the member in the root node_modules. bun.lock then
-  // contained the same "packages" key twice, every later install printed
-  // `Duplicate key "alpha" in object literal`, ignored the lockfile and
-  // re-resolved, and `--frozen-lockfile` always failed. The explicitly
-  // declared dependency now replaces the member's implicit workspace
-  // dependency, the same way an npm dependency overrides a same-name
-  // workspace on a version mismatch.
+  // An explicitly declared root `file:` dependency replaces a same-named
+  // workspace member's implicit workspace dependency (like the npm-range
+  // override on a version mismatch). Both used to be placed at the root,
+  // writing duplicate bun.lock keys that broke --frozen-lockfile.
 
   test.concurrent("root file: dependency wins and the lockfile round-trips", async () => {
     using ctx = await setupTest();

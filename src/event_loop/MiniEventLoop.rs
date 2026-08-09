@@ -354,7 +354,11 @@ impl MiniEventLoop {
         }
     }
 
-    pub(crate) fn tick_without_idle(&mut self, context: *mut c_void) {
+    /// Non-blocking tick: runs ready tasks and processes already-ready epoll
+    /// events (timeout=0), then returns. Used by OHOS multi_run, where pipes
+    /// are drained via FIONREAD polling and a blocking tick would stall the
+    /// drain forever when no epoll event ever fires (T50 kernel bug).
+    pub fn tick_without_idle(&mut self, context: *mut c_void) {
         loop {
             let _ = self.tick_concurrent_with_count();
             while let Some(task) = self.tasks.read_item() {

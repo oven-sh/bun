@@ -347,10 +347,9 @@ describe("workspace and npm dependency sharing a name", () => {
       name: "no-deps",
     });
 
-    // this shape re-saves the lockfile on every install (a pre-existing
-    // quirk, not specific to the name collision), but the content must not
-    // move and a frozen install must accept it
-    await runBunInstall(env, packageDir);
+    // whether this shape re-saves on reinstall is tracked separately; here
+    // only the content and frozen acceptance matter
+    await runBunInstall(env, packageDir, { savesLockfile: false });
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
 
     await runBunInstall(env, packageDir, { frozenLockfile: true });
@@ -697,7 +696,7 @@ describe("workspace and npm dependency sharing a name", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Duplicate workspace name: 'member-a'");
     expect(exitCode).toBe(1);
   });

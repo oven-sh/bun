@@ -876,6 +876,45 @@ test("--parallel: a test producing a >64MB result line is truncated, not treated
   expect(exitCode).toBe(1);
 }, 90_000);
 
+test("--parallel: back-to-back huge result lines drain in linear time without corrupting the channel", async () => {
+  // Two tests whose status lines each come in just under the 64MB IPC frame
+  // cap, from the same worker. The second frame is queued while the first
+  // backlog is still draining, so this exercises the write cursor, the
+  // amortized compaction, and appends to a partially-sent backlog. The 60s
+  // kill is the regression signal: draining the backlog by memmoving the
+  // whole remainder after every partial write is quadratic in frame size,
+  // and on macOS (~8KB socketpair buffers) one 64MB frame alone took ~90s
+  // of memmove.
+  using dir = tempDir("parallel-huge-backlog", {
+    "huge.test.js": `import {test,expect} from "bun:test";
+      test("A".repeat(60_000_000), () => expect(1).toBe(2));
+      test("B".repeat(60_000_000), () => expect(1).toBe(2));`,
+    "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  // Both huge tests failed normally: the channel survived both frames (no
+  // worker "crashed"), both 60MB status lines arrived intact (each stays
+  // just under the 64MB frame cap, so no truncation), and ok.test.js's pass
+  // survived on the other worker.
+  expect(stderr).not.toContain("crashed");
+  expect(stderr).toContain("A".repeat(10_000));
+  expect(stderr).toContain("B".repeat(10_000));
+  expect(stderr).toContain("1 pass");
+  expect(stderr).toContain("2 fail");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
+}, 90_000);
+
 test("--parallel: a test writing garbage to fd 3 does not hang the coordinator", async () => {
   using dir = tempDir("parallel-hostile-fd3", {
     "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,

@@ -108,6 +108,13 @@ pub type Socket = uws::NewSocketHandler<false>;
 #[cfg(not(windows))]
 pub struct PosixBackend {
     pub(crate) socket: Cell<Socket>,
+    /// Bytes at the front of `out` already accepted by the kernel. Tracking a
+    /// cursor instead of draining `out` after every partial write keeps the
+    /// backlog drain linear: the kernel accepts one send-buffer chunk per
+    /// writable event (8KB for macOS socketpairs), and a front-drain each time
+    /// would memmove the whole remaining backlog per chunk — quadratic, ~90s
+    /// of pure memmove for one 64MB frame on macOS x64.
+    out_head: Cell<usize>,
 }
 
 #[cfg(not(windows))]
@@ -115,6 +122,7 @@ impl Default for PosixBackend {
     fn default() -> Self {
         Self {
             socket: Cell::new(Socket::DETACHED),
+            out_head: Cell::new(0),
         }
     }
 }
@@ -448,13 +456,29 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         {
             while !self.done.get() {
                 let mut pending = self.out.replace(Vec::new());
-                if pending.is_empty() {
+                let mut head = self.backend.out_head.get();
+                debug_assert!(head <= pending.len());
+                if pending.len() <= head {
+                    self.backend.out_head.set(0);
                     self.out.set(pending);
                     return;
                 }
-                let wrote = self.backend.socket.get().write(pending.as_slice());
-                let w = usize::try_from(wrote).unwrap_or(0).min(pending.len());
-                pending.drain_front(w);
+                let wrote = self.backend.socket.get().write(&pending[head..]);
+                let w = usize::try_from(wrote)
+                    .unwrap_or(0)
+                    .min(pending.len() - head);
+                head += w;
+                if head == pending.len() {
+                    pending.clear();
+                    head = 0;
+                } else if head >= pending.len() - head {
+                    // Compact only once the sent prefix is at least as large
+                    // as the unsent tail; each compaction is then charged to
+                    // the bytes it discards, keeping the total cost linear.
+                    pending.drain_front(head);
+                    head = 0;
+                }
+                self.backend.out_head.set(head);
                 self.out.with_mut(|cur| {
                     pending.extend_from_slice(cur);
                     *cur = pending;

@@ -953,7 +953,9 @@ it("tolerates lazy Bun property builders that throw during the walk", async () =
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // stderr is drained alongside stdout so an aborting child cannot fill the
+  // pipe buffer and stall before exiting.
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe(["inspect: true", "sql: TypeError", "SQL: TypeError", ""].join("\n"));
   expect(exitCode).toBe(0);

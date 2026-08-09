@@ -1613,7 +1613,6 @@ pub mod js_bundler {
                     match err {
                         JsError::OutOfMemory => bun_core::out_of_memory(),
                         JsError::Thrown => {}
-                        JsError::Terminated => {}
                     }
                     panic!("Unexpected: source_code is not a string");
                 }
@@ -1729,7 +1728,6 @@ pub mod js_bundler {
                 Ok(v) => v,
                 Err(JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
                 Err(JsError::Thrown) => global_this.take_error(JsError::Thrown),
-                Err(JsError::Terminated) => return Err(JsError::Terminated),
             };
 
             // The C++ side has a `DECLARE_THROW_SCOPE` whose dtor sets

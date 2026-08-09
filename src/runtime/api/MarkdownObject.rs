@@ -31,7 +31,6 @@ fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
     match e {
         bun_jsc::JsError::Thrown => ParserError::JSError,
         bun_jsc::JsError::OutOfMemory => ParserError::OutOfMemory,
-        bun_jsc::JsError::Terminated => ParserError::JSTerminated,
     }
 }
 
@@ -48,7 +47,6 @@ fn parser_err_to_js(
         // A renderer callback threw (or the VM is terminating); the exception
         // is already pending on the VM.
         ParserError::JSError => bun_jsc::JsError::Thrown,
-        ParserError::JSTerminated => bun_jsc::JsError::Terminated,
         ParserError::OutOfMemory => global_this.throw_out_of_memory(),
         ParserError::StackOverflow => global_this.throw_stack_overflow(),
         ParserError::InputTooLarge => global_this.throw_range_error(

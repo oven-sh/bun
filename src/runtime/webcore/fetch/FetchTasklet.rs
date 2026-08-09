@@ -1206,7 +1206,6 @@ impl FetchTasklet {
                                 jsc::JsError::OutOfMemory => {
                                     let _ = global_object.throw_out_of_memory();
                                 }
-                                jsc::JsError::Terminated => {}
                             }
                             let check_result = global_object.try_take_exception().unwrap();
                             // mark to wait until deinit
@@ -1227,7 +1226,6 @@ impl FetchTasklet {
                                 jsc::JsError::OutOfMemory => {
                                     let _ = global_object.throw_out_of_memory();
                                 }
-                                jsc::JsError::Terminated => {}
                             }
                             let hostname_err_result = global_object.try_take_exception().unwrap();
                             self.is_waiting_abort = self.result.has_more;

@@ -1902,7 +1902,6 @@ impl Outcome {
     pub(crate) fn of(global: &JSGlobalObject, result: JsResult<JSValue>) -> Outcome {
         match result {
             Ok(v) => Outcome::Value(v),
-            Err(bun_jsc::JsError::Terminated) => Outcome::Terminated,
             Err(bun_jsc::JsError::OutOfMemory) => {
                 Outcome::Error(global.create_out_of_memory_error())
             }

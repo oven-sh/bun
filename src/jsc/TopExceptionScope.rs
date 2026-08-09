@@ -312,6 +312,22 @@ impl TopExceptionScope {
     /// Asserts that there is or is not an exception according to the value of `should_have_exception`.
     /// Prefer over `assert(scope.has_exception() == ...)` because if there is an unexpected exception,
     /// this function prints a trace of where it was thrown.
+    /// A native/JS boundary got an empty value back (`unwound`) or a real one: an empty one must be
+    /// explained by a pending exception or by the VM no longer allowing script (WebCore's
+    /// `isTerminationException(returned) || isTerminatingExecution()`); a real one by neither.
+    #[cfg(any(debug_assertions, bun_asan))]
+    pub(crate) fn assert_unwind_reason_matches(&mut self, global: &crate::JSGlobalObject, unwound: bool) {
+        if unwound {
+            // As below: `has_exception()` must actually be called for the C++ verifier.
+            let has_exception = self.has_exception();
+            assert!(
+                has_exception || !global.script_allowed(),
+                "returned empty with no exception pending and script still allowed"
+            );
+        } else {
+            self.assert_no_exception();
+        }
+    }
     #[cfg(any(debug_assertions, bun_asan))]
     pub(crate) fn assert_exception_presence_matches(&mut self, should_have_exception: bool) {
         if should_have_exception {
@@ -327,12 +343,12 @@ impl TopExceptionScope {
     }
 
     /// If no exception, returns.
-    /// If termination exception, returns JSTerminated (so you can `?`)
-    /// If non-termination exception, assertion failure.
+    /// If the termination exception is pending, `Err(Thrown)`: it is an exception, so unwind (`?`).
+    /// If a non-termination exception, assertion failure.
     pub(crate) fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         if let Some(e) = self.exception() {
             if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
-                return Err(JsError::Terminated);
+                return Err(JsError::Thrown);
             }
             #[cfg(any(debug_assertions, bun_asan))]
             self.assertion_failure(e);
@@ -536,9 +552,17 @@ impl ExceptionValidationScope {
         let _ = should_have_exception;
     }
 
+    /// See [`TopExceptionScope::assert_unwind_reason_matches`].
+    pub fn assert_unwind_reason_matches(&mut self, global: &crate::JSGlobalObject, unwound: bool) {
+        #[cfg(any(debug_assertions, bun_asan))]
+        self.scope.assert_unwind_reason_matches(global, unwound);
+        #[cfg(not(any(debug_assertions, bun_asan)))]
+        let _ = (global, unwound);
+    }
+
     /// If no exception, returns.
-    /// If termination exception, returns JSTerminated (so you can `?`)
-    /// If non-termination exception, assertion failure.
+    /// If the termination exception is pending, `Err(Thrown)` (so you can `?`).
+    /// If a non-termination exception, assertion failure.
     pub(crate) fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         #[cfg(any(debug_assertions, bun_asan))]
         return self.scope.assert_no_exception_except_termination();

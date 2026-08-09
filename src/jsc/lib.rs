@@ -555,15 +555,20 @@ Warning: options change between releases of Bun and WebKit without notice. This 
     bun_core::exit(1);
 }
 
-/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`).
+/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory}`).
+///
+/// There is deliberately no "terminated" variant. A worker being terminated reaches native code the way
+/// it reaches JSC's own host functions: as a pending TerminationException, i.e. `Thrown`; only the
+/// boundary that entered JS asks whether the exception it takes is the termination one (or whether the
+/// VM's gate has closed) and stands the loop down with [`JsTerminated`]. That is WebCore's shape too:
+/// `if (vm.isTerminationException(returned) || isTerminatingExecution()) forbidExecution();`.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope.
+    /// Unwind to the native/JS boundary: a JavaScript exception is pending in the VM's exception scope
+    /// (a termination is just such an exception), or script is no longer allowed on this VM at all.
     Thrown,
     /// Allocation failure; caller must throw an `OutOfMemoryError`.
     OutOfMemory,
-    /// The VM is terminating (worker shutdown / `process.exit`).
-    Terminated,
 }
 /// `bun.JSError!T`. Dropping a `JsResult` swallows a pending JS exception —
 /// always `?`-propagate, [`JsResultExt::report_unhandled`], or `let _ =` with a
@@ -583,15 +588,16 @@ impl From<bun_core::JsError> for JsError {
         match e {
             E::Thrown => JsError::Thrown,
             E::OutOfMemory => JsError::OutOfMemory,
-            E::Terminated => JsError::Terminated,
         }
     }
 }
 
+/// A loop-level stop observed inside a `JsResult` function unwinds to the boundary like an exception
+/// does; the boundary finds the gate closed (or the termination pending) and stands down.
 impl From<JsTerminated> for bun_core::JsError {
     #[inline]
     fn from(_: JsTerminated) -> Self {
-        bun_core::JsError::Terminated
+        bun_core::JsError::Thrown
     }
 }
 
@@ -602,7 +608,6 @@ impl From<JsError> for bun_core::JsError {
         match e {
             JsError::Thrown => E::Thrown,
             JsError::OutOfMemory => E::OutOfMemory,
-            JsError::Terminated => E::Terminated,
         }
     }
 }
@@ -612,8 +617,6 @@ impl From<JsError> for bun_core::JsError {
 #[inline]
 pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
     match e {
-        // TODO: this might lose a JSTerminated, causing m_terminationException problems
-        JsError::Terminated => core::fmt::Error,
         // TODO: this might lose a JSError, causing exception check problems
         JsError::Thrown => core::fmt::Error,
         // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
@@ -622,9 +625,10 @@ pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
     }
 }
 
+/// See the `bun_core::JsError` impl: a loop-level stop unwinds to the boundary as `Thrown`.
 impl From<JsTerminated> for JsError {
     fn from(_: JsTerminated) -> Self {
-        JsError::Terminated
+        JsError::Thrown
     }
 }
 
@@ -646,12 +650,7 @@ impl<T> JsResultExt for JsResult<T> {
     #[inline]
     fn report_unhandled(self, global: &JSGlobalObject) {
         if let Err(e) = self {
-            // `Terminated` carries no exception value to report — the VM is
-            // already unwinding. `OutOfMemory`/`Thrown` both leave a pending
-            // exception that `report_uncaught_exception_from_error` will take.
-            if e != JsError::Terminated {
-                global.report_uncaught_exception_from_error(e);
-            }
+            global.report_uncaught_exception_from_error(e);
         }
     }
 }
@@ -694,10 +693,10 @@ impl From<JsError> for crate::CrateError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
-            // `Terminated` (worker shutdown) has no distinct error tag of its
+            // A worker shutdown has no distinct error tag of its
             // own, so collapse into `JSError` like every other thrown JS
             // exception.
-            JsError::Thrown | JsError::Terminated => crate::CrateError::JSError,
+            JsError::Thrown => crate::CrateError::JSError,
         }
     }
 }

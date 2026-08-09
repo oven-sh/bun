@@ -134,14 +134,13 @@ pub use {JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig};
 // ─────────────────────── host-fn wrapping (proc-macro) ───────────────────────
 
 /// Map a `JsResult<JSValue>` to the raw `JSValue` a host fn must return
-/// (`.zero` when an exception is pending).
+/// (`.zero` when an exception is pending, or the VM has stopped allowing script).
 pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSValue>) -> JSValue {
     if Environment::ALLOW_ASSERT && Environment::IS_CANARY {
         let value = match result {
             Ok(v) => v,
             Err(JsError::Thrown) => JSValue::ZERO,
             Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-            Err(JsError::Terminated) => JSValue::ZERO,
         };
         debug_exception_assertion(global_this, value, "_unknown_");
         return value;
@@ -150,7 +149,6 @@ pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSVal
         Ok(v) => v,
         Err(JsError::Thrown) => JSValue::ZERO,
         Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-        Err(JsError::Terminated) => JSValue::ZERO,
     }
 }
 
@@ -175,7 +173,15 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
         }
     }
     let _ = func;
-    assert!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
+    // An empty return means "unwind": an exception is pending, or script is no longer allowed here.
+    assert!(
+        if value.is_empty() {
+            global_this.has_exception() || !global_this.script_allowed()
+        } else {
+            !global_this.has_exception()
+        },
+        "host fn return/exception state mismatch"
+    );
 }
 
 pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
@@ -185,7 +191,6 @@ pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsRes
             let _ = global_this.throw_out_of_memory_value();
             false
         }
-        Err(JsError::Terminated) => false,
         Ok(()) => true,
     }
 }
@@ -666,9 +671,8 @@ pub fn to_js_host_call(
         Ok(v) => v,
         Err(JsError::Thrown) => JSValue::ZERO,
         Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-        Err(JsError::Terminated) => JSValue::ZERO,
     };
-    scope.assert_exception_presence_matches(normal.is_empty());
+    scope.assert_unwind_reason_matches(global_this, normal.is_empty());
     normal
 }
 

@@ -162,7 +162,6 @@ pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) ->
     match FormData::to_js(global, input, &encoding) {
         Ok(v) => Ok(v),
         Err(crate::Error::JSError) => Err(JsError::Thrown),
-        Err(crate::Error::JSTerminated) => Err(JsError::Terminated),
         Err(e) => Err(global.throw_error(e, "while parsing FormData")),
     }
 }

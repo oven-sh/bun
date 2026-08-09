@@ -57,7 +57,6 @@ impl PluginResolver for PluginRunner {
             bun_bundler::Error::Js(match e {
                 crate::JsError::Thrown => bun_core::JsError::Thrown,
                 crate::JsError::OutOfMemory => bun_core::JsError::OutOfMemory,
-                crate::JsError::Terminated => bun_core::JsError::Terminated,
             })
         };
 

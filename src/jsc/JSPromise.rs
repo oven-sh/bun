@@ -398,7 +398,9 @@ impl JSPromise {
             // We can't use `global.take_exception()` because it throws an
             // out-of-memory error when we instead need to take the exception.
             Err(JsError::OutOfMemory) => global.create_out_of_memory_error(),
-            Err(JsError::Terminated) => return Err(JsTerminated::JSTerminated),
+            Err(JsError::Thrown) if !global.script_allowed() => {
+                return Err(JsTerminated::JSTerminated);
+            }
             Err(JsError::Thrown) => {
                 let Some(exception) = global.try_take_exception() else {
                     panic!(

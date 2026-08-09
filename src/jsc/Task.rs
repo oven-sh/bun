@@ -36,17 +36,14 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 // `pub fn run_tasks` wrapper here had no callers and aliased the same body —
 // deleted r6 (one symbol per dispatch entry, per PORTING.md §extern-Rust-ban).
 
-/// Shared helper for the high-tier match arms that bubble `JsError` out of a
-/// task body: report the uncaught exception, or convert termination into the
-/// `JsTerminated` sentinel that unwinds the tick loop.
+/// The fold at a loop entry that ran a task's JS: report the uncaught exception, or -- if what came
+/// back is the VM's termination (pending, or the gate already closed) -- stand the tick loop down.
+/// WebCore: `if (isTerminationException(returned) || isTerminatingExecution()) forbidExecution();`.
 #[cold]
 pub fn report_error_or_terminate(
     global: &JSGlobalObject,
     proof: JsError,
 ) -> Result<(), JsTerminated> {
-    if proof == JsError::Terminated {
-        return Err(JsTerminated::JSTerminated);
-    }
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
         return Err(JsTerminated::JSTerminated);

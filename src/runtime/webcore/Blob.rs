@@ -5552,7 +5552,6 @@ bun_jsc::jsc_host_abi! {
                 let _ = global_this.throw_out_of_memory();
                 None
             }
-            Err(jsc::JsError::Terminated) => None,
         }
     }
 }

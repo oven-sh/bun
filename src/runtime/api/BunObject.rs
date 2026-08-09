@@ -1931,7 +1931,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
 
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED]) {
         Ok(p) => p,
-        Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
+        Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
             let _ =
                 global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
@@ -1947,7 +1947,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
     match SubscriptionCtx::init(valkey_ref) {
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
-        Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
+        Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
             let _ =
                 global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");

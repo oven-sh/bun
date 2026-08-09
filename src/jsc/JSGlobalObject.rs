@@ -981,6 +981,13 @@ impl JSGlobalObject {
     /// cleared the bit, so they are sound. New code must not
     /// pair this with a raw `extern "C"` throwing call — use the generated
     /// [`crate::cpp`] wrappers or [`top_scope!`](crate::top_scope) instead.
+    /// Whether this VM still runs script (its stop gate is open) -- WebCore's `!isTerminatingExecution()`.
+    /// For the folds at native/JS boundaries; see `VirtualMachine::script_allowed` for when else to read it.
+    #[inline]
+    pub fn script_allowed(&self) -> bool {
+        self.bun_vm().script_allowed()
+    }
+
     pub fn has_exception(&self) -> bool {
         JSGlobalObject__hasException(self)
     }
@@ -1002,38 +1009,28 @@ impl JSGlobalObject {
     }
 
     /// Clears the current exception and returns that value. Requires compile-time
-    /// proof of an exception via `JsError`.
+    /// proof of an unwind via `JsError`. When the unwind was the VM's gate closing rather than a throw
+    /// (nothing pending, script no longer allowed), the value is the VM's TerminationException — what
+    /// a boundary asks `is_termination_exception()` about before it stands the loop down.
     pub fn take_exception(&self, proof: JsError) -> JSValue {
         match proof {
             JsError::Thrown => {}
             JsError::OutOfMemory => {
                 let _ = self.throw_out_of_memory();
             }
-            JsError::Terminated => {}
         }
 
         self.try_take_exception().unwrap_or_else(|| {
-            panic!(
+            assert!(
+                !self.script_allowed(),
                 "A JavaScript exception was thrown, but it was cleared before it could be read."
             );
+            self.vm().termination_exception_value()
         })
     }
 
     pub fn take_error(&self, proof: JsError) -> JSValue {
-        match proof {
-            JsError::Thrown => {}
-            JsError::OutOfMemory => {
-                let _ = self.throw_out_of_memory();
-            }
-            JsError::Terminated => {}
-        }
-
-        self.try_take_exception()
-            .unwrap_or_else(|| {
-                panic!(
-                    "A JavaScript exception was thrown, but it was cleared before it could be read."
-                );
-            })
+        self.take_exception(proof)
             .to_error()
             .unwrap_or_else(|| {
                 panic!("Couldn't convert a JavaScript exception to an Error instance.");
@@ -1382,8 +1379,12 @@ impl JSGlobalObject {
 
     pub fn report_uncaught_exception_from_error(&self, proof: JsError) {
         crate::mark_binding();
-        let exc = self
-            .take_exception(proof)
+        let taken = self.take_exception(proof);
+        // A terminated worker's pending exception (or its closed gate) is not an error to report.
+        if taken.is_termination_exception() {
+            return;
+        }
+        let exc = taken
             .as_exception(std::ptr::from_ref::<VM>(self.vm()).cast_mut())
             .expect("exception value must be an Exception cell");
         // `as_exception` returned a non-null cell pointer rooted on the VM;

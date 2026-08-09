@@ -972,7 +972,8 @@ impl EventLoop {
     /// Ticks until `promise` settles. `Err` when it returns with the promise
     /// still pending because the VM can no longer run the script that would
     /// settle it (execution forbidden, or a stop was requested: a worker being
-    /// terminated mid-wait) — a `JsError::Terminated` for the caller.
+    /// terminated mid-wait). Nothing is thrown for it: a caller inside a `JsResult`
+    /// function unwinds (`?`) and its boundary finds the gate closed.
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::JsTerminated> {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
@@ -980,7 +981,6 @@ impl EventLoop {
         }
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden() || !self.vm_ref().script_allowed() {
-                jsc_vm.ensure_termination_exception_pending();
                 return Err(jsc::JsTerminated::JSTerminated);
             }
             self.tick();

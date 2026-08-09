@@ -1135,10 +1135,9 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            // A termination request landed while building the error: as above.
-            Err(JsError::Terminated) => return,
             Err(JsError::Thrown) => {
-                // Building an error from log messages threw: report that instead.
+                // Building an error from log messages threw: report that instead -- unless what is
+                // pending is this worker's termination, which is not an error.
                 global.report_active_exception_as_unhandled(JsError::Thrown);
                 return;
             }
@@ -1218,7 +1217,7 @@ fn on_unhandled_rejection(
     );
     if let Err(err) = format_result {
         match err {
-            JsError::Thrown | JsError::Terminated => {}
+            JsError::Thrown => {}
             JsError::OutOfMemory => {
                 let _ = global_object.throw_out_of_memory();
             }
@@ -1418,7 +1417,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                     return None;
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(JsError::Thrown | JsError::Terminated) => {
+                Err(JsError::Thrown) => {
                     *error_message = BunString::static_(b"unexpected exception");
                     return None;
                 }

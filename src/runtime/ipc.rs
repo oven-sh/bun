@@ -249,7 +249,6 @@ impl From<JsError> for IPCDecodeError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::Thrown => IPCDecodeError::JSError,
-            JsError::Terminated => IPCDecodeError::JSTerminated,
             JsError::OutOfMemory => IPCDecodeError::OutOfMemory,
         }
     }
@@ -263,8 +262,6 @@ pub enum IPCSerializationError {
     // —— bun.JSError variants ——
     #[error("JSError")]
     JSError,
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("OutOfMemory")]
     OutOfMemory,
 }
@@ -407,7 +404,6 @@ mod advanced {
             IsInternal::External => {
                 let tagged = ipc_tag_advanced_buffers(global, value).map_err(|e| match e {
                     JsError::Thrown => IPCSerializationError::JSError,
-                    JsError::Terminated => IPCSerializationError::JSTerminated,
                     JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
                 })?;
                 if tagged.is_null() {
@@ -429,7 +425,6 @@ mod advanced {
             )
             .map_err(|e| match e {
                 JsError::Thrown => IPCSerializationError::JSError,
-                JsError::Terminated => IPCSerializationError::JSTerminated,
                 JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
             })?;
         // `serialized` Drops at scope exit (defer serialized.deinit()).
@@ -553,7 +548,8 @@ mod json {
         }
         let deserialized = match parsed {
             Ok(v) => v,
-            Err(JsError::Thrown) | Err(JsError::Terminated) => {
+            Err(JsError::Thrown) => {
+                // A malformed message; a pending termination is not cleared by this and keeps unwinding.
                 global_this.clear_exception();
                 return Err(IPCDecodeError::InvalidFormat);
             }
@@ -585,7 +581,6 @@ mod json {
             .json_stringify_fast(global, &mut out)
             .map_err(|e| match e {
                 JsError::Thrown => IPCSerializationError::JSError,
-                JsError::Terminated => IPCSerializationError::JSTerminated,
                 JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
             })?;
         // `bun_core::String` is `Copy` (no `Drop`),

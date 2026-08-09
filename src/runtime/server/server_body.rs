@@ -1439,7 +1439,7 @@ where
             // on this (single-threaded) JS thread for the call's duration.
             return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
                 Ok(r) => r,
-                Err(JsError::Thrown) | Err(JsError::Terminated) => {
+                Err(JsError::Thrown) => {
                     panic!("unhandled exception from ServePlugins.getStartOrLoad")
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -3769,7 +3769,6 @@ extern "C" fn Server__setIdleTimeout(server: JSValue, seconds: JSValue, global: 
         Err(JsError::OutOfMemory) => {
             let _ = global.throw_out_of_memory_value();
         }
-        Err(JsError::Terminated) => {}
     }
 }
 

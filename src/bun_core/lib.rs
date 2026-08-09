@@ -893,12 +893,11 @@ pub type OOM = AllocError;
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope.
+    /// Unwind to the native/JS boundary: a JavaScript exception is pending in the VM's exception scope
+    /// (a termination is just such an exception), or script is no longer allowed on this VM at all.
     Thrown = 0,
     /// Allocation failure; caller must throw an `OutOfMemoryError`.
     OutOfMemory = 1,
-    /// The VM is terminating (worker shutdown / `process.exit`).
-    Terminated = 2,
 }
 
 bun_alloc::oom_from_alloc!(JsError);

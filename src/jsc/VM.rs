@@ -124,13 +124,10 @@ impl VM {
         crate::cpp::JSC__VM__hasTerminationRequest(self)
     }
 
-    /// JS thread: make this VM's stop concrete here — afterwards a
-    /// TerminationException is pending (what the next exception check would
-    /// have done with the requester's trap). For code that learns of the stop
-    /// from the gate rather than from a thrown termination and must return
-    /// `Err(JsError::Terminated)`, which always means "exception pending".
-    pub fn ensure_termination_exception_pending(&self) {
-        crate::cpp::JSC__VM__ensureTerminationExceptionPending(self)
+    /// The VM's TerminationException value; nothing is thrown or set pending. For a boundary that unwound
+    /// because script is no longer allowed and needs the value a termination would have carried.
+    pub fn termination_exception_value(&self) -> crate::JSValue {
+        crate::cpp::JSC__VM__terminationExceptionValue(self)
     }
 
     #[track_caller]

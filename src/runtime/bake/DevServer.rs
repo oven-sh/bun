@@ -5191,7 +5191,7 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(dev, rbi, &mut ctx) {
             Ok(()) => {}
-            Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
+            Err(e @ jsc::JsError::Thrown) => {
                 dev.vm().global().report_active_exception_as_unhandled(e)
             }
             Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -5241,7 +5241,7 @@ impl DevServer {
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(self, rbi, &mut ctx) {
             Ok(()) => {}
-            Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
+            Err(e @ jsc::JsError::Thrown) => {
                 self.vm().global().report_active_exception_as_unhandled(e)
             }
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),

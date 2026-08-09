@@ -764,11 +764,9 @@ impl StreamResult {
             // `release()` frees `.owned`/`.owned_and_done` ByteLists and
             // unprotects `.err.JSValue` instead of leaking on the shutdown path.
             self.release();
-            // No value is produced for a VM that is going away; say so the one
-            // way callers (a pull promise's settle) understand: a pending
-            // termination, not an empty "Ok".
-            global_this.vm().ensure_termination_exception_pending();
-            return Err(jsc::JsError::Terminated);
+            // No value is produced for a VM that is going away: unwind; the boundary that settles the
+            // pull promise finds the gate closed and stands down.
+            return Err(jsc::JsError::Thrown);
         }
 
         match self {

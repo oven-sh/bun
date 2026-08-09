@@ -28,20 +28,15 @@ use bun_valkey::valkey_protocol as protocol;
 // `jsc::JsTerminatedResult` alias from `bun_jsc::event_loop`.
 type JsTerminatedResult<T> = jsc::JsResult<T>;
 
-/// Narrow `valkey::ValkeyClient`'s `JsResult<()>` (its local `JsTerminated<T>`
-/// alias) back to the spec'd `bun.JSTerminated!void`. The inner client only
-/// ever propagates `JsError::Terminated` (originating from `JSPromise::reject`
-/// / `resolve`); the other variants are unreachable on this path.
-// While `JsTerminatedResult` is widened to `JsResult` (see above), this is
-// effectively identity-with-OOM-crash. Once both aliases tighten to
-// `jsc::JsTerminatedResult`, restore the `JsTerminated::JSTerminated` mapping.
+/// Narrow `valkey::ValkeyClient`'s `JsResult<()>` (its local `JsTerminated<T>` alias) back to the
+/// spec'd `bun.JSTerminated!void`: these paths only ever unwind because the VM is stopping (a settle
+/// on a promise whose worker is gone), never with an error of their own; OOM crashes.
+// While `JsTerminatedResult` is widened to `JsResult` (see above) this is identity-with-OOM-crash.
 #[inline]
 fn narrow_terminated(r: JsResult<()>) -> JsTerminatedResult<()> {
     r.map_err(|e| match e {
-        jsc::JsError::Terminated => jsc::JsError::Terminated,
         jsc::JsError::OutOfMemory => bun_core::out_of_memory(),
-        // valkey.rs never throws into JS from these paths; treat as terminal.
-        jsc::JsError::Thrown => jsc::JsError::Terminated,
+        jsc::JsError::Thrown => jsc::JsError::Thrown,
     })
 }
 
@@ -1883,8 +1878,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let ssl_js_value =
             match crate::socket::uws_jsc::verify_error_to_js(ssl_error, &this.global_object) {
                 Ok(v) => v,
-                Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
                 Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
+                Err(jsc::JsError::Thrown) if !this.global_object.script_allowed() => {
+                    return Err(jsc::JsError::Thrown);
+                }
                 Err(jsc::JsError::Thrown) => {
                     // Clear any pending exception since we can't convert it to
                     // JS, but still fail-close the connection so we never fall

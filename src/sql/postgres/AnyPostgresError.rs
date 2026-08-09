@@ -25,7 +25,6 @@ pub enum AnyPostgresError {
     InvalidServerSignature,
     InvalidTimeFormat,
     JSError,
-    JSTerminated,
     MultidimensionalArrayNotSupportedYet,
     NullsInArrayNotSupportedYet,
     OutOfMemory,

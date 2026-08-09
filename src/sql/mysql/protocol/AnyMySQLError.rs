@@ -20,7 +20,6 @@ pub enum Error {
 
     LocalInfileNotSupported,
     JSError,
-    JSTerminated,
     OutOfMemory,
     Overflow,
 

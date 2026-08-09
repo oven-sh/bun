@@ -188,8 +188,6 @@ pub enum Error {
     InvalidSessionToken,
     #[error("SignError")]
     SignError,
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("failed to parse multipart data")]
     FailedToParseMultipartData,
     #[error("boundary is too long")]
@@ -526,10 +524,12 @@ impl From<bun_shell_parser::braces::ParserError> for Error {
     }
 }
 
+/// A loop-level stop crossing into this crate's error unwinds like an exception does (see
+/// `From<JsTerminated> for JsError`): the boundary finds the VM's gate closed.
 impl From<bun_jsc::JsTerminated> for Error {
     #[inline]
     fn from(_: bun_jsc::JsTerminated) -> Self {
-        Self::JSTerminated
+        Self::JSError
     }
 }
 
@@ -673,7 +673,6 @@ impl Error {
             Self::InvalidEndpoint => "InvalidEndpoint",
             Self::InvalidSessionToken => "InvalidSessionToken",
             Self::SignError => "SignError",
-            Self::JSTerminated => "JSTerminated",
             Self::FailedToParseMultipartData => "failed to parse multipart data",
             Self::BoundaryIsTooLong => "boundary is too long",
             Self::MissingFinalBoundary => "missing final boundary",

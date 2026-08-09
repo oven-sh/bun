@@ -3420,7 +3420,8 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
                 continue;
             unsigned th = 0;
             for (uintptr_t* w = lo + 512; w < hi; ++w) { // skip the guard-ish bottom
-                uintptr_t base; const char* cls = interesting(*w, base);
+                uintptr_t base;
+                const char* cls = interesting(*w, base);
                 if (!cls) continue;
                 if (++th <= 40)
                     fprintf(stderr, "[napi-diag]     other-thread stack[%p] (origin-0x%zx) = %p -> %s @%p\n", (void*)w, (size_t)((hi - w) * sizeof(uintptr_t)), (void*)*w, cls, (void*)base);

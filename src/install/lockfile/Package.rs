@@ -1756,8 +1756,8 @@ impl Package<u64> {
                     // `get_or_put_resolved_package` so the decision is the same
                     // wherever the dependency is declared.
                     let npm_version = &dependency_version.npm().version;
-                    let satisfies = npm_version.satisfies(workspace_version, buf, buf)
-                        || npm_version.is_star();
+                    let satisfies =
+                        npm_version.satisfies(workspace_version, buf, buf) || npm_version.is_star();
                     if pm.options.link_workspace_packages && satisfies {
                         // `String::sliced` takes `&'a self`; bind the unwrapped
                         // value so the borrow outlives the parse call.

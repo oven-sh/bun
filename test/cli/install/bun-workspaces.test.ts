@@ -234,9 +234,7 @@ test.concurrent("root wildcard dependency on a prerelease workspace member links
   const lock = await file(join(packageDir, "bun.lock")).text();
   expect(lock).toContain("no-deps@workspace:packages/no-deps");
   expect(lock).not.toContain("no-deps@2.0.0");
-  expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe(
-    "3.0.0-beta.1",
-  );
+  expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe("3.0.0-beta.1");
 
   // repeat install converges: no re-save, identical lockfile
   {

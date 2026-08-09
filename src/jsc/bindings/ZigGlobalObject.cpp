@@ -3566,6 +3566,46 @@ __attribute__((noinline)) static void bunNapiDiagMaybeDumpHeap(JSC::VM& vm, JSC:
 
 // Diagnostics: copy of the dead stack region below gc()'s frame taken before
 // the collection runs (see the statics above bunNapiDiagWhereAreTheRoots).
+// Pre-GC: report every word between this frame and the stack origin that
+// points at / into / just past a live JSArray, so a run in which the following
+// collection finalizes (and aborts) still shows what the scan was about to see.
+__attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagPreGcLiveScan(JSC::VM& vm)
+{
+    WTF::HashSet<uintptr_t> arrays;
+    {
+        JSC::HeapIterationScope scope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
+            if (kind == JSC::HeapCell::JSCell && static_cast<JSC::JSCell*>(cell)->type() == JSC::ArrayType)
+                arrays.add(reinterpret_cast<uintptr_t>(cell));
+            return IterationStatus::Continue;
+        });
+    }
+    volatile uintptr_t marker = 0;
+    uintptr_t* sp = const_cast<uintptr_t*>(&marker);
+    uintptr_t* origin = static_cast<uintptr_t*>(WTF::Thread::currentSingleton().stack().origin());
+    unsigned hits = 0;
+    for (uintptr_t* w = sp; w < origin; ++w) {
+        uintptr_t v = *w;
+        if (v < 4096 || v == UINTPTR_MAX)
+            continue;
+        uintptr_t aligned = v & ~uintptr_t(7);
+        for (size_t off = 0; off <= 32; off += 8) {
+            if (aligned < off + 4096)
+                break;
+            uintptr_t base = aligned - off;
+            if (!arrays.contains(base))
+                continue;
+            ++hits;
+            fprintf(stderr, "[napi-diag] PRE-GC stack[%p] (origin-0x%zx) = %p -> Array @%p +%zu (addr mod 16 = %zu => %s)\n",
+                (void*)w, (size_t)((origin - w) * sizeof(uintptr_t)), (void*)v, (void*)base, (size_t)(v - base),
+                (size_t)(base & 15), (base & 8) ? "PreciseAllocation" : "MarkedBlock");
+            break;
+        }
+    }
+    fprintf(stderr, "[napi-diag] PRE-GC live JSArrays: %u; stack words at/into/just past one: %u\n", arrays.size(), hits);
+    fflush(stderr);
+}
+
 __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagCaptureBelowSp(JSC::VM& vm)
 {
     volatile uintptr_t marker = 0;
@@ -3586,8 +3626,10 @@ JSC_DEFINE_HOST_FUNCTION(functionJsGc,
     BUN_NAPI_DIAG_CAPTURE_CALLEE_SAVED();
     Zig::GlobalObject* globalObject = defaultGlobalObject(global);
 #if !OS(WINDOWS)
-    if (access("/tmp/bun-napi-diag-request", F_OK) == 0)
+    if (access("/tmp/bun-napi-diag-request", F_OK) == 0) {
+        bunNapiDiagPreGcLiveScan(JSC::getVM(global));
         bunNapiDiagCaptureBelowSp(JSC::getVM(global));
+    }
 #endif
     Bun__gc(globalObject->bunVM(), true);
     bunNapiDiagMaybeDumpHeap(JSC::getVM(global), callFrame);

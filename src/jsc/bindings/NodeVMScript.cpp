@@ -326,8 +326,12 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         // the ERR_SCRIPT_EXECUTION_* error below replaces it.
         if (vm.hasPendingTerminationException())
             DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        if (!consumeTermination(vm))
+        if (!consumeTermination(vm)) {
+            // Deliver the re-armed worker stop right away; the caller's
+            // RETURN_IF_EXCEPTION propagates it.
+            vm.throwTerminationException();
             return false;
+        }
         if (script->getSigintReceived()) {
             script->setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);

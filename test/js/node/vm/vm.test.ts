@@ -1493,13 +1493,14 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
 // afterward so the surviving thread is not re-terminated at its next trap
 // check.
 describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
-  // Atomics.notify returning 1 proves the main thread is parked; the short
-  // wait lets it re-enter the park before SIGINT is sent.
+  // Each Atomics.notify returning 1 proves the guest thread is parked at that
+  // instant; the second spin observes the re-park after the first wake, so
+  // SIGINT is only sent against a provably parked (or just-woken) guest.
   const workerSource = `
     const { workerData } = require("node:worker_threads");
     const ia = new Int32Array(workerData);
     while (Atomics.notify(ia, 0, 1) === 0) {}
-    Atomics.wait(ia, 1, 0, 100);
+    while (Atomics.notify(ia, 0, 1) === 0) {}
     process.kill(process.pid, "SIGINT");
   `;
 
@@ -1608,10 +1609,10 @@ describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
         messages.push(m);
         if (m === "alive") aliveResolve();
       });
-      // Atomics.notify returning 1 proves the worker is parked inside the
-      // guest's Atomics.wait; then give it 100ms to re-enter the park.
+      // Each Atomics.notify returning 1 proves the worker is parked inside
+      // the guest's Atomics.wait; the second spin observes the re-park.
       while (Atomics.notify(ia, 0, 1) === 0) {}
-      Atomics.wait(ia, 1, 0, 100);
+      while (Atomics.notify(ia, 0, 1) === 0) {}
       process.kill(process.pid, "SIGINT");
       await alive;
       phase = "post";
@@ -1681,7 +1682,13 @@ describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
           \`const { workerData } = require("node:worker_threads");
            const ia = new Int32Array(workerData);
            while (Atomics.notify(ia, 0, 1) === 0) {}
+           // The 400ms wait is wall-clock ordering, not a park grace: the
+           // 200ms watchdog timer must fire (claiming the thread-stop
+           // request) before SIGINT arrives, or this test degenerates into
+           // the plain interrupt path. The final spin proves the guest is
+           // parked again when SIGINT is sent.
            Atomics.wait(ia, 1, 0, 400);
+           while (Atomics.notify(ia, 0, 1) === 0) {}
            process.kill(process.pid, "SIGINT");\`,
           { eval: true, workerData: sab },
         ).unref();

@@ -532,10 +532,8 @@ impl<'a> WorkerLoop<'a> {
         unsafe {
             WORKER_CMDS.write(Some(&raw mut self.cmds));
         }
-        // `process.exit()` runs on_exit → cleanup hooks → VM teardown, and
-        // teardown closes this channel before the process dies. Announce the
-        // exit while the channel is still up so the coordinator lets the
-        // worker finish instead of treating the early EOF as a lost worker.
+        // `process.exit()` runs cleanup hooks before teardown closes this
+        // channel; see `Kind::Exiting`.
         let global = vm.global();
         vm.rare_data()
             .push_cleanup_hook(global, core::ptr::null_mut(), announce_deliberate_exit);
@@ -676,9 +674,7 @@ pub(crate) fn run_as_worker(
     vm_ref.run_with_api_lock(|| wloop.begin());
 
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
-    // This path bypasses on_exit (no cleanup hooks), so announce the exit
-    // here: global_exit's teardown closes the channel before the process
-    // dies, and the coordinator must not mistake that EOF for a lost worker.
+    // This path bypasses on_exit (no cleanup hooks); see `Kind::Exiting`.
     announce_deliberate_exit(core::ptr::null_mut());
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs / junit_chunk / coverage_chunk.
@@ -753,10 +749,8 @@ static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::
 // Lifetime note: stores an 'a-bound pointer as 'static; sound because the
 // pointee outlives all callers (process exits before it's dropped).
 
-/// Tell the coordinator a deliberate exit is in progress (`Kind::Exiting`),
-/// so the EOF it is about to see is teardown closing the channel, not a lost
-/// worker to SIGKILL. Runs as a VM cleanup hook on the `process.exit()` path
-/// and is called directly from `run_as_worker`'s normal tail.
+/// Send `Kind::Exiting`. A VM cleanup hook on the `process.exit()` path;
+/// called directly from `run_as_worker`'s normal tail.
 extern "C" fn announce_deliberate_exit(_: *mut core::ffi::c_void) {
     // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
     let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {

@@ -71,10 +71,8 @@ pub struct Worker {
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub(crate) exit_status: Option<Status>,
     pub(crate) reap_pending: bool,
-    /// Worker announced a deliberate exit (`Kind::Exiting`). The EOF that
-    /// follows is its teardown closing the channel, not a lost worker: the
-    /// real exit status is on the way, and teardown (ASAN leak checks) must
-    /// be allowed to finish, so `on_channel_done` must not kill(9).
+    /// Worker sent `Kind::Exiting`: the EOF that follows is its own exit
+    /// path, not a lost channel, so `on_channel_done` must not kill it.
     pub(crate) exiting: bool,
 }
 
@@ -381,15 +379,10 @@ impl ChannelOwner for Worker {
     }
 
     fn on_channel_done(&mut self) {
-        // The channel is the worker's only command/result path, so a worker
-        // that outlives it can neither receive a file nor report one. Unless
-        // it announced a deliberate exit (`exiting`), a still-running worker
-        // here is lost — a corrupt frame, or its IPC fd died under it (e.g.
-        // a test closed fd 3, which the worker itself cannot detect: the fd
-        // silently left its poll set and it would wait for commands forever)
-        // — so kill it; onWorkerExit accounts for the in-flight file and the
-        // slot can respawn. A worker that already exited is an unreaped
-        // zombie here at most, for which kill(9) is a no-op.
+        // A live worker that didn't announce `Kind::Exiting` is lost with its
+        // channel (corrupt frame, or a test closed fd 3 — which the worker
+        // itself cannot detect): kill it so onWorkerExit accounts for the
+        // in-flight file and the slot can respawn.
         if !self.exiting {
             if let Some(p) = self.process {
                 // SAFETY: `p` is the live intrusive-refcounted *mut Process.

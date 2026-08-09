@@ -2623,9 +2623,8 @@ pub mod package_index {
     }
 
     /// Does a package with this name exist with a workspace resolution?
-    /// Unlike `Lockfile.workspace_paths` (which a `workspace:` dependency
-    /// also registers its name in, member or not), this only matches names
-    /// an actual workspace package resolved for.
+    /// `Lockfile.workspace_paths` is not equivalent: a `workspace:` dependency
+    /// registers its name there even when no member matches.
     pub(crate) fn contains_workspace_package(
         map: &Map,
         pkg_resolutions: &[Resolution],

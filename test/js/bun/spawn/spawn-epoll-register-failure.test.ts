@@ -7,8 +7,12 @@
 // The failure is injected with an LD_PRELOAD shim that makes epoll_ctl
 // ADD/MOD fail with ENOMEM whenever the target fd is a pidfd. Bun issues
 // epoll_ctl both through the libc symbol and through the generic syscall()
-// entry point, so the shim interposes both.
+// entry point, so the shim interposes both. The shim touches a marker file
+// on the first injected failure, and the tests assert it exists: if a kernel
+// ever renames the pidfd readlink target, the tests fail loudly instead of
+// passing without injecting anything.
 import { expect, test } from "bun:test";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 
@@ -22,8 +26,10 @@ const SHIM_SOURCE = `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/syscall.h>
@@ -35,11 +41,23 @@ static int is_pidfd(int fd) {
   ssize_t n = readlink(path, buf, sizeof(buf) - 1);
   if (n <= 0) return 0;
   buf[n] = 0;
-  return strstr(buf, "[pidfd]") != NULL;
+  /* "anon_inode:[pidfd]" classically; pidfs kernels may use "pidfd:[<ino>]". */
+  return strstr(buf, "pidfd") != NULL;
+}
+
+static void mark_fired(void) {
+  const char *marker = getenv("BUN_EPOLL_FAIL_MARKER");
+  if (!marker || !*marker) return;
+  int fd = open(marker, O_WRONLY | O_CREAT, 0644);
+  if (fd >= 0) close(fd);
 }
 
 static int should_fail(int op, int fd) {
-  return (op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) && is_pidfd(fd);
+  if ((op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) && is_pidfd(fd)) {
+    mark_fired();
+    return 1;
+  }
+  return 0;
 }
 
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *ev) {
@@ -127,12 +145,16 @@ test.skipIf(!enabled)(
 
     // With every pidfd epoll_ctl ADD/MOD failing, the signal must still be
     // delivered and the exit must still be observed.
-    expect(await runFixture({ LD_PRELOAD: shim })).toEqual({
+    const marker = join(String(dir), "fired");
+    expect(await runFixture({ LD_PRELOAD: shim, BUN_EPOLL_FAIL_MARKER: marker })).toEqual({
       exited: 137,
       signalCode: "SIGKILL",
       killed: true,
       alive: false,
     });
+    // The shim must actually have injected a failure, or the run above
+    // proved nothing.
+    expect(existsSync(marker)).toBe(true);
   },
   15_000,
 );
@@ -142,6 +164,7 @@ test.skipIf(!enabled)(
   async () => {
     using dir = tempDir("epoll-fail-exit", {});
     const shim = await compileShim(String(dir));
+    const marker = join(String(dir), "fired");
 
     await using proc = Bun.spawn({
       cmd: [
@@ -154,13 +177,16 @@ test.skipIf(!enabled)(
        clearTimeout(timer);
        console.log(JSON.stringify({ exited, exitCode: p.exitCode }));`,
       ],
-      env: { ...bunEnv, LD_PRELOAD: shim },
+      env: { ...bunEnv, LD_PRELOAD: shim, BUN_EPOLL_FAIL_MARKER: marker },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe(JSON.stringify({ exited: 0, exitCode: 0 }));
     expect(exitCode).toBe(0);
+    // The shim must actually have injected a failure, or the run above
+    // proved nothing.
+    expect(existsSync(marker)).toBe(true);
   },
   15_000,
 );

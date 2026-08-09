@@ -484,6 +484,76 @@ test.concurrent.each([
   },
 );
 
+test.concurrent("migrated bun.lock with a nested-placed peer of a file: dependency round-trips --frozen-lockfile", async () => {
+  // gamma (a file: dependency of the root) has a regular peer dependency on
+  // delta, and delta's only placement is nested (workspace ws-a's file:
+  // dependency), never hoisted to the root. The migration writer records the
+  // placement as "gamma/delta" and must not also list delta in gamma's
+  // "optionalPeers": reloading would then treat the peer as optional, re-derive
+  // its resolution slot, drop the entry, and fail --frozen-lockfile on an
+  // unchanged tree.
+  await using testDir = tempDir("migrate-nested-peer-fixed-point", {
+    "package.json": JSON.stringify({
+      name: "sandbox",
+      version: "1.0.0",
+      workspaces: ["packages/ws-a"],
+      dependencies: { gamma: "file:vendor/gamma" },
+    }),
+    "vendor/gamma/package.json": JSON.stringify({
+      name: "gamma",
+      version: "1.0.0",
+      peerDependencies: { delta: "*" },
+    }),
+    "vendor/delta/package.json": JSON.stringify({ name: "delta", version: "2.0.0" }),
+    "packages/ws-a/package.json": JSON.stringify({
+      name: "ws-a",
+      version: "0.1.0",
+      dependencies: { delta: "file:../../vendor/delta" },
+    }),
+    // What `npm install --package-lock-only` produces for this tree.
+    "package-lock.json": JSON.stringify({
+      name: "sandbox",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "sandbox",
+          version: "1.0.0",
+          dependencies: { gamma: "file:vendor/gamma" },
+          workspaces: ["packages/ws-a"],
+        },
+        "node_modules/gamma": { resolved: "vendor/gamma", link: true },
+        "vendor/gamma": { name: "gamma", version: "1.0.0", peerDependencies: { delta: "*" } },
+        "node_modules/delta": { resolved: "vendor/delta", link: true },
+        "vendor/delta": { name: "delta", version: "2.0.0" },
+        "node_modules/ws-a": { resolved: "packages/ws-a", link: true },
+        "packages/ws-a": { name: "ws-a", version: "0.1.0", dependencies: { delta: "file:../../vendor/delta" } },
+      },
+    }),
+  });
+
+  const first = await install(testDir);
+  expect(first.stderr).toContain("migrated lockfile from package-lock.json");
+  expect(first.exitCode).toBe(0);
+
+  const lock = await Bun.file(join(testDir, "bun.lock")).text();
+  // The peer's resolution is recorded right below in the same lockfile, so the
+  // peer is not optional.
+  expect(lock).toContain('"gamma/delta"');
+  expect(lock).not.toContain("optionalPeers");
+
+  // An unchanged tree satisfies --frozen-lockfile...
+  const frozen = await install(testDir, "--frozen-lockfile");
+  expect(frozen.stderr).not.toContain("lockfile had changes");
+  expect(frozen.exitCode).toBe(0);
+
+  // ...and a plain re-install does not rewrite the lockfile.
+  const second = await install(testDir);
+  expect(second.exitCode).toBe(0);
+  expect(await Bun.file(join(testDir, "bun.lock")).text()).toBe(lock);
+});
+
 test.concurrent("package-lock.json migration does not platform-skip a regular file: tarball dependency", async () => {
   // Same divergence as the folder variant, for a `LocalTarball` resolution. npm records
   // the packed package's `os`/`cpu` arrays in its lockfile entry, and a fresh resolve of

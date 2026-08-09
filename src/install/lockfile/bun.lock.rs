@@ -650,6 +650,7 @@ impl Stringifier {
 
             let mut tree_deps_sort_buf: Vec<DependencyID> = Vec::new();
             let mut pkg_deps_sort_buf: Vec<DependencyID> = Vec::new();
+            let mut entry_path_buf: Vec<u8> = Vec::new();
 
             Self::write_indent(writer, *indent)?;
             writer.write_all(b"\"packages\": {")?;
@@ -707,29 +708,27 @@ impl Stringifier {
                         Self::write_indent(writer, *indent)?;
                     }
 
-                    writer.write_byte(b'"')?;
-                    // relative_path is empty string for root resolutions
-                    write!(
-                        writer,
-                        "{}",
-                        bun_core::fmt::format_json_string_utf8(
-                            relative_path,
-                            bun_core::fmt::JSONFormatterUTF8Options { quote: false }
-                        ),
-                    )?;
-
-                    if *depth != 0 {
-                        writer.write_byte(b'/')?;
-                    }
-
                     let dep = &deps_buf[dep_id as usize];
                     let dep_name = dep.name.slice(buf);
 
+                    // The entry key is also the tree path this package's own
+                    // dependencies resolve from. `find_resolution` must walk up
+                    // from it (not from the parent node's `relative_path`), the
+                    // same way the parser binds this entry's dependencies.
+                    // relative_path is empty string for root resolutions.
+                    entry_path_buf.clear();
+                    entry_path_buf.extend_from_slice(relative_path);
+                    if *depth != 0 {
+                        entry_path_buf.push(b'/');
+                    }
+                    entry_path_buf.extend_from_slice(dep_name);
+                    let entry_path: &[u8] = entry_path_buf.as_slice();
+
                     write!(
                         writer,
-                        "{}\": ",
+                        "\"{}\": ",
                         bun_core::fmt::format_json_string_utf8(
-                            dep_name,
+                            entry_path,
                             bun_core::fmt::JSONFormatterUTF8Options { quote: false }
                         ),
                     )?;
@@ -826,7 +825,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                entry_path,
                                 &mut path_buf,
                             )?;
 
@@ -851,7 +850,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                entry_path,
                                 &mut path_buf,
                             )?;
 
@@ -881,7 +880,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                entry_path,
                                 &mut path_buf,
                             )?;
 
@@ -910,7 +909,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                entry_path,
                                 &mut path_buf,
                             )?;
 
@@ -957,7 +956,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                entry_path,
                                 &mut path_buf,
                             )?;
 
@@ -1005,7 +1004,7 @@ impl Stringifier {
                                 &mut optional_peers_buf,
                                 extern_strings,
                                 &pkg_map,
-                                relative_path,
+                                entry_path,
                                 &mut path_buf,
                             )?;
 
@@ -1054,7 +1053,9 @@ impl Stringifier {
         optional_peers_buf: &mut Vec<String>,
         extern_strings: &[ExternalString],
         pkg_map: &PkgMap<()>,
-        relative_path: &[u8],
+        // The package's own tree path (its `packages` key), which its
+        // dependencies resolve relative to; see `PkgMap::find_resolution`.
+        pkg_path: &[u8],
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
         // `optional_peers_buf` is cleared at the fn tail.
@@ -1109,7 +1110,7 @@ impl Stringifier {
                     && pkg_map.map.len() > 0
                 {
                     if pkg_map
-                        .find_resolution(relative_path, dep, buf, path_buf)
+                        .find_resolution(pkg_path, dep, buf, path_buf)
                         .is_err()
                     {
                         optional_peers_buf.push(dep.name);
@@ -1230,7 +1231,9 @@ impl Stringifier {
         workspace_versions: &VersionHashMap,
         optional_peers_buf: &mut Vec<String>,
         pkg_map: &PkgMap<()>,
-        relative_path: &[u8],
+        // The workspace package's own tree path ("" for the root package, the
+        // workspace name otherwise); its dependencies resolve relative to it.
+        pkg_path: &[u8],
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
         // `optional_peers_buf` is cleared at the fn tail.
@@ -1351,7 +1354,7 @@ impl Stringifier {
                     && !dep.behavior.contains(Behavior::OPTIONAL)
                     && pkg_map.map.len() > 0
                 {
-                    if let Err(err) = pkg_map.find_resolution(relative_path, dep, buf, path_buf) {
+                    if let Err(err) = pkg_map.find_resolution(pkg_path, dep, buf, path_buf) {
                         if err == ResolveError::Unresolvable {
                             optional_peers_buf.push(dep.name);
                         }

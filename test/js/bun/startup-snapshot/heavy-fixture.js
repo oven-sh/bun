@@ -7,8 +7,8 @@ async function afterRestore() {
   const server = Bun.serve({ port: 0, fetch: () => new Response("hello from restored server") });
   const txt = await (await fetch(`http://localhost:${server.port}/`)).text();
   console.log("[js] fetch ->", txt);
-  await Bun.write("/tmp/img-heavy.out", "written after restore\n");
-  console.log("[js] fs ->", (await Bun.file("/tmp/img-heavy.out").text()).trim());
+  await Bun.write(process.env.HEAVY_OUT, "written after restore\n");
+  console.log("[js] fs ->", (await Bun.file(process.env.HEAVY_OUT).text()).trim());
   const { stdout } = Bun.spawnSync(["uname", "-m"]); console.log("[js] spawn ->", stdout.toString().trim());
   server.stop(true); process.exit(0);
 }

@@ -1677,7 +1677,7 @@ impl Run {
 // Snapshot: a process restored from a snapshot jumps here instead of loading an entry point.
 // The Rust `VirtualMachine`/event loop objects come from the snapshot (heap); only thread-locals need re-seating.
 unsafe extern "C" {
-    fn Bun__startupSnapshotDumpNow(vm: *mut bun_jsc::VM, path: *const ::core::ffi::c_char);
+    fn Bun__startupSnapshotDumpNow(vm: *mut bun_jsc::VM, path: *const ::core::ffi::c_char) -> bool;
     safe fn Bun__startupSnapshotClearTerminationRequest(vm: &bun_jsc::VM);
     safe fn Bun__startupSnapshotUnwindJS(vm: &bun_jsc::VM);
 }
@@ -1798,13 +1798,13 @@ pub fn take_startup_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::Virtual
     print_local_io_audit();
     let cpath = std::ffi::CString::new(path).unwrap();
     // SAFETY: main thread, VM live, no JS on the stack.
-    unsafe {
+    let written = unsafe {
         Bun__startupSnapshotDumpNow(
             ::core::ptr::from_ref(vm.jsc_vm()).cast_mut(),
             cpath.as_ptr(),
         )
     };
-    bun_core::Global::exit(0);
+    bun_core::Global::exit(if written { 0 } else { 1 }); // the dump already said why it declined
 }
 
 /// What still ties this process to work in flight; the snapshot is only written when this is empty.

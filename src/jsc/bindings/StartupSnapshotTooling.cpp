@@ -1254,6 +1254,7 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
             mach_vm_size_t cnt = 1;
             if (mach_vm_page_range_query(mach_task_self(), (uintptr_t)cell & ~(pg - 1), pg, (mach_vm_address_t)disp.data(), &cnt) == KERN_SUCCESS && !(disp[0] & 0x8 /* dirty */)) {
                 scanned++;
+                return IterationStatus::Continue;
             }
         }
 #else
@@ -1282,7 +1283,7 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
         {
             int k = 0;
             JSC::Structure* st = object->structure();
-            st->forEachProperty(vm, [&](const JSC::PropertyTableEntry& e) { if (k < 5) { if (k) shape += ","; auto* u = e.key(); shape += u ? std::string((const char*)u->span8().data(), u->is8Bit() ? std::min<size_t>(u->length(), 24) : 0) : "?"; } k++; return true; });
+            st->forEachProperty(vm, [&](const JSC::PropertyTableEntry& e) { if (k < 5) { if (k) shape += ","; auto* u = e.key(); shape += (u && u->is8Bit()) ? std::string((const char*)u->span8().data(), std::min<size_t>(u->length(), 24)) : "?"; } k++; return true; });
             if (k > 5) shape += ",+" + std::to_string(k - 5);
         }
         shape += "}";
@@ -1318,7 +1319,7 @@ static struct sigaction s_prevBus, s_prevSegv;
 static void snapshotTrapHandler(int sig, siginfo_t* info, void* uctx)
 {
     uintptr_t a = (uintptr_t)info->si_addr;
-    size_t pg = 16384;
+    size_t pg = getpagesize();
     uintptr_t page = a & ~(pg - 1);
     auto it = std::upper_bound(frozenRanges.begin(), frozenRanges.end(), std::make_pair(a, UINTPTR_MAX));
     bool ours = s_trapCap && it != frozenRanges.begin() && a < std::prev(it)->second;
@@ -1383,6 +1384,7 @@ static void snapshotTrapHandler(int sig, siginfo_t* info, void* uctx)
 
 static void snapshotTrapArm()
 {
+    const size_t pg = getpagesize();
     s_trapCap = 1 << 18;
     s_trapRecs = (TrapRec*)mmap(nullptr, s_trapCap * sizeof(TrapRec), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     struct sigaction sa {};
@@ -1395,7 +1397,7 @@ static void snapshotTrapArm()
     const char* mode = getenv("BUN_STARTUP_SNAPSHOT_TRAP");
     if (mode && !strcmp(mode, "cells")) { // only MarkedBlock pages: syscalls never target them, so kernel-side EFAULTs can't derail the run
         for (uintptr_t page : s_cellPages)
-            if (!mprotect((void*)page, 16384, PROT_READ)) n += 16384;
+            if (!mprotect((void*)page, pg, PROT_READ)) n += pg;
     } else
         for (auto& r : frozenRanges) {
             if (!mprotect((void*)r.first, r.second - r.first, PROT_READ)) n += r.second - r.first;
@@ -1419,7 +1421,7 @@ static void snapshotTrapReport()
         fprintf(f, "\n");
     }
     fclose(f);
-    fprintf(stderr, "[snapshottrap] %zu first-write faults recorded (%.1fMB of pages) -> %s\n", n, n * 16384 / 1048576.0, path);
+    fprintf(stderr, "[snapshottrap] %zu first-write faults recorded (%.1fMB of pages) -> %s\n", n, n * (size_t)getpagesize() / 1048576.0, path);
 }
 
 void startupSnapshotToolingIndexAtFreeze(JSC::VM& vm, size_t pg)

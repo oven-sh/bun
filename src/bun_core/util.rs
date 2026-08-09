@@ -2458,7 +2458,6 @@ impl<T> Once<T> {
     {
         *self.get_or_init(f)
     }
-    /// Fast path: already initialised?
     /// Back to uninitialized, so the next use recomputes. Only for `Copy` payloads (nothing to drop) and only while no other
     /// thread can be using the value: a process that just resumed from a snapshot recomputing what it inherited from the build.
     pub fn reset_for_snapshot_restore(&self)
@@ -2469,6 +2468,7 @@ impl<T> Once<T> {
             .store(ONCE_UNINIT, core::sync::atomic::Ordering::Release);
     }
 
+    /// Fast path: already initialised?
     #[inline(always)]
     pub fn get(&self) -> Option<&T> {
         if self.state.load(core::sync::atomic::Ordering::Acquire) == ONCE_DONE {

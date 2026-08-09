@@ -372,7 +372,7 @@ impl ElfFile {
             .copy_from_slice(payload);
 
         // Zero the padding between payload end and the relocated tail
-        let payload_end = new_file_offset + new_content_size;
+        let payload_end = new_file_offset + header_size + payload.len() as u64; // the trailer is written separately at the end of the block
         if move_dst_start > payload_end {
             self.data[usize::try_from(payload_end).expect("int cast")
                 ..usize::try_from(move_dst_start).expect("int cast")]

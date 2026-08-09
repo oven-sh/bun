@@ -34,7 +34,7 @@ for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
     expect(build.stderr.toString()).toContain("[snapshot] wrote");
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, fixture)],
-      env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+      env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img, HEAVY_OUT: join(String(dir), "heavy.out") },
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -65,7 +65,7 @@ overlapTest(
     using dir = tempDir("bun-snapshot-stack-overlap", {});
     const exe = join(String(dir), "app");
     const padding: Record<string, string> = {};
-    for (let i = 0; i < 14; i++) padding[`SNAPSHOT_TEST_PAD_${i}`] = "x".repeat(96 * 1024); // 14 × 96 KB, each under Linux's 128 KB per-string limit
+    for (let i = 0; i < 14; i++) padding[`SNAPSHOT_TEST_PAD_${i}`] = Buffer.alloc(96 * 1024, "x").toString(); // 14 × 96 KB, each under Linux's 128 KB per-string limit
     const build = Bun.spawnSync({
       cmd: [
         setarch!,
@@ -100,6 +100,7 @@ snapshotTest(
   "bun build --compile --snapshot embeds the snapshot; the single file restores from itself with no env",
   async () => {
     using dir = tempDir("bun-snapshot-compile", {});
+    using out = tempDir("bun-snapshot-compile-out", {}); // the fixture's own output; the launch dir below must stay untouched
     const exe = join(String(dir), "heavy");
     const build = Bun.spawnSync({
       cmd: [
@@ -128,7 +129,7 @@ snapshotTest(
     for (const run of [1, 2]) {
       await using proc = Bun.spawn({
         cmd: [exe],
-        env: { HOME: String(dir), PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT_VERBOSE: "1" },
+        env: { HOME: String(dir), PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT_VERBOSE: "1", HEAVY_OUT: join(String(out), "heavy.out") },
         stderr: "pipe",
         stdout: "pipe",
       });
@@ -153,7 +154,7 @@ snapshotTest(
     // Opt out boots normally.
     const plain = Bun.spawnSync({
       cmd: [exe],
-      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT: "0" },
+      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT: "0", HEAVY_OUT: join(String(out), "heavy.out") },
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -181,7 +182,7 @@ snapshotTest(
     expect(Bun.file(dbg + ".snapshot").size).toBeGreaterThan(1024 * 1024);
     const viaFile = Bun.spawnSync({
       cmd: [dbg],
-      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT_IN: dbg + ".snapshot" },
+      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT_IN: dbg + ".snapshot", HEAVY_OUT: join(String(dir), "heavy.out") },
       stderr: "pipe",
       stdout: "pipe",
     });

@@ -439,7 +439,7 @@ extern "C" void mi_prof_reinit_lock(void);
 extern "C" void mi_os_hint_floor(void*) noexcept;
 extern "C" bool mi_prof_lock_is_free(void);
 extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
-static void snapshotDump(JSC::VM& vm, const char* path);
+static bool snapshotDump(JSC::VM& vm, const char* path);
 // envGate (take() option): NUL-separated names stored after the region data, hashed with their values so a launch that differs in any of them declines before mapping anything.
 static std::string s_envGateNames;
 extern "C" void Bun__startupSnapshotSetEnvGate(const uint8_t* names, size_t len) { s_envGateNames.assign((const char*)names, len); }
@@ -461,7 +461,7 @@ static uint64_t envGateHash(const char* names, size_t len)
 }
 extern "C" void Bun__startupSnapshotUnwindJS(JSC::VM* vm) { vm->notifyNeedTermination(); }
 extern "C" void Bun__startupSnapshotClearTerminationRequest(JSC::VM* vm) { vm->clearHasTerminationRequest(); }
-extern "C" void Bun__startupSnapshotDumpNow(JSC::VM* vm, const char* path)
+extern "C" bool Bun__startupSnapshotDumpNow(JSC::VM* vm, const char* path)
 {
     mi_scavenger_stop(); // joins mimalloc's background thread: nothing may hold allocator locks while we freeze
 #if OS(DARWIN)
@@ -527,7 +527,7 @@ extern "C" void Bun__startupSnapshotDumpNow(JSC::VM* vm, const char* path)
         scope.clearException();
         vm->traps().clearTrap(JSC::VMTraps::NeedTermination);
     }
-    snapshotDump(*vm, path);
+    return snapshotDump(*vm, path);
 }
 extern "C" uint32_t Bun__standaloneStartupSnapshotBuildFlags();
 extern "C" void Bun__startupSnapshotRunMain(JSC::JSGlobalObject*);
@@ -1149,7 +1149,7 @@ struct SnapshotFileFd {
 };
 static SnapshotFileFd s_snapshotFileFds[32];
 static int s_snapshotFileFdCount = 0; // writable regular files (logs) get reopened O_APPEND at the same fd number
-static void snapshotDump(JSC::VM& vm, const char* path)
+static bool snapshotDump(JSC::VM& vm, const char* path)
 {
 #if OS(DARWIN) || OS(LINUX)
     JSC::JSLockHolder lock(vm);
@@ -1313,7 +1313,7 @@ static void snapshotDump(JSC::VM& vm, const char* path)
     int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) {
         fprintf(stderr, "[snapshot] open %s failed\n", path);
-        return;
+        return false;
     }
     StartupSnapshotHeader hdr {};
     memcpy(hdr.magic, "BUNSNAP1", 8);
@@ -1447,12 +1447,17 @@ static void snapshotDump(JSC::VM& vm, const char* path)
         fprintf(stderr, "[snapshot] error: executable memory changed while the snapshot was being written (%zu pages live at the walk, %zu now): something was still compiling; not writing a snapshot\n", jitPagesAtScan, now);
         close(fd);
         unlink(path);
-        return;
+        return false;
     }
     pwrite(fd, &hdr, sizeof hdr, 0);
     pwrite(fd, out.data(), out.size() * sizeof(StartupSnapshotRegion), tableOff);
     close(fd);
     fprintf(stderr, "[snapshot] wrote %s: %zu regions, %.1fMB (vm=%p global=%p thread=%p text=%p)\n", path, out.size(), total / 1048576.0, (void*)hdr.vm, (void*)hdr.globalObject, (void*)hdr.mainThread, (void*)hdr.textBase);
+    return true;
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(path);
+    return false;
 #endif
 }
 
@@ -1975,7 +1980,7 @@ extern "C" void Bun__startupSnapshotRecleanPages(JSC::VM*) {}
 extern "C" void Bun__VM__refreshStackBoundsAfterSnapshotRestore(JSC::VM*) {}
 extern "C" void Bun__startupSnapshotUnwindJS(JSC::VM*) {}
 extern "C" void Bun__startupSnapshotClearTerminationRequest(JSC::VM*) {}
-extern "C" void Bun__startupSnapshotDumpNow(JSC::VM*, const char*)
+extern "C" bool Bun__startupSnapshotDumpNow(JSC::VM*, const char*)
 {
     fprintf(stderr, "error: snapshots are not supported on this platform\n");
     exit(1);

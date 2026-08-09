@@ -19,7 +19,6 @@ use crate::hir::{
     PlaceOrSpread, SourceLocation, Type, is_set_state_type, is_use_effect_hook_type,
 };
 
-/// Non-experimental version of the derived-computations-in-effects validation.
 /// Records errors directly on the Environment (matching TS `env.recordError()` behavior).
 pub(crate) fn validate_no_derived_computations_in_effects(
     func: &HirFunction,
@@ -110,7 +109,7 @@ pub(crate) fn validate_no_derived_computations_in_effects(
     // Uses ErrorDetail (flat loc format) to match TS behavior where
     // env.recordError(new CompilerErrorDetail({...})) is used.
     for (func_id, resolved_deps) in effects_to_validate {
-        let details = validate_effect_non_exp(
+        let details = validate_effect(
             &env.functions[func_id.0 as usize],
             &resolved_deps,
             &env.identifiers,
@@ -123,7 +122,7 @@ pub(crate) fn validate_no_derived_computations_in_effects(
     Ok(())
 }
 
-fn validate_effect_non_exp(
+fn validate_effect(
     effect_func: &HirFunction,
     effect_deps: &[IdentifierId],
     ids: &[Identifier],
@@ -195,7 +194,7 @@ fn validate_effect_non_exp(
                 | InstructionValue::CallExpression { .. }
                 | InstructionValue::MethodCall { .. } => {
                     let mut aggregate: HashSet<IdentifierId> = HashSet::new();
-                    for operand in non_exp_value_operands(&instr.value) {
+                    for operand in value_operands(&instr.value) {
                         if let Some(deps) = dep_values.get(&operand) {
                             for d in deps {
                                 aggregate.insert(*d);
@@ -270,15 +269,15 @@ fn validate_effect_non_exp(
 }
 
 /// Collects operand IdentifierIds for a subset of instruction variants used
-/// by `validate_effect_non_exp`.
+/// by `validate_effect`.
 ///
 /// NOTE: This intentionally does NOT use the canonical `each_instruction_value_operand`
-/// because: (1) `validate_effect_non_exp` only matches specific variants
+/// because: (1) `validate_effect` only matches specific variants
 /// (ComputedLoad, PropertyLoad, BinaryExpression, TemplateLiteral, CallExpression,
 /// MethodCall), so FunctionExpression/ObjectMethod context handling is unnecessary;
 /// and (2) the caller does not have access to `env` which the canonical function requires
 /// for resolving function expression context captures.
-fn non_exp_value_operands(value: &InstructionValue) -> Vec<IdentifierId> {
+fn value_operands(value: &InstructionValue) -> Vec<IdentifierId> {
     match value {
         InstructionValue::ComputedLoad {
             object, property, ..

@@ -444,7 +444,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
-            "--snapshot <STR>?           After --compile, run the executable once and embed a snapshot of it, so later launches resume instead of booting. 'auto' (default: taken once startup drains) or 'manual' (the app calls Bun.unsafe.snapshot())"
+            "--snapshot <STR>?           After --compile, run the executable once and embed a snapshot of it, so later launches resume instead of booting. 'auto' (default: taken once startup drains) or 'manual' (the app calls Bun.startupSnapshot.take())"
         ),
         parse_param!(
             "--snapshot-io <STR>         What the app may touch while its snapshot is taken: 'strict' (default: nothing), 'local' (files, subprocesses, local sockets) or 'network' (that too); every use is reported"

@@ -195,7 +195,7 @@ pub enum CompileStartupSnapshot {
 }
 
 /// `--snapshot-io` / `compile.snapshotIO`: what the app may touch on the build machine while its snapshot is taken.
-/// Network use is refused either way.
+/// `strict` refuses all of it, `local` allows the file system and processes, `network` allows sockets and DNS too.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CompileStartupSnapshotIo {
     #[default]

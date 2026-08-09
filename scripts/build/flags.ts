@@ -730,7 +730,7 @@ export const defines: Flag[] = [
   },
   {
     flag: "BUN_MIMALLOC_ZONE_OVERRIDE=1",
-    when: c => c.darwin && !!process.env.BUN_MIMALLOC_OVERRIDE_DARWIN, // keep in step with `osxZone` in deps/mimalloc.ts
+    when: c => c.darwin && !c.asan && !!process.env.BUN_MIMALLOC_OVERRIDE_DARWIN, // keep in step with `osxZone` in deps/mimalloc.ts
     desc: "mimalloc is registered as the process's malloc zone (what startup snapshots need on macOS)",
   },
 

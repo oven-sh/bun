@@ -130,6 +130,7 @@ int snapshotFd = -1;
 ::mi_heap_s* freshHeap = nullptr;
 off_t snapshotBaseOff = 0;
 ssize_t ipread(int fd, void* buf, size_t n, off_t off) { return ::pread(fd, buf, n, off + snapshotBaseOff); }
+void* immap(void* addr, size_t len, int prot, int flags, int fd, off_t off) { return ::mmap(addr, len, prot, flags, fd, off + snapshotBaseOff); }
 } // namespace Bun::StartupSnapshot
 using namespace Bun::StartupSnapshot;
 #if OS(DARWIN)
@@ -138,7 +139,6 @@ using namespace Bun::StartupSnapshot;
 #define OS_DARWIN_ONLY(x) 0
 #endif
 // Snapshot bytes may live at an offset inside a bigger file (embedded in the executable's __BUN/.bun section): all snapshot-file reads/maps add this.
-static void* immap(void* addr, size_t len, int prot, int flags, int fd, off_t off) { return ::mmap(addr, len, prot, flags, fd, off + snapshotBaseOff); }
 
 static void snapshotRestoreAndRun(const char* path);
 extern "C" struct mach_header_64 _mh_execute_header;
@@ -610,7 +610,7 @@ void recleanFrozenPages(JSC::VM& vm)
             continue;
 #else
         pm.assign(n, 0);
-        if (ipread(pagemap, pm.data(), n * sizeof(uint64_t), (off_t)(run.start / pg) * sizeof(uint64_t)) != (ssize_t)(n * sizeof(uint64_t)))
+        if (::pread(pagemap, pm.data(), n * sizeof(uint64_t), (off_t)(run.start / pg) * sizeof(uint64_t)) != (ssize_t)(n * sizeof(uint64_t)))
             continue;
 #endif
         for (size_t i = 0; i < n;) {
@@ -1129,14 +1129,6 @@ struct StartupSnapshotRegion {
 }; // kind: 0 heap(anon), 1 __DATA segment
 
 // First-writer trap: snapshot pages are made read-only; the fault handler records the writer's stack, unprotects the page and resumes.
-struct TrapRec {
-    uintptr_t page;
-    uintptr_t pcs[10];
-};
-static TrapRec* s_trapRecs = nullptr;
-static std::atomic<size_t> s_trapCount { 0 };
-static size_t s_trapCap = 0;
-static struct sigaction s_prevBus, s_prevSegv;
 
 // A dup'd controlling-tty fd to recreate at restore: fd, the F_GETFL word, and source stdio+1 in disjoint fields (an overlapping layout let x86-64's O_LARGEFILE bleed into the fd number).
 static uint64_t ttyFdRecord(int fd, int flags, int src) { return ((uint64_t)(uint32_t)fd << 40) | ((uint64_t)(uint32_t)flags << 8) | (uint64_t)(src + 1); }
@@ -1842,8 +1834,8 @@ static void snapshotRestoreAndRun(const char* path)
                     hi = std::max<uintptr_t>(hi, r.addr + r.len);
                 }
             if (hi > lo) {
-                WTF::g_snapshotImmortalRangeLo = lo;
-                WTF::g_snapshotImmortalRangeSpan = hi - lo;
+                JSC::Heap::s_snapshotImmortalRangeLo = lo;
+                JSC::Heap::s_snapshotImmortalRangeSpan = hi - lo;
             }
         }
         if (hdr.reserved[0]) mi_theap_freeze((mi_theap_t*)hdr.reserved[0]);
@@ -1888,9 +1880,9 @@ static void snapshotRestoreAndRun(const char* path)
         {
             void* probe = mi_malloc(64);
             if (verbose) fprintf(stderr, "[snapshot] fresh heap: own arena=%d probe=%p\n", (int)(fresh != nullptr), probe);
-            if (WTF::isInSnapshotImmortalRange(probe)) { // cannot happen with the floor above; if it ever does, misclassifying new objects as snapshotted would be worse than the rule it serves
+            if (JSC::Heap::isInSnapshotImmortalRange(probe)) { // cannot happen with the floor above; if it ever does, misclassifying new objects as snapshotted would be worse than the rule it serves
                 fprintf(stderr, "[snapshot] fresh heap overlaps the snapshot span; not tracking snapshot objects\n");
-                WTF::g_snapshotImmortalRangeSpan = 0;
+                JSC::Heap::s_snapshotImmortalRangeSpan = 0;
             }
             mi_free(probe);
         }

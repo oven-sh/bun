@@ -19,6 +19,7 @@
 #include <JavaScriptCore/MarkedSpaceInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
 #include <JavaScriptCore/UnlinkedCodeBlock.h>
+#include <JavaScriptCore/UnlinkedMetadataTableInlines.h>
 #include <JavaScriptCore/MarkedBlockInlines.h>
 #include <JavaScriptCore/BlockDirectoryInlines.h>
 #include <JavaScriptCore/Subspace.h>
@@ -991,9 +992,9 @@ static void dumpDirtyMap(JSC::VM& vm)
                     fprintf(f2, "\n");
                 }
                 fclose(f2);
-                munmap(raw.recs, raw.cap * sizeof(Rec));
                 fprintf(stderr, "[owners-fast] %zu of %zu changed blocks had samples -> %s\n", hit, changedBlocks.size(), path2);
             }
+            munmap(raw.recs, raw.cap * sizeof(Rec));
         }
         // Owners of mutated payload: join live profiler samples with the byte diff.
         if (getenv("MIMALLOC_PROF_SAMPLE_RATE") && getenv("BUN_MEMDEBUG_SLOW_OWNERS")) {
@@ -1305,6 +1306,15 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
         fprintf(stderr, "%s\n", rows[i].second.c_str());
 }
 
+struct TrapRec {
+    uintptr_t page;
+    uintptr_t pcs[10];
+};
+static TrapRec* s_trapRecs = nullptr;
+static std::atomic<size_t> s_trapCount { 0 };
+static size_t s_trapCap = 0;
+static struct sigaction s_prevBus, s_prevSegv;
+
 static void snapshotTrapHandler(int sig, siginfo_t* info, void* uctx)
 {
     uintptr_t a = (uintptr_t)info->si_addr;
@@ -1508,7 +1518,7 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
             req = 6;
         else if (!strncmp(buf, "cellprofile", 11))
             req = 7;
-        else if (!strncmp(buf, "snapshottedump", 9))
+        else if (!strncmp(buf, "snapshot", 8))
             req = 8;
         else if (!strncmp(buf, "trapreport", 10))
             req = 9;
@@ -1697,10 +1707,14 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
                 { // Discriminator: does an explicit idle sweep on this (the JS) thread reclaim anything the census called slack?
                     mi_purge_holes_stats_t before, after;
                     mi_purge_holes_stats_get(&before);
-                    auto footprint = [] {
+                    auto footprint = []() -> double {
+#if !OS(DARWIN)
+                        return -1.0;
+#else
                         task_vm_info_data_t info;
                         mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
                         return task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) == KERN_SUCCESS ? (double)info.phys_footprint / 1048576.0 : -1.0;
+#endif
                     };
                     double fpBefore = footprint();
                     mi_on_thread_idle();

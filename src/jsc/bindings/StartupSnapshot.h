@@ -46,6 +46,7 @@ extern int snapshotFd; // the snapshot file, kept open so pages can be compared 
 extern ::mi_heap_s* freshHeap; // where this process allocates after a restore (null before one, or if the general path was used)
 extern off_t snapshotBaseOff; // where the snapshot starts inside snapshotFd (non-zero when it is embedded in the executable)
 ssize_t ipread(int fd, void* buf, size_t n, off_t off);
+void* immap(void* addr, size_t len, int prot, int flags, int fd, off_t off);
 void recleanFrozenPages(JSC::VM&);
 }
 #endif

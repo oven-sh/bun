@@ -1597,16 +1597,19 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
     // Where a snapshot may be built or mapped, this reservation has to land at the same address in every process; the
     // allocator decides that once and hands out the same kind of bump hint it uses for its own reservations.
+    // Bottom of the address window StartupSnapshot.cpp captures as ours (0x1f0'0000'0000..); mimalloc's own hinted arenas start above it.
+    const SNAPSHOT_RESERVE_BASE: usize = 0x1f0_0000_0000;
+    const SNAPSHOT_RESERVE_ALIGN: usize = 4 << 20;
     static SNAPSHOT_HINT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
     let mut hint: *mut libc::c_void = core::ptr::null_mut();
     if mimalloc::mi_startup_snapshot_hints_enabled() {
         let _ = SNAPSHOT_HINT.compare_exchange(
             0,
-            0x1f0_0000_0000,
+            SNAPSHOT_RESERVE_BASE,
             core::sync::atomic::Ordering::AcqRel,
             core::sync::atomic::Ordering::Acquire,
         );
-        let aligned = (len + 0x3f_ffff) & !0x3f_ffff;
+        let aligned = (len + SNAPSHOT_RESERVE_ALIGN - 1) & !(SNAPSHOT_RESERVE_ALIGN - 1);
         hint = SNAPSHOT_HINT.fetch_add(aligned, core::sync::atomic::Ordering::AcqRel)
             as *mut libc::c_void;
     }

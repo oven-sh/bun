@@ -710,13 +710,6 @@ unsafe impl Sync for VirtualMachine {}
 unsafe impl Send for VirtualMachine {}
 
 impl VirtualMachine {
-    /// Safe `&'static` accessor for the current thread's VM. The VM is a
-    /// per-thread singleton allocated once in [`init`] and never freed until
-    /// thread teardown, so the `'static` lifetime is sound. Mutation goes
-    /// through [`JsCell`]-wrapped fields (`vm.field.with_mut(|x| ...)`);
-    /// legacy code that still needs `&mut VirtualMachine` whole-struct uses
-    /// [`Self::get_mut_ptr`] + an explicit `unsafe` deref.
-    #[inline(always)]
     /// Snapshot: the main-thread VM recorded in a plain static (survives a snapshot restore, unlike TLS).
     pub fn main_thread_vm_ptr() -> *mut VirtualMachine {
         MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire)
@@ -725,6 +718,13 @@ impl VirtualMachine {
         VMHolder::adopt(vm);
     }
 
+    /// Safe `&'static` accessor for the current thread's VM. The VM is a
+    /// per-thread singleton allocated once in [`init`] and never freed until
+    /// thread teardown, so the `'static` lifetime is sound. Mutation goes
+    /// through [`JsCell`]-wrapped fields (`vm.field.with_mut(|x| ...)`);
+    /// legacy code that still needs `&mut VirtualMachine` whole-struct uses
+    /// [`Self::get_mut_ptr`] + an explicit `unsafe` deref.
+    #[inline(always)]
     pub fn get() -> &'static VirtualMachine {
         // SAFETY: `get_or_null()` returns the thread-local pointer set by
         // `init()`; non-null while a VM is installed; the allocation outlives

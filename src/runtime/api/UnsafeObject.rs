@@ -17,8 +17,6 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     )
 }
 
-/// from the top of the event loop, then exit. A process started from that snapshot resumes in the event loop and gets
-/// `process.emit("restore")` before its first tick. Never returns normally.
 #[bun_jsc::host_fn]
 fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global;

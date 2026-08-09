@@ -789,11 +789,11 @@ pub(crate) struct Elf64_Shdr {
 
 // --- byte helpers ---
 
-#[inline]
 fn read_u64_le(bytes: &[u8]) -> u64 {
     u64::from_le_bytes(bytes[..8].try_into().expect("8 bytes"))
 }
 
+#[inline]
 fn write_u64_le(bytes: &mut [u8], value: u64) {
     bytes[..8].copy_from_slice(&value.to_le_bytes());
 }

@@ -75,30 +75,43 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     stdout: Buffer;
     stderr: Buffer;
     exitCode: number;
+    #captured: boolean;
 
-    constructor(stdout: Buffer, stderr: Buffer, exitCode: number) {
+    constructor(stdout: Buffer, stderr: Buffer, exitCode: number, captured: boolean = true) {
       this.stdout = stdout;
       this.stderr = stderr;
       this.exitCode = exitCode;
+      this.#captured = captured;
+    }
+
+    #throwIfNotCaptured() {
+      if (!this.#captured) {
+        throw new Error("Cannot read output: output is not captured when inheritStdio() is used");
+      }
     }
 
     text(encoding) {
+      this.#throwIfNotCaptured();
       return this.stdout.toString(encoding);
     }
 
     json() {
+      this.#throwIfNotCaptured();
       return JSON.parse(this.stdout.toString());
     }
 
     arrayBuffer() {
+      this.#throwIfNotCaptured();
       return this.stdout.buffer;
     }
 
     bytes() {
+      this.#throwIfNotCaptured();
       return new Uint8Array(this.arrayBuffer());
     }
 
     blob() {
+      this.#throwIfNotCaptured();
       return new Blob([this.stdout]);
     }
   }
@@ -122,7 +135,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
       super((res, rej) => {
         resolve = (code, stdout, stderr) => {
-          const out = new ShellOutput(stdout, stderr, code);
+          const out = new ShellOutput(stdout, stderr, code, !this.#inheritStdio);
           if (this.#throws && code !== 0) {
             potentialError!.initialize(out, code);
             rej(potentialError);
@@ -134,7 +147,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
           }
         };
         reject = (code, stdout, stderr) => {
-          potentialError!.initialize(new ShellOutput(stdout, stderr, code), code);
+          potentialError!.initialize(new ShellOutput(stdout, stderr, code, !this.#inheritStdio), code);
           rej(potentialError);
         };
       });
@@ -193,10 +206,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     /**
      * Pass the parent process's stdout/stderr file descriptors to spawned
-     * commands instead of piping them, so `isatty(1)`/`isatty(2)` return
-     * `true` and colors, progress bars, and pagers work. Output is not
-     * captured — reading it back via `.text()`/`.json()`/etc. is not
-     * supported and throws.
+     * commands instead of piping them. If the parent's stdout/stderr are
+     * terminals, `isatty(1)`/`isatty(2)` stay `true` inside the spawned
+     * commands, so colors, progress bars, and pagers work. Output is not
+     * captured — reading it back via `.text()`/`.json()`/etc. throws.
      */
     inheritStdio(): this {
       this.#throwIfRunning();

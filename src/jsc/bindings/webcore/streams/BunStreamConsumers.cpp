@@ -357,10 +357,8 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned length = chunks->length();
 
-    // ONE pass over the array: read each element exactly once, materialize each string
-    // exactly once, and size the output as we go. `values` roots every chunk; `measuredChunks`
-    // carries each chunk's measured size (and each materialized string) so the write pass
-    // below never re-reads the array or re-encodes.
+    // One pass: read and measure each chunk exactly once (strings materialize into
+    // `measuredChunks`) so the write pass never re-reads or re-encodes; `values` roots the chunks.
     MarkedArgumentBuffer values;
     WTF::Vector<std::pair<WTF::String, size_t>, 16> measuredChunks;
     bool anyString = false;
@@ -405,8 +403,7 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
         return {};
     }
     // Assemble directly into the result ArrayBuffer: WTF::Vector<uint8_t> CRASH()es past
-    // its INT32_MAX capacity cap, while ArrayBuffer capacities are size_t and allocation
-    // failure throws instead of aborting.
+    // its INT32_MAX capacity cap; ArrayBuffer capacities are size_t and fail by throwing.
     RefPtr<JSC::ArrayBuffer> resultBuffer = JSC::ArrayBuffer::tryCreateUninitialized(total.value(), 1);
     if (!resultBuffer) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);

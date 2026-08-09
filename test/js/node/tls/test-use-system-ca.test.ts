@@ -130,6 +130,39 @@ describe("--use-system-ca", () => {
     },
   );
 
+  // A worker whose --use-system-ca differs from the process default must not make TLS-less
+  // options parse as a TLS config: Bun.serve({ port: 0, fetch }) inside such a worker has to
+  // stay a plain HTTP server instead of silently becoming an HTTPS server with no certificate.
+  test("a differing --use-system-ca worker still serves plain HTTP without tls options", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("worker_threads");
+        const w = new Worker(\`
+          const { parentPort } = require("worker_threads");
+          (async () => {
+            const server = Bun.serve({ port: 0, fetch: () => new Response("plain") });
+            const body = await (await fetch(server.url)).text();
+            parentPort.postMessage({ protocol: server.url.protocol, body });
+            server.stop(true);
+          })();
+        \`, { eval: true, execArgv: ["--use-system-ca"] });
+        w.once("message", m => console.log(JSON.stringify(m)));
+        w.once("error", e => { console.error(e); process.exit(1); });
+        `,
+      ],
+      env: { ...bunEnv, NODE_USE_SYSTEM_CA: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ protocol: "http:", body: "plain" });
+    expect(exitCode).toBe(0);
+  });
+
   test("--use-system-ca overrides NODE_USE_SYSTEM_CA=0", async () => {
     // Test that CLI flag takes precedence over environment variable
     await using proc = spawn({

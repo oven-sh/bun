@@ -153,7 +153,6 @@ impl SSLConfigFromJs for SSLConfig {
         let mut result = SSLConfig::zero();
         // `result` cleanup handled by Drop on error-path `?`
         result.use_system_ca = vm.tls_use_system_ca_option();
-        result.requires_custom_request_ctx = vm.tls_use_system_ca_differs_from_process();
         let mut any = false;
 
         if let Some(passphrase) = generated.passphrase.get() {
@@ -262,6 +261,13 @@ impl SSLConfigFromJs for SSLConfig {
             || result.requires_custom_request_ctx
             || result.client_renegotiation_limit != 0
             || generated.client_renegotiation_window != 0;
+
+        // ORed in after `any` is decided: the VM-level CA choice must shape a
+        // real TLS config's request context without turning a TLS-less object
+        // into Some(config) (callers treat None as "no TLS here", and the
+        // no-tls differing-CA case is handled at the fetch call site).
+        result.requires_custom_request_ctx =
+            result.requires_custom_request_ctx || vm.tls_use_system_ca_differs_from_process();
 
         // We don't need to deinit `result` if `any` is false.
         if any { Ok(Some(result)) } else { Ok(None) }

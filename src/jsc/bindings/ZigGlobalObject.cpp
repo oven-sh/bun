@@ -2345,21 +2345,27 @@ void GlobalObject::finishCreation(VM& vm)
     m_utilInspectStylizeColorFunction.initLater(
         [](const Initializer<JSFunction>& init) {
             auto scope = DECLARE_THROW_SCOPE(init.vm);
-            JSC::MarkedArgumentBuffer args;
-            args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
+            JSC::JSFunction* inspect = uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction();
 
             if (!scope.exception()) [[likely]] {
-                JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
+                // stylizeWithColor reads inspect.styles at call time; the fallback stub
+                // installed when node:util fails to load has none, so stay colorless then.
+                JSValue styles = inspect->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "styles"_s));
+                if (!scope.exception() && styles && styles.isObject()) [[likely]] {
+                    JSC::MarkedArgumentBuffer args;
+                    args.append(inspect);
+                    JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
 
-                JSC::CallData callData = JSC::getCallData(getStylize);
-                NakedPtr<JSC::Exception> returnedException = nullptr;
-                auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
-                if (returnedException) [[unlikely]]
-                    throwException(init.owner, scope, returnedException.get());
-                if (!scope.exception()) [[likely]] {
-                    if (auto* stylize = dynamicDowncast<JSFunction>(result)) [[likely]] {
-                        init.set(stylize);
-                        return;
+                    JSC::CallData callData = JSC::getCallData(getStylize);
+                    NakedPtr<JSC::Exception> returnedException = nullptr;
+                    auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
+                    if (returnedException) [[unlikely]]
+                        throwException(init.owner, scope, returnedException.get());
+                    if (!scope.exception()) [[likely]] {
+                        if (auto* stylize = dynamicDowncast<JSFunction>(result)) [[likely]] {
+                            init.set(stylize);
+                            return;
+                        }
                     }
                 }
             }

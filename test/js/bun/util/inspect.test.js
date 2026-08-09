@@ -971,3 +971,23 @@ it("console.log survives util.inspect failing to load for custom inspect", async
   expect(stdout).toContain("SURVIVED");
   expect(exitCode).toBe(0);
 });
+
+// With colors on, options.stylize comes from a closure built around util.inspect.
+// When util.inspect failed to load, the colorless stylizer must be used instead.
+it("stylize degrades to no color when util.inspect failed to load", async () => {
+  const code = `
+    globalThis.process = undefined;
+    console.log({ [Symbol.for("nodejs.util.inspect.custom")](depth, options) { return options.stylize("hi", "string"); } });
+    console.log("SURVIVED");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: { ...bunEnv, FORCE_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("hi");
+  expect(stdout).toContain("SURVIVED");
+  expect(exitCode).toBe(0);
+});

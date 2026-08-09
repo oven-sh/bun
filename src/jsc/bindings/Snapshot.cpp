@@ -4,13 +4,13 @@
 #include "root.h"
 #include "Snapshot.h"
 #include "JSEnvironmentVariableMap.h"
-#if OS(DARWIN)
-#include <libproc.h>
-#endif
-#include <sys/time.h>
 // Snapshots are built and mapped on macOS and (glibc/musl) Linux; elsewhere the entry points exist so the rest of the runtime
 // links, and report the feature as absent.
 #if BUN_SNAPSHOT_SUPPORTED
+#include <sys/time.h>
+#if OS(DARWIN)
+#include <libproc.h>
+#endif
 #include <wtf/CryptographicallyRandomNumber.h>
 
 #include <JavaScriptCore/VM.h>
@@ -173,15 +173,15 @@ static bool snapshotVerbose()
     return !!getenv("BUN_SNAPSHOT_VERBOSE"); // not cached: a value cached while the snapshot was written would be restored along with it
 }
 extern "C" bool Bun__snapshotActive() { return s_snapshotActive; }
-#if OS(DARWIN)
-extern "C" __attribute__((weak_import)) size_t mi_malloc_zone_process_owned_ranges(uintptr_t (*out)[2], size_t cap); // absent when mimalloc is built without the zone override
+#if OS(DARWIN) && defined(BUN_MIMALLOC_ZONE_OVERRIDE)
+extern "C" size_t mi_malloc_zone_process_owned_ranges(uintptr_t (*out)[2], size_t cap);
 #endif
-// Whether this build of bun can take and restore snapshots at all. On macOS that needs mimalloc built as the process's
-// malloc (mi_malloc_zone_process_owned_ranges), which is a build-time option of bun itself.
+// Whether this build of bun can take and restore snapshots at all. On macOS that needs mimalloc registered as the process's
+// malloc zone, a build-time option of bun (BUN_MIMALLOC_OVERRIDE_DARWIN); official builds do not enable it yet.
 extern "C" bool Bun__snapshotSupported()
 {
-#if OS(DARWIN)
-    return mi_malloc_zone_process_owned_ranges != nullptr;
+#if OS(DARWIN) && !defined(BUN_MIMALLOC_ZONE_OVERRIDE)
+    return false;
 #else
     return true;
 #endif
@@ -690,7 +690,11 @@ static size_t platformLinkerOwnedRanges(uint64_t (*out)[2], size_t cap)
 #else
 static size_t platformLinkerOwnedRanges(uint64_t (*out)[2], size_t cap) // Darwin: the malloc zone libsystem registered for this process (see alloc-override-zone.c)
 {
-    if (!mi_malloc_zone_process_owned_ranges) return 0;
+#if !defined(BUN_MIMALLOC_ZONE_OVERRIDE)
+    (void)out;
+    (void)cap;
+    return 0;
+#else
     uintptr_t tmp[8][2];
     size_t n = mi_malloc_zone_process_owned_ranges(tmp, std::min<size_t>(cap, 8));
     for (size_t i = 0; i < n; i++) {
@@ -698,11 +702,11 @@ static size_t platformLinkerOwnedRanges(uint64_t (*out)[2], size_t cap) // Darwi
         out[i][1] = tmp[i][1];
     }
     return n;
+#endif
 }
 #endif
-// ===== v0 snapshot experiment (macOS, no-ASLR, JIT off): dump all mimalloc/JSC memory + __DATA at idle; a fresh process maps it back and runs JS on the snapshot VM.
 
-// ---- platform seam for the snapshot product path (region walk, residency, data segments, JIT copy) ----
+// Platform seam: region walk, residency, data segments, JIT copy.
 struct PlatformRegion {
     uint64_t addr, size;
     bool writable, executable, anon, shared, isStack, isMallocZone, isGuard;
@@ -1242,6 +1246,12 @@ static void snapshotDump(JSC::VM& vm, const char* path)
     std::vector<SnapshotRegion> out;
     for (auto& r : regions) {
         if (r.kind == 0 && sp >= r.addr && sp < r.addr + r.len) continue;
+        // Address-adjacent heap runs (and reservations) restore as one mapping; the enumeration yields them in address order.
+        unsigned k = r.kind & 0xff;
+        if (!out.empty() && (k == 0 || k == 4) && (out.back().kind & 0xff) == k && out.back().addr + out.back().len == r.addr) {
+            out.back().len += r.len;
+            continue;
+        }
         out.push_back(r);
     }
     int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);

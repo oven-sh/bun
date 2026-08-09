@@ -728,6 +728,11 @@ export const defines: Flag[] = [
     flag: "USE_BUN_MIMALLOC=1",
     desc: "Use mimalloc as default allocator",
   },
+  {
+    flag: "BUN_MIMALLOC_ZONE_OVERRIDE=1",
+    when: c => c.darwin && !!process.env.BUN_MIMALLOC_OVERRIDE_DARWIN, // keep in step with `osxZone` in deps/mimalloc.ts
+    desc: "mimalloc is registered as the process's malloc zone (what startup snapshots need on macOS)",
+  },
 
   // ─── Config-dependent ───
   {

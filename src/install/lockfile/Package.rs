@@ -1751,10 +1751,9 @@ impl Package<u64> {
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {
-                    // A wildcard accepts the member even when its version is a
-                    // prerelease the range does not satisfy, mirroring
-                    // `get_or_put_resolved_package` so the decision is the same
-                    // wherever the dependency is declared.
+                    // `is_star` mirrors `get_or_put_resolved_package`: a wildcard
+                    // accepts the member even when its version is a prerelease
+                    // the range does not satisfy.
                     let npm_version = &dependency_version.npm().version;
                     let satisfies =
                         npm_version.satisfies(workspace_version, buf, buf) || npm_version.is_star();

@@ -17,7 +17,7 @@
 #   2. CC/CXX 指向 Homebrew 的 cc/c++ shims (→ llvm@21 clang)
 #   3. bun scripts/build.ts 直接驱动构建 (--webkit=local 编译 WebKit)
 #   4. rust nightly (nightly-2026-07-20, aarch64-linux-ohos) 预装于
-#      /data/storage/el2/base/tmp/rust-nightly-2026-07-20 (已签名)
+#      ~/.rust-nightly/nightly-2026-07-20 (已签名, 持久目录)
 #   5. ICU 用 llvm@21 OHOS libc++ 头文件重编 (std::__h 命名空间),
 #      由 libc++_static.a 真实解析, 无需 shim
 #
@@ -52,8 +52,9 @@ ICU_LIB="$ICU_TARGET/lib"
 OUTDIR="$REPO_ROOT/build/release"
 
 # Rust nightly (CI 匹配版本)
+# 安装位置: ~/.rust-nightly/nightly-<date>/ (避免 /data/storage/el2/base/tmp 被清理)
 RUST_VER="nightly-2026-07-20"
-RUST_HOME="/data/storage/el2/base/tmp/rust-${RUST_VER}"
+RUST_HOME="${RUST_HOME:-$HOME/.rust-nightly/nightly-2026-07-20}"
 RUST_READY="$RUST_HOME/BREW_SIGNED_OK"
 
 # V8 stub (Rust napi 引用的 V8 符号)
@@ -256,9 +257,10 @@ CLANGXX
   export LD_LIBRARY_PATH="$HOMEBREW_PREFIX/opt/libxml2/lib:$HOMEBREW_PREFIX/opt/zlib/lib:$HOMEBREW_PREFIX/opt/openssl@3/lib:$LLVM21/lib"
 
   # Rust 环境变量
-  local cargo_home_dir="$TMPDIR/cargo-home"
-  mkdir -p "$cargo_home_dir"
-  export CARGO_HOME="$cargo_home_dir"
+  # CARGO_HOME: 统一使用 ~/.cargo (持久目录, 避免 /tmp 被清理;
+  # 与系统默认 cargo 缓存合并, 避免重复下载 crate)
+  export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+  mkdir -p "$CARGO_HOME"
   export RUSTUP_HOME="$RUST_HOME"
   export RUSTUP_TOOLCHAIN="$RUST_VER"
 
@@ -340,7 +342,6 @@ phase_build() {
       --profile=release \
       --os=ohos \
       --arch=aarch64 \
-      --canary=off \
       --webkit=local \
       --cache-dir="$cache_dir" \
       --ohos-sdk-root="$OHOS_SDK" \

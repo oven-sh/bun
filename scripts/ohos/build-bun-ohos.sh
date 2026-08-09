@@ -242,8 +242,9 @@ run_build() {
     export AR="/opt/llvm-22.1.4/bin/llvm-ar"
     export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_OHOS_LINKER="/home/user/.local/bin/clang++"
     export CARGO_HOME="/home/user/.cargo"
-    export RUSTUP_HOME="/home/user/.rustup"
-    export RUSTUP_TOOLCHAIN="nightly-2026-06-06"
+    export RUSTUP_HOME="${RUSTUP_HOME:-/home/user/.rustup}"
+    # 与 rust-toolchain.toml / ~/.rust-nightly/nightly-2026-07-01 同步
+    export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-nightly-2026-07-01}"
 
     # ninja 编译
     cd "$CI_SRC"

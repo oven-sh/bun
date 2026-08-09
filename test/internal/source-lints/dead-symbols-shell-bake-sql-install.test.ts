@@ -157,7 +157,10 @@ test("dead websocket/timer/subprocess/watcher/css symbols do not reappear", () =
     // Websocket ErrorCode variants never constructed. Discriminants are
     // explicit, so the remaining values still match the C++
     // WebSocketErrorCode table.
-    ["src/http_jsc/websocket_client.rs", /HeadersTooLarge|CompressionFailed = 24|ExpectedControlFrame|ProxyConnectionRefused/],
+    [
+      "src/http_jsc/websocket_client.rs",
+      /HeadersTooLarge|CompressionFailed = 24|ExpectedControlFrame|ProxyConnectionRefused/,
+    ],
     // WTFTimer__runIfImminent: an extern "C" export nothing in C++,
     // vendor/WebKit, or codegen referenced (the imminent-GC path runs via
     // __bun_run_wtf_timer -> EventLoop::run_imminent_gc_timer).

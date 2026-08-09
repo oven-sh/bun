@@ -5290,7 +5290,6 @@ impl DevServer {
     }
 }
 
-
 impl DevServer {
     fn encode_serialized_failures(
         &self,

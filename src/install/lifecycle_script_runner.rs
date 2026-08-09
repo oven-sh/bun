@@ -351,7 +351,6 @@ use bun_sys::windows::libuv as uv;
 
 pub type OutputReader = BufferedReader;
 
-
 impl<'a> LifecycleScriptSubprocess<'a> {
     /// Heap-allocate and return a raw pointer; this type is intrusive (heap field,
     /// OutputReader parent backrefs), so it lives behind `*mut Self`.

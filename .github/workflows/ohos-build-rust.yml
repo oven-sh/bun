@@ -137,9 +137,15 @@ jobs:
           if [ "${{ steps.rust-nightly.outputs.nightly_changed }}" = "true" ]; then
             echo "⚠️  Nightly version changed — cleaning old Rust deps/incremental"
             SRC_TARGET=/home/user/sources/bun/build/release-ohos/rust-target
+            # Target deps + incremental (aarch64-unknown-linux-ohos)
             rm -rf "$SRC_TARGET/aarch64-unknown-linux-ohos/release/deps" 2>/dev/null || true
             rm -rf "$SRC_TARGET/aarch64-unknown-linux-ohos/release/incremental" 2>/dev/null || true
             rm -f "$SRC_TARGET/aarch64-unknown-linux-ohos/release/.cargo-lock" 2>/dev/null || true
+            # Host deps (proc-macro2, unicode_ident, etc.) are compiled by
+            # the OLD rustc for build-scripts — if left behind they fail with
+            # E0514 "compiled by an incompatible version of rustc" on the new
+            # nightly. Remove the entire host `release/` too.
+            rm -rf "$SRC_TARGET/release" 2>/dev/null || true
             rm -f "$SRC_TARGET/.rustc_info.json" 2>/dev/null || true
             echo "⚠️  Will perform a full Rust rebuild"
           fi

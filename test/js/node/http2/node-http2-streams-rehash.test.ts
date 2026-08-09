@@ -178,6 +178,10 @@ test(
     try {
       parser.getStreamContext(2);
     } catch (e) {
+      if (e.message !== "Invalid stream id") {
+        console.error("unexpected getStreamContext error: " + e.message);
+        process.exit(1);
+      }
       drained = true;
     }
     if (!drained) {

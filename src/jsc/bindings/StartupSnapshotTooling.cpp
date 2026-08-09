@@ -1294,8 +1294,10 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
         {
             int k = 0;
             JSC::Structure* st = object->structure();
-            if (!st->hasPropertyTableForSnapshot()) shape += "?"; else
-            st->forEachProperty(vm, [&](const JSC::PropertyTableEntry& e) { if (k < 5) { if (k) shape += ","; auto* u = e.key(); shape += (u && u->is8Bit()) ? std::string((const char*)u->span8().data(), std::min<size_t>(u->length(), 24)) : "?"; } k++; return true; });
+            if (!st->hasPropertyTableForSnapshot())
+                shape += "?";
+            else
+                st->forEachProperty(vm, [&](const JSC::PropertyTableEntry& e) { if (k < 5) { if (k) shape += ","; auto* u = e.key(); shape += (u && u->is8Bit()) ? std::string((const char*)u->span8().data(), std::min<size_t>(u->length(), 24)) : "?"; } k++; return true; });
             if (k > 5) shape += ",+" + std::to_string(k - 5);
         }
         shape += "}";
@@ -1779,5 +1781,5 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
 }
 #endif // BUN_STARTUP_SNAPSHOT_TOOLING
 #if BUN_STARTUP_SNAPSHOT_TOOLING && !BUN_STARTUP_SNAPSHOT_SUPPORTED
-extern "C" void Bun__startupSnapshotToolingTick(JSC::VM*) { }
+extern "C" void Bun__startupSnapshotToolingTick(JSC::VM*) {}
 #endif

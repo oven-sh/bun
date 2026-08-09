@@ -83,6 +83,10 @@ const IGNORED_PRAGMAS = new Set([
   // current harness ignores them.
   "xonly",
   "Pass",
+  // The experimental derived-computations validation was removed; the pragma
+  // is parsed but applies nothing.
+  "validateNoDerivedComputationsInEffectsExp",
+  "validateNoDerivedComputationsInEffects_exp",
 ]);
 
 // Pragmas Bun's `parse_fixture_pragmas` (src/react_compiler/program.rs) reads
@@ -115,8 +119,6 @@ const HANDLED_PRAGMAS = new Set([
   "enableUseKeyedState",
   "validateNoSetStateInEffects",
   "validateNoDerivedComputationsInEffects",
-  "validateNoDerivedComputationsInEffectsExp",
-  "validateNoDerivedComputationsInEffects_exp",
   "validateNoJsxInTryStatements",
   "validateNoJSXInTryStatements",
   "validateStaticComponents",

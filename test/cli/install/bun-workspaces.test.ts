@@ -698,6 +698,57 @@ describe("workspace and npm dependency sharing a name", () => {
     await runBunInstall(env, packageDir, { frozenLockfile: true });
   });
 
+  test.concurrent("displaced member's dependency hoisted to an intermediate node binds there", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    // beta pins the same a-dep version as the member, so the member's
+    // dependency hoists to beta's node ("beta/a-dep") rather than nesting
+    // under "beta/no-deps/a-dep" or hoisting to the root; the reload walk
+    // must stop at that intermediate level
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.2" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "no-deps", "package.json"),
+        JSON.stringify({ name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({
+          name: "beta",
+          version: "1.0.0",
+          dependencies: { "no-deps": "workspace:*", "a-dep": "1.0.1" },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(`"beta/a-dep": ["a-dep@1.0.1"`);
+    expect(lockfile).not.toContain("beta/no-deps/a-dep");
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "packages", "no-deps", "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "packages", "beta", "node_modules"), { recursive: true, force: true });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+    expect(
+      await file(join(packageDir, "packages", "beta", "node_modules", "a-dep", "package.json")).json(),
+    ).toMatchObject({ name: "a-dep", version: "1.0.1" });
+    // hoisted to beta's node: the member must not get its own nested copy
+    expect(await exists(join(packageDir, "packages", "no-deps", "node_modules", "a-dep"))).toBe(false);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
   test.concurrent("duplicate workspace keys in a hand-edited lockfile are rejected", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;

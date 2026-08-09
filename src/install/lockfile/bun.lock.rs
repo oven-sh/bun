@@ -711,8 +711,7 @@ impl Stringifier {
                     let dep = &deps_buf[dep_id as usize];
                     let dep_name = dep.name.slice(buf);
 
-                    // The entry key is also the tree path this entry's dependencies
-                    // resolve from; `find_resolution` walks up from it like the parser.
+                    // The entry key doubles as the tree path this entry's dependencies resolve from.
                     entry_path_buf.clear();
                     entry_path_buf.extend_from_slice(relative_path);
                     if *depth != 0 {

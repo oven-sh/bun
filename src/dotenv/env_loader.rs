@@ -22,20 +22,25 @@ pub enum DotEnvFileSuffix {
 }
 
 /// Directory-entry probe used by `Loader::load`. `bun_dotenv` sits below
-/// `bun_resolver` in the crate graph, so the concrete
-/// `bun_resolver::fs::DirEntry` is taken generically; the only operation
-/// `load_default_files` performs is a fast O(1) lookup of a
-/// known-at-compile-time filename in the directory's entry map. Implemented
-/// for `bun_resolver::fs::DirEntry`.
+/// `bun_resolver` in the crate graph, so the directory listing is taken
+/// generically; the only operation `load_default_files` performs is a lookup
+/// of a known-at-compile-time filename. Callers snapshot the resolver's
+/// listing into a [`DirEntryKeys`] (the live `DirEntry` map may be rewritten
+/// in place by a concurrent resolver, so `load` must not probe it directly).
 pub trait DirEntryProbe {
     /// The argument MUST already be ASCII-lowercase.
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
 }
 
-// LAYERING: the concrete `DirEntry` lives in `bun_resolver::fs` (higher tier,
-// depends on this crate). `impl DirEntryProbe for bun_resolver::fs::DirEntry`
-// is provided there — see src/resolver/lib.rs. No impl here; that would be a
-// dep-cycle.
+/// Directory-listing basenames copied out under the resolver's
+/// `entries_mutex`, probed between the `.env` file reads in `Loader::load`.
+pub struct DirEntryKeys(pub Vec<Box<[u8]>>);
+
+impl DirEntryProbe for DirEntryKeys {
+    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+        self.0.iter().any(|k| **k == *query_lower)
+    }
+}
 
 /// Canonical definition; re-exported as
 /// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
@@ -682,9 +687,6 @@ impl Loader {
     ) -> crate::Result<()> {
         let dir_handle = bun_sys::Fd::cwd();
 
-        // `bun_dotenv` sits below `bun_resolver` in the crate graph, so the
-        // directory entry is taken generically — `bun_resolver::fs::DirEntry`
-        // impls `DirEntryProbe`.
         match suffix {
             DotEnvFileSuffix::Development => {
                 self.try_load_default(dir, dir_handle, b".env.development.local", value_buffer)?

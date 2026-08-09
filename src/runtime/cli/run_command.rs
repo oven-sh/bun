@@ -3794,6 +3794,12 @@ impl RunCommand {
                     .flatten()
                 {
                     if let Some(entries) = bin_dir.get_entries_const() {
+                        // `.data` iteration must hold `entries_mutex`
+                        // (uncontended on this single-threaded CLI path).
+                        let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                            .fs
+                            .entries_mutex
+                            .lock_guard();
                         let mut path_buf = PathBuffer::uninit();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;
@@ -3802,8 +3808,9 @@ impl RunCommand {
                             // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
                             // the resolver dir-cache for the process lifetime.
                             let value = unsafe { &**entry.1 };
-                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
-                            // non-null process-static singleton.
+                            // SAFETY: `Transpiler::fs` is the non-null process-static
+                            // singleton; the lazy-stat rewrite inside `kind()` is
+                            // serialized on the per-entry mutex.
                             if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                             {
@@ -3849,6 +3856,12 @@ impl RunCommand {
                 .flatten()
             {
                 if let Some(entries) = dir_info.get_entries_const() {
+                    // `.data` iteration must hold `entries_mutex`
+                    // (uncontended on this single-threaded CLI path).
+                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        .fs
+                        .entries_mutex
+                        .lock_guard();
                     let mut iter = entries.data.iter();
 
                     while let Some(entry) = iter.next() {
@@ -3865,8 +3878,9 @@ impl RunCommand {
                             && !strings::contains(name, b".d.ts")
                             && !strings::contains(name, b".d.mts")
                             && !strings::contains(name, b".d.cts")
-                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
-                            // non-null process-static singleton.
+                            // SAFETY: `Transpiler::fs` is the non-null process-static
+                            // singleton; the lazy-stat rewrite inside `kind()` is
+                            // serialized on the per-entry mutex.
                             && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                         {

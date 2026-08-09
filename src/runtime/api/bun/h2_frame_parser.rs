@@ -3522,7 +3522,7 @@ impl H2FrameParser {
         let global = self.handlers.get().global();
         // A prior frame's callback can drain microtasks that tear the worker
         // down (worker.terminate()); skip rather than calling JS with the
-        // termination exception pending. Same guard as read_bytes().
+        // termination exception pending.
         if global.has_exception() {
             return Some(stream);
         }

@@ -1351,15 +1351,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           const file = join(diagDir, f);
           try {
             const snap = JSON.parse(readFileSync(file, "utf8"));
-            if (!Array.isArray(snap.strings)) throw new Error("no strings table");
+            // V8 format keeps every string in `strings`; JSC's GC-debugging
+            // format keeps cell labels (incl. JSString contents) in `labels`
+            // and names in `nodeClassNames` / `edgeNames`.
+            const tables = ["strings", "labels", "nodeClassNames", "edgeNames"].filter(k => Array.isArray(snap[k]));
+            if (!tables.length) throw new Error("no string tables");
             let redacted = 0;
-            snap.strings = snap.strings.map((str: string) => {
-              if (typeof str === "string" && secrets.some(v => str.includes(v))) {
-                redacted++;
-                return "<redacted>";
-              }
-              return str;
-            });
+            for (const k of tables) {
+              snap[k] = snap[k].map((str: string) => {
+                if (typeof str === "string" && secrets.some(v => str.includes(v))) {
+                  redacted++;
+                  return "<redacted>";
+                }
+                return str;
+              });
+            }
             writeFileSync(file, JSON.stringify(snap));
             console.error(`napi diagnostics: ${f}: redacted ${redacted} strings`);
           } catch (e) {

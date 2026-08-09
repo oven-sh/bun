@@ -1,6 +1,9 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "JavaScriptCore/HeapSnapshotBuilder.h"
+#include "JavaScriptCore/HeapProfiler.h"
+#include <unistd.h>
 #include "MessagePort.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
@@ -3251,11 +3254,43 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 /// `globalThis.gc()` is an alias for `Bun.gc(true)`
 /// Note that `vm` is a `VirtualMachine*`
 extern "C" size_t Bun__gc(void* vm, bool sync);
+
+// Diagnostics branch only: when /tmp/bun-napi-diag-request exists, `gc()`
+// additionally writes a JSC GC-debugging heap snapshot (which records, per
+// live cell, the root that marked it) to /tmp/bun-napi-diag-<pid>.json. Keyed
+// on a file rather than argv/env so the process under test is byte-for-byte
+// the same as the one that fails.
+static void bunNapiDiagMaybeDumpHeap(JSC::VM& vm)
+{
+    if (access("/tmp/bun-napi-diag-request", F_OK) != 0)
+        return;
+    fprintf(stderr, "[napi-diag] gc() returned; building GC-debugging snapshot (runs another full GC)\n");
+    fflush(stderr);
+    vm.ensureHeapProfiler();
+    auto& heapProfiler = *vm.heapProfiler();
+    heapProfiler.clearSnapshots();
+    JSC::HeapSnapshotBuilder builder(heapProfiler, JSC::HeapSnapshotBuilder::SnapshotType::GCDebuggingSnapshot);
+    builder.buildSnapshot();
+    WTF::String json = builder.json();
+    char path[128];
+    snprintf(path, sizeof(path), "/tmp/bun-napi-diag-%d.json", getpid());
+    if (FILE* f = fopen(path, "w")) {
+        auto utf8 = json.utf8();
+        fwrite(utf8.data(), 1, utf8.length(), f);
+        fclose(f);
+        fprintf(stderr, "[napi-diag] wrote %s (%zu bytes)\n", path, utf8.length());
+    } else {
+        fprintf(stderr, "[napi-diag] could not open %s\n", path);
+    }
+    fflush(stderr);
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionJsGc,
     (JSC::JSGlobalObject * global, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(global);
     Bun__gc(globalObject->bunVM(), true);
+    bunNapiDiagMaybeDumpHeap(JSC::getVM(global));
     return JSValue::encode(jsUndefined());
 }
 

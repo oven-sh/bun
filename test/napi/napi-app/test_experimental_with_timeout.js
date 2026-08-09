@@ -67,10 +67,28 @@ const RUNS = 3;
 let allCrashedOnFirstGc = true;
 const rows = [];
 let sample = '';
+const fs = require('fs');
+const DIAG_REQUEST = '/tmp/bun-napi-diag-request';
 for (const v of variants) {
   const cells = [];
   for (let i = 0; i < RUNS; i++) {
-    const r = spawnSync(process.argv[0], ['--expose-gc', '-e', v.script], { env: v.env, encoding: 'utf8', timeout: 20_000 });
+    // For the first run of V1 only, ask the (diagnostics-patched) binary to
+    // dump a GC-debugging heap snapshot from inside gc(). Keyed on a file so
+    // the child's argv/env stay byte-identical to the failing configuration.
+    const wantDump = v === variants[0] && i === 0;
+    try { if (wantDump) fs.writeFileSync(DIAG_REQUEST, ''); else fs.rmSync(DIAG_REQUEST, { force: true }); } catch {}
+    const r = spawnSync(process.argv[0], ['--expose-gc', '-e', v.script], { env: v.env, encoding: 'utf8', timeout: 60_000 });
+    try { fs.rmSync(DIAG_REQUEST, { force: true }); } catch {}
+    if (wantDump) {
+      const dump = `/tmp/bun-napi-diag-${r.pid}.json`;
+      if (fs.existsSync(dump)) {
+        const dest = path.join(__dirname, `napi-diag-${r.pid}.heapsnapshot`);
+        fs.renameSync(dump, dest);
+        console.log(`[napi-diag] snapshot from V1 run 0 (pid ${r.pid}) saved to ${dest} (${fs.statSync(dest).size} bytes)`);
+      } else {
+        console.log(`[napi-diag] no snapshot file for pid ${r.pid} (stderr: ${JSON.stringify((r.stderr || '').split('\n').filter(l => l.includes('napi-diag')))})`);
+      }
+    }
     const out = (r.stdout || '') + (r.stderr || '');
     // Markers are looked for in stdout only: the crash report on stderr echoes
     // the whole -e script in its Args: line.
@@ -79,7 +97,9 @@ for (const v of variants) {
     const firstGcReturned = so.includes('GC triggered - should crash now') || so.includes('GC #1 returned without crashing');
     const secondGcReturned = so.includes('GC #2 returned without crashing');
     let cell;
-    if (crashed && !firstGcReturned) cell = 'crash@gc1';
+    const se = r.stderr || '';
+    if (crashed && se.includes('[napi-diag] gc() returned') && !se.includes('[napi-diag] wrote')) cell = 'CRASH@SNAPSHOT-GC';
+    else if (crashed && !firstGcReturned) cell = 'crash@gc1';
     else if (crashed && firstGcReturned && !secondGcReturned) cell = 'CRASH@GC2';
     else if (so.includes('ERROR: Did not crash')) cell = 'NO-CRASH';
     else if (r.error) cell = 'spawn-error:' + r.error.code;

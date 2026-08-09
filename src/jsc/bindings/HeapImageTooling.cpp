@@ -106,6 +106,8 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength();
 
 extern "C" int mi_prof_dump_to_file(const char*) noexcept;
 extern "C" void mi_prof_enable(size_t) noexcept;
+extern "C" void mi_on_thread_idle(void) noexcept;
+extern "C" void mi_purge_holes_report(void) noexcept;
 typedef void(mi_output_fun)(const char* msg, void* arg);
 extern "C" void mi_stats_print_out(mi_output_fun* out, void* arg) noexcept;
 extern "C" void mi_arenas_print(void) noexcept;
@@ -1612,14 +1614,104 @@ extern "C" void Bun__heapImageToolingTick(JSC::VM* vm)
             struct Live {
                 size_t bytes = 0, blocks = 0, imageBytes = 0;
             } live;
-            mi_heap_visit_blocks(mi_heap_main(), true, [](const mi_heap_t*, const mi_heap_area_t*, void* block, size_t size, void* arg) {
+            auto visitLive = [](const mi_heap_t*, const mi_heap_area_t*, void* block, size_t size, void* arg) {
                 auto* l = static_cast<Live*>(arg);
                 if (!block) return true;
                 auto it = std::upper_bound(frozenRanges.begin(), frozenRanges.end(), std::make_pair((uintptr_t)block, UINTPTR_MAX));
                 if (it != frozenRanges.begin() && (uintptr_t)block < std::prev(it)->second) { l->imageBytes += size; return true; }
                 l->bytes += size; l->blocks++;
-                return true; }, &live);
-            fprintf(stderr, "[memdebug] live malloc outside the image: %.1f MB in %zu blocks (image-resident live: %.1f MB)\n", live.bytes / 1048576.0, live.blocks, live.imageBytes / 1048576.0);
+                return true; };
+            mi_heap_visit_blocks(mi_heap_main(), true, visitLive, &live);
+            if (freshHeap) mi_heap_visit_blocks(freshHeap, true, visitLive, &live);
+            (void)0;
+            fprintf(stderr, "[memdebug] live malloc outside the image (main + fresh heaps): %.1f MB in %zu blocks (image-resident live: %.1f MB)\n", live.bytes / 1048576.0, live.blocks, live.imageBytes / 1048576.0);
+
+            { // The residue question: are the fresh arenas' pages empty-but-retained, or sparsely used? Per page (area), outside the image.
+                struct Areas {
+                    size_t committed[5] = {}, pages[5] = {}; // buckets: 0%, <10%, <25%, <50%, >=50% used
+                    std::map<size_t, std::pair<size_t, size_t>> bySize; // block size -> (committed in pages under 25% used, live bytes there)
+                    std::map<size_t, std::pair<size_t, size_t>> dirtyBySize; // block size -> (kernel-dirty bytes over all its pages, live bytes)
+                    size_t dirtyTotal = 0, liveTotal = 0;
+                    std::vector<int> disp;
+                } areas;
+                auto visitArea = [](const mi_heap_t*, const mi_heap_area_t* area, void*, size_t, void* arg) {
+                auto* a = static_cast<Areas*>(arg);
+                uintptr_t start = (uintptr_t)area->blocks;
+                auto it = std::upper_bound(frozenRanges.begin(), frozenRanges.end(), std::make_pair(start, UINTPTR_MAX));
+                if (it != frozenRanges.begin() && start < std::prev(it)->second) return true; // image page
+                if (!area->committed) return true;
+                size_t live = area->used * area->full_block_size;
+#if OS(DARWIN)
+                { // what the kernel actually holds for this area: holes the sweep punched are committed to mimalloc but not dirty here
+                    const size_t pg = getpagesize();
+                    uintptr_t lo = start & ~(pg - 1), hi = (start + area->committed + pg - 1) & ~(pg - 1);
+                    a->disp.assign((hi - lo) / pg, 0);
+                    mach_vm_size_t n = a->disp.size();
+                    if (mach_vm_page_range_query(mach_task_self(), lo, hi - lo, (mach_vm_address_t)a->disp.data(), &n) == KERN_SUCCESS) {
+                        size_t dirty = 0;
+                        for (size_t k = 0; k < a->disp.size(); k++)
+                            if (a->disp[k] & (VM_PAGE_QUERY_PAGE_DIRTY | VM_PAGE_QUERY_PAGE_COPIED)) dirty += pg;
+                        auto& d = a->dirtyBySize[area->block_size];
+                        d.first += dirty;
+                        d.second += live;
+                        a->dirtyTotal += dirty;
+                        a->liveTotal += live;
+                    }
+                }
+#endif
+                double util = (double)live / (double)area->committed;
+                int b = area->used == 0 ? 0 : util < 0.10 ? 1 : util < 0.25 ? 2 : util < 0.50 ? 3 : 4;
+                a->committed[b] += area->committed;
+                a->pages[b]++;
+                if (b <= 2) {
+                    auto& e = a->bySize[area->block_size];
+                    e.first += area->committed;
+                    e.second += live;
+                }
+                return true; };
+                mi_heap_visit_blocks(mi_heap_main(), false, visitArea, &areas);
+                if (freshHeap) mi_heap_visit_blocks(freshHeap, false, visitArea, &areas);
+                (void)0;
+                static const char* names[5] = { "empty", "<10%", "<25%", "<50%", ">=50%" };
+                fprintf(stderr, "[memdebug] fresh pages by utilization:");
+                for (int b = 0; b < 5; b++)
+                    fprintf(stderr, "  %s: %zu pages / %.1f MB", names[b], areas.pages[b], areas.committed[b] / 1048576.0);
+                fprintf(stderr, "\n[memdebug] committed in pages under 25%% used, by block size (committed MB / live MB):\n");
+                std::vector<std::pair<size_t, size_t>> order; // committed -> size
+                for (auto& [sz, e] : areas.bySize)
+                    order.push_back({ e.first, sz });
+                std::sort(order.rbegin(), order.rend());
+                for (size_t k = 0; k < order.size() && k < 16; k++) {
+                    auto& e = areas.bySize[order[k].second];
+                    fprintf(stderr, "    %8zu B blocks: %6.1f MB committed, %5.2f MB live\n", order[k].second, e.first / 1048576.0, e.second / 1048576.0);
+                }
+                fprintf(stderr, "[memdebug] fresh pages, kernel-dirty vs live: %.1f MB dirty, %.1f MB live => %.1f MB slack. Slack by block size:\n", areas.dirtyTotal / 1048576.0, areas.liveTotal / 1048576.0, (areas.dirtyTotal > areas.liveTotal ? areas.dirtyTotal - areas.liveTotal : 0) / 1048576.0);
+                std::vector<std::pair<long long, size_t>> slack; // slack bytes -> block size
+                for (auto& [sz, d] : areas.dirtyBySize)
+                    slack.push_back({ (long long)d.first - (long long)d.second, sz });
+                std::sort(slack.rbegin(), slack.rend());
+                for (size_t k = 0; k < slack.size() && k < 16; k++) {
+                    auto& d = areas.dirtyBySize[slack[k].second];
+                    fprintf(stderr, "    %8zu B blocks: %6.1f MB dirty, %6.1f MB live, %6.1f MB slack\n", slack[k].second, d.first / 1048576.0, d.second / 1048576.0, slack[k].first / 1048576.0);
+                }
+                { // Discriminator: does an explicit idle sweep on this (the JS) thread reclaim anything the census called slack?
+                    mi_purge_holes_stats_t before, after;
+                    mi_purge_holes_stats_get(&before);
+                    auto footprint = [] {
+                        task_vm_info_data_t info;
+                        mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+                        return task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) == KERN_SUCCESS ? (double)info.phys_footprint / 1048576.0 : -1.0;
+                    };
+                    double fpBefore = footprint();
+                    mi_on_thread_idle();
+                    double fpAfter = footprint();
+                    mi_purge_holes_stats_get(&after);
+                    fprintf(stderr, "[memdebug] phys_footprint around the explicit sweep: %.1f -> %.1f MB\n", fpBefore, fpAfter);
+                    mi_purge_holes_report();
+                    fprintf(stderr, "[memdebug] explicit mi_on_thread_idle() on this thread: discarded %.1f MB more (total discarded now %.1f MB), pages freed %zu -> %zu, ineligible pages %zu\n",
+                        ((double)after.purged_bytes_total - (double)before.purged_bytes_total) / 1048576.0, after.purged_bytes / 1048576.0, before.pages_freed, after.pages_freed, after.ineligible_pages);
+                }
+            }
         }
     }
     std::string base = std::string(s_dir) + "/memdebug." + std::to_string(getpid()) + "." + std::to_string(s_seq);

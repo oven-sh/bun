@@ -121,6 +121,7 @@ namespace Bun::HeapImage {
 std::vector<std::pair<uintptr_t, uintptr_t>> frozenRanges; // sorted [start,end)
 std::vector<FrozenRun> imageRuns;
 int imageFd = -1;
+::mi_heap_s* freshHeap = nullptr;
 off_t imageBaseOff = 0;
 ssize_t ipread(int fd, void* buf, size_t n, off_t off) { return ::pread(fd, buf, n, off + imageBaseOff); }
 } // namespace Bun::HeapImage
@@ -619,6 +620,7 @@ extern "C" struct us_loop_t* uws_get_loop();
 extern "C" void Bun__imageContinueEventLoop();
 extern "C" void uws_adopt_loop_for_current_thread(struct us_loop_t*);
 void _mi_scavenger_forked_child(void); // C++-mangled (mimalloc is built as C++ here)
+void _mi_scavenger_start_if_forked(void);
 extern "C" void Bun__imageAdoptMainThreadVM();
 struct BunLaunchContext {
     size_t argc;
@@ -1732,7 +1734,10 @@ static void imageRestoreAndRun(const char* path)
     for (size_t di = 0; di < nDataSegs; di++)
         munmap((void*)dataSegs[di].src, dataSegs[di].words * 8);
     bun_launch_context_restore(&launch); // everything derived from it (process.argv, Bun.argv, …) is ProcessDerived and recomputes this epoch
-    if (hdr.reserved[0]) mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
+    if (hdr.reserved[0]) {
+        mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
+        mi_theap_adopt_current_thread((mi_theap_t*)hdr.reserved[0]); // the fresh heap below binds to this thread state; it must name this thread
+    }
     _mi_scavenger_forked_child(); // same situation as a fork child: the image says a scavenger runs, but no such thread exists here
     mi_prof_reinit_lock(); // and any allocator-internal lock a build-process thread was holding is nobody's now
     { // park /dev/null on every fd number the image thinks it owns (the image file fd itself gets moved out of the way first)
@@ -1822,7 +1827,10 @@ static void imageRestoreAndRun(const char* path)
             mi_os_hint_floor((void*)((uintptr_t)want + 2 * sz));
         }
 #endif
-        mi_theap_set_default(mi_heap_theap(fresh ? fresh : mi_heap_new()));
+        if (!fresh)
+            fresh = mi_heap_new();
+        freshHeap = fresh;
+        mi_theap_set_default(mi_heap_theap(fresh));
         {
             void* probe = mi_malloc(64);
             if (verbose) fprintf(stderr, "[image] fresh heap: own arena=%d probe=%p\n", (int)(fresh != nullptr), probe);
@@ -1833,6 +1841,9 @@ static void imageRestoreAndRun(const char* path)
             mi_free(probe);
         }
     }
+    // The image's scavenger thread died with the build process; without one, nothing sweeps this thread's heaps while it is
+    // parked, and everything the app frees after resuming stays resident. Same restart a fork child gets, done eagerly.
+    _mi_scavenger_start_if_forked();
     heapImageToolingAfterRestore();
     heapImageToolingArmTraps();
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.

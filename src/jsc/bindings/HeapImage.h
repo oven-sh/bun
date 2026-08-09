@@ -10,6 +10,7 @@
 #define BUN_HEAPIMAGE_TOOLING 0
 #endif
 
+struct mi_heap_s;
 namespace JSC {
 class VM;
 }
@@ -24,6 +25,7 @@ struct FrozenRun {
 extern std::vector<std::pair<uintptr_t, uintptr_t>> frozenRanges; // sorted [start, end)
 extern std::vector<FrozenRun> imageRuns; // the same ranges with their file offsets, sorted by address
 extern int imageFd; // the image file, kept open so pages can be compared with / remapped from it
+extern ::mi_heap_s* freshHeap; // where this process allocates after a restore (null before one, or if the general path was used)
 extern off_t imageBaseOff; // where the image starts inside imageFd (non-zero when it is embedded in the executable)
 ssize_t ipread(int fd, void* buf, size_t n, off_t off);
 void recleanFrozenPages(JSC::VM&);

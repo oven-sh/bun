@@ -35,17 +35,18 @@ public:
 
 // Drop `ticket` from whichever pending set holds it. Caller holds m_lock; the
 // event-loop ref is balanced after the caller releases the lock.
+//
+// Must stay O(1): ~VM -> WaiterListManager::unregister reaches this once per
+// still-pending Atomics.waitAsync ticket while holding the process-global
+// waiter-lists lock, so a per-call scan makes a worker exiting with N waiters
+// O(N^2) and stalls Atomics.notify/waitAsync on every other thread for the
+// whole window.
 static bool dropPendingTicketLocked(Bun::JSCTaskScheduler& scheduler, Ticket* ticket) WTF_REQUIRES_LOCK(scheduler.m_lock)
 {
-    bool isKeepingEventLoopAlive = scheduler.m_pendingTicketsKeepingEventLoopAlive.removeIf([ticket](auto& pendingTicket) {
-        return pendingTicket.key.ptr() == ticket;
-    });
+    bool isKeepingEventLoopAlive = scheduler.m_pendingTicketsKeepingEventLoopAlive.remove(ticket);
     // -- At this point, ticket may be an invalid pointer.
-    if (!isKeepingEventLoopAlive) {
-        scheduler.m_pendingTicketsOther.removeIf([ticket](auto& pendingTicket) {
-            return pendingTicket.key.ptr() == ticket;
-        });
-    }
+    if (!isKeepingEventLoopAlive)
+        scheduler.m_pendingTicketsOther.remove(ticket);
     return isKeepingEventLoopAlive;
 }
 

@@ -3254,10 +3254,11 @@ extern "C" void Bun__Process__recreateStdioAfterSnapshotRestore(JSC::JSGlobalObj
                 wasTerminal = false;
             }
         }
-        if (wasTerminal && bun_stdio_tty[stream.fd]) {
+        // stdin is never kept: a readable stream carries the build process's reader/poll state, a writable one carries nothing.
+        if (stream.fd != 0 && wasTerminal && bun_stdio_tty[stream.fd]) {
 #if !OS(WINDOWS)
             struct winsize size;
-            if (stream.fd != 0 && ioctl(stream.fd, TIOCGWINSZ, &size) == 0) {
+            if (ioctl(stream.fd, TIOCGWINSZ, &size) == 0) {
                 auto* object = existing.getObject();
                 object->putDirect(vm, Identifier::fromString(vm, "columns"_s), jsNumber(size.ws_col));
                 object->putDirect(vm, Identifier::fromString(vm, "rows"_s), jsNumber(size.ws_row));

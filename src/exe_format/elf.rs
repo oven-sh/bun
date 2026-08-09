@@ -220,7 +220,6 @@ impl ElfFile {
         let trailer_size: u64 = size_of::<u64>() as u64;
         let new_content_size: u64 = header_size + payload.len() as u64 + trailer_size;
         let aligned_new_size = align_up(new_content_size, page_size);
-        let compiled_slot_vaddr = self.compiled_slot_vaddr(&bun_section);
 
         // Extend the writable PT_LOAD that contains `.bun` (matched by vaddr,
         // not "first writable": patchelf'd templates have an extra writable
@@ -255,6 +254,20 @@ impl ElfFile {
         let Some(rw_index) = rw_phdr_index else {
             return Err(ElfError::NoWritableLoadSegment);
         };
+
+        let previous_block = self.previous_block_slot(&bun_section, &rw_phdr);
+        let compiled_slot_vaddr = previous_block.unwrap_or(bun_section.vaddr);
+        if previous_block.is_some() && new_content_size <= bun_section.size {
+            // Rewriting our own earlier output with something that fits: overwrite the block in place (the slot already
+            // points at it; the trailer stays at the end of the block's capacity).
+            let start = usize::try_from(bun_section.file_offset).expect("int cast");
+            let cap = usize::try_from(bun_section.size).expect("int cast");
+            write_u64_le(&mut self.data[start..][..8], payload.len() as u64);
+            self.data[start + 8..][..payload.len()].copy_from_slice(payload);
+            self.data[start + 8 + payload.len()..start + cap - 8].fill(0);
+            write_u64_le(&mut self.data[start + cap - 8..][..8], compiled_slot_vaddr);
+            return Ok(());
+        }
 
         // Place the new data at a page-aligned virtual address past every
         // existing mapping. page_size is ≥ 128 so this also guarantees the
@@ -360,7 +373,7 @@ impl ElfFile {
 
         // The block's trailer: where the `BUN_COMPILED` slot is, for the next rewrite of this file.
         write_u64_le(
-            &mut self.data[usize::try_from(new_file_offset + header_size + payload.len() as u64)
+            &mut self.data[usize::try_from(new_file_offset + aligned_new_size - trailer_size)
                 .expect("int cast")..][..8],
             compiled_slot_vaddr,
         );
@@ -396,7 +409,7 @@ impl ElfFile {
 
             if i == bun_section.section_index as usize {
                 shdr.sh_offset = new_file_offset;
-                shdr.sh_size = new_content_size;
+                shdr.sh_size = aligned_new_size;
                 shdr.sh_addr = new_vaddr;
             } else if shdr.sh_type != SHT_NOBITS
                 && shdr.sh_offset >= move_src_start
@@ -440,25 +453,26 @@ impl ElfFile {
 
     // --- Internal helpers ---
 
-    /// The `BUN_COMPILED` slot: the `.bun` header's own address in a clean template, or the trailer of the `[size][payload][slot]` block it describes in a file we wrote before.
-    fn compiled_slot_vaddr(&self, bun_section: &BunSectionInfo) -> u64 {
+    /// If the `.bun` header describes a block this function wrote earlier, the `BUN_COMPILED` slot recorded in its
+    /// trailer (validated: inside the RW segment and currently pointing at this block); `None` for a clean template.
+    fn previous_block_slot(
+        &self,
+        bun_section: &BunSectionInfo,
+        rw_phdr: &Elf64_Phdr,
+    ) -> Option<u64> {
         let word = size_of::<u64>() as u64;
-        let off = bun_section.file_offset;
-        let Ok(off_usz) = usize::try_from(off) else {
-            return bun_section.vaddr;
-        };
-        if bun_section.size < 2 * word
-            || off_usz + usize::try_from(bun_section.size).unwrap_or(usize::MAX) > self.data.len()
-        {
-            return bun_section.vaddr;
+        if bun_section.size < 2 * word {
+            return None;
         }
-        let payload_len = read_u64_le(&self.data[off_usz..][..8]);
-        if payload_len.checked_add(2 * word) != Some(bun_section.size) {
-            return bun_section.vaddr;
+        let trailer_off =
+            usize::try_from(bun_section.file_offset + bun_section.size - word).ok()?;
+        let slot_vaddr = read_u64_le(self.data.get(trailer_off..trailer_off + 8)?);
+        if slot_vaddr < rw_phdr.p_vaddr || slot_vaddr + word > rw_phdr.p_vaddr + rw_phdr.p_filesz {
+            return None;
         }
-        read_u64_le(
-            &self.data[off_usz + usize::try_from(word + payload_len).expect("int cast")..][..8],
-        )
+        let slot_off = usize::try_from(rw_phdr.p_offset + (slot_vaddr - rw_phdr.p_vaddr)).ok()?;
+        (read_u64_le(self.data.get(slot_off..slot_off + 8)?) == bun_section.vaddr)
+            .then_some(slot_vaddr)
     }
 
     /// Returns the file offset and section index of the `.bun` section.

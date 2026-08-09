@@ -97,10 +97,7 @@ pub trait ReadFileCompletion {
 }
 
 impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
-    unsafe fn run(
-        handler: *mut Self,
-        maybe_bytes: ReadFileResultType,
-    ) -> Result<(), jsc::Stopped> {
+    unsafe fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> Result<(), jsc::Stopped> {
         // SAFETY: handler was heap-allocated by doReadFile(); we take ownership here.
         let mut handler = unsafe { bun_core::heap::take(handler) };
         // `Strong::swap()` ties the returned `&mut JSPromise` to

@@ -119,8 +119,8 @@ pub use bun_jsc::webcore_types::{
 ///    keeps its window's end across structuredClone/postMessage
 const SERIALIZATION_VERSION: u8 = 4;
 
-pub use bun_jsc::generated::JSBlob as js;
 use bun_jsc::Stopped;
+pub use bun_jsc::generated::JSBlob as js;
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -218,10 +218,8 @@ pub trait BlobExt {
     fn get_text_clone(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::Stopped>;
     fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_json_share(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::Stopped>;
-    fn get_array_buffer_clone(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::Stopped>;
+    fn get_array_buffer_clone(&self, global_this: &JSGlobalObject)
+    -> Result<JSValue, jsc::Stopped>;
     fn get_array_buffer(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_bytes_clone(&self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::Stopped>;
     fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
@@ -3790,14 +3788,14 @@ impl BlobExt for Blob {
 // JSC-integration methods (host fns, to_js/from_js, S3/file I/O state machines)
 // ──────────────────────────────────────────────────────────────────────────
 
+use crate::api::archive::Archive;
 use crate::image::Image;
 use crate::node;
-use bun_core::string_joiner::StringJoiner;
-use bun_jsc::SysErrorJsc as _;
-use crate::api::archive::Archive;
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::simple_request::S3UploadResult;
 use crate::webcore::s3_file as S3File;
+use bun_core::string_joiner::StringJoiner;
+use bun_jsc::SysErrorJsc as _;
 // The `write_file` module name coexists with `pub fn write_file` below (module
 // vs value namespace); alias the module so the call sites read unambiguously.
 use self::write_file as write_file_mod;

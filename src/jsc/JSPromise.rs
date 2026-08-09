@@ -130,11 +130,7 @@ impl Strong {
     }
 
     /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn resolve_task(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JSValue,
-    ) -> Result<(), Stopped> {
+    pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), Stopped> {
         let _guard = VirtualMachine::get().enter_event_loop_scope();
         self.resolve(global, val)
     }
@@ -365,8 +361,7 @@ impl JSPromise {
             return self.reject(global, Err(JsError::Thrown));
         }
         // `[[ZIG_EXPORT(check_slow)]]`
-        crate::cpp::JSC__JSPromise__resolve(self, global, value)
-            .map_err(|_| Stopped)
+        crate::cpp::JSC__JSPromise__resolve(self, global, value).map_err(|_| Stopped)
     }
 
     /// See [`Strong::settle`].
@@ -417,8 +412,7 @@ impl JSPromise {
         };
 
         // `[[ZIG_EXPORT(check_slow)]]`
-        crate::cpp::JSC__JSPromise__reject(self, global, err)
-            .map_err(|_| Stopped)
+        crate::cpp::JSC__JSPromise__reject(self, global, err).map_err(|_| Stopped)
     }
 
     pub fn reject_as_handled(
@@ -431,8 +425,7 @@ impl JSPromise {
             return self.reject(global, Ok(value));
         }
         // `[[ZIG_EXPORT(check_slow)]]`
-        crate::cpp::JSC__JSPromise__rejectAsHandled(self, global, value)
-            .map_err(|_| Stopped)
+        crate::cpp::JSC__JSPromise__rejectAsHandled(self, global, value).map_err(|_| Stopped)
     }
 
     /// Like `reject` but first attaches async stack frames from this promise's

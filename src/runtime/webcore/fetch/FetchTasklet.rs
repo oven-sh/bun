@@ -18,8 +18,8 @@ use bun_http::{
 use bun_io::KeepAlive;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{Stopped, 
-    self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
+use bun_jsc::{
+    self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Stopped, StringJsc, StrongOptional,
 };
 use bun_sys::FdExt;
 use bun_threading::Mutex;

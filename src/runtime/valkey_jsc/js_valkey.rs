@@ -8,9 +8,9 @@ use bun_core::{String as BunString, strings};
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{Stopped, 
+use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell,
-    JsRef, JsResult,
+    JsRef, JsResult, Stopped,
 };
 use bun_ptr::{AsCtxPtr, BackRef, ScopedRef};
 use bun_uws as uws;
@@ -1213,10 +1213,7 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client connects
-    pub(crate) fn on_valkey_connect(
-        &self,
-        value: &mut protocol::RESPValue,
-    ) -> Result<(), Stopped> {
+    pub(crate) fn on_valkey_connect(&self, value: &mut protocol::RESPValue) -> Result<(), Stopped> {
         debug_assert!(self.client.get().status == valkey::Status::Connected);
         // we should always have a strong reference to the object here
         debug_assert!(self.this_value.get().is_strong());
@@ -1403,11 +1400,7 @@ impl JSValkeyClient {
 
     // Callback for when Valkey client times out
 
-    pub(crate) fn client_fail(
-        &self,
-        message: &[u8],
-        err: protocol::RedisError,
-    ) -> JsResult<()> {
+    pub(crate) fn client_fail(&self, message: &[u8], err: protocol::RedisError) -> JsResult<()> {
         self.client_mut().fail(message, err)
     }
 
@@ -1749,10 +1742,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub(crate) fn on_open(
-        this: &JSValkeyClient,
-        socket: SocketType<SSL>,
-    ) -> JsResult<()> {
+    pub(crate) fn on_open(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsResult<()> {
         this.client_mut().socket = Self::socket(socket);
         this.client_mut().on_open(Self::socket(socket))
     }
@@ -1894,12 +1884,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub(crate) const ON_HANDSHAKE: Option<
-        fn(
-            &JSValkeyClient,
-            SocketType<SSL>,
-            i32,
-            uws::us_bun_verify_error_t,
-        ) -> JsResult<()>,
+        fn(&JSValkeyClient, SocketType<SSL>, i32, uws::us_bun_verify_error_t) -> JsResult<()>,
     > = if SSL { Some(Self::on_handshake) } else { None };
 
     pub fn on_close(

@@ -13,6 +13,8 @@ Bun reads the following files automatically (listed in order of increasing prece
 - `.env.production`, `.env.development`, `.env.test` (depending on the value of `NODE_ENV`)
 - `.env.local`
 
+In a monorepo using [workspaces](/install/workspaces), the same set of files is also loaded from the workspace root when running from a package subdirectory. Values from the package's own `.env` files take precedence over the root's.
+
 ```ini .env icon="settings"
 FOO=hello
 BAR=world

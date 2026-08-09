@@ -2706,7 +2706,7 @@ describe.concurrent("install summary", () => {
     );
 
     const { out } = await runBunInstall(bunEnv, packageDir);
-    expect(out).toContain("1 package installed");
+    expect(out).toMatch(/\b1 package installed\b/);
   });
 
   test("peer variants of one package count once", async () => {
@@ -2746,6 +2746,6 @@ describe.concurrent("install summary", () => {
     );
 
     const { out } = await runBunInstall(bunEnv, packageDir);
-    expect(out).toContain("3 packages installed");
+    expect(out).toMatch(/\b3 packages installed\b/);
   });
 });

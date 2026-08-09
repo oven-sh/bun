@@ -1682,7 +1682,7 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
                 return true; };
                 mi_heap_visit_blocks(mi_heap_main(), false, visitArea, &areas);
                 if (freshHeap) mi_heap_visit_blocks(freshHeap, false, visitArea, &areas);
-                    static const char* names[5] = { "empty", "<10%", "<25%", "<50%", ">=50%" };
+                static const char* names[5] = { "empty", "<10%", "<25%", "<50%", ">=50%" };
                 fprintf(stderr, "[memdebug] fresh pages by utilization:");
                 for (int b = 0; b < 5; b++)
                     fprintf(stderr, "  %s: %zu pages / %.1f MB", names[b], areas.pages[b], areas.committed[b] / 1048576.0);

@@ -922,8 +922,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // NAPI hands out must point at the storage that survives, or native writes
     // are silently dropped (see issue #37151).
     it("returns a data pointer whose writes are visible through small typed arrays", async () => {
+      // 999/1000 straddle JSC's fastSizeLimit; 2048 is always wasteful mode.
       await Promise.all(
-        [16, 999, 2048].map(async size => {
+        [16, 999, 1000, 2048].map(async size => {
           const output = await checkSameOutput("test_typedarray_info_write_visibility", `[new Uint8Array(${size})]`);
           expect(output).toBe(`length=${size} first=42 last=42`);
         }),
@@ -932,7 +933,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
     it("returns a data pointer at the reported byte offset for small typed arrays", async () => {
       await Promise.all(
-        ["new Uint8Array(0)", "new Uint8Array(64)", "new Int32Array(8)"].map(async expr => {
+        [
+          "new Uint8Array(0)",
+          "new Uint8Array(64)",
+          "new Int32Array(8)",
+          // offset view derived from a small array
+          "new Uint8Array(64).subarray(16)",
+        ].map(async expr => {
           const output = await checkSameOutput("test_typedarray_info_byte_offset", `[${expr}]`);
           expect(output).toEndWith("data_is_arraybuffer_data_plus_byte_offset=true");
         }),

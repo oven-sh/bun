@@ -327,9 +327,8 @@ static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue 
         RETURN_IF_EXCEPTION(scope, false);
         if (size_t byteLength = utf8ByteLengthWithReplacement(string)) {
             size_t oldSize = bytes.size();
-            // tryGrow/tryAppend: UTF-8 expansion can push the total past the estimate that
-            // sized the vector, and growing past the Vector capacity limit must surface as
-            // a catchable out-of-memory error, not a CRASH() in allocateBuffer.
+            // UTF-8 expansion can overshoot the reserve, and Vector CRASH()es past
+            // INT32_MAX capacity; the try-variants keep both catchable.
             if (!bytes.tryGrow(oldSize + byteLength)) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return false;
@@ -721,11 +720,8 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
             return rope.substring(1);
         return rope;
     }
-    // The UTF-8 re-encode below only grows the estimate (binary bytes are exact, string
-    // chunks count UTF-16 code units), so an estimate past the string limit is final.
-    // Throw before touching the Vector: its capacity CRASH()es past INT32_MAX, so an
-    // estimate in [2^31, 2^32) would abort in reserveInitialCapacity before the
-    // exceedsStringLimit() throw below is ever reached.
+    // estimatedLength only undercounts the result (binary sizes are exact, strings count
+    // UTF-16 units), so over the limit is final; Vector CRASH()es past INT32_MAX capacity.
     const double estimatedLength = accumulator.estimatedLength;
     if (estimatedLength > static_cast<double>(WTF::StringImpl::MaxLength)
         || exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {

@@ -271,11 +271,8 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         return rope;
     }
 
-    // The UTF-8 re-encode below only grows the estimate (binary bytes are exact, string
-    // chunks count UTF-16 code units), so an estimate past the string limit is final.
-    // Throw before appending anything: Vector's capacity CRASH()es past INT32_MAX, so a
-    // >2GB accumulation would abort in append before the exceedsStringLimit() throw
-    // below is ever reached.
+    // estimatedLength only undercounts the result (binary sizes are exact, strings count
+    // UTF-16 units), so over the limit is final; Vector CRASH()es past INT32_MAX capacity.
     const double estimatedLength = accumulator.estimatedLength;
     if (estimatedLength > static_cast<double>(WTF::StringImpl::MaxLength)
         || Bun::WebStreams::exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {

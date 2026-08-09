@@ -2290,12 +2290,13 @@ fn get_or_put_resolved_package(
                     let buf = this.lockfile.buffers.string_bytes.as_slice();
                     let npm_group = &version.npm().version;
                     if this.options.link_workspace_packages
-                        && ((workspace_version.is_some()
-                            && npm_group.satisfies(*workspace_version.unwrap(), buf, buf))
-                            // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
-                            // if the workspace doesn't have a version, it can still be used if
-                            // dependency version is wildcard
-                            || (workspace_path.is_some() && npm_group.is_star()))
+                        && dependency::npm_range_accepts_workspace_member(
+                            npm_group,
+                            workspace_version.copied(),
+                            workspace_path.is_some(),
+                            buf,
+                            buf,
+                        )
                     {
                         let Some(root_package) = this.lockfile.root_package() else {
                             break 'resolve_from_workspace;

@@ -586,6 +586,23 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     true
 }
 
+/// Whether an npm range accepts a same-name workspace member. Parse
+/// (`Package::parse_dependency`) and resolution
+/// (`get_or_put_resolved_package`) share this rule; if they disagree,
+/// link-vs-registry depends on which package declares the dependency.
+/// A wildcard accepts any present member, even versionless (#10899) or
+/// with a prerelease version the range does not otherwise satisfy.
+pub(crate) fn npm_range_accepts_workspace_member(
+    range: &Semver::query::Group,
+    workspace_version: Option<Semver::Version>,
+    has_workspace_path: bool,
+    range_buf: &[u8],
+    version_buf: &[u8],
+) -> bool {
+    workspace_version.is_some_and(|v| range.satisfies(v, range_buf, version_buf))
+        || (has_workspace_path && range.is_star())
+}
+
 /// assumes version is valid
 pub fn without_build_tag(version: &[u8]) -> &[u8] {
     if let Some(plus) = strings::index_of_char(version, b'+') {

@@ -1751,13 +1751,14 @@ impl Package<u64> {
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {
-                    // `is_star` mirrors `get_or_put_resolved_package`: a wildcard
-                    // accepts the member even when its version is a prerelease
-                    // the range does not satisfy.
-                    let npm_version = &dependency_version.npm().version;
-                    let satisfies =
-                        npm_version.satisfies(workspace_version, buf, buf) || npm_version.is_star();
-                    if pm.options.link_workspace_packages && satisfies {
+                    let accepts = dependency::npm_range_accepts_workspace_member(
+                        &dependency_version.npm().version,
+                        Some(workspace_version),
+                        true,
+                        buf,
+                        buf,
+                    );
+                    if pm.options.link_workspace_packages && accepts {
                         // `String::sliced` takes `&'a self`; bind the unwrapped
                         // value so the borrow outlives the parse call.
                         let wp = workspace_path.unwrap();

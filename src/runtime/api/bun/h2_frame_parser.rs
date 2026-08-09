@@ -5354,12 +5354,10 @@ impl H2FrameParser {
         if global.has_exception() {
             return Some(stream);
         }
-        // The callback runs arbitrary JS while `stream` is held (here and by every caller):
-        // arm the dispatch guard so a reentrant read() cannot drain
-        // pending_engine_stream_closes at depth 0 and free the box under us.
-        // Deliberately not enter_stream_dispatch: no `&mut Stream` may live across the
-        // call — the streamStart handler's refused-stream path re-enters rst_stream,
-        // which forms its own `&mut` to this stream.
+        // The callback runs arbitrary JS while `stream` is held (here and by every
+        // caller): arm the dispatch guard so a reentrant read() cannot free the box at
+        // depth 0. Bare guard, not enter_stream_dispatch — rst_stream reached from the
+        // callback takes its own `&mut` to this stream, so ours must wait for the return.
         let _dispatch = self.enter_dispatch();
         match callback.call(
             &global,
@@ -5370,9 +5368,8 @@ impl H2FrameParser {
             Ok(returned) => {
                 // streamStart returns the JS stream it created; storing it here saves the
                 // setStreamContext host call the JS layer used to make per stream.
-                // Skip if the callback closed the stream (free_resources queued its id and
-                // dropped its sctx root): re-rooting it would pin the dead JS stream until
-                // the session dies.
+                // Skipped when the callback closed the stream: free_resources dropped its
+                // sctx root, and re-rooting would pin the dead JS stream until session death.
                 if returned.is_object()
                     && !self
                         .pending_engine_stream_closes
@@ -5382,10 +5379,7 @@ impl H2FrameParser {
                     self.sctx.with_mut(|m| {
                         m.insert(stream_identifier, StrongOptional::create(returned, &global));
                     });
-                    // SAFETY: stream is *mut Stream from self.streams; valid while the map
-                    // entry exists — the armed dispatch guard deferred the only free path
-                    // (rewrite_read's pending close drain) while the callback ran.
-                    unsafe { (*stream).set_context(returned, &global) };
+                    self.enter_stream_dispatch(stream).set_context(returned, &global);
                 }
             }
         }

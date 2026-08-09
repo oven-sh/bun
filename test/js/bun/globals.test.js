@@ -257,3 +257,32 @@ describe("globalThis.gc", () => {
     });
   });
 });
+
+it("accessing Bun.SQL while unwinding from stack overflow does not crash", async () => {
+  // Touching a lazily-initialized Bun property when there is almost no stack
+  // left makes its module require throw mid-reification. The process must
+  // surface that as a catchable error, not abort.
+  const src = `
+    Error.stackTraceLimit = 0;
+    let probes = 200;
+    function F() {
+      if (!new.target) throw "must call with new";
+      try { new F(); } catch {}
+      if (probes > 0) {
+        probes--;
+        try { Bun.SQL; } catch {}
+      }
+    }
+    new F();
+    Bun.SQL;
+    console.log("survived");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("survived\n");
+  expect(exitCode).toBe(0);
+});

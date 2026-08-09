@@ -1039,8 +1039,7 @@ impl<'a> PackageInstall<'a> {
         };
         walker_.resolve_unknown_entry_types = true;
 
-        fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<u32> {
-            let mut real_file_count: u32 = 0;
+        fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<()> {
             let mut stackpath = [0u8; path::MAX_PATH_BYTES];
             while let Some(entry) = walker.next()? {
                 match entry.kind {
@@ -1079,14 +1078,12 @@ impl<'a> PackageInstall<'a> {
                                 _ => return Err(crate::Error::Unexpected),
                             },
                         }
-
-                        real_file_count += 1;
                     }
                     _ => {}
                 }
             }
 
-            Ok(real_file_count)
+            Ok(())
         }
 
         let subdir = match destination_dir.make_open_path(
@@ -1332,11 +1329,7 @@ impl<'a> PackageInstall<'a> {
             head1: WinSlice<'_>,
             to_copy_into2_offset: WinOffset,
             head2: WinSlice<'_>,
-        ) -> crate::Result<u32> {
-            #[cfg(not(windows))]
-            let mut real_file_count: u32 = 0;
-            #[cfg(windows)]
-            let real_file_count: u32 = 0;
+        ) -> crate::Result<()> {
             #[cfg(not(windows))]
             let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
             #[cfg(not(windows))]
@@ -1438,7 +1431,6 @@ impl<'a> PackageInstall<'a> {
                     if entry.kind != EntryKind::File {
                         continue;
                     }
-                    real_file_count += 1;
 
                     let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)?;
                     let _close_in = sys::CloseOnDrop::new(in_file);
@@ -1524,7 +1516,7 @@ impl<'a> PackageInstall<'a> {
                 }
             }
 
-            Ok(real_file_count)
+            Ok(())
         }
 
         #[cfg(windows)]
@@ -1584,8 +1576,7 @@ impl<'a> PackageInstall<'a> {
             head1: WinSlice<'_>,
             to_copy_into2_offset: WinOffset,
             head2: WinSlice<'_>,
-        ) -> crate::Result<u32> {
-            let mut real_file_count: u32 = 0;
+        ) -> crate::Result<()> {
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
             #[cfg(windows)]
@@ -1654,8 +1645,6 @@ impl<'a> PackageInstall<'a> {
                                     return Err(map_linkat_err(err));
                                 }
                             }
-
-                            real_file_count += 1;
                         }
                         _ => {}
                     }
@@ -1693,7 +1682,6 @@ impl<'a> PackageInstall<'a> {
                             entry.basename.as_slice(),
                         ));
                     }
-                    real_file_count += 1;
                 }
             }
 
@@ -1713,7 +1701,7 @@ impl<'a> PackageInstall<'a> {
                 }
             }
 
-            Ok(real_file_count)
+            Ok(())
         }
 
         #[cfg(windows)]
@@ -1804,11 +1792,7 @@ impl<'a> PackageInstall<'a> {
             head1: WinSlice<'_>,
             to_copy_into2_offset: usize,
             head2: &mut [Head2Char],
-        ) -> crate::Result<u32> {
-            #[cfg(not(windows))]
-            let mut real_file_count: u32 = 0;
-            #[cfg(windows)]
-            let real_file_count: u32 = 0;
+        ) -> crate::Result<()> {
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1);
             while let Some(entry) = walker.next()? {
@@ -1839,8 +1823,6 @@ impl<'a> PackageInstall<'a> {
                                 let _ = sys::unlinkat(destination_dir, entry.path);
                                 sys::symlinkat(entry.basename, destination_dir.fd(), entry.path)?;
                             }
-
-                            real_file_count += 1;
                         }
                         _ => {}
                     }
@@ -1920,7 +1902,7 @@ impl<'a> PackageInstall<'a> {
                 }
             }
 
-            Ok(real_file_count)
+            Ok(())
         }
 
         #[cfg(windows)]

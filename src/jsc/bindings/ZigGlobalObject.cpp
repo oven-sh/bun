@@ -2348,8 +2348,7 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSFunction* inspect = uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction();
 
             if (!scope.exception()) [[likely]] {
-                // stylizeWithColor reads inspect.styles at call time; the fallback stub
-                // installed when node:util fails to load has none, so stay colorless then.
+                // stylizeWithColor reads inspect.styles at call time; the fallback stub has none.
                 JSValue styles = inspect->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "styles"_s));
                 if (!scope.exception() && styles && styles.isObject()) [[likely]] {
                     JSC::MarkedArgumentBuffer args;

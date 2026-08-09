@@ -584,7 +584,7 @@ pub(crate) fn format_utf16_type_with_path_options(
             }
             write_bytes(writer, ptr)?;
         }
-        slice = &slice[result.read as usize..];
+        slice = &slice[result.read..];
     }
     Ok(())
 }

@@ -416,9 +416,10 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
         if (!string.isNull()) {
             if (measuredByteLength) {
                 size_t written = writeUTF8(string, bytes.subspan(offset, measuredByteLength));
-                // The sizer and writer must agree; never expose unwritten (uninitialized) bytes.
-                ASSERT(written == measuredByteLength);
-                offset += written;
+                // The sizer/writer pair agrees by contract; the writer reports its count through
+                // a u32 (0 for an exactly-2^32-byte string), so advance by the measured size.
+                ASSERT_UNUSED(written, written == measuredByteLength || measuredByteLength == (1ull << 32));
+                offset += measuredByteLength;
             }
             continue;
         }
@@ -431,8 +432,8 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
             if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
                 span = impl->span();
         }
-        // Clamp to the measured size: a chunk grown since the sizing pass (a growable
-        // SharedArrayBuffer, from another thread) must not overrun the buffer.
+        // Clamp to the measured size: a chunk grown since the sizing pass (getter reentry
+        // during getIndex above, or a cross-thread SharedArrayBuffer grow) must not overrun.
         size_t copyLength = std::min(span.size(), measuredByteLength);
         if (copyLength)
             memcpy(bytes.data() + offset, span.data(), copyLength);

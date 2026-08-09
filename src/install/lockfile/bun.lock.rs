@@ -3165,9 +3165,7 @@ fn map_dep_to_pkg(
                 let npm = dep.version.npm();
                 let parse_would_rewrite = workspace_versions
                     .get(&StringBuilder::string_hash(npm.name.slice(string_buf)))
-                    .is_some_and(|version| {
-                        npm.version.satisfies(*version, string_buf, string_buf)
-                    });
+                    .is_some_and(|version| npm.version.satisfies(*version, string_buf, string_buf));
                 if !parse_would_rewrite {
                     return;
                 }

@@ -2922,7 +2922,10 @@ mod posix_impl {
             );
             Ok(())
         }
-        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+        #[cfg(all(
+            not(any(target_os = "macos", target_os = "freebsd")),
+            not(target_env = "ohos")
+        ))]
         {
             const SYS_FCHMODAT2: libc::c_long = 452;
             loop {
@@ -2948,6 +2951,20 @@ mod posix_impl {
                 }
                 return Ok(());
             }
+        }
+        // OHOS: the HongMeng kernel has no fchmodat2 (syscall 452 is
+        // seccomp-intercepted → SIGSYS) and fchmodat rejects
+        // AT_SYMLINK_NOFOLLOW (ENOTSUP on Linux semantics), so the
+        // no-follow path always fails. Every in-tree lchmod caller
+        // (bin-link chmod, node:fs lchmod) operates on a regular file
+        // target where following the symlink is the correct semantic —
+        // fall through to plain chmod.
+        #[cfg(all(
+            not(any(target_os = "macos", target_os = "freebsd")),
+            target_env = "ohos"
+        ))]
+        {
+            chmod(path, mode)
         }
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {

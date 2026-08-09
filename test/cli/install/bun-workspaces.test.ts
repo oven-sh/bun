@@ -2138,6 +2138,57 @@ test.concurrent("override still applies when the range does not link the member"
   });
 });
 
+test.concurrent("override for a workspace member's name does not apply to a member's peer dependency", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        overrides: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+    write(
+      join(packageDir, "packages", "bar", "package.json"),
+      JSON.stringify({ name: "bar", version: "1.0.0", peerDependencies: { "no-deps": "^1.0.0" } }),
+    ),
+  ]);
+
+  let { exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  let stderrText = await stderr.text();
+  expect(stderrText).not.toContain("dependency loop");
+  expect(await exited).toBe(0);
+  // the peer binds to the member, not an overridden registry copy
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+  expect(await exists(join(packageDir, "node_modules", "bar", "node_modules", "no-deps"))).toBe(false);
+
+  // a reinstall from the written lockfile binds the same way and does not re-save
+  ({ exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  stderrText = await stderr.text();
+  expect(stderrText).not.toContain("Saved lockfile");
+  expect(await exited).toBe(0);
+});
+
 // A ranged `workspace:` dependency a present member cannot satisfy is rejected while
 // parsing package.json, before overrides are consulted, with or without this fix. The
 // override neither rescues it nor turns it into a resolution conflict.

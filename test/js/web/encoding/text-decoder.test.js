@@ -9,6 +9,7 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import os from "node:os";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -963,8 +964,9 @@ describe("TextDecoder.decode above the maximum string length", () => {
   // decode() used to return "" silently instead of throwing. The input is
   // never written (untouched zero pages) and the throw happens before the
   // output string is allocated, so this runs in about a second even under
-  // debug + ASAN.
-  it("throws ERR_STRING_TOO_LONG for a 2**31 byte ASCII input", async () => {
+  // debug + ASAN. Skipped on small machines where the 2 GiB reservation
+  // itself can fail (same gate as blob-oom.test.ts and fs-oom.test.ts).
+  it.skipIf(os.totalmem() < 10 * 1024 ** 3)("throws ERR_STRING_TOO_LONG for a 2**31 byte ASCII input", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script("2 ** 31")],
       env: bunEnv,

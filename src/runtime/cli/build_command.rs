@@ -1495,9 +1495,7 @@ pub(crate) fn collect_compile_assets(
     Ok(())
 }
 
-/// The snapshot step: run `exe` once so it writes its snapshot, then embed that into `exe` in place. Works on an executable built
-/// just now (`--compile --snapshot`) or earlier (`--snapshot --outfile exe`, e.g. after cross-compiling elsewhere);
-/// re-running it replaces the previous snapshot. `exe` is resolved against `dir` when relative.
+/// The snapshot step: run `exe` (in `dir`) once so it writes its snapshot, then embed that in place; re-running replaces the previous snapshot.
 pub(crate) fn run_snapshot_step(
     dir: bun_sys::Fd,
     exe: &[u8],
@@ -1532,8 +1530,7 @@ pub(crate) fn run_snapshot_step(
             Ok(_) => None,
         }
     };
-    // The executable itself is told to take its snapshot (and how) through a marking in its payload; nothing about the
-    // run is passed through the environment or arguments, which belong to the app.
+    // The executable learns that (and how) it should take its snapshot from a marking in its payload; its env and argv belong to the app.
     let mut marking = Flags::TAKE_SNAPSHOT;
     if mode == CompileSnapshot::Manual {
         marking |= Flags::SNAPSHOT_MANUAL;
@@ -1563,9 +1560,7 @@ pub(crate) fn run_snapshot_step(
         // Whatever happened, what is left on disk must be an ordinary executable again.
         let _ = set_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
         let _ = bun_sys::unlink(&snapshot_z);
-        // The runtime exits 70 when the app would not become quiet, having printed what kept it busy; anything else
-        // non-zero is the app itself failing. Either way the flag asked for a snapshot and there is none: the build fails,
-        // and the executable is left as built.
+        // 70 = the runtime gave up waiting for the app to become quiet (it printed why); anything else non-zero is the app failing. Either way there is no snapshot, so the build fails.
         const NOT_QUIET: i32 = 70;
         return Err(match status {
             Err(e) => format!("could not run {}: {:?}", bstr::BStr::new(&exe_abs), e),

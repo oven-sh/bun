@@ -1,6 +1,4 @@
-//! `Bun.startupSnapshot`: the app-facing side of `bun build --snapshot`. `take()` marks the point at which a manual-mode
-//! build takes the snapshot; the rest lets an app ask which kind of process it is in. `process.on('restore')` is the
-//! hook that runs in a resumed process.
+//! `Bun.startupSnapshot`, the app-facing side of `bun build --snapshot`; `process.on('restore')` is the hook that runs in a resumed process.
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 
@@ -17,14 +15,11 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     )
 }
 
-/// `Bun.startupSnapshot.take({ timers, envGate })`: in the run that takes the snapshot, the app has finished starting up —
-/// leave JS via an uncatchable termination and write the snapshot from the top of the event loop, then exit. Returns at once
-/// in every other process, so it can be called unconditionally.
+/// `take({ timers, envGate })`: in the snapshot run, unwind JS with an uncatchable termination and write the snapshot from the top of the event loop; a no-op everywhere else.
 #[bun_jsc::host_fn]
 fn take(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [opts] = frame.arguments_as_array::<1>();
-    // Only a process that `bun build --snapshot` started to take the snapshot does anything here, so apps can call this
-    // unconditionally at the point in their startup they consider "ready".
+    // Apps call this unconditionally at their "ready" point; only the run `bun build --snapshot` started acts on it.
     if !bun_core::snapshot::building() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -47,8 +42,7 @@ fn take(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             };
             bun_core::snapshot::set_snapshot_timers(mode);
         }
-        // envGate: names of environment variables the snapshotted boot depended on. The snapshot records their values (or
-        // absence) at build time and is only restored by processes whose environment agrees; anything else boots normally.
+        // envGate: variables the snapshotted boot depended on; their build-time values travel with the snapshot and a launch that differs boots normally.
         if let Some(names) = opts.get(global, "envGate")? {
             if !names.is_undefined_or_null() {
                 let mut it = names.array_iterator(global)?;
@@ -89,8 +83,7 @@ unsafe extern "C" {
     safe fn Bun__snapshotSetEnvGate(names: *const u8, len: usize);
 }
 
-/// `Bun.startupSnapshot.reclean()`: in a process restored from a snapshot, hand pages whose contents drifted back to the
-/// snapshot's bytes (transient writes: locks, refcounts) back to the clean file mapping. Cheap (~10ms); call when idle.
+/// `reclean()`: in a restored process, pages whose bytes drifted back to the snapshot's go back to the clean file mapping (~10ms; call when idle).
 #[bun_jsc::host_fn]
 fn reclean(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     if bun_core::snapshot::restored() {
@@ -115,9 +108,7 @@ fn epoch(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::js_number(bun_core::snapshot::epoch() as f64))
 }
 
-/// `Bun.startupSnapshot.main(fn)`: the program itself. Called right away in an ordinary launch; kept aside in the run that
-/// takes the snapshot (so the snapshot holds the loaded program, not a program that has run); called after `'restore'` in
-/// a launch that resumes from the snapshot, with that launch's argv, cwd, environment and stdio.
+/// `main(fn)`: run now in an ordinary launch; kept aside (not run) in the snapshot run; run after `'restore'` in a resumed launch, with that launch's argv/cwd/env/stdio.
 #[bun_jsc::host_fn]
 fn main(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [callback] = frame.arguments_as_array::<1>();

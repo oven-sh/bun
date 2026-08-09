@@ -209,10 +209,7 @@ impl ElfFile {
     /// `.got.plt` come after it, and expanding in-place would invalidate their
     /// absolute virtual addresses.
     ///
-    /// The same function also re-injects into an executable produced by an earlier call (`bun build --snapshot` rewrites
-    /// the payload of an existing executable). The `.bun` header of such a file describes the appended block, not the
-    /// `BUN_COMPILED` slot the runtime reads, so every block ends with the slot's vaddr; the new block is appended after
-    /// the old one, which stays behind as dead file space, and the slot is repointed.
+    /// Re-injecting into our own earlier output works too: every block ends with the `BUN_COMPILED` slot's vaddr, so a rewrite appends a new block (the old one becomes dead space) and repoints the slot.
     pub fn write_bun_section(&mut self, payload: &[u8]) -> Result<(), ElfError> {
         let ehdr = read_ehdr(&self.data);
         let bun_section = self.find_bun_section(ehdr)?;
@@ -368,10 +365,7 @@ impl ElfFile {
             compiled_slot_vaddr,
         );
 
-        // Write the vaddr of the appended data into the `BUN_COMPILED` slot (the original .bun section's first word).
-        // At runtime, BUN_COMPILED.size is this vaddr (always non-zero), which the runtime dereferences as a pointer;
-        // non-standalone binaries have BUN_COMPILED.size = 0, meaning "no data". The slot is inside the RW segment at a
-        // fixed distance from its start, in this file and in every rewrite of it.
+        // The runtime reads BUN_COMPILED.size as the payload's vaddr (0 = no payload); the slot sits at a fixed offset into the RW segment in every rewrite of this file.
         let compiled_slot_offset = rw_phdr.p_offset + (compiled_slot_vaddr - rw_phdr.p_vaddr);
         write_u64_le(
             &mut self.data[usize::try_from(compiled_slot_offset).expect("int cast")..][..8],
@@ -446,9 +440,7 @@ impl ElfFile {
 
     // --- Internal helpers ---
 
-    /// vaddr of the `BUN_COMPILED` slot. In a clean template the `.bun` header describes the original section, whose
-    /// first word is the slot; in a file this function already wrote, it describes an appended `[size][payload][slot]`
-    /// block, recognizable by its size arithmetic, and the slot's vaddr is the block's trailer.
+    /// The `BUN_COMPILED` slot: the `.bun` header's own address in a clean template, or the trailer of the `[size][payload][slot]` block it describes in a file we wrote before.
     fn compiled_slot_vaddr(&self, bun_section: &BunSectionInfo) -> u64 {
         let word = size_of::<u64>() as u64;
         let off = bun_section.file_offset;

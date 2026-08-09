@@ -57,9 +57,7 @@ impl SnapshotOnce {
     }
 }
 
-/// A lazily computed value derived from this process's launch context (argv, environment, cwd, uid, terminal…).
-/// It is recomputed after a snapshot restore: the value in the snapshot belongs to the process that built it.
-/// Use this — not `Once`/`OnceLock`/`static mut` — for anything read from the OS at startup and cached.
+/// A cached value derived from the launch context (argv, env, cwd, uid, terminal…), recomputed after a restore; use it instead of `Once`/`OnceLock` for anything read from the OS and cached.
 pub struct ProcessDerived<T: 'static> {
     epoch_plus_one: AtomicU32,
     lock: std::sync::Mutex<()>,
@@ -73,8 +71,7 @@ impl<T: 'static> ProcessDerived<T> {
             ptr: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
         }
     }
-    /// The value for the current process; `init` runs on first use and again on first use after each restore.
-    /// Previous values are leaked, never dropped (references handed out earlier stay valid).
+    /// The current process's value: `init` runs on first use after each restore; earlier values are leaked so references stay valid.
     pub fn get(&'static self, init: impl FnOnce() -> T) -> &'static T {
         let want = epoch() + 1;
         if self.epoch_plus_one.load(Ordering::Acquire) != want {
@@ -94,10 +91,7 @@ impl<T: 'static> ProcessDerived<T> {
     }
 }
 
-/// What the process building a snapshot may touch on the machine it is built on. Network use is refused either way: its
-/// answers would be frozen into every launch. `Local` (BUN_SNAPSHOT_IO=local) lets the app read its files, run helpers, bind
-/// local sockets and resolve names — each use is recorded and reported when the snapshot is written, so what got baked in
-/// can be audited.
+/// What the snapshot run may touch on the build machine (`--snapshot-io`); every allowed use is recorded and reported when the snapshot is written.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum IoPolicy {
     Strict,
@@ -134,8 +128,7 @@ pub fn note_local_io(kind: &'static str, site: Vec<u8>) {
     }
 }
 static STDIO_NOTES: std::sync::Mutex<Vec<(i32, Vec<u8>)>> = std::sync::Mutex::new(Vec::new());
-/// While the snapshot is being taken: `process.stdin/stdout/stderr` was created. The stream is re-created at restore, but
-/// whatever the app derived from it before the snapshot (isTTY, color support) describes the build's descriptors.
+/// A `process.std*` stream was created during the snapshot run: whatever the app derived from it (isTTY, colors) describes the build's descriptors.
 pub fn note_stdio_stream(fd: i32, site: Vec<u8>) {
     STDIO_NOTES
         .lock()
@@ -164,8 +157,7 @@ pub fn snapshot_requested() -> bool {
     SNAPSHOT_REQUESTED.load(Ordering::Acquire) != 0
 }
 static SNAPSHOT_IN_PROGRESS: AtomicU32 = AtomicU32::new(0);
-/// Set once the runtime has started draining the process for the snapshot; a `Bun.startupSnapshot.take()` call from then on only
-/// contributes its options.
+/// Set once the runtime is draining the process for the snapshot; later `take()` calls only contribute their options.
 pub fn set_snapshot_in_progress() {
     SNAPSHOT_IN_PROGRESS.store(1, Ordering::Release);
 }

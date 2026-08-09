@@ -622,8 +622,7 @@ bitflags::bitflags! {
         const DISABLE_AUTOLOAD_BUNFIG       = 1 << 1;
         const DISABLE_AUTOLOAD_TSCONFIG     = 1 << 2;
         const DISABLE_AUTOLOAD_PACKAGE_JSON = 1 << 3;
-        /// `bun build --snapshot` stamps these into the executable it is about to run, so that run takes the snapshot (to
-        /// `<own path>.snapshot`) instead of starting the app for real; embedding the result clears them again.
+        /// Stamped by `bun build --snapshot` into the executable it is about to run: that run writes `<own path>.snapshot` instead of starting the app; embedding clears them.
         const TAKE_SNAPSHOT                 = 1 << 4;
         const SNAPSHOT_MANUAL               = 1 << 5;
         const SNAPSHOT_IO_LOCAL             = 1 << 6;
@@ -794,8 +793,7 @@ impl StandaloneModuleGraph {
     }
 }
 
-/// C++ (snapshot restore) asks: does this executable carry an embedded snapshot, and where is it in memory? File offset is derived by the caller
-/// from the section mapping. Returns false when not a compiled executable or no snapshot was embedded.
+/// For the restore path: whether this executable carries an embedded snapshot and where it is mapped (false if not compiled or none embedded).
 ///
 /// # Safety
 /// `out_ptr` and `out_len` must be valid for writes.
@@ -1892,11 +1890,7 @@ pub(crate) fn download_to_path(
     Ok(())
 }
 
-/// `--snapshot` pass 2: the snapshot was produced by an executable carrying `bytes` (pass 1) and holds pointers into that exact payload
-/// (module graph, sources, borrowed bytecode), so the graph bytes must be reused verbatim — only the trailer is rewritten and the page-aligned
-/// snapshot appended after them.
-/// `min_len`: the executable being re-emitted already carries a payload of this size, and the Mach-O injector can only grow
-/// the segment; zero padding after the snapshot keeps the new payload at least as large (`byte_count` covers the padding).
+/// The snapshot holds pointers into exactly these payload bytes, so they are reused verbatim with the snapshot appended page-aligned; `min_len` pads the result to the payload size already in the file, since the Mach-O injector can only grow.
 pub fn append_snapshot_to_serialized(
     bytes: &[u8],
     snapshot: &[u8],
@@ -1991,8 +1985,7 @@ fn rewrite_executable(
     out_name: &[u8],
     env: &mut bun_dotenv::Loader,
 ) -> crate::Result<CompileResult> {
-    // The executable says which injector rewrites it; `bun build --snapshot` may be pointed at one built for another OS
-    // (it will then fail to run it, and say so, but the file must survive the attempt intact).
+    // The file's own format picks the injector: the step may be pointed at another OS's executable, which must survive the (failing) attempt intact.
     let mut target = CompileTarget::default();
     let mut magic = [0u8; 4];
     if let Ok(file) = bun_sys::File::openat(Fd::cwd(), exe_path, bun_sys::O::RDONLY, 0)
@@ -2020,8 +2013,7 @@ fn rewrite_executable(
     )
 }
 
-/// `bun build --snapshot`: mark (or, with empty `flags`, unmark) the executable so that running it takes its snapshot; see
-/// `Flags::TAKE_SNAPSHOT`. Only the trailer word changes, so a snapshot already embedded stays where it is.
+/// Mark (or, with empty `flags`, unmark) the executable so that running it takes its snapshot (`Flags::TAKE_SNAPSHOT`); only the trailer word changes.
 pub fn set_snapshot_build_flags(
     exe_path: &[u8],
     flags: Flags,
@@ -2051,8 +2043,7 @@ pub fn set_snapshot_build_flags(
     rewrite_executable(exe_path, &payload, out_dir, out_name, env)
 }
 
-/// Embed a snapshot into an existing compiled executable, in place or to `out_name`; re-running it replaces the previous snapshot
-/// and clears the `TAKE_SNAPSHOT` marking.
+/// Embed a snapshot into an existing compiled executable (replacing any previous one) and clear the `TAKE_SNAPSHOT` marking.
 pub fn embed_snapshot_into_executable(
     exe_path: &[u8],
     snapshot: &[u8],
@@ -2394,9 +2385,7 @@ pub fn to_executable(
 impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
-    /// snapshot restore runs long before the graph is constructed: locate the section, read the trailer `Offsets`, and report the
-    /// embedded snapshot's in-memory location (the section is mapped as part of the executable). `None` if not compiled / no snapshot.
-    /// The trailer `Offsets` of this executable's own payload, readable before anything else is set up.
+    /// The trailer `Offsets` of this executable's own payload, readable long before the graph exists (restore runs first thing in main).
     fn offsets_early() -> Option<(*const u8, usize, Offsets)> {
         #[cfg(target_os = "macos")]
         let data = macho::get_data();

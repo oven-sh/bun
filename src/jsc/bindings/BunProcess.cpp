@@ -1569,8 +1569,7 @@ extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
 }
 #endif
 
-// Signal dispositions are kernel state: a process resumed from a snapshot has the listener table but none of the
-// handlers the build process installed for it.
+// Signal dispositions are kernel state: a resumed process has the listener table but none of the handlers the build installed.
 extern "C" void Bun__Process__reinstallSignalHandlersAfterSnapshotRestore()
 {
 #if !OS(WINDOWS)
@@ -3225,26 +3224,43 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
 
 // snapshot restore: process.env holds the builder's environment; rebuild it from the reloaded loader map.
 extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject*);
-// A process.stdin/stdout/stderr the app created while the snapshot was taken is a stream over the build's descriptors
-// (their kind decides the stream class and write mode); replace each one that exists with one over this launch's.
+// Streams created before the snapshot describe the build's descriptors: terminal-to-terminal keeps the object (captured references stay valid) and refreshes its size; anything else is rebuilt for this launch.
 extern "C" void Bun__Process__recreateStdioAfterSnapshotRestore(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     JSC::JSLockHolder lock(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* process = globalObject->processObject();
-    struct {
-        ASCIILiteral name;
-        JSValue (*construct)(VM&, JSObject*);
-    } streams[] = {
-        { "stdin"_s, constructStdin },
-        { "stdout"_s, constructStdout },
-        { "stderr"_s, constructStderr },
+    struct { ASCIILiteral name; int fd; JSValue (*construct)(VM&, JSObject*); } streams[] = {
+        { "stdin"_s, 0, constructStdin },
+        { "stdout"_s, 1, constructStdout },
+        { "stderr"_s, 2, constructStderr },
     };
     for (auto& stream : streams) {
         auto ident = Identifier::fromString(vm, stream.name);
-        if (process->getDirect(vm, ident).isEmpty())
+        JSValue existing = process->getDirect(vm, ident);
+        if (existing.isEmpty())
             continue; // never created: the lazy property will build one for this launch on first use
+        bool wasTerminal = false;
+        if (auto* object = existing.getObject()) {
+            wasTerminal = object->get(globalObject, Identifier::fromString(vm, "isTTY"_s)).isTrue();
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                wasTerminal = false;
+            }
+        }
+        if (wasTerminal && bun_stdio_tty[stream.fd]) {
+#if !OS(WINDOWS)
+            struct winsize size;
+            if (stream.fd != 0 && ioctl(stream.fd, TIOCGWINSZ, &size) == 0) {
+                auto* object = existing.getObject();
+                object->putDirect(vm, Identifier::fromString(vm, "columns"_s), jsNumber(size.ws_col));
+                object->putDirect(vm, Identifier::fromString(vm, "rows"_s), jsNumber(size.ws_row));
+            }
+#endif
+            continue;
+        }
         process->putDirect(vm, ident, stream.construct(vm, process));
     }
 }
@@ -3260,16 +3276,14 @@ extern "C" void Bun__Process__reloadEnvAfterSnapshotRestore(JSC::JSGlobalObject*
         (void)scope.tryClearException();
         return;
     }
-    // Snapshots built by `bun` make process.env a store-backed view first, so the contents can change under every reference
-    // the app holds; only a snapshot built some other way needs the object itself replaced.
+    // Snapshots built by `bun` use a store-backed process.env whose contents change under every reference; only other builds need the object replaced.
     JSObject* process = globalObject->processObject();
     if (!Bun::refillSharedEnvAfterSnapshotRestore(globalObject, fresh.getObject())) {
         globalObject->m_processEnvObject.set(vm, globalObject, fresh.getObject());
         process->putDirect(vm, JSC::Identifier::fromString(vm, "env"_s), fresh, 0);
     }
     uncheckedDowncast<Bun::Process>(process)->invalidateLaunchContext();
-    // Bun-object lazy properties derived from the launch context were reified into own properties on first access;
-    // deleting them sends the next access back through their PropertyCallback (which reads the current process).
+    // Launch-context lazy properties were reified on first access; deleting them sends the next access back through the PropertyCallback.
     Bun__BunObject__refreshLaunchDerivedProperties(globalObject);
     (void)scope.tryClearException();
 }

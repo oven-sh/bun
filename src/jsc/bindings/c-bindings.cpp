@@ -614,8 +614,7 @@ extern "C" void Bun__setCTRLHandler(BOOL add)
 extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
-// Which of descriptors 0-2 are terminals (termios saved for restoration at exit) and which were closed (now /dev/null).
-// Run at startup, and again by a process that resumed from a snapshot, whose copies of all this describe the build's descriptors.
+// Which of fds 0-2 are terminals (termios saved for exit) or were closed (now /dev/null); rerun after a snapshot restore, whose copies describe the build's.
 static void bun_detect_stdio()
 {
     int devNullFd_ = -1;
@@ -1129,9 +1128,7 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 
 #endif // OS(DARWIN) / __linux__
 
-// Read by our statically linked mimalloc (weak reference) before main: "is this a `bun build --compile` executable?" — those use
-// deterministic address hints from the first allocation so snapshots work without any environment. A function rather than a data
-// reference because BUN_COMPILED itself is a local symbol in the final link.
+// Called by our mimalloc before main (compiled executables get deterministic address hints from their first allocation); a function because BUN_COMPILED is a local symbol in the final link.
 extern "C" __attribute__((visibility("default"), used)) int bun_is_compiled_executable(void)
 {
     return BUN_COMPILED.size != 0;
@@ -1188,8 +1185,7 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
     return pe_section_data;
 }
 
-// Snapshots do not exist on Windows; a mimalloc built with the hook would call this during its own initialization,
-// before the PE section can be looked at, so this answers without looking.
+// No snapshots on Windows, and mimalloc may call this during its own initialization, so it answers without looking at the PE section.
 extern "C" int bun_is_compiled_executable(void)
 {
     return 0;

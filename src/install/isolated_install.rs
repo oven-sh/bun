@@ -2664,8 +2664,7 @@ pub(crate) fn install_isolated_packages(
 
             debug_assert!(done);
 
-            // `success` counts unique packages, in lock-step with the
-            // `installed` bitset the tree printer consumes.
+            // The summary line prints `success`; the tree printer lists the bitset.
             assert!(installer.summary.success as usize == installer.installed.count());
         }
 

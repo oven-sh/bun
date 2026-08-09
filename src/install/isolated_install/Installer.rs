@@ -539,8 +539,7 @@ impl<'a> Installer<'a> {
 
         match real_state {
             CompleteState::Success => {
-                // A package with multiple store entries (one per peer
-                // dependency variant) counts as one installed package.
+                // A package may have several store entries (peer variants); count it once.
                 let pkg_id = nodes.items_pkg_id()[node_id.get() as usize];
                 let is_duplicate = self.installed.is_set(pkg_id as usize);
                 self.summary.success += (!is_duplicate) as u32;

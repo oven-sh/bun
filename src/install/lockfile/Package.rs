@@ -1758,9 +1758,8 @@ impl Package<u64> {
                                 .version
                                 .satisfies(workspace_version, buf, buf)
                         }
-                        // A member without a version can only be used by a
-                        // wildcard range (`get_or_put_resolved_package`
-                        // applies the same rule when resolving).
+                        // A versionless member is only linkable by a wildcard
+                        // range, matching `get_or_put_resolved_package`.
                         None => dependency_version.npm().version.is_star(),
                     };
                     if pm.options.link_workspace_packages && satisfies {

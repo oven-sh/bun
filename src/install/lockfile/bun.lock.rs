@@ -2194,13 +2194,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 // there should be no duplicates
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-                // A root dependency that replaced this member's workspace
-                // dependency (`Package::parse_dependency`) owns the root
-                // `packages` key matching the member's name, and the member
-                // only appears nested under its dependents. Pre-claiming the
-                // name in `pkg_map` would falsely collide with that entry as
-                // a duplicate package path; the nested key still maps to this
-                // package through the resolution search further down.
+                // A member displaced by a root dependency only appears
+                // nested; pre-claiming its name would falsely collide with
+                // the root `packages` key the other package owns.
                 if member_owns_packages_key(&pkgs_expr_for_claims, name, path) {
                     let entry = pkg_map.get_or_put(name)?;
                     if entry.found_existing {
@@ -3408,11 +3404,9 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     .expect("infallible: is_string checked");
                 let name_hash = StringBuilder::string_hash(name);
 
-                // A root dependency whose npm range cannot link this member
-                // replaced the member's workspace dependency when
-                // package.json was parsed (`Package::parse_dependency`);
-                // mirror it so the loaded lockfile produces the same root
-                // dependency list.
+                // Mirror `Package::parse_dependency`: an npm range that
+                // cannot link this member replaced its workspace dependency,
+                // so the loaded root dependency list must match.
                 let overridden = {
                     let bytes = lockfile.buffers.string_bytes.as_slice();
                     let member_version = lockfile.workspace_versions.get(&name_hash).copied();

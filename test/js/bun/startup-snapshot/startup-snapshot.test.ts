@@ -129,7 +129,12 @@ snapshotTest(
     for (const run of [1, 2]) {
       await using proc = Bun.spawn({
         cmd: [exe],
-        env: { HOME: String(dir), PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT_VERBOSE: "1", HEAVY_OUT: join(String(out), "heavy.out") },
+        env: {
+          HOME: String(dir),
+          PATH: bunEnv.PATH!,
+          BUN_STARTUP_SNAPSHOT_VERBOSE: "1",
+          HEAVY_OUT: join(String(out), "heavy.out"),
+        },
         stderr: "pipe",
         stdout: "pipe",
       });
@@ -154,7 +159,12 @@ snapshotTest(
     // Opt out boots normally.
     const plain = Bun.spawnSync({
       cmd: [exe],
-      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT: "0", HEAVY_OUT: join(String(out), "heavy.out") },
+      env: {
+        HOME: bunEnv.HOME!,
+        PATH: bunEnv.PATH!,
+        BUN_STARTUP_SNAPSHOT: "0",
+        HEAVY_OUT: join(String(out), "heavy.out"),
+      },
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -182,7 +192,12 @@ snapshotTest(
     expect(Bun.file(dbg + ".snapshot").size).toBeGreaterThan(1024 * 1024);
     const viaFile = Bun.spawnSync({
       cmd: [dbg],
-      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT_IN: dbg + ".snapshot", HEAVY_OUT: join(String(dir), "heavy.out") },
+      env: {
+        HOME: bunEnv.HOME!,
+        PATH: bunEnv.PATH!,
+        BUN_STARTUP_SNAPSHOT_IN: dbg + ".snapshot",
+        HEAVY_OUT: join(String(dir), "heavy.out"),
+      },
       stderr: "pipe",
       stdout: "pipe",
     });

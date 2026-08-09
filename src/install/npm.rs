@@ -1237,10 +1237,11 @@ pub mod package_manifest {
         }
 
         /// We save into a temporary directory and then move the file to the cache directory.
-        /// Nothing consumes the result, so this is not a `pending_tasks` entry;
-        /// it is counted in `pending_manifest_saves` instead so the command
-        /// waits for the write to land before exiting (otherwise whether the
-        /// next run finds the manifest cached depends on thread scheduling).
+        /// Saving the files to the manifest cache doesn't need to prevent application exit.
+        /// It's an optional cache.
+        /// Therefore, we choose to not increment the pending task count or wake up the main thread.
+        ///
+        /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
         pub(crate) fn save_async(
             this: &PackageManifest,
             scope: &registry::Scope,
@@ -1300,17 +1301,6 @@ pub mod package_manifest {
                             Output::flush();
                         }
                     }
-                    drop(save_task);
-
-                    let pm = crate::package_manager::get();
-                    // SAFETY: atomic field projection from a worker thread (no
-                    // `&mut PackageManager`); `wake_raw` is the thread-safe wake.
-                    unsafe {
-                        (*pm)
-                            .pending_manifest_saves
-                            .fetch_sub(1, core::sync::atomic::Ordering::Release);
-                        PackageManager::wake_raw(pm);
-                    }
                 }
             }
 
@@ -1327,11 +1317,7 @@ pub mod package_manifest {
 
             // SAFETY: task is a valid Box-allocated SaveTask
             let batch = PoolBatch::from(unsafe { core::ptr::addr_of_mut!((*task).task) });
-            let manager = PackageManager::get();
-            manager
-                .pending_manifest_saves
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            manager.thread_pool.schedule(batch);
+            PackageManager::get().thread_pool.schedule(batch);
         }
 
         fn manifest_file_name<'b>(

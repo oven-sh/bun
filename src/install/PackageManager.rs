@@ -344,10 +344,6 @@ pub struct PackageManager {
     ///
     /// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
     pub(crate) pending_pre_calc_hashes: AtomicU32,
-    /// Manifest cache writes still running on the thread pool. Not part of
-    /// `pending_tasks` (nothing consumes their result), but `sleep_until` and
-    /// the runtime's module poll do not report done until they land.
-    pub pending_manifest_saves: AtomicU32,
     pub pending_tasks: AtomicU32,
     pub total_tasks: u32,
     pub(crate) preallocated_network_tasks: PreallocatedNetworkTasks,
@@ -951,24 +947,6 @@ impl PackageManager {
                 trampoline::<C>,
             )
         };
-
-        // The tasks the caller waited on may have handed manifest cache
-        // writes to the thread pool (`Serializer::save_async`). Nothing reads
-        // their result, but returning — and letting the command exit — before
-        // they land makes what the next run finds cached a matter of thread
-        // scheduling, so every wait also covers them.
-        fn saves_landed(this: *mut c_void) -> bool {
-            // SAFETY: `this` is the `*mut PackageManager` passed below; atomic
-            // field projection only, no `&mut PackageManager` is formed.
-            unsafe {
-                (*this.cast::<PackageManager>())
-                    .pending_manifest_saves
-                    .load(Ordering::Acquire)
-                    == 0
-            }
-        }
-        // SAFETY: as above; `saves_landed` never borrows `*event_loop`.
-        unsafe { AnyEventLoop::tick_raw(event_loop, this.cast::<c_void>(), saves_landed) };
     }
 
     pub(crate) fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
@@ -1944,7 +1922,6 @@ pub fn init(
         wr!(patch_calc_hash_batch, thread_pool::Batch::default());
         wr!(patch_task_queue, PatchTaskQueue::default());
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
-        wr!(pending_manifest_saves, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
         wr!(total_tasks, 0);
         wr!(lifecycle_script_time_log, LifecycleScriptTimeLog::default());
@@ -2378,7 +2355,6 @@ fn init_with_runtime_once(
         wr!(patch_task_fifo, PatchTaskFifo::init());
         wr!(patch_task_queue, PatchTaskQueue::default());
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
-        wr!(pending_manifest_saves, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
         wr!(total_tasks, 0);
         wr!(lifecycle_script_time_log, LifecycleScriptTimeLog::default());

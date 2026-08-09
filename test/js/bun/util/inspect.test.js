@@ -949,3 +949,25 @@ it("console.log survives a lazy property builder throwing mid-walk", async () =>
   expect(stdout).toContain("SURVIVED");
   expect(exitCode).toBe(0);
 });
+
+// util.inspect is loaded lazily the first time a custom inspect function is
+// formatted. With `process` clobbered, requiring node:util throws; the lazy
+// property initializer must still install a fallback instead of aborting.
+// On Windows, console.log(Bun) also reaches this through Bun.env.
+it("console.log survives util.inspect failing to load for custom inspect", async () => {
+  const code = `
+    globalThis.process = undefined;
+    console.log({ [Symbol.for("nodejs.util.inspect.custom")]() { return "hi" } });
+    console.log("SURVIVED");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("hi");
+  expect(stdout).toContain("SURVIVED");
+  expect(exitCode).toBe(0);
+});

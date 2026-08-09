@@ -738,9 +738,10 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
         if (!value)
             continue;
         bool appended = appendChunkBytes(vm, globalObject, value, bytes);
-        RETURN_IF_EXCEPTION(scope, WTF::String());
-        if (!appended)
+        if (scope.exception() || !appended) [[unlikely]] {
+            releaseAccumulated();
             return WTF::String();
+        }
     }
     if (accumulator.rope.length()) {
         WTF::String rope = accumulator.rope.toString();

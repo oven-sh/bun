@@ -236,7 +236,6 @@ impl<'a> ProcessHandle<'a> {
                     .map_err(Error::from);
                 #[cfg(target_env = "ohos")]
                 if let Some(poll) = self.stdout_reader.reader.handle.get_poll() {
-                    poll.set_flag(bun_io::FilePollFlag::Socket);
                     poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                 }
                 r?;
@@ -250,7 +249,6 @@ impl<'a> ProcessHandle<'a> {
                     .map_err(Error::from);
                 #[cfg(target_env = "ohos")]
                 if let Some(poll) = self.stderr_reader.reader.handle.get_poll() {
-                    poll.set_flag(bun_io::FilePollFlag::Socket);
                     poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                 }
                 r?;
@@ -524,19 +522,15 @@ impl<'a> State<'a> {
         // dispatch above.
         for i in 0..self.handles.len() {
             let handle = unsafe { &mut *handles_ptr.add(i) };
-            Self::drain_one(state_ptr, &raw mut handle.stdout_reader, handle);
-            Self::drain_one(state_ptr, &raw mut handle.stderr_reader, handle);
+            Self::drain_one(&raw mut handle.stdout_reader);
+            Self::drain_one(&raw mut handle.stderr_reader);
         }
     }
 
     #[cfg(target_env = "ohos")]
-    fn drain_one(
-        state_ptr: *mut State<'a>,
-        reader_ptr: *mut PipeReader<'a>,
-        handle_ptr: &mut ProcessHandle<'a>,
-    ) {
-        // SAFETY: reader_ptr points into handle_ptr's readers; state_ptr is
-        // the live State; all outlive this call.
+    fn drain_one(reader_ptr: *mut PipeReader<'a>) {
+        // SAFETY: reader_ptr points into the live handle's reader; the
+        // handle outlives this call.
         let reader = unsafe { &mut *reader_ptr };
         if reader.ended {
             return;
@@ -550,18 +544,14 @@ impl<'a> State<'a> {
         if unsafe { libc::ioctl(fd.native(), libc::FIONREAD, &raw mut avail) } != 0 || avail <= 0 {
             return;
         }
-        let mut buf = [0u8; 16384];
-        // SAFETY: buf is a valid write buffer for read(); fd is non-blocking.
-        let n = unsafe { libc::read(fd.native(), buf.as_mut_ptr().cast(), buf.len()) };
-        if n > 0 {
-            // SAFETY: state_ptr is the live State; reader is one of its
-            // handles' readers (aliasing the buffered-reader dispatch relies on).
-            let _ = unsafe { (*state_ptr).read_chunk(reader, &buf[..n as usize]) };
-        } else if n == 0 {
-            reader.ended = true;
-            // SAFETY: handle_ptr is live; same call the exit path makes.
-            let _ = unsafe { (*state_ptr).maybe_finish(handle_ptr) };
-        }
+        // FIONREAD says bytes are pending but epoll never reports readable
+        // (OHOS kernel bug). Route through BufferedReader::read() — not a raw
+        // libc::read — so the chunk goes through the same buffered path as
+        // the epoll callback (on_read_chunk), preserving ordering and the
+        // line_buffer flush in maybe_finish.
+        // SAFETY: `reader` is the live PipeReader; its reader is registered
+        // for this fd and outlives this call.
+        unsafe { reader.reader.read(&raw mut reader.reader) };
     }
 
     fn start_dependents(dependents: &[*mut ProcessHandle]) {
